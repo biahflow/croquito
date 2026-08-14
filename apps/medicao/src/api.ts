@@ -18,9 +18,36 @@
  *   como string formatada (`format.ts`); nenhum número da medição vira `number` aqui.
  */
 
-/** Base do servidor local; a UI não fala com mais nada. */
+/**
+ * Base do servidor de medição; a UI não fala com mais nada.
+ *
+ * Em desenvolvimento é o servidor local em `http://localhost:8801`. No build servido pelo
+ * nginx do host público a base é RELATIVA (`/medicao/api`), e o proxy same-origin leva a
+ * chamada ao serviço interno — nenhum host aparece no bundle.
+ */
 export const apiBaseUrl =
   import.meta.env.VITE_MEDICAO_API_BASE_URL ?? "http://localhost:8801";
+
+/**
+ * Fonte do access token da sessão (`apps/medicao/src/auth.ts`), injetada pela tela.
+ *
+ * O módulo de API não conhece OIDC: ele pergunta o token a quem tem a sessão e manda o
+ * `Authorization` quando existe resposta. Sem provider — o caminho do servidor local, que
+ * não autentica (ADR-0020) — nenhum header extra é enviado e nada da rotina local muda.
+ */
+let accessTokenProvider: (() => string | null) | null = null;
+
+export function setAccessTokenProvider(
+  provider: (() => string | null) | null,
+): void {
+  accessTokenProvider = provider;
+}
+
+/** `{}` sem sessão; um `Authorization` quando o provider devolve token. */
+function authHeaders(): Record<string, string> {
+  const token = accessTokenProvider?.() ?? null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export type TakeoffItemStatus =
   | "proposed"
@@ -382,10 +409,19 @@ export function isStateMoved(error: unknown): boolean {
 }
 
 /**
+ * Recusa de sessão sem envelope legível (401/403). É código LOCAL, como
+ * `LOCAL_RESPONSE_UNREADABLE`: ele só entra quando o servidor não disse nada de
+ * aproveitável — envelope do servidor continua vencendo, sempre.
+ */
+export const SESSION_REJECTED_CODE = "LOCAL_SESSION_REJECTED";
+
+/**
  * Traduz uma resposta não-ok no erro de domínio que ela carrega.
  *
  * Corpo ilegível não vira mensagem inventada: sobra o status e um código local
- * (`LOCAL_RESPONSE_UNREADABLE`) que a tela sabe exibir.
+ * (`LOCAL_RESPONSE_UNREADABLE`, ou `LOCAL_SESSION_REJECTED` em 401/403) que a tela sabe
+ * exibir. Sem isso, um 401 do modo hospedado apareceria como "respondeu fora do formato
+ * esperado", que manda o revisor procurar o defeito no lugar errado.
  */
 export async function readProblem(response: Response): Promise<MedicaoApiError> {
   const payload = (await response.json().catch(() => null)) as {
@@ -400,6 +436,14 @@ export async function readProblem(response: Response): Promise<MedicaoApiError> 
       ? (payload.details as Record<string, unknown>)
       : {};
   if (code === null) {
+    if (response.status === 401 || response.status === 403) {
+      return new MedicaoApiError(
+        response.status,
+        SESSION_REJECTED_CODE,
+        detail ?? `o servidor respondeu ${response.status} sem envelope de erro`,
+        details,
+      );
+    }
     return new MedicaoApiError(
       response.status,
       "LOCAL_RESPONSE_UNREADABLE",
@@ -419,10 +463,25 @@ export function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * Opções de uma chamada deste módulo. `headers` é um objeto simples (e não `HeadersInit`)
+ * de propósito: é o que todas as chamadas daqui usam, e é o que permite juntar o
+ * `Authorization` ao que a chamada declarou sem perder nenhum dos dois.
+ */
+type RequestOptions = Omit<RequestInit, "headers"> & {
+  headers?: Record<string, string>;
+};
+
+async function request<T>(path: string, init?: RequestOptions): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${apiBaseUrl}${path}`, init);
+    // O `Authorization` entra ANTES do que a chamada declarou, para que um header
+    // explícito continue vencendo; nenhum outro header é tocado — o `uploadPlate` manda
+    // `FormData` e um `Content-Type` escrito aqui quebraria o boundary do multipart.
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      ...init,
+      headers: { ...authHeaders(), ...(init?.headers ?? {}) },
+    });
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === "AbortError") {
       throw cause;

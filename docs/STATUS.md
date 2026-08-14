@@ -589,7 +589,10 @@ domínio homologar sem CLI ([ADR-0020](adr/0020-local-homologation-server-for-va
   adulterada é tratada como ausente); busca por palavra-chave no catálogo como rota
   (mecanismo nascido da rodada real da Toca); CORS restrito à origem local; nenhum
   provider é chamado pelo servidor.
-- `apps/medicao`: app React/TS strict novo, todo em português de obra, sem OIDC —
+- `apps/medicao`: app React/TS strict novo, todo em português de obra, sem OIDC no
+  caminho local (no modo hospedado do
+  [ADR-0026](adr/0026-medicao-hospedada-sessao-autenticada-minima.md) a mesma tela exige
+  sessão antes de ler a rodada) —
   quatro telas (rodada, revisão do takeoff sobre a prancha com bboxes SVG e decisão por
   item, confirmação de código com descrição completa + busca + distinção fornecimento ×
   execução declarada como dica de leitura, boletim e memória). A tela nunca calcula

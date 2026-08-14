@@ -1,16 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   calcBuildBody,
   codeDecisionBody,
   codeSearchTerm,
+  getState,
   isAbortError,
   isStateMoved,
   itemAnchor,
   MedicaoApiError,
+  postSuggestionsRecompute,
   readProblem,
+  SESSION_REJECTED_CODE,
+  setAccessTokenProvider,
   STATE_MOVED_CODE,
   suggestionsRecomputeBody,
   takeoffDecisionBody,
+  uploadPlate,
   type TakeoffItem,
 } from "./api";
 
@@ -64,6 +69,25 @@ describe("readProblem", () => {
     expect(error.code).toBe("LOCAL_RESPONSE_UNREADABLE");
     expect(error.status).toBe(500);
     expect(isStateMoved(error)).toBe(false);
+  });
+
+  it("recusa de sessão sem envelope é dita como sessão, não como formato", async () => {
+    const error = await readProblem(new Response("", { status: 401 }));
+
+    expect(error.code).toBe(SESSION_REJECTED_CODE);
+    expect(error.status).toBe(401);
+  });
+
+  it("envelope do servidor vence o código local, inclusive em 401", async () => {
+    const error = await readProblem(
+      problemResponse(401, {
+        code: "MEDICAO_ROLE_REQUIRED",
+        detail: "o papel orcamentista é exigido nesta rota",
+        details: {},
+      }),
+    );
+
+    expect(error.code).toBe("MEDICAO_ROLE_REQUIRED");
   });
 
   it("reconhece a recusa de segunda prancha na mesma rodada", async () => {
@@ -299,5 +323,91 @@ describe("calcBuildBody", () => {
       reference_label: "3ª MEDIÇÃO",
       contract_label: "Contrato 05/2024",
     });
+  });
+});
+
+/**
+ * Injeção do token da sessão (modo hospedado, ADR-0026). O oráculo é o que sai no `fetch`:
+ * o módulo de API não conhece OIDC, ele só pergunta o token a quem tem a sessão.
+ */
+describe("setAccessTokenProvider", () => {
+  const chamadas: { url: string; init: RequestInit | undefined }[] = [];
+
+  beforeEach(() => {
+    chamadas.length = 0;
+    vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+      chamadas.push({ url, init });
+      return Promise.resolve(
+        new Response("{}", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+  });
+
+  afterEach(() => {
+    setAccessTokenProvider(null);
+    vi.unstubAllGlobals();
+  });
+
+  function headersDaChamada(indice = 0): Record<string, string> {
+    return (chamadas[indice]?.init?.headers ?? {}) as Record<string, string>;
+  }
+
+  it("sem provider nenhum header de sessão é enviado (servidor local do ADR-0020)", async () => {
+    await getState();
+
+    expect(chamadas).toHaveLength(1);
+    expect(headersDaChamada()).not.toHaveProperty("Authorization");
+  });
+
+  it("com provider, a chamada carrega o Bearer da sessão", async () => {
+    setAccessTokenProvider(() => "token-de-teste");
+
+    await getState();
+
+    expect(headersDaChamada().Authorization).toBe("Bearer token-de-teste");
+  });
+
+  it("o token é lido a cada chamada, então a renovação silenciosa entra sozinha", async () => {
+    let token = "primeiro";
+    setAccessTokenProvider(() => token);
+
+    await getState();
+    token = "renovado";
+    await getState();
+
+    expect(headersDaChamada(0).Authorization).toBe("Bearer primeiro");
+    expect(headersDaChamada(1).Authorization).toBe("Bearer renovado");
+  });
+
+  it("sessão encerrada não vira header vazio", async () => {
+    setAccessTokenProvider(() => null);
+
+    await getState();
+
+    expect(headersDaChamada()).not.toHaveProperty("Authorization");
+  });
+
+  it("o Content-Type do POST sobrevive ao Authorization", async () => {
+    setAccessTokenProvider(() => "token-de-teste");
+
+    await postSuggestionsRecompute(null);
+
+    expect(headersDaChamada().Authorization).toBe("Bearer token-de-teste");
+    expect(headersDaChamada()["Content-Type"]).toBe("application/json");
+  });
+
+  it("o upload multipart continua sem Content-Type escrito pelo cliente", async () => {
+    setAccessTokenProvider(() => "token-de-teste");
+
+    await uploadPlate(
+      new File(["%PDF-1.4 sintetico"], "prancha.pdf", { type: "application/pdf" }),
+    );
+
+    expect(headersDaChamada().Authorization).toBe("Bearer token-de-teste");
+    // O boundary é escrito pelo navegador; um `Content-Type` daqui quebraria o parsing.
+    expect(headersDaChamada()).not.toHaveProperty("Content-Type");
   });
 });

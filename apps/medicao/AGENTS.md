@@ -7,11 +7,17 @@ obra" do [FDD](../../docs/product/FDD.md) e o
 
 ## Boundary
 
-Este app é a UI **local de homologação** da medição: apresenta a rodada, a revisão do
-takeoff, a confirmação de código e o boletim, falando só com o servidor local
-(`croquito-valuation serve`). Ele não calcula dinheiro, não decide código, não chama
-provider e não conhece a API `/v1` autenticada — quando a sessão autenticada da medição
-existir, as telas e módulos puros migram; o client local é descartável.
+Este app é a UI de homologação da medição: apresenta a rodada, a revisão do
+takeoff, a confirmação de código e o boletim, falando só com o servidor de medição
+(`croquito-valuation serve`, na máquina do operador ou hospedado). Ele não calcula
+dinheiro, não decide código, não chama provider e não conhece a API `/v1` autenticada —
+quando a sessão autenticada da medição existir, as telas e módulos puros migram; o client
+local é descartável.
+
+Autenticação é do modo hospedado ([ADR-0026](../../docs/adr/0026-medicao-hospedada-sessao-autenticada-minima.md)):
+com `VITE_OIDC_AUTHORITY`/`VITE_OIDC_CLIENT_ID` configurados, a tela exige sessão antes de
+ler a rodada e injeta o `Authorization` em `api.ts`; sem eles — o caminho local do
+ADR-0020 — nada disso existe e nenhum header a mais é enviado.
 
 ## Regras
 

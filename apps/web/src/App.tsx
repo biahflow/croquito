@@ -2436,11 +2436,24 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="Croquito - início">
+        {/* Início desta SPA, não raiz do host: em homologação a raiz redireciona para cá,
+            e o caminho da marca deve ser o mesmo que o `redirect_uri` do login. */}
+        <a
+          className="brand"
+          href={import.meta.env.BASE_URL}
+          aria-label="Croquito - início"
+        >
           <img className="brand-logo" src={logoDark} alt="Croquito" />
           <small>Revisão humana autenticada</small>
         </a>
         <div className="topbar-actions">
+          {/* As duas SPAs só convivem na mesma origem quando servidas em subrota; em
+              desenvolvimento cada uma tem a sua porta e o link levaria a lugar nenhum. */}
+          {import.meta.env.BASE_URL === "/" ? null : (
+            <a className="topbar-link" href="/medicao/">
+              Medição
+            </a>
+          )}
           <span className="schema-pill">
             Cena {sceneSchema.$id?.split("/").at(-1)}
           </span>

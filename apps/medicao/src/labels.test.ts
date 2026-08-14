@@ -66,6 +66,14 @@ describe("errorMessage", () => {
     );
   });
 
+  it("diz o que fazer quando a sessão é recusada, sem devolver o código cru", () => {
+    const message = errorMessage("LOCAL_SESSION_REJECTED");
+
+    expect(message).toContain("recusou esta sessão");
+    expect(message).toContain("orçamentista");
+    expect(message).not.toContain("LOCAL_SESSION_REJECTED");
+  });
+
   it("acrescenta o detalhe do servidor quando ele diz algo a mais", () => {
     const message = errorMessage(
       "LOCAL_ARTIFACT_MISSING",

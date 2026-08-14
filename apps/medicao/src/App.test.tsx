@@ -35,4 +35,25 @@ describe("App", () => {
     expect(html).not.toContain("Campo do Toca");
     expect(html).not.toContain("AD04");
   });
+
+  it("sem OIDC configurado não pede login: o caminho do servidor local não muda", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    expect(html).not.toContain("Sessão da orçamentista");
+    expect(html).not.toContain("Verificando a sessão");
+    expect(html).not.toContain(">Entrar<");
+  });
+
+  /**
+   * O `base` do Vite é o de produção fora do `vite dev` (aqui, `/medicao/`), que é
+   * exatamente a condição em que as duas telas dividem a origem. Em desenvolvimento
+   * (`base` = `/`) cada app tem a sua porta e o link não é renderizado.
+   */
+  it("oferece a ida para a revisão quando as duas telas dividem a origem", () => {
+    expect(import.meta.env.BASE_URL).toBe("/medicao/");
+
+    const html = renderToStaticMarkup(<App />);
+
+    expect(html).toContain('href="/revisao/"');
+  });
 });

@@ -245,7 +245,7 @@ jobs:
           esac
           url=$(gcloud run services describe croquito-web-hml --region "$REGIAO" \
             --format='value(status.url)')
-          for rota in /api/healthz /auth/realms/croquito/.well-known/openid-configuration; do
+          for rota in /revisao/ /medicao/ /api/healthz /auth/realms/croquito/.well-known/openid-configuration; do
             ok=""
             for tentativa in 1 2 3 4 5; do
               if curl -sf --max-time 10 "$url$rota" > /dev/null; then

@@ -42,6 +42,7 @@
   --dark-ink: #f2f4f7;
   --dark-ink-soft: rgba(242, 244, 247, 0.72);
   --dark-line: rgba(242, 244, 247, 0.12);
+  --dark-line-strong: rgba(242, 244, 247, 0.34);
 
   color: var(--ink);
   background: var(--bg);
@@ -131,6 +132,37 @@ p {
   margin: 4px 0 0;
   font-size: 0.85rem;
   color: var(--dark-ink-soft);
+}
+
+.topbar-acoes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Navegação entre as duas telas do host público e sessão, sobre o topbar escuro. O verde
+   da marca é preenchimento e nunca cor de texto: aqui o texto é `--dark-ink-soft`, e o
+   estado ativo (hover/foco) sobe para `--dark-ink` com a borda mais firme. */
+.topbar-link {
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  background: transparent;
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.topbar-link:hover,
+.topbar-link:focus-visible {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+}
+
+/* Botão com a mesma aparência do link: "Sair" é ação, não navegação. */
+.topbar-link-botao {
+  font-family: inherit;
+  line-height: inherit;
 }
 
 .aviso-fixo {

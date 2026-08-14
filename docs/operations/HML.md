@@ -33,6 +33,27 @@ Keycloak, em schemas separados.
 Cada serviço roda com a própria conta de serviço
 (`<serviço>@biahflow-hml.iam.gserviceaccount.com`), atribuída pelo deploy.
 
+### A borda pública
+
+`croquito-web-hml` é o único serviço com ingress público. A imagem
+(`docker/web.Dockerfile`) constrói as duas SPAs e as serve por
+[`deploy/nginx.conf`](../../deploy/nginx.conf), que faz o proxy same-origin do resto. Duas
+consequências operacionais:
+
+- **As URLs internas são literais na configuração do nginx.** Elas são determinísticas
+  (`croquito-<serviço>-hml-209400815796.us-east1.run.app`) e não vêm de variável de
+  ambiente: trocar de URL — outro projeto, outra região, outro serviço — exige reconstruir
+  e republicar a imagem do nginx, não editar o serviço.
+- **As `VITE_*` das SPAs são de build** (base da API `/api`, base da medição
+  `/medicao/api`, `authority` do realm e `client_id` público). Elas entram no bundle como
+  `ARG`/`ENV` do Dockerfile; mudar qualquer uma delas também é reconstruir a imagem.
+
+O prefixo é removido no proxy da API e da medição (`/api/healthz` → `/healthz`,
+`/medicao/api/state` → `/state`) e **preservado** no do Keycloak (`/auth/...`), que vive em
+subpath. O corpo aceito pela borda é de 1 MB, com uma exceção declarada: o `POST` da
+prancha em `/medicao/api/` aceita 50 MB, o mesmo teto do servidor de medição — o documento
+da sessão de cena não passa por aqui, vai presignado direto ao bucket.
+
 ## Como deployar
 
 Só existe um caminho: a esteira
@@ -96,10 +117,12 @@ caminho automatizado para alteração ou remoção (lacuna declarada no
 ```bash
 curl -sf https://croquito-hml.biahflow.ai/api/healthz
 curl -sf https://croquito-hml.biahflow.ai/auth/realms/croquito/.well-known/openid-configuration
+curl -sfo /dev/null https://croquito-hml.biahflow.ai/revisao/
+curl -sfo /dev/null https://croquito-hml.biahflow.ai/medicao/
 ```
 
-As duas rotas passam pelo nginx, que é o único serviço público; se elas respondem, o proxy
-same-origin está de pé. O `croquito-worker-hml` não tem fumaça externa por construção — ele
+As quatro rotas passam pelo nginx, que é o único serviço público; se elas respondem, o
+proxy same-origin e as duas SPAs estão de pé. O `croquito-worker-hml` não tem fumaça externa por construção — ele
 só aceita chamada autenticada do Pub/Sub, e a prova de vida dele é o job andar.
 
 ## Custo
@@ -112,11 +135,6 @@ login do dia espere o servidor nascer. É uma escolha de operação, não uma ex
 
 ## Lacunas declaradas
 
-- **`redirect_uri` da SPA de cena.** `apps/web` monta `redirect_uri` como
-  `${window.location.origin}/`, e o realm de homologação autoriza
-  `/revisao/*` e `/medicao/*`. Servir a SPA em subpath exige que o app passe a compor o
-  `redirect_uri` com o base path (ou que o realm autorize a raiz). Fica com a entrega do
-  nginx/SPA, e sem isso o login não fecha.
 - **`serve --hosted`** (Bearer JWT, papel `orcamentista`, CORS do host público) está
   decidido no [ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md) e
   ainda não implementado: até lá o serviço `croquito-medicao-hml` recusa subir por falta da

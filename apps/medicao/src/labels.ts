@@ -154,6 +154,10 @@ const ERROR_MESSAGES: LookupTable = {
     "O servidor local não respondeu. Confira se `croquito-valuation serve` está no ar.",
   LOCAL_RESPONSE_UNREADABLE:
     "O servidor local respondeu fora do formato esperado.",
+  // Só aparece no modo hospedado (ADR-0026), e só quando a recusa vem sem envelope: a
+  // sessão expirou ou o usuário não tem o papel de quem decide medição.
+  LOCAL_SESSION_REJECTED:
+    "O servidor recusou esta sessão. Entre de novo; se continuar, confirme com quem administra o ambiente se o seu usuário tem o papel de orçamentista.",
   // Prancha e extração automática.
   LOCAL_ROUND_ALREADY_HAS_PLATE:
     "Esta rodada já tem prancha; uma rodada é uma prancha. Para enviar outra, abra o servidor numa rodada nova.",

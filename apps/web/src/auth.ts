@@ -4,12 +4,20 @@ const authority = import.meta.env.VITE_OIDC_AUTHORITY;
 const clientId = import.meta.env.VITE_OIDC_CLIENT_ID;
 const browser = typeof window !== "undefined";
 
+/**
+ * Onde esta SPA está montada: `/` em desenvolvimento, `/revisao/` no build servido pelo
+ * nginx do host público. O `redirect_uri` precisa ser esse caminho, e não a raiz do host:
+ * o realm de homologação autoriza `/revisao/*` e `/medicao/*`, então voltar para `/`
+ * seria recusado pelo Keycloak antes de o login fechar.
+ */
+const basePath = import.meta.env.BASE_URL;
+
 const manager = browser && authority && clientId
   ? new UserManager({
       authority,
       client_id: clientId,
-      redirect_uri: `${window.location.origin}/`,
-      post_logout_redirect_uri: `${window.location.origin}/`,
+      redirect_uri: `${window.location.origin}${basePath}`,
+      post_logout_redirect_uri: `${window.location.origin}${basePath}`,
       response_type: "code",
       scope: "openid profile",
       // O access token do Keycloak dura 5 min por padrão; uma sessão de revisão dura
@@ -133,8 +141,8 @@ export async function signIn(): Promise<void> {
   if (!manager) {
     throw new Error("OIDC não está configurado neste ambiente.");
   }
-  // O `redirect_uri` é fixo na raiz; o job aberto viaja no `state` e é devolvido à URL
-  // por `readSession`. Objeto simples de propósito: o `state` trafega serializado.
+  // O `redirect_uri` é fixo na base da SPA; o job aberto viaja no `state` e é devolvido à
+  // URL por `readSession`. Objeto simples de propósito: o `state` trafega serializado.
   const job = new URLSearchParams(window.location.search).get("job");
   await manager.signinRedirect(job ? { state: { job } } : undefined);
 }
