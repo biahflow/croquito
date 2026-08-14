@@ -7,9 +7,44 @@
  * item não foi decidido) além de mudar de cor.
  */
 
+/*
+ * Identidade "Grafite técnico" do croquito — bloco copiado de `apps/web/src/styles.css`
+ * (os dois apps não compartilham build; a paleta é mantida por cópia).
+ *
+ * Regras de uso, na ordem em que importam:
+ * - `--accent` (verde vetor) só em PREENCHIMENTO (aba ativa, botão primário, número do
+ *   item) com `--accent-ink` por cima; ele tem 2,2:1 sobre branco e nunca é cor de texto.
+ * - Verde de texto, de traço fino e de indicador de estado (barra da etapa concluída,
+ *   retângulo/pino confirmado) usa `--accent-text` (5,8:1 sobre branco; o pino carrega
+ *   número branco, que precisa de fundo escuro).
+ * - Texto secundário sobre claro usa `--ink-secondary`; `--muted` fica em borda de
+ *   controle e desabilitado.
+ * - Âmbar (proposto/aviso), vermelho (ambíguo/erro) e cinza (rejeitado/bloqueado) são
+ *   cor de estado, não de marca: matiz e distinção preservados, junto com o
+ *   `stroke-dasharray` que diferencia o item ainda não decidido.
+ */
 :root {
-  color: #17211b;
-  background: #eef1ec;
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --surface-subtle: #f4f4f1;
+  --surface-sunken: #efefeb;
+  --ink: #14181d;
+  --ink-secondary: #5b6169;
+  --muted: #9aa0a8;
+  --line: #e5e5e0;
+  --accent: #00c877;
+  --accent-hover: #00b169;
+  --accent-ink: #0e1116;
+  --accent-text: #00744a;
+  --accent-soft: #e6f6ee;
+  --accent-line: #9bdcc0;
+  --dark: #0e1116;
+  --dark-ink: #f2f4f7;
+  --dark-ink-soft: rgba(242, 244, 247, 0.72);
+  --dark-line: rgba(242, 244, 247, 0.12);
+
+  color: var(--ink);
+  background: var(--bg);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
@@ -23,7 +58,7 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: #eef1ec;
+  background: var(--bg);
 }
 
 button,
@@ -40,8 +75,10 @@ button:disabled {
   opacity: 0.55;
 }
 
+/* O anel de foco é indicador gráfico: usa o verde escuro (5,8:1 sobre branco), porque
+   `--accent` puro sumiria sobre a superfície clara. */
 :focus-visible {
-  outline: 3px solid #2f6f4f;
+  outline: 3px solid var(--accent-text);
   outline-offset: 2px;
 }
 
@@ -80,20 +117,20 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  color: #f5f8f4;
-  background: #172c23;
+  color: var(--dark-ink);
+  background: var(--dark);
 }
 
 .eyebrow {
   font-size: 0.7rem;
   letter-spacing: 0.14em;
-  color: #a9c1b0;
+  color: var(--dark-ink-soft);
 }
 
 .topbar-meta {
   margin: 4px 0 0;
   font-size: 0.85rem;
-  color: #cddbd2;
+  color: var(--dark-ink-soft);
 }
 
 .aviso-fixo {
@@ -116,26 +153,26 @@ p {
   flex-wrap: wrap;
   gap: 8px;
   padding: 12px 28px;
-  background: #dfe6de;
-  border-bottom: 1px solid #c3d0c4;
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--line);
 }
 
 .etapa-tab {
   padding: 8px 14px;
-  color: #17211b;
-  background: #f7f9f6;
-  border: 1px solid #b9c8bc;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--muted);
   border-radius: 6px;
 }
 
 .etapa-tab.ativa {
-  color: #f5f8f4;
-  background: #2f6f4f;
-  border-color: #2f6f4f;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .etapa-tab.done {
-  border-left: 5px solid #2f6f4f;
+  border-left: 5px solid var(--accent-text);
 }
 
 .etapa-tab.blocked {
@@ -171,9 +208,9 @@ p {
 }
 
 .banner-sucesso {
-  color: #123322;
-  background: #d5ead9;
-  border-left: 5px solid #2f6f4f;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-left: 5px solid var(--accent-text);
 }
 
 .conteudo {
@@ -182,8 +219,8 @@ p {
 
 .painel {
   padding: 18px 20px;
-  background: #ffffff;
-  border: 1px solid #d3ddd4;
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: 8px;
 }
 
@@ -231,8 +268,8 @@ p {
 
 .cartao {
   padding: 14px;
-  background: #f7f9f6;
-  border: 1px solid #d3ddd4;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
   border-left: 5px solid #8a8f8b;
   border-radius: 6px;
 }
@@ -242,7 +279,7 @@ p {
 }
 
 .cartao.done {
-  border-left-color: #2f6f4f;
+  border-left-color: var(--accent-text);
 }
 
 .cartao h3 {
@@ -253,7 +290,7 @@ p {
   font-size: 0.8rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #4a574d;
+  color: var(--ink-secondary);
 }
 
 .cartao-motivo {
@@ -265,17 +302,26 @@ p {
 .botao-secundario {
   padding: 9px 16px;
   border-radius: 6px;
-  border: 1px solid #2f6f4f;
+  border: 1px solid transparent;
 }
 
 .botao-primario {
-  color: #f5f8f4;
-  background: #2f6f4f;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
+.botao-primario:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* A borda é a afordância do secundário: fica no verde escuro, que se destaca sobre
+   branco (5,8:1) — `--accent-line` apagaria o contorno do botão. */
 .botao-secundario {
-  color: #1c3527;
-  background: #ffffff;
+  color: var(--accent-text);
+  background: var(--surface);
+  border-color: var(--accent-text);
 }
 
 .acoes-linha {
@@ -297,7 +343,7 @@ p {
 .confirmados {
   margin-top: 20px;
   padding-top: 12px;
-  border-top: 1px solid #d3ddd4;
+  border-top: 1px solid var(--line);
 }
 
 .confirmados-lista li {
@@ -312,12 +358,12 @@ p {
 .digest {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 0.8em;
-  color: #4a574d;
+  color: var(--ink-secondary);
 }
 
 .dica {
   font-size: 0.84rem;
-  color: #4a574d;
+  color: var(--ink-secondary);
 }
 
 /* Prancha ------------------------------------------------------------------ */
@@ -337,8 +383,8 @@ p {
 .prancha-canvas {
   max-height: 72vh;
   overflow: auto;
-  background: #dfe6de;
-  border: 1px solid #c3d0c4;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
   border-radius: 6px;
   touch-action: none;
 }
@@ -390,7 +436,7 @@ p {
 }
 
 .bbox-confirmed rect {
-  stroke: #2f6f4f;
+  stroke: var(--accent-text);
 }
 
 .bbox-rejected rect {
@@ -405,7 +451,7 @@ p {
    sem retângulo) quanto no item com retângulo forte. Cor nunca é o único indicador: o
    número identifica o item e o estado por extenso continua na lista ao lado. */
 .bbox-pino-circulo {
-  stroke: #ffffff;
+  stroke: var(--surface);
   stroke-width: 2;
 }
 
@@ -416,7 +462,7 @@ p {
 .bbox-pino-texto {
   font-size: 18px;
   font-weight: 700;
-  fill: #ffffff;
+  fill: var(--surface);
   pointer-events: none;
 }
 
@@ -429,7 +475,7 @@ p {
 }
 
 .bbox-confirmed .bbox-pino-circulo {
-  fill: #2f6f4f;
+  fill: var(--accent-text);
 }
 
 .bbox-rejected .bbox-pino-circulo {
@@ -448,7 +494,7 @@ p {
 }
 
 .item {
-  border-bottom: 1px solid #e2e8e2;
+  border-bottom: 1px solid var(--line);
 }
 
 .item-botao {
@@ -471,7 +517,7 @@ p {
 }
 
 .item.confirmed .item-botao {
-  border-left-color: #2f6f4f;
+  border-left-color: var(--accent-text);
 }
 
 .item.rejected .item-botao {
@@ -479,7 +525,7 @@ p {
 }
 
 .item.selecionado .item-botao {
-  background: #eaf1ea;
+  background: var(--accent-soft);
 }
 
 .item-numero {
@@ -489,8 +535,8 @@ p {
   place-items: center;
   font-size: 0.8rem;
   font-weight: 700;
-  color: #f5f8f4;
-  background: #2f6f4f;
+  color: var(--accent-ink);
+  background: var(--accent);
   border-radius: 50%;
 }
 
@@ -508,7 +554,7 @@ p {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #4a574d;
+  color: var(--ink-secondary);
 }
 
 .item-quantidade {
@@ -518,7 +564,7 @@ p {
 .item-raw,
 .item-nota {
   font-size: 0.8rem;
-  color: #4a574d;
+  color: var(--ink-secondary);
 }
 
 /* Formulários -------------------------------------------------------------- */
@@ -534,7 +580,7 @@ p {
   gap: 18px;
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid #d3ddd4;
+  border: 1px solid var(--line);
   border-radius: 6px;
 }
 
@@ -555,13 +601,13 @@ p {
 .campo textarea {
   padding: 8px 10px;
   font: inherit;
-  border: 1px solid #b9c8bc;
+  border: 1px solid var(--muted);
   border-radius: 6px;
 }
 
 .campo-dica {
   font-size: 0.78rem;
-  color: #4a574d;
+  color: var(--ink-secondary);
 }
 
 .campo-aviso {
@@ -576,7 +622,7 @@ p {
 
 .decisao-registrada {
   padding: 12px;
-  background: #f7f9f6;
+  background: var(--surface-subtle);
   border-radius: 6px;
 }
 
@@ -595,13 +641,13 @@ p {
 .codigo-card {
   padding: 12px;
   margin-bottom: 10px;
-  background: #f7f9f6;
-  border: 1px solid #d3ddd4;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
   border-radius: 6px;
 }
 
 .codigo-card.escolhido {
-  border-color: #2f6f4f;
+  border-color: var(--accent-text);
   border-left-width: 5px;
 }
 
@@ -633,13 +679,13 @@ p {
   padding: 2px 8px;
   font-size: 0.75rem;
   border-radius: 999px;
-  border: 1px solid #b9c8bc;
-  background: #ffffff;
+  border: 1px solid var(--muted);
+  background: var(--surface);
 }
 
 .selo-execucao_incluida {
-  border-color: #2f6f4f;
-  color: #1c3527;
+  border-color: var(--accent-text);
+  color: var(--accent-text);
 }
 
 .selo-somente_material {
@@ -650,12 +696,12 @@ p {
 .selo-indefinido,
 .selo-neutro {
   border-color: #8a8f8b;
-  color: #3a423c;
+  color: var(--ink-secondary);
 }
 
 .selo-ok {
-  border-color: #2f6f4f;
-  color: #1c3527;
+  border-color: var(--accent-text);
+  color: var(--accent-text);
 }
 
 .selo-atencao {
@@ -686,9 +732,9 @@ p {
 }
 
 .chip-inclui {
-  color: #1c3527;
-  background: #e3f0e6;
-  border-color: #2f6f4f;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-color: var(--accent-text);
 }
 
 .chip-nao_inclui,
@@ -728,13 +774,13 @@ p {
 .aditivo {
   margin-top: 20px;
   padding-top: 12px;
-  border-top: 1px solid #d3ddd4;
+  border-top: 1px solid var(--line);
 }
 
 .shortlist-vazia {
   padding: 12px;
   margin-bottom: 12px;
-  background: #f7f9f6;
+  background: var(--surface-subtle);
   border-radius: 6px;
 }
 
@@ -762,14 +808,14 @@ p {
 .tabela caption {
   text-align: left;
   font-size: 0.8rem;
-  color: #4a574d;
+  color: var(--ink-secondary);
   padding-bottom: 6px;
 }
 
 .tabela th,
 .tabela td {
   padding: 6px 8px;
-  border-bottom: 1px solid #e2e8e2;
+  border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
 }
@@ -793,7 +839,7 @@ p {
 .tabela tfoot th,
 .tabela tfoot td {
   font-weight: 700;
-  border-top: 2px solid #b9c8bc;
+  border-top: 2px solid var(--muted);
 }
 
 .total-geral {

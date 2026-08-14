@@ -163,6 +163,7 @@ import {
   type EvidenceCropStyle,
   type PanOrigin,
 } from "./viewport";
+import logoDark from "./assets/croquito-logo-dark.svg";
 
 const MEASUREMENT_KINDS = [
   "length",
@@ -2436,13 +2437,8 @@ export function App() {
     <main className="app-shell">
       <header className="topbar">
         <a className="brand" href="/" aria-label="Croquito - início">
-          <span className="brand-mark" aria-hidden="true">
-            C›D
-          </span>
-          <span>
-            <strong>Croquito</strong>
-            <small>Revisão humana autenticada</small>
-          </span>
+          <img className="brand-logo" src={logoDark} alt="Croquito" />
+          <small>Revisão humana autenticada</small>
         </a>
         <div className="topbar-actions">
           <span className="schema-pill">
