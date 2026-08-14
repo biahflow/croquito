@@ -139,6 +139,7 @@ jobs:
             --memory 1Gi --cpu 1 --timeout 60 \
             --set-secrets CROQUITO_DATABASE_URL=croquito-hml-database-url:latest,AWS_ACCESS_KEY_ID=croquito-hml-storage-hmac-id:latest,AWS_SECRET_ACCESS_KEY=croquito-hml-storage-hmac-secret:latest \
             --set-env-vars CROQUITO_STORAGE_FLAVOR=gcs,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_PUBSUB_TOPIC=projects/biahflow-hml/topics/croquito-hml-processing,CROQUITO_OIDC_ISSUER=https://croquito-hml.biahflow.ai/auth/realms/croquito,CROQUITO_OIDC_AUDIENCE=croquito-web,CROQUITO_WEB_ORIGIN=https://croquito-hml.biahflow.ai \
+            --startup-probe httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=3,periodSeconds=5,failureThreshold=12,timeoutSeconds=3 \
             --quiet
 
       # O worker recebe comando por push do Pub/Sub em `POST /pubsub` e nunca é chamado
@@ -160,6 +161,7 @@ jobs:
             --memory 2Gi --cpu 2 --timeout 900 --concurrency 4 \
             --set-secrets CROQUITO_DATABASE_URL=croquito-hml-database-url:latest,AWS_ACCESS_KEY_ID=croquito-hml-storage-hmac-id:latest,AWS_SECRET_ACCESS_KEY=croquito-hml-storage-hmac-secret:latest \
             --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts \
+            --startup-probe httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=3,periodSeconds=5,failureThreshold=12,timeoutSeconds=3 \
             --quiet
 
       # Keycloak em subpath (`/auth`), atrás do proxy do host público: `KC_HOSTNAME` com
