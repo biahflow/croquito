@@ -6,7 +6,7 @@ Responsável: Engineering
 
 ## Contexto
 
-Até este marco o DXF só era gerado pela CLI (`croquitodxf-demo rectangle-export`). A
+Até este marco o DXF só era gerado pela CLI (`croquito-demo rectangle-export`). A
 sessão autenticada não tinha caminho para produzir o pacote CAD, o que impedia o
 primeiro DXF real mesmo depois de uma aprovação técnica válida.
 

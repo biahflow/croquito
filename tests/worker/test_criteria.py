@@ -10,8 +10,8 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 
-from croquitodxf_core.models import Issue, IssueSeverity, IssueStatus
-from croquitodxf_worker.criteria import (
+from croquito_core.models import Issue, IssueSeverity, IssueStatus
+from croquito_worker.criteria import (
     FALLBACK_CRITERION_MESSAGE,
     ScopeCriterionError,
     apply_criteria_declarations,
@@ -24,7 +24,7 @@ TEXT = "Perímetro, linha central, círculo, áreas e gols são entidades CAD li
 
 
 def _fixed_uuid(code: str) -> UUID:
-    return uuid5(NAMESPACE_URL, f"croquitodxf:teste:{code}")
+    return uuid5(NAMESPACE_URL, f"croquito:teste:{code}")
 
 
 def test_declaracao_aceita_codigo_puro_e_codigo_com_texto() -> None:

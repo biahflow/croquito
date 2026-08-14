@@ -89,7 +89,7 @@ descritos em "Quinto marco: medição de obra (M1 a M5 em código)".
 - A tela autenticada lista projetos do tenant, abre revisões sem exigir UUID e não
   expõe aceite de IA por job. O entitlement contratual é administrado somente por
   `platform_operator`, registrado por tenant e revalidado pelo worker.
-- `croquitodxf-demo seed-review` liga um pacote de revisão autorizado a um job existente
+- `croquito-demo seed-review` liga um pacote de revisão autorizado a um job existente
   sem copiar o original para o Git e sem chamar provedor. Recusa fechada quando o job não
   é do tenant, quando o digest do documento ou da página diverge do upload, quando o
   pacote já traz decisão humana, quando uma leitura do solver não tem candidato de
@@ -449,7 +449,7 @@ O começo da cadeia de medição — a legenda já quantificada da prancha do pr
 ganhou mecanismo, inteiramente offline e sintético
 ([Valuation Context](architecture/VALUATION_CONTEXT.md)).
 
-- Domínio espelho: `packages/valuation/src/croquitodxf_valuation/takeoff.py`
+- Domínio espelho: `packages/valuation/src/croquito_valuation/takeoff.py`
   (`TakeoffPacket`/`TakeoffItem`) reproduz a forma e o ciclo `proposed`/`ambiguous` →
   `confirmed`/`rejected` do `ReviewPacket`/`DimensionReading` do worker sem importar dele
   (`ADR-0016`); recusa fechada de re-decisão (`TAKEOFF_ITEM_ALREADY_REVIEWED`) e de
@@ -462,7 +462,7 @@ ganhou mecanismo, inteiramente offline e sintético
   mesma acabou de gerar; arquivo alterado entre gerar e extrair recusa
   (`TAKEOFF_FIXTURE_ARTIFACT_MISMATCH`) em vez de virar item de takeoff.
 - Overlay com banner de aviso fixo ("legenda quantificada, revisão obrigatória, não gera
-  medição") e três comandos offline no CLI `croquitodxf-valuation`: `extract-legend`,
+  medição") e três comandos offline no CLI `croquito-valuation`: `extract-legend`,
   `review-takeoff` e `takeoff-demo` (cadeia ponta a ponta com decisões sintéticas
   gravadas para reprodução).
 - Eval com gate: `make valuation-eval` (`takeoff-eval`) mede o recall da legenda contra o
@@ -572,14 +572,15 @@ contrato (RE-RA), e o sistema deve produzir o dossiê do aditivo em vez de preci
 fora — e dois achados de mecanismo: a shortlist lexical é fraca sobre catálogo real (rótulo de legenda
 × descrição técnica SCO — busca por palavra-chave assistida cobriu o vão nesta rodada) e
 o refino pago recusou `INVALID_SCHEMA` sobre payload real (provável estouro do limite de
-rationale; candidato a dica de tamanho no template em `sco-refinement@1.0.2`).
+rationale; candidato a dica de tamanho no template — a `1.0.2` foi consumida pelo patch
+coletivo do rebranding, então essa mudança nasce em `sco-refinement@1.0.3`).
 
 ### M6 em código: UI local de homologação da medição
 
 A homologação da cadeia ganhou tela, priorizada pelo usuário para a orçamentista do
 domínio homologar sem CLI ([ADR-0020](adr/0020-local-homologation-server-for-valuation.md)).
 
-- `croquitodxf-valuation serve` (`local_server.py`): servidor local fino sobre as mesmas
+- `croquito-valuation serve` (`local_server.py`): servidor local fino sobre as mesmas
   funções de domínio fail-closed do CLI — recusa atravessa com código estável e nunca
   grava artefato. Identidade por flag (`--reviewer`) com `reviewer_id`/`decided_at`
   carimbados no servidor e recusados no corpo (`extra="forbid"`); guarda otimista por

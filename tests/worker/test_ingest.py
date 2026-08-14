@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pymupdf
 
-from croquitodxf_worker.ingest import ingest_pdf
+from croquito_worker.ingest import ingest_pdf
 
 
 def _create_synthetic_pdf(path: Path) -> None:

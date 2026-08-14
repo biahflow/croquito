@@ -9,7 +9,7 @@ obra" do [FDD](../../docs/product/FDD.md) e o
 
 Este app é a UI **local de homologação** da medição: apresenta a rodada, a revisão do
 takeoff, a confirmação de código e o boletim, falando só com o servidor local
-(`croquitodxf-valuation serve`). Ele não calcula dinheiro, não decide código, não chama
+(`croquito-valuation serve`). Ele não calcula dinheiro, não decide código, não chama
 provider e não conhece a API `/v1` autenticada — quando a sessão autenticada da medição
 existir, as telas e módulos puros migram; o client local é descartável.
 
@@ -42,5 +42,5 @@ viewport. `App.test.tsx` SSR estático do estado sem servidor, sem dados fabrica
 
 Mudança de comportamento atualiza a seção de medição do FDD e os critérios VAL-*;
 mudança no contrato do servidor local é feita primeiro em
-`services/worker/src/croquitodxf_worker/valuation/local_server.py` (testes lá) e só
+`services/worker/src/croquito_worker/valuation/local_server.py` (testes lá) e só
 depois refletida aqui.

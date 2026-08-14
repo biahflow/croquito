@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 
-from croquitodxf_api.database import (
+from croquito_api.database import (
     AiProcessingAuthorizationRecord,
     Database,
     JobRecord,
@@ -16,8 +16,8 @@ from croquitodxf_api.database import (
     TenantAiProcessingEntitlementRecord,
     UploadRecord,
 )
-from croquitodxf_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
-from croquitodxf_worker.providers import (
+from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
+from croquito_worker.providers import (
     FixtureProviderAdapter,
     PromptTask,
     ProviderFailureCode,

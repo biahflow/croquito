@@ -15,9 +15,9 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from croquitodxf_valuation.models import BulletinLine, Valuation
-from croquitodxf_valuation.template import WorkbookTemplate
-from croquitodxf_worker.valuation.cli import BULLETIN_COMPARE_REPORT_FILENAME, main
+from croquito_valuation.models import BulletinLine, Valuation
+from croquito_valuation.template import WorkbookTemplate
+from croquito_worker.valuation.cli import BULLETIN_COMPARE_REPORT_FILENAME, main
 from tests.valuation.builders import build_fixture
 
 SHEET_NAME = "BM PRACA SINTETICA NORTE"

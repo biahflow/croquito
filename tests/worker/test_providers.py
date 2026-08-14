@@ -8,8 +8,8 @@ from typing import Any, cast
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from croquitodxf_worker.provider_review import build_provider_review_snapshot
-from croquitodxf_worker.providers import (
+from croquito_worker.provider_review import build_provider_review_snapshot
+from croquito_worker.providers import (
     EMBEDDINGS_MAX_BATCH,
     EMBEDDINGS_MODEL,
     IMAGE_TEXT_TASKS,
@@ -62,7 +62,7 @@ from croquitodxf_worker.providers import (
     embeddings_input_digest,
     image_text_input_digest,
 )
-from croquitodxf_worker.synthetic import render_synthetic_input
+from croquito_worker.synthetic import render_synthetic_input
 
 
 def _request(task: PromptTask) -> ProviderRequest:
@@ -295,27 +295,32 @@ TASKS_WITH_OWN_PROMPT_BRANCH = frozenset(
         PromptTask.REVIEW_CHAT,
     }
 )
-"""Tarefas cujo template tem ramo e versão próprios; o resto compartilha o texto `@1.1.0`."""
+"""Tarefas cujo template tem ramo e versão próprios; o resto compartilha o texto `@1.1.1`."""
 
 
 def test_prompt_hashes_of_existing_tasks_are_frozen() -> None:
     """`template_hash` é a identidade do prompt no lineage já gravado.
 
-    Mudá-lo reescreveria a proveniência de leituras existentes; a instrução nova precisa
-    entrar em ramo próprio, com versão própria.
+    Mudá-lo **sob a mesma versão** reescreveria a proveniência de leituras existentes; a
+    instrução nova precisa entrar em ramo próprio, com versão própria.
+
+    Os hashes abaixo foram recongelados no rebranding de 2026-08-14, que trocou o nome do
+    produto no cabeçalho de todos os templates e veio com PATCH em todas as tarefas — texto
+    novo, versão nova ([ADR-0024](../../docs/adr/0024-rebranding-to-croquito.md)). O lineage
+    gravado antes disso segue declarando as versões antigas e não é reescrito.
     """
     assert {
         task.value: PROMPT_SPECS[task].template_hash
         for task in PromptTask
         if task not in TASKS_WITH_OWN_PROMPT_BRANCH
     } == {
-        "page-survey": "1853bd33597324ca35cbf76befde80d372fcd8622a28f5b4cc4cee123769137a",
+        "page-survey": "e39631860c12205227335a2503874cec5ee38cba2c40775e78313f5a753c2beb",
         "measurement-extraction": (
-            "d7f70134f9e5dbd7497e708ec8af67f6e4a0708018c0f7a022ca2d81ab1b3205"
+            "c26789378ebe11bc3334ff871125dc44fa3a1de5f46ac49e87c990dfd2bd29f5"
         ),
-        "semantic-elements": "5550ad2414bfeaf64437bd4bc651f54a0fbe99fc424e440ecd309688ed7908b7",
-        "disagreement-review": "992fe4afdc3b7f3a0446747172c44507f4c9cf8b6c66c79f6daf19bf5e64b556",
-        "ocr": "2c253b67aaf6bdd23e5ab0517081058b827cfcd55611f4216a33e57d556951b2",
+        "semantic-elements": "9c971c37d8f85546645a81ac9799e9e383d130f861cc6f1495a96ab8d84f930b",
+        "disagreement-review": "686c1c6e2db6e3f42f9ddaa281a26907bbe3cd0b578fe75a16451f4c063c4800",
+        "ocr": "c8efeb70a853d4385f3e79b74b20f42f2af38fc8df1e37195eadd10d69e022cf",
     }
     assert {
         task.value: PROMPT_SPECS[task].prompt_version for task in TASKS_WITH_OWN_PROMPT_BRANCH
@@ -323,12 +328,14 @@ def test_prompt_hashes_of_existing_tasks_are_frozen() -> None:
         # 2.0.0: o arco ganhou três pontos-âncora observados (arc_start/arc_mid/arc_end) e o
         # texto do template ganhou a instrução que os pede. Major porque a 1.0.0 não tinha
         # ângulo nenhum para arco: a abertura era fabricada como meia-volta na conversão.
-        "geometry-extraction": "geometry-extraction@2.0.0",
-        "legend-extraction": "legend-extraction@1.0.0",
+        # 2.0.1: só o cabeçalho do rebranding; o schema `2.0.0` continua o mesmo.
+        "geometry-extraction": "geometry-extraction@2.0.1",
+        "legend-extraction": "legend-extraction@1.0.1",
         # 1.0.1: limite por flag no schema do refino; o texto do template não mudou.
-        "sco-refinement": "sco-refinement@1.0.1",
+        # 1.0.2: cabeçalho do rebranding.
+        "sco-refinement": "sco-refinement@1.0.2",
         # Primeira tarefa imagem+texto: a folha e a pergunta do profissional viajam juntas.
-        "review-chat": "review-chat@1.0.0",
+        "review-chat": "review-chat@1.0.1",
     }
 
 
@@ -818,7 +825,7 @@ def test_build_text_request_derives_the_digest_from_the_payload() -> None:
     assert request.text_payload == SCO_TEXT_PAYLOAD
     assert request.image_bytes is None
     assert request.image_width_px is None
-    assert request.prompt.prompt_version == "sco-refinement@1.0.1"
+    assert request.prompt.prompt_version == "sco-refinement@1.0.2"
 
 
 def test_build_text_request_refuses_a_vision_task() -> None:
@@ -1034,10 +1041,10 @@ def test_new_prompts_forbid_computing_and_confirming() -> None:
     legend = _prompt_template(PromptTask.LEGEND_EXTRACTION)
     refinement = _prompt_template(PromptTask.SCO_REFINEMENT)
 
-    assert legend.startswith("croquitodxf:legend-extraction@1.0.0\n")
+    assert legend.startswith("croquito:legend-extraction@1.0.1\n")
     assert "Never compute, convert, sum, or invent" in legend
     assert "literal transcriptions" in legend
-    assert refinement.startswith("croquitodxf:sco-refinement@1.0.1\n")
+    assert refinement.startswith("croquito:sco-refinement@1.0.2\n")
     assert "reorder only the candidate codes" in refinement
     assert "never mark anything as confirmed or chosen" in refinement.lower()
 
@@ -1162,17 +1169,17 @@ def test_embeddings_reserve_the_budget_before_the_call_and_retry_only_transport(
 def test_the_embeddings_factory_refuses_without_a_key_or_a_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("CROQUITODXF_OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("CROQUITODXF_AI_MAX_ESTIMATED_COST_USD", "1.0")
+    monkeypatch.delenv("CROQUITO_OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD", "1.0")
     with pytest.raises(ValueError):
         build_embeddings_adapter()
 
-    monkeypatch.setenv("CROQUITODXF_OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("CROQUITODXF_AI_MAX_ESTIMATED_COST_USD", raising=False)
+    monkeypatch.setenv("CROQUITO_OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD", raising=False)
     with pytest.raises(ValueError):
         build_embeddings_adapter()
 
-    monkeypatch.setenv("CROQUITODXF_AI_MAX_ESTIMATED_COST_USD", "0")
+    monkeypatch.setenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD", "0")
     with pytest.raises(ValueError):
         build_embeddings_adapter()
 
@@ -1418,7 +1425,7 @@ def test_anthropic_adapter_sends_instruction_text_and_image_in_order() -> None:
     body = cast(dict[str, Any], captured["body"])
     content = cast(list[dict[str, Any]], body["messages"][0]["content"])
     assert [part["type"] for part in content] == ["text", "text", "image"]
-    assert content[0]["text"].startswith("croquitodxf:review-chat@1.0.0")
+    assert content[0]["text"].startswith("croquito:review-chat@1.0.1")
     assert content[1]["text"] == CHAT_TEXT_PAYLOAD
     assert content[2]["source"]["media_type"] == "image/png"
     assert isinstance(execution.output, ReviewChatOutput)

@@ -387,7 +387,7 @@ qualquer uma):
 
 A primeira implementação dessas regras é a **UI local de homologação** (M6,
 [ADR-0020](../adr/0020-local-homologation-server-for-valuation.md)): o app
-`apps/medicao` sobre o servidor `croquitodxf-valuation serve`. A orçamentista revisa o
+`apps/medicao` sobre o servidor `croquito-valuation serve`. A orçamentista revisa o
 takeoff item a item sobre a prancha (bbox por estado, decisão nunca em lote, nada
 pré-marcado), confirma ou rejeita o código de cada item com a descrição completa do
 catálogo, busca por palavra-chave sempre à mão e a distinção fornecimento × execução

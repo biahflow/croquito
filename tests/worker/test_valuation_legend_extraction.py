@@ -17,10 +17,10 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from croquitodxf_valuation.errors import ValuationValidationError, valuation_error_codes
-from croquitodxf_valuation.takeoff import TakeoffItemStatus
-from croquitodxf_worker.extraction_eval import ExtractionNotAllowlistedError
-from croquitodxf_worker.providers import (
+from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
+from croquito_valuation.takeoff import TakeoffItemStatus
+from croquito_worker.extraction_eval import ExtractionNotAllowlistedError
+from croquito_worker.providers import (
     FixtureProviderAdapter,
     LegendExtractionOutput,
     LegendRowOutput,
@@ -28,7 +28,7 @@ from croquitodxf_worker.providers import (
     PromptTask,
     ProviderName,
 )
-from croquitodxf_worker.valuation.legend_extraction import (
+from croquito_worker.valuation.legend_extraction import (
     extractor_label,
     legend_item_id,
     normalized_legend_unit,
@@ -37,7 +37,7 @@ from croquitodxf_worker.valuation.legend_extraction import (
     takeoff_packet_from_legend,
 )
 
-ALLOWLIST = "CROQUITODXF_AI_EXTRACTION_ALLOWED_DIGESTS"
+ALLOWLIST = "CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS"
 
 _PLATE_ID = "prancha-de-teste-01"
 _IMAGE_DIGEST = "a" * 64

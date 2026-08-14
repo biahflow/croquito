@@ -18,13 +18,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from croquitodxf_valuation.assignment import (
+from croquito_valuation.assignment import (
     SCO_HYBRID_SUGGESTER_VERSION,
     SCO_SUGGESTER_VERSION,
     CodeSuggestionSet,
     SuggestionConfig,
 )
-from croquitodxf_valuation.catalog import (
+from croquito_valuation.catalog import (
     DomainSynonyms,
     LegendNoiseList,
     StemIdfTable,
@@ -36,24 +36,24 @@ from croquitodxf_valuation.catalog import (
     read_price_catalog,
     weighted_query_coverage_score,
 )
-from croquitodxf_valuation.errors import ValuationValidationError, valuation_error_codes
-from croquitodxf_valuation.models import PriceCatalog, PriceCatalogEntry
-from croquitodxf_valuation.takeoff import load_takeoff_packet
-from croquitodxf_valuation.template import default_template
-from croquitodxf_worker.providers import (
+from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
+from croquito_valuation.models import PriceCatalog, PriceCatalogEntry
+from croquito_valuation.takeoff import load_takeoff_packet
+from croquito_valuation.template import default_template
+from croquito_worker.providers import (
     EmbeddingsExecution,
     ProviderName,
     ProviderUsage,
 )
-from croquitodxf_worker.valuation import sco_matching
-from croquitodxf_worker.valuation.cli import (
+from croquito_worker.valuation import sco_matching
+from croquito_worker.valuation.cli import (
     CATALOG_FILENAME,
     CODE_SUGGESTIONS_FILENAME,
     SEMANTIC_DISABLED_BY_FLAG,
     TAKEOFF_PACKET_FILENAME,
     main,
 )
-from croquitodxf_worker.valuation.sco_matching import (
+from croquito_worker.valuation.sco_matching import (
     CATALOG_INDEX_FILENAME,
     INDEX_TEXT_RECIPE,
     QUERY_CACHE_FILENAME,
@@ -73,21 +73,21 @@ from croquitodxf_worker.valuation.sco_matching import (
     resolve_query_vectors,
     semantic_topk,
 )
-from croquitodxf_worker.valuation.sco_matching_fixtures import (
+from croquito_worker.valuation.sco_matching_fixtures import (
     FIXTURE_EMBEDDINGS_DIMS,
     FIXTURE_EMBEDDINGS_MODEL,
     fixture_catalog_index,
     fixture_semantic_index,
     fixture_vector,
 )
-from croquitodxf_worker.valuation.synthetic import (
+from croquito_worker.valuation.synthetic import (
     SYNTHETIC_CONTRACT_SOURCE_LABEL,
     SYNTHETIC_REFERENCE_MONTH,
     build_synthetic_previous_mapao,
 )
 
-BUDGET_ENV = "CROQUITODXF_AI_MAX_ESTIMATED_COST_USD"
-KEY_ENV = "CROQUITODXF_OPENAI_API_KEY"
+BUDGET_ENV = "CROQUITO_AI_MAX_ESTIMATED_COST_USD"
+KEY_ENV = "CROQUITO_OPENAI_API_KEY"
 
 
 @dataclass
@@ -357,9 +357,7 @@ def test_index_catalog_rebuilds_when_the_text_recipe_changed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     adapter = _FixtureEmbeddingsAdapter()
-    monkeypatch.setattr(
-        "croquitodxf_worker.valuation.cli.build_embeddings_adapter", lambda: adapter
-    )
+    monkeypatch.setattr("croquito_worker.valuation.cli.build_embeddings_adapter", lambda: adapter)
     catalog_path = _write_catalog(tmp_path / "rodada", catalog)
     stale = fixture_catalog_index(catalog).model_copy(update={"text_recipe": "description-unit-v2"})
     (catalog_path.parent / CATALOG_INDEX_FILENAME).write_text(
@@ -673,9 +671,7 @@ def test_index_catalog_writes_the_index_next_to_the_catalog_and_reuses_it(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     adapter = _FixtureEmbeddingsAdapter()
-    monkeypatch.setattr(
-        "croquitodxf_worker.valuation.cli.build_embeddings_adapter", lambda: adapter
-    )
+    monkeypatch.setattr("croquito_worker.valuation.cli.build_embeddings_adapter", lambda: adapter)
     catalog_path = _write_catalog(tmp_path / "rodada", catalog)
 
     assert main(["index-catalog", "--catalog", str(catalog_path)]) == 0
@@ -703,7 +699,7 @@ def test_suggest_codes_uses_the_round_index_when_it_is_there(
 ) -> None:
     adapter = _FixtureEmbeddingsAdapter()
     monkeypatch.setattr(
-        "croquitodxf_worker.valuation.cli.embeddings_adapter_or_reason", lambda: (adapter, None)
+        "croquito_worker.valuation.cli.embeddings_adapter_or_reason", lambda: (adapter, None)
     )
     output_dir = tmp_path / "rodada"
     catalog_path = _write_catalog(output_dir, catalog)

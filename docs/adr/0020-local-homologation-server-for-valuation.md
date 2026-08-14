@@ -21,7 +21,7 @@ CLI é campo do JSON de entrada, enquanto a API de cena a deriva do JWT.
 ## Decisão
 
 O M6 entrega a homologação por um **servidor local fino**
-(`croquitodxf-valuation serve`, `local_server.py`) mais um app web dedicado
+(`croquito-valuation serve`, `local_server.py`) mais um app web dedicado
 (`apps/medicao`), com os seguintes limites, todos deliberados:
 
 - O servidor **embrulha as mesmas funções de domínio fail-closed do CLI** — nenhuma

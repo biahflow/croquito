@@ -5,8 +5,8 @@ Responsável: Product / Engineering
 Última revisão: 2026-08-13 (nome inline aposentado; todo elemento rotulado vira balão)
 
 Este documento é a referência canônica do estágio de traçado em lote
-(`services/worker/src/croquitodxf_worker/tracing.py`, comandos `solve-trace` e
-`trace-export` do CLI `croquitodxf-demo`). Ele existe por dois motivos: registrar de
+(`services/worker/src/croquito_worker/tracing.py`, comandos `solve-trace` e
+`trace-export` do CLI `croquito-demo`). Ele existe por dois motivos: registrar de
 forma durável o que foi aprendido nas iterações do Campo do Guaxindiba (2026-08-11), e
 servir de especificação funcional para a tela de revisão e para o agente de conversa
 ([ADR-0023](../adr/0023-review-chat-as-an-observational-agent.md)) — **cada controle

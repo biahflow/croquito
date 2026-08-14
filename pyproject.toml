@@ -1,5 +1,5 @@
 [project]
-name = "croquitodxf"
+name = "croquito"
 version = "0.1.0"
 description = "Pipeline auditavel para transformar croquis em cenas tecnicas e DXF."
 readme = "README.md"
@@ -31,8 +31,8 @@ dependencies = [
 ]
 
 [project.scripts]
-croquitodxf-demo = "croquitodxf_worker.cli:main"
-croquitodxf-valuation = "croquitodxf_worker.valuation.cli:main"
+croquito-demo = "croquito_worker.cli:main"
+croquito-valuation = "croquito_worker.valuation.cli:main"
 
 [dependency-groups]
 dev = [
@@ -58,7 +58,7 @@ where = [
 [tool.setuptools.package-data]
 # Seed versionado de sinônimos de domínio (`catalog.default_domain_synonyms`), carregado
 # via `importlib.resources`; sem esta entrada o wheel não empacota o JSON.
-croquitodxf_valuation = ["data/*.json"]
+croquito_valuation = ["data/*.json"]
 
 [tool.ruff]
 target-version = "py312"
@@ -84,7 +84,7 @@ addopts = "-q --strict-markers --disable-warnings"
 
 [tool.coverage.run]
 branch = true
-source = ["croquitodxf_core", "croquitodxf_valuation", "croquitodxf_api", "croquitodxf_worker"]
+source = ["croquito_core", "croquito_valuation", "croquito_api", "croquito_worker"]
 
 [tool.mypy]
 python_version = "3.12"

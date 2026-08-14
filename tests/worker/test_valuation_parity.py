@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from croquitodxf_worker.valuation.cli import PARITY_REPORT_FILENAME, main
+from croquito_worker.valuation.cli import PARITY_REPORT_FILENAME, main
 
 SHEET = "TESTE"
 _SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"

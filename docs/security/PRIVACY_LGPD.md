@@ -9,7 +9,7 @@ jurídico.
 
 ## Papéis esperados
 
-No uso B2B, o cliente tende a atuar como controlador e CroquiToDXF como operador
+No uso B2B, o cliente tende a atuar como controlador e Croquito como operador
 dos documentos enviados. Contratos devem confirmar papéis, finalidade,
 suboperadores e canal para solicitações.
 

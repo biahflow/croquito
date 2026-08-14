@@ -8,7 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import sceneSchema from "@croquitodxf/contracts/scene.schema.json";
+import sceneSchema from "@croquito/contracts/scene.schema.json";
 import type { User } from "oidc-client-ts";
 
 import {
@@ -235,7 +235,7 @@ function CopyIdButton({ value, label }: { value: string; label: string }) {
  * `localStorage` e não `sessionStorage` porque o revisor volta ao mesmo croqui deitado
  * em outro dia, e reencontrar o desenho em pé é o ponto do controle.
  */
-const VIEWER_ROTATION_KEY = "croquitodxf:viewer-rotation";
+const VIEWER_ROTATION_KEY = "croquito:viewer-rotation";
 
 function readStoredRotation(jobId: string): number {
   if (typeof window === "undefined" || !jobId) {
@@ -1059,14 +1059,14 @@ export function App() {
     if (!jobId) {
       return;
     }
-    const draft = window.sessionStorage.getItem(`croquitodxf:approval:${jobId}`);
+    const draft = window.sessionStorage.getItem(`croquito:approval:${jobId}`);
     if (!draft) {
       return;
     }
     try {
       setApprovalForm({ ...emptyApprovalForm, ...JSON.parse(draft) });
     } catch {
-      window.sessionStorage.removeItem(`croquitodxf:approval:${jobId}`);
+      window.sessionStorage.removeItem(`croquito:approval:${jobId}`);
     }
   }, [jobId]);
 
@@ -1075,7 +1075,7 @@ export function App() {
       return;
     }
     window.sessionStorage.setItem(
-      `croquitodxf:approval:${jobId}`,
+      `croquito:approval:${jobId}`,
       JSON.stringify(approvalForm),
     );
   }, [jobId, approvalForm]);
@@ -2305,7 +2305,7 @@ export function App() {
       });
       setApprovedRevisionId(approved.id);
       setApprovalForm(emptyApprovalForm);
-      window.sessionStorage.removeItem(`croquitodxf:approval:${jobId}`);
+      window.sessionStorage.removeItem(`croquito:approval:${jobId}`);
       setReview(await getReview(session.access_token, jobId));
       setConflict(false);
       setToast(`Cena v${approved.version} aprovada tecnicamente.`);
@@ -2435,12 +2435,12 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="CroquiToDXF - início">
+        <a className="brand" href="/" aria-label="Croquito - início">
           <span className="brand-mark" aria-hidden="true">
             C›D
           </span>
           <span>
-            <strong>CroquiToDXF</strong>
+            <strong>Croquito</strong>
             <small>Revisão humana autenticada</small>
           </span>
         </a>

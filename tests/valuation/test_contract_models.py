@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from croquitodxf_valuation.contract import (
+from croquito_valuation.contract import (
     Amendment,
     AmendmentLine,
     ContractLine,
@@ -15,7 +15,7 @@ from croquitodxf_valuation.contract import (
     PeriodProgress,
     contract_workbook_id_for,
 )
-from croquitodxf_valuation.errors import (
+from croquito_valuation.errors import (
     ValuationValidationError,
     valuation_error_codes,
     valuation_errors,

@@ -17,40 +17,40 @@ from pathlib import Path
 
 import pytest
 
-from croquitodxf_valuation.catalog import read_price_catalog
-from croquitodxf_valuation.contract import ContractWorkbook
-from croquitodxf_valuation.models import PriceCatalog
-from croquitodxf_valuation.takeoff import (
+from croquito_valuation.catalog import read_price_catalog
+from croquito_valuation.contract import ContractWorkbook
+from croquito_valuation.models import PriceCatalog
+from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
     TakeoffItem,
     TakeoffItemStatus,
 )
-from croquitodxf_valuation.template import default_template
-from croquitodxf_valuation.workbook_reader import read_contract_workbook
-from croquitodxf_worker.providers import (
+from croquito_valuation.template import default_template
+from croquito_valuation.workbook_reader import read_contract_workbook
+from croquito_worker.providers import (
     FixtureProviderAdapter,
     LegendExtractionOutput,
     LegendRowOutput,
     PromptTask,
     ProviderName,
 )
-from croquitodxf_worker.valuation.extraction_eval import (
+from croquito_worker.valuation.extraction_eval import (
     ExtractionArm,
     _run_arm,
     gabarito_row_for,
 )
-from croquitodxf_worker.valuation.legend_fixtures import (
+from croquito_worker.valuation.legend_fixtures import (
     FIXTURE_LEGEND_MODEL_ID,
     build_legend_extraction_output,
     refinement_fixture_adapter,
 )
-from croquitodxf_worker.valuation.plate import (
+from croquito_worker.valuation.plate import (
     SYNTHETIC_LEGEND_ROWS,
     PlateArtifacts,
     render_synthetic_plate,
 )
-from croquitodxf_worker.valuation.synthetic import (
+from croquito_worker.valuation.synthetic import (
     DEMO_EXPECTED_CODE_BY_LABEL,
     SYNTHETIC_CONTRACT_LABEL,
     SYNTHETIC_CONTRACT_SOURCE_LABEL,

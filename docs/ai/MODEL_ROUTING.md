@@ -22,12 +22,12 @@ não ocorre substituição silenciosa.
 
 Quando o Bedrock não está acessível na conta (caso real em 2026-08-11), os modelos
 Claude podem ser chamados pela API direta da Anthropic via `AnthropicProviderAdapter`
-(`CROQUITODXF_ANTHROPIC_API_KEY`). O lineage distingue os dois caminhos: API direta
+(`CROQUITO_ANTHROPIC_API_KEY`). O lineage distingue os dois caminhos: API direta
 grava `provider: anthropic`; Bedrock grava `provider: bedrock_anthropic`. Relatórios
 de eval anteriores a essa distinção (Guaxindiba, 2026-08-11) foram executados pela
 API direta apesar de rotulados `bedrock_anthropic`.
 
-O caminho direto é usado hoje apenas pela eval CLI (`croquitodxf-demo
+O caminho direto é usado hoje apenas pela eval CLI (`croquito-demo
 extraction-eval`), que seleciona provedor e modelo pela flag
 `--arm nome=provider:model_id` (ex.: `opus=anthropic:claude-opus-5`). A autorização
 de providers por job na API (`openai`, `bedrock_anthropic`, `textract`) ainda não
@@ -40,13 +40,13 @@ O worker possui portas tipadas e mocks determinísticos para OpenAI, Bedrock/Cla
 e Textract. Elas são ativadas somente por injeção em teste ou pelo demo sintético;
 o worker normal não lê flag de ambiente para fabricar observações e não chama
 serviços externos. Adapters reais são configuráveis somente no ambiente local por
-`CROQUITODXF_REAL_PROVIDERS_ENABLED=true`; exigem entitlement contratual ativo por
+`CROQUITO_REAL_PROVIDERS_ENABLED=true`; exigem entitlement contratual ativo por
 tenant e snapshot imutável por job, credenciais fora do Git, budget, eval
 comparativa e plano de rollback. O piloto
 processa a primeira página e sinaliza as demais como não analisadas. LocalStack
 continua restrito a storage/fila: Bedrock e Textract usam clientes AWS separados.
 Antes de cada chamada, o worker reserva o custo estimado configurado para o job;
-ultrapassar `CROQUITODXF_AI_MAX_ESTIMATED_COST_USD` bloqueia a chamada.
+ultrapassar `CROQUITO_AI_MAX_ESTIMATED_COST_USD` bloqueia a chamada.
 
 ## Etapas
 
@@ -102,7 +102,7 @@ Primeira eval paga comparativa de extração de geometria, autorizada pelo usuá
 Decisão de roteamento: **Opus é o modelo de extração de geometria**. O Sonnet reprovou
 mesmo após o registro fino (`register-extraction`): o melhor assentamento exigiu girar o
 conjunto 270° e 6 de 14 elementos ficaram sem tinta — estrutura errada, não só
-enquadramento. Rollback: desligar `CROQUITODXF_REAL_PROVIDERS_ENABLED` volta ao caminho
+enquadramento. Rollback: desligar `CROQUITO_REAL_PROVIDERS_ENABLED` volta ao caminho
 OpenCV-only (golden `dxf-toca` demonstra o resultado sem extração).
 
 O gate `corroborated_rate >= 0.7` reprova por desregistro sistemático do VLM; o comando
@@ -118,7 +118,7 @@ reprovou por elementos sem tinta nenhuma, que refino nenhum recupera.
 ## Eval comparativa executada (medição, prancha sintética, 2026-08-13)
 
 Primeira eval paga do contexto de medição, autorizada pelo usuário (teto US$ 1,50 para a
-rodada sintética), sobre a prancha sintética via `croquitodxf-valuation extraction-eval
+rodada sintética), sobre a prancha sintética via `croquito-valuation extraction-eval
 --arm`, API direta da Anthropic. Cobre as duas tarefas novas: `legend-extraction`
 (visão) e `sco-refinement` (a primeira tarefa de texto puro do repositório).
 
@@ -195,7 +195,7 @@ com 0% de omissão onde houve arco. Custo real da rodada: 4 chamadas (2 perdidas
 defeito de contrato + diagnóstico, 2 do candidato revisado), ≈ US$ 0,45–0,60 total.
 Rollback: reverter o commit de contrato/prompt (saída v1 valida sob o schema v2 — campo
 aditivo-opcional; artefatos v2 são auto-descritos pelo `prompt_version` no lineage);
-`CROQUITODXF_REAL_PROVIDERS_ENABLED=false` segue sendo o kill switch do caminho pago.
+`CROQUITO_REAL_PROVIDERS_ENABLED=false` segue sendo o kill switch do caminho pago.
 
 ## Embeddings para retrieval de código SCO (M7, 2026-08-13)
 
@@ -203,7 +203,7 @@ O matcher de código do contexto de medição usa retrieval híbrido
 ([ADR-0021](../adr/0021-hybrid-sco-code-retrieval.md)): braço léxico (cobertura da
 consulta ponderada por IDF sobre radicais + sinônimos como dado) fundido por RRF com
 braço semântico — embeddings OpenAI `text-embedding-3-small` (env
-`CROQUITODXF_EMBEDDINGS_MODEL` para trocar), índice local por catálogo amarrado por
+`CROQUITO_EMBEDDINGS_MODEL` para trocar), índice local por catálogo amarrado por
 digest e receita de texto, kNN em numpy. Custos reais medidos: índice de 4.964 itens
 ≈ US$ 0,007 (uma vez por versão de catálogo); consulta por rótulo ≈ desprezível, com
 cache por rodada.

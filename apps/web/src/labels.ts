@@ -96,9 +96,9 @@ export function measurementKindLabel(kind: string): string {
 /**
  * Rótulo do eixo de separação do par manter-separados, em língua de obra — a direção
  * do desenho, não a letra do eixo. Mapeamento conferido em
- * `services/worker/src/croquitodxf_worker/geometry_solver.py` (docstring de
+ * `services/worker/src/croquito_worker/geometry_solver.py` (docstring de
  * `BandSeparation`) e no espelho `KeepApartPair` de
- * `services/worker/src/croquitodxf_worker/tracing.py`: no caso do Guaxindiba, a mureta
+ * `services/worker/src/croquito_worker/tracing.py`: no caso do Guaxindiba, a mureta
  * e o patamar precisam ficar em "faixas X distintas" — o recuo HORIZONTAL de 3,30/4,80
  * que a folha cota — enquanto o encontro VERTICAL entre a base da mureta e a base do
  * campo é legítimo e não deve ser separado. Eixo x = lado a lado (horizontal); eixo y =

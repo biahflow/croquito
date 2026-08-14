@@ -17,9 +17,9 @@ from decimal import Decimal
 
 import pytest
 
-from croquitodxf_valuation.assignment import CodeSuggestionSet
-from croquitodxf_valuation.models import CalcRecipe
-from croquitodxf_worker.valuation.cli import (
+from croquito_valuation.assignment import CodeSuggestionSet
+from croquito_valuation.models import CalcRecipe
+from croquito_worker.valuation.cli import (
     CALC_PLAN_FILENAME,
     CODE_ASSIGNMENT_DECISIONS_FILENAME,
     CODE_ASSIGNMENTS_FILENAME,
@@ -27,9 +27,9 @@ from croquitodxf_worker.valuation.cli import (
     ValuationDemoResult,
     run_valuation_demo,
 )
-from croquitodxf_worker.valuation.plate import SYNTHETIC_PLATE_ID
-from croquitodxf_worker.valuation.synthetic import SYNTHETIC_TAKEOFF_WORKSITE_KEY
-from croquitodxf_worker.valuation.takeoff_fixture import takeoff_item_id
+from croquito_worker.valuation.plate import SYNTHETIC_PLATE_ID
+from croquito_worker.valuation.synthetic import SYNTHETIC_TAKEOFF_WORKSITE_KEY
+from croquito_worker.valuation.takeoff_fixture import takeoff_item_id
 
 _LAWN_ITEM_ID = takeoff_item_id(SYNTHETIC_PLATE_ID, "GRAMADO SINTETICO")
 _FENCE_ITEM_NUMBER = "2"

@@ -18,12 +18,12 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
-from croquitodxf_api.config import ApiSettings
-from croquitodxf_api.database import Database
-from croquitodxf_api.main import create_app
-from croquitodxf_worker.criteria import ScopeCriterion
-from croquitodxf_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
-from croquitodxf_worker.review_seed import SeedInputs, seed_review
+from croquito_api.config import ApiSettings
+from croquito_api.database import Database
+from croquito_api.main import create_app
+from croquito_worker.criteria import ScopeCriterion
+from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
+from croquito_worker.review_seed import SeedInputs, seed_review
 from tests.bundles import (
     CIRCLE_PROPOSAL_ID,
     CIRCLE_READING_ID,
@@ -74,7 +74,7 @@ def stack(tmp_path: Path) -> tuple[TestClient, LocalQueueWorker, FakeObjectStore
     database.create_schema()
     settings = ApiSettings(
         database_url=database_url,
-        artifact_bucket="croquitodxf-e2e",
+        artifact_bucket="croquito-e2e",
         aws_region="sa-east-1",
         aws_endpoint_url="http://localhost:4566",
         queue_url=QUEUE_URL,
@@ -96,7 +96,7 @@ def stack(tmp_path: Path) -> tuple[TestClient, LocalQueueWorker, FakeObjectStore
             queue_url=QUEUE_URL,
             aws_region="sa-east-1",
             aws_endpoint_url="http://localhost:4566",
-            artifact_bucket="croquitodxf-e2e",
+            artifact_bucket="croquito-e2e",
         )
     )
     worker.client = queue
@@ -166,7 +166,7 @@ def test_authenticated_flow_reaches_an_audited_package(
             queue_url="",
             aws_region="sa-east-1",
             aws_endpoint_url="http://localhost:4566",
-            artifact_bucket="croquitodxf-e2e",
+            artifact_bucket="croquito-e2e",
         ),
         s3_client=storage,
     )
@@ -304,7 +304,7 @@ def test_authenticated_flow_reaches_an_audited_package(
     assert completed.json()["package_url"] is not None
 
     # 10. O pacote publicado carrega a auditoria e a ressalva reconhecida.
-    package_key = f"tenants/{TENANT}/jobs/{job_id}/exports/{export_id}/croquitodxf.zip"
+    package_key = f"tenants/{TENANT}/jobs/{job_id}/exports/{export_id}/croquito.zip"
     with zipfile.ZipFile(BytesIO(storage.body(package_key))) as package:
         assert sorted(package.namelist()) == [
             "aprovacao.json",
@@ -385,7 +385,7 @@ def test_a_wrong_decision_is_rectified_and_the_package_still_closes(
             queue_url="",
             aws_region="sa-east-1",
             aws_endpoint_url="http://localhost:4566",
-            artifact_bucket="croquitodxf-e2e",
+            artifact_bucket="croquito-e2e",
         ),
         s3_client=storage,
     )
@@ -574,7 +574,7 @@ def test_trace_solve_reaches_a_metric_scene_through_the_queue(
             queue_url="",
             aws_region="sa-east-1",
             aws_endpoint_url="http://localhost:4566",
-            artifact_bucket="croquitodxf-e2e",
+            artifact_bucket="croquito-e2e",
         ),
         s3_client=storage,
     )
@@ -723,7 +723,7 @@ def test_traced_scene_carries_the_scope_criterion_to_the_audited_package(
             queue_url="",
             aws_region="sa-east-1",
             aws_endpoint_url="http://localhost:4566",
-            artifact_bucket="croquitodxf-e2e",
+            artifact_bucket="croquito-e2e",
         ),
         s3_client=storage,
     )
@@ -829,7 +829,7 @@ def test_traced_scene_carries_the_scope_criterion_to_the_audited_package(
         "export_scene_package",
     ]
 
-    package_key = f"tenants/{TENANT}/jobs/{job_id}/exports/{export_id}/croquitodxf.zip"
+    package_key = f"tenants/{TENANT}/jobs/{job_id}/exports/{export_id}/croquito.zip"
     with zipfile.ZipFile(BytesIO(storage.body(package_key))) as package:
         approval_record = json.loads(package.read("aprovacao.json"))
     assert approval_record["covered_criteria"] == [SCOPE_CRITERION]

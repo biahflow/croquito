@@ -52,24 +52,24 @@ um `SceneApproval` que:
 ## CLI local
 
 ```bash
-uv run croquitodxf-demo review-artifacts \
+uv run croquito-demo review-artifacts \
   --packet /caminho/review-input.json \
   --image /caminho/page-001.png \
   --output output/review
 
-uv run croquitodxf-demo apply-review \
+uv run croquito-demo apply-review \
   --packet output/review/review-packet.json \
   --decisions /caminho/decisoes.json \
   --image /caminho/page-001.png \
   --output output/review-confirmado
 
-uv run croquitodxf-demo solve-rectangle \
+uv run croquito-demo solve-rectangle \
   --packet output/review/review-packet.json \
   --request /caminho/rectangle-request.json \
   --associations /caminho/associacoes-confirmadas.json \
   --output output/review
 
-uv run croquitodxf-demo rectangle-export \
+uv run croquito-demo rectangle-export \
   --solve-result output/review/solve-result.json \
   --approval /caminho/aprovacao.json \
   --output output/export
@@ -120,7 +120,7 @@ métrica. Ao resolver, a `SceneRevision` é nova e não aprovada; o worker/API a
 issues críticas para requisitos do caso ainda ausentes, portanto o primeiro
 rascunho parcial do Guaxindiba não é exportável sem reconhecimento explícito.
 
-O pacote autorizado entra na sessão por `croquitodxf-demo seed-review`, que liga packet,
+O pacote autorizado entra na sessão por `croquito-demo seed-review`, que liga packet,
 associações, propostas e `RectangleSolveRequest` a um job existente. O comando recusa
 divergência entre o pacote e o upload do tenant, recusa pacote que já traga decisão
 humana e nunca sobrescreve uma revisão existente.

@@ -10,13 +10,13 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
-from croquitodxf_valuation.canonical import audit_workbook, canonicalize_workbook
-from croquitodxf_valuation.contract import ContractWorkbook
-from croquitodxf_valuation.errors import ValuationValidationError
-from croquitodxf_valuation.models import BulletinLine, PriceCatalog, Valuation
-from croquitodxf_valuation.template import WorkbookTemplate, default_template
-from croquitodxf_valuation.workbook_reader import read_contract_workbook
-from croquitodxf_valuation.workbook_writer import (
+from croquito_valuation.canonical import audit_workbook, canonicalize_workbook
+from croquito_valuation.contract import ContractWorkbook
+from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.models import BulletinLine, PriceCatalog, Valuation
+from croquito_valuation.template import WorkbookTemplate, default_template
+from croquito_valuation.workbook_reader import read_contract_workbook
+from croquito_valuation.workbook_writer import (
     PlannedCell,
     plan_workbook,
     write_valuation_workbook,

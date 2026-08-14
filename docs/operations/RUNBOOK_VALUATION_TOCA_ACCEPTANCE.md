@@ -11,7 +11,7 @@ Conduzir a rodada paga autorizada que fecha o M5 do contexto de medição
 da prancha real da Toca com um provider externo, revisar e confirmar o quantitativo e o
 código com o orçamentista, montar o boletim da obra e compará-lo, centavo a centavo, com
 o BM real que a prefeitura já publicou. O aceite é literal — **"BM da Toca gerado × real
-= zero centavo"** — e só é alcançado quando `croquitodxf-valuation compare-bulletin`
+= zero centavo"** — e só é alcançado quando `croquito-valuation compare-bulletin`
 sai com `zero_cent: true` (exit 0) sobre o par gerado/real de verdade, não sobre fixture.
 
 Este runbook **não autoriza** nenhuma chamada paga em massa nem antecipa decisão: cada
@@ -21,7 +21,7 @@ nunca um ajuste silencioso do lado gerado para bater com o real.
 
 As duas vias pagas que este runbook exercita — `extract-legend-real` (extração de
 legenda) e `suggest-codes --refine-arm` (refino de código) — já existem no CLI
-`croquitodxf-valuation` e são cobertas offline pelo gate `extraction-eval`
+`croquito-valuation` e são cobertas offline pelo gate `extraction-eval`
 (`make valuation-extraction-eval`); este runbook é a primeira vez que elas rodam sobre o
 documento real da Toca, com o braço vencedor da comparação feita antes por
 `extraction-eval --arm` ([Evaluation Strategy](../ai/EVALUATION_STRATEGY.md)).
@@ -29,7 +29,7 @@ documento real da Toca, com o braço vencedor da comparação feita antes por
 ## Pré-condições e segurança
 
 - Autorização de gasto registrada para esta rodada, com o teto explícito por variável de
-  ambiente (`CROQUITODXF_AI_MAX_ESTIMATED_COST_USD`) — nunca implícito.
+  ambiente (`CROQUITO_AI_MAX_ESTIMATED_COST_USD`) — nunca implícito.
 - Prancha quantificada real e BM real do cliente ficam **fora do repositório** (nunca
   versionados). Todo artefato desta rodada nasce em `output/valuation-toca/…`, que é
   ignorado pelo Git e segue a retenção local de sete dias.
@@ -50,7 +50,7 @@ documento real da Toca, com o braço vencedor da comparação feita antes por
   `CODE_NOT_IN_CONTRACT`. Isso não compromete `compare-bulletin`, que confere o boletim
   gerado contra o BM real por código, quantidade e preço, independente do consolidado.
 - Chave de API do provider do braço vencedor fora do Git:
-  `CROQUITODXF_ANTHROPIC_API_KEY` para `anthropic`, `CROQUITODXF_OPENAI_API_KEY` para
+  `CROQUITO_ANTHROPIC_API_KEY` para `anthropic`, `CROQUITO_OPENAI_API_KEY` para
   `openai`; o braço `bedrock` usa credenciais AWS via `boto3` (perfil/região local), sem
   chave própria.
 - **Certificado CA do Python gerenciado pelo `uv`**: neste macOS, o Python do `uv` não
@@ -68,7 +68,7 @@ documento real da Toca, com o braço vencedor da comparação feita antes por
   tentativa, ou `BUDGET_EXCEEDED` depois de retries que nunca chegaram a sair da
   máquina.
 - **Reserva de gasto é por tentativa, não por chamada útil.** Cada braço reserva
-  `CROQUITODXF_AI_ESTIMATED_COST_PER_LLM_CALL_USD` (default `0.75`) contra o mesmo
+  `CROQUITO_AI_ESTIMATED_COST_PER_LLM_CALL_USD` (default `0.75`) contra o mesmo
   `CostBudget` a cada tentativa — inclusive as que o `RetryingProviderAdapter` refaz
   depois de falha transitória. A cadeia desta rodada faz **duas** chamadas pagas sob o
   mesmo teto (`extract-legend-real`, depois `suggest-codes --refine-arm`), e com o
@@ -77,8 +77,8 @@ documento real da Toca, com o braço vencedor da comparação feita antes por
   1,50". Recomendação validada na primeira rodada paga real: exporte também
 
   ```bash
-  export CROQUITODXF_AI_ESTIMATED_COST_PER_LLM_CALL_USD=0.35
-  export CROQUITODXF_PROVIDER_TIMEOUT_SECONDS=120
+  export CROQUITO_AI_ESTIMATED_COST_PER_LLM_CALL_USD=0.35
+  export CROQUITO_PROVIDER_TIMEOUT_SECONDS=120
   ```
 
   ao lado do teto, para que um retry isolado não consuma sozinho o orçamento da rodada
@@ -87,7 +87,7 @@ documento real da Toca, com o braço vencedor da comparação feita antes por
 - Nenhum item de takeoff, código ou decisão desta rodada é fabricado por agente ou
   fixture: `review-takeoff` e `confirm-codes` só aceitam decisões que o orçamentista de
   fato tomou olhando a prancha e o catálogo reais.
-- Pare a rodada se a allowlist (`CROQUITODXF_AI_EXTRACTION_ALLOWED_DIGESTS`) não bater
+- Pare a rodada se a allowlist (`CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS`) não bater
   com o digest do manifest, se o teto de gasto não estiver setado, ou se qualquer
   comando pago recusar (`refused`) — recusa fechada aqui não é para contornar.
 
@@ -97,11 +97,11 @@ Cada comando roda a partir da raiz do repositório, com o `.venv` do `uv sync
 --all-groups` ativo. Ajuste os caminhos de `--output` conforme a convenção
 `output/valuation-toca/<etapa>`.
 
-1. `croquitodxf-demo ingest` da prancha real → PNGs 200 DPI + manifest com digest, fora
+1. `croquito-demo ingest` da prancha real → PNGs 200 DPI + manifest com digest, fora
    do Git:
 
    ```bash
-   uv run croquitodxf-demo ingest \
+   uv run croquito-demo ingest \
      --input <prancha-toca-real.pdf> \
      --dataset-id toca-prancha-v1 \
      --role legenda-quantificada \
@@ -113,18 +113,18 @@ Cada comando roda a partir da raiz do repositório, com o `.venv` do `uv sync
    gasto por tentativa das Pré-condições):
 
    ```bash
-   export CROQUITODXF_AI_MAX_ESTIMATED_COST_USD=<teto autorizado>
-   export CROQUITODXF_AI_EXTRACTION_ALLOWED_DIGESTS=<source_sha256 do manifest>
+   export CROQUITO_AI_MAX_ESTIMATED_COST_USD=<teto autorizado>
+   export CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS=<source_sha256 do manifest>
    ```
 
 3. `extract-legend-real` — extração paga da legenda com o braço vencedor da eval
-   sintética (`uv run croquitodxf-valuation extraction-eval --output <dir> --arm
+   sintética (`uv run croquito-valuation extraction-eval --output <dir> --arm
    NOME=PROVIDER:MODELO`; decisão humana sobre o relatório — a rodada de 2026-08-13
    aprovou `sonnet=anthropic:claude-sonnet-5` para as duas tarefas, ver
    [Model Routing](../ai/MODEL_ROUTING.md)):
 
    ```bash
-   uv run croquitodxf-valuation extract-legend-real \
+   uv run croquito-valuation extract-legend-real \
      --image output/valuation-toca/ingest/<página>.png \
      --manifest output/valuation-toca/ingest/manifest.json \
      --arm <braço vencedor> \
@@ -138,11 +138,11 @@ Cada comando roda a partir da raiz do repositório, com o `.venv` do `uv sync
 4. **Ato humano** — revisão do takeoff pelo orçamentista. As decisões (confirmar ou
    rejeitar cada item, com quantidade e nota quando o item for ambíguo) são registradas
    pelo orçamentista de verdade, olhando a prancha real, e gravadas num
-   `TakeoffDecisionBatch` (`packages/valuation/src/croquitodxf_valuation/takeoff.py`)
+   `TakeoffDecisionBatch` (`packages/valuation/src/croquito_valuation/takeoff.py`)
    antes de rodar:
 
    ```bash
-   uv run croquitodxf-valuation review-takeoff \
+   uv run croquito-valuation review-takeoff \
      --packet output/valuation-toca/extract/takeoff-packet.json \
      --decisions <decisões-do-orçamentista.json> \
      --image output/valuation-toca/ingest/<página>.png \
@@ -157,13 +157,13 @@ Cada comando roda a partir da raiz do repositório, com o `.venv` do `uv sync
    (pré-condição), os dois comandos rodam **sem `--contract`**:
 
    ```bash
-   uv run croquitodxf-valuation suggest-codes \
+   uv run croquito-valuation suggest-codes \
      --packet output/valuation-toca/review/takeoff-packet.json \
      --catalog output/valuation-toca/import/catalog.json \
      --output output/valuation-toca/suggest \
      [--refine-arm <braço vencedor>]   # só se a eval mostrou ganho sobre a lexical
 
-   uv run croquitodxf-valuation confirm-codes \
+   uv run croquito-valuation confirm-codes \
      --packet output/valuation-toca/review/takeoff-packet.json \
      --decisions <confirmações-do-orçamentista.json> \
      --catalog output/valuation-toca/import/catalog.json \
@@ -181,7 +181,7 @@ Cada comando roda a partir da raiz do repositório, com o `.venv` do `uv sync
    curso):
 
    ```bash
-   uv run croquitodxf-valuation build-calc \
+   uv run croquito-valuation build-calc \
      --packet output/valuation-toca/review/takeoff-packet.json \
      --assignments output/valuation-toca/confirm/code-assignments.json \
      --catalog output/valuation-toca/import/catalog.json \
@@ -199,7 +199,7 @@ Cada comando roda a partir da raiz do repositório, com o `.venv` do `uv sync
    do passo anterior e a aba BM real que a prefeitura publicou:
 
    ```bash
-   uv run croquitodxf-valuation compare-bulletin \
+   uv run croquito-valuation compare-bulletin \
      --valuation output/valuation-toca/calc/valuation.json \
      --worksite <chave-da-obra-toca> \
      --reference <BM-real-da-toca.xlsx> \
@@ -222,10 +222,10 @@ Cada comando roda a partir da raiz do repositório, com o `.venv` do `uv sync
 ## Rollback / limpeza
 
 - Ao fim da sessão, `unset` de todas as variáveis exportadas nos passos 2 e nas
-  pré-condições (`CROQUITODXF_AI_MAX_ESTIMATED_COST_USD`,
-  `CROQUITODXF_AI_EXTRACTION_ALLOWED_DIGESTS`, `SSL_CERT_FILE`,
-  `CROQUITODXF_AI_ESTIMATED_COST_PER_LLM_CALL_USD`,
-  `CROQUITODXF_PROVIDER_TIMEOUT_SECONDS`) — nenhuma delas deve sobreviver à sessão nem
+  pré-condições (`CROQUITO_AI_MAX_ESTIMATED_COST_USD`,
+  `CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS`, `SSL_CERT_FILE`,
+  `CROQUITO_AI_ESTIMATED_COST_PER_LLM_CALL_USD`,
+  `CROQUITO_PROVIDER_TIMEOUT_SECONDS`) — nenhuma delas deve sobreviver à sessão nem
   ir para `.env.local` versionado.
 - Nenhum artefato desta rodada (prancha, manifest, pacotes, relatório de comparação) é
   persistido fora da máquina local; tudo vive em `output/valuation-toca/` e segue a
@@ -242,7 +242,7 @@ sobre fixture sintética (sem custo, sem rede):
 ```bash
 uv run pytest tests/valuation/test_bulletin_compare.py tests/worker/test_valuation_compare_cli.py -x
 uv run pytest tests/valuation tests/worker
-uv run croquitodxf-valuation demo --output output/valuation-demo
+uv run croquito-valuation demo --output output/valuation-demo
 make valuation-eval
 make valuation-extraction-eval
 ```

@@ -40,7 +40,7 @@ Testes individuais:
 uv run pytest tests/worker/test_dxf.py
 uv run pytest tests/worker/test_rectangle_solver.py::test_nome -x
 uv run pytest tests/e2e/test_full_flow.py      # cadeia completa, in-process
-npm --workspace @croquitodxf/web run test -- src/App.test.tsx
+npm --workspace @croquito/web run test -- src/App.test.tsx
 ```
 
 `tests/` é um pacote: fixtures compartilhadas ficam em `tests/fakes.py` (storage e fila
@@ -64,7 +64,7 @@ Smoke contra o stack Docker real (fixture sintética, fora do CI):
 
 ```bash
 make dev-services && make db-init && make dev-api
-CROQUITODXF_ALLOW_TEST_TOKENS=true make smoke-local
+CROQUITO_ALLOW_TEST_TOKENS=true make smoke-local
 ```
 
 Infra: `make infra-check` só roda `terraform fmt -check`. Validação real exige uma vez
@@ -73,13 +73,15 @@ Nunca execute `terraform apply`.
 
 ## Arquitetura
 
-Monorepo Python + TypeScript. `pyproject.toml` na raiz é único e declara três pacotes
-Python via `packages/core/src`, `services/api/src`, `services/worker/src`; `package.json`
-usa npm workspaces para `apps/web` e `packages/contracts`.
+Monorepo Python + TypeScript. `pyproject.toml` na raiz é único e declara quatro pacotes
+Python via `packages/core/src`, `packages/valuation/src`, `services/api/src`,
+`services/worker/src`, e dois entry points (`croquito-demo` para a cadeia do croqui,
+`croquito-valuation` para a cadeia de medição); `package.json` usa npm workspaces para
+`apps/web`, `apps/medicao` e `packages/contracts`.
 
 ### O scene graph é a fonte geométrica
 
-`packages/core/src/croquitodxf_core/models.py` define `SceneRevision` e é a única fonte
+`packages/core/src/croquito_core/models.py` define `SceneRevision` e é a única fonte
 de verdade geométrica. Modelos de IA e OpenCV produzem *observações*; nada vira geometria
 sem passar por aqui.
 
@@ -95,7 +97,7 @@ por esse portão, não contorná-lo.
 Pydantic → JSON Schema → TypeScript:
 
 ```
-croquitodxf_core.models  →  packages/contracts/scene.schema.json  →  packages/contracts/src/scene.generated.ts
+croquito_core.models  →  packages/contracts/scene.schema.json  →  packages/contracts/src/scene.generated.ts
 ```
 
 Depois de mudar `SceneRevision`, rode `make contracts` e `make check`. `make check` falha
@@ -104,8 +106,8 @@ com drift (`schema_export --check` + `contracts:check`). Não edite `scene.schem
 
 ### Fluxo real: evidência → revisão → associação → solver → aprovação → DXF
 
-Implementado em `services/worker/src/croquitodxf_worker/`, cada etapa como comando
-idempotente do CLI `croquitodxf-demo` (`cli.py`):
+Implementado em `services/worker/src/croquito_worker/`, cada etapa como comando
+idempotente do CLI `croquito-demo` (`cli.py`):
 
 | Etapa | Módulo | Saída |
 |---|---|---|
@@ -133,14 +135,14 @@ Invariantes que atravessam o pipeline:
 `providers.py` isola OpenAI, Bedrock/Claude e Textract atrás de adapters com schema
 estrito, `RetryingProviderAdapter` (só falha transitória), `BudgetedProviderAdapter` e
 lineage de prompt/modelo por leitura. Estão **desligados por padrão**
-(`CROQUITODXF_REAL_PROVIDERS_ENABLED=false`) e exigem entitlement contratual por tenant,
+(`CROQUITO_REAL_PROVIDERS_ENABLED=false`) e exigem entitlement contratual por tenant,
 administrado apenas por `platform_operator`. Uploads normais não chamam providers; as
 fixtures offline (`provider_review.py`, `make provider-contract-demo`) só entram por
 injeção explícita em teste/demo. Chamadas pagas em massa exigem aprovação humana.
 
 ### API
 
-`services/api/src/croquitodxf_api/main.py` monta tudo em `create_app()` (rotas declaradas
+`services/api/src/croquito_api/main.py` monta tudo em `create_app()` (rotas declaradas
 como closures). Ela autentica, autoriza e coordena lifecycle — não renderiza PDF, não
 chama modelos e não gera DXF no request path. Rotas em `/v1/`: `projects`, `uploads/presign`,
 `jobs`, `jobs/{id}/review` (+ `decisions`, `proposals`, `calibration`), `jobs/{id}/revisions`,
@@ -152,12 +154,12 @@ chama modelos e não gera DXF no request path. Rotas em `/v1/`: `projects`, `upl
 - Erros usam códigos estáveis em `application/problem+json`; respostas brutas de provider
   nunca voltam ao cliente.
 - `database.py` concentra os modelos SQLAlchemy; blobs ficam no S3, banco guarda metadados
-  e digests. `config.py` lê tudo de env com prefixo `CROQUITODXF_`.
+  e digests. `config.py` lê tudo de env com prefixo `CROQUITO_`.
 
 ### Web
 
 `apps/web` é React 19 + TS strict + Vite, consumindo os tipos gerados de
-`@croquitodxf/contracts` e OIDC via `oidc-client-ts`. Apresenta revisão e status; não
+`@croquito/contracts` e OIDC via `oidc-client-ts`. Apresenta revisão e status; não
 resolve geometria nem decide consenso. Edições são operations allowlisted com `base_version`.
 Cor nunca é o único indicador de precisão/issue; warnings críticos não são escondidos.
 
@@ -165,9 +167,9 @@ Cor nunca é o único indicador de precisão/issue; warnings críticos não são
 
 - Código e identificadores em inglês; documentação e mensagens de domínio em português.
 - Python 3.12, mypy `strict = true`, ruff com `line-length = 100`, `select = ["E","F","I","UP","B","SIM","RUF"]`.
-- Metros e radianos internamente; UTC; UUIDv7 (`croquitodxf_core.ids.new_uuid7`).
+- Metros e radianos internamente; UTC; UUIDv7 (`croquito_core.ids.new_uuid7`).
 - `Decimal` onde a precisão escrita da cota importa; float só no solver, com tolerâncias nomeadas.
-- Erros de domínio estruturados (`croquitodxf_core.errors.DomainValidationError`); não faça
+- Erros de domínio estruturados (`croquito_core.errors.DomainValidationError`); não faça
   parsing de string de exception.
 - Logs permitem IDs opacos, stage, duração, status, error code, model ID, tokens, custo e
   contagens. Nunca imagens, texto integral, cotas, tokens ou URLs assinadas.

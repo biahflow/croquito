@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from croquitodxf_core.models import IssueSeverity
-from croquitodxf_worker.dimension_closure import (
+from croquito_core.models import IssueSeverity
+from croquito_worker.dimension_closure import (
     ChainVerificationError,
     is_plan_dimension,
     suggest_chains,
     verify_chain,
 )
-from croquitodxf_worker.review import (
+from croquito_worker.review import (
     DimensionReading,
     EvidenceRegion,
     HumanDecision,

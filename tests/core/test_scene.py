@@ -3,8 +3,8 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from croquitodxf_core.errors import DomainValidationError
-from croquitodxf_core.models import (
+from croquito_core.errors import DomainValidationError
+from croquito_core.models import (
     DiameterDimensionGeometry,
     Entity,
     EntityKind,
@@ -20,7 +20,7 @@ from croquitodxf_core.models import (
     Provenance,
     UnitCode,
 )
-from croquitodxf_worker.synthetic import build_synthetic_scene
+from croquito_worker.synthetic import build_synthetic_scene
 
 
 def test_synthetic_scene_is_exportable() -> None:

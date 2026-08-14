@@ -9,7 +9,7 @@ publicado, fecha sem nenhum atalho substituindo um comando real por chamada dire
 domínio.
 
 Não há stack HTTP aqui: a cadeia de medição é inteiramente CLI, offline e síncrona
-(`croquitodxf_worker.valuation.cli.main`), como em `tests/worker/test_valuation_cli.py`.
+(`croquito_worker.valuation.cli.main`), como em `tests/worker/test_valuation_cli.py`.
 A fixture `chain` roda a cadeia cara uma vez por módulo — a extração da prancha sintética
 é o passo caro —, devolvendo os artefatos e modelos de cada elo.
 `test_full_chain_happy_path` faz as asserções de negócio sobre esse resultado, uma por
@@ -28,17 +28,17 @@ from typing import Final, Literal
 import pytest
 from openpyxl import load_workbook
 
-from croquitodxf_valuation.assignment import (
+from croquito_valuation.assignment import (
     CodeAssignmentBatch,
     CodeAssignmentInput,
     CodeAssignmentSet,
     CodeSuggestionSet,
 )
-from croquitodxf_valuation.contract import ContractWorkbook
-from croquitodxf_valuation.models import CalcRecipe, Valuation
-from croquitodxf_valuation.takeoff import TakeoffItemStatus, TakeoffPacket, load_takeoff_packet
-from croquitodxf_valuation.template import WorkbookTemplate, default_template
-from croquitodxf_worker.valuation.cli import (
+from croquito_valuation.contract import ContractWorkbook
+from croquito_valuation.models import CalcRecipe, Valuation
+from croquito_valuation.takeoff import TakeoffItemStatus, TakeoffPacket, load_takeoff_packet
+from croquito_valuation.template import WorkbookTemplate, default_template
+from croquito_worker.valuation.cli import (
     AUDIT_FILENAME,
     CALC_PLAN_FILENAME,
     CATALOG_FILENAME,
@@ -50,8 +50,8 @@ from croquitodxf_worker.valuation.cli import (
     WORKBOOK_FILENAME,
     main,
 )
-from croquitodxf_worker.valuation.plate import SYNTHETIC_LEGEND_ROWS, SYNTHETIC_PLATE_ID
-from croquitodxf_worker.valuation.synthetic import (
+from croquito_worker.valuation.plate import SYNTHETIC_LEGEND_ROWS, SYNTHETIC_PLATE_ID
+from croquito_worker.valuation.synthetic import (
     SYNTHETIC_CODE_DECIDED_AT,
     SYNTHETIC_CONTRACT_LABEL,
     SYNTHETIC_PERIOD_REFERENCE_LABEL,
@@ -66,7 +66,7 @@ from croquitodxf_worker.valuation.synthetic import (
     build_synthetic_approval,
     build_synthetic_previous_mapao,
 )
-from croquitodxf_worker.valuation.takeoff_fixture import takeoff_item_id
+from croquito_worker.valuation.takeoff_fixture import takeoff_item_id
 
 # Rótulos e ids da legenda sintética: a MESMA fonte que `tests/valuation/test_chain_demo.py`
 # usa para a obra que nasce da prancha, para que os dois testes não possam divergir sobre

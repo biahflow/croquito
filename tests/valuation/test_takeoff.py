@@ -10,9 +10,9 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
-from croquitodxf_valuation.errors import ValuationValidationError, valuation_error_codes
-from croquitodxf_valuation.models import ReviewerDecision
-from croquitodxf_valuation.takeoff import (
+from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
+from croquito_valuation.models import ReviewerDecision
+from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
     TakeoffDecisionBatch,

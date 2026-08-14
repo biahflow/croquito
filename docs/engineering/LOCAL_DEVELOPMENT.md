@@ -51,7 +51,7 @@ O export falha fechado. Um erro do auditor não publica o ZIP.
 ## Ingestão privada de PDF
 
 ```bash
-uv run croquitodxf-demo ingest \
+uv run croquito-demo ingest \
   --input "/caminho/autorizado.pdf" \
   --dataset-id "identificador-logico-v1" \
   --role "golden|regression|evaluation" \
@@ -72,7 +72,7 @@ trabalho terminar.
 Para um dataset já ingerido:
 
 ```bash
-uv run croquitodxf-demo propose-dataset \
+uv run croquito-demo propose-dataset \
   --manifest output/pdf/identificador-logico-v1/manifest.json
 ```
 
@@ -101,12 +101,12 @@ Um `ReviewPacket` liga transcrições ao digest e ao recorte da imagem. Gere o
 overlay, solucione e exporte somente após aprovação explícita:
 
 ```bash
-uv run croquitodxf-demo review-artifacts \
+uv run croquito-demo review-artifacts \
   --packet /caminho/review-input.json \
   --image output/pdf/caso/page-001.png \
   --output output/pdf/caso/review
 
-uv run croquitodxf-demo solve-rectangle \
+uv run croquito-demo solve-rectangle \
   --packet output/pdf/caso/review/review-packet.json \
   --request /caminho/rectangle-request.json \
   --associations /caminho/associacoes-confirmadas.json \
@@ -129,7 +129,7 @@ decisões com `reviewer_id`, papel e timestamp com timezone ao comando
 Para ranquear geometrias CV próximas de cada recorte de cota, sem confirmar alvo:
 
 ```bash
-uv run croquitodxf-demo associate-review \
+uv run croquito-demo associate-review \
   --packet output/pdf/caso/review/review-packet.json \
   --proposals output/pdf/caso/vision/page-001/vision-proposals.json \
   --output output/pdf/caso/review
@@ -160,7 +160,7 @@ make dev
 - Web: `http://localhost:5173` ou `http://127.0.0.1:5173`.
 - API: `http://localhost:8000`.
 - OpenAPI: `http://localhost:8000/docs`.
-- Keycloak: `http://localhost:8083`, realm `croquitodxf`.
+- Keycloak: `http://localhost:8083`, realm `croquito`.
 - LocalStack: `http://localhost:4566` (S3, SQS, Step Functions, EventBridge e
   Secrets Manager).
 - PostgreSQL: `127.0.0.1:5432`.
@@ -170,7 +170,7 @@ credencial seed é exclusivamente local e está no realm importado; nunca a reus
 fora deste ambiente. A API aceita tokens OIDC e não é acoplada a Cognito.
 O bucket local aceita PUT assinado somente dessas duas origens, com `Content-Type`
 e `x-amz-checksum-sha256`.
-Configure ambas em `CROQUITODXF_WEB_ORIGIN`, separadas por vírgula, para que a API
+Configure ambas em `CROQUITO_WEB_ORIGIN`, separadas por vírgula, para que a API
 também responda ao browser nos dois endereços.
 
 ### Carregar um pacote de revisão autorizado
@@ -180,7 +180,7 @@ desligados. Para conduzir uma sessão real, o responsável pelo tenant liga um p
 preparado localmente ao job criado pelo upload autenticado:
 
 ```bash
-uv run croquitodxf-demo seed-review \
+uv run croquito-demo seed-review \
   --job-id <uuid do job> --tenant-id <tenant> \
   --packet output/pdf/<caso>/review/review-packet.json \
   --associations output/pdf/<caso>/review/association-candidates.json \
@@ -214,7 +214,7 @@ deles.
 ```bash
 make dev-services && make db-init
 make dev-api            # em outro terminal
-CROQUITODXF_ALLOW_TEST_TOKENS=true make smoke-local
+CROQUITO_ALLOW_TEST_TOKENS=true make smoke-local
 ```
 
 O smoke usa **somente fixture sintética** e percorre presign assinado, PUT com checksum,
@@ -222,8 +222,8 @@ job, fila, seed, decisões, solver, calibração, aceite, aprovação, exportaç
 ZIP pela URL assinada. Ele cobre o que o teste in-process não alcança: assinatura real do
 S3, `head_object` com checksum, envelope do SQS, PostgreSQL e `JSONB`.
 
-Ele recusa antes de escrever qualquer coisa se `CROQUITODXF_REAL_PROVIDERS_ENABLED`
-estiver ligado, e exige `CROQUITODXF_ALLOW_TEST_TOKENS=true` porque o realm local
+Ele recusa antes de escrever qualquer coisa se `CROQUITO_REAL_PROVIDERS_ENABLED`
+estiver ligado, e exige `CROQUITO_ALLOW_TEST_TOKENS=true` porque o realm local
 desabilita direct access grants — não há token fora do browser. Mantenha o opt-in ligado
 apenas durante o smoke.
 

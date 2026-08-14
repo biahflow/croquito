@@ -6,7 +6,7 @@ Responsável: Product
 
 ## Visão
 
-CroquiToDXF reduz o tempo entre um levantamento manuscrito e um desenho CAD
+Croquito reduz o tempo entre um levantamento manuscrito e um desenho CAD
 utilizável. O sistema produz uma primeira versão técnica, evidencia incertezas e
 permite que um profissional corrija apenas o que não pôde ser determinado.
 

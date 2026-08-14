@@ -13,8 +13,8 @@ from pathlib import Path
 import pymupdf
 from PIL import Image
 
-from croquitodxf_valuation.catalog import file_sha256
-from croquitodxf_worker.valuation.plate import (
+from croquito_valuation.catalog import file_sha256
+from croquito_worker.valuation.plate import (
     PLATE_IMAGE_FILENAME,
     PLATE_IMAGE_HEIGHT_PX,
     PLATE_IMAGE_WIDTH_PX,

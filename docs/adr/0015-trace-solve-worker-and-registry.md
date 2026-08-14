@@ -8,7 +8,7 @@ Responsável: Engineering
 
 O estágio de traçado ([Trace Stage](../architecture/TRACE_STAGE.md)) está completo no
 worker e validado em dois casos dourados, mas só é acionável pela CLI
-(`croquitodxf-demo solve-trace`) com arquivos JSON em disco. A sessão autenticada não
+(`croquito-demo solve-trace`) com arquivos JSON em disco. A sessão autenticada não
 tinha nenhum caminho para aceitar um traçado: o profissional que revisou as cotas na tela
 não conseguia transformar a extração aceita em cena métrica sem um operador rodando
 comandos locais.

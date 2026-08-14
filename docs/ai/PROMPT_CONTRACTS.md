@@ -2,7 +2,7 @@
 
 Status: Accepted for MVP  
 Responsável: AI Engineering  
-Última revisão: 2026-08-13
+Última revisão: 2026-08-14
 
 ## Convenção de versão
 
@@ -17,15 +17,41 @@ Responsável: AI Engineering
 Cada chamada registra prompt ID, hash do template, provider, model ID e schema
 version.
 
-Os contratos MVP usam `@1.1.0`, com instruções invariantes completas e schema JSON
+Os contratos MVP usam `@1.1.1`, com instruções invariantes completas e schema JSON
 estrito. Tarefa criada depois nasce com versão própria e ramo próprio de template: o
 `template_hash` é a identidade do prompt no lineage já gravado, e reaproveitar o texto de
 outra tarefa reescreveria proveniência existente. Fixtures continuam apenas como contratos
 offline; nenhum hash de fixture representa um prompt enviado a provedor externo.
 
+### Patch coletivo do rebranding (2026-08-14)
+
+O cabeçalho de todo template carrega o nome do produto (`<produto>:<task>@<versão>`). O
+rebranding para **croquito** trocou esse cabeçalho em todas as nove tarefas, o que mudou o
+texto e, com ele, o `template_hash`. Como texto novo exige versão nova, todas receberam
+PATCH — nenhum schema de saída mudou:
+
+| Tarefa | Antes | Agora |
+|---|---|---|
+| `page-survey` | `1.1.0` | `1.1.1` |
+| `measurement-extraction` | `1.1.0` | `1.1.1` |
+| `semantic-elements` | `1.1.0` | `1.1.1` |
+| `disagreement-review` | `1.1.0` | `1.1.1` |
+| `ocr` | `1.1.0` | `1.1.1` |
+| `geometry-extraction` | `2.0.0` | `2.0.1` |
+| `legend-extraction` | `1.0.0` | `1.0.1` |
+| `sco-refinement` | `1.0.1` | `1.0.2` |
+| `review-chat` | `1.0.0` | `1.0.1` |
+
+Lineage gravado antes disso continua declarando a versão sob a qual foi produzido e **não
+é reescrito**: as evals pagas já executadas descrevem as versões antigas, e continuam
+válidas como registro do que foi enviado
+([ADR-0024](../adr/0024-rebranding-to-croquito.md)). Nenhuma instrução mudou
+neste patch, então o comportamento esperado dos modelos é o mesmo; a mudança de identidade
+é que precisava ser declarada.
+
 ## Contratos MVP
 
-### `page-survey@1.1.0`
+### `page-survey@1.1.1`
 
 Objetivo: classificar conteúdo e propor regiões.
 
@@ -48,7 +74,7 @@ Saída:
 
 Proibições: descartar página, inferir escala, produzir dimensão não visível.
 
-### `measurement-extraction@1.1.0`
+### `measurement-extraction@1.1.1`
 
 Objetivo: transcrever e normalizar anotações de uma região.
 
@@ -80,12 +106,12 @@ Regras:
 - Alternativas são explicitadas; nenhuma escolha é escondida.
 - `target_hint` é hipótese, não ID geométrico definitivo.
 
-### `semantic-elements@1.1.0`
+### `semantic-elements@1.1.1`
 
 Objetivo: identificar elementos nomeados, line style e relação espacial candidata.
 Saída não contém medidas novas nem geometria métrica.
 
-### `disagreement-review@1.1.0`
+### `disagreement-review@1.1.1`
 
 Objetivo: reavaliar um recorte quando leituras divergem.
 
@@ -95,7 +121,7 @@ modelo está certo”.
 
 ## Contrato de geometria
 
-### `geometry-extraction@2.0.0`
+### `geometry-extraction@2.0.1`
 
 Changelog: `2.0.0` acrescenta três pontos-âncora ao arco (`arc_start`, `arc_mid`,
 `arc_end`). Major porque o schema mudou. A `1.0.0` existiu apenas em código e no lineage
@@ -180,7 +206,7 @@ Estes dois contratos servem a cadeia de medição de obra
 observacionais: nada que sai deles confirma quantidade, unidade ou código — confirmação
 continua sendo ato humano registrado.
 
-### `legend-extraction@1.0.0`
+### `legend-extraction@1.0.1`
 
 Objetivo: transcrever as linhas da legenda já quantificada de uma prancha do projetista.
 Tarefa de visão, sobre o recorte da legenda.
@@ -210,7 +236,7 @@ Regras:
 - Célula ausente é `null`; dúvida vira `ambiguous`/`illegible`, nunca chute.
 - Texto fora da tabela da legenda não é linha de legenda e é omitido.
 
-### `sco-refinement@1.0.1`
+### `sco-refinement@1.0.2`
 
 Changelog: `1.0.1` limita cada `flag` a 120 caracteres (o máximo de 5 flags não mudou, e o
 texto do template continua o mesmo). Motivo: o domínio compõe uma anotação única a partir
@@ -252,7 +278,7 @@ Regras:
 
 ## Contrato da conversa da revisão
 
-### `review-chat@1.0.0`
+### `review-chat@1.0.1`
 
 Objetivo: responder uma pergunta do profissional sobre a folha em revisão e devolver, junto
 com a resposta, **rascunhos tipados** dos atos que ele pode assinar

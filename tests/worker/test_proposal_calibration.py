@@ -2,7 +2,7 @@ from uuid import UUID
 
 import pytest
 
-from croquitodxf_core.models import (
+from croquito_core.models import (
     CircleGeometry,
     Entity,
     EntityKind,
@@ -14,14 +14,14 @@ from croquitodxf_core.models import (
     Provenance,
     SceneRevision,
 )
-from croquitodxf_worker.proposal_calibration import (
+from croquito_worker.proposal_calibration import (
     CalibrationAnchor,
     CalibrationError,
     approximate_entity_from_proposal,
     calibrate_affine,
     calibrate_similarity,
 )
-from croquitodxf_worker.vision import (
+from croquito_worker.vision import (
     PixelCircle,
     PixelLine,
     PixelPoint,

@@ -1,0 +1,65 @@
+{
+  "realm": "croquito",
+  "enabled": true,
+  "displayName": "Croquito Local",
+  "accessTokenLifespan": 3600,
+  "ssoSessionIdleTimeout": 28800,
+  "ssoSessionMaxLifespan": 43200,
+  "roles": {
+    "realm": [
+      {"name": "engineer"},
+      {"name": "cad_operator"},
+      {"name": "tenant_admin"},
+      {"name": "platform_operator"}
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "croquito-web",
+      "name": "Croquito Web Local",
+      "rootUrl": "http://localhost:5173",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:5173/*", "http://127.0.0.1:5173/*"],
+      "webOrigins": ["http://localhost:5173", "http://127.0.0.1:5173", "+"],
+      "protocolMappers": [
+        {
+          "name": "tenant-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "croquito-web",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "engenheiro.local",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {"tenant_id": ["tenant-local"]},
+      "realmRoles": ["engineer", "tenant_admin"],
+      "credentials": [
+        {"type": "password", "value": "local-dev-only", "temporary": false}
+      ]
+    }
+  ]
+}

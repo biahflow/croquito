@@ -39,6 +39,7 @@ e NFRs. Um ADR aceito é imutável; correção material exige novo ADR com
 | [0021](0021-hybrid-sco-code-retrieval.md) | Retrieval híbrido local para sugestão de código SCO | Accepted |
 | [0022](0022-declared-rectification-of-review-decisions.md) | Correção declarada de decisão de revisão | Accepted |
 | [0023](0023-review-chat-as-an-observational-agent.md) | Conversa da revisão como agente observacional com rascunhos tipados | Proposed |
+| [0024](0024-rebranding-to-croquito.md) | Rebranding do produto para croquito | Accepted |
 
 ## Processo
 

@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from croquitodxf_worker import cli
-from croquitodxf_worker.providers import (
+from croquito_worker import cli
+from croquito_worker.providers import (
     FixtureProviderAdapter,
     MeasurementExtractionOutput,
     MeasurementReadingOutput,
@@ -26,15 +26,15 @@ from croquitodxf_worker.providers import (
     ProviderName,
     TargetHint,
 )
-from croquitodxf_worker.synthetic import render_synthetic_input
-from croquitodxf_worker.transcription import TranscriptionArtifact
+from croquito_worker.synthetic import render_synthetic_input
+from croquito_worker.transcription import TranscriptionArtifact
 from tests.bundles import build_manifest, build_packet
 
-ALLOWLIST = "CROQUITODXF_AI_EXTRACTION_ALLOWED_DIGESTS"
+ALLOWLIST = "CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS"
 
 
 def _run_main(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> int:
-    monkeypatch.setattr("sys.argv", ["croquitodxf-demo", *argv])
+    monkeypatch.setattr("sys.argv", ["croquito-demo", *argv])
     return cli.main()
 
 
@@ -122,7 +122,7 @@ def test_transcribe_readings_cli_happy_path(
         )
 
     monkeypatch.setattr(
-        "croquitodxf_worker.providers.build_extraction_arm", _fake_build_extraction_arm
+        "croquito_worker.providers.build_extraction_arm", _fake_build_extraction_arm
     )
 
     exit_code = _run_main(

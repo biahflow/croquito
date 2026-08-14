@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from croquitodxf_api.database import (
+from croquito_api.database import (
     Database,
     JobRecord,
     ProjectRecord,
@@ -23,9 +23,9 @@ from croquitodxf_api.database import (
     TraceSolveRecord,
     UploadRecord,
 )
-from croquitodxf_core.models import SceneRevision
-from croquitodxf_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
-from croquitodxf_worker.tracing import TraceAcceptance
+from croquito_core.models import SceneRevision
+from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
+from croquito_worker.tracing import TraceAcceptance
 from tests.bundles import (
     CIRCLE_PROPOSAL_ID,
     HEIGHT_PROPOSAL_ID,

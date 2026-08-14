@@ -11,15 +11,15 @@ from pathlib import Path
 
 import pytest
 
-from croquitodxf_valuation.errors import ValuationValidationError
-from croquitodxf_valuation.takeoff import TakeoffItemStatus, TakeoffPacket
-from croquitodxf_worker.valuation.plate import (
+from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.takeoff import TakeoffItemStatus, TakeoffPacket
+from croquito_worker.valuation.plate import (
     PLATE_EXTRACTOR_VERSION,
     SYNTHETIC_LEGEND_ROWS,
     SYNTHETIC_PLATE_ID,
     render_synthetic_plate,
 )
-from croquitodxf_worker.valuation.takeoff_fixture import (
+from croquito_worker.valuation.takeoff_fixture import (
     FIXTURE_EXTRACTOR,
     extract_takeoff_fixture,
     takeoff_item_id,

@@ -8,7 +8,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from croquitodxf_worker.review import (
+from croquito_worker.review import (
     RECTIFICATION_SAFETY_NOTE,
     HumanDecision,
     ReadingDecisionBatch,

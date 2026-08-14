@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from croquitodxf_valuation.takeoff import PlateBox
-from croquitodxf_worker.valuation.plate import render_synthetic_plate
-from croquitodxf_worker.valuation.takeoff_fixture import extract_takeoff_fixture
-from croquitodxf_worker.valuation.takeoff_overlay import (
+from croquito_valuation.takeoff import PlateBox
+from croquito_worker.valuation.plate import render_synthetic_plate
+from croquito_worker.valuation.takeoff_fixture import extract_takeoff_fixture
+from croquito_worker.valuation.takeoff_overlay import (
     BALLOON_MAX_DIAMETER_FRACTION,
     BALLOON_MIN_DIAMETER_PX,
     balloon_layout,

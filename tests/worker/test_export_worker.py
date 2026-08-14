@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from croquitodxf_api.database import (
+from croquito_api.database import (
     ApprovalRecord,
     Database,
     ExportArtifactRecord,
@@ -16,9 +16,9 @@ from croquitodxf_api.database import (
     RevisionRecord,
     UploadRecord,
 )
-from croquitodxf_core.models import SceneRevision
-from croquitodxf_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
-from croquitodxf_worker.synthetic import build_synthetic_scene
+from croquito_core.models import SceneRevision
+from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
+from croquito_worker.synthetic import build_synthetic_scene
 from tests.fakes import FakeObjectStore, FakeQueue
 
 JOB_ID = "00000000-0000-7000-8000-000000000801"
@@ -165,7 +165,7 @@ def test_export_publishes_audited_package_with_the_approval(
         assert artifact.audit_status == "approved"
         assert artifact.dxf_sha256 is not None
         assert artifact.package_object_key == (
-            f"tenants/{TENANT_ID}/jobs/{JOB_ID}/exports/{EXPORT_ID}/croquitodxf.zip"
+            f"tenants/{TENANT_ID}/jobs/{JOB_ID}/exports/{EXPORT_ID}/croquito.zip"
         )
         job = session.get(JobRecord, JOB_ID)
         assert job is not None

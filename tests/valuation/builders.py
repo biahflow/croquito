@@ -13,9 +13,9 @@ from uuid import NAMESPACE_URL, uuid5
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
 
-from croquitodxf_valuation.canonical import canonicalize_workbook
-from croquitodxf_valuation.catalog import file_sha256, read_price_catalog
-from croquitodxf_valuation.contract import (
+from croquito_valuation.canonical import canonicalize_workbook
+from croquito_valuation.catalog import file_sha256, read_price_catalog
+from croquito_valuation.contract import (
     Amendment,
     AmendmentLine,
     ContractLine,
@@ -23,7 +23,7 @@ from croquitodxf_valuation.contract import (
     PeriodProgress,
     contract_workbook_id_for,
 )
-from croquitodxf_valuation.models import (
+from croquito_valuation.models import (
     BulletinLine,
     CalcBlock,
     CalcOperand,
@@ -35,17 +35,17 @@ from croquitodxf_valuation.models import (
     ValuationApproval,
     WorksiteBulletin,
 )
-from croquitodxf_valuation.rounding import money_trunc
-from croquitodxf_valuation.sco import is_sco_code, parse_sco_code
-from croquitodxf_valuation.template import (
+from croquito_valuation.rounding import money_trunc
+from croquito_valuation.sco import is_sco_code, parse_sco_code
+from croquito_valuation.template import (
     AmendmentLayout,
     CatalogLayout,
     GeneralLayout,
     WorkbookTemplate,
     default_template,
 )
-from croquitodxf_valuation.workbook_writer import WriteReport, write_valuation_workbook
-from croquitodxf_worker.valuation.synthetic import (
+from croquito_valuation.workbook_writer import WriteReport, write_valuation_workbook
+from croquito_worker.valuation.synthetic import (
     SYNTHETIC_CATALOG_LABEL,
     SYNTHETIC_REFERENCE_MONTH,
     build_synthetic_catalog_workbook,
@@ -820,7 +820,7 @@ def real_layout_items(*, reduce_duplicated_code: bool = False) -> tuple[_MapaoIt
 
 MULTI_WORKSITE_REFERENCE_LABEL = "MARCO/2026"
 CONTRACT_CATALOG_LABEL = "CATALOGO SINTETICO DO CONTRATO (fixture)"
-_VALUATION_NAMESPACE = uuid5(NAMESPACE_URL, "https://croquitodxf.local/valuation/multi-worksite")
+_VALUATION_NAMESPACE = uuid5(NAMESPACE_URL, "https://croquito.local/valuation/multi-worksite")
 
 
 @dataclass(frozen=True, slots=True)

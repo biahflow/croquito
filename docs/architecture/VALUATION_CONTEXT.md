@@ -5,8 +5,8 @@ Responsável: Product / Engineering
 Última revisão: 2026-08-13
 
 Este documento é a referência canônica do contexto delimitado `valuation`
-(`packages/valuation/src/croquitodxf_valuation/` e
-`services/worker/src/croquitodxf_worker/valuation/`, CLI `croquitodxf-valuation`).
+(`packages/valuation/src/croquito_valuation/` e
+`services/worker/src/croquito_worker/valuation/`, CLI `croquito-valuation`).
 
 Medição de obra pública é um problema diferente de croqui → DXF: a entrada é planilha e
 catálogo de preços, a saída é boletim de medição, e o erro que interessa é de centavo,
@@ -74,8 +74,8 @@ Ao lado do `extract-legend` por fixture existe o caminho **pago** da mesma etapa
 não substitui o comando offline nem muda a natureza do resultado — todo item continua
 nascendo `proposed` ou `ambiguous`, e o pacote sai com o overlay de revisão obrigatória. O
 que ele acrescenta é a cadeia de autorização: braço `NOME=PROVIDER:MODELO` real, teto de
-gasto em `CROQUITODXF_AI_MAX_ESTIMATED_COST_USD`, manifest do `croquitodxf-demo ingest` e o
-documento na allowlist `CROQUITODXF_AI_EXTRACTION_ALLOWED_DIGESTS`.
+gasto em `CROQUITO_AI_MAX_ESTIMATED_COST_USD`, manifest do `croquito-demo ingest` e o
+documento na allowlist `CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS`.
 
 Fora da cadeia existem duas ferramentas de diagnóstico **local**, que nunca rodam no CI e
 não escrevem nos arquivos analisados. `parity` abre uma pasta que o sistema não gerou duas
@@ -107,7 +107,7 @@ como freio duro, o ato de upload como consentimento do documento (digest registr
 lineage), braço fixado no vencedor da eval e falha visível com re-disparo explícito; o
 refino pago de código continua exclusivo do CLI
 ([ADR-0020](../adr/0020-local-homologation-server-for-valuation.md)). `serve --catalog
-<catalog.json>` (ou `CROQUITODXF_MEDICAO_CATALOG`) provê o catálogo de preços a uma
+<catalog.json>` (ou `CROQUITO_MEDICAO_CATALOG`) provê o catálogo de preços a uma
 rodada nova na subida do servidor — validado e copiado para dentro da rodada, nunca
 sobrescrevendo o catálogo de uma rodada existente (as confirmações de código já feitas
 se apoiam nele); o banner do `serve` declara catálogo e disponibilidade da extração.
@@ -151,7 +151,7 @@ consolidado contratual com RE-RA, consolidação multi-obra na PLANILHA GERAL, p
 aprovação e saldo, e exportação que falha fechada. O M3 abriu o começo da cadeia — extração
 da legenda quantificada por fixture sintética e revisão do orçamentista. O M4 fecha o
 **meio** da cadeia, inteiramente offline: sugestão lexical de código, confirmação
-fail-closed e o boletim/memória que nascem do takeoff confirmado. `croquitodxf-valuation
+fail-closed e o boletim/memória que nascem do takeoff confirmado. `croquito-valuation
 demo` (`make valuation-demo`) percorre a cadeia inteira sobre fixture sintética, do MAPÃO
 anterior à pasta auditada, com a quarta obra nascendo da prancha. O M5 abre as duas vias
 pagas — extração de prancha real de cliente e refino da sugestão de código —, ambas atrás

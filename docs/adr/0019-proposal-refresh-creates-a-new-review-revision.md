@@ -11,7 +11,7 @@ visão computacional melhor sob os MESMOS ids `vp_…` — a tinta da página n�
 precisão com que o detector a lê. Até aqui não existia caminho para essa geometria
 melhor entrar num job que já tem revisão em andamento: `seed-review` recusa fechado
 qualquer job que já carregue uma `review_revisions`
-(`REVIEW_ALREADY_EXISTS`, `services/worker/src/croquitodxf_worker/review_seed.py:180-188`;
+(`REVIEW_ALREADY_EXISTS`, `services/worker/src/croquito_worker/review_seed.py:180-188`;
 `review_store.py` grava a revisão 1 com `insert_review_revision_v1`, hard-coded para
 `version = 1`). Um job real pode ter dezenas de revisões, dezenas de decisões humanas
 imutáveis (`HumanDecision` presas às leituras) e um mapa
@@ -51,8 +51,8 @@ geometria de propostas. Só muda o que depende dela:
 - `associations_json` é RECOMPUTADO com `associate_readings` contra a evidência da
   revisão vigente — nunca copiado;
 - `calibration_json`, quando havia calibração ativa, é revalidado pela MESMA regra que
-  a API usa nas decisões de leitura (`croquitodxf_worker.proposal_calibration.
-  revalidate_calibration`, movida de `services/api/src/croquitodxf_api/main.py` para o
+  a API usa nas decisões de leitura (`croquito_worker.proposal_calibration.
+  revalidate_calibration`, movida de `services/api/src/croquito_api/main.py` para o
   worker e reusada de lá pelos dois lados). Se o drift ultrapassa a tolerância, a
   calibração é descartada na revisão nova e a cena corrente ganha uma nova revisão só
   para carregar a issue crítica `CALIBRATION_SUPERSEDED` — a entidade já aceita nunca é
@@ -93,7 +93,7 @@ uma issue crítica quando a recomputação não fecha.
   inventaria consentimento.
 - Duplicar a lógica de revalidação de calibração no worker: rejeitado. Duas
   implementações do mesmo teste de deriva divergiriam silenciosamente; a lógica foi
-  movida para `croquitodxf_worker.proposal_calibration` (dependência que a API já tinha)
+  movida para `croquito_worker.proposal_calibration` (dependência que a API já tinha)
   e reusada por referência nos dois lados.
 
 ## Consequências

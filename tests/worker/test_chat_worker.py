@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from croquitodxf_api.database import (
+from croquito_api.database import (
     ChatSessionRecord,
     ChatTurnRecord,
     Database,
@@ -24,8 +24,8 @@ from croquitodxf_api.database import (
     ReviewRevisionRecord,
     UploadRecord,
 )
-from croquitodxf_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
-from croquitodxf_worker.providers import (
+from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
+from croquito_worker.providers import (
     ProviderName,
     ProviderSuite,
     build_synthetic_provider_suite,
@@ -210,7 +210,7 @@ def test_chat_turn_records_the_answer_with_the_call_lineage(tmp_path: Path) -> N
         assert acts[0]["reading_id"] == WIDTH_READING_ID
         assert acts[0]["association_proposal_id"] == WIDTH_PROPOSAL_ID
         assert record.provider == ProviderName.BEDROCK_ANTHROPIC.value
-        assert record.prompt_version == "review-chat@1.0.0"
+        assert record.prompt_version == "review-chat@1.0.1"
         # O digest do lineage é o do envelope imagem+texto da chamada.
         assert record.input_digest is not None and len(record.input_digest) == 64
     assert queue.deleted == ["receipt-1"]

@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from croquitodxf_worker.extraction_eval import ExtractionCandidate, ExtractionNotAllowlistedError
-from croquitodxf_worker.providers import (
+from croquito_worker.extraction_eval import ExtractionCandidate, ExtractionNotAllowlistedError
+from croquito_worker.providers import (
     FixtureProviderAdapter,
     MeasurementExtractionOutput,
     MeasurementReadingOutput,
@@ -27,15 +27,15 @@ from croquitodxf_worker.providers import (
     ProviderRequest,
     TargetHint,
 )
-from croquitodxf_worker.review import (
+from croquito_worker.review import (
     DimensionReading,
     EvidenceRegion,
     PixelBox,
     ReadingStatus,
     ReviewPacket,
 )
-from croquitodxf_worker.synthetic import render_synthetic_input
-from croquitodxf_worker.transcription import (
+from croquito_worker.synthetic import render_synthetic_input
+from croquito_worker.transcription import (
     CollisionResolutionNote,
     TranscriptionArtifact,
     TranscriptionMergeError,
@@ -52,7 +52,7 @@ from tests.bundles import (
     build_packet,
 )
 
-ALLOWLIST = "CROQUITODXF_AI_EXTRACTION_ALLOWED_DIGESTS"
+ALLOWLIST = "CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS"
 
 
 class _NeverCalledAdapter:

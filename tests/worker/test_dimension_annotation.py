@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 
-from croquitodxf_core.models import (
+from croquito_core.models import (
     DimensionGeometry,
     Entity,
     EntityKind,
@@ -18,7 +18,7 @@ from croquitodxf_core.models import (
     SceneRevision,
     TextGeometry,
 )
-from croquitodxf_worker.dimension_annotation import (
+from croquito_worker.dimension_annotation import (
     DimensionAnnotationError,
     annotate_note,
     annotate_traced_line,

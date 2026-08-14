@@ -262,7 +262,7 @@ export type Measurements = Measurement[];
 export type SchemaVersion = "1.0.0";
 export type Version = number;
 
-export interface CroquiToDXFSceneRevision {
+export interface CroquitoSceneRevision {
   accepted_approximation_ids?: AcceptedApproximationIds;
   approved?: Approved;
   constraints?: Constraints;

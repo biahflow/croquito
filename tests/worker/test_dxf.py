@@ -4,10 +4,10 @@ from zipfile import ZipFile
 import pytest
 from ezdxf.filemanagement import readfile
 
-from croquitodxf_core.errors import DomainValidationError
-from croquitodxf_worker.dxf import APP_ID, export_scene_package
-from croquitodxf_worker.pipeline import run_synthetic_pipeline
-from croquitodxf_worker.synthetic import build_synthetic_scene
+from croquito_core.errors import DomainValidationError
+from croquito_worker.dxf import APP_ID, export_scene_package
+from croquito_worker.pipeline import run_synthetic_pipeline
+from croquito_worker.synthetic import build_synthetic_scene
 
 
 def test_synthetic_pipeline_creates_audited_package(tmp_path: Path) -> None:

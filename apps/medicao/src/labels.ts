@@ -151,7 +151,7 @@ const ERROR_MESSAGES: LookupTable = {
   LOCAL_TAKEOFF_REVIEW_INCOMPLETE:
     "A sugestão de código exige a revisão do takeoff concluída.",
   LOCAL_SERVER_UNREACHABLE:
-    "O servidor local não respondeu. Confira se `croquitodxf-valuation serve` está no ar.",
+    "O servidor local não respondeu. Confira se `croquito-valuation serve` está no ar.",
   LOCAL_RESPONSE_UNREADABLE:
     "O servidor local respondeu fora do formato esperado.",
   // Prancha e extração automática.

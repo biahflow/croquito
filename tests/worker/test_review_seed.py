@@ -5,16 +5,16 @@ from uuid import UUID
 
 import pytest
 
-from croquitodxf_api.database import (
+from croquito_api.database import (
     Database,
     JobRecord,
     ProjectRecord,
     ReviewRevisionRecord,
     UploadRecord,
 )
-from croquitodxf_worker.criteria import ScopeCriterion
-from croquitodxf_worker.local_queue import LocalWorkerSettings
-from croquitodxf_worker.review_seed import SeedInputs, SeedRefusedError, seed_review
+from croquito_worker.criteria import ScopeCriterion
+from croquito_worker.local_queue import LocalWorkerSettings
+from croquito_worker.review_seed import SeedInputs, SeedRefusedError, seed_review
 from tests.bundles import write_seed_bundle
 from tests.fakes import FakeObjectStore, synthetic_pdf
 

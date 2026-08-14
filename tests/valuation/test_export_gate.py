@@ -10,9 +10,9 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from croquitodxf_valuation.contract import ContractLine, ContractWorkbook
-from croquitodxf_valuation.errors import ValuationValidationError, valuation_error_codes
-from croquitodxf_valuation.models import (
+from croquito_valuation.contract import ContractLine, ContractWorkbook
+from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
+from croquito_valuation.models import (
     BulletinLine,
     CalcBlock,
     CalcOperand,
@@ -23,7 +23,7 @@ from croquitodxf_valuation.models import (
     ValuationApproval,
     WorksiteBulletin,
 )
-from croquitodxf_valuation.rounding import money_trunc
+from croquito_valuation.rounding import money_trunc
 
 _CODE = "AD04050050(/)"
 _OTHER_CODE = "SP01050010(/)"

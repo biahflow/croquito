@@ -14,8 +14,8 @@ from botocore.exceptions import BotoCoreError
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from croquitodxf_api.config import ApiSettings
-from croquitodxf_api.database import (
+from croquito_api.config import ApiSettings
+from croquito_api.database import (
     AiProcessingAuthorizationRecord,
     ApprovalRecord,
     AuditRecord,
@@ -32,8 +32,8 @@ from croquitodxf_api.database import (
     TraceSolveRecord,
     UploadRecord,
 )
-from croquitodxf_api.main import create_app
-from croquitodxf_core.models import (
+from croquito_api.main import create_app
+from croquito_core.models import (
     Entity,
     EntityKind,
     LayerName,
@@ -46,9 +46,9 @@ from croquitodxf_core.models import (
     SceneRevision,
     UnitCode,
 )
-from croquitodxf_worker.association import AssociationSet
-from croquitodxf_worker.criteria import FALLBACK_CRITERION_MESSAGE
-from croquitodxf_worker.review import (
+from croquito_worker.association import AssociationSet
+from croquito_worker.criteria import FALLBACK_CRITERION_MESSAGE
+from croquito_worker.review import (
     DimensionReading,
     EvidenceRegion,
     HumanDecision,
@@ -56,7 +56,7 @@ from croquitodxf_worker.review import (
     ReadingStatus,
     ReviewPacket,
 )
-from croquitodxf_worker.vision import (
+from croquito_worker.vision import (
     PixelCircle,
     PixelLine,
     PixelPoint,
@@ -74,7 +74,7 @@ def _client(tmp_path: Path) -> TestClient:
     database.create_schema()
     settings = ApiSettings(
         database_url=f"sqlite+pysqlite:///{tmp_path / 'api.db'}",
-        artifact_bucket="croquitodxf-test-artifacts",
+        artifact_bucket="croquito-test-artifacts",
         aws_region="sa-east-1",
         aws_endpoint_url="http://localhost:4566",
         queue_url=None,
@@ -2017,7 +2017,7 @@ def test_completed_export_signs_only_the_tenant_package(tmp_path: Path) -> None:
         artifact.audit_status = "approved"
         artifact.dxf_sha256 = "f" * 64
         artifact.package_object_key = (
-            f"tenants/tenant-a/jobs/{job_id}/exports/{export_id}/croquitodxf.zip"
+            f"tenants/tenant-a/jobs/{job_id}/exports/{export_id}/croquito.zip"
         )
 
     completed = client.get(f"/v1/jobs/{job_id}/exports/{export_id}", headers=_headers("tenant-a"))

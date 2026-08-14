@@ -18,7 +18,7 @@ variable "environment" {
 variable "project_name" {
   description = "Prefixo estável usado em nomes e tags."
   type        = string
-  default     = "croquitodxf"
+  default     = "croquito"
 
   validation {
     condition     = can(regex("^[a-z0-9-]{3,24}$", var.project_name))

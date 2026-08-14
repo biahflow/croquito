@@ -14,21 +14,21 @@ from pathlib import Path
 
 import pytest
 
-from croquitodxf_valuation.catalog import file_sha256
-from croquitodxf_valuation.takeoff import (
+from croquito_valuation.catalog import file_sha256
+from croquito_valuation.takeoff import (
     TakeoffDecisionBatch,
     TakeoffDecisionInput,
     TakeoffItemStatus,
     TakeoffPacket,
     load_takeoff_packet,
 )
-from croquitodxf_worker.valuation.cli import (
+from croquito_worker.valuation.cli import (
     TAKEOFF_DECISIONS_FILENAME,
     TAKEOFF_OVERLAY_FILENAME,
     TAKEOFF_PACKET_FILENAME,
     main,
 )
-from croquitodxf_worker.valuation.plate import (
+from croquito_worker.valuation.plate import (
     PLATE_IMAGE_FILENAME,
     PLATE_PDF_FILENAME,
     SYNTHETIC_LEGEND_ROWS,

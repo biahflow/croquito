@@ -11,9 +11,9 @@
  *
  *     make dev-services && make db-init && make dev
  *     npx playwright install chromium        # uma vez, não roda no postinstall
- *     CROQUITODXF_SMOKE_JOB=<uuid do job> npm --workspace @croquitodxf/web run smoke:headless
+ *     CROQUITO_SMOKE_JOB=<uuid do job> npm --workspace @croquito/web run smoke:headless
  *
- * Cena opcional da conversa da revisão (`CROQUITODXF_SMOKE_CHAT=1`, exige o `?job`): ela
+ * Cena opcional da conversa da revisão (`CROQUITO_SMOKE_CHAT=1`, exige o `?job`): ela
  * abre o painel, pergunta, espera a resposta da FIXTURE e confere que "Usar este
  * rascunho" só pré-preenche. A resposta só chega com o consumidor de fixtures rodando —
  * cada execução dele serve UMA mensagem:
@@ -31,18 +31,18 @@
 
 import { chromium } from "playwright";
 
-const WEB_URL = process.env.CROQUITODXF_SMOKE_WEB_URL ?? "http://localhost:5173";
-// Usuário do realm local versionado em keycloak/croquitodxf-realm.json. É fixture de
+const WEB_URL = process.env.CROQUITO_SMOKE_WEB_URL ?? "http://localhost:5173";
+// Usuário do realm local versionado em keycloak/croquito-realm.json. É fixture de
 // desenvolvimento, nunca credencial de ambiente real — e nunca é impressa.
-const USERNAME = process.env.CROQUITODXF_SMOKE_USER ?? "engenheiro.local";
-const PASSWORD = process.env.CROQUITODXF_SMOKE_PASSWORD ?? "local-dev-only";
-const JOB_ID = process.env.CROQUITODXF_SMOKE_JOB ?? "";
-const TIMEOUT_MS = Number(process.env.CROQUITODXF_SMOKE_TIMEOUT_MS ?? 30_000);
-const CHAT_SCENE = process.env.CROQUITODXF_SMOKE_CHAT === "1";
+const USERNAME = process.env.CROQUITO_SMOKE_USER ?? "engenheiro.local";
+const PASSWORD = process.env.CROQUITO_SMOKE_PASSWORD ?? "local-dev-only";
+const JOB_ID = process.env.CROQUITO_SMOKE_JOB ?? "";
+const TIMEOUT_MS = Number(process.env.CROQUITO_SMOKE_TIMEOUT_MS ?? 30_000);
+const CHAT_SCENE = process.env.CROQUITO_SMOKE_CHAT === "1";
 // A resposta espera um `make dev-worker-fixtures` humano noutro terminal; o teto é
 // generoso de propósito.
 const CHAT_TIMEOUT_MS = Number(
-  process.env.CROQUITODXF_SMOKE_CHAT_TIMEOUT_MS ?? 120_000,
+  process.env.CROQUITO_SMOKE_CHAT_TIMEOUT_MS ?? 120_000,
 );
 
 class SmokeFailure extends Error {}
@@ -202,13 +202,13 @@ async function run() {
     } else {
       if (CHAT_SCENE) {
         throw new SmokeFailure(
-          "a cena da conversa exige CROQUITODXF_SMOKE_JOB: ela roda dentro de uma revisão.",
+          "a cena da conversa exige CROQUITO_SMOKE_JOB: ela roda dentro de uma revisão.",
         );
       }
       await page.getByRole("heading", { name: "Projetos e revisões" }).waitFor();
       step("área autenticada renderizada (sem job informado)");
       console.log(
-        "· aviso: sem CROQUITODXF_SMOKE_JOB o teste do ?job não é executado.",
+        "· aviso: sem CROQUITO_SMOKE_JOB o teste do ?job não é executado.",
       );
     }
 

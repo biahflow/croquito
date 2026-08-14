@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from croquitodxf_valuation.catalog import normalize_unit, read_price_catalog
-from croquitodxf_valuation.errors import ValuationValidationError
-from croquitodxf_valuation.models import PriceCatalog
-from croquitodxf_valuation.template import default_template
+from croquito_valuation.catalog import normalize_unit, read_price_catalog
+from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.models import PriceCatalog
+from croquito_valuation.template import default_template
 from tests.valuation.builders import (
     ColumnarCatalogRow,
     build_fixture,

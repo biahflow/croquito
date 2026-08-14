@@ -16,7 +16,7 @@ const allPending = new Set(["vp_a", "vp_b", "vp_c"]);
 describe("chave do rascunho", () => {
   it("é por job", () => {
     expect(traceDraftStorageKey("job-1")).toBe(
-      "croquitodxf:trace-draft:job-1",
+      "croquito:trace-draft:job-1",
     );
   });
 });

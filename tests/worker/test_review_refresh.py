@@ -15,7 +15,7 @@ import pytest
 from PIL import Image
 from pydantic import BaseModel, ValidationError
 
-from croquitodxf_api.database import (
+from croquito_api.database import (
     Database,
     JobRecord,
     ProjectRecord,
@@ -23,8 +23,8 @@ from croquitodxf_api.database import (
     RevisionRecord,
     UploadRecord,
 )
-from croquitodxf_core.ids import new_uuid7
-from croquitodxf_core.models import (
+from croquito_core.ids import new_uuid7
+from croquito_core.models import (
     CircleGeometry,
     Entity,
     EntityKind,
@@ -35,26 +35,26 @@ from croquitodxf_core.models import (
     Provenance,
     SceneRevision,
 )
-from croquitodxf_worker.association import AssociationCandidate, AssociationSet
-from croquitodxf_worker.ingest import PageManifest, PdfManifest
-from croquitodxf_worker.local_queue import LocalWorkerSettings
-from croquitodxf_worker.proposal_calibration import (
+from croquito_worker.association import AssociationCandidate, AssociationSet
+from croquito_worker.ingest import PageManifest, PdfManifest
+from croquito_worker.local_queue import LocalWorkerSettings
+from croquito_worker.proposal_calibration import (
     HUMAN_ACCEPTED_PROPOSAL_SOURCE_TYPE,
     CalibrationAnchor,
     calibrate_similarity,
     matrix_of,
 )
-from croquitodxf_worker.rectangle_solver import RectangleSolveRequest
-from croquitodxf_worker.review import (
+from croquito_worker.rectangle_solver import RectangleSolveRequest
+from croquito_worker.review import (
     DimensionReading,
     EvidenceRegion,
     PixelBox,
     ReadingStatus,
     ReviewPacket,
 )
-from croquitodxf_worker.review_refresh import RefreshInputs, RefreshRefusedError, refresh_proposals
-from croquitodxf_worker.review_seed import SeedInputs, seed_review
-from croquitodxf_worker.vision import PixelLine, PixelPoint, VisionProposal, VisionProposalSet
+from croquito_worker.review_refresh import RefreshInputs, RefreshRefusedError, refresh_proposals
+from croquito_worker.review_seed import SeedInputs, seed_review
+from croquito_worker.vision import PixelLine, PixelPoint, VisionProposal, VisionProposalSet
 from tests.fakes import FakeObjectStore, synthetic_pdf
 
 JOB_ID = UUID("00000000-0000-7000-8000-000000001001")

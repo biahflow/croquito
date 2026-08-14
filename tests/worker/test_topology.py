@@ -1,10 +1,10 @@
-from croquitodxf_worker.topology import (
+from croquito_worker.topology import (
     Topology,
     build_topology,
     junction_positions,
     rebuild_all,
 )
-from croquitodxf_worker.vision import (
+from croquito_worker.vision import (
     PixelCircle,
     PixelGeometryValue,
     PixelLine,

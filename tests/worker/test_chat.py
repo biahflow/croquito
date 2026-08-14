@@ -8,17 +8,17 @@ from __future__ import annotations
 
 import json
 
-from croquitodxf_worker.chat import (
+from croquito_worker.chat import (
     CHAT_CONTEXT_VERSION,
     build_chat_text_payload,
     chat_unknown_references,
     note_target_proposal_id,
 )
-from croquitodxf_worker.providers import (
+from croquito_worker.providers import (
     CHAT_NOTE_TARGET_PATTERN,
     ReviewChatOutput,
 )
-from croquitodxf_worker.tracing import GENERAL_NOTE_TARGET, LEGEND_NOTE_PREFIX
+from croquito_worker.tracing import GENERAL_NOTE_TARGET, LEGEND_NOTE_PREFIX
 from tests.bundles import (
     HEIGHT_PROPOSAL_ID,
     HEIGHT_READING_ID,

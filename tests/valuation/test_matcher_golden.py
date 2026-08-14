@@ -4,7 +4,7 @@
 pelo campo `catalog`:
 
 - `synthetic`: roda no CI, contra o mesmo mini-MAPÃO sintético que
-  `croquitodxf_worker.valuation.synthetic.build_synthetic_previous_mapao` gera em memória
+  `croquito_worker.valuation.synthetic.build_synthetic_previous_mapao` gera em memória
   (o gabarito é `DEMO_EXPECTED_CODE_BY_LABEL`, já usado por `extraction_eval.py`).
 - `real`: roda contra o catálogo REAL do SCO publicado em
   `output/valuation-toca/import/catalog.json` — arquivo local, não versionado (dado da
@@ -70,23 +70,23 @@ from typing import Final
 
 import pytest
 
-from croquitodxf_valuation.assignment import CodeSuggestion, SuggestionConfig, suggest_codes
-from croquitodxf_valuation.catalog import (
+from croquito_valuation.assignment import CodeSuggestion, SuggestionConfig, suggest_codes
+from croquito_valuation.catalog import (
     default_domain_synonyms,
     default_legend_noise,
     query_covered_only_by_noise,
     read_price_catalog,
 )
-from croquitodxf_valuation.models import PriceCatalog, ReviewerDecision
-from croquitodxf_valuation.takeoff import (
+from croquito_valuation.models import PriceCatalog, ReviewerDecision
+from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
     TakeoffItem,
     TakeoffItemStatus,
     TakeoffPacket,
 )
-from croquitodxf_valuation.template import default_template
-from croquitodxf_worker.valuation.sco_matching import (
+from croquito_valuation.template import default_template
+from croquito_worker.valuation.sco_matching import (
     CATALOG_INDEX_FILENAME,
     QUERY_CACHE_FILENAME,
     hybrid_candidates,
@@ -95,7 +95,7 @@ from croquitodxf_worker.valuation.sco_matching import (
     normalize_query_text,
     semantic_topk,
 )
-from croquitodxf_worker.valuation.synthetic import (
+from croquito_worker.valuation.synthetic import (
     SYNTHETIC_CONTRACT_SOURCE_LABEL,
     SYNTHETIC_REFERENCE_MONTH,
     build_synthetic_previous_mapao,

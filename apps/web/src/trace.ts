@@ -53,7 +53,7 @@ export const NOTE_LEGEND_PREFIX = "legenda:";
 
 /**
  * Par mantido separado com o eixo da separação, em espelho de `KeepApartPair` do
- * worker (`services/worker/src/croquitodxf_worker/tracing.py`). `axis: null` é o
+ * worker (`services/worker/src/croquito_worker/tracing.py`). `axis: null` é o
  * comportamento histórico: separa nos dois eixos.
  */
 export type KeepApartDraft = {

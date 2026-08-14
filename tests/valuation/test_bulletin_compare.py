@@ -17,15 +17,15 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from croquitodxf_valuation.bulletin_compare import (
+from croquito_valuation.bulletin_compare import (
     BulletinLineDiff,
     ReferenceBulletin,
     compare_bulletin,
     read_bulletin_lines,
 )
-from croquitodxf_valuation.errors import ValuationValidationError
-from croquitodxf_valuation.models import Valuation
-from croquitodxf_valuation.template import WorkbookTemplate
+from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.models import Valuation
+from croquito_valuation.template import WorkbookTemplate
 from tests.valuation.builders import ValuationFixture, build_fixture
 
 SHEET_NAME = "BM PRACA SINTETICA NORTE"

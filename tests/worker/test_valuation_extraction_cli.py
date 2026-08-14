@@ -17,17 +17,17 @@ from pathlib import Path
 
 import pytest
 
-from croquitodxf_valuation.assignment import (
+from croquito_valuation.assignment import (
     SCO_REFINED_SUGGESTER_VERSION,
     SCO_SUGGESTER_VERSION,
     CodeSuggestionSet,
     suggest_codes,
 )
-from croquitodxf_valuation.catalog import default_domain_synonyms
-from croquitodxf_valuation.contract import ContractWorkbook
-from croquitodxf_valuation.models import PriceCatalog
-from croquitodxf_valuation.takeoff import TakeoffItemStatus, load_takeoff_packet
-from croquitodxf_worker.providers import (
+from croquito_valuation.catalog import default_domain_synonyms
+from croquito_valuation.contract import ContractWorkbook
+from croquito_valuation.models import PriceCatalog
+from croquito_valuation.takeoff import TakeoffItemStatus, load_takeoff_packet
+from croquito_worker.providers import (
     FixtureProviderAdapter,
     LegendExtractionOutput,
     LegendRowOutput,
@@ -42,8 +42,8 @@ from croquitodxf_worker.providers import (
     ScoItemRefinementOutput,
     ScoRefinementOutput,
 )
-from croquitodxf_worker.valuation import cli as valuation_cli
-from croquitodxf_worker.valuation.cli import (
+from croquito_worker.valuation import cli as valuation_cli
+from croquito_worker.valuation.cli import (
     CATALOG_FILENAME,
     CODE_SUGGESTIONS_FILENAME,
     CONTRACT_FILENAME,
@@ -51,13 +51,13 @@ from croquitodxf_worker.valuation.cli import (
     TAKEOFF_PACKET_FILENAME,
     main,
 )
-from croquitodxf_worker.valuation.extraction_eval import REPORT_FILENAME
-from croquitodxf_worker.valuation.plate import PLATE_IMAGE_FILENAME
-from croquitodxf_worker.valuation.synthetic import build_synthetic_previous_mapao
+from croquito_worker.valuation.extraction_eval import REPORT_FILENAME
+from croquito_worker.valuation.plate import PLATE_IMAGE_FILENAME
+from croquito_worker.valuation.synthetic import build_synthetic_previous_mapao
 
-ALLOWLIST = "CROQUITODXF_AI_EXTRACTION_ALLOWED_DIGESTS"
-BUDGET = "CROQUITODXF_AI_MAX_ESTIMATED_COST_USD"
-PROVIDER_KEYS = ("CROQUITODXF_ANTHROPIC_API_KEY", "CROQUITODXF_OPENAI_API_KEY")
+ALLOWLIST = "CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS"
+BUDGET = "CROQUITO_AI_MAX_ESTIMATED_COST_USD"
+PROVIDER_KEYS = ("CROQUITO_ANTHROPIC_API_KEY", "CROQUITO_OPENAI_API_KEY")
 
 _REAL_ARM = "sonnet=anthropic:claude-sonnet-5"
 _FIXTURE_ARM = "fabricado=fixture:qualquer-modelo"
@@ -234,7 +234,7 @@ def test_suggest_codes_with_a_refine_arm_publishes_the_reordered_shortlist(
     assert published.suggester_version == SCO_REFINED_SUGGESTER_VERSION
     assert published.refinement is not None
     assert published.refinement.model_id == _FIXTURE_MODEL_ID
-    assert published.refinement.prompt_version == "sco-refinement@1.0.1"
+    assert published.refinement.prompt_version == "sco-refinement@1.0.2"
     # A ordem publicada é a pedida pelo refino, e a shortlist continua sendo a mesma.
     for before, after in zip(lexical.suggestions, published.suggestions, strict=True):
         assert [c.code for c in after.candidates] == [c.code for c in reversed(before.candidates)]
@@ -413,7 +413,7 @@ def test_extract_legend_real_publishes_a_packet_bound_to_the_authorised_document
     assert payload["image_sha256"] == image_digest
     extraction = payload["extraction"]
     assert isinstance(extraction, dict)
-    assert extraction["prompt_version"] == "legend-extraction@1.0.0"
+    assert extraction["prompt_version"] == "legend-extraction@1.0.1"
     packet = load_takeoff_packet(output_dir / TAKEOFF_PACKET_FILENAME)
     assert packet.plate_id == _PLATE_ID
     assert packet.image_sha256 == image_digest

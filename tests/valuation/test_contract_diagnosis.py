@@ -16,15 +16,15 @@ from pathlib import Path
 
 import pytest
 
-from croquitodxf_valuation.contract_diagnosis import (
+from croquito_valuation.contract_diagnosis import (
     ContractDiagnosis,
     ContractSemanticsError,
     SemanticFinding,
     diagnose_contract,
 )
-from croquitodxf_valuation.errors import ValuationValidationError
-from croquitodxf_valuation.template import AmendmentLayout, WorkbookTemplate, default_template
-from croquitodxf_valuation.workbook_reader import read_contract_parse, read_contract_workbook
+from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.template import AmendmentLayout, WorkbookTemplate, default_template
+from croquito_valuation.workbook_reader import read_contract_parse, read_contract_workbook
 from tests.valuation.builders import (
     PREVIOUS_MAPAO_CONTRACT_LABEL,
     PREVIOUS_MAPAO_PERIOD_NUMBERS,
@@ -313,7 +313,7 @@ def test_a_clean_dossier_reraises_the_original_refusal(
     """Invariante que o dossiê não cobre é bug nosso: o erro original sobe, não some."""
     history = _divergent_history(tmp_path / "mapao-divergente.xlsx")
     monkeypatch.setattr(
-        "croquitodxf_valuation.workbook_reader.diagnose_contract",
+        "croquito_valuation.workbook_reader.diagnose_contract",
         lambda parse: ContractDiagnosis(findings=(), summary={}),
     )
 

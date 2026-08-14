@@ -9,11 +9,11 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from croquitodxf_core.errors import DomainValidationError
-from croquitodxf_core.models import MeasurementKind, UnitCode
-from croquitodxf_worker.dxf import export_scene_package
-from croquitodxf_worker.rectangle_solver import RectangleSolveRequest, solve_rectangle
-from croquitodxf_worker.review import (
+from croquito_core.errors import DomainValidationError
+from croquito_core.models import MeasurementKind, UnitCode
+from croquito_worker.dxf import export_scene_package
+from croquito_worker.rectangle_solver import RectangleSolveRequest, solve_rectangle
+from croquito_worker.review import (
     DimensionReading,
     EvidenceRegion,
     HumanDecision,
@@ -26,7 +26,7 @@ from croquitodxf_worker.review import (
     file_sha256,
     write_review_artifacts,
 )
-from croquitodxf_worker.solver_eval import run_solver_eval
+from croquito_worker.solver_eval import run_solver_eval
 
 
 def _digest() -> str:

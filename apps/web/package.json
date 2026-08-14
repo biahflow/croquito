@@ -1,5 +1,5 @@
 {
-  "name": "@croquitodxf/web",
+  "name": "@croquito/web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -12,7 +12,7 @@
     "smoke:headless": "node e2e/smoke-headless.mjs"
   },
   "dependencies": {
-    "@croquitodxf/contracts": "*",
+    "@croquito/contracts": "*",
     "oidc-client-ts": "^3.1.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"

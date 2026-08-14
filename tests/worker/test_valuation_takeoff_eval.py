@@ -1,19 +1,19 @@
 """Eval determinística do takeoff: recall da fixture e contrato do fluxo de revisão.
 
 O gate roda inteiramente sobre a prancha sintética; ver a nota de honestidade em
-`croquitodxf_worker.valuation.takeoff_eval`.
+`croquito_worker.valuation.takeoff_eval`.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from croquitodxf_worker.valuation.plate import (
+from croquito_worker.valuation.plate import (
     PLATE_IMAGE_FILENAME,
     PLATE_PDF_FILENAME,
     SYNTHETIC_LEGEND_ROWS,
 )
-from croquitodxf_worker.valuation.takeoff_eval import TakeoffEvalReport, run_takeoff_eval
+from croquito_worker.valuation.takeoff_eval import TakeoffEvalReport, run_takeoff_eval
 
 _EXPECTED_CHECKS = {
     "no_item_born_confirmed",

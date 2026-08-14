@@ -4,16 +4,16 @@ from decimal import Decimal
 
 import pytest
 
-from croquitodxf_core.models import MeasurementKind, UnitCode
-from croquitodxf_worker.association import associate_readings
-from croquitodxf_worker.review import (
+from croquito_core.models import MeasurementKind, UnitCode
+from croquito_worker.association import associate_readings
+from croquito_worker.review import (
     DimensionReading,
     EvidenceRegion,
     PixelBox,
     ReadingStatus,
     ReviewPacket,
 )
-from croquitodxf_worker.vision import (
+from croquito_worker.vision import (
     PixelCircle,
     PixelLine,
     PixelPoint,

@@ -578,7 +578,7 @@ nem em auditoria. Artefato de outro tenant retorna `404`.
 
 ```json
 {
-  "type": "https://croquitodxf/errors/revision-conflict",
+  "type": "https://croquito/errors/revision-conflict",
   "title": "Revision conflict",
   "status": 409,
   "code": "REVISION_CONFLICT",

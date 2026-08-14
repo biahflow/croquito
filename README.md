@@ -1,6 +1,6 @@
-# CroquiToDXF
+# Croquito
 
-CroquiToDXF é um SaaS **AI First** para transformar levantamentos e croquis
+Croquito é um SaaS **AI First** para transformar levantamentos e croquis
 manuscritos de engenharia, arquitetura e equipamentos urbanos em arquivos DXF
 técnicos, revisáveis e auditáveis.
 
@@ -91,7 +91,7 @@ credenciais, SDKs nem envia documentos a serviços externos.
 Para ingerir um PDF autorizado sem upload externo:
 
 ```bash
-uv run croquitodxf-demo ingest \
+uv run croquito-demo ingest \
   --input "/caminho/arquivo.pdf" \
   --dataset-id "caso-local-v1" \
   --role "evaluation" \
@@ -105,7 +105,7 @@ manifesto com digest e métricas. Veja o
 Após a ingestão, propostas CV não exportáveis podem ser geradas com:
 
 ```bash
-uv run croquitodxf-demo propose-dataset \
+uv run croquito-demo propose-dataset \
   --manifest output/pdf/caso-local-v1/manifest.json
 ```
 

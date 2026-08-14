@@ -14,7 +14,7 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
-from croquitodxf_valuation.assignment import (
+from croquito_valuation.assignment import (
     SCO_REFINED_SUGGESTER_VERSION,
     SCO_SUGGESTER_VERSION,
     CodeAssignmentBatch,
@@ -28,7 +28,7 @@ from croquitodxf_valuation.assignment import (
     apply_refinement,
     suggest_codes,
 )
-from croquitodxf_valuation.catalog import (
+from croquito_valuation.catalog import (
     DomainSynonyms,
     ExpandedTerms,
     LegendNoiseList,
@@ -39,10 +39,10 @@ from croquitodxf_valuation.catalog import (
     lexical_stems,
     lexical_tokens,
 )
-from croquitodxf_valuation.contract import ContractLine, ContractWorkbook
-from croquitodxf_valuation.errors import ValuationValidationError, valuation_error_codes
-from croquitodxf_valuation.models import PriceCatalog, PriceCatalogEntry, ReviewerDecision
-from croquitodxf_valuation.takeoff import (
+from croquito_valuation.contract import ContractLine, ContractWorkbook
+from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
+from croquito_valuation.models import PriceCatalog, PriceCatalogEntry, ReviewerDecision
+from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
     TakeoffItem,

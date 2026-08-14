@@ -18,7 +18,7 @@ from typing import Any, cast
 import fitz
 from botocore.exceptions import ClientError
 
-from croquitodxf_api.storage import UploadedObject
+from croquito_api.storage import UploadedObject
 
 
 @dataclass(frozen=True, slots=True)

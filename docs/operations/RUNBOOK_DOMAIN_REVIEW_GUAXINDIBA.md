@@ -47,7 +47,7 @@ profissional que assina, nunca um passo automático.
    observações nem exporta DXF.
 4. O **responsável pelo tenant** — nunca o revisor — faz o upload autenticado do PDF
    autorizado e, depois que o worker mover o job para `REVIEW_REQUIRED`, executa
-   `croquitodxf-demo seed-review` ligando o pacote ao job, conforme o
+   `croquito-demo seed-review` ligando o pacote ao job, conforme o
    [guia de desenvolvimento local](../engineering/LOCAL_DEVELOPMENT.md). O pacote local
    do Guaxindiba já satisfaz todas as validações do comando: os quatro digests de imagem
    coincidem, as três leituras do solver existem e têm candidato de associação, e nenhuma

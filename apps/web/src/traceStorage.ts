@@ -21,7 +21,7 @@ import {
  * Este módulo é puro para ser testável sem DOM; quem toca o storage é o App.
  */
 
-const STORAGE_PREFIX = "croquitodxf:trace-draft:";
+const STORAGE_PREFIX = "croquito:trace-draft:";
 
 export function traceDraftStorageKey(jobId: string): string {
   return `${STORAGE_PREFIX}${jobId}`;

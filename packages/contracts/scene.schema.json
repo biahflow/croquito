@@ -665,7 +665,7 @@
       "type": "string"
     }
   },
-  "$id": "https://schemas.croquitodxf.local/scene/1.0.0.json",
+  "$id": "https://schemas.croquito.local/scene/1.0.0.json",
   "additionalProperties": false,
   "properties": {
     "accepted_approximation_ids": {
@@ -742,6 +742,6 @@
     "version",
     "entities"
   ],
-  "title": "CroquiToDXF Scene Revision",
+  "title": "Croquito Scene Revision",
   "type": "object"
 }

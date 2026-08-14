@@ -39,7 +39,7 @@ um score como probabilidade ou confirmação.
 ## Uso local
 
 ```bash
-uv run croquitodxf-demo associate-review \
+uv run croquito-demo associate-review \
   --packet output/pdf/caso/review/review-packet.json \
   --proposals output/pdf/caso/vision/page-001/vision-proposals.json \
   --output output/pdf/caso/review

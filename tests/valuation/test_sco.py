@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from croquitodxf_valuation.errors import ValuationValidationError
-from croquitodxf_valuation.sco import (
+from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.sco import (
     is_contract_code,
     is_family_row_code,
     is_sco_code,

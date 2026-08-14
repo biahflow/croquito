@@ -319,7 +319,7 @@ export type ReviewRectification = {
 /**
  * Rascunhos tipados da conversa da revisão. Cada um espelha, campo a campo, o contrato
  * servido pela API (`ReviewChatOutput` em
- * `services/worker/src/croquitodxf_worker/providers.py`): é o corpo de um endpoint que
+ * `services/worker/src/croquito_worker/providers.py`): é o corpo de um endpoint que
  * já existe, preenchido pelo agente e assinado pelo profissional (ADR-0023).
  */
 export type ChatReadingDecisionDraft = {

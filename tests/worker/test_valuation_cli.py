@@ -18,11 +18,11 @@ import pytest
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
 
-from croquitodxf_valuation.catalog import file_sha256
-from croquitodxf_valuation.contract import ContractWorkbook
-from croquitodxf_valuation.models import PriceCatalog, Valuation
-from croquitodxf_valuation.template import WorkbookTemplate, default_template
-from croquitodxf_worker.valuation.cli import (
+from croquito_valuation.catalog import file_sha256
+from croquito_valuation.contract import ContractWorkbook
+from croquito_valuation.models import PriceCatalog, Valuation
+from croquito_valuation.template import WorkbookTemplate, default_template
+from croquito_worker.valuation.cli import (
     AUDIT_FILENAME,
     CATALOG_FILENAME,
     CATALOG_IMPORT_REPORT_FILENAME,
@@ -32,7 +32,7 @@ from croquitodxf_worker.valuation.cli import (
     WORKBOOK_FILENAME,
     main,
 )
-from croquitodxf_worker.valuation.synthetic import (
+from croquito_worker.valuation.synthetic import (
     SYNTHETIC_PREVIOUS_PERIOD_COUNT,
     build_synthetic_approval,
     build_synthetic_multi_valuation,

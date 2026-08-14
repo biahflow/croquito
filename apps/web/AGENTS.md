@@ -35,7 +35,7 @@ geometria, escolhe consenso ou autoriza tenant por conta própria.
 
 ## Smoke headless (local, nunca CI)
 
-`npm --workspace @croquitodxf/web run smoke:headless` (fonte em `e2e/smoke-headless.mjs`)
+`npm --workspace @croquito/web run smoke:headless` (fonte em `e2e/smoke-headless.mjs`)
 abre a tela num Chromium, faz o login real no Keycloak local e confere que a jornada
 renderizou e que o `?job` do link sobreviveu ao redirect do OIDC. É o único teste que
 alcança o redirect de verdade; o resto do comportamento é coberto por teste puro.
@@ -48,12 +48,12 @@ npx playwright install chromium   # uma vez; não roda no postinstall
 cp .env.local.example .env.local  # dentro de apps/web, se ainda não existir
 ```
 
-Variáveis (todas opcionais, com default do ambiente local): `CROQUITODXF_SMOKE_WEB_URL`,
-`CROQUITODXF_SMOKE_JOB` (sem ele a checagem do `?job` não roda), `CROQUITODXF_SMOKE_USER`,
-`CROQUITODXF_SMOKE_PASSWORD`, `CROQUITODXF_SMOKE_TIMEOUT_MS`.
+Variáveis (todas opcionais, com default do ambiente local): `CROQUITO_SMOKE_WEB_URL`,
+`CROQUITO_SMOKE_JOB` (sem ele a checagem do `?job` não roda), `CROQUITO_SMOKE_USER`,
+`CROQUITO_SMOKE_PASSWORD`, `CROQUITO_SMOKE_TIMEOUT_MS`.
 
-Cena opcional da conversa da revisão, com `CROQUITODXF_SMOKE_CHAT=1` (exige
-`CROQUITODXF_SMOKE_JOB`): abre o painel, envia a pergunta, espera a resposta e confere
+Cena opcional da conversa da revisão, com `CROQUITO_SMOKE_CHAT=1` (exige
+`CROQUITO_SMOKE_JOB`): abre o painel, envia a pergunta, espera a resposta e confere
 que "Usar este rascunho" só pré-preenche. Ela **depende de um consumidor de fixtures
 rodando**, porque a resposta é servida por fixture sintética e nenhum provider é chamado:
 
@@ -62,7 +62,7 @@ make dev-worker-fixtures   # noutro terminal, depois de a pergunta ser enviada
 ```
 
 `make dev-worker-fixtures` serve **uma** mensagem por execução. O teto de espera é
-`CROQUITODXF_SMOKE_CHAT_TIMEOUT_MS` (120 s por padrão). A fixture cita o par sintético
+`CROQUITO_SMOKE_CHAT_TIMEOUT_MS` (120 s por padrão). A fixture cita o par sintético
 canônico do repositório: contra um job cujo pacote não o contém, o turno é recusado com
 `CHAT_ACT_UNKNOWN_REFERENCE` — o portão funcionando — e a cena reprova por não haver
 rascunho para conferir.

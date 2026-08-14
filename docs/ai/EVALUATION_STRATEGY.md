@@ -139,7 +139,7 @@ braço, os checks de gate e o veredito `passed`.
   e do mesmo gabarito de código do `demo`. Nada sai da máquina e nada é cobrado.
 - **Pago (local).** Com `--arm nome=provider:modelo` (repetível), os braços reais entram
   pela mesma fábrica dos demais comandos pagos, que exige
-  `CROQUITODXF_AI_MAX_ESTIMATED_COST_USD`. Nenhum teste roda nesse modo, e a comparação
+  `CROQUITO_AI_MAX_ESTIMATED_COST_USD`. Nenhum teste roda nesse modo, e a comparação
   entre modelos é decisão humana sobre o relatório.
 
 Os dois modos passam pelo mesmo mapeamento observação→takeoff e pelo mesmo refino do

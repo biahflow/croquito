@@ -9,8 +9,8 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
-from croquitodxf_valuation.assignment import CodeAssignment, CodeAssignmentSet
-from croquitodxf_valuation.calc import (
+from croquito_valuation.assignment import CodeAssignment, CodeAssignmentSet
+from croquito_valuation.calc import (
     DEFAULT_BLOCK_LABEL,
     DEFAULT_OPERAND_NAME,
     CalcBlockPlan,
@@ -19,16 +19,16 @@ from croquitodxf_valuation.calc import (
     build_worksite_bulletin,
     build_worksite_valuation,
 )
-from croquitodxf_valuation.contract import ContractLine, ContractWorkbook
-from croquitodxf_valuation.errors import ValuationValidationError, valuation_error_codes
-from croquitodxf_valuation.models import (
+from croquito_valuation.contract import ContractLine, ContractWorkbook
+from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
+from croquito_valuation.models import (
     CalcOperand,
     CalcRecipe,
     PriceCatalog,
     PriceCatalogEntry,
     ReviewerDecision,
 )
-from croquitodxf_valuation.takeoff import (
+from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
     TakeoffItem,

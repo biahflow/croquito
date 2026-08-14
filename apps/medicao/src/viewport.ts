@@ -135,7 +135,7 @@ function circleOverlapsRect(pin: PinCircle, rect: SvgRect): boolean {
  * disso; se nenhuma das quatro direções sobrar, a mais próxima do pedido (acima) vence.
  *
  * Mesma intenção de posicionamento do `balloon_layout` do overlay do servidor
- * (`services/worker/src/croquitodxf_worker/valuation/takeoff_overlay.py`) —
+ * (`services/worker/src/croquito_worker/valuation/takeoff_overlay.py`) —
  * reimplementada aqui, sem importar nada de lá: aquele módulo desenha PNG em Python no
  * worker, este é geometria pura de apresentação em TypeScript no navegador.
  */

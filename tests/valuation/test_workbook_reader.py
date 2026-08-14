@@ -14,16 +14,16 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
-from croquitodxf_valuation.catalog import file_sha256
-from croquitodxf_valuation.contract import ContractWorkbook, contract_workbook_id_for
-from croquitodxf_valuation.contract_diagnosis import (
+from croquito_valuation.catalog import file_sha256
+from croquito_valuation.contract import ContractWorkbook, contract_workbook_id_for
+from croquito_valuation.contract_diagnosis import (
     ContractDiagnosis,
     ContractSemanticsError,
     SemanticFinding,
 )
-from croquitodxf_valuation.errors import ValuationValidationError
-from croquitodxf_valuation.template import WorkbookTemplate, default_template
-from croquitodxf_valuation.workbook_reader import (
+from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.template import WorkbookTemplate, default_template
+from croquito_valuation.workbook_reader import (
     ContractImportNotes,
     read_contract_workbook,
     read_contract_workbook_with_notes,

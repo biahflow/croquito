@@ -25,9 +25,9 @@ import cv2
 import pytest
 from PIL import Image, ImageDraw
 
-from croquitodxf_valuation.catalog import file_sha256
-from croquitodxf_valuation.errors import ValuationValidationError
-from croquitodxf_valuation.takeoff import (
+from croquito_valuation.catalog import file_sha256
+from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
     TakeoffDecisionBatch,
@@ -38,13 +38,13 @@ from croquitodxf_valuation.takeoff import (
     apply_takeoff_decisions,
     load_takeoff_packet,
 )
-from croquitodxf_worker.valuation.cli import (
+from croquito_worker.valuation.cli import (
     TAKEOFF_OVERLAY_FILENAME,
     TAKEOFF_PACKET_FILENAME,
     TAKEOFF_REGISTRATION_REPORT_FILENAME,
     main,
 )
-from croquitodxf_worker.valuation.legend_registration import (
+from croquito_worker.valuation.legend_registration import (
     LabeledSpan,
     TextBand,
     detect_text_bands,
@@ -54,8 +54,8 @@ from croquitodxf_worker.valuation.legend_registration import (
     resolve_item_bands,
     restore_raw_bboxes,
 )
-from croquitodxf_worker.valuation.plate import PlateArtifacts, render_synthetic_plate
-from croquitodxf_worker.valuation.takeoff_fixture import extract_takeoff_fixture, takeoff_item_id
+from croquito_worker.valuation.plate import PlateArtifacts, render_synthetic_plate
+from croquito_worker.valuation.takeoff_fixture import extract_takeoff_fixture, takeoff_item_id
 
 CONTAINMENT_THRESHOLD = 0.6
 """Tolerância do teste (a mesma citada no spec): fração do bbox RECUPERADO que precisa

@@ -16,10 +16,10 @@ from typing import Any
 from PIL import Image
 from pydantic import BaseModel
 
-from croquitodxf_worker.association import AssociationSet
-from croquitodxf_worker.ingest import PageManifest, PdfManifest
-from croquitodxf_worker.rectangle_solver import RectangleSolveRequest
-from croquitodxf_worker.review import (
+from croquito_worker.association import AssociationSet
+from croquito_worker.ingest import PageManifest, PdfManifest
+from croquito_worker.rectangle_solver import RectangleSolveRequest
+from croquito_worker.review import (
     DimensionReading,
     EvidenceRegion,
     HumanDecision,
@@ -27,7 +27,7 @@ from croquitodxf_worker.review import (
     ReadingStatus,
     ReviewPacket,
 )
-from croquitodxf_worker.vision import (
+from croquito_worker.vision import (
     PixelCircle,
     PixelLine,
     PixelPoint,

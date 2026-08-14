@@ -3,7 +3,7 @@ from itertools import combinations
 
 import pytest
 
-from croquitodxf_core.models import (
+from croquito_core.models import (
     CircleGeometry,
     DimensionGeometry,
     Entity,
@@ -16,7 +16,7 @@ from croquitodxf_core.models import (
     Provenance,
     TextGeometry,
 )
-from croquitodxf_worker.element_labels import (
+from croquito_worker.element_labels import (
     BALLOON_SUMMARY_CODE,
     LABEL_SUMMARY_CODE,
     LEGEND_SUMMARY_CODE,

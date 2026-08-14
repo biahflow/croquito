@@ -16,8 +16,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from croquitodxf_valuation.canonical import canonicalize_workbook
-from croquitodxf_worker.valuation.cli import run_valuation_demo
+from croquito_valuation.canonical import canonicalize_workbook
+from croquito_worker.valuation.cli import run_valuation_demo
 from tests.valuation.builders import build_fixture, write_fixture_workbook
 
 GOLDEN_PATH = Path(__file__).parent / "golden" / "valuation-demo.canonical.json"

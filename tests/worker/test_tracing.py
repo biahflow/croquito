@@ -20,7 +20,7 @@ from ezdxf.entities.dimension import Dimension
 from ezdxf.filemanagement import readfile
 from pydantic import ValidationError
 
-from croquitodxf_core.models import (
+from croquito_core.models import (
     CircleGeometry,
     DiameterDimensionGeometry,
     DimensionGeometry,
@@ -37,10 +37,10 @@ from croquitodxf_core.models import (
     SceneRevision,
     TextGeometry,
 )
-from croquitodxf_worker.criteria import FALLBACK_CRITERION_MESSAGE, ScopeCriterion
-from croquitodxf_worker.dxf import export_scene_package
-from croquitodxf_worker.geometry_solver import BandSeparation
-from croquitodxf_worker.review import (
+from croquito_worker.criteria import FALLBACK_CRITERION_MESSAGE, ScopeCriterion
+from croquito_worker.dxf import export_scene_package
+from croquito_worker.geometry_solver import BandSeparation
+from croquito_worker.review import (
     DimensionReading,
     EvidenceRegion,
     HumanDecision,
@@ -49,7 +49,7 @@ from croquitodxf_worker.review import (
     ReviewPacket,
     SceneApproval,
 )
-from croquitodxf_worker.tracing import (
+from croquito_worker.tracing import (
     DerivedDimensionRequest,
     KeepApartPair,
     TraceAcceptance,
@@ -59,7 +59,7 @@ from croquitodxf_worker.tracing import (
     solve_trace,
     write_approved_trace_revision,
 )
-from croquitodxf_worker.vision import (
+from croquito_worker.vision import (
     PixelCircle,
     PixelLine,
     PixelPoint,
@@ -419,7 +419,7 @@ def test_prancha_dimensoes_hachura_e_carimbo(tmp_path: Path) -> None:
     assert len(modelspace.query("DIMENSION")) == 6
     hatch = modelspace.query("HATCH").first
     assert hatch is not None
-    assert hatch.has_xdata("CROQUITODXF")
+    assert hatch.has_xdata("CROQUITO")
 
 
 def test_rotulos_nao_cobrem_o_desenho() -> None:
@@ -1303,7 +1303,7 @@ def test_nota_curta_usa_fonte_menor() -> None:
 
 
 def _dimension_reference_height(scene: SceneRevision) -> float:
-    from croquitodxf_worker.element_labels import dimension_text_height
+    from croquito_worker.element_labels import dimension_text_height
 
     xs: list[float] = []
     ys: list[float] = []
@@ -1784,9 +1784,7 @@ def test_export_com_detalhe_audita_e_exclui_quantidade_de_moldura(tmp_path: Path
     frame_polylines = [
         polyline for polyline in modelspace.query("LWPOLYLINE") if polyline.dxf.layer == "DETALHES"
     ]
-    assert frame_polylines and all(
-        polyline.has_xdata("CROQUITODXF") for polyline in frame_polylines
-    )
+    assert frame_polylines and all(polyline.has_xdata("CROQUITO") for polyline in frame_polylines)
 
 
 def test_export_de_sketch_fica_fora_dos_quantitativos(tmp_path: Path) -> None:
@@ -3063,7 +3061,7 @@ def test_export_leva_a_cota_diametral_auditada(tmp_path: Path) -> None:
         if isinstance(dimension, Dimension) and dimension.dimtype & 7 == 3
     ]
     assert len(diametrais) == 1
-    assert diametrais[0].has_xdata("CROQUITODXF")
+    assert diametrais[0].has_xdata("CROQUITO")
     assert diametrais[0].dxf.layer == "COTAS"
 
     # A cota pousa onde o croqui a escreveu: a evidência está à direita do centro, e é

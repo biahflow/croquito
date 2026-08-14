@@ -8,10 +8,10 @@ import pytest
 from numpy.typing import NDArray
 from PIL import Image, ImageDraw
 
-from croquitodxf_worker import vision
-from croquitodxf_worker.providers import GeometryElementOutput, NormalizedPoint
-from croquitodxf_worker.synthetic import render_synthetic_input
-from croquitodxf_worker.vision import (
+from croquito_worker import vision
+from croquito_worker.providers import GeometryElementOutput, NormalizedPoint
+from croquito_worker.synthetic import render_synthetic_input
+from croquito_worker.vision import (
     ARC_SAMPLES,
     EDGE_MIN_EXTENT_RATIO,
     EDGE_ORTHOGONALITY_TOLERANCE_DEGREES,
@@ -34,7 +34,7 @@ from croquitodxf_worker.vision import (
     register_to_ink,
     write_proposal_artifacts,
 )
-from croquitodxf_worker.vision_eval import run_synthetic_vision_eval
+from croquito_worker.vision_eval import run_synthetic_vision_eval
 
 
 def test_synthetic_vision_eval_passes(tmp_path: Path) -> None:
@@ -1313,7 +1313,7 @@ def test_edge_orthogonality_tolerance_matches_the_trace_regulariser() -> None:
     refino chamasse de retângulo o que ela trata como diagonal, o estágio corrigiria o
     tamanho de uma forma que o traçado nem vai reconhecer.
     """
-    from croquitodxf_worker.geometry_solver import AXIS_TOLERANCE_DEGREES
+    from croquito_worker.geometry_solver import AXIS_TOLERANCE_DEGREES
 
     assert EDGE_ORTHOGONALITY_TOLERANCE_DEGREES == AXIS_TOLERANCE_DEGREES
 

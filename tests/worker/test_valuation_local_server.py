@@ -36,16 +36,16 @@ import pymupdf
 import pytest
 from fastapi.testclient import TestClient
 
-from croquitodxf_valuation.assignment import (
+from croquito_valuation.assignment import (
     LLM_RERANK_SUFFIX,
     SCO_HYBRID_SUGGESTER_VERSION,
     SCO_SUGGESTER_VERSION,
     CodeSuggestionSet,
     SuggestionRefinement,
 )
-from croquitodxf_valuation.models import PriceCatalog, PriceCatalogEntry
-from croquitodxf_valuation.takeoff import load_takeoff_packet
-from croquitodxf_worker.providers import (
+from croquito_valuation.models import PriceCatalog, PriceCatalogEntry
+from croquito_valuation.takeoff import load_takeoff_packet
+from croquito_worker.providers import (
     EmbeddingsExecution,
     FixtureProviderAdapter,
     LegendExtractionOutput,
@@ -60,8 +60,8 @@ from croquitodxf_worker.providers import (
     ProviderRequest,
     ProviderUsage,
 )
-from croquitodxf_worker.valuation import local_server
-from croquitodxf_worker.valuation.cli import (
+from croquito_worker.valuation import local_server
+from croquito_worker.valuation.cli import (
     CATALOG_FILENAME,
     CODE_ASSIGNMENTS_FILENAME,
     CODE_SUGGESTIONS_FILENAME,
@@ -70,9 +70,9 @@ from croquitodxf_worker.valuation.cli import (
     TAKEOFF_REGISTRATION_REPORT_FILENAME,
     VALUATION_FILENAME,
 )
-from croquitodxf_worker.valuation.cli import main as cli_main
-from croquitodxf_worker.valuation.legend_extraction import run_legend_extraction
-from croquitodxf_worker.valuation.local_server import (
+from croquito_worker.valuation.cli import main as cli_main
+from croquito_worker.valuation.legend_extraction import run_legend_extraction
+from croquito_worker.valuation.local_server import (
     CATALOG_INDEX_NOTES,
     CATALOG_NOTES,
     EXTRACTION_LINEAGE_FILENAME,
@@ -82,19 +82,19 @@ from croquitodxf_worker.valuation.local_server import (
     install_round_catalog,
     install_round_catalog_index,
 )
-from croquitodxf_worker.valuation.plate import PLATE_IMAGE_FILENAME
-from croquitodxf_worker.valuation.sco_matching import (
+from croquito_worker.valuation.plate import PLATE_IMAGE_FILENAME
+from croquito_worker.valuation.sco_matching import (
     CATALOG_INDEX_FILENAME,
     QUERY_CACHE_FILENAME,
     index_document,
 )
-from croquitodxf_worker.valuation.sco_matching_fixtures import (
+from croquito_worker.valuation.sco_matching_fixtures import (
     FIXTURE_EMBEDDINGS_DIMS,
     FIXTURE_EMBEDDINGS_MODEL,
     fixture_catalog_index,
     fixture_vector,
 )
-from croquitodxf_worker.valuation.synthetic import build_synthetic_previous_mapao
+from croquito_worker.valuation.synthetic import build_synthetic_previous_mapao
 
 REVIEWER: Final = "orcamentista-de-teste"
 
@@ -1203,9 +1203,9 @@ def _last_json(capsys: pytest.CaptureFixture[str]) -> dict[str, Any]:
 # Upload da prancha do projetista e extração paga automática
 # --------------------------------------------------------------------------------------
 
-BUDGET_ENV: Final = "CROQUITODXF_AI_MAX_ESTIMATED_COST_USD"
-ANTHROPIC_KEY_ENV: Final = "CROQUITODXF_ANTHROPIC_API_KEY"
-ALLOWLIST_ENV: Final = "CROQUITODXF_AI_EXTRACTION_ALLOWED_DIGESTS"
+BUDGET_ENV: Final = "CROQUITO_AI_MAX_ESTIMATED_COST_USD"
+ANTHROPIC_KEY_ENV: Final = "CROQUITO_ANTHROPIC_API_KEY"
+ALLOWLIST_ENV: Final = "CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS"
 
 _FIXTURE_MODEL_ID: Final = "fixture-legend-v1"
 _PROMOTED_PAGE_FILENAME: Final = "page-001.png"
@@ -1383,7 +1383,7 @@ def test_the_upload_ingests_the_plate_and_the_paid_extraction_publishes_the_pack
     execution = extraction["execution"]
     assert execution["provider"] == "anthropic"
     assert execution["model_id"] == _FIXTURE_MODEL_ID
-    assert execution["prompt_version"] == "legend-extraction@1.0.0"
+    assert execution["prompt_version"] == "legend-extraction@1.0.1"
     assert set(execution) >= {"latency_ms", "input_tokens", "output_tokens", "estimated_cost_usd"}
 
     packet = load_takeoff_packet(empty_root / TAKEOFF_PACKET_FILENAME)
@@ -1583,7 +1583,7 @@ def test_a_multi_page_pdf_promotes_the_first_page_and_declares_the_count(
 # Catálogo de preços da rodada e avisos do banner do `serve`
 # --------------------------------------------------------------------------------------
 
-CATALOG_ENV: Final = "CROQUITODXF_MEDICAO_CATALOG"
+CATALOG_ENV: Final = "CROQUITO_MEDICAO_CATALOG"
 
 
 @pytest.fixture

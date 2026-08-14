@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from croquitodxf_worker.geometry_solver import (
+from croquito_worker.geometry_solver import (
     AxisBands,
     BandSeparation,
     SpanConstraint,
@@ -13,7 +13,7 @@ from croquitodxf_worker.geometry_solver import (
     solve_axis,
     solve_geometry,
 )
-from croquitodxf_worker.topology import (
+from croquito_worker.topology import (
     JUNCTION_TOLERANCE_RATIO,
     Junction,
     Topology,
@@ -22,7 +22,7 @@ from croquitodxf_worker.topology import (
     junction_positions,
     rebuild_all,
 )
-from croquitodxf_worker.vision import PixelLine, PixelPoint, PixelPolyline, VisionProposal
+from croquito_worker.vision import PixelLine, PixelPoint, PixelPolyline, VisionProposal
 
 WIDTH, HEIGHT = 2000, 2000
 TOUCH_PX = math.hypot(WIDTH, HEIGHT) * JUNCTION_TOLERANCE_RATIO

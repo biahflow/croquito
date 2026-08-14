@@ -62,7 +62,7 @@ pesado já tem neste repositório, e não tem nenhum caminho de escrita para o d
 A fatia 1, entregue com este ADR, é **100% offline**: a tarefa `review-chat@1.0.0` é servida
 por fixture sintética injetada explicitamente (`make dev-worker-fixtures`), e sem suíte
 injetada o turno falha com `CHAT_PROVIDER_UNAVAILABLE` sem construir provider algum —
-inclusive com `CROQUITODXF_REAL_PROVIDERS_ENABLED` ligado. A via paga real é assunto de
+inclusive com `CROQUITO_REAL_PROVIDERS_ENABLED` ligado. A via paga real é assunto de
 outro ADR: ela traz consentimento de gasto, teto por sessão e roteamento de modelo, que este
 não decide.
 

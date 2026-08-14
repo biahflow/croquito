@@ -1093,7 +1093,7 @@ export function App() {
             {state === null ? (
               <p>
                 O estado da rodada ainda não foi lido. Suba o servidor local com{" "}
-                <code>croquitodxf-valuation serve --root &lt;rodada&gt; --reviewer &lt;id&gt;</code>{" "}
+                <code>croquito-valuation serve --root &lt;rodada&gt; --reviewer &lt;id&gt;</code>{" "}
                 e use “Recarregar estado atual”.
               </p>
             ) : (

@@ -33,9 +33,9 @@ divergente) e é o formato que o cliente exige.
 ## Decisão
 
 Medição de obra é um contexto delimitado próprio, em `packages/valuation`
-(domínio puro) e `services/worker/src/croquitodxf_worker/valuation/` (comandos), com
+(domínio puro) e `services/worker/src/croquito_worker/valuation/` (comandos), com
 vocabulário próprio e sem dependência do scene graph. O pacote pode depender de
-`croquitodxf_core` para ids e utilidades, nunca do worker.
+`croquito_core` para ids e utilidades, nunca do worker.
 
 - **O JSON canônico é a fonte de verdade; a planilha é render auditado.** Toda pasta
   gerada é reaberta, tem suas fórmulas recomputadas em `Decimal` por um avaliador

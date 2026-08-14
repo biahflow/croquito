@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from croquitodxf_valuation.rounding import (
+from croquito_valuation.rounding import (
     money_trunc,
     quantity_round,
     spreadsheet_double_trunc,

@@ -7,8 +7,8 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from croquitodxf_valuation.errors import valuation_error_codes
-from croquitodxf_valuation.template import (
+from croquito_valuation.errors import valuation_error_codes
+from croquito_valuation.template import (
     AmendmentColumns,
     AmendmentLayout,
     CatalogLayout,

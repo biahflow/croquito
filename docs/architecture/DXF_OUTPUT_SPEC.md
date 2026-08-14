@@ -53,12 +53,17 @@ automática com norma. Templates por cliente ficam fora do MVP.
 
 ## Provenance
 
-O DXF inclui XDATA no application registry `CROQUITODXF` para:
+O DXF inclui XDATA no application registry `CROQUITO` para:
 
 - entity UUID.
 - scene revision UUID.
 - precision.
 - provenance summary code.
+
+O nome do registry acompanhou o rebranding de 2026-08-14 e é mudança de formato de saída:
+arquivo exportado a partir dessa data declara `CROQUITO`, e os publicados antes dela
+continuam declarando o nome anterior, sem migração
+([ADR-0024](../adr/0024-rebranding-to-croquito.md)).
 
 Nenhum texto bruto de cliente ou resposta de modelo entra em XDATA. O relatório
 JSON guarda detalhes protegidos no pacote do usuário.

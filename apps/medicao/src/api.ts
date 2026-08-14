@@ -2,7 +2,7 @@
  * Cliente do servidor **local** de homologação da medição (Fase A do M6).
  *
  * Os tipos abaixo são escritos à mão como espelho do contrato de
- * `services/worker/src/croquitodxf_worker/valuation/local_server.py` — mesma prática do
+ * `services/worker/src/croquito_worker/valuation/local_server.py` — mesma prática do
  * `apps/web/src/api.ts`, porque este contexto não tem schema gerado. Quando uma rota
  * mudar lá, ela muda aqui; nada nesta tela adivinha campo que o servidor não mandou.
  *
@@ -430,7 +430,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new MedicaoApiError(
       0,
       "LOCAL_SERVER_UNREACHABLE",
-      "o servidor local não respondeu; confira se `croquitodxf-valuation serve` está no ar",
+      "o servidor local não respondeu; confira se `croquito-valuation serve` está no ar",
       { base_url: apiBaseUrl, path },
     );
   }

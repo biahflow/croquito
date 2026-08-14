@@ -17,7 +17,7 @@ Responsável: Architecture / Engineering
 ```mermaid
 flowchart LR
     User[Engenheiro / CADista]
-    System[CroquiToDXF]
+    System[Croquito]
     AutoCAD[AutoCAD / leitor DXF]
     OpenAI[OpenAI API]
     AWSAI[Textract + Bedrock]

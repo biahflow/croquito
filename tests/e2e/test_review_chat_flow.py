@@ -15,12 +15,12 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
-from croquitodxf_api.config import ApiSettings
-from croquitodxf_api.database import Database
-from croquitodxf_api.main import create_app
-from croquitodxf_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
-from croquitodxf_worker.providers import build_synthetic_provider_suite
-from croquitodxf_worker.review_seed import SeedInputs, seed_review
+from croquito_api.config import ApiSettings
+from croquito_api.database import Database
+from croquito_api.main import create_app
+from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
+from croquito_worker.providers import build_synthetic_provider_suite
+from croquito_worker.review_seed import SeedInputs, seed_review
 from tests.bundles import WIDTH_PROPOSAL_ID, WIDTH_READING_ID, write_seed_bundle
 from tests.fakes import FakeObjectStore, FakeQueue, synthetic_pdf
 
@@ -43,7 +43,7 @@ def stack(tmp_path: Path) -> tuple[TestClient, Path, FakeObjectStore, FakeQueue]
     app = create_app(
         settings=ApiSettings(
             database_url=database_url,
-            artifact_bucket="croquitodxf-chat-e2e",
+            artifact_bucket="croquito-chat-e2e",
             aws_region="sa-east-1",
             aws_endpoint_url="http://localhost:4566",
             queue_url=QUEUE_URL,
@@ -72,7 +72,7 @@ def _worker(
             queue_url=QUEUE_URL,
             aws_region="sa-east-1",
             aws_endpoint_url="http://localhost:4566",
-            artifact_bucket="croquitodxf-chat-e2e",
+            artifact_bucket="croquito-chat-e2e",
         ),
         provider_suite=build_synthetic_provider_suite() if fixtures else None,
     )
@@ -134,7 +134,7 @@ def test_chat_draft_becomes_a_decision_only_through_the_human_command(
             queue_url="",
             aws_region="sa-east-1",
             aws_endpoint_url="http://localhost:4566",
-            artifact_bucket="croquitodxf-chat-e2e",
+            artifact_bucket="croquito-chat-e2e",
         ),
         s3_client=storage,
     )

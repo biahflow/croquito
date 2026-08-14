@@ -5,14 +5,14 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter
 
-from croquitodxf_worker.extraction_eval import (
+from croquito_worker.extraction_eval import (
     ExtractionCandidate,
     ExtractionEvalReport,
     ExtractionNotAllowlistedError,
     register_extraction_arms,
     run_extraction_eval,
 )
-from croquitodxf_worker.providers import (
+from croquito_worker.providers import (
     FixtureProviderAdapter,
     GeometryElementOutput,
     GeometryExtractionOutput,
@@ -20,10 +20,10 @@ from croquitodxf_worker.providers import (
     PromptTask,
     ProviderName,
 )
-from croquitodxf_worker.synthetic import render_synthetic_input
-from croquitodxf_worker.vision import VisionProposal
+from croquito_worker.synthetic import render_synthetic_input
+from croquito_worker.vision import VisionProposal
 
-ALLOWLIST = "CROQUITODXF_AI_EXTRACTION_ALLOWED_DIGESTS"
+ALLOWLIST = "CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS"
 
 
 def _adapter(*elements: GeometryElementOutput) -> FixtureProviderAdapter:

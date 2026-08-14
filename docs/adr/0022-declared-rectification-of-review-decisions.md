@@ -7,7 +7,7 @@ Responsável: Domain / Backend / Frontend
 ## Contexto
 
 Decisão de leitura é imutável desde o primeiro dia: `apply_reading_decisions`
-(`services/worker/src/croquitodxf_worker/review.py`) recusa fechado qualquer leitura já
+(`services/worker/src/croquito_worker/review.py`) recusa fechado qualquer leitura já
 `confirmed` ou `rejected`, e a API devolvia 422 para a segunda tentativa. A regra existe
 para uma razão boa — uma decisão sobrescrita apagaria a única evidência do que o
 profissional decidiu e sobre qual geometria — mas ela deixava um caminho só para o erro

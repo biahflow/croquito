@@ -16,7 +16,7 @@ describe("App", () => {
     );
     expect(html).toContain("Recarregar estado atual");
     expect(html).toContain("Rodada não carregada");
-    expect(html).toContain("croquitodxf-valuation serve");
+    expect(html).toContain("croquito-valuation serve");
   });
 
   it("não mostra etapa alcançável nem número de medição antes de ler o estado", () => {

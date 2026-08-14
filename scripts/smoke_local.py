@@ -41,15 +41,15 @@ from tests.bundles import (
 )
 from tests.fakes import synthetic_pdf
 
-from croquitodxf_worker.criteria import ScopeCriterion
-from croquitodxf_worker.local_queue import (
+from croquito_worker.criteria import ScopeCriterion
+from croquito_worker.local_queue import (
     LocalQueueWorker,
     LocalWorkerSettings,
 )
-from croquitodxf_worker.review_seed import SeedInputs, seed_review
+from croquito_worker.review_seed import SeedInputs, seed_review
 
-API_BASE_URL = os.getenv("CROQUITODXF_SMOKE_API_URL", "http://127.0.0.1:8000")
-TENANT = os.getenv("CROQUITODXF_SMOKE_TENANT", "tenant-smoke")
+API_BASE_URL = os.getenv("CROQUITO_SMOKE_API_URL", "http://127.0.0.1:8000")
+TENANT = os.getenv("CROQUITO_SMOKE_TENANT", "tenant-smoke")
 SCOPE_CRITERION = "ACC_SMOKE_001"
 SCOPE_CRITERION_TEXT = "Critério sintético do smoke: cobertura declarada da fixture local."
 DATASET_ID = "smoke-sintetico-v1"
@@ -93,14 +93,14 @@ def _line_entity_id(
 
 
 def _preflight() -> LocalWorkerSettings:
-    if os.getenv("CROQUITODXF_REAL_PROVIDERS_ENABLED", "").lower() in {"1", "true", "yes"}:
+    if os.getenv("CROQUITO_REAL_PROVIDERS_ENABLED", "").lower() in {"1", "true", "yes"}:
         raise SmokeFailure(
             "Providers reais estão ligados. O smoke não executa chamadas pagas: "
-            "desligue CROQUITODXF_REAL_PROVIDERS_ENABLED."
+            "desligue CROQUITO_REAL_PROVIDERS_ENABLED."
         )
-    if os.getenv("CROQUITODXF_ALLOW_TEST_TOKENS", "").lower() not in {"1", "true", "yes"}:
+    if os.getenv("CROQUITO_ALLOW_TEST_TOKENS", "").lower() not in {"1", "true", "yes"}:
         raise SmokeFailure(
-            "O smoke precisa de CROQUITODXF_ALLOW_TEST_TOKENS=true no .env.local: o realm "
+            "O smoke precisa de CROQUITO_ALLOW_TEST_TOKENS=true no .env.local: o realm "
             "local desabilita direct access grants e não há token fora do browser."
         )
     return LocalWorkerSettings.from_environment()
@@ -317,7 +317,7 @@ def run_smoke(output_dir: Path) -> dict[str, Any]:
 
     # Baixa pela URL assinada e confere o conteúdo publicado.
     with tempfile.TemporaryDirectory() as workspace:
-        package_path = Path(workspace) / "croquitodxf.zip"
+        package_path = Path(workspace) / "croquito.zip"
         with urlopen(str(artifact["package_url"])) as download:
             package_path.write_bytes(download.read())
         with zipfile.ZipFile(package_path) as package:
@@ -346,7 +346,7 @@ def run_smoke(output_dir: Path) -> dict[str, Any]:
         endpoint_url=settings.aws_endpoint_url,
     )
     package_key = (
-        f"tenants/{TENANT}/jobs/{report_job_id}/exports/{artifact['export_id']}/croquitodxf.zip"
+        f"tenants/{TENANT}/jobs/{report_job_id}/exports/{artifact['export_id']}/croquito.zip"
     )
     head = s3.head_object(Bucket=settings.artifact_bucket, Key=package_key)
     if head.get("ServerSideEncryption") != "AES256":
@@ -364,7 +364,7 @@ def run_smoke(output_dir: Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    output_dir = Path(os.getenv("CROQUITODXF_SMOKE_OUTPUT", "output/smoke"))
+    output_dir = Path(os.getenv("CROQUITO_SMOKE_OUTPUT", "output/smoke"))
     try:
         report = run_smoke(output_dir)
     except (SmokeFailure, httpx.HTTPError) as error:

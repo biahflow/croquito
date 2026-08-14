@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-awslocal s3api create-bucket --bucket croquitodxf-local-artifacts \
+awslocal s3api create-bucket --bucket croquito-local-artifacts \
   --create-bucket-configuration LocationConstraint=sa-east-1
 cat >/tmp/artifact-cors.json <<'EOF'
 {
@@ -14,15 +14,15 @@ cat >/tmp/artifact-cors.json <<'EOF'
   }]
 }
 EOF
-awslocal s3api put-bucket-cors --bucket croquitodxf-local-artifacts --cors-configuration file:///tmp/artifact-cors.json
-awslocal sqs create-queue --queue-name croquitodxf-local-processing-dlq
+awslocal s3api put-bucket-cors --bucket croquito-local-artifacts --cors-configuration file:///tmp/artifact-cors.json
+awslocal sqs create-queue --queue-name croquito-local-processing-dlq
 DLQ_ARN=$(awslocal sqs get-queue-attributes \
-  --queue-url http://localhost:4566/000000000000/croquitodxf-local-processing-dlq \
+  --queue-url http://localhost:4566/000000000000/croquito-local-processing-dlq \
   --attribute-names QueueArn --query 'Attributes.QueueArn' --output text)
 # Sem redrive a DLQ fica solta e uma mensagem venenosa reentrega para sempre.
-awslocal sqs create-queue --queue-name croquitodxf-local-processing \
+awslocal sqs create-queue --queue-name croquito-local-processing \
   --attributes "{\"RedrivePolicy\":\"{\\\"deadLetterTargetArn\\\":\\\"${DLQ_ARN}\\\",\\\"maxReceiveCount\\\":\\\"5\\\"}\"}"
-awslocal secretsmanager create-secret --name croquitodxf/local/runtime --secret-string '{}'
+awslocal secretsmanager create-secret --name croquito/local/runtime --secret-string '{}'
 
 cat >/tmp/extraction-state-machine.json <<'EOF'
 {
@@ -39,6 +39,6 @@ cat >/tmp/extraction-state-machine.json <<'EOF'
 EOF
 
 awslocal stepfunctions create-state-machine \
-  --name croquitodxf-local-extraction \
-  --role-arn arn:aws:iam::000000000000:role/croquitodxf-local-workflow \
+  --name croquito-local-extraction \
+  --role-arn arn:aws:iam::000000000000:role/croquito-local-workflow \
   --definition file:///tmp/extraction-state-machine.json
