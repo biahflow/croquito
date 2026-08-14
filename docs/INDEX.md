@@ -61,13 +61,18 @@ Este arquivo é o roteador de contexto para humanos e agentes. Leia
 4. [Evaluation Strategy](ai/EVALUATION_STRATEGY.md)
 5. [Prompt Change Protocol](ai/PROMPT_CHANGE_PROTOCOL.md)
 
-### Alterar AWS ou operação
+### Alterar infraestrutura ou operação
 
-1. [AWS Deployment](architecture/AWS_DEPLOYMENT.md)
-2. [Processing Workflows](architecture/PROCESSING_WORKFLOWS.md)
-3. [Observability](operations/OBSERVABILITY.md)
-4. [Deployment and Rollback](operations/DEPLOYMENT_AND_ROLLBACK.md)
-5. `infra/AGENTS.md`
+A homologação hospedada roda em **GCP** ([ADR-0025](adr/0025-homologacao-em-gcp-cloud-run.md));
+o desenho AWS é o alvo de produção e não descreve o que está no ar.
+
+1. [HML (ambiente hospedado)](operations/HML.md)
+2. [HML Keycloak](operations/HML_KEYCLOAK.md)
+3. [AWS Deployment](architecture/AWS_DEPLOYMENT.md)
+4. [Processing Workflows](architecture/PROCESSING_WORKFLOWS.md)
+5. [Observability](operations/OBSERVABILITY.md)
+6. [Deployment and Rollback](operations/DEPLOYMENT_AND_ROLLBACK.md)
+7. `infra/AGENTS.md`
 
 ### Revisar segurança e privacidade
 
@@ -148,6 +153,8 @@ Este arquivo é o roteador de contexto para humanos e agentes. Leia
 
 ### Operação
 
+- [HML (ambiente hospedado em GCP)](operations/HML.md)
+- [HML Keycloak](operations/HML_KEYCLOAK.md)
 - [Observability](operations/OBSERVABILITY.md)
 - [Deployment and Rollback](operations/DEPLOYMENT_AND_ROLLBACK.md)
 - [Incident Response](operations/INCIDENT_RESPONSE.md)

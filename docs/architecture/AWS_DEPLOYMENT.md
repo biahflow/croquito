@@ -4,6 +4,12 @@ Status: Accepted for MVP
 Responsável: Platform / Security  
 Última revisão: 2026-08-10
 
+> **Este documento descreve o desenho-alvo de produção em AWS, que nunca foi aplicado.**
+> A homologação em uso hoje roda em GCP/Cloud Run
+> ([ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md)), descrita em
+> [HML](../operations/HML.md). O ADR-0002 continua valendo como decisão de produção, e a
+> escolha de produção permanece aberta.
+
 ## Região e processamento
 
 - Região principal: `sa-east-1`.

@@ -39,7 +39,12 @@ services:
     ports:
       - "127.0.0.1:8083:8080"
     volumes:
-      - ./keycloak:/opt/keycloak/data/import:ro
+      # Só o realm LOCAL é montado, arquivo a arquivo. Montar a pasta inteira passou a
+      # importar também o realm de homologação (`croquito-hml-realm.json`), que tem o
+      # mesmo nome de realm `croquito` e nenhum usuário: como o Keycloak percorre o
+      # diretório em ordem alfabética e ignora o segundo realm de mesmo nome, o ambiente
+      # local subiria sem o usuário de desenvolvimento.
+      - ./keycloak/croquito-realm.json:/opt/keycloak/data/import/croquito-realm.json:ro
 
 volumes:
   postgres-data:

@@ -435,7 +435,11 @@ class IdempotencyRecord(Base):
 class Database:
     def __init__(self, database_url: str) -> None:
         connect_args: dict[str, Any] = {}
-        engine_kwargs: dict[str, Any] = {"future": True}
+        # `pool_pre_ping` custa um SELECT 1 na conexão reciclada e evita o erro que o
+        # Postgres gerenciado produz quando o compute suspende por ociosidade: a conexão
+        # no pool continua parecendo viva e só falha na primeira query real, já dentro do
+        # request. Descartar de graça é mais barato que traduzir esse erro em toda rota.
+        engine_kwargs: dict[str, Any] = {"future": True, "pool_pre_ping": True}
         if database_url.startswith("sqlite"):
             connect_args["check_same_thread"] = False
             if database_url.endswith(":memory:"):

@@ -735,6 +735,20 @@ nominal e exportação auditada aberta no AutoCAD — foi percorrido de ponta a 
 no Campo do Guaxindiba em 2026-08-13. O próximo passo de validação é o teste por
 um segundo profissional e a repetição do ciclo nos demais golden cases.
 
+### Roadmap declarado da medição hospedada
+
+A homologação em GCP ([ADR-0025](adr/0025-homologacao-em-gcp-cloud-run.md)) hospeda o
+servidor local de medição com autenticação mínima e rodadas em bucket via FUSE
+([ADR-0026](adr/0026-medicao-hospedada-sessao-autenticada-minima.md)). Isso é **ponte,
+não destino**: o servidor e o client `apps/medicao` continuam descartáveis por
+construção (ADR-0020), e a solução definitiva é a **migração da medição para a API
+`/v1` autenticada** (tabelas próprias, contratos TS gerados, concorrência otimista
+real, papel `orcamentista` no realm) — quando ela existir, as telas e módulos puros
+migram e o servidor hospedado sai do ar. Os custos aceitos da ponte (escrita direta
+sem rename no FUSE, uma instância só, uma rodada por ambiente) estão declarados no
+ADR-0026 e não devem ganhar investimento além do necessário para a homologação
+remota.
+
 ## Condição para avançar ao processamento real
 
 - PDFs mantidos fora do Git. **Atendido localmente.**

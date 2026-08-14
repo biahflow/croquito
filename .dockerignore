@@ -1,0 +1,46 @@
+# Contexto de qualquer imagem construída a partir da raiz do repositório — hoje a
+# imagem Python (`docker/python.Dockerfile`), na Entrega 3 também a do nginx.
+#
+# Duas regras de ouro: nada de segredo e nada de artefato local. Arquivo de ambiente
+# (`.env*`) e a pasta `output/` — que guarda render, DXF e relatório de rodada real —
+# ficam fora porque o contexto inteiro é enviado ao daemon a cada build e porque um
+# `COPY` amplo (deste Dockerfile ou de um futuro) os levaria para dentro de uma camada
+# sem que ninguém precisasse decidir isso.
+#
+# O resto é peso morto: o que a imagem Python precisa é `pyproject.toml`, `uv.lock`,
+# `README.md` (o build do pacote o exige), `packages/` e `services/`.
+.git
+.gitignore
+.github
+
+# Segredo e configuração local — sem exceção.
+.env
+.env.*
+
+# Artefato de rodada local (retenção de 7 dias, fora do Git).
+output
+
+# Ambientes e caches
+.venv
+**/node_modules
+**/__pycache__
+**/*.py[cod]
+.mypy_cache
+.pytest_cache
+.ruff_cache
+**/.terraform
+*.egg-info
+
+# Saídas de build
+dist
+build
+apps/*/dist
+
+# Não entram em imagem nenhuma construída a partir da raiz. `apps/` NÃO está nesta
+# lista de propósito: a imagem do nginx (Entrega 3) constrói as SPAs a partir daqui, e
+# excluí-las agora seria armar uma falha de build para depois.
+docs
+infra
+keycloak
+localstack
+tests

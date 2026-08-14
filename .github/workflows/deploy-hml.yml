@@ -1,0 +1,262 @@
+# Deploy de homologação (GCP, projeto `biahflow-hml`, região `us-east1`).
+#
+# **Este workflow é dono da imagem e do container; não é dono da infraestrutura.** A
+# casca dos serviços (ingress, IAM, min/max instâncias, mapeamento de domínio, tópico,
+# buckets e segredos) é criada fora daqui; o que o deploy troca é a imagem e o que
+# depende dela — comando, variáveis, segredos montados e volumes. Misturar as duas
+# coisas faria um deploy de rotina poder derrubar rede.
+#
+# Autentica por Workload Identity Federation: **nenhuma chave de conta de serviço
+# existe**, e a organização proíbe criá-las. Este workflow é o único caminho de
+# publicação — imagem construída em máquina de desenvolvimento não sobe.
+#
+# Decisões que valem para tudo abaixo:
+#
+# - **Tag pelo `$GITHUB_SHA`, nunca `latest`.** É o que permite voltar apontando a
+#   revisão anterior e o que faz duas revisões serem distinguíveis.
+# - **Uma imagem Python para quatro processos** (API, worker, medição e o job de
+#   banco): eles rodam o mesmo código e só divergem em `command`/`args`.
+# - **O job de banco roda antes da API.** Código novo contra schema velho é a forma
+#   mais barata de transformar deploy em incidente.
+name: deploy-hml
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/**"
+      - "packages/**"
+      - "apps/**"
+      - "docker/**"
+      - "keycloak/**"
+      - "deploy/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy-hml.yml"
+  workflow_dispatch:
+
+concurrency:
+  # Dois deploys ao mesmo tempo põem revisões fora de ordem: a segunda a terminar vence,
+  # e não é necessariamente a mais nova. `cancel-in-progress: false` porque cancelar no
+  # meio pode deixar o schema migrado e a revisão antiga servindo.
+  group: deploy-hml
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # o token OIDC que o WIF troca por credencial
+
+env:
+  PROJETO: biahflow-hml
+  REGIAO: us-east1
+  REGISTRO: us-east1-docker.pkg.dev/biahflow-hml/hml
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          project_id: biahflow-hml
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: hml-deploy@biahflow-hml.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Autoriza o registro
+        run: gcloud auth configure-docker "$REGIAO-docker.pkg.dev" --quiet
+
+      # `--platform linux/amd64` é explícito e não custa nada no runner (que já é amd64):
+      # ele existe para o dia em que alguém repetir o comando numa máquina ARM e o
+      # Cloud Run recusar a imagem — recusa que aparece só no deploy, não no build.
+      - name: Constrói e publica a imagem Python
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            -t "$REGISTRO/croquito-python:$GITHUB_SHA" -f docker/python.Dockerfile .
+          docker push "$REGISTRO/croquito-python:$GITHUB_SHA"
+
+      # Contexto `keycloak/`: a imagem do Keycloak precisa do realm e de mais nada. Dar
+      # a raiz do repositório como contexto mandaria o código inteiro para o daemon.
+      - name: Constrói e publica a imagem do Keycloak
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            -t "$REGISTRO/croquito-auth:$GITHUB_SHA" -f keycloak/Dockerfile keycloak
+          docker push "$REGISTRO/croquito-auth:$GITHUB_SHA"
+
+      # O nginx do host público chega na Entrega 3. Enquanto `docker/web.Dockerfile` não
+      # existir, os dois passos do web são pulados em vez de quebrarem o workflow: o
+      # resto do ambiente já sobe e é operável pelas URLs internas do Cloud Run.
+      - name: Constrói e publica a imagem do nginx
+        if: hashFiles('docker/web.Dockerfile') != ''
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            -t "$REGISTRO/croquito-web:$GITHUB_SHA" -f docker/web.Dockerfile .
+          docker push "$REGISTRO/croquito-web:$GITHUB_SHA"
+
+      # `--args=` com sinal de igual, aqui e nos deploys abaixo: o valor começa com `-m`,
+      # e na forma separada por espaço o parser do gcloud leria o próprio valor como se
+      # fosse outra flag.
+      #
+      # `bootstrap.py` é aditivo (`create_all` mais colunas novas declaradas) e não
+      # apaga nada. Ele é o inicializador do ambiente local promovido a HML de forma
+      # declarada; o runner de migrations revisadas é lacuna registrada no ADR-0025.
+      # Falhar aqui **para o deploy**, antes de qualquer revisão nova entrar no ar.
+      - name: Inicializa o schema
+        run: |
+          set -euo pipefail
+          gcloud run jobs deploy croquito-db-init-hml \
+            --image "$REGISTRO/croquito-python:$GITHUB_SHA" \
+            --region "$REGIAO" \
+            --service-account croquito-api-hml@biahflow-hml.iam.gserviceaccount.com \
+            --set-secrets CROQUITO_DATABASE_URL=croquito-hml-database-url:latest \
+            --command python \
+            --args=-m,croquito_api.bootstrap \
+            --max-retries 1 \
+            --quiet
+          gcloud run jobs execute croquito-db-init-hml --region "$REGIAO" --wait --quiet
+
+      # Storage: GCS pela interoperabilidade S3 (`CROQUITO_STORAGE_FLAVOR=gcs` desliga
+      # checksum SHA-256 no PUT e SSE-S3, que a API XML do GCS não aceita). Fila: o
+      # tópico configurado é o que escolhe o transporte Pub/Sub.
+      - name: Publica a API
+        run: |
+          set -euo pipefail
+          gcloud run services update croquito-api-hml \
+            --image "$REGISTRO/croquito-python:$GITHUB_SHA" \
+            --region "$REGIAO" \
+            --service-account croquito-api-hml@biahflow-hml.iam.gserviceaccount.com \
+            --port 8080 \
+            --command uvicorn \
+            --args=croquito_api.main:app,--host,0.0.0.0,--port,8080 \
+            --memory 1Gi --cpu 1 --timeout 60 \
+            --set-secrets CROQUITO_DATABASE_URL=croquito-hml-database-url:latest,AWS_ACCESS_KEY_ID=croquito-hml-storage-hmac-id:latest,AWS_SECRET_ACCESS_KEY=croquito-hml-storage-hmac-secret:latest \
+            --set-env-vars CROQUITO_STORAGE_FLAVOR=gcs,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_PUBSUB_TOPIC=projects/biahflow-hml/topics/croquito-hml-processing,CROQUITO_OIDC_ISSUER=https://croquito-hml.biahflow.ai/auth/realms/croquito,CROQUITO_OIDC_AUDIENCE=croquito-web,CROQUITO_WEB_ORIGIN=https://croquito-hml.biahflow.ai \
+            --quiet
+
+      # O worker recebe comando por push do Pub/Sub em `POST /pubsub` e nunca é chamado
+      # de fora: a assinatura da entrega é verificada pela IAM do Cloud Run antes de o
+      # processo ver a requisição. `--timeout 900` porque render de PDF, visão e export
+      # DXF são minutos, não segundos; `--concurrency 4` porque cada comando é pesado em
+      # CPU e memória. Ele não tem `CROQUITO_STORAGE_FLAVOR` — o flavor da API é da
+      # camada de presign; do lado do worker o que muda é `CROQUITO_STORAGE_SSE=false`,
+      # porque o GCS recusa SSE-S3.
+      - name: Publica o worker
+        run: |
+          set -euo pipefail
+          gcloud run services update croquito-worker-hml \
+            --image "$REGISTRO/croquito-python:$GITHUB_SHA" \
+            --region "$REGIAO" \
+            --service-account croquito-worker-hml@biahflow-hml.iam.gserviceaccount.com \
+            --port 8080 \
+            --command croquito-worker-push \
+            --memory 2Gi --cpu 2 --timeout 900 --concurrency 4 \
+            --set-secrets CROQUITO_DATABASE_URL=croquito-hml-database-url:latest,AWS_ACCESS_KEY_ID=croquito-hml-storage-hmac-id:latest,AWS_SECRET_ACCESS_KEY=croquito-hml-storage-hmac-secret:latest \
+            --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts \
+            --quiet
+
+      # Keycloak em subpath (`/auth`), atrás do proxy do host público: `KC_HOSTNAME` com
+      # a URL pública e `KC_PROXY_HEADERS=xforwarded` para o issuer dos tokens sair com
+      # o endereço que o navegador usa — issuer errado quebra a validação em todo o
+      # resto. `KC_CACHE=local` porque não há cluster: uma instância, cache no processo.
+      #
+      # A sonda de subida é folgada de propósito (Keycloak otimizado ainda leva dezenas
+      # de segundos e abre conexão com o Neon, que pode estar suspenso). O Cloud Run
+      # limita `periodSeconds * failureThreshold` a 240s, então são 24 tentativas de 10s
+      # depois de 20s de espera inicial — e não as 30 tentativas que dariam 300s e
+      # seriam recusadas pela API.
+      - name: Publica o Keycloak
+        run: |
+          set -euo pipefail
+          gcloud run services update croquito-auth-hml \
+            --image "$REGISTRO/croquito-auth:$GITHUB_SHA" \
+            --region "$REGIAO" \
+            --service-account croquito-auth-hml@biahflow-hml.iam.gserviceaccount.com \
+            --port 8080 \
+            --memory 2Gi --cpu 2 --no-cpu-throttling \
+            --set-secrets KC_DB_URL=croquito-hml-kc-db-url:latest,KC_DB_USERNAME=croquito-hml-kc-db-user:latest,KC_DB_PASSWORD=croquito-hml-kc-db-password:latest,KC_BOOTSTRAP_ADMIN_PASSWORD=croquito-hml-kc-bootstrap-admin-password:latest \
+            --set-env-vars KC_HOSTNAME=https://croquito-hml.biahflow.ai/auth,KC_HTTP_ENABLED=true,KC_PROXY_HEADERS=xforwarded,KC_CACHE=local,KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+            --startup-probe httpGet.path=/auth/realms/master,httpGet.port=8080,initialDelaySeconds=20,periodSeconds=10,failureThreshold=24,timeoutSeconds=5 \
+            --quiet
+
+      # A rodada de medição é um diretório de artefatos JSON atômicos, montado por FUSE
+      # do bucket `croquito-hml-rounds`. Uma instância no máximo e uma rodada por
+      # ambiente: o servidor grava arquivo, e duas instâncias sobre o mesmo diretório
+      # não têm árbitro (limite herdado do ADR-0020 e registrado no ADR-0026).
+      #
+      # `serve --hosted` (sessão autenticada mínima) chega na Entrega 4. Até lá este
+      # passo publica a revisão certa e o processo recusa subir por falta da flag — o
+      # que é visível, e melhor que subir um servidor local sem autenticação num host
+      # público.
+      - name: Publica o servidor de medição
+        run: |
+          set -euo pipefail
+          gcloud run services update croquito-medicao-hml \
+            --image "$REGISTRO/croquito-python:$GITHUB_SHA" \
+            --region "$REGIAO" \
+            --service-account croquito-medicao-hml@biahflow-hml.iam.gserviceaccount.com \
+            --port 8080 \
+            --memory 1Gi --cpu 1 --no-cpu-throttling --concurrency 8 \
+            --add-volume name=rounds,type=cloud-storage,bucket=croquito-hml-rounds \
+            --add-volume-mount volume=rounds,mount-path=/mnt/rounds \
+            --command croquito-valuation \
+            --args=serve,--hosted,--root,/mnt/rounds/atual,--host,0.0.0.0,--port,8080 \
+            --set-env-vars CROQUITO_MEDICAO_OIDC_ISSUER=https://croquito-hml.biahflow.ai/auth/realms/croquito,CROQUITO_MEDICAO_OIDC_AUDIENCE=croquito-web,CROQUITO_MEDICAO_WEB_ORIGINS=https://croquito-hml.biahflow.ai,CROQUITO_IO_DIRECT_WRITE=1 \
+            --quiet
+
+      - name: Publica o nginx
+        if: hashFiles('docker/web.Dockerfile') != ''
+        run: |
+          set -euo pipefail
+          gcloud run services update croquito-web-hml \
+            --image "$REGISTRO/croquito-web:$GITHUB_SHA" \
+            --region "$REGIAO" \
+            --service-account croquito-web-hml@biahflow-hml.iam.gserviceaccount.com \
+            --port 8080 \
+            --memory 256Mi \
+            --quiet
+
+      # Fumaça, e ela é o que separa "o deploy terminou" de "o deploy funcionou". Todos
+      # os outros serviços têm ingress interno, então quem responde de fora é o web — e
+      # é justamente ele que prova que o proxy same-origin (`/api/`, `/auth/`) está de
+      # pé.
+      #
+      # Enquanto o web servir a imagem inicial (Entrega 3 pendente), não há o que
+      # afirmar: o passo avisa e sai. Fumaça que testa outra coisa é pior que nenhuma,
+      # porque ensina a confiar no verde errado.
+      - name: Fumaça
+        run: |
+          set -euo pipefail
+          imagem=$(gcloud run services describe croquito-web-hml --region "$REGIAO" \
+            --format='value(spec.template.spec.containers[0].image)')
+          case "$imagem" in
+            "$REGISTRO/croquito-web:"*) ;;
+            *)
+              echo "::warning::croquito-web-hml ainda serve $imagem; fumaça pulada até a Entrega 3"
+              exit 0
+              ;;
+          esac
+          url=$(gcloud run services describe croquito-web-hml --region "$REGIAO" \
+            --format='value(status.url)')
+          for rota in /api/healthz /auth/realms/croquito/.well-known/openid-configuration; do
+            ok=""
+            for tentativa in 1 2 3 4 5; do
+              if curl -sf --max-time 10 "$url$rota" > /dev/null; then
+                ok="sim"; break
+              fi
+              echo "tentativa $tentativa em $rota falhou; esperando"
+              sleep 10
+            done
+            if [ -z "$ok" ]; then
+              echo "::error::$rota não respondeu depois do deploy"
+              exit 1
+            fi
+            echo "$rota responde"
+          done

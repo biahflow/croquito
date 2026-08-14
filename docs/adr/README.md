@@ -40,6 +40,8 @@ e NFRs. Um ADR aceito é imutável; correção material exige novo ADR com
 | [0022](0022-declared-rectification-of-review-decisions.md) | Correção declarada de decisão de revisão | Accepted |
 | [0023](0023-review-chat-as-an-observational-agent.md) | Conversa da revisão como agente observacional com rascunhos tipados | Proposed |
 | [0024](0024-rebranding-to-croquito.md) | Rebranding do produto para croquito | Accepted |
+| [0025](0025-homologacao-em-gcp-cloud-run.md) | Homologação hospedada em GCP (Cloud Run) | Accepted |
+| [0026](0026-medicao-hospedada-sessao-autenticada-minima.md) | Medição hospedada com sessão autenticada mínima | Accepted |
 
 ## Processo
 
