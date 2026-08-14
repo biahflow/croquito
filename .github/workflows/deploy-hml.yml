@@ -129,7 +129,7 @@ jobs:
       - name: Publica a API
         run: |
           set -euo pipefail
-          gcloud run services update croquito-api-hml \
+          gcloud run services update croquito-scene-hml \
             --image "$REGISTRO/croquito-python:$GITHUB_SHA" \
             --region "$REGIAO" \
             --service-account croquito-api-hml@biahflow-hml.iam.gserviceaccount.com \
@@ -152,7 +152,7 @@ jobs:
       - name: Publica o worker
         run: |
           set -euo pipefail
-          gcloud run services update croquito-worker-hml \
+          gcloud run services update croquito-jobs-hml \
             --image "$REGISTRO/croquito-python:$GITHUB_SHA" \
             --region "$REGIAO" \
             --service-account croquito-worker-hml@biahflow-hml.iam.gserviceaccount.com \

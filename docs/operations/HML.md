@@ -19,10 +19,10 @@ Projeto `biahflow-hml`, região `us-east1`, registro
 | `https://croquito-hml.biahflow.ai/` | `croquito-web-hml` | público | nginx: serve as SPAs e faz proxy do resto |
 | `/revisao/` | `croquito-web-hml` | público | SPA da sessão de cena (`apps/web`) |
 | `/medicao/` | `croquito-web-hml` | público | SPA da medição (`apps/medicao`) |
-| `/api/` | `croquito-api-hml` | interno | API FastAPI (`croquito_api.main:app`) |
+| `/api/` | `croquito-scene-hml` | interno | API FastAPI (`croquito_api.main:app`) |
 | `/auth/` | `croquito-auth-hml` | interno | Keycloak, realm `croquito` |
 | `/medicao/api/` | `croquito-medicao-hml` | interno | servidor de medição (`serve --hosted`) |
-| — | `croquito-worker-hml` | interno e privado | worker; recebe push do Pub/Sub em `POST /pubsub` |
+| — | `croquito-jobs-hml` | interno e privado | worker; recebe push do Pub/Sub em `POST /pubsub` |
 
 Recursos de apoio: buckets `croquito-hml-artifacts` (documentos, previews e pacotes
 exportados) e `croquito-hml-rounds` (rodada da medição, montada por FUSE em
@@ -76,14 +76,14 @@ Imagem é sempre endereçada pelo SHA do commit; `latest` não é usado em lugar
 
 ```bash
 # log recente de um serviço (últimos 60 minutos por padrão do comando)
-gcloud run services logs read croquito-api-hml --region us-east1 --limit 100
+gcloud run services logs read croquito-scene-hml --region us-east1 --limit 100
 
 # quem está servindo agora, e com qual imagem
-gcloud run services describe croquito-api-hml --region us-east1 \
+gcloud run services describe croquito-scene-hml --region us-east1 \
   --format='value(status.url, status.latestReadyRevisionName, spec.template.spec.containers[0].image)'
 
 # revisões, da mais nova para a mais antiga
-gcloud run revisions list --service croquito-api-hml --region us-east1
+gcloud run revisions list --service croquito-scene-hml --region us-east1
 ```
 
 O que os logs podem conter é o que a política do repositório já define: id opaco, stage,
@@ -97,9 +97,9 @@ Duas camadas, nesta ordem.
 1. **Imediato, sem build** — aponta o tráfego para a revisão anterior:
 
    ```bash
-   gcloud run revisions list --service croquito-api-hml --region us-east1
-   gcloud run services update-traffic croquito-api-hml --region us-east1 \
-     --to-revisions=croquito-api-hml-00042-abc=100
+   gcloud run revisions list --service croquito-scene-hml --region us-east1
+   gcloud run services update-traffic croquito-scene-hml --region us-east1 \
+     --to-revisions=croquito-scene-hml-00042-abc=100
    ```
 
    Vale para qualquer um dos cinco serviços. Toda revisão carrega a imagem do SHA que a
@@ -122,7 +122,7 @@ curl -sfo /dev/null https://croquito-hml.biahflow.ai/medicao/
 ```
 
 As quatro rotas passam pelo nginx, que é o único serviço público; se elas respondem, o
-proxy same-origin e as duas SPAs estão de pé. O `croquito-worker-hml` não tem fumaça externa por construção — ele
+proxy same-origin e as duas SPAs estão de pé. O `croquito-jobs-hml` não tem fumaça externa por construção — ele
 só aceita chamada autenticada do Pub/Sub, e a prova de vida dele é o job andar.
 
 ## Custo
