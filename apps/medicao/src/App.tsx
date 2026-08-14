@@ -12,6 +12,7 @@ import type { User } from "oidc-client-ts";
 import {
   codeSearchTerm,
   extractPlate,
+  fetchImageObjectUrl,
   getBulletin,
   getCodes,
   getState,
@@ -21,7 +22,8 @@ import {
   isStateMoved,
   itemAnchor,
   MedicaoApiError,
-  plateImageUrl,
+  PLATE_IMAGE_PATH,
+  plateImageSource,
   postCalcBuild,
   postCodeDecision,
   postSuggestionsRecompute,
@@ -56,9 +58,9 @@ import {
 import {
   assignmentStatusLabel,
   AVISO_ADITIVO,
-  AVISO_FERRAMENTA_LOCAL,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
   AVISO_QUANTIDADE_AMBIGUA,
+  avisoDaFerramenta,
   descricaoCalculoShortlist,
   DICA_QUANTIDADE,
   errorMessage,
@@ -424,6 +426,12 @@ export function App() {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const panOrigin = useRef<PanOrigin | null>(null);
   const [panning, setPanning] = useState(false);
+  // `src` da prancha. No caminho local é a URL direta do servidor, como sempre foi; no
+  // hospedado ela nasce `null` e vira um object URL depois da busca autenticada, porque
+  // `<img src>` não leva o `Authorization` da sessão (ver o efeito mais abaixo).
+  const [pranchaSrc, setPranchaSrc] = useState<string | null>(() =>
+    plateImageSource(oidcAtivo),
+  );
   // Prancha limpa por padrão: nenhuma marcação sobre a imagem que o projetista enviou.
   // Só o item selecionado ganha o retângulo fino, sem número. "Mostrar marcações"
   // revela retângulo + número de todos, para auditoria. Estado de componente, nunca em
@@ -746,6 +754,46 @@ export function App() {
   const jornada = useMemo(() => derivarEtapas(state), [state]);
   const etapaVisivel: EtapaId | "rodada" = openStep === null ? "rodada" : openStep;
   const prancha = state?.images.plate ?? null;
+  // Nome do arquivo servido: é ele que muda quando a rodada troca de prancha, e é por isso
+  // que ele — e não o objeto de estado inteiro — decide quando rebuscar a imagem.
+  const pranchaFilename = prancha?.present === true ? prancha.filename : null;
+
+  // Modo hospedado (ADR-0026): a imagem vem por `fetch` com o mesmo `Authorization` das
+  // outras chamadas e é exibida como object URL, revogado ao trocar de prancha ou
+  // desmontar — object URL sobrevive ao componente e uma revisão abre a prancha muitas
+  // vezes. Sem OIDC nada disso roda: o `src` continua sendo a URL direta do servidor local,
+  // sem nenhuma requisição a mais.
+  useEffect(() => {
+    if (!oidcAtivo) {
+      return;
+    }
+    if (!autenticado || pranchaFilename === null) {
+      setPranchaSrc(null);
+      return;
+    }
+    let cancelado = false;
+    let criado: string | null = null;
+    void (async () => {
+      try {
+        const url = await fetchImageObjectUrl(PLATE_IMAGE_PATH);
+        if (cancelado) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        criado = url;
+        setPranchaSrc(url);
+      } catch (error) {
+        setPranchaSrc(null);
+        setAlertMessage(describeError(error));
+      }
+    })();
+    return () => {
+      cancelado = true;
+      if (criado !== null) {
+        URL.revokeObjectURL(criado);
+      }
+    };
+  }, [oidcAtivo, autenticado, pranchaFilename]);
 
   const items = takeoff?.packet.items ?? [];
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
@@ -1104,7 +1152,7 @@ export function App() {
           </p>
         </div>
         {/* Aviso permanente: ele não fecha, não recolhe e não expira. */}
-        <p className="aviso-fixo">{AVISO_FERRAMENTA_LOCAL}</p>
+        <p className="aviso-fixo">{avisoDaFerramenta(oidcAtivo)}</p>
         <div className="topbar-acoes">
           {/* As duas SPAs só convivem na mesma origem quando servidas em subrota; em
               desenvolvimento cada uma tem a sua porta e o link levaria a lugar nenhum. */}
@@ -1364,9 +1412,9 @@ export function App() {
                       : stageStyle(zoom, imageSize.width, imageSize.height)
                   }
                 >
-                  {prancha === null || prancha.present ? (
+                  {(prancha === null || prancha.present) && pranchaSrc !== null ? (
                     <img
-                      src={plateImageUrl}
+                      src={pranchaSrc}
                       alt="Prancha do projetista com a legenda quantificada"
                       draggable={false}
                       onLoad={(event) => {
@@ -2055,7 +2103,7 @@ export function App() {
         {etapaVisivel === "boletim" ? (
           <section className="painel" aria-label="Boletim da medição">
             <h2>Boletim de medição</h2>
-            <p className="aviso-fixo aviso-inline">{AVISO_FERRAMENTA_LOCAL}</p>
+            <p className="aviso-fixo aviso-inline">{avisoDaFerramenta(oidcAtivo)}</p>
             {bulletin === null ? (
               <form
                 className="formulario"

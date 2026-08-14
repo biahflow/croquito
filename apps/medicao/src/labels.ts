@@ -14,6 +14,21 @@ import type { TakeoffItemStatus } from "./api";
 export const AVISO_FERRAMENTA_LOCAL =
   "Ferramenta local de homologação — medição sem aprovação; aprovar e exportar são atos separados.";
 
+/**
+ * O mesmo aviso no modo hospedado (ADR-0026). O que muda é a primeira metade: com sessão
+ * ativa a ferramenta não é local e a decisão não é carimbada com a identidade de quem subiu
+ * o processo, e sim com a de quem entrou. A segunda metade não muda porque a regra não
+ * mudou — medir continua não sendo aprovar nem exportar.
+ */
+export const AVISO_FERRAMENTA_HOSPEDADA =
+  "Homologação remota autenticada; decisões carimbadas com sua identidade — medição sem " +
+  "aprovação; aprovar e exportar são atos separados.";
+
+/** O aviso que descreve a realidade desta sessão; `false` é o caminho local do ADR-0020. */
+export function avisoDaFerramenta(oidcAtivo: boolean): string {
+  return oidcAtivo ? AVISO_FERRAMENTA_HOSPEDADA : AVISO_FERRAMENTA_LOCAL;
+}
+
 /** Por que a quantidade do item ambíguo é responsabilidade de quem revisa. */
 export const AVISO_QUANTIDADE_AMBIGUA =
   "a extração não conseguiu ler este número; quem o informa é você";
@@ -158,6 +173,16 @@ const ERROR_MESSAGES: LookupTable = {
   // sessão expirou ou o usuário não tem o papel de quem decide medição.
   LOCAL_SESSION_REJECTED:
     "O servidor recusou esta sessão. Entre de novo; se continuar, confirme com quem administra o ambiente se o seu usuário tem o papel de orçamentista.",
+  // Recusas COM envelope do modo hospedado: o servidor disse por que, e a tela separa
+  // "entre de novo" (sessão) de "peça o papel" (autorização) — são consertos diferentes.
+  HOSTED_SESSION_REQUIRED:
+    "Esta rodada exige sessão autenticada. Entre para revisar, confirmar código ou montar o boletim.",
+  HOSTED_SESSION_INVALID:
+    "A sua sessão não é mais válida. Entre de novo; o que você escreveu no formulário continua aqui.",
+  HOSTED_ROLE_REQUIRED:
+    "O seu usuário não tem o papel de orçamentista neste ambiente. Peça a quem administra o ambiente antes de decidir.",
+  HOSTED_REVIEWER_INVALID:
+    "A identidade da sua sessão não serve de carimbo de decisão. Fale com quem administra o ambiente.",
   // Prancha e extração automática.
   LOCAL_ROUND_ALREADY_HAS_PLATE:
     "Esta rodada já tem prancha; uma rodada é uma prancha. Para enviar outra, abra o servidor numa rodada nova.",

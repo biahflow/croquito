@@ -45,6 +45,18 @@ describe("App", () => {
   });
 
   /**
+   * O aviso permanente descreve a realidade da sessão: sem OIDC, a ferramenta é local e a
+   * prancha vem da URL direta do servidor — nenhum object URL é criado, porque nenhuma
+   * busca autenticada acontece.
+   */
+  it("sem OIDC o aviso continua sendo o da ferramenta local, sem object URL", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    expect(html).not.toContain("Homologação remota autenticada");
+    expect(html).not.toContain("blob:");
+  });
+
+  /**
    * O `base` do Vite é o de produção fora do `vite dev` (aqui, `/medicao/`), que é
    * exatamente a condição em que as duas telas dividem a origem. Em desenvolvimento
    * (`base` = `/`) cada app tem a sua porta e o link não é renderizado.

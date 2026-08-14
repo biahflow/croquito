@@ -1,4 +1,4 @@
-"""Servidor **local** de homologação da medição: HTTP fino sobre o domínio fail-closed.
+"""Servidor de homologação da medição: HTTP fino sobre o domínio fail-closed.
 
 Ele existe para que o ato do orçamentista — revisar o takeoff, confirmar código, montar o
 boletim — aconteça numa tela em vez de num lote de JSON escrito à mão. Nenhuma regra de
@@ -8,12 +8,20 @@ função de domínio que o comando equivalente chama (`apply_takeoff_decisions`,
 o resultado com os mesmos nomes de arquivo e a mesma escrita atômica. Recusa do domínio
 atravessa intacta, com o código estável, e **não** grava artefato — como no CLI.
 
-Limites declarados, não escondidos:
+Dois modos, uma cadeia de domínio só (`_build_app` é o construtor comum):
 
-- É ferramenta **local**, da família do `parity`: bind padrão em `127.0.0.1`, CORS restrito
-  à UI local e **sem autenticação**. A identidade do revisor vem da flag de inicialização
-  (`--reviewer`), não de token: quem sobe o processo declara quem está decidindo. Sessão
-  autenticada de verdade é marco futuro, com ADR próprio.
+- `create_local_app` é o servidor **local** do ADR-0020, da família do `parity`: bind
+  padrão em `127.0.0.1`, CORS restrito à UI local e **sem autenticação**. A identidade do
+  revisor vem da flag de inicialização (`--reviewer`), não de token: quem sobe o processo
+  declara quem está decidindo.
+- `create_hosted_app` é o modo **hospedado** do ADR-0026, e é o único que pode subir fora
+  da máquina do operador: Bearer JWT obrigatório em toda rota de rodada (`hosted_auth`,
+  sobre o validador compartilhado `croquito_core.oidc`), papel `orcamentista` exigido e
+  `reviewer_id` derivado do token — claim assinado no lugar de argumento de processo. O que
+  muda entre os dois é a ORIGEM da identidade, o CORS e a porta de entrada; nenhuma regra
+  de domínio, nenhum nome de artefato e nenhuma guarda.
+
+Limites declarados, não escondidos:
 - Chama provider em **uma** operação e só nela: a extração da legenda que o upload da
   prancha dispara (`POST /plates`), por decisão registrada do usuário em 2026-08-13. Os
   freios do CLI continuam todos de pé — teto de gasto obrigatório por variável de ambiente
@@ -48,15 +56,15 @@ import re
 import shutil
 import tempfile
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Annotated, Final, Literal
+from typing import Annotated, Any, Final, Literal
 
 import uvicorn
-from fastapi import FastAPI, File, Query, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, Query, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -126,6 +134,13 @@ from croquito_worker.valuation.cli import (
     VALUATION_FILENAME,
     load_round_synonyms,
 )
+from croquito_worker.valuation.hosted_auth import (
+    REVIEWER_ID_MAX_LENGTH,
+    REVIEWER_ROLE,
+    HostedSessionRefusal,
+    build_reviewer_dependency,
+    hosted_reviewer_id,
+)
 from croquito_worker.valuation.legend_extraction import (
     LegendExtractionResult,
     build_legend_request,
@@ -165,10 +180,15 @@ LOCAL_WEB_ORIGINS: Final[tuple[str, ...]] = (
     "http://localhost:5174",
     "http://127.0.0.1:5174",
 )
-"""Origens da UI local de homologação (Fase B). Nada além delas fala com este servidor."""
+"""Origens da UI local de homologação (Fase B). Nada além delas fala com este servidor.
 
-REVIEWER_ROLE: Final = "orcamentista"
-"""Único papel deste contexto; ele não vem do corpo da requisição."""
+No modo hospedado as origens vêm do ambiente (`hosted_auth.HOSTED_WEB_ORIGINS_ENV`): a
+tela de lá é servida por outro host, e assumir estas seria recusar a UI de produção."""
+
+# `REVIEWER_ROLE` e `REVIEWER_ID_MAX_LENGTH` são importados de `hosted_auth`: o papel virou
+# claim de realm no ADR-0026 e passou a ser exigido ANTES da rota, mas continua sendo o
+# mesmo que este servidor carimba na decisão — uma constante, os dois modos. O nome segue
+# importável daqui para quem já o importava.
 
 CATALOG_SEARCH_DEFAULT_LIMIT: Final = 20
 CATALOG_SEARCH_MAX_LIMIT: Final = 50
@@ -639,7 +659,13 @@ class _Run:
     """
 
     root: Path
-    reviewer_id: str
+    reviewer_id: str = ""
+    """Identidade fixa do modo local (ADR-0020).
+
+    Vazia no modo hospedado, onde quem decide é derivado do token a CADA requisição: lá a
+    identidade não é do processo, e por isso ela não pode morar num objeto do processo. Quem
+    lê o revisor de uma requisição é sempre `reviewer_of`, nunca este campo diretamente."""
+
     extraction: _ExtractionTracker = field(default_factory=_ExtractionTracker)
     index_cache: _IndexCache = field(default_factory=_IndexCache)
 
@@ -1696,8 +1722,12 @@ def extraction_banner_note() -> str:
     return unavailable.message
 
 
-def _state_payload(run: _Run) -> dict[str, object]:
+def _state_payload(run: _Run, *, reviewer_id: str) -> dict[str, object]:
     """Etapas da rodada derivadas da EXISTÊNCIA dos artefatos, com os digests atuais.
+
+    `reviewer_id` é parâmetro, e não campo da rodada, porque no modo hospedado ele é da
+    REQUISIÇÃO: a tela precisa mostrar quem vai assinar a próxima decisão, que é quem está
+    logado agora — não quem subiu o processo.
 
     O `valuation.json` entra aqui só por presença e digest: revalidá-lo é papel do
     `GET /bulletin`, e uma medição ilegível não pode derrubar a tela inteira antes de o
@@ -1752,7 +1782,7 @@ def _state_payload(run: _Run) -> dict[str, object]:
     return {
         "server_version": LOCAL_SERVER_VERSION,
         "root": str(run.root),
-        "reviewer_id": run.reviewer_id,
+        "reviewer_id": reviewer_id,
         "reviewer_role": REVIEWER_ROLE,
         "artifacts": artifacts,
         "busca_semantica": _semantic_payload(run),
@@ -1856,13 +1886,8 @@ def _compute_suggestions_response(run: _Run) -> dict[str, object]:
     }
 
 
-def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
-    """Monta o servidor local sobre um diretório de rodada já produzido pelo CLI.
-
-    `reviewer_id` é a identidade de quem decide durante toda a vida do processo: ela entra
-    em cada `ReviewerDecision` gravada, ao lado do relógio do servidor. Trocar de revisor é
-    subir outro processo, não mandar outro campo.
-    """
+def _round_root(root: Path) -> Path:
+    """Diretório da rodada, resolvido e conferido; ausência recusa antes de qualquer rota."""
     resolved = root.expanduser().resolve()
     if not resolved.is_dir():
         raise ValuationValidationError(
@@ -1870,31 +1895,64 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             "diretório da rodada não existe; aponte --root para a saída de um comando",
             {"root": str(resolved)},
         )
-    cleaned_reviewer = reviewer_id.strip()
-    if not 1 <= len(cleaned_reviewer) <= 120:
-        raise ValuationValidationError(
-            "LOCAL_REVIEWER_INVALID",
-            "identidade do revisor deve ter de 1 a 120 caracteres",
-            {"length": len(cleaned_reviewer)},
-        )
-    run = _Run(root=resolved, reviewer_id=cleaned_reviewer)
+    return resolved
 
+
+def _build_app(
+    run: _Run,
+    *,
+    origins: Sequence[str],
+    reviewer_of: Callable[[Request], str],
+    dependencies: Sequence[Any],
+) -> FastAPI:
+    """Construtor comum dos dois modos; as rotas e o domínio são os MESMOS nos dois.
+
+    Três parâmetros são toda a diferença entre a ferramenta local e o servidor hospedado:
+
+    - `origins` alimenta o CORS. No hospedado a tela é servida pela mesma origem (proxy
+      nginx), então o CORS de lá é quase decorativo — ele é configurado assim mesmo, por
+      defesa em profundidade.
+    - `reviewer_of` responde "quem está decidindo NESTA requisição". No local devolve a
+      identidade do processo (`--reviewer`); no hospedado, a que a dependency derivou do
+      token. É o único lugar de onde o `reviewer_id` carimbado pode vir.
+    - `dependencies` é a porta de entrada: vazia no local (ADR-0020, sem autenticação),
+      `[Depends(require_reviewer)]` no hospedado. Ela vai no ROTEADOR das rotas de rodada,
+      e não no app, para que o `create_hosted_app` possa declarar a prova de vida fora
+      dela — é o que permite o probe do Cloud Run responder sem sessão.
+
+    O modo é derivado de `dependencies`: exigir sessão é o que define o hospedado, e é
+    também o que decide o texto do OpenAPI (dizer "sem autenticação" lá seria mentira) e a
+    liberação do cabeçalho `Authorization` no preflight do CORS.
+    """
+    hosted = bool(dependencies)
     application = FastAPI(
-        title="Croquito — homologação local da medição",
+        title=(
+            "Croquito — homologação hospedada da medição"
+            if hosted
+            else "Croquito — homologação local da medição"
+        ),
         version="0.1.0",
         description=(
-            "Ferramenta LOCAL de homologação: sem autenticação, sem provider e sem AWS. "
+            (
+                "Homologação HOSPEDADA da medição (ADR-0026): Bearer JWT obrigatório, papel "
+                "`orcamentista` exigido e identidade do revisor derivada do token. "
+            )
+            if hosted
+            else "Ferramenta LOCAL de homologação: sem autenticação, sem provider e sem AWS. "
+        )
+        + (
             "Serve e muta os artefatos de um diretório de rodada pelas mesmas funções de "
             "domínio que o CLI `croquito-valuation` usa."
         ),
     )
     application.add_middleware(
         CORSMiddleware,
-        allow_origins=list(LOCAL_WEB_ORIGINS),
+        allow_origins=list(origins),
         allow_credentials=False,
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type"],
+        allow_headers=["Content-Type", "Authorization"] if hosted else ["Content-Type"],
     )
+    router = APIRouter(dependencies=list(dependencies))
 
     @application.exception_handler(LocalServerRefusal)
     async def refusal_handler(_request: Request, exception: LocalServerRefusal) -> JSONResponse:
@@ -1928,11 +1986,11 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             ),
         )
 
-    @application.get("/state", tags=["state"])
-    async def read_state() -> dict[str, object]:
-        return _state_payload(run)
+    @router.get("/state", tags=["state"])
+    async def read_state(request: Request) -> dict[str, object]:
+        return _state_payload(run, reviewer_id=reviewer_of(request))
 
-    @application.get("/takeoff", tags=["takeoff"])
+    @router.get("/takeoff", tags=["takeoff"])
     async def read_takeoff() -> dict[str, object]:
         """Pacote da rodada com a âncora de cada item declarada (`registered` | `raw`)."""
         packet, digest = run.require_packet()
@@ -1943,7 +2001,7 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             **_anchor_counts(packet, registered),
         }
 
-    @application.get("/images/plate", tags=["images"])
+    @router.get("/images/plate", tags=["images"])
     async def read_plate_image() -> FileResponse:
         packet, _digest = run.require_packet()
         image_path = run.plate_image(packet)
@@ -1961,15 +2019,17 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             )
         return FileResponse(image_path, media_type="image/png", headers=_NO_STORE)
 
-    @application.get("/images/overlay", tags=["images"])
+    @router.get("/images/overlay", tags=["images"])
     async def read_overlay_image() -> FileResponse:
         overlay_path = run.path(TAKEOFF_OVERLAY_FILENAME)
         if not overlay_path.is_file():
             raise _artifact_missing(TAKEOFF_OVERLAY_FILENAME)
         return FileResponse(overlay_path, media_type="image/png", headers=_NO_STORE)
 
-    @application.post("/plates", status_code=202, tags=["plates"])
-    async def upload_plate(file: Annotated[UploadFile, File()]) -> dict[str, object]:
+    @router.post("/plates", status_code=202, tags=["plates"])
+    async def upload_plate(
+        request: Request, file: Annotated[UploadFile, File()]
+    ) -> dict[str, object]:
         """Recebe o PDF do projetista, ingere a página 1 e dispara a extração paga.
 
         A resposta é o estado da rodada, devolvido **sem esperar** a chamada paga — quem
@@ -1989,10 +2049,10 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
         payload = await _read_upload(file)
         manifest = _ingest_plate_upload(run, filename=file.filename, payload=payload)
         _trigger_extraction(run, manifest)
-        return _state_payload(run)
+        return _state_payload(run, reviewer_id=reviewer_of(request))
 
-    @application.post("/plates/extract", status_code=202, tags=["plates"])
-    async def extract_plate() -> dict[str, object]:
+    @router.post("/plates/extract", status_code=202, tags=["plates"])
+    async def extract_plate(request: Request) -> dict[str, object]:
         """Re-dispara a extração da prancha JÁ ingerida, com a mesma pré-checagem.
 
         Existe para que falha transitória do provider — ou servidor que subiu sem teto de
@@ -2010,10 +2070,12 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
         unavailable = _trigger_extraction(run, manifest)
         if unavailable is not None:
             raise LocalServerRefusal(409, unavailable)
-        return _state_payload(run)
+        return _state_payload(run, reviewer_id=reviewer_of(request))
 
-    @application.post("/takeoff/decisions", tags=["takeoff"])
-    async def decide_takeoff_item(payload: TakeoffDecisionRequest) -> dict[str, object]:
+    @router.post("/takeoff/decisions", tags=["takeoff"])
+    async def decide_takeoff_item(
+        request: Request, payload: TakeoffDecisionRequest
+    ) -> dict[str, object]:
         """Aplica UMA decisão do orçamentista e republica pacote e overlay.
 
         A ordem é a de `cli._publish_takeoff`: o overlay é renderizado em memória antes de
@@ -2026,7 +2088,7 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
         decision = TakeoffDecisionInput(
             item_id=payload.item_id,
             action=payload.action,
-            reviewer_id=run.reviewer_id,
+            reviewer_id=reviewer_of(request),
             reviewer_role=REVIEWER_ROLE,
             decided_at=_now(),
             quantity=_parse_quantity(payload.quantity),
@@ -2053,7 +2115,7 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             **_anchor_counts(reviewed, registered),
         }
 
-    @application.get("/suggestions", tags=["codes"])
+    @router.get("/suggestions", tags=["codes"])
     async def read_suggestions() -> dict[str, object]:
         """Shortlist dos itens confirmados; calculada uma vez e persistida.
 
@@ -2086,7 +2148,7 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             }
         return _compute_suggestions_response(run)
 
-    @application.post("/suggestions/recompute", tags=["codes"])
+    @router.post("/suggestions/recompute", tags=["codes"])
     async def recompute_suggestions(payload: SuggestionsRecomputeRequest) -> dict[str, object]:
         """Recomputa a shortlist do zero pelo algoritmo corrente, sobrescrevendo o arquivo.
 
@@ -2154,7 +2216,7 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
                 )
         return _compute_suggestions_response(run)
 
-    @application.get("/catalog/search", tags=["codes"])
+    @router.get("/catalog/search", tags=["codes"])
     async def search_catalog(
         q: Annotated[str, Query(min_length=1, max_length=200)],
         limit: Annotated[
@@ -2200,7 +2262,7 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             semantic_warning=warning,
         )
 
-    @application.get("/codes", tags=["codes"])
+    @router.get("/codes", tags=["codes"])
     async def read_codes() -> dict[str, object]:
         packet, _digest = run.require_packet()
         assignments_found = run.assignments()
@@ -2221,8 +2283,8 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             ],
         }
 
-    @application.post("/codes/decisions", tags=["codes"])
-    async def decide_item_code(payload: CodeDecisionRequest) -> dict[str, object]:
+    @router.post("/codes/decisions", tags=["codes"])
+    async def decide_item_code(request: Request, payload: CodeDecisionRequest) -> dict[str, object]:
         """Confirma ou rejeita o código de UM item, acumulando sobre o conjunto anterior.
 
         Acumular item a item é a semântica do `--previous` do `confirm-codes`: o domínio
@@ -2266,7 +2328,7 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
                     item_id=payload.item_id,
                     action=payload.action,
                     code=payload.code,
-                    reviewer_id=run.reviewer_id,
+                    reviewer_id=reviewer_of(request),
                     reviewer_role=REVIEWER_ROLE,
                     decided_at=_now(),
                     note=payload.note,
@@ -2292,7 +2354,7 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             ],
         }
 
-    @application.post("/calc/build", tags=["bulletin"])
+    @router.post("/calc/build", tags=["bulletin"])
     async def build_calc(payload: CalcBuildRequest) -> dict[str, object]:
         """Monta boletim e memória da obra e grava a medição **sem aprovação**.
 
@@ -2325,7 +2387,7 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             "total_amount": str(valuation.total_amount),
         }
 
-    @application.get("/bulletin", tags=["bulletin"])
+    @router.get("/bulletin", tags=["bulletin"])
     async def read_bulletin() -> dict[str, object]:
         """Medição gravada, revalidada na leitura: totais recomputados pelos validadores do
         modelo. Arquivo que não passa é 422 — a tela nunca renderiza medição inválida."""
@@ -2336,6 +2398,69 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             "valuation_sha256": digest,
             "total_amount": str(valuation.total_amount),
         }
+
+    application.include_router(router)
+    return application
+
+
+def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
+    """Monta o servidor local sobre um diretório de rodada já produzido pelo CLI.
+
+    `reviewer_id` é a identidade de quem decide durante toda a vida do processo: ela entra
+    em cada `ReviewerDecision` gravada, ao lado do relógio do servidor. Trocar de revisor é
+    subir outro processo, não mandar outro campo.
+    """
+    resolved = _round_root(root)
+    cleaned_reviewer = reviewer_id.strip()
+    if not 1 <= len(cleaned_reviewer) <= REVIEWER_ID_MAX_LENGTH:
+        raise ValuationValidationError(
+            "LOCAL_REVIEWER_INVALID",
+            "identidade do revisor deve ter de 1 a 120 caracteres",
+            {"length": len(cleaned_reviewer)},
+        )
+    run = _Run(root=resolved, reviewer_id=cleaned_reviewer)
+    return _build_app(
+        run,
+        origins=LOCAL_WEB_ORIGINS,
+        # A identidade é do PROCESSO neste modo: ela não olha a requisição, e é por isso que
+        # expor esta porta fora de 127.0.0.1 faz o servidor avisar (`LOCAL_SERVER_EXPOSED`).
+        reviewer_of=lambda _request: run.reviewer_id,
+        dependencies=(),
+    )
+
+
+def create_hosted_app(
+    root: Path, *, issuer: str, audience: str, allowed_origins: Sequence[str]
+) -> FastAPI:
+    """Monta o servidor hospedado do ADR-0026 sobre o diretório da rodada.
+
+    A diferença para `create_local_app` é a porta de entrada, e só ela: toda rota de rodada
+    exige Bearer JWT do MESMO realm da sessão de cena, com o papel `orcamentista`, e o
+    `reviewer_id` gravado na decisão vem do claim assinado — nunca de flag. As funções de
+    domínio, os nomes de artefato, a guarda otimista por digest e as recusas são as mesmas.
+
+    `GET /healthz` fica **fora** da dependency, no roteador do próprio app: o probe do host
+    não tem sessão e não entrega dado nenhum. É a única rota sem token, e ela é declarada
+    aqui, à vista, em vez de virar uma exceção escondida dentro da dependency.
+    """
+    run = _Run(root=_round_root(root))
+    require_reviewer = build_reviewer_dependency(issuer=issuer, audience=audience)
+    application = _build_app(
+        run,
+        origins=allowed_origins,
+        reviewer_of=hosted_reviewer_id,
+        dependencies=[Depends(require_reviewer)],
+    )
+
+    @application.exception_handler(HostedSessionRefusal)
+    async def session_handler(_request: Request, exception: HostedSessionRefusal) -> JSONResponse:
+        """Recusa de sessão no MESMO envelope das recusas de domínio; o token nunca aparece."""
+        return _problem(exception.status_code, exception.error)
+
+    @application.get("/healthz", tags=["health"])
+    async def read_health() -> dict[str, str]:
+        """Prova de vida do processo. Sem sessão, sem estado da rodada e sem dado de obra."""
+        return {"status": "ok"}
 
     return application
 

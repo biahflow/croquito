@@ -739,5 +739,53 @@ export function getBulletin(): Promise<BulletinResponse> {
 }
 
 /** Rotas de imagem sem parâmetro de caminho: a UI escolhe a etapa, nunca o arquivo. */
-export const plateImageUrl = `${apiBaseUrl}/images/plate`;
-export const overlayImageUrl = `${apiBaseUrl}/images/overlay`;
+export const PLATE_IMAGE_PATH = "/images/plate";
+export const OVERLAY_IMAGE_PATH = "/images/overlay";
+
+export const plateImageUrl = `${apiBaseUrl}${PLATE_IMAGE_PATH}`;
+export const overlayImageUrl = `${apiBaseUrl}${OVERLAY_IMAGE_PATH}`;
+
+/**
+ * Baixa uma imagem do servidor COM o `Authorization` da sessão e devolve um object URL.
+ *
+ * `<img src={url}>` não passa por este módulo: o navegador busca a imagem sozinho, sem
+ * header nenhum, e no modo hospedado (ADR-0026) isso é um 401 — a prancha sumiria da tela
+ * de quem está autenticado. Buscar por `fetch` e virar `blob:` é o que faz a imagem
+ * atravessar a mesma porta que o resto das chamadas.
+ *
+ * Quem chama fica responsável por `URL.revokeObjectURL` quando trocar ou desmontar: object
+ * URL vive até o fim do documento, e uma rodada de revisão abre a prancha muitas vezes.
+ */
+export async function fetchImageObjectUrl(path: string): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, { headers: authHeaders() });
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === "AbortError") {
+      throw cause;
+    }
+    throw new MedicaoApiError(
+      0,
+      "LOCAL_SERVER_UNREACHABLE",
+      "o servidor local não respondeu; confira se `croquito-valuation serve` está no ar",
+      { base_url: apiBaseUrl, path },
+    );
+  }
+  if (!response.ok) {
+    throw await readProblem(response);
+  }
+  return URL.createObjectURL(await response.blob());
+}
+
+/**
+ * `src` da prancha antes de qualquer busca: a URL direta no caminho local, `null` no
+ * hospedado.
+ *
+ * Sem sessão OIDC (o servidor local do ADR-0020, que não autentica) a imagem continua
+ * vindo pela URL direta — nenhum fetch a mais, nenhum object URL a revogar, exatamente o
+ * que a ferramenta local sempre fez. Com sessão, o `null` é o estado honesto: ainda não há
+ * imagem, porque ela só existe depois da busca autenticada.
+ */
+export function plateImageSource(oidcAtivo: boolean): string | null {
+  return oidcAtivo ? null : plateImageUrl;
+}

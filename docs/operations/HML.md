@@ -135,11 +135,11 @@ login do dia espere o servidor nascer. É uma escolha de operação, não uma ex
 
 ## Lacunas declaradas
 
-- **`serve --hosted`** (Bearer JWT, papel `orcamentista`, CORS do host público) está
-  decidido no [ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md) e
-  ainda não implementado: até lá o serviço `croquito-medicao-hml` recusa subir por falta da
-  flag, o que é o desfecho correto — servidor sem autenticação não deve nascer em host
-  público.
+- **Uma rodada e uma instância por ambiente.** O servidor de medição aponta um diretório
+  (`--root /mnt/rounds/atual`) e o volume por FUSE não dá lock: trocar de rodada é trocar o
+  argumento, e duas instâncias sobre o mesmo diretório não teriam árbitro. Limite declarado
+  no [ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md), junto da
+  ausência de `base_version` real e de multi-tenant na medição.
 - **Retenção de sete dias** precisa estar no ciclo de vida dos buckets, e não apenas na
   política escrita.
 - **Migrations revisadas**: o ambiente usa bootstrap aditivo, descrito acima.

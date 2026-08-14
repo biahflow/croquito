@@ -3,11 +3,15 @@ import {
   calcBuildBody,
   codeDecisionBody,
   codeSearchTerm,
+  fetchImageObjectUrl,
   getState,
   isAbortError,
   isStateMoved,
   itemAnchor,
   MedicaoApiError,
+  PLATE_IMAGE_PATH,
+  plateImageSource,
+  plateImageUrl,
   postSuggestionsRecompute,
   readProblem,
   SESSION_REJECTED_CODE,
@@ -409,5 +413,87 @@ describe("setAccessTokenProvider", () => {
     expect(headersDaChamada().Authorization).toBe("Bearer token-de-teste");
     // O boundary é escrito pelo navegador; um `Content-Type` daqui quebraria o parsing.
     expect(headersDaChamada()).not.toHaveProperty("Content-Type");
+  });
+});
+
+/**
+ * Imagem da prancha no modo hospedado: `<img src>` não leva header nenhum, então ela é
+ * buscada como qualquer outra chamada e vira object URL. Sem sessão, o caminho local do
+ * ADR-0020 continua exibindo a URL direta, sem requisição a mais.
+ */
+describe("fetchImageObjectUrl", () => {
+  const chamadas: { url: string; init: RequestInit | undefined }[] = [];
+
+  beforeEach(() => {
+    chamadas.length = 0;
+    vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+      chamadas.push({ url, init });
+      return Promise.resolve(
+        new Response(new Blob([new Uint8Array([137, 80, 78, 71])]), {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        }),
+      );
+    });
+  });
+
+  afterEach(() => {
+    setAccessTokenProvider(null);
+    vi.unstubAllGlobals();
+  });
+
+  it("busca a imagem com o Bearer da sessão e devolve um object URL", async () => {
+    setAccessTokenProvider(() => "token-de-teste");
+
+    const url = await fetchImageObjectUrl(PLATE_IMAGE_PATH);
+
+    expect(chamadas).toHaveLength(1);
+    expect(chamadas[0]?.url).toBe(plateImageUrl);
+    expect(
+      (chamadas[0]?.init?.headers as Record<string, string>).Authorization,
+    ).toBe("Bearer token-de-teste");
+    expect(url.startsWith("blob:")).toBe(true);
+    URL.revokeObjectURL(url);
+  });
+
+  it("sem sessão nenhum header a mais é enviado", async () => {
+    const url = await fetchImageObjectUrl(PLATE_IMAGE_PATH);
+
+    expect(chamadas[0]?.init?.headers).not.toHaveProperty("Authorization");
+    URL.revokeObjectURL(url);
+  });
+
+  it("recusa do servidor vira o erro de domínio, nunca um object URL vazio", async () => {
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ code: "HOSTED_SESSION_INVALID", detail: "entre de novo" }), {
+          status: 401,
+          headers: { "Content-Type": "application/problem+json" },
+        }),
+      ),
+    );
+
+    await expect(fetchImageObjectUrl(PLATE_IMAGE_PATH)).rejects.toMatchObject({
+      code: "HOSTED_SESSION_INVALID",
+      status: 401,
+    });
+  });
+
+  it("servidor fora do ar é dito como servidor fora do ar", async () => {
+    vi.stubGlobal("fetch", () => Promise.reject(new TypeError("failed to fetch")));
+
+    await expect(fetchImageObjectUrl(PLATE_IMAGE_PATH)).rejects.toMatchObject({
+      code: "LOCAL_SERVER_UNREACHABLE",
+    });
+  });
+});
+
+describe("plateImageSource", () => {
+  it("sem OIDC a prancha continua vindo da URL direta do servidor local", () => {
+    expect(plateImageSource(false)).toBe(plateImageUrl);
+  });
+
+  it("com OIDC não há src antes da busca autenticada", () => {
+    expect(plateImageSource(true)).toBeNull();
   });
 });

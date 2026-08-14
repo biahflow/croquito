@@ -2,7 +2,7 @@
 
 Status: Proposed  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-13
+Última revisão: 2026-08-14
 
 Este documento é a referência canônica do contexto delimitado `valuation`
 (`packages/valuation/src/croquito_valuation/` e
@@ -115,6 +115,23 @@ Recalcular a shortlist já gravada (`POST /suggestions/recompute`) é gesto do o
 com o digest-base citado como as demais mutações, e recusa fechado
 (`LOCAL_SUGGESTIONS_REFINED`) quando ela carrega refino pago — recalcular descartaria o
 lineage da chamada, e refinar de novo continua sendo comando do CLI.
+
+`serve --hosted` ([ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md)) é
+o **modo hospedado** do mesmo servidor, e o único que pode subir fora da máquina do
+operador: toda rota da rodada exige Bearer JWT do mesmo realm da sessão de cena (validador
+compartilhado `croquito_core.oidc`, sem tocar em `croquito_api`) com o papel `orcamentista`,
+o `reviewer_id` carimbado na decisão vem do claim assinado (`preferred_username`, com `sub`
+como fallback) em vez da flag, o CORS sai das origens declaradas no ambiente
+(`CROQUITO_MEDICAO_OIDC_ISSUER`, `CROQUITO_MEDICAO_OIDC_AUDIENCE`,
+`CROQUITO_MEDICAO_WEB_ORIGINS` — ausência recusa a subida) e `GET /healthz` é a única rota
+sem sessão, para o probe do host. Nenhuma regra de domínio muda entre os modos: as mesmas
+funções fail-closed, os mesmos nomes de artefato, a mesma guarda por digest. Sem a flag, o
+comportamento local do ADR-0020 é idêntico ao que sempre foi, inclusive o aviso ao expor a
+porta em outra interface. No volume da rodada hospedada (bucket montado por FUSE), a
+publicação de artefato troca `temporário + rename` por escrita direta quando
+`CROQUITO_IO_DIRECT_WRITE` está ligada — lá o `rename` é copy+delete e não é a operação
+atômica, enquanto o fechamento do arquivo é; desligada (o default), a escrita local não
+muda.
 
 A sugestão e a busca de código usam o **matcher híbrido** do M7
 ([ADR-0021](../adr/0021-hybrid-sco-code-retrieval.md)): braço léxico (radicais +

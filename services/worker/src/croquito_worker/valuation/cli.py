@@ -1894,20 +1894,27 @@ def _command_build_calc(args: argparse.Namespace) -> int:
 
 
 def _command_serve(args: argparse.Namespace) -> int:
-    """Sobe o servidor local de homologação sobre um diretório de rodada.
+    """Sobe o servidor de homologação sobre um diretório de rodada, local ou hospedado.
 
     O import é tardio de propósito: `local_server` lê deste módulo os nomes padrão dos
     artefatos, então importá-lo no topo fecharia um ciclo — e nenhum outro comando precisa
     pagar o custo de carregar o stack HTTP.
+
+    Os dois modos são explícitos e não se confundem (ADR-0026): sem `--hosted` nada muda em
+    relação ao ADR-0020 (identidade por `--reviewer`, CORS da UI local, aviso ao expor a
+    porta); com `--hosted` a identidade vem do token e `--reviewer` passa a ser proibido —
+    aceitar os dois deixaria em aberto qual deles carimba a decisão.
 
     O banner declara duas condições que só se descobrem no start e que a tela não tem como
     adivinhar depois: se a rodada tem catálogo de preços e se a extração automática está
     disponível. É o momento em que o operador ainda pode corrigir as duas com uma flag ou
     uma variável de ambiente.
     """
+    from croquito_worker.valuation.hosted_auth import hosted_settings_from_env
     from croquito_worker.valuation.local_server import (
         LOCAL_WEB_ORIGINS,
         catalog_source,
+        create_hosted_app,
         create_local_app,
         extraction_banner_note,
         install_round_catalog,
@@ -1917,7 +1924,38 @@ def _command_serve(args: argparse.Namespace) -> int:
 
     root = Path(args.root)
     try:
-        application = create_local_app(root, args.reviewer)
+        if args.hosted:
+            if args.reviewer is not None:
+                raise ValuationValidationError(
+                    "SERVE_REVIEWER_FORBIDDEN",
+                    "no modo hospedado a identidade de quem decide vem do token da sessão; "
+                    "remova --reviewer",
+                    {},
+                )
+            settings = hosted_settings_from_env()
+            application = create_hosted_app(
+                root,
+                issuer=settings.issuer,
+                audience=settings.audience,
+                allowed_origins=settings.allowed_origins,
+            )
+            identity: dict[str, object] = {
+                "identity": "token OIDC do realm do ambiente (papel orcamentista)",
+                "oidc_issuer": settings.issuer,
+                "oidc_audience": settings.audience,
+            }
+            origins = list(settings.allowed_origins)
+        else:
+            if args.reviewer is None:
+                raise ValuationValidationError(
+                    "SERVE_REVIEWER_REQUIRED",
+                    "o modo local exige --reviewer: quem sobe o processo declara quem "
+                    "decide. Identidade por token é `serve --hosted`",
+                    {},
+                )
+            application = create_local_app(root, args.reviewer)
+            identity = {"identity": "--reviewer", "reviewer_id": args.reviewer}
+            origins = list(LOCAL_WEB_ORIGINS)
         resolved_root = root.expanduser().resolve()
         source = catalog_source(args.catalog)
         catalog_note = install_round_catalog(resolved_root, source)
@@ -1925,7 +1963,9 @@ def _command_serve(args: argparse.Namespace) -> int:
     except (ValuationValidationError, ValidationError) as error:
         _print(_refused_payload(error))
         return 2
-    if args.host != LOCAL_SERVER_DEFAULT_HOST:
+    # O aviso é sobre expor uma porta SEM autenticação; ele não se aplica ao modo hospedado,
+    # que exige Bearer JWT em toda rota de rodada e nasce para subir fora da máquina.
+    if not args.hosted and args.host != LOCAL_SERVER_DEFAULT_HOST:
         _print(
             {
                 "warning": "LOCAL_SERVER_EXPOSED",
@@ -1940,10 +1980,11 @@ def _command_serve(args: argparse.Namespace) -> int:
     _print(
         {
             "status": "serving",
-            "root": str(root.expanduser().resolve()),
-            "reviewer_id": args.reviewer,
+            "mode": "hosted" if args.hosted else "local",
+            "root": str(resolved_root),
+            **identity,
             "url": f"http://{args.host}:{args.port}",
-            "web_origins": list(LOCAL_WEB_ORIGINS),
+            "web_origins": origins,
             "catalog": catalog_note,
             "catalog_index": catalog_index_note,
             "extracao": extraction_banner_note(),
@@ -2270,22 +2311,35 @@ def build_parser() -> argparse.ArgumentParser:
 
     serve = subcommands.add_parser(
         "serve",
-        help="sobe a UI local de homologação sobre um diretório de rodada; nunca produção",
+        help="sobe a UI de homologação sobre um diretório de rodada (local ou --hosted)",
         description=(
-            "Servidor LOCAL de homologação da medição, na família do `parity`: sem "
-            "autenticação, sem provider e sem AWS. Ele embrulha as mesmas funções de "
+            "Servidor de homologação da medição. Ele embrulha as mesmas funções de "
             "domínio dos comandos (`review-takeoff`, `suggest-codes`, `confirm-codes`, "
             "`build-calc`) sobre os artefatos que já estão em --root, com os nomes padrão. "
-            "A identidade de quem decide vem de --reviewer, não de token: ela entra em "
-            "cada decisão gravada, junto do relógio do servidor. O bind padrão é "
-            "127.0.0.1; expor em outro host publica a ferramenta sem autenticação."
+            "Sem --hosted é a ferramenta LOCAL da família do `parity` (ADR-0020): sem "
+            "autenticação, bind padrão em 127.0.0.1, identidade de quem decide vinda de "
+            "--reviewer — expor em outro host publica a ferramenta sem autenticação. Com "
+            "--hosted (ADR-0026) toda rota da rodada exige Bearer JWT do realm do "
+            "ambiente com o papel orcamentista, e a identidade da decisão vem do token."
         ),
     )
     serve.add_argument("--root", type=Path, required=True)
     serve.add_argument(
+        "--hosted",
+        action="store_true",
+        help=(
+            "modo hospedado (ADR-0026): exige CROQUITO_MEDICAO_OIDC_ISSUER, "
+            "CROQUITO_MEDICAO_OIDC_AUDIENCE e CROQUITO_MEDICAO_WEB_ORIGINS no ambiente, "
+            "e proíbe --reviewer"
+        ),
+    )
+    serve.add_argument(
         "--reviewer",
-        required=True,
-        help="identidade do orçamentista que decide nesta sessão; vai em cada decisão",
+        default=None,
+        help=(
+            "identidade do orçamentista que decide nesta sessão; vai em cada decisão. "
+            "Exigido no modo local e proibido com --hosted, onde ela vem do token"
+        ),
     )
     serve.add_argument("--host", default=LOCAL_SERVER_DEFAULT_HOST)
     serve.add_argument("--port", type=int, default=LOCAL_SERVER_DEFAULT_PORT)

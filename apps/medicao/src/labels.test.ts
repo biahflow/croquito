@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   assignmentStatusLabel,
+  AVISO_FERRAMENTA_HOSPEDADA,
   AVISO_FERRAMENTA_LOCAL,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
+  avisoDaFerramenta,
   descricaoCalculoShortlist,
   errorMessage,
   itemStatusLabel,
@@ -129,6 +131,27 @@ describe("AVISO_FERRAMENTA_LOCAL", () => {
   it("declara que medir não é aprovar nem exportar", () => {
     expect(AVISO_FERRAMENTA_LOCAL).toContain("medição sem aprovação");
     expect(AVISO_FERRAMENTA_LOCAL).toContain("atos separados");
+  });
+});
+
+describe("avisoDaFerramenta", () => {
+  it("sem sessão OIDC, o aviso é o da ferramenta local", () => {
+    expect(avisoDaFerramenta(false)).toBe(AVISO_FERRAMENTA_LOCAL);
+  });
+
+  it("com sessão, o aviso deixa de chamar de local o que está hospedado", () => {
+    const aviso = avisoDaFerramenta(true);
+
+    expect(aviso).toBe(AVISO_FERRAMENTA_HOSPEDADA);
+    expect(aviso).not.toContain("Ferramenta local");
+    expect(aviso).toContain("carimbadas com sua identidade");
+  });
+
+  it("os dois avisos mantêm a regra que não mudou: medir não é aprovar nem exportar", () => {
+    for (const aviso of [avisoDaFerramenta(false), avisoDaFerramenta(true)]) {
+      expect(aviso).toContain("medição sem aprovação");
+      expect(aviso).toContain("atos separados");
+    }
   });
 });
 

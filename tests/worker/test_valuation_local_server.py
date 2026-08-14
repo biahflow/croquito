@@ -724,10 +724,14 @@ def test_missing_images_return_404(root: Path) -> None:
 
 def test_no_route_accepts_a_path_of_its_own(root: Path) -> None:
     """Travessia de diretório é impossível por construção: nenhuma rota tem parâmetro de
-    caminho, e as imagens são exatamente dois nomes fixos."""
+    caminho, e as imagens são exatamente dois nomes fixos.
+
+    Os caminhos são lidos do próprio OpenAPI publicado, e não da lista interna de rotas:
+    é ele o contrato que o servidor expõe, e ele continua verdadeiro qualquer que seja a
+    forma como as rotas foram registradas (direto no app ou por roteador incluído)."""
     application = create_local_app(root, REVIEWER)
 
-    paths = {str(getattr(route, "path", "")) for route in application.routes}
+    paths = set(application.openapi()["paths"])
 
     assert {path for path in paths if path.startswith("/images")} == {
         "/images/plate",

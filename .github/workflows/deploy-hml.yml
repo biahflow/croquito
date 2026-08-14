@@ -191,10 +191,9 @@ jobs:
       # ambiente: o servidor grava arquivo, e duas instâncias sobre o mesmo diretório
       # não têm árbitro (limite herdado do ADR-0020 e registrado no ADR-0026).
       #
-      # `serve --hosted` (sessão autenticada mínima) chega na Entrega 4. Até lá este
-      # passo publica a revisão certa e o processo recusa subir por falta da flag — o
-      # que é visível, e melhor que subir um servidor local sem autenticação num host
-      # público.
+      # `serve --hosted` é a sessão autenticada mínima do ADR-0026: Bearer do mesmo
+      # realm, papel orcamentista, reviewer carimbado do token, e `/healthz` como a
+      # única rota sem sessão — é ela que o startup probe consulta.
       - name: Publica o servidor de medição
         run: |
           set -euo pipefail
@@ -209,6 +208,7 @@ jobs:
             --command croquito-valuation \
             --args=serve,--hosted,--root,/mnt/rounds/atual,--host,0.0.0.0,--port,8080 \
             --set-env-vars CROQUITO_MEDICAO_OIDC_ISSUER=https://croquito-hml.biahflow.ai/auth/realms/croquito,CROQUITO_MEDICAO_OIDC_AUDIENCE=croquito-web,CROQUITO_MEDICAO_WEB_ORIGINS=https://croquito-hml.biahflow.ai,CROQUITO_IO_DIRECT_WRITE=1 \
+            --startup-probe httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=5,periodSeconds=5,failureThreshold=12,timeoutSeconds=3 \
             --quiet
 
       - name: Publica o nginx
