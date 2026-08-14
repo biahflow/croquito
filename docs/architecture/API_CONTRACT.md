@@ -36,8 +36,14 @@ papéis somente dos claims assinados.
 
 Entrada: `filename`, `content_type`, `size_bytes`, `sha256`.  
 Saída: `upload_id`, `object_key`, `url`, headers obrigatórios e `expires_at`.
-Os headers incluem `Content-Type: application/pdf` e
-`x-amz-checksum-sha256` (SHA-256 em base64); ambos devem ser enviados no PUT.
+Os headers incluem `Content-Type: application/pdf` e, quando o storage assina
+checksum, `x-amz-checksum-sha256` (SHA-256 em base64). O cliente envia no PUT
+exatamente os headers devolvidos, nem mais nem menos: no perfil de storage sem
+checksum assinado (`CROQUITO_STORAGE_FLAVOR=gcs`, interoperabilidade XML do Cloud
+Storage) o header não vem e enviá-lo faria o PUT falhar. Nesse perfil a criação do
+job confere tamanho e tipo, registra o evento de auditoria
+`UPLOAD_CHECKSUM_DEFERRED_TO_WORKER` e o digest continua verificado pelo worker,
+que recalcula o SHA-256 dos bytes gravados antes de qualquer processamento.
 
 O endpoint não aceita caminho S3 fornecido pelo cliente. A URL expira em até 15
 minutos.

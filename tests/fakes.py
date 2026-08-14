@@ -107,6 +107,47 @@ class FakeQueue:
         return [str(json.loads(message["Body"]).get("command")) for message in self.delivered]
 
 
+@dataclass
+class FakePublishFuture:
+    """Futuro do publisher Pub/Sub; a falha combinada aparece só em `result()`."""
+
+    message_id: str = "fake-message-id"
+    failure: BaseException | None = None
+
+    def result(self, timeout: float | None = None) -> str:
+        if self.failure is not None:
+            raise self.failure
+        return self.message_id
+
+
+class FakePublisher:
+    """Publisher Pub/Sub de teste: registra `(topic, data)` e falha sob demanda.
+
+    As duas falhas são distintas de propósito: o cliente real recusa algumas publicações
+    na chamada e reporta as demais no futuro, e o adaptador precisa traduzir as duas.
+    """
+
+    def __init__(
+        self,
+        *,
+        publish_failure: BaseException | None = None,
+        result_failure: BaseException | None = None,
+    ) -> None:
+        self.published: list[tuple[str, bytes]] = []
+        self.publish_failure = publish_failure
+        self.result_failure = result_failure
+
+    def publish(self, topic: str, data: bytes) -> FakePublishFuture:
+        if self.publish_failure is not None:
+            raise self.publish_failure
+        self.published.append((topic, data))
+        return FakePublishFuture(failure=self.result_failure)
+
+    def bodies(self) -> list[bytes]:
+        """Corpos publicados, na ordem, como o worker os leria."""
+        return [data for _topic, data in self.published]
+
+
 def synthetic_pdf() -> bytes:
     """A one-page PDF that passes every deterministic upload guardrail."""
     document = fitz.open()

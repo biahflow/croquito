@@ -14,6 +14,7 @@ from typing import Any
 from uuid import UUID
 
 import boto3
+from botocore.config import Config as BotoConfig
 from sqlalchemy import create_engine, text
 
 from croquito_worker.association import AssociationSet
@@ -198,6 +199,8 @@ def seed_review(
         "s3",
         region_name=settings.aws_region,
         endpoint_url=settings.aws_endpoint_url,
+        # Mesma configuração do client da API: interop S3 do GCS exige path-style.
+        config=BotoConfig(signature_version="s3v4", s3={"addressing_style": "path"}),
     )
     with inputs.image_path.open("rb") as image_stream:
         storage.put_object(
@@ -205,7 +208,7 @@ def seed_review(
             Key=source_image_key,
             Body=image_stream,
             ContentType="image/png",
-            ServerSideEncryption="AES256",
+            **({"ServerSideEncryption": "AES256"} if settings.storage_sse_enabled else {}),
         )
 
     with engine.begin() as connection:

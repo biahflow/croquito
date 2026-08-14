@@ -1,4 +1,9 @@
-"""Consumidor local SQS com providers externos explicitamente autorizados por job."""
+"""Consumidor local SQS com providers externos explicitamente autorizados por job.
+
+O despacho (`LocalQueueWorker.dispatch`) é independente do transporte: o consumidor SQS o
+chama depois do `receive_message` e o receptor push (`push_server`) depois de decodificar
+o envelope. Retorno normal significa ack; exceção significa reentrega.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ from typing import Any
 
 import boto3
 import fitz
+from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, RowMapping
@@ -65,6 +71,9 @@ class LocalWorkerSettings:
     aws_region: str
     aws_endpoint_url: str
     artifact_bucket: str = "croquito-local-artifacts"
+    # SSE-S3 explícita em todo put. O storage do GCP criptografa em repouso por padrão e
+    # recusa o header pela interoperabilidade; lá a flag desliga sem perder criptografia.
+    storage_sse_enabled: bool = True
     real_providers_enabled: bool = False
     # Digests sha256 de upload liberados para extração paga. Vazio significa nenhum:
     # ligar a flag de providers não deve, sozinho, mandar documento de cliente para fora.
@@ -88,6 +97,8 @@ class LocalWorkerSettings:
             aws_region=os.getenv("AWS_REGION", "sa-east-1"),
             aws_endpoint_url=str(required["aws_endpoint_url"]),
             artifact_bucket=os.getenv("CROQUITO_ARTIFACT_BUCKET", "croquito-local-artifacts"),
+            storage_sse_enabled=os.getenv("CROQUITO_STORAGE_SSE", "true").lower()
+            in {"1", "true", "yes"},
             real_providers_enabled=os.getenv("CROQUITO_REAL_PROVIDERS_ENABLED", "").lower()
             in {"1", "true", "yes"},
             ai_extraction_allowed_digests=frozenset(
@@ -96,6 +107,12 @@ class LocalWorkerSettings:
                 if digest.strip()
             ),
         )
+
+
+#: Status de job que só existem depois da ingestão ter concluído. `FAILED` fica de fora
+#: de propósito: a recusa por autorização ou por PDF inválido é recuperável, e reenfileirar
+#: o mesmo comando depois de corrigir a causa continua sendo o caminho de retomada.
+INGESTED_JOB_STATUSES = frozenset({"REVIEW_REQUIRED", "APPROVED", "EXPORTING", "COMPLETED"})
 
 
 def _json_column(value: Any) -> Any:
@@ -127,6 +144,15 @@ class InvalidUploadError(ValueError):
     """Untrusted input failed a deterministic pre-processing guardrail."""
 
 
+class UnroutableMessageError(ValueError):
+    """A mensagem não descreve um comando conhecido deste worker.
+
+    É defeito do publicador ou payload estranho à fila, nunca falha transitória: reentregar
+    produz exatamente o mesmo resultado. Continua sendo `ValueError` para preservar a
+    semântica do consumidor SQS, que não apaga a mensagem quando o despacho levanta.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class ValidatedUpload:
     page_count: int
@@ -141,6 +167,8 @@ class S3ProtectedRawResponseStore(ProtectedRawResponseStore):
     bucket: str
     tenant_id: str
     job_id: str
+    #: Ver `WorkerArtifactStore.sse`: SSE-S3 explícita, desligável só onde o storage recusa.
+    sse: bool = True
 
     def persist(self, *, provider: ProviderName, input_digest: str, payload: bytes) -> str:
         payload_digest = hashlib.sha256(payload).hexdigest()
@@ -153,7 +181,7 @@ class S3ProtectedRawResponseStore(ProtectedRawResponseStore):
             Key=key,
             Body=payload,
             ContentType="application/json",
-            ServerSideEncryption="AES256",
+            **({"ServerSideEncryption": "AES256"} if self.sse else {}),
         )
         return key
 
@@ -208,13 +236,41 @@ class LocalQueueWorker:
         self.settings = settings
         # No environment switch exists for fixtures: only a caller can explicitly inject one.
         self.provider_suite = provider_suite
-        self.client: Any = boto3.client(
-            "sqs", region_name=settings.aws_region, endpoint_url=settings.aws_endpoint_url
-        )
-        self.s3_client: Any = boto3.client(
-            "s3", region_name=settings.aws_region, endpoint_url=settings.aws_endpoint_url
-        )
+        self._queue_client: Any | None = None
+        self._object_client: Any | None = None
         self.engine = create_engine(settings.database_url)
+
+    @property
+    def client(self) -> Any:
+        """SQS client built on first use: the push transport never consumes a queue."""
+        if self._queue_client is None:
+            self._queue_client = boto3.client(
+                "sqs",
+                region_name=self.settings.aws_region,
+                endpoint_url=self.settings.aws_endpoint_url,
+            )
+        return self._queue_client
+
+    @client.setter
+    def client(self, value: Any) -> None:
+        self._queue_client = value
+
+    @property
+    def s3_client(self) -> Any:
+        if self._object_client is None:
+            # Path-style e SigV4 explícitos, como no ArtifactStore da API: o interop
+            # S3 do GCS exige os dois; LocalStack e AWS aceitam ambos.
+            self._object_client = boto3.client(
+                "s3",
+                region_name=self.settings.aws_region,
+                endpoint_url=self.settings.aws_endpoint_url,
+                config=BotoConfig(signature_version="s3v4", s3={"addressing_style": "path"}),
+            )
+        return self._object_client
+
+    @s3_client.setter
+    def s3_client(self, value: Any) -> None:
+        self._object_client = value
 
     def _mark_failed(self, *, job_id: str, tenant_id: str, failure_code: str) -> None:
         with self.engine.begin() as connection:
@@ -248,40 +304,57 @@ class LocalQueueWorker:
         if not messages:
             return 0
         message = messages[0]
-        body = json.loads(message["Body"])
+        processed = self.dispatch(json.loads(message["Body"]))
+        # Retorno normal do despacho é o ack; exceção deixa a mensagem para reentrega.
+        self._delete_message(message)
+        return processed
+
+    def dispatch(self, body: Mapping[str, Any]) -> int:
+        """Executa um comando já decodificado, independente do transporte que o trouxe.
+
+        Contrato com o chamador: retorno normal significa ack (o transporte pode
+        descartar a mensagem); exceção significa reentrega. Nenhum handler apaga
+        mensagem — a semântica do transporte mora aqui e em `run_once`.
+        """
         job_id = body.get("job_id")
         tenant_id = body.get("tenant_id")
         if not isinstance(job_id, str) or not isinstance(tenant_id, str):
-            raise ValueError("Mensagem de processamento inválida")
+            raise UnroutableMessageError("Mensagem de processamento inválida")
         # Messages published before the command field are always ingestion work.
         command = body.get("command", "process_upload")
         if command == "export_scene_package":
             export_id = body.get("export_id")
             if not isinstance(export_id, str):
-                raise ValueError("Mensagem de exportação inválida")
-            return self._handle_export(
-                message, export_id=export_id, job_id=job_id, tenant_id=tenant_id
-            )
+                raise UnroutableMessageError("Mensagem de exportação inválida")
+            return self._handle_export(export_id=export_id, job_id=job_id, tenant_id=tenant_id)
         if command == "solve_trace_scene":
             trace_solve_id = body.get("trace_solve_id")
             if not isinstance(trace_solve_id, str):
-                raise ValueError("Mensagem de traçado inválida")
+                raise UnroutableMessageError("Mensagem de traçado inválida")
             return self._handle_trace_solve(
-                message, trace_solve_id=trace_solve_id, job_id=job_id, tenant_id=tenant_id
+                trace_solve_id=trace_solve_id, job_id=job_id, tenant_id=tenant_id
             )
         if command == "answer_chat_turn":
             chat_turn_id = body.get("chat_turn_id")
             if not isinstance(chat_turn_id, str):
-                raise ValueError("Mensagem de conversa inválida")
+                raise UnroutableMessageError("Mensagem de conversa inválida")
             return self._handle_chat_turn(
-                message, chat_turn_id=chat_turn_id, job_id=job_id, tenant_id=tenant_id
+                chat_turn_id=chat_turn_id, job_id=job_id, tenant_id=tenant_id
             )
         if command != "process_upload":
-            raise ValueError("Comando de processamento desconhecido")
-        return self._handle_upload(message, job_id=job_id, tenant_id=tenant_id)
+            raise UnroutableMessageError("Comando de processamento desconhecido")
+        return self._handle_upload(job_id=job_id, tenant_id=tenant_id)
 
-    def _handle_upload(self, message: dict[str, Any], *, job_id: str, tenant_id: str) -> int:
+    def _handle_upload(self, *, job_id: str, tenant_id: str) -> int:
         with self.engine.connect() as connection:
+            ingested = connection.execute(
+                text("SELECT status FROM jobs WHERE id = :job_id AND tenant_id = :tenant_id"),
+                {"job_id": job_id, "tenant_id": tenant_id},
+            ).scalar_one_or_none()
+            if ingested in INGESTED_JOB_STATUSES:
+                # Reentrega de um job que já passou da ingestão: reprocessar baixaria o
+                # documento de novo e, com providers ligados, pagaria a chamada outra vez.
+                return 1
             upload = (
                 connection.execute(
                     text(
@@ -317,10 +390,6 @@ class LocalQueueWorker:
                 tenant_id=tenant_id,
                 failure_code="AI_PROCESSING_NOT_AUTHORIZED",
             )
-            self.client.delete_message(
-                QueueUrl=self.settings.queue_url,
-                ReceiptHandle=message["ReceiptHandle"],
-            )
             return 1
         try:
             uploaded_object = self.s3_client.get_object(
@@ -335,13 +404,9 @@ class LocalQueueWorker:
             )
         except InvalidUploadError:
             self._mark_invalid_upload(job_id=job_id, tenant_id=tenant_id)
-            self.client.delete_message(
-                QueueUrl=self.settings.queue_url,
-                ReceiptHandle=message["ReceiptHandle"],
-            )
             return 1
         except (BotoCoreError, ClientError):
-            # SQS redelivery owns the bounded retry policy for transient object-store failures.
+            # Redelivery owns the bounded retry policy for transient object-store failures.
             raise
         review_snapshot = None
         suite = self.provider_suite
@@ -359,7 +424,6 @@ class LocalQueueWorker:
                 tenant_id=tenant_id,
                 failure_code="AI_EXTRACTION_NOT_ALLOWLISTED",
             )
-            self._delete_message(message)
             return 1
         if suite is None and self.settings.real_providers_enabled:
             suite = build_real_provider_suite(
@@ -368,6 +432,7 @@ class LocalQueueWorker:
                     bucket=self.settings.artifact_bucket,
                     tenant_id=tenant_id,
                     job_id=job_id,
+                    sse=self.settings.storage_sse_enabled,
                 )
             )
         if suite is not None:
@@ -386,15 +451,14 @@ class LocalQueueWorker:
                 except ProviderExecutionError as error:
                     if error.code is not ProviderFailureCode.BUDGET_EXCEEDED:
                         raise
-                    # Estouro de budget não é falha transitória. Sem drenar a mensagem, a
-                    # reentrega chamaria o provider de novo e gastaria mais — o oposto do
-                    # que o teto existe para impedir.
+                    # Estouro de budget não é falha transitória. Sem o ack, a reentrega
+                    # chamaria o provider de novo e gastaria mais — o oposto do que o
+                    # teto existe para impedir.
                     self._mark_failed(
                         job_id=job_id,
                         tenant_id=tenant_id,
                         failure_code="AI_BUDGET_EXCEEDED",
                     )
-                    self._delete_message(message)
                     return 1
             if validated_upload.page_count > 1:
                 review_snapshot = ProviderReviewSnapshot(
@@ -451,7 +515,6 @@ class LocalQueueWorker:
             )
         if result.rowcount != 1:
             raise ValueError("Job não encontrado ou tenant divergente")
-        self._delete_message(message)
         return 1
 
     def _finish_export(
@@ -500,9 +563,7 @@ class LocalQueueWorker:
                 {"job_id": job_id, "tenant_id": tenant_id, "job_status": job_status},
             )
 
-    def _handle_export(
-        self, message: dict[str, Any], *, export_id: str, job_id: str, tenant_id: str
-    ) -> int:
+    def _handle_export(self, *, export_id: str, job_id: str, tenant_id: str) -> int:
         """Builds, audits and publishes the CAD package exactly once per approved revision."""
         with self.engine.connect() as connection:
             artifact = (
@@ -527,7 +588,6 @@ class LocalQueueWorker:
             raise ValueError("Exportação não encontrada ou tenant divergente")
         if artifact["status"] == "COMPLETED":
             # Replay of a published package never rebuilds or re-uploads it.
-            self._delete_message(message)
             return 1
 
         with self.engine.begin() as connection:
@@ -540,7 +600,6 @@ class LocalQueueWorker:
                 {"export_id": export_id, "tenant_id": tenant_id},
             )
         if claimed.rowcount != 1:
-            self._delete_message(message)
             return 1
 
         scene_json = artifact["scene"]
@@ -565,7 +624,9 @@ class LocalQueueWorker:
                     scene, output_dir, extra_package_files=extra_files or None
                 )
                 package_key = WorkerArtifactStore(
-                    client=self.s3_client, bucket=self.settings.artifact_bucket
+                    client=self.s3_client,
+                    bucket=self.settings.artifact_bucket,
+                    sse=self.settings.storage_sse_enabled,
                 ).put_export_package(
                     tenant_id=tenant_id,
                     job_id=job_id,
@@ -582,10 +643,9 @@ class LocalQueueWorker:
                 failure_code="EXPORT_AUDIT_FAILED",
                 audit_json={"errors": list(error.errors)},
             )
-            self._delete_message(message)
             return 1
         except (BotoCoreError, ClientError):
-            # SQS redelivery owns the bounded retry policy for transient object-store failures.
+            # Redelivery owns the bounded retry policy for transient object-store failures.
             raise
 
         self._finish_export(
@@ -599,7 +659,6 @@ class LocalQueueWorker:
             audit_status=export.audit.status,
             audit_json={"checks": export.audit.checks, "errors": list(export.audit.errors)},
         )
-        self._delete_message(message)
         return 1
 
     def _write_trace_solve_result(
@@ -755,9 +814,7 @@ class LocalQueueWorker:
             review_parameters,
         )
 
-    def _handle_trace_solve(
-        self, message: dict[str, Any], *, trace_solve_id: str, job_id: str, tenant_id: str
-    ) -> int:
+    def _handle_trace_solve(self, *, trace_solve_id: str, job_id: str, tenant_id: str) -> int:
         """Solves one accepted batch trace exactly once, recording conflict as a result."""
         with self.engine.connect() as connection:
             record = (
@@ -782,7 +839,6 @@ class LocalQueueWorker:
             raise ValueError("Traçado não encontrado ou tenant divergente")
         if record["status"] == "COMPLETED":
             # Replay of a recorded outcome never re-solves nor creates another revision.
-            self._delete_message(message)
             return 1
 
         with self.engine.begin() as connection:
@@ -795,7 +851,6 @@ class LocalQueueWorker:
                 {"trace_solve_id": trace_solve_id, "tenant_id": tenant_id},
             )
         if claimed.rowcount != 1:
-            self._delete_message(message)
             return 1
 
         with self.engine.connect() as connection:
@@ -844,7 +899,6 @@ class LocalQueueWorker:
                 status="FAILED",
                 failure_code="TRACE_BASE_REVISION_MISSING",
             )
-            self._delete_message(message)
             return 1
         base_scene_id = record["base_scene_revision_id"]
         current_scene_id = latest_scene["id"] if latest_scene is not None else None
@@ -858,7 +912,6 @@ class LocalQueueWorker:
                 solve_status="conflict",
                 failure_code="REVISION_MOVED",
             )
-            self._delete_message(message)
             return 1
 
         try:
@@ -902,7 +955,6 @@ class LocalQueueWorker:
                 status="FAILED",
                 failure_code="TRACE_SOLVE_FAILED",
             )
-            self._delete_message(message)
             return 1
 
         outcome: dict[str, Any] = {
@@ -923,7 +975,6 @@ class LocalQueueWorker:
                 status="COMPLETED",
                 **outcome,
             )
-            self._delete_message(message)
             return 1
 
         scene_id = str(new_uuid7())
@@ -980,7 +1031,6 @@ class LocalQueueWorker:
                 blockers=result.blockers,
                 unapplied_reading_ids=result.unapplied_reading_ids,
             )
-        self._delete_message(message)
         return 1
 
     def _write_chat_turn_result(
@@ -1034,9 +1084,7 @@ class LocalQueueWorker:
                 parameters,
             )
 
-    def _handle_chat_turn(
-        self, message: dict[str, Any], *, chat_turn_id: str, job_id: str, tenant_id: str
-    ) -> int:
+    def _handle_chat_turn(self, *, chat_turn_id: str, job_id: str, tenant_id: str) -> int:
         """Responde um turno de conversa exatamente uma vez, sobre a revisão-base da sessão.
 
         O contexto é imutável: a folha e as leituras são as da revisão que a conversa fixou
@@ -1065,7 +1113,6 @@ class LocalQueueWorker:
             raise ValueError("Turno de conversa não encontrado ou tenant divergente")
         if record["turn_status"] == "COMPLETED":
             # Replay de um turno já respondido não chama provider nem reescreve a resposta.
-            self._delete_message(message)
             return 1
 
         with self.engine.begin() as connection:
@@ -1078,7 +1125,6 @@ class LocalQueueWorker:
                 {"chat_turn_id": chat_turn_id, "tenant_id": tenant_id},
             )
         if claimed.rowcount != 1:
-            self._delete_message(message)
             return 1
 
         suite = self.provider_suite
@@ -1091,7 +1137,6 @@ class LocalQueueWorker:
                 status="FAILED",
                 failure_code="CHAT_PROVIDER_UNAVAILABLE",
             )
-            self._delete_message(message)
             return 1
 
         try:
@@ -1171,7 +1216,7 @@ class LocalQueueWorker:
                 proposal_ids=set(proposals_by_id),
             )
         except (BotoCoreError, ClientError):
-            # SQS redelivery owns the bounded retry policy for transient object-store failures.
+            # Redelivery owns the bounded retry policy for transient object-store failures.
             raise
         except Exception:
             # A mensagem da exceção pode carregar evidência do cliente; só o código sai.
@@ -1181,7 +1226,6 @@ class LocalQueueWorker:
                 status="FAILED",
                 failure_code="CHAT_ANSWER_FAILED",
             )
-            self._delete_message(message)
             return 1
 
         if unknown:
@@ -1194,7 +1238,6 @@ class LocalQueueWorker:
                 execution=execution,
                 failure_code="CHAT_ACT_UNKNOWN_REFERENCE",
             )
-            self._delete_message(message)
             return 1
 
         self._write_chat_turn_result(
@@ -1204,7 +1247,6 @@ class LocalQueueWorker:
             answer=answer.model_dump(mode="json"),
             execution=execution,
         )
-        self._delete_message(message)
         return 1
 
 

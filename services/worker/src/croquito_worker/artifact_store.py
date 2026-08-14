@@ -13,6 +13,9 @@ class WorkerArtifactStore:
 
     client: Any
     bucket: str
+    #: SSE-S3 gerenciada pelo bucket. Desligar só é correto onde o storage já criptografa
+    #: em repouso por padrão e recusa o header (interoperabilidade GCS).
+    sse: bool = True
 
     def put_export_package(self, *, tenant_id: str, job_id: str, export_id: str, path: Path) -> str:
         key = f"tenants/{tenant_id}/jobs/{job_id}/exports/{export_id}/croquito.zip"
@@ -22,6 +25,6 @@ class WorkerArtifactStore:
                 Key=key,
                 Body=package,
                 ContentType="application/zip",
-                ServerSideEncryption="AES256",
+                **({"ServerSideEncryption": "AES256"} if self.sse else {}),
             )
         return key

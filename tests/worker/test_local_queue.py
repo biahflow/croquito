@@ -1,6 +1,6 @@
 import hashlib
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -16,11 +16,19 @@ from croquito_api.database import (
     TenantAiProcessingEntitlementRecord,
     UploadRecord,
 )
-from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
+from croquito_worker.local_queue import (
+    LocalQueueWorker,
+    LocalWorkerSettings,
+    S3ProtectedRawResponseStore,
+)
 from croquito_worker.providers import (
     FixtureProviderAdapter,
     PromptTask,
+    ProviderExecution,
     ProviderFailureCode,
+    ProviderName,
+    ProviderRequest,
+    ProviderSuite,
     build_synthetic_provider_suite,
 )
 from tests.fakes import FakeObjectStore, FakeQueue, synthetic_pdf
@@ -432,3 +440,77 @@ def test_real_providers_require_contractual_authorization_before_reading_upload(
         assert job is not None
         assert job.failure_code == "AI_PROCESSING_NOT_AUTHORIZED"
     assert queue.deleted == ["receipt-1"]
+
+
+@dataclass(frozen=True)
+class _RefusingAdapter:
+    """Qualquer chamada aqui é o defeito que o teste procura."""
+
+    def execute(self, request: ProviderRequest) -> ProviderExecution:
+        raise AssertionError("provider chamado numa reentrega de job já ingerido")
+
+
+def test_redelivery_of_an_ingested_job_neither_reprocesses_nor_calls_the_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sem a guarda, a reentrega rebaixaria o documento e pagaria a chamada de novo."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'redelivery.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    pdf = synthetic_pdf()
+    job_id = "00000000-0000-7000-8000-000000000011"
+    object_key = "tenants/tenant-redelivery/uploads/reentrega.pdf"
+    _seed_authorized_job(
+        database, job_id=job_id, tenant_id="tenant-redelivery", object_key=object_key, pdf=pdf
+    )
+    settings = LocalWorkerSettings(
+        database_url=database_url,
+        queue_url="http://localstack/queue",
+        aws_region="sa-east-1",
+        aws_endpoint_url="http://localstack",
+        real_providers_enabled=True,
+    )
+    body = {"command": "process_upload", "job_id": job_id, "tenant_id": "tenant-redelivery"}
+    first = LocalQueueWorker(settings, provider_suite=build_synthetic_provider_suite())
+    first.client = _queue(body)
+    first.s3_client = _storage(object_key=object_key, pdf=pdf)
+    assert first.run_once() == 1
+
+    refusing = _RefusingAdapter()
+    second = LocalQueueWorker(
+        settings,
+        provider_suite=ProviderSuite(
+            openai=refusing, bedrock_anthropic=refusing, textract=refusing
+        ),
+    )
+    second.client = _queue(body)
+    # Storage vazio: qualquer releitura do documento levantaria em vez de passar batido.
+    second.s3_client = FakeObjectStore()
+
+    assert second.run_once() == 1
+    with database.sessions() as session:
+        job = session.get(JobRecord, job_id)
+        assert job is not None
+        assert job.status == "REVIEW_REQUIRED"
+        assert session.query(ReviewRevisionRecord).filter_by(job_id=job_id).count() == 1
+    assert second.s3_client.puts == []
+    # A reentrega é reconhecida e drenada; ela não volta para a fila.
+    assert second.client.deleted == ["receipt-1"]
+
+
+def test_raw_response_store_honours_the_encryption_flag() -> None:
+    storage = FakeObjectStore()
+    encrypted = S3ProtectedRawResponseStore(
+        client=storage, bucket="bucket", tenant_id="tenant-a", job_id="job-a"
+    )
+    plain = S3ProtectedRawResponseStore(
+        client=storage, bucket="bucket", tenant_id="tenant-a", job_id="job-a", sse=False
+    )
+
+    encrypted.persist(provider=ProviderName.OPENAI, input_digest="a" * 64, payload=b"{}")
+    plain.persist(provider=ProviderName.OPENAI, input_digest="b" * 64, payload=b"{}")
+
+    assert storage.puts[0]["ServerSideEncryption"] == "AES256"
+    assert "ServerSideEncryption" not in storage.puts[1]

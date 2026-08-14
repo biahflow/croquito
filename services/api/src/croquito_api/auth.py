@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from croquito_core.oidc import OidcTokenError, validate_bearer_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -38,16 +40,17 @@ class OidcAuthenticator:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={"code": "AUTH_NOT_CONFIGURED"},
             )
-        jwks = jwt.PyJWKClient(f"{self.issuer.rstrip('/')}/protocol/openid-connect/certs")
-        signing_key = jwks.get_signing_key_from_jwt(token)
-        payload = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            audience=self.audience,
-            issuer=self.issuer,
+        try:
+            identity = validate_bearer_token(token, issuer=self.issuer, audience=self.audience)
+        except OidcTokenError as error:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail={"code": error.code}
+            ) from error
+        return Principal(
+            subject=identity.subject,
+            tenant_id=identity.tenant_id,
+            roles=identity.roles,
         )
-        return self._principal_from_claims(payload)
 
     @staticmethod
     def _test_principal(token: str) -> Principal:
@@ -58,22 +61,6 @@ class OidcAuthenticator:
             )
         roles = frozenset(role for role in parts[3].split(",") if role)
         return Principal(subject=parts[2], tenant_id=parts[1], roles=roles)
-
-    @staticmethod
-    def _principal_from_claims(payload: dict[str, Any]) -> Principal:
-        subject = payload.get("sub")
-        tenant_id = payload.get("tenant_id")
-        realm_access = payload.get("realm_access")
-        roles = realm_access.get("roles", []) if isinstance(realm_access, dict) else []
-        if (
-            not isinstance(subject, str)
-            or not isinstance(tenant_id, str)
-            or not all(isinstance(role, str) for role in roles)
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail={"code": "INVALID_TOKEN"}
-            )
-        return Principal(subject=subject, tenant_id=tenant_id, roles=frozenset(roles))
 
 
 def require_principal(
@@ -87,6 +74,8 @@ def require_principal(
     authenticator: OidcAuthenticator = request.app.state.authenticator
     try:
         return authenticator.authenticate(credentials.credentials)
+    # O validador compartilhado já traduz falha de PyJWT em 401; a rede continua aqui
+    # para qualquer autenticador injetado que ainda propague o erro cru da biblioteca.
     except jwt.PyJWTError as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail={"code": "INVALID_TOKEN"}

@@ -104,12 +104,13 @@ def _criteria_for(mutation: str) -> tuple[ScopeCriterion, ...]:
     return (ScopeCriterion(code="ACC_GUA_001", text=CRITERION_TEXT),)
 
 
-def _settings(database_url: str) -> LocalWorkerSettings:
+def _settings(database_url: str, *, storage_sse_enabled: bool = True) -> LocalWorkerSettings:
     return LocalWorkerSettings(
         database_url=database_url,
         queue_url="",
         aws_region="sa-east-1",
         aws_endpoint_url="http://localstack",
+        storage_sse_enabled=storage_sse_enabled,
     )
 
 
@@ -211,3 +212,19 @@ def test_seed_refuses_every_divergence(tmp_path: Path, mutation: str, expected_c
     assert storage.puts == []
     with database.sessions() as session:
         assert session.query(ReviewRevisionRecord).count() == 0
+
+
+def test_seed_omits_server_side_encryption_when_the_storage_refuses_it(tmp_path: Path) -> None:
+    source_sha256 = hashlib.sha256(synthetic_pdf()).hexdigest()
+    _database, database_url = _seed_database(tmp_path, source_sha256=source_sha256)
+    bundle = write_seed_bundle(tmp_path / "bundle", source_sha256=source_sha256)
+    storage = FakeObjectStore()
+
+    result = seed_review(
+        _inputs(bundle), _settings(database_url, storage_sse_enabled=False), s3_client=storage
+    )
+
+    assert result.review_version == 1
+    assert len(storage.puts) == 1
+    assert storage.puts[0]["ContentType"] == "image/png"
+    assert "ServerSideEncryption" not in storage.puts[0]

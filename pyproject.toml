@@ -8,6 +8,10 @@ dependencies = [
   "boto3>=1.40,<2",
   "ezdxf>=1.4,<2",
   "fastapi>=0.116,<1",
+  # Transporte da fila quando o deploy é GCP (`croquito_api.pubsub_queue`): publica os
+  # mesmos comandos que o adaptador SQS. Apache-2.0, mantida pelo Google; fica atrás de
+  # `CROQUITO_PUBSUB_TOPIC` e o SDK só é importado quando esse backend é escolhido.
+  "google-cloud-pubsub>=2.31,<3",
   "matplotlib>=3.10,<4",
   # Álgebra do braço semântico do matcher SCO (`valuation/sco_matching.py`): kNN por
   # cosseno em força bruta e decodificação dos vetores float32 do índice. Já era
@@ -33,6 +37,7 @@ dependencies = [
 [project.scripts]
 croquito-demo = "croquito_worker.cli:main"
 croquito-valuation = "croquito_worker.valuation.cli:main"
+croquito-worker-push = "croquito_worker.push_server:main"
 
 [dependency-groups]
 dev = [
@@ -92,7 +97,9 @@ strict = true
 warn_unreachable = true
 show_error_codes = true
 plugins = ["pydantic.mypy"]
-untyped_calls_exclude = ["cv2", "pymupdf"]
+# `google.api_core` publica py.typed mas deixa os construtores das exceções sem anotação;
+# levantá-las no teste do adaptador Pub/Sub é uso legítimo.
+untyped_calls_exclude = ["cv2", "pymupdf", "google.api_core"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -100,6 +107,8 @@ module = [
   "botocore.*",
   "cv2.*",
   "fitz",
+  # `google.api_core` é tipado; os módulos gerados do Pub/Sub não têm py.typed.
+  "google.cloud.*",
   "matplotlib.*",
   "openpyxl.*",
   "PIL.*",

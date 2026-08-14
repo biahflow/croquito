@@ -47,6 +47,7 @@ from croquito_api.database import (
     TraceSolveRecord,
     UploadRecord,
 )
+from croquito_api.pubsub_queue import PubSubProcessingQueue, QueuePublishError
 from croquito_api.storage import ArtifactStore
 from croquito_core.errors import DomainValidationError
 from croquito_core.ids import new_uuid7
@@ -623,6 +624,14 @@ class ProcessingQueue:
                 }
             ),
         )
+
+
+#: Os dois transportes publicam os mesmos comandos com o mesmo corpo; a rota não sabe
+#: qual está montado.
+QueueAdapter = ProcessingQueue | PubSubProcessingQueue
+
+#: Falhas de transporte que a rota traduz em 503 repetível, seja qual for a nuvem.
+QUEUE_TRANSPORT_ERRORS = (BotoCoreError, ClientError, QueuePublishError)
 
 
 def _problem(code: str, http_status: int, detail: str) -> HTTPException:
@@ -1459,7 +1468,12 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         audience=runtime_settings.oidc_audience,
         allow_test_tokens=runtime_settings.allow_test_tokens,
     )
-    application.state.queue = ProcessingQueue(runtime_settings)
+    queue_adapter: QueueAdapter = (
+        PubSubProcessingQueue(runtime_settings)
+        if runtime_settings.queue_backend == "pubsub"
+        else ProcessingQueue(runtime_settings)
+    )
+    application.state.queue = queue_adapter
     application.state.artifact_store = ArtifactStore(runtime_settings)
     application.state.settings = runtime_settings
 
@@ -1658,14 +1672,15 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             object_key=object_key,
             checksum_sha256=checksum_sha256,
         )
+        headers = {"Content-Type": payload.content_type}
+        if runtime_settings.storage_flavor == "s3":
+            # O header entra na assinatura só no S3; enviá-lo ao GCS faria o PUT falhar.
+            headers["x-amz-checksum-sha256"] = checksum_sha256
         response = PresignUploadResponse(
             upload_id=upload_id,
             object_key=object_key,
             url=url,
-            headers={
-                "Content-Type": payload.content_type,
-                "x-amz-checksum-sha256": checksum_sha256,
-            },
+            headers=headers,
             expires_at=expires_at,
         )
         session.add(record)
@@ -1712,7 +1727,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 application.state.queue.enqueue(
                     job_id=str(response.job_id), tenant_id=principal.tenant_id
                 )
-            except (BotoCoreError, ClientError) as error:
+            except QUEUE_TRANSPORT_ERRORS as error:
                 raise _problem(
                     "PROCESSING_UNAVAILABLE",
                     status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1734,11 +1749,15 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         expected_checksum = base64.b64encode(bytes.fromhex(upload.sha256)).decode("ascii")
         uploaded_object = application.state.artifact_store.head_upload(object_key=upload.object_key)
+        # O checksum remoto não existe na interoperabilidade GCS. Tamanho e tipo continuam
+        # conferidos aqui, e o digest é verificado pelo worker, que relê os bytes gravados
+        # antes de qualquer processamento — a integridade não é dispensada, é adiada.
+        checksum_deferred = runtime_settings.storage_flavor == "gcs"
         if (
             uploaded_object is None
             or uploaded_object.content_length != upload.size_bytes
             or uploaded_object.content_type.lower() != upload.content_type
-            or uploaded_object.checksum_sha256 != expected_checksum
+            or (not checksum_deferred and uploaded_object.checksum_sha256 != expected_checksum)
         ):
             raise _problem(
                 "INVALID_UPLOAD",
@@ -1822,11 +1841,20 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=str(job_id),
             request_id=request.state.request_id,
         )
+        if checksum_deferred:
+            _record_audit(
+                session,
+                principal=principal,
+                action="UPLOAD_CHECKSUM_DEFERRED_TO_WORKER",
+                resource_type="upload",
+                resource_id=str(payload.upload_id),
+                request_id=request.state.request_id,
+            )
         session.commit()
-        queue: ProcessingQueue = application.state.queue
+        queue: QueueAdapter = application.state.queue
         try:
             queue.enqueue(job_id=str(job_id), tenant_id=principal.tenant_id)
-        except (BotoCoreError, ClientError) as error:
+        except QUEUE_TRANSPORT_ERRORS as error:
             raise _problem(
                 "PROCESSING_UNAVAILABLE",
                 status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -3631,7 +3659,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         # The intent is durable before the queue call, and no transaction spans it.
         session.commit()
-        queue: ProcessingQueue = application.state.queue
+        queue: QueueAdapter = application.state.queue
         try:
             queue.enqueue_export(
                 export_id=artifact.id,
@@ -3639,7 +3667,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 tenant_id=principal.tenant_id,
                 scene_revision_id=revision.id,
             )
-        except (BotoCoreError, ClientError) as error:
+        except QUEUE_TRANSPORT_ERRORS as error:
             raise _problem(
                 "PROCESSING_UNAVAILABLE",
                 status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -3848,14 +3876,14 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         # The intent is durable before the queue call, and no transaction spans it.
         session.commit()
-        queue: ProcessingQueue = application.state.queue
+        queue: QueueAdapter = application.state.queue
         try:
             queue.enqueue_trace_solve(
                 trace_solve_id=record.id,
                 job_id=str(job_id),
                 tenant_id=principal.tenant_id,
             )
-        except (BotoCoreError, ClientError) as error:
+        except QUEUE_TRANSPORT_ERRORS as error:
             raise _problem(
                 "PROCESSING_UNAVAILABLE",
                 status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -4108,14 +4136,14 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         # The intent is durable before the queue call, and no transaction spans it.
         session.commit()
-        queue: ProcessingQueue = application.state.queue
+        queue: QueueAdapter = application.state.queue
         try:
             queue.enqueue_chat_turn(
                 chat_turn_id=record.id,
                 job_id=str(job_id),
                 tenant_id=principal.tenant_id,
             )
-        except (BotoCoreError, ClientError) as error:
+        except QUEUE_TRANSPORT_ERRORS as error:
             raise _problem(
                 "PROCESSING_UNAVAILABLE",
                 status.HTTP_503_SERVICE_UNAVAILABLE,

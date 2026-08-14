@@ -121,13 +121,16 @@ def _seed(tmp_path: Path, *, approved: bool) -> tuple[Database, str]:
     return database, database_url
 
 
-def _worker(database_url: str, body: dict[str, Any]) -> tuple[LocalQueueWorker, FakeObjectStore]:
+def _worker(
+    database_url: str, body: dict[str, Any], *, storage_sse_enabled: bool = True
+) -> tuple[LocalQueueWorker, FakeObjectStore]:
     worker = LocalQueueWorker(
         LocalWorkerSettings(
             database_url=database_url,
             queue_url="http://localstack/queue",
             aws_region="sa-east-1",
             aws_endpoint_url="http://localstack",
+            storage_sse_enabled=storage_sse_enabled,
         )
     )
     queue = FakeQueue()
@@ -267,3 +270,19 @@ def test_export_id_is_required_for_the_export_command(
 
     with pytest.raises(ValueError):
         worker.run_once()
+
+
+def test_export_omits_server_side_encryption_when_the_storage_refuses_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Storage que criptografa em repouso por padrão recusa o header; o pacote sai igual."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    _database, database_url = _seed(tmp_path, approved=True)
+    worker, storage = _worker(database_url, _message(), storage_sse_enabled=False)
+
+    assert worker.run_once() == 1
+
+    assert len(storage.puts) == 1
+    assert storage.puts[0]["ContentType"] == "application/zip"
+    assert "ServerSideEncryption" not in storage.puts[0]
