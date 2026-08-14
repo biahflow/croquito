@@ -1,0 +1,326 @@
+{
+  "schema_version": "matcher-golden-v1",
+  "description": "Golden set do matcher de codigo SCO (M7). Cada caso e {label, unit, expected, gates}. `expected` e {\"code\": \"...\"} quando existe UM codigo correto, {\"codes\": [...], \"family\", \"human_choice\"} quando a resposta certa e uma FAMILIA (ver `note_family_oracle`), ou {\"aditivo\": true} quando o item legitimamente nao tem cotacao publicada. Existem DOIS gates porque existem dois matchers medidos: `lexical_gate` e o matcher lexical puro (radical + sinonimo + Dice, medido por `suggest_codes`), que segue sendo o fallback permanente; `hybrid_gate` e o matcher do produto desde a Fase 2 (fusao RRF entre cobertura lexica ponderada por IDF e vizinhanca semantica, medido por `hybrid_candidates`). Gate `true` FALHA o teste se nenhum codigo aceitavel aparecer no top-20 daquele matcher; `false` marca gap conhecido, com o rank medido ao lado para que piora apareca e melhora nunca reprove. `gate` sozinho vale para os dois e e o que os casos sinteticos e os de aditivo usam.",
+  "note_ci_vs_local": "Casos com \"catalog\": \"synthetic\" rodam no CI: o catalogo e o mini-MAPAO sintetico que `croquitodxf_worker.valuation.synthetic.build_synthetic_previous_mapao` gera em memoria durante o teste (mesmo gabarito de `DEMO_EXPECTED_CODE_BY_LABEL`). Casos com \"catalog\": \"real\" rodam contra o catalogo real do SCO publicado por `output/valuation-toca/import/catalog.json`, que NAO e versionado (dado do cliente/prefeitura) -- o teste correspondente usa `pytest.mark.skipif` quando esse arquivo nao existe na maquina local, e por isso essa metade nunca roda no CI.",
+  "note_known_gaps": "Achado da Fase 1 (2026-08-13), medido contra o catalogo real (4964 itens): o Dice sobre radicais favorece descricoes CURTAS sobre descricoes LONGAS quando ambas compartilham uma palavra comum, porque o denominador de |A|+|B| penaliza o lado verboso. `IP49150409(/)` (a resposta certa de REFLETOR EXISTENTE) tem uma descricao tecnica de um paragrafo inteiro, e dezenas de outros codigos da mesma familia projetor/refletor com descricao curta ('Substituicao de lampada e lavagem do refletor.') pontuam mais alto no Dice puro, mesmo sendo respostas menos precisas. O sinonimo refletor<->projetor FUNCIONA -- ele tira o score de ~0 (sem interseccao nenhuma) para um score real, e o top da lista passa a ser todo composto de codigos genuinamente da familia projetor/refletor -- mas nao e o suficiente para colocar ESTE codigo especifico dentro dos 20 primeiros. E exatamente a classe de problema que a Fase 2 (retrieval semantico por embeddings + fusao de ranking) foi desenhada para resolver, e o `known_gap_rank` de cada caso serve de baseline para medir esse ganho quando ela entrar.",
+  "cases": [
+    {
+      "catalog": "real",
+      "label": "PISO EM CONCRETO",
+      "unit": "m2",
+      "expected": {
+        "code": "RV14250100(C)"
+      },
+      "lexical_gate": true,
+      "hybrid_gate": true,
+      "hybrid_rank_2026_08_13": 0
+    },
+    {
+      "catalog": "real",
+      "label": "PISO INTERTRAVADO",
+      "unit": "m2",
+      "expected": {
+        "code": "BP09200350(/)"
+      },
+      "lexical_gate": false,
+      "hybrid_gate": true,
+      "known_gap_rank_2026_08_13": 346,
+      "known_gap_reason": "descricao do codigo certo tem 521 caracteres; perde no Dice para dezenas de servicos curtos de limpeza/polimento de piso que so compartilham a palavra 'piso'",
+      "hybrid_rank_2026_08_13": 14
+    },
+    {
+      "catalog": "real",
+      "label": "GRAMADO",
+      "unit": "m2",
+      "expected": {
+        "code": "PJ04100100(A)"
+      },
+      "lexical_gate": true,
+      "hybrid_gate": true,
+      "hybrid_rank_2026_08_13": 11
+    },
+    {
+      "catalog": "real",
+      "label": "PISO EM SAIBRO",
+      "unit": "m2",
+      "expected": {
+        "code": "BP04050350(/)"
+      },
+      "lexical_gate": false,
+      "hybrid_gate": true,
+      "known_gap_rank_2026_08_13": 33,
+      "known_gap_reason": "mesmo padrão de diluição por descrição longa que PISO INTERTRAVADO, em grau menor",
+      "hybrid_rank_2026_08_13": 14
+    },
+    {
+      "catalog": "real",
+      "label": "ALAMBRADO DO CAMPO EXISTENTE A SER RECUPERAR",
+      "unit": "m",
+      "expected": {
+        "codes": [
+          "PJ14150050(/)",
+          "PJ14150100(C)",
+          "PJ14150101(A)",
+          "PJ14150102(/)",
+          "PJ14150103(C)",
+          "PJ14150104(/)",
+          "PJ14150105(/)",
+          "PJ14150106(C)",
+          "PJ14150109(B)",
+          "PJ14150110(/)",
+          "PJ14150112(A)",
+          "PJ14150113(/)",
+          "PJ14150115(B)",
+          "PJ14150116(/)",
+          "PJ14150117(A)",
+          "PJ14150118(/)",
+          "PJ14150150(B)",
+          "PJ14150200(/)",
+          "PJ14150203(A)",
+          "PJ14150206(/)",
+          "PJ14150250(/)"
+        ],
+        "family": "PJ1415 alambrados",
+        "human_choice": "PJ14150100(C)"
+      },
+      "lexical_gate": false,
+      "hybrid_gate": true,
+      "known_gap_rank_2026_08_13": 747,
+      "known_gap_reason": "rank do MELHOR codigo da familia no matcher lexico puro (`suggest_codes`), medido na rodada 2.1 depois de o oraculo virar familia; o numero anterior media o codigo unico",
+      "hybrid_rank_2026_08_13": 1,
+      "hybrid_junk_max": 0,
+      "family_reason": "O rotulo da prancha nao diz a altura, e a altura e o que separa os 21 alambrados da familia PJ1415 entre si (ate 2m, 3,0m, 4,5m, 6m, 7,5m, campo de esporte). O orcamentista escolheu PJ14150100(C) (3,0m) com a prancha na frente, evidencia que o rotulo nao carrega. O matcher responde pela FAMILIA; a variante e ato humano. Contraventamento (PJ141503xx/PJ141505xx) e recuperacao de apoio (PJ141515xx/PJ141516xx) ficam FORA da familia: sao servicos diferentes, nao variantes do mesmo."
+    },
+    {
+      "catalog": "real",
+      "label": "ALAMBRADO PARQUE INFANTIL E CENTRO COMUNITÁRIO h=1.00m",
+      "unit": "m",
+      "expected": {
+        "codes": [
+          "PJ14150050(/)",
+          "PJ14150100(C)",
+          "PJ14150101(A)",
+          "PJ14150102(/)",
+          "PJ14150103(C)",
+          "PJ14150104(/)",
+          "PJ14150105(/)",
+          "PJ14150106(C)",
+          "PJ14150109(B)",
+          "PJ14150110(/)",
+          "PJ14150112(A)",
+          "PJ14150113(/)",
+          "PJ14150115(B)",
+          "PJ14150116(/)",
+          "PJ14150117(A)",
+          "PJ14150118(/)",
+          "PJ14150150(B)",
+          "PJ14150200(/)",
+          "PJ14150203(A)",
+          "PJ14150206(/)",
+          "PJ14150250(/)"
+        ],
+        "family": "PJ1415 alambrados",
+        "human_choice": "PJ14150050(/)"
+      },
+      "lexical_gate": false,
+      "hybrid_gate": true,
+      "known_gap_rank_2026_08_13": 757,
+      "known_gap_reason": "rank do MELHOR codigo da familia no matcher lexico puro (`suggest_codes`), medido na rodada 2.1 depois de o oraculo virar familia; o numero anterior media o codigo unico",
+      "hybrid_rank_2026_08_13": 2,
+      "family_reason": "Mesmo caso do alambrado do campo, com uma diferenca: aqui o rotulo ate diz a altura (h=1.00m), mas nenhum item da familia e de 1m — o orcamentista escolheu PJ14150050(/) (ate 2m) por ser a faixa que cobre. Casar faixa de altura com altura escrita e decisao de dominio, nao de ranking."
+    },
+    {
+      "catalog": "real",
+      "label": "MESA COM 04 BANCOS",
+      "unit": "un",
+      "expected": {
+        "code": "PJ24050153(B)"
+      },
+      "lexical_gate": false,
+      "hybrid_gate": true,
+      "known_gap_rank_2026_08_13": 37,
+      "known_gap_reason": "descrição do código (\"tabuleiro de xadrez em marmorite\") introduz vocabulário que não está no rótulo, diluindo o Dice",
+      "hybrid_rank_2026_08_13": 0
+    },
+    {
+      "catalog": "real",
+      "label": "MESA COM 03 BANCOS",
+      "unit": "un",
+      "expected": {
+        "aditivo": true
+      },
+      "gate": true
+    },
+    {
+      "catalog": "real",
+      "label": "GOLA QUADRADA (1.10x1.10m)",
+      "unit": "un",
+      "expected": {
+        "code": "PJ14050160(/)"
+      },
+      "lexical_gate": true,
+      "hybrid_gate": true,
+      "hybrid_rank_2026_08_13": 10
+    },
+    {
+      "catalog": "real",
+      "label": "REFLETOR EXISTENTE",
+      "unit": "un",
+      "expected": {
+        "codes": [
+          "IP49150075(/)",
+          "IP49150409(/)",
+          "IP49150455(/)",
+          "IP49150460(/)",
+          "IP49150465(/)",
+          "IP49150470(/)",
+          "IP49150475(/)",
+          "IP49150480(/)",
+          "IP49150485(/)",
+          "IP49150490(/)",
+          "IP49150495(/)",
+          "IP49150500(/)",
+          "IP49150505(/)",
+          "IP49150510(/)",
+          "IP49150515(/)",
+          "IP49150520(/)",
+          "IP49150525(/)",
+          "IP49150530(/)",
+          "IP49150531(/)",
+          "IP49150532(/)",
+          "IP49150533(/)",
+          "IP49150540(/)",
+          "IP49150545(/)",
+          "IP49150550(/)",
+          "IT29200100(/)",
+          "IT29200600(/)",
+          "IT29200609(/)"
+        ],
+        "family": "IT2920+IP4915 holofote de quadra",
+        "human_choice": "IP49150409(/)"
+      },
+      "requires_synonym": "refletor->projetor",
+      "lexical_gate": false,
+      "hybrid_gate": true,
+      "known_gap_rank_2026_08_13": 49,
+      "known_gap_reason": "rank do MELHOR codigo da familia no matcher lexico puro (`suggest_codes`), medido na rodada final com a familia IT2920+IP4915",
+      "hybrid_rank_2026_08_13": 0,
+      "hybrid_junk_max": 0,
+      "family_reason": "As duas secoes do catalogo guardam o MESMO equipamento de quadra (holofote): IT2920 o chama de \"Refletor, incluindo lampada halogena de 300W\" e IP4915 de \"Projetor\" de iluminacao publica (PRJ-01 a vapor de sodio, PLRJ-12.x a led). Escolher entre recuperar o refletor halogeno existente e substituir por projetor e decisao de campo da orcamentista, com a praca na frente — o rotulo \"REFLETOR EXISTENTE\" nao carrega essa informacao, exatamente como o rotulo do alambrado nao carrega a altura. O oraculo anterior (so IP4915) era escolha da rodada manual, e a medicao mostrou que ela cobrava do matcher uma preferencia que o texto nao expressa: o topo fundido e IT29200600/IT29200609, fiel a palavra escrita. INCLUIDOS os 24 projetores IP4915 mais tres itens de IT2920 (IT29200100 para quadras/patios/fachadas e os dois refletores halogenos). EXCLUIDOS, com motivo: os projetores subaquaticos IT292003xx-IT2920055x e o de embutir IT29200050 sao equipamento de OUTRA aplicacao (piscina, interno), nao variante deste; e os servicos de manutencao IP59200850 (\"Substituicao de lampada e lavagem do refletor\") e IP59200450 (\"Retirada de projetor\") nao sao o equipamento — a linha real da legenda e \"REFLETOR EXISTENTE 4 UNID.\", contagem de equipamento em unidade, e o IP59200850 ainda e medido em HORA. Se uma prancha futura disser \"avaliar e recuperar\", como o alambrado diz, a manutencao passa a ser resposta legitima e a familia daquele caso precisa incluir esses servicos."
+    },
+    {
+      "catalog": "real",
+      "label": "LUMINÁRIAS DUPLAS ALTAS",
+      "unit": "un",
+      "expected": {
+        "aditivo": true
+      },
+      "gate": true
+    },
+    {
+      "catalog": "real",
+      "label": "GANGORRA DUPLA",
+      "unit": "un",
+      "expected": {
+        "code": "PJ24100654(A)"
+      },
+      "lexical_gate": true,
+      "hybrid_gate": true,
+      "hybrid_rank_2026_08_13": 3
+    },
+    {
+      "catalog": "real",
+      "label": "BALANÇO DUPLO",
+      "unit": "un",
+      "expected": {
+        "code": "PJ24100147(A)"
+      },
+      "lexical_gate": false,
+      "hybrid_gate": true,
+      "known_gap_rank_2026_08_13": 168,
+      "known_gap_reason": "mesmo padrão de família com muitos códigos curtos concorrentes (balanços/travessões de manutenção) diluindo o Dice do código de fornecimento",
+      "hybrid_rank_2026_08_13": 5
+    },
+    {
+      "catalog": "real",
+      "label": "ÁRVORES EXISTENTES",
+      "unit": "un",
+      "expected": {
+        "aditivo": true
+      },
+      "gate": true
+    },
+    {
+      "catalog": "real",
+      "label": "FORRAÇÃO EM GRAMA (NAS GOLAS DE ÁRVORES)",
+      "unit": "m2",
+      "expected": {
+        "code": "PJ04100100(A)"
+      },
+      "lexical_gate": false,
+      "hybrid_gate": true,
+      "known_gap_rank_2026_08_13": 26,
+      "known_gap_reason": "rótulo com \"golas de árvores\" agrega ruído lexical ausente da descrição do código; perde por pouco (rank 26) para PISO INTERTRAVADO/ALAMBRADO",
+      "hybrid_rank_2026_08_13": 9
+    },
+    {
+      "catalog": "synthetic",
+      "label": "PISO INTERTRAVADO SINTETICO",
+      "unit": "m2",
+      "expected": {
+        "code": "AD04050060(/)"
+      },
+      "gate": true
+    },
+    {
+      "catalog": "synthetic",
+      "label": "GRAMADO SINTETICO",
+      "unit": "m2",
+      "expected": {
+        "aditivo": true
+      },
+      "gate": true
+    },
+    {
+      "catalog": "synthetic",
+      "label": "ALAMBRADO SINTETICO",
+      "unit": "m",
+      "expected": {
+        "code": "CE02100010(/)"
+      },
+      "gate": true
+    },
+    {
+      "catalog": "synthetic",
+      "label": "BANCO DE CONCRETO SINTETICO",
+      "unit": "un",
+      "expected": {
+        "code": "MB01100010(/)"
+      },
+      "gate": true
+    },
+    {
+      "catalog": "synthetic",
+      "label": "LUMINARIA DUPLA SINTETICA",
+      "unit": "un",
+      "expected": {
+        "code": "MB01300010(/)"
+      },
+      "gate": true
+    },
+    {
+      "catalog": "synthetic",
+      "label": "PISO EMBORRACHADO SINTETICO",
+      "unit": "m2",
+      "expected": {
+        "code": "AD04150010(/)"
+      },
+      "gate": true
+    }
+  ],
+  "note_family_oracle": "Refinamento do oraculo nas rodadas 2.1 e final, decidido pelo coordenador: em tres casos reais o ROTULO DA PRANCHA nao carrega a informacao que separa o codigo certo dos irmaos da mesma classe de equipamento — a altura do alambrado, o modelo do projetor, a escolha entre recuperar o refletor halogeno e substituir por projetor de iluminacao publica. Cobrar do matcher a variante exata seria cobrar dele evidencia que o texto nao tem. A responsabilidade correta e: o matcher responde pela FAMILIA, e a variante e decisao humana com a praca na frente (`human_choice` guarda a que a orcamentista fez, e `family_reason` documenta o que entrou, o que ficou de fora e por que). Isso NAO e afrouxar o gate: os outros nove casos continuam exigindo o codigo exato, cada familia exclui explicitamente o que e outro equipamento ou outro servico, e o REFLETOR chegou a reprovar em nivel de familia enquanto a familia era so IP4915 — foi a MEDICAO que mostrou que aquele recorte, escolhido numa busca manual por \"projetor\", cobrava uma preferencia que a palavra escrita nao expressa.",
+  "note_phase_final": "Rodada final (2026-08-13), catalogo real (4.964 itens), text-embedding-3-small, cobertura ponderada por IDF, profundidade de braco 50, RRF_K 60: recall@20 do hibrido = 12/12, top-1 3/12, top-3 5/12. Ranks fundidos, na ordem dos casos: 0, 14, 11, 14, 1, 2, 0, 10, 0, 3, 5, 9. Contra a Fase 1 (lexico puro), os oito gaps fecharam: PISO INTERTRAVADO 346->14, PISO EM SAIBRO 33->14, ALAMBRADO DO CAMPO 853->1 (familia), ALAMBRADO PARQUE 796->2 (familia), MESA COM 04 BANCOS 37->0, REFLETOR EXISTENTE 163->0 (familia), BALANCO DUPLO 168->5, FORRACAO EM GRAMA 26->9; e os quatro que ja passavam seguem dentro: PISO EM CONCRETO 0, GRAMADO 11, GOLA QUADRADA 10, GANGORRA DUPLA 3. Tres medicoes descartadas no caminho, registradas para nao serem refeitas: indice sem o codigo SCO no texto embeddado (8/12, pior — ver INDEX_TEXT_RECIPE_MEASUREMENT), varredura de 108 combinacoes de parametro global da fusao antes do IDF (teto de 9/12) e profundidade de braco diferente de 50 (ver HYBRID_ARM_DEPTH).",
+  "note_opportunity_legend_noise": "IMPLEMENTADA na rodada 2.2 (2026-08-13) COM GANHO MEDIDO — lista de ruido de legenda. O rotulo de prancha carrega palavras que descrevem o ESTADO do elemento, nao o servico: \"existente\", \"a ser recuperar\", \"h=1.00m\". Elas entram na consulta como qualquer outra palavra e, com a ponderacao por IDF, uma palavra-ruido RARA no catalogo ganha peso alto: no REFLETOR EXISTENTE, \"existente\" pesa 0,532 contra 0,468 de \"refletor\". `LegendNoiseList` (packages/valuation/.../data/sco-legend-noise-v1.json, termos \"existente\"/\"a ser recuperar\") e o parametro `noise` de `weighted_query_coverage_score`/`hybrid_candidates` AMORTECEM (nunca removem) o peso do radical de ruido. A PRIMEIRA calibracao (so rank do alvo) nao viu ganho e quase parou o mecanismo aqui — foi a metrica errada: o rank do codigo aceitavel nos 12 casos gateados fica byte-identico ao baseline (nenhum alvo estava perto o bastante do topo para o amortecimento empurra-lo), mas a COMPOSICAO do top-20 — o que a orcamentista realmente varre — muda muito. Ver `note_phase_2_2` para a medicao completa (junk-share 10/20 -> 0/20 no REFLETOR EXISTENTE). Mecanismo ATIVADO nos call sites de producao (`local_server.py` rotas `/suggestions` e `/catalog/search`, `cli.py` `run_suggest_codes`) desde esta rodada, sem override por rodada (so o seed versionado). `SCO_HYBRID_SUGGESTER_VERSION` bumpou para `v2`; `hybrid_junk_max` no golden gateia a composicao dos dois casos com termo de ruido.",
+  "note_phase_2_2": "Calibracao da lista de ruido de legenda em DUAS rodadas (2026-08-13), sobre os 12 casos reais gateados do braco hibrido, damp em {0.1, 0.25, 0.5} contra o baseline sem noise (scripts descartaveis, fora do repo). RODADA 1 (so rank do alvo): os RANKS FUNDIDOS SAO BYTE-IDENTICOS ao baseline nos quatro cenarios — 0, 14, 11, 14, 1, 2, 0, 10, 0, 3, 5, 9 (recall@20 12/12, top-1 3/12, top-3 5/12 em TODOS, inclusive apos ativar `noise` em producao). Causa: dos 12 rotulos, so 2 contem um termo de ruido (\"REFLETOR EXISTENTE\", \"ALAMBRADO DO CAMPO EXISTENTE A SER RECUPERAR\"); nos dois casos, os candidatos mais proximos do codigo certo no braco lexico TAMBEM cobrem os mesmos radicais de ruido na propria descricao, entao amortecer o peso reescala numerador e denominador quase na mesma proporcao para eles e para o alvo — a ordem relativa do ALVO nao muda (so troca IT29200600<->IT29200609 no topo do REFLETOR, os dois aceitaveis pela familia). RODADA 2 (JUNK-SHARE, a metrica que decidiu): quantos itens do top-20 fundido cobrem ao menos um radical de RUIDO e NENHUM radical de SERVICO (`query_covered_only_by_noise`) — o lixo que a orcamentista teria que varrer manualmente. Sem `noise`, REFLETOR EXISTENTE tem 10/20 itens assim (\"Remocao de caiacao existente\", \"Forracao de piso com carpete... sobre base existente\", \"Chapiscado... existente\", etc. — nenhum tem qualquer radical de \"refletor\"); ALAMBRADO DO CAMPO ja tinha 0/20 mas a ordem interna piora (PJ14151500, \"Recuperacao do apoio de alambrado\", no rank 15 em vez do 4). COM `noise`, nos TRES fatores testados (0.1/0.25/0.5), REFLETOR EXISTENTE cai para 0/20 (lista vira integralmente refletor/luminaria/projetor) e ALAMBRADO permanece 0/20 com a ordem interna melhor (PJ14151500 sobe para rank 4). Os tres fatores empataram nessa metrica; o criterio de desempate do spec (recall -> top-3 -> top-1 -> rank medio, tambem empatados) mantem o ponto de partida, `LEGEND_NOISE_DAMP_FACTOR = 0.25`. Os pisos ratchet `_HYBRID_TOP1_FLOOR`/`_HYBRID_TOP3_FLOOR` NAO mudaram: nenhum rank de caso gateado mudou, entao nao ha novo patamar para subir. Registrado para nao ser remedido do zero: a licao e medir a COMPOSICAO da lista, nao so o rank do alvo, quando a hipotese for sobre ruido lexical.",
+  "note_abstention_measurement": "MEDIDA E DESCARTADA (2026-08-13) — sinal de abstencao \"possivel aditivo\" por limiar de evidencia. Hipotese: um item sem correspondente no SCO produziria evidencia fraca de retrieval, e um flag calibrado avisaria a orcamentista. Medicao sobre os 15 rotulos reais (com noise ativo), tres caracteristicas por rotulo: maior cobertura ponderada amortecida do top-20 (cov_max), maior cosseno do braco semantico (cos_max) e fracao do peso IDF da consulta que NENHUM candidato cobre (gap_share). Resultado: as distribuicoes se SOBREPOEM por completo. \"LUMINARIAS DUPLAS ALTAS\" (aditivo) tem cov_max 1.000 — todos os radicais cobertos; \"MESA COM 03 BANCOS\" (aditivo, cov 0.679/cos 0.574) e gemea metrica de \"MESA COM 04 BANCOS\" (codigo, 0.687/0.631), e ate o gap_share falha porque \"03\" aparece em outras descricoes (\"03 modulos focais\"); enquanto isso, casos COM codigo como GOLA QUADRADA (cov 0.389) e ALAMBRADO PARQUE (0.415) ficam ABAIXO dos aditivos. Nenhum limiar em nenhuma caracteristica (nem combinacao simples) dispara 3/3 aditivos com 0/12 falsos. A explicacao e de dominio, nao de engenharia: esses itens sao aditivo por razao CONTRATUAL (fora do escopo SCO da licitacao — mesa com OUTRA contagem de bancos, variante de luminaria sem preco, arvores a preservar), nao por distancia lexical ou semantica. E o mesmo limite de evidencia do oraculo por familia: o texto do rotulo nao carrega a informacao que decide, e quem decide e a orcamentista com a prancha na frente (confirm-codes ja e fail-closed: rejeitar codigo e o caminho do dossie de aditivo). Registrado para nao ser reconstruido como \"ganho obvio\": um chip \"possivel aditivo\" errado nas duas direcoes (falso alarme em GOLA QUADRADA, silencio em LUMINARIAS) seria pior que nenhum. Se um dia entrar, precisa de evidencia NOVA (ex.: historico de confirmacoes da propria obra), nao de limiar sobre estas caracteristicas."
+}

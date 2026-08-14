@@ -1,0 +1,21 @@
+{
+  "name": "croquitodxf-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web",
+    "apps/medicao",
+    "packages/contracts"
+  ],
+  "scripts": {
+    "contracts:generate": "npm --workspace @croquitodxf/contracts run generate",
+    "contracts:check": "npm --workspace @croquitodxf/contracts run check",
+    "web:dev": "npm --workspace @croquitodxf/web run dev",
+    "web:check": "npm --workspace @croquitodxf/web run check",
+    "web:test": "npm --workspace @croquitodxf/web run test",
+    "medicao:dev": "npm --workspace @croquitodxf/medicao run dev",
+    "medicao:check": "npm --workspace @croquitodxf/medicao run check",
+    "medicao:test": "npm --workspace @croquitodxf/medicao run test"
+  }
+}
+

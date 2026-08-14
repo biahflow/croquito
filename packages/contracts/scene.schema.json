@@ -1,0 +1,747 @@
+{
+  "$defs": {
+    "ArcGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "center": {
+          "$ref": "#/$defs/Point2D"
+        },
+        "end_angle": {
+          "title": "End Angle",
+          "type": "number"
+        },
+        "radius": {
+          "exclusiveMinimum": 0,
+          "title": "Radius",
+          "type": "number"
+        },
+        "start_angle": {
+          "title": "Start Angle",
+          "type": "number"
+        },
+        "type": {
+          "const": "arc",
+          "default": "arc",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "center",
+        "radius",
+        "start_angle",
+        "end_angle"
+      ],
+      "title": "ArcGeometry",
+      "type": "object"
+    },
+    "CircleGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "center": {
+          "$ref": "#/$defs/Point2D"
+        },
+        "radius": {
+          "exclusiveMinimum": 0,
+          "title": "Radius",
+          "type": "number"
+        },
+        "type": {
+          "const": "circle",
+          "default": "circle",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "center",
+        "radius"
+      ],
+      "title": "CircleGeometry",
+      "type": "object"
+    },
+    "Constraint": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Entity Ids",
+          "type": "array"
+        },
+        "hard": {
+          "default": false,
+          "title": "Hard",
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        },
+        "satisfied": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Satisfied"
+        },
+        "tolerance": {
+          "minimum": 0,
+          "title": "Tolerance",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "entity_ids",
+        "tolerance"
+      ],
+      "title": "Constraint",
+      "type": "object"
+    },
+    "DiameterDimensionGeometry": {
+      "additionalProperties": false,
+      "description": "Cota diametral (⌀) de um círculo, desenhada como DIMENSION diametral no CAD.",
+      "properties": {
+        "angle": {
+          "title": "Angle",
+          "type": "number"
+        },
+        "center": {
+          "$ref": "#/$defs/Point2D"
+        },
+        "radius": {
+          "exclusiveMinimum": 0,
+          "title": "Radius",
+          "type": "number"
+        },
+        "text_override": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text Override"
+        },
+        "type": {
+          "const": "diameter_dimension",
+          "default": "diameter_dimension",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "center",
+        "radius",
+        "angle"
+      ],
+      "title": "DiameterDimensionGeometry",
+      "type": "object"
+    },
+    "DimensionGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/Point2D"
+        },
+        "first": {
+          "$ref": "#/$defs/Point2D"
+        },
+        "second": {
+          "$ref": "#/$defs/Point2D"
+        },
+        "text_override": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text Override"
+        },
+        "type": {
+          "const": "dimension",
+          "default": "dimension",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "first",
+        "second",
+        "base"
+      ],
+      "title": "DimensionGeometry",
+      "type": "object"
+    },
+    "Entity": {
+      "additionalProperties": false,
+      "properties": {
+        "export": {
+          "default": true,
+          "title": "Export",
+          "type": "boolean"
+        },
+        "fill": {
+          "default": "none",
+          "enum": [
+            "none",
+            "hatch"
+          ],
+          "title": "Fill",
+          "type": "string"
+        },
+        "geometry": {
+          "discriminator": {
+            "mapping": {
+              "arc": "#/$defs/ArcGeometry",
+              "circle": "#/$defs/CircleGeometry",
+              "diameter_dimension": "#/$defs/DiameterDimensionGeometry",
+              "dimension": "#/$defs/DimensionGeometry",
+              "line": "#/$defs/LineGeometry",
+              "polyline": "#/$defs/PolylineGeometry",
+              "spline": "#/$defs/SplineGeometry",
+              "text": "#/$defs/TextGeometry"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/LineGeometry"
+            },
+            {
+              "$ref": "#/$defs/PolylineGeometry"
+            },
+            {
+              "$ref": "#/$defs/CircleGeometry"
+            },
+            {
+              "$ref": "#/$defs/ArcGeometry"
+            },
+            {
+              "$ref": "#/$defs/SplineGeometry"
+            },
+            {
+              "$ref": "#/$defs/TextGeometry"
+            },
+            {
+              "$ref": "#/$defs/DimensionGeometry"
+            },
+            {
+              "$ref": "#/$defs/DiameterDimensionGeometry"
+            }
+          ],
+          "title": "Geometry"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/EntityKind"
+        },
+        "layer": {
+          "$ref": "#/$defs/LayerName"
+        },
+        "precision": {
+          "$ref": "#/$defs/Precision"
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provenance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "kind",
+        "layer",
+        "precision",
+        "geometry"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "EntityKind": {
+      "enum": [
+        "line",
+        "polyline",
+        "circle",
+        "arc",
+        "spline",
+        "text",
+        "dimension",
+        "diameter_dimension"
+      ],
+      "title": "EntityKind",
+      "type": "string"
+    },
+    "Issue": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^[A-Z0-9_]{3,64}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "entity_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Entity Ids",
+          "type": "array"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/IssueSeverity"
+        },
+        "status": {
+          "$ref": "#/$defs/IssueStatus",
+          "default": "open"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "title": "Issue",
+      "type": "object"
+    },
+    "IssueSeverity": {
+      "enum": [
+        "info",
+        "warning",
+        "critical"
+      ],
+      "title": "IssueSeverity",
+      "type": "string"
+    },
+    "IssueStatus": {
+      "enum": [
+        "open",
+        "resolved",
+        "accepted"
+      ],
+      "title": "IssueStatus",
+      "type": "string"
+    },
+    "LayerName": {
+      "enum": [
+        "CONTORNO",
+        "CAMPO",
+        "QUADRA",
+        "MURO",
+        "ALAMBRADO",
+        "PORTAO",
+        "PATAMAR",
+        "EQUIPAMENTOS",
+        "COTAS",
+        "TEXTOS",
+        "DETALHES",
+        "APROXIMADO",
+        "REVISAO"
+      ],
+      "title": "LayerName",
+      "type": "string"
+    },
+    "LineGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "$ref": "#/$defs/Point2D"
+        },
+        "start": {
+          "$ref": "#/$defs/Point2D"
+        },
+        "type": {
+          "const": "line",
+          "default": "line",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "LineGeometry",
+      "type": "object"
+    },
+    "Measurement": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmed": {
+          "default": false,
+          "title": "Confirmed",
+          "type": "boolean"
+        },
+        "entity_id": {
+          "format": "uuid",
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/MeasurementKind"
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provenance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "raw_text": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Text"
+        },
+        "unit": {
+          "$ref": "#/$defs/UnitCode"
+        },
+        "value_si": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value Si"
+        },
+        "written_decimals": {
+          "default": 2,
+          "maximum": 8,
+          "minimum": 0,
+          "title": "Written Decimals",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entity_id",
+        "kind",
+        "unit"
+      ],
+      "title": "Measurement",
+      "type": "object"
+    },
+    "MeasurementKind": {
+      "enum": [
+        "length",
+        "width",
+        "height",
+        "radius",
+        "diameter",
+        "angle",
+        "area"
+      ],
+      "title": "MeasurementKind",
+      "type": "string"
+    },
+    "Point2D": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "Point2D",
+      "type": "object"
+    },
+    "PolylineGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "closed": {
+          "default": false,
+          "title": "Closed",
+          "type": "boolean"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/Point2D"
+          },
+          "minItems": 2,
+          "title": "Points",
+          "type": "array"
+        },
+        "type": {
+          "const": "polyline",
+          "default": "polyline",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "points"
+      ],
+      "title": "PolylineGeometry",
+      "type": "object"
+    },
+    "Precision": {
+      "enum": [
+        "exact",
+        "derived",
+        "approximate",
+        "unresolved"
+      ],
+      "title": "Precision",
+      "type": "string"
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "source_type": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Source Type",
+          "type": "string"
+        },
+        "summary_code": {
+          "pattern": "^[A-Z0-9_]{3,64}$",
+          "title": "Summary Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_type",
+        "source_ids",
+        "summary_code"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "SplineGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "fit_points": {
+          "items": {
+            "$ref": "#/$defs/Point2D"
+          },
+          "minItems": 3,
+          "title": "Fit Points",
+          "type": "array"
+        },
+        "type": {
+          "const": "spline",
+          "default": "spline",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fit_points"
+      ],
+      "title": "SplineGeometry",
+      "type": "object"
+    },
+    "TextGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "number"
+        },
+        "insertion": {
+          "$ref": "#/$defs/Point2D"
+        },
+        "rotation": {
+          "default": 0.0,
+          "title": "Rotation",
+          "type": "number"
+        },
+        "text": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "insertion",
+        "text",
+        "height"
+      ],
+      "title": "TextGeometry",
+      "type": "object"
+    },
+    "UnitCode": {
+      "enum": [
+        "m",
+        "mm",
+        "rad",
+        "deg",
+        "m2"
+      ],
+      "title": "UnitCode",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.croquitodxf.local/scene/1.0.0.json",
+  "additionalProperties": false,
+  "properties": {
+    "accepted_approximation_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Accepted Approximation Ids",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "approved": {
+      "default": false,
+      "title": "Approved",
+      "type": "boolean"
+    },
+    "constraints": {
+      "items": {
+        "$ref": "#/$defs/Constraint"
+      },
+      "title": "Constraints",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "entities": {
+      "items": {
+        "$ref": "#/$defs/Entity"
+      },
+      "title": "Entities",
+      "type": "array"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "issues": {
+      "items": {
+        "$ref": "#/$defs/Issue"
+      },
+      "title": "Issues",
+      "type": "array"
+    },
+    "job_id": {
+      "format": "uuid",
+      "title": "Job Id",
+      "type": "string"
+    },
+    "measurements": {
+      "items": {
+        "$ref": "#/$defs/Measurement"
+      },
+      "title": "Measurements",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "job_id",
+    "version",
+    "entities"
+  ],
+  "title": "CroquiToDXF Scene Revision",
+  "type": "object"
+}

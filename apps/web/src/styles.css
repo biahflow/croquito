@@ -1,0 +1,2090 @@
+:root {
+  color: #17211b;
+  background: #eef1ec;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 1180px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(169, 193, 176, 0.3), transparent 28rem),
+    #eef1ec;
+}
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.topbar {
+  min-height: 76px;
+  padding: 14px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #f5f8f4;
+  background: #172c23;
+  border-bottom: 1px solid #29483b;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.brand-mark {
+  width: 45px;
+  height: 45px;
+  display: grid;
+  place-items: center;
+  color: #172c23;
+  background: #d7ed56;
+  border-radius: 11px 11px 4px 11px;
+  font-weight: 900;
+  letter-spacing: -0.08em;
+}
+
+.brand strong,
+.brand small {
+  display: block;
+}
+
+.brand strong {
+  font-size: 18px;
+}
+
+.brand small {
+  margin-top: 3px;
+  color: #a9bdb3;
+  font-size: 12px;
+}
+
+.topbar-actions,
+.context-bar,
+.difficulty,
+.pipeline,
+.panel-heading,
+.view-tabs,
+footer {
+  display: flex;
+  align-items: center;
+}
+
+.authenticated-workspace {
+  margin: 0 24px 18px;
+  padding: 18px;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(340px, 1.4fr);
+  gap: 16px;
+  color: #30473b;
+  background: #f4f8f4;
+  border: 1px solid #d6e2d8;
+  border-radius: 10px;
+}
+
+.authenticated-workspace h2 {
+  margin: 4px 0 8px;
+  font-size: 18px;
+}
+
+.authenticated-workspace p {
+  margin: 0;
+  max-width: 55ch;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.upload-form {
+  display: grid;
+  /* O input de arquivo nativo carrega botão + nome do PDF; um track fixo estreito
+     corta o campo. Cada coluna precisa de piso próprio e colapsa quando não cabe. */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.upload-form label {
+  display: grid;
+  gap: 4px;
+  color: #526358;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.upload-form label:last-of-type {
+  grid-column: 1 / -1;
+}
+
+.upload-form input,
+.upload-form select {
+  min-width: 0;
+  padding: 8px;
+  color: #22332a;
+  background: #fff;
+  border: 1px solid #cbd8ce;
+  border-radius: 5px;
+}
+
+.upload-form input[type="file"] {
+  max-width: 100%;
+  padding: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.upload-form .button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.job-status,
+.project-list {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  background: #fff;
+  border: 1px solid #dce6de;
+  border-radius: 6px;
+}
+
+.project-list {
+  list-style: none;
+}
+
+.project-list li {
+  min-width: 220px;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e0e8e1;
+  border-radius: 6px;
+}
+
+.project-list li > div {
+  display: grid;
+  gap: 3px;
+}
+
+.project-list span {
+  color: #68756d;
+}
+
+/* `button-quiet` nasceu para a topbar escura; nos cartões claros o texto sumia e o
+   botão parecia desativado (feedback do usuário na rodada do Guaxindiba). Ação
+   disponível precisa parecer ação: fundo, peso e borda firmes. */
+.project-action {
+  min-height: 30px;
+  padding: 0 12px;
+  color: #1c3527;
+  background: #dcebd2;
+  border-color: #5f8a6d;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.project-action:hover:not(:disabled) {
+  background: #c9e0ba;
+}
+
+.project-action:disabled {
+  color: #8b978e;
+  background: transparent;
+  border-color: #d5ded6;
+  font-weight: 500;
+}
+
+.topbar-actions {
+  gap: 10px;
+}
+
+.schema-pill {
+  margin-right: 8px;
+  padding: 7px 10px;
+  color: #b9cbc2;
+  border: 1px solid #3c574c;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.demo-pill {
+  padding: 7px 10px;
+  color: #f0d899;
+  border: 1px solid #665a38;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.identity-pill {
+  padding: 7px 10px;
+  color: #cde5d6;
+  border: 1px solid #4e715d;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.session-error,
+.session-summary {
+  margin: 12px 32px 0;
+  font-size: 12px;
+}
+
+.session-error {
+  color: #9a3428;
+}
+
+/*
+ * A página de revisão é longa e a ação fica no rodapé de um painel lateral. Uma
+ * mensagem só no topo é invisível na hora em que ela importa: o clique parece
+ * não ter feito nada.
+ */
+.app-alert {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 32px;
+  background: #fbeeec;
+  border-bottom: 1px solid #e0b4ad;
+  color: #7d2f26;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.app-alert-close {
+  flex: none;
+  padding: 0 6px;
+  color: #7d2f26;
+  background: transparent;
+  border: 0;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+/* Sucesso é transitório e verde; erro fica até o usuário fechar. */
+.app-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 30;
+  margin: 0;
+  padding: 11px 15px;
+  max-width: 340px;
+  background: #edf7f0;
+  border: 1px solid #a8ccb4;
+  border-radius: 7px;
+  box-shadow: 0 6px 18px rgba(35, 57, 46, 0.14);
+  color: #245638;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.approval-summary {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  background: #edf7f0;
+  border: 1px solid #a8ccb4;
+  border-radius: 6px;
+  color: #245638;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.approval-summary p {
+  margin: 0;
+}
+
+/* 83 propostas abertas por padrão afogam a tarefa principal, que é decidir as cotas. */
+.proposal-toggle {
+  display: grid;
+  gap: 3px;
+  padding: 9px;
+  text-align: left;
+  color: #315746;
+  background: #fff;
+  border: 1px dashed #b9d0be;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.proposal-toggle small {
+  color: #667269;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.proposal-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-summary {
+  color: #476254;
+}
+
+.button {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-weight: 750;
+  font-size: 13px;
+}
+
+.button-primary {
+  color: #182217;
+  background: #d7ed56;
+  box-shadow: 0 5px 16px rgba(100, 120, 24, 0.18);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  color: #6c7653;
+  background: #dce4a7;
+  box-shadow: none;
+}
+
+.button-quiet {
+  color: #e7eee9;
+  background: transparent;
+  border-color: #466054;
+}
+
+.context-bar {
+  padding: 22px 32px 18px;
+  justify-content: space-between;
+  background: #fafbf8;
+  border-bottom: 1px solid #d9ded8;
+}
+
+.eyebrow {
+  color: #65766d;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  margin-top: 4px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: 600;
+}
+
+h2 {
+  margin-top: 3px;
+  font-size: 15px;
+}
+
+.difficulty,
+.case-selector {
+  gap: 9px;
+  padding: 8px 13px;
+  background: #edf4d4;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.difficulty i {
+  width: 18px;
+  height: 1px;
+  background: #b6c09b;
+}
+
+.case-selector {
+  display: flex;
+  padding: 4px;
+}
+
+.case-chip {
+  padding: 6px 10px;
+  color: #687568;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.case-chip.active {
+  color: #1d392b;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(35, 57, 46, 0.1);
+}
+
+.muted {
+  color: #89928d;
+}
+
+.pipeline {
+  padding: 13px 32px;
+  gap: 14px;
+  background: #f4f6f2;
+  border-bottom: 1px solid #dce1db;
+}
+
+.stage {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #6c7a72;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.stage:not(:last-child)::after {
+  content: "";
+  width: 42px;
+  height: 1px;
+  margin-left: 7px;
+  background: #c8cfc9;
+}
+
+.stage span {
+  width: 23px;
+  height: 23px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #b8c2bb;
+  border-radius: 50%;
+  font-size: 10px;
+}
+
+.stage-complete span {
+  color: #e9f1ec;
+  background: #315746;
+  border-color: #315746;
+}
+
+.stage-active {
+  color: #1e392e;
+}
+
+.stage-active span {
+  color: #172217;
+  background: #d7ed56;
+  border-color: #c5dc3d;
+}
+
+/* A coluna de painéis virou a jornada (uma etapa por vez); o desenho fica ao lado dela,
+   sempre visível, porque o palco não é governado pela etapa aberta. */
+.workspace {
+  padding: 18px 20px;
+  display: grid;
+  grid-template-columns: minmax(320px, 360px) minmax(640px, 1fr);
+  gap: 14px;
+}
+
+.panel {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #d9ded8;
+  border-radius: 11px;
+  box-shadow: 0 8px 28px rgba(31, 51, 41, 0.05);
+}
+
+.panel-heading {
+  min-height: 68px;
+  padding: 14px 16px;
+  justify-content: space-between;
+  border-bottom: 1px solid #e5e9e4;
+}
+
+.counter {
+  min-width: 27px;
+  padding: 5px;
+  text-align: center;
+  background: #edf1ed;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+/*
+ * Trilho da jornada. Tudo em uma tela só polui: a etapa ativa fica aberta, a concluída
+ * vira resumo reabrível e a futura aparece bloqueada com o motivo escrito. O trilho é
+ * espelho do estado do servidor — ele organiza a tela e nunca substitui os guards da API.
+ */
+.journey-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.journey {
+  padding: 12px 12px 0;
+}
+
+.journey-steps {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+  list-style: none;
+}
+
+.journey-step-button {
+  width: 100%;
+  padding: 8px 9px;
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: start;
+  gap: 8px;
+  text-align: left;
+  color: #3d5448;
+  background: #fff;
+  border: 1px solid #dfe6e0;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.journey-step-button:hover:not(:disabled) {
+  background: #f3f6f1;
+}
+
+/* Etapa bloqueada não é clicável, mas o motivo continua legível em texto. */
+.journey-step-button:disabled {
+  cursor: not-allowed;
+  color: #6f7a72;
+  background: #f6f7f4;
+}
+
+.journey-mark {
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.journey-step-text {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.journey-step-text strong {
+  font-size: 11.5px;
+}
+
+.journey-step-text small,
+.journey-step-status {
+  color: #667269;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.journey-step-status {
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.journey-step.done .journey-step-button {
+  color: #245638;
+  background: #f2f8f3;
+  border-color: #b9d0be;
+}
+
+.journey-step.done .journey-step-text small,
+.journey-step.done .journey-step-status {
+  color: #4a6a56;
+}
+
+.journey-step.blocked .journey-mark {
+  color: #825320;
+}
+
+/* A etapa que a jornada abriu sozinha; `aria-current="step"` diz o mesmo sem cor. */
+.journey-step.active .journey-step-button {
+  border-color: #7fa78d;
+  box-shadow: inset 3px 0 0 #d7ed56;
+}
+
+.journey-step.open .journey-step-button {
+  background: #edf4d4;
+  border-color: #d4e18e;
+}
+
+.journey-section {
+  margin-top: 12px;
+  border-top: 1px solid #e5e9e4;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 3px;
+  color: #55604f;
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.review-list {
+  padding: 8px;
+  /* Com dezenas de leituras a lista empurrava o recorte e os controles de decisão para
+     fora da tela; a rolagem é da lista, o painel de decisão fica sempre ao alcance. */
+  max-height: 38vh;
+  overflow-y: auto;
+}
+
+.review-row {
+  width: 100%;
+  padding: 12px 9px;
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  color: #25332c;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.review-row:hover {
+  background: #f3f6f1;
+}
+
+.review-row.selected {
+  background: #edf4d4;
+  outline: 1px solid #d4e18e;
+}
+
+.review-row small {
+  color: #758078;
+  font-size: 10px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  border-radius: 50%;
+}
+
+.status-dot.exact {
+  background: #2f845e;
+}
+
+.status-dot.derived {
+  background: #3f76b2;
+}
+
+.status-dot.review {
+  background: #d58a2a;
+}
+
+.status-dot.proposed {
+  background: #2f6ea3;
+}
+
+.status-dot.ambiguous {
+  background: #d58a2a;
+}
+
+.status-dot.confirmed {
+  background: #2f845e;
+}
+
+.status-dot.rejected {
+  background: #b42318;
+}
+
+.decision-controls {
+  margin: 2px 10px 10px;
+  padding: 12px;
+  display: grid;
+  gap: 9px;
+  color: #3d5448;
+  background: #edf5ef;
+  border: 1px solid #d7e5da;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.decision-controls label {
+  display: grid;
+  gap: 4px;
+  font-weight: 700;
+}
+
+.decision-controls input,
+.decision-controls select {
+  min-width: 0;
+  padding: 7px;
+  color: #22332a;
+  background: #fff;
+  border: 1px solid #cbd8ce;
+  border-radius: 5px;
+}
+
+.decision-controls div {
+  display: grid;
+  gap: 5px;
+}
+
+.decision-controls button,
+.reload-review {
+  padding: 7px 8px;
+  color: #315746;
+  background: #fff;
+  border: 1px solid #b9d0be;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.proposal-controls {
+  margin: 2px 10px 10px;
+  padding: 12px;
+  display: grid;
+  gap: 9px;
+  color: #3d5448;
+  background: #f8f4ea;
+  border: 1px solid #ead8b4;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.proposal-controls h3 {
+  margin: 3px 0 0;
+  font-size: 13px;
+}
+
+.proposal-list {
+  max-height: 150px;
+  overflow: auto;
+  border: 1px solid #e4d6b9;
+  border-radius: 6px;
+}
+
+.proposal-row {
+  width: 100%;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 6px;
+  color: #3d5448;
+  background: #fffdf8;
+  border: 0;
+  text-align: left;
+  font-size: 10px;
+}
+
+.proposal-row.selected {
+  background: #f5e4ae;
+  outline: 1px solid #d8aa35;
+}
+
+.proposal-row small {
+  color: #6f705e;
+  font-size: 9px;
+}
+
+.calibration-controls,
+.approval-controls,
+.export-controls,
+.proposal-decision {
+  margin: 0;
+  padding: 9px;
+  display: grid;
+  gap: 7px;
+  border: 1px solid #dbc99d;
+  border-radius: 6px;
+}
+
+.calibration-controls label,
+.approval-controls label,
+.proposal-decision label {
+  display: grid;
+  gap: 4px;
+  font-weight: 700;
+}
+
+.calibration-controls select,
+.approval-controls textarea,
+.proposal-decision input {
+  min-width: 0;
+  padding: 6px;
+  color: #22332a;
+  background: #fff;
+  border: 1px solid #cdbf9f;
+  border-radius: 4px;
+}
+
+.calibration-controls button,
+.approval-controls button,
+.export-controls button,
+.proposal-decision button {
+  padding: 7px;
+  color: #315746;
+  background: #fff;
+  border: 1px solid #b9d0be;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.proposal-decision div {
+  display: grid;
+  gap: 5px;
+}
+
+.check-label {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  font-weight: 500 !important;
+}
+
+.proposal-hint,
+.calibration-summary {
+  color: #675c38;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+/* Caminho legado dentro da etapa de traçado: a régua pixel→metro só é necessária para
+   aceitar forma sem cota escrita, então ela nasce recolhida em vez de disputar espaço
+   com o aceite em lote. */
+.calibration-details {
+  padding: 7px 9px;
+  border: 1px solid #dbc99d;
+  border-radius: 6px;
+}
+
+.calibration-details > summary {
+  cursor: pointer;
+  color: #675c38;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.calibration-details[open] > :not(summary) {
+  margin-top: 7px;
+}
+
+/* O casamento que a régua resolveu: proposta à esquerda, aresta métrica à direita. */
+.calibration-anchors {
+  margin: 0;
+  padding-left: 15px;
+  color: #675c38;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+/* O nome ocupa a linha e o "Copiar ID" fica discreto no canto, sem virar ação primária. */
+.decision-controls .decision-title,
+.proposal-decision .decision-title {
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.decision-controls .copy-id,
+.proposal-decision .copy-id {
+  padding: 3px 6px;
+  color: #667269;
+  background: transparent;
+  border: 1px solid #cbd8ce;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.legend {
+  margin: 10px;
+  padding: 12px;
+  color: #68756d;
+  background: #f6f8f5;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.legend .status-dot {
+  margin-right: 4px;
+}
+
+.drawing-panel {
+  min-width: 0;
+}
+
+.drawing-heading {
+  padding-right: 10px;
+}
+
+.view-tabs {
+  padding: 3px;
+  gap: 2px;
+  background: #eef1ed;
+  border-radius: 7px;
+}
+
+.view-tabs button {
+  padding: 7px 9px;
+  color: #667269;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.view-tabs .active {
+  color: #1e3329;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(35, 57, 46, 0.1);
+}
+
+.drawing-canvas {
+  position: relative;
+  min-height: 550px;
+  padding: 22px;
+  background: #f7f8f5;
+  overflow: auto;
+}
+
+/* Ampliada, a folha não cabe na janela; arrastar é mais direto do que perseguir a
+   barra de rolagem. Scroll e teclado continuam funcionando do mesmo jeito. */
+.drawing-canvas.pannable {
+  cursor: grab;
+}
+
+.drawing-canvas.panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.viewer-hint {
+  margin: 4px 0 0;
+  max-width: 46ch;
+  color: #65766d;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.viewer-controls {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.rotate-button {
+  min-width: 30px;
+  padding: 5px 7px;
+  color: #315746;
+  background: #fff;
+  border: 1px solid #cbd8ce;
+  border-radius: 5px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.rotate-readout {
+  min-width: 34px;
+  color: #667269;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * O croqui é desenhado em paisagem numa página retrato, então o engenheiro lê tudo
+ * deitado. O palco reserva a caixa do conteúdo já girado; o conteúdo gira em torno do
+ * próprio centro, levando imagem e overlays juntos e preservando o registro entre eles.
+ * A largura do palco é inline e cresce com o zoom (ver `viewport.ts`), de modo que a
+ * folha ampliada continue inteira dentro da área rolável.
+ */
+.preview-stage {
+  position: relative;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.preview-transform {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: center center;
+}
+
+/* Sem as dimensões da página, a imagem se mede no fluxo em vez de o palco chutar uma
+   proporção quadrada. Dura até o `load` da imagem. */
+.preview-transform.measuring {
+  position: static;
+  width: 100%;
+  transform: none;
+}
+
+.preview-transform img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Realce de APRESENTAÇÃO da folha no palco: lápis claro numa página de milhares de
+   pixels desaparece quando o browser reduz para caber na tela. Só a imagem-base do
+   palco recebe o filtro; o recorte de evidência e o overlay ficam crus — o que o
+   revisor decide continua sendo a evidência sem tratamento. */
+.preview-transform > img:not(.review-overlay) {
+  filter: contrast(1.45) saturate(1.6);
+}
+
+.preview-transform .review-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.preview-transform .proposal-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Nunca é alvo de clique: é só o registro visual da leitura selecionada. */
+.preview-transform .evidence-overlay {
+  pointer-events: none;
+}
+
+.proposal-shape {
+  fill: none;
+  stroke: #bd7a20;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  /* O viewBox está em pixels da folha (milhares): sem isto o traço de 2 unidades vira
+     sub-pixel na tela e as formas detectadas somem — mesmo motivo do .marquee-rect. */
+  vector-effect: non-scaling-stroke;
+}
+
+.proposal-shape.selected {
+  stroke: #166a83;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Só recebe clique quando o painel de lote está aberto; fora disso a sobreposição
+   não pode roubar o cursor de quem só quer olhar o desenho. */
+.preview-transform .proposal-overlay.pickable {
+  pointer-events: auto;
+}
+
+.proposal-overlay.pickable .proposal-shape {
+  cursor: pointer;
+  stroke-linecap: round;
+}
+
+/* O alvo de clique real é o gêmeo transparente com traço em unidades da folha: com
+   `non-scaling-stroke` o hit-test usa a geometria pré-transformação e a linha fina
+   ficava com alvo sub-pixel (medido com elementFromPoint: zero acerto em ±3px). */
+.proposal-hit {
+  fill: none;
+  stroke: transparent;
+  pointer-events: stroke;
+}
+
+.proposal-overlay.pickable .proposal-hit {
+  cursor: pointer;
+}
+
+/* Amarrando cota: só a linha já traçada é alvo, e ela precisa se destacar do resto. */
+.proposal-shape.bindable {
+  stroke: #7a3fa0;
+  stroke-width: 5;
+  stroke-dasharray: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.binding-controls {
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+  background: #f6f2fa;
+  border: 1px solid #d3c1e2;
+  border-radius: 6px;
+}
+
+.binding-controls button {
+  padding: 7px;
+  color: #4a2a63;
+  background: #fff;
+  border: 1px solid #d3c1e2;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+/*
+ * Retângulo de Shift+arrasto. O tracejado é o indicador: cor sozinha não distingue o
+ * rastro do gesto das formas já marcadas. `non-scaling-stroke` porque o viewBox está em
+ * pixels da folha (milhares) e um traço de 2 unidades sumiria na tela. Nunca é alvo de
+ * clique: ele é rastro, não controle.
+ */
+.marquee-rect {
+  fill: rgba(29, 63, 143, 0.12);
+  stroke: #1d3f8f;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+/*
+ * Rascunho das amarrações sobre a folha: âncora de trecho, ponto da cota derivada e a
+ * linha do vão entre duas formas. É eco do que a lista já diz por escrito — desenho
+ * nunca é o único indicador — e nunca é alvo de clique.
+ */
+.draft-overlay {
+  pointer-events: none;
+}
+
+.draft-anchor {
+  fill: rgba(122, 63, 160, 0.25);
+  stroke: #7a3fa0;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.draft-span {
+  fill: none;
+  stroke: #7a3fa0;
+  stroke-width: 2;
+  stroke-dasharray: 10 6;
+  vector-effect: non-scaling-stroke;
+}
+
+.proposal-shape.batched {
+  stroke: #1d3f8f;
+  stroke-width: 5;
+  stroke-dasharray: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.batch-controls {
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+  background: #fff;
+  border: 1px solid #cbd8ce;
+  border-radius: 6px;
+}
+
+.batch-count {
+  margin: 0;
+  font-size: 12px;
+}
+
+.batch-hint {
+  margin: 0;
+  color: #667269;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.batch-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.batch-buttons button {
+  flex: 1 1 auto;
+  padding: 7px;
+  color: #315746;
+  background: #fff;
+  border: 1px solid #b9d0be;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+/* Aceite de traçado: seção irmã do lote de aproximações, com a mesma seleção. */
+.trace-controls {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  background: #fff;
+  border: 1px solid #cbd8ce;
+  border-radius: 6px;
+}
+
+.trace-controls h4 {
+  margin: 0;
+  font-size: 12px;
+}
+
+.trace-controls > label {
+  display: grid;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.trace-controls > label input,
+.trace-detail-controls input {
+  min-width: 0;
+  padding: 6px;
+  color: #22332a;
+  background: #fff;
+  border: 1px solid #cdbf9f;
+  border-radius: 4px;
+}
+
+.trace-selection {
+  margin: 0;
+  padding: 0;
+  max-height: 170px;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid #e4d6b9;
+  border-radius: 6px;
+}
+
+.trace-selection li {
+  display: grid;
+  gap: 4px;
+  padding: 7px;
+  font-size: 10px;
+}
+
+.trace-selection li + li {
+  border-top: 1px solid #eee3ca;
+}
+
+.trace-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/*
+ * O estado da declaração é escrito no próprio botão ("hachura: sim"): quem não
+ * distingue o realce continua lendo a marcação.
+ *
+ * Pílula porque é INTERRUPTOR, não ação: a forma redonda separa à distância o que
+ * alterna um estado do que executa um comando (`.trace-action`, abaixo). Os dois
+ * moravam na mesma classe e o revisor clicava em "Desfazer" pensando em marcar.
+ */
+.trace-flag {
+  padding: 4px 9px;
+  color: #667269;
+  background: #fff;
+  border: 1px solid #cbd8ce;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.trace-flag.marked {
+  color: #315746;
+  background: #eaf3ec;
+  border-color: #7fa78d;
+}
+
+/* Ação do aceite (desfazer, reamarrar, virar vão): botão pequeno, na cara do lote. */
+.trace-action {
+  padding: 6px 8px;
+  color: #315746;
+  background: #fff;
+  border: 1px solid #b9d0be;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+/*
+ * Falta o eixo nesta cota. O texto é o indicador; a cor de alerta do app só reforça —
+ * a mesma pendência continua na lista agregada do aceite.
+ */
+.axis-warning {
+  display: block;
+  color: #7d2f26;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+/* Vãos e amarrações: a subseção onde a cota confirmada vira vão, nota ou derivada. */
+.trace-spans {
+  display: grid;
+  gap: 7px;
+}
+
+.trace-spans h5 {
+  margin: 0;
+  font-size: 11px;
+}
+
+/*
+ * Banner da captura em andamento. Ele é `aria-live`: o gesto acontece no desenho, longe
+ * deste painel, e quem usa leitor de tela precisa ouvir a próxima instrução.
+ */
+.capture-banner {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  color: #667269;
+  background: #fff;
+  border: 1px solid #cbd8ce;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+/* Captura em andamento: o realce acompanha o texto, nunca o substitui. */
+.capture-banner.active {
+  color: #24405b;
+  background: #eef4fb;
+  border-color: #b9cde4;
+  font-weight: 700;
+}
+
+.capture-banner p {
+  margin: 0;
+}
+
+.capture-banner button {
+  padding: 5px 8px;
+  color: #24405b;
+  background: #fff;
+  border: 1px solid #b9cde4;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+/* A linha inteira é o alvo de seleção; o estado da amarração vem escrito nela. */
+.span-row {
+  display: grid;
+  gap: 2px;
+  padding: 0;
+  text-align: left;
+  color: #22332a;
+  background: transparent;
+  border: 0;
+  font-size: 10px;
+}
+
+.span-row small {
+  color: #667269;
+}
+
+.span-row.selected {
+  color: #1d3f8f;
+  font-weight: 700;
+}
+
+.span-field {
+  display: grid;
+  gap: 3px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.span-field input,
+.span-field select {
+  min-width: 0;
+  padding: 5px;
+  color: #22332a;
+  background: #fff;
+  border: 1px solid #cdbf9f;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.trace-declarations {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  font-size: 10px;
+}
+
+.trace-declarations li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.trace-declarations button {
+  padding: 3px 6px;
+  color: #667269;
+  background: transparent;
+  border: 1px solid #cbd8ce;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.keep-apart-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.keep-apart-controls select {
+  font-size: 9px;
+}
+
+/* Pendência da montagem fica em lista acima do botão, nunca em aviso que some. */
+.trace-issues {
+  margin: 0;
+  padding: 8px 8px 8px 24px;
+  color: #6e2820;
+  background: #fff6f4;
+  border: 1px solid #f0d0cb;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.trace-status {
+  display: grid;
+  gap: 6px;
+  color: #3d5448;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.trace-status p {
+  margin: 0;
+}
+
+/* Candidato de associação em avaliação: traço cheio, contrasta com o tracejado. */
+.proposal-shape.associating {
+  stroke: #1d3f8f;
+  stroke-width: 4;
+  stroke-dasharray: none;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Códigos de blocker são longos e sem espaço; sem isso eles estouram o painel. */
+.blocker-list li {
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+
+.blocker-list code {
+  display: block;
+  font-size: 0.78em;
+  color: #65766d;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * A cota ocupa poucas centenas de pixels numa imagem de 4875x6718: no viewer inteiro
+ * ela é ilegível. Aqui ela enche o painel, com giro próprio porque as cotas da folha
+ * estão escritas em orientações diferentes entre si.
+ */
+.evidence-zoom {
+  display: grid;
+  gap: 4px;
+}
+
+.evidence-zoom-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #526358;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.evidence-crop {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #cbd8ce;
+  border-radius: 5px;
+}
+
+.evidence-pivot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: center center;
+}
+
+.evidence-pivot img {
+  position: absolute;
+  max-width: none;
+}
+
+.decision-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid #a33d32;
+  background: #fbeeec;
+  color: #7d2f26;
+  line-height: 1.4;
+}
+
+.proposal-shape.accept {
+  stroke: #3b8a5d;
+  stroke-dasharray: none;
+}
+
+.proposal-shape.reject {
+  stroke: #a33d32;
+  opacity: 0.35;
+}
+
+/* Recorte da leitura selecionada: traço cheio e espesso, distinto das propostas. */
+.reading-evidence {
+  fill: none;
+  stroke: #1d3f8f;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.reading-current {
+  margin: 0;
+  color: #4a5b52;
+  line-height: 1.4;
+}
+
+.preview-empty {
+  padding: 24px;
+  color: #65766d;
+  line-height: 1.5;
+}
+
+.zoom-control {
+  display: grid;
+  gap: 4px;
+  color: #65766d;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.issue-panel {
+  margin: 12px;
+  padding: 12px;
+  color: #6e2820;
+  background: #fff6f4;
+  border: 1px solid #f0d0cb;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.issue-panel ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.issue-panel li + li {
+  margin-top: 4px;
+}
+
+.reload-review {
+  margin: 8px 32px;
+}
+
+/* Os únicos svg do canvas hoje são os OVERLAYS sobre a folha (propostas, evidência,
+   marquee): fundo opaco aqui cobre a própria folha — foi exatamente o defeito da
+   rodada do Guaxindiba (palco "em branco"). Overlay é transparente por definição. */
+.drawing-canvas svg {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}
+
+.technical-drawing rect,
+.technical-drawing circle,
+.technical-drawing line:not(.dimension) {
+  fill: none;
+  stroke: #244d3d;
+  stroke-width: 3;
+}
+
+.technical-drawing .dimension {
+  stroke: #bd5a3f;
+  stroke-width: 1.5;
+}
+
+.technical-drawing text {
+  fill: #984933;
+  font-size: 14px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.candidate-drawing rect,
+.candidate-drawing circle,
+.candidate-drawing line,
+.candidate-drawing path {
+  stroke: #c37825;
+  stroke-dasharray: 8 6;
+}
+
+.candidate-drawing text {
+  fill: #8a541d;
+  font-size: 13px;
+}
+
+.canvas-badge {
+  position: absolute;
+  right: 34px;
+  bottom: 35px;
+  padding: 9px 11px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #d6ddd7;
+  border-radius: 7px;
+  box-shadow: 0 5px 16px rgba(39, 58, 48, 0.08);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.ready {
+  padding: 5px 8px;
+  color: #245d43;
+  background: #dcf1e5;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.blocked {
+  padding: 5px 8px;
+  color: #825320;
+  background: #fff0d2;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.audit-list {
+  margin: 0;
+  padding: 10px 16px;
+}
+
+.audit-list div {
+  padding: 11px 0;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid #edf0ec;
+}
+
+.audit-list dt {
+  color: #68756d;
+  font-size: 11px;
+}
+
+.audit-list dd {
+  margin: 0;
+  color: #22332a;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+/* Conversa da revisão: painel auxiliar, recolhido por padrão, no mesmo tom da
+   calibração — auxiliar não disputa espaço com a etapa aberta. */
+.chat-details {
+  margin: 12px 16px 0;
+  padding: 7px 9px;
+  border: 1px solid #cdd9e4;
+  border-radius: 6px;
+}
+
+.chat-details > summary {
+  cursor: pointer;
+  color: #3c5568;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.chat-panel {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+  color: #34474f;
+  font-size: 11px;
+}
+
+.chat-empty {
+  margin: 0;
+  color: #667269;
+  font-size: 10px;
+}
+
+.chat-feed {
+  margin: 0;
+  padding: 0;
+  max-height: 40vh;
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.chat-turn {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  background: #f4f7f9;
+  border: 1px solid #dde6ec;
+  border-radius: 7px;
+}
+
+.chat-question {
+  margin: 0;
+  display: grid;
+  gap: 2px;
+  line-height: 1.4;
+}
+
+.chat-question strong {
+  color: #526358;
+  font-size: 10px;
+}
+
+/* Estado sempre escrito ao lado do conteúdo: espera, resposta e falha nunca são
+   indicadas só por cor. */
+.chat-state {
+  margin: 0;
+  color: #667269;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.chat-answer {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #e2e9ee;
+  border-radius: 6px;
+  line-height: 1.45;
+}
+
+.chat-answer p {
+  margin: 0;
+}
+
+.chat-open-question {
+  color: #6b5a22;
+  background: #fbf6da;
+  border-left: 3px solid #d6b93e;
+  border-radius: 3px 6px 6px 3px;
+  padding: 6px 8px;
+  line-height: 1.4;
+}
+
+.chat-notes {
+  margin: 0;
+  padding-left: 15px;
+  color: #667269;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.chat-draft {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  background: #edf5ef;
+  border: 1px solid #d7e5da;
+  border-radius: 6px;
+}
+
+.chat-draft-act {
+  margin: 0;
+  color: #2f4438;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.chat-draft-shapes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.chat-anchors {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  list-style: none;
+}
+
+.chat-anchors li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 8px;
+  color: #3c5568;
+  background: #e9eff4;
+  border: 1px solid #d2dee7;
+  border-radius: 999px;
+  font-size: 10px;
+}
+
+.chat-compose {
+  display: grid;
+  gap: 6px;
+}
+
+.chat-compose label {
+  display: grid;
+  gap: 4px;
+  font-weight: 700;
+}
+
+.chat-compose textarea {
+  padding: 7px;
+  color: #22332a;
+  background: #fff;
+  border: 1px solid #cbd8ce;
+  border-radius: 5px;
+  font: inherit;
+  resize: vertical;
+}
+
+.chat-compose-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-draft > button,
+.chat-compose-actions button {
+  padding: 7px 8px;
+  color: #315746;
+  background: #fff;
+  border: 1px solid #b9d0be;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.chat-draft > button:disabled,
+.chat-compose-actions button:disabled {
+  color: #7d8a83;
+  border-color: #d6dcd7;
+  cursor: not-allowed;
+}
+
+.chat-compose-actions small {
+  color: #667269;
+  font-size: 10px;
+}
+
+.chat-guard {
+  margin: 0;
+  padding: 7px 9px;
+  color: #504821;
+  background: #fbf6da;
+  border-left: 3px solid #d6b93e;
+  border-radius: 3px 6px 6px 3px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.policy-note {
+  margin: 12px 16px 16px;
+  padding: 13px;
+  color: #504821;
+  background: #fbf6da;
+  border-left: 3px solid #d6b93e;
+  border-radius: 4px 8px 8px 4px;
+}
+
+.policy-note strong {
+  font-size: 11px;
+}
+
+.policy-note p {
+  margin-top: 5px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.production-flow {
+  margin: 0 16px 16px;
+  padding: 12px;
+  color: #385246;
+  background: #eef5f0;
+  border: 1px solid #d7e4da;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.production-flow strong {
+  font-size: 11px;
+}
+
+.production-flow ol {
+  margin: 7px 0 0;
+  padding-left: 17px;
+}
+
+.production-flow li + li {
+  margin-top: 4px;
+}
+
+.button-full {
+  width: calc(100% - 32px);
+  margin: 0 16px 16px;
+}
+
+footer {
+  padding: 0 24px 18px;
+  justify-content: space-between;
+  color: #77837b;
+  font-size: 10px;
+}
+
+@media (max-width: 1250px) {
+  .workspace {
+    grid-template-columns: minmax(300px, 330px) minmax(600px, 1fr);
+  }
+}
+
+@media (max-width: 800px) {
+  .authenticated-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+.approval-controls legend {
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.approval-controls > div {
+  display: grid;
+  gap: 5px;
+}
+
+.approval-controls label:has(input[type="checkbox"]),
+.approval-controls label:has(input[type="radio"]) {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  font-weight: 500;
+}
+
+.scope-criteria-hint {
+  margin: 0;
+  font-size: 10px;
+  color: #5b6a61;
+}
+
+/*
+ * O critério é uma frase de obra e é ela que o profissional assina: o texto manda na
+ * legenda e o código fica embaixo, pequeno, só como referência de auditoria.
+ */
+.criterion-declaration {
+  margin: 0;
+  padding: 7px 9px 9px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dbc99d;
+  border-radius: 5px;
+}
+
+.approval-controls .criterion-declaration legend {
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: normal;
+  text-transform: none;
+  overflow-wrap: anywhere;
+}
+
+.criterion-declaration legend code {
+  display: block;
+  font-size: 0.82em;
+  font-weight: 500;
+  color: #65766d;
+  overflow-wrap: anywhere;
+}
+
+.approval-controls textarea {
+  min-height: 68px;
+  font: inherit;
+  resize: vertical;
+}
+
+.readiness-reasons {
+  margin: 0;
+  padding-left: 16px;
+  color: #7a4526;
+  font-size: 10px;
+}
+
+.readiness-reasons li + li {
+  margin-top: 3px;
+}
+
+.export-controls p {
+  margin: 0;
+  font-size: 10px;
+  /* Um SHA-256 é uma palavra de 64 caracteres: sem quebra forçada ele vaza do painel. */
+  overflow-wrap: anywhere;
+}
+
+.export-controls code {
+  color: #4a5b52;
+  overflow-wrap: anywhere;
+}
+
+.export-controls a {
+  color: #315746;
+  font-weight: 750;
+}

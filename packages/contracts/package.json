@@ -1,0 +1,18 @@
+{
+  "name": "@croquitodxf/contracts",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    "./scene": "./src/scene.generated.ts",
+    "./scene.schema.json": "./scene.schema.json"
+  },
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "check": "node scripts/check-generated.mjs"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15.0.4"
+  }
+}
+

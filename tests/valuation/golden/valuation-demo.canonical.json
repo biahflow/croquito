@@ -1,0 +1,1110 @@
+{
+  "schema_version": "1.0.0",
+  "sheets": [
+    {
+      "cells": [
+        {
+          "kind": "text",
+          "ref": "A1",
+          "value": "BOLETIM DE MEDIÇÃO"
+        },
+        {
+          "kind": "text",
+          "ref": "A2",
+          "value": "INTERVENÇÃO"
+        },
+        {
+          "kind": "text",
+          "ref": "C2",
+          "value": "PRACA SINTETICA NORTE"
+        },
+        {
+          "kind": "text",
+          "ref": "A3",
+          "value": "ENDEREÇO"
+        },
+        {
+          "kind": "text",
+          "ref": "C3",
+          "value": "RUA SINTETICA 100 — BAIRRO SINTETICO"
+        },
+        {
+          "kind": "text",
+          "ref": "A4",
+          "value": "CONTRATO"
+        },
+        {
+          "kind": "text",
+          "ref": "C4",
+          "value": "CONTRATO SINTETICO 001/2026"
+        },
+        {
+          "kind": "text",
+          "ref": "A5",
+          "value": "MEDIÇÃO"
+        },
+        {
+          "kind": "text",
+          "ref": "C5",
+          "value": "Nº 1 — JANEIRO/2026"
+        },
+        {
+          "kind": "text",
+          "ref": "A7",
+          "value": "ITEM"
+        },
+        {
+          "kind": "text",
+          "ref": "B7",
+          "value": "COD."
+        },
+        {
+          "kind": "text",
+          "ref": "C7",
+          "value": "DESCRIÇÃO"
+        },
+        {
+          "kind": "text",
+          "ref": "D7",
+          "value": "UN"
+        },
+        {
+          "kind": "text",
+          "ref": "E7",
+          "value": "VALOR UNIT"
+        },
+        {
+          "kind": "text",
+          "ref": "F7",
+          "value": "QUANT"
+        },
+        {
+          "kind": "text",
+          "ref": "G7",
+          "value": "TOTAL"
+        },
+        {
+          "kind": "text",
+          "ref": "A8",
+          "value": "1"
+        },
+        {
+          "kind": "text",
+          "ref": "B8",
+          "value": "AD04050050(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C8",
+          "value": "PISO INTERTRAVADO SINTETICO 6CM CINZA"
+        },
+        {
+          "kind": "text",
+          "ref": "D8",
+          "value": "m2"
+        },
+        {
+          "kind": "number",
+          "ref": "E8",
+          "value": "89.30"
+        },
+        {
+          "kind": "number",
+          "ref": "F8",
+          "value": "126.00"
+        },
+        {
+          "formula": "=TRUNC(F8*E8,2)",
+          "kind": "formula",
+          "ref": "G8",
+          "value": "11251.80"
+        },
+        {
+          "kind": "text",
+          "ref": "A9",
+          "value": "2"
+        },
+        {
+          "kind": "text",
+          "ref": "B9",
+          "value": "CE02100015(A)"
+        },
+        {
+          "kind": "text",
+          "ref": "C9",
+          "value": "ALAMBRADO SINTETICO TELA GALVANIZADA 3POL H=2M"
+        },
+        {
+          "kind": "text",
+          "ref": "D9",
+          "value": "m2"
+        },
+        {
+          "kind": "number",
+          "ref": "E9",
+          "value": "142.75"
+        },
+        {
+          "kind": "number",
+          "ref": "F9",
+          "value": "85.20"
+        },
+        {
+          "formula": "=TRUNC(F9*E9,2)",
+          "kind": "formula",
+          "ref": "G9",
+          "value": "12162.30"
+        },
+        {
+          "kind": "text",
+          "ref": "A10",
+          "value": "3"
+        },
+        {
+          "kind": "text",
+          "ref": "B10",
+          "value": "CE02100015(B)"
+        },
+        {
+          "kind": "text",
+          "ref": "C10",
+          "value": "ALAMBRADO SINTETICO TELA REVESTIDA H=2M"
+        },
+        {
+          "kind": "text",
+          "ref": "D10",
+          "value": "m2"
+        },
+        {
+          "kind": "number",
+          "ref": "E10",
+          "value": "168.90"
+        },
+        {
+          "kind": "number",
+          "ref": "F10",
+          "value": "10.00"
+        },
+        {
+          "formula": "=TRUNC(F10*E10,2)",
+          "kind": "formula",
+          "ref": "G10",
+          "value": "1689.00"
+        },
+        {
+          "kind": "text",
+          "ref": "A11",
+          "value": "4"
+        },
+        {
+          "kind": "text",
+          "ref": "B11",
+          "value": "CE02200010(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C11",
+          "value": "MURETA SINTETICA H=1,00M EM BLOCO"
+        },
+        {
+          "kind": "text",
+          "ref": "D11",
+          "value": "m"
+        },
+        {
+          "kind": "number",
+          "ref": "E11",
+          "value": "236.55"
+        },
+        {
+          "kind": "number",
+          "ref": "F11",
+          "value": "18.40"
+        },
+        {
+          "kind": "number",
+          "ref": "G11",
+          "value": "4352.52"
+        },
+        {
+          "kind": "text",
+          "ref": "A12",
+          "value": "5"
+        },
+        {
+          "kind": "text",
+          "ref": "B12",
+          "value": "MB01100020(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C12",
+          "value": "BANCO SINTETICO DE MADEIRA PLASTICA"
+        },
+        {
+          "kind": "text",
+          "ref": "D12",
+          "value": "un"
+        },
+        {
+          "kind": "number",
+          "ref": "E12",
+          "value": "612.40"
+        },
+        {
+          "kind": "number",
+          "ref": "F12",
+          "value": "12.00"
+        },
+        {
+          "kind": "number",
+          "ref": "G12",
+          "value": "7348.80"
+        },
+        {
+          "kind": "text",
+          "ref": "A13",
+          "value": "6"
+        },
+        {
+          "kind": "text",
+          "ref": "B13",
+          "value": "SP01050010(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C13",
+          "value": "ESCAVACAO SINTETICA MANUAL EM SOLO"
+        },
+        {
+          "kind": "text",
+          "ref": "D13",
+          "value": "m3"
+        },
+        {
+          "kind": "number",
+          "ref": "E13",
+          "value": "10.30"
+        },
+        {
+          "kind": "number",
+          "ref": "F13",
+          "value": "1.15"
+        },
+        {
+          "formula": "=TRUNC(F13*E13,2)",
+          "kind": "formula",
+          "ref": "G13",
+          "value": "11.84"
+        },
+        {
+          "kind": "text",
+          "ref": "A14",
+          "value": "7"
+        },
+        {
+          "kind": "text",
+          "ref": "B14",
+          "value": "SP02100010(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C14",
+          "value": "CONTAINER SINTETICO ESCRITORIO 6M"
+        },
+        {
+          "kind": "text",
+          "ref": "D14",
+          "value": "mes"
+        },
+        {
+          "kind": "number",
+          "ref": "E14",
+          "value": "1850.00"
+        },
+        {
+          "kind": "number",
+          "ref": "F14",
+          "value": "12.00"
+        },
+        {
+          "formula": "=TRUNC(F14*E14,2)",
+          "kind": "formula",
+          "ref": "G14",
+          "value": "22200.00"
+        },
+        {
+          "kind": "text",
+          "ref": "A15",
+          "value": "8"
+        },
+        {
+          "kind": "text",
+          "ref": "B15",
+          "value": "SP01050015(A)"
+        },
+        {
+          "kind": "text",
+          "ref": "C15",
+          "value": "ATERRO SINTETICO COMPACTADO MANUAL"
+        },
+        {
+          "kind": "text",
+          "ref": "D15",
+          "value": "m3"
+        },
+        {
+          "kind": "number",
+          "ref": "E15",
+          "value": "13.30"
+        },
+        {
+          "kind": "number",
+          "ref": "F15",
+          "value": "4.35"
+        },
+        {
+          "formula": "=TRUNC(F15*E15,2)",
+          "kind": "formula",
+          "ref": "G15",
+          "value": "57.85"
+        },
+        {
+          "kind": "text",
+          "ref": "C16",
+          "value": "TOTAL DA OBRA"
+        },
+        {
+          "formula": "=SUM(G8:G15)",
+          "kind": "formula",
+          "ref": "G16",
+          "value": "59074.11"
+        }
+      ],
+      "name": "BM PRACA SINTETICA NORTE"
+    },
+    {
+      "cells": [
+        {
+          "kind": "text",
+          "ref": "A1",
+          "value": "MEMÓRIA DE CÁLCULO"
+        },
+        {
+          "kind": "text",
+          "ref": "A2",
+          "value": "INTERVENÇÃO"
+        },
+        {
+          "kind": "text",
+          "ref": "C2",
+          "value": "PRACA SINTETICA NORTE"
+        },
+        {
+          "kind": "text",
+          "ref": "A4",
+          "value": "ITEM"
+        },
+        {
+          "kind": "text",
+          "ref": "B4",
+          "value": "CODIGO"
+        },
+        {
+          "kind": "text",
+          "ref": "C4",
+          "value": "DESCRIÇÃO"
+        },
+        {
+          "kind": "text",
+          "ref": "D4",
+          "value": "UNIDADE"
+        },
+        {
+          "kind": "text",
+          "ref": "E4",
+          "value": "VALOR UNIT"
+        },
+        {
+          "kind": "text",
+          "ref": "F4",
+          "value": "QUANT."
+        },
+        {
+          "kind": "text",
+          "ref": "G4",
+          "value": "TOTAL"
+        },
+        {
+          "kind": "text",
+          "ref": "A5",
+          "value": "1"
+        },
+        {
+          "kind": "text",
+          "ref": "B5",
+          "value": "AD04050050(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C5",
+          "value": "PISO INTERTRAVADO SINTETICO 6CM CINZA"
+        },
+        {
+          "kind": "text",
+          "ref": "D5",
+          "value": "m2"
+        },
+        {
+          "kind": "number",
+          "ref": "E5",
+          "value": "89.30"
+        },
+        {
+          "kind": "number",
+          "ref": "F5",
+          "value": "126.00"
+        },
+        {
+          "formula": "=TRUNC(F5*E5,2)",
+          "kind": "formula",
+          "ref": "G5",
+          "value": "11251.80"
+        },
+        {
+          "kind": "text",
+          "ref": "B6",
+          "value": "PASSEIO NORTE"
+        },
+        {
+          "kind": "text",
+          "ref": "C7",
+          "value": "COMPRIMENTO"
+        },
+        {
+          "kind": "text",
+          "ref": "D7",
+          "value": "LARGURA"
+        },
+        {
+          "kind": "text",
+          "ref": "F7",
+          "value": "SUBTOTAL"
+        },
+        {
+          "kind": "number",
+          "ref": "C8",
+          "value": "12.50"
+        },
+        {
+          "kind": "number",
+          "ref": "D8",
+          "value": "8.40"
+        },
+        {
+          "formula": "=ROUND(PRODUCT(C8:D8),2)",
+          "kind": "formula",
+          "ref": "F8",
+          "value": "105.00"
+        },
+        {
+          "kind": "text",
+          "ref": "B9",
+          "value": "PASSEIO LESTE"
+        },
+        {
+          "kind": "text",
+          "ref": "C10",
+          "value": "COMPRIMENTO"
+        },
+        {
+          "kind": "text",
+          "ref": "D10",
+          "value": "LARGURA"
+        },
+        {
+          "kind": "text",
+          "ref": "F10",
+          "value": "SUBTOTAL"
+        },
+        {
+          "kind": "number",
+          "ref": "C11",
+          "value": "6.00"
+        },
+        {
+          "kind": "number",
+          "ref": "D11",
+          "value": "3.50"
+        },
+        {
+          "formula": "=ROUND(PRODUCT(C11:D11),2)",
+          "kind": "formula",
+          "ref": "F11",
+          "value": "21.00"
+        },
+        {
+          "kind": "text",
+          "ref": "B12",
+          "value": "TOTAL"
+        },
+        {
+          "formula": "=SUM(F8:F11)",
+          "kind": "formula",
+          "ref": "F12",
+          "value": "126.00"
+        },
+        {
+          "kind": "text",
+          "ref": "A14",
+          "value": "2"
+        },
+        {
+          "kind": "text",
+          "ref": "B14",
+          "value": "CE02100015(A)"
+        },
+        {
+          "kind": "text",
+          "ref": "C14",
+          "value": "ALAMBRADO SINTETICO TELA GALVANIZADA 3POL H=2M"
+        },
+        {
+          "kind": "text",
+          "ref": "D14",
+          "value": "m2"
+        },
+        {
+          "kind": "number",
+          "ref": "E14",
+          "value": "142.75"
+        },
+        {
+          "kind": "number",
+          "ref": "F14",
+          "value": "85.20"
+        },
+        {
+          "formula": "=TRUNC(F14*E14,2)",
+          "kind": "formula",
+          "ref": "G14",
+          "value": "12162.30"
+        },
+        {
+          "kind": "text",
+          "ref": "B15",
+          "value": "ALAMBRADO DO CAMPO"
+        },
+        {
+          "kind": "text",
+          "ref": "C16",
+          "value": "PERÍMETRO"
+        },
+        {
+          "kind": "text",
+          "ref": "D16",
+          "value": "ALTURA"
+        },
+        {
+          "kind": "text",
+          "ref": "E16",
+          "value": "DESC. VÃOS"
+        },
+        {
+          "kind": "text",
+          "ref": "F16",
+          "value": "SUBTOTAL"
+        },
+        {
+          "kind": "number",
+          "ref": "C17",
+          "value": "45.60"
+        },
+        {
+          "kind": "number",
+          "ref": "D17",
+          "value": "2.00"
+        },
+        {
+          "kind": "number",
+          "ref": "E17",
+          "value": "6.00"
+        },
+        {
+          "formula": "=ROUND(PRODUCT(C17:D17),2)-E17",
+          "kind": "formula",
+          "ref": "F17",
+          "value": "85.20"
+        },
+        {
+          "kind": "text",
+          "ref": "B18",
+          "value": "TOTAL"
+        },
+        {
+          "formula": "=SUM(F17:F17)",
+          "kind": "formula",
+          "ref": "F18",
+          "value": "85.20"
+        },
+        {
+          "kind": "text",
+          "ref": "A20",
+          "value": "3"
+        },
+        {
+          "kind": "text",
+          "ref": "B20",
+          "value": "CE02100015(B)"
+        },
+        {
+          "kind": "text",
+          "ref": "C20",
+          "value": "ALAMBRADO SINTETICO TELA REVESTIDA H=2M"
+        },
+        {
+          "kind": "text",
+          "ref": "D20",
+          "value": "m2"
+        },
+        {
+          "kind": "number",
+          "ref": "E20",
+          "value": "168.90"
+        },
+        {
+          "kind": "number",
+          "ref": "F20",
+          "value": "10.00"
+        },
+        {
+          "formula": "=TRUNC(F20*E20,2)",
+          "kind": "formula",
+          "ref": "G20",
+          "value": "1689.00"
+        },
+        {
+          "kind": "text",
+          "ref": "B21",
+          "value": "FECHAMENTO DO DEPOSITO"
+        },
+        {
+          "kind": "text",
+          "ref": "C22",
+          "value": "PERÍMETRO"
+        },
+        {
+          "kind": "text",
+          "ref": "D22",
+          "value": "ALTURA"
+        },
+        {
+          "kind": "text",
+          "ref": "F22",
+          "value": "SUBTOTAL"
+        },
+        {
+          "kind": "number",
+          "ref": "C23",
+          "value": "4.00"
+        },
+        {
+          "kind": "number",
+          "ref": "D23",
+          "value": "2.50"
+        },
+        {
+          "formula": "=ROUND(PRODUCT(C23:D23),2)",
+          "kind": "formula",
+          "ref": "F23",
+          "value": "10.00"
+        },
+        {
+          "kind": "text",
+          "ref": "B24",
+          "value": "TOTAL"
+        },
+        {
+          "formula": "=SUM(F23:F23)",
+          "kind": "formula",
+          "ref": "F24",
+          "value": "10.00"
+        },
+        {
+          "kind": "text",
+          "ref": "A26",
+          "value": "4"
+        },
+        {
+          "kind": "text",
+          "ref": "B26",
+          "value": "CE02200010(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C26",
+          "value": "MURETA SINTETICA H=1,00M EM BLOCO"
+        },
+        {
+          "kind": "text",
+          "ref": "D26",
+          "value": "m"
+        },
+        {
+          "kind": "number",
+          "ref": "E26",
+          "value": "236.55"
+        },
+        {
+          "kind": "number",
+          "ref": "F26",
+          "value": "18.40"
+        },
+        {
+          "kind": "number",
+          "ref": "G26",
+          "value": "4352.52"
+        },
+        {
+          "kind": "text",
+          "ref": "B27",
+          "value": "MURETA DA DIVISA"
+        },
+        {
+          "kind": "text",
+          "ref": "C28",
+          "value": "EXTENSÃO"
+        },
+        {
+          "kind": "text",
+          "ref": "F28",
+          "value": "SUBTOTAL"
+        },
+        {
+          "kind": "number",
+          "ref": "C29",
+          "value": "18.40"
+        },
+        {
+          "formula": "=ROUND(PRODUCT(C29:C29),2)",
+          "kind": "formula",
+          "ref": "F29",
+          "value": "18.40"
+        },
+        {
+          "kind": "text",
+          "ref": "B30",
+          "value": "TOTAL"
+        },
+        {
+          "formula": "=SUM(F29:F29)",
+          "kind": "formula",
+          "ref": "F30",
+          "value": "18.40"
+        },
+        {
+          "kind": "text",
+          "ref": "A32",
+          "value": "5"
+        },
+        {
+          "kind": "text",
+          "ref": "B32",
+          "value": "MB01100020(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C32",
+          "value": "BANCO SINTETICO DE MADEIRA PLASTICA"
+        },
+        {
+          "kind": "text",
+          "ref": "D32",
+          "value": "un"
+        },
+        {
+          "kind": "number",
+          "ref": "E32",
+          "value": "612.40"
+        },
+        {
+          "kind": "number",
+          "ref": "F32",
+          "value": "12.00"
+        },
+        {
+          "kind": "number",
+          "ref": "G32",
+          "value": "7348.80"
+        },
+        {
+          "kind": "text",
+          "ref": "B33",
+          "value": "BANCOS DA PRACA"
+        },
+        {
+          "kind": "text",
+          "ref": "C34",
+          "value": "QUANTIDADE"
+        },
+        {
+          "kind": "text",
+          "ref": "F34",
+          "value": "SUBTOTAL"
+        },
+        {
+          "kind": "number",
+          "ref": "C35",
+          "value": "12.00"
+        },
+        {
+          "formula": "=ROUND(PRODUCT(C35:C35),2)",
+          "kind": "formula",
+          "ref": "F35",
+          "value": "12.00"
+        },
+        {
+          "kind": "text",
+          "ref": "B36",
+          "value": "TOTAL"
+        },
+        {
+          "formula": "=SUM(F35:F35)",
+          "kind": "formula",
+          "ref": "F36",
+          "value": "12.00"
+        },
+        {
+          "kind": "text",
+          "ref": "A38",
+          "value": "6"
+        },
+        {
+          "kind": "text",
+          "ref": "B38",
+          "value": "SP01050010(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C38",
+          "value": "ESCAVACAO SINTETICA MANUAL EM SOLO"
+        },
+        {
+          "kind": "text",
+          "ref": "D38",
+          "value": "m3"
+        },
+        {
+          "kind": "number",
+          "ref": "E38",
+          "value": "10.30"
+        },
+        {
+          "kind": "number",
+          "ref": "F38",
+          "value": "1.15"
+        },
+        {
+          "formula": "=TRUNC(F38*E38,2)",
+          "kind": "formula",
+          "ref": "G38",
+          "value": "11.84"
+        },
+        {
+          "kind": "text",
+          "ref": "B39",
+          "value": "VALA DE DRENAGEM"
+        },
+        {
+          "kind": "text",
+          "ref": "C40",
+          "value": "VOLUME"
+        },
+        {
+          "kind": "text",
+          "ref": "F40",
+          "value": "SUBTOTAL"
+        },
+        {
+          "kind": "number",
+          "ref": "C41",
+          "value": "1.15"
+        },
+        {
+          "formula": "=ROUND(PRODUCT(C41:C41),2)",
+          "kind": "formula",
+          "ref": "F41",
+          "value": "1.15"
+        },
+        {
+          "kind": "text",
+          "ref": "B42",
+          "value": "TOTAL"
+        },
+        {
+          "formula": "=SUM(F41:F41)",
+          "kind": "formula",
+          "ref": "F42",
+          "value": "1.15"
+        },
+        {
+          "kind": "text",
+          "ref": "A44",
+          "value": "7"
+        },
+        {
+          "kind": "text",
+          "ref": "B44",
+          "value": "SP02100010(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C44",
+          "value": "CONTAINER SINTETICO ESCRITORIO 6M"
+        },
+        {
+          "kind": "text",
+          "ref": "D44",
+          "value": "mes"
+        },
+        {
+          "kind": "number",
+          "ref": "E44",
+          "value": "1850.00"
+        },
+        {
+          "kind": "number",
+          "ref": "F44",
+          "value": "12.00"
+        },
+        {
+          "formula": "=TRUNC(F44*E44,2)",
+          "kind": "formula",
+          "ref": "G44",
+          "value": "22200.00"
+        },
+        {
+          "kind": "text",
+          "ref": "B45",
+          "value": "ESCRITORIO DE OBRA"
+        },
+        {
+          "kind": "text",
+          "ref": "C46",
+          "value": "QUANTIDADE"
+        },
+        {
+          "kind": "text",
+          "ref": "D46",
+          "value": "MESES"
+        },
+        {
+          "kind": "text",
+          "ref": "F46",
+          "value": "SUBTOTAL"
+        },
+        {
+          "kind": "number",
+          "ref": "C47",
+          "value": "2.00"
+        },
+        {
+          "kind": "number",
+          "ref": "D47",
+          "value": "6.00"
+        },
+        {
+          "formula": "=ROUND(PRODUCT(C47:D47),2)",
+          "kind": "formula",
+          "ref": "F47",
+          "value": "12.00"
+        },
+        {
+          "kind": "text",
+          "ref": "B48",
+          "value": "TOTAL"
+        },
+        {
+          "formula": "=SUM(F47:F47)",
+          "kind": "formula",
+          "ref": "F48",
+          "value": "12.00"
+        },
+        {
+          "kind": "text",
+          "ref": "A50",
+          "value": "8"
+        },
+        {
+          "kind": "text",
+          "ref": "B50",
+          "value": "SP01050015(A)"
+        },
+        {
+          "kind": "text",
+          "ref": "C50",
+          "value": "ATERRO SINTETICO COMPACTADO MANUAL"
+        },
+        {
+          "kind": "text",
+          "ref": "D50",
+          "value": "m3"
+        },
+        {
+          "kind": "number",
+          "ref": "E50",
+          "value": "13.30"
+        },
+        {
+          "kind": "number",
+          "ref": "F50",
+          "value": "4.35"
+        },
+        {
+          "formula": "=TRUNC(F50*E50,2)",
+          "kind": "formula",
+          "ref": "G50",
+          "value": "57.85"
+        },
+        {
+          "kind": "text",
+          "ref": "B51",
+          "value": "ATERRO DO TALUDE"
+        },
+        {
+          "kind": "text",
+          "ref": "C52",
+          "value": "VOLUME"
+        },
+        {
+          "kind": "text",
+          "ref": "F52",
+          "value": "SUBTOTAL"
+        },
+        {
+          "kind": "number",
+          "ref": "C53",
+          "value": "4.35"
+        },
+        {
+          "formula": "=ROUND(PRODUCT(C53:C53),2)",
+          "kind": "formula",
+          "ref": "F53",
+          "value": "4.35"
+        },
+        {
+          "kind": "text",
+          "ref": "B54",
+          "value": "TOTAL"
+        },
+        {
+          "formula": "=SUM(F53:F53)",
+          "kind": "formula",
+          "ref": "F54",
+          "value": "4.35"
+        }
+      ],
+      "name": "MEMÓRIA PRACA SINTETICA NORTE"
+    }
+  ]
+}

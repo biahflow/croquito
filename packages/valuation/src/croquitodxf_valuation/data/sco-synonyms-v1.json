@@ -1,0 +1,17 @@
+{
+  "version": "sco-synonyms-v1",
+  "terms": {
+    "refletor": ["projetor"],
+    "alambrado": ["tela de arame galvanizado"],
+    "luminária": ["poste de iluminação"],
+    "meio-fio": ["guia"],
+    "passeio": ["calçada"],
+    "brinquedo": ["playground"],
+    "mureta": ["muro"],
+    "ralo": ["boca de lobo", "bueiro"],
+    "sarjeta": ["canaleta"],
+    "cerca": ["gradil"],
+    "fonte": ["chafariz"],
+    "quadra poliesportiva": ["quadra de esportes"]
+  }
+}

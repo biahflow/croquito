@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.13.0"
+      - run: uv sync --all-groups --locked
+      - run: npm ci
+      - run: make check
+      - run: make test
+      - run: make vision-eval
+      - run: make solver-eval
+      - run: make demo
+      - run: terraform -chdir=infra init -backend=false
+      - run: terraform -chdir=infra validate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demonstracoes-sinteticas
+          path: |
+            output/demo/
+            output/vision-eval/
+            output/solver-eval/
+          if-no-files-found: error

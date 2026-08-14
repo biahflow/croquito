@@ -1,0 +1,108 @@
+[project]
+name = "croquitodxf"
+version = "0.1.0"
+description = "Pipeline auditavel para transformar croquis em cenas tecnicas e DXF."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "boto3>=1.40,<2",
+  "ezdxf>=1.4,<2",
+  "fastapi>=0.116,<1",
+  "matplotlib>=3.10,<4",
+  # Álgebra do braço semântico do matcher SCO (`valuation/sco_matching.py`): kNN por
+  # cosseno em força bruta e decodificação dos vetores float32 do índice. Já era
+  # dependência transitiva do OpenCV e do matplotlib; passa a ser declarada porque agora
+  # há import direto. BSD-3, mantida pelo NumFOCUS.
+  "numpy>=2.1,<3",
+  "opencv-python-headless>=4.12,<5",
+  "openpyxl>=3.1,<4",
+  "pillow>=11,<13",
+  "pydantic>=2.11,<3",
+  "pymupdf>=1.26,<2",
+  "PyJWT[crypto]>=2.10,<3",
+  "psycopg[binary]>=3.2,<4",
+  # Upload multipart do servidor local de homologação (`POST /plates`): FastAPI/Starlette
+  # não parseiam `multipart/form-data` sem ele. Apache-2.0, mantido pelo ecossistema
+  # Starlette; nenhum tipo de domínio depende dele.
+  "python-multipart>=0.0.20,<1",
+  "sqlalchemy>=2.0,<3",
+  "shapely>=2.1,<3",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.scripts]
+croquitodxf-demo = "croquitodxf_worker.cli:main"
+croquitodxf-valuation = "croquitodxf_worker.valuation.cli:main"
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28,<1",
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<10",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+]
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = [
+  "packages/core/src",
+  "packages/valuation/src",
+  "services/api/src",
+  "services/worker/src",
+]
+
+[tool.setuptools.package-data]
+# Seed versionado de sinônimos de domínio (`catalog.default_domain_synonyms`), carregado
+# via `importlib.resources`; sem esta entrada o wheel não empacota o JSON.
+croquitodxf_valuation = ["data/*.json"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = [
+  "packages/core/src",
+  "packages/valuation/src",
+  "services/api/src",
+  "services/worker/src",
+  "tests",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers --disable-warnings"
+
+[tool.coverage.run]
+branch = true
+source = ["croquitodxf_core", "croquitodxf_valuation", "croquitodxf_api", "croquitodxf_worker"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+show_error_codes = true
+plugins = ["pydantic.mypy"]
+untyped_calls_exclude = ["cv2", "pymupdf"]
+
+[[tool.mypy.overrides]]
+module = [
+  "boto3.*",
+  "botocore.*",
+  "cv2.*",
+  "fitz",
+  "matplotlib.*",
+  "openpyxl.*",
+  "PIL.*",
+  "shapely.*",
+]
+ignore_missing_imports = true

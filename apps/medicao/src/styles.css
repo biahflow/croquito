@@ -1,0 +1,803 @@
+/*
+ * Folha enxuta da UI de homologação. Ela segue a família visual do app de revisão
+ * (`apps/web`), mas é independente: os dois apps não compartilham build.
+ *
+ * Regra que o CSS precisa respeitar: cor nunca é o único indicador. Todo estado tem
+ * texto ao lado, e no overlay da prancha o traço muda de forma (tracejado enquanto o
+ * item não foi decidido) além de mudar de cor.
+ */
+
+:root {
+  color: #17211b;
+  background: #eef1ec;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #eef1ec;
+}
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+:focus-visible {
+  outline: 3px solid #2f6f4f;
+  outline-offset: 2px;
+}
+
+h1 {
+  margin: 2px 0 0;
+  font-size: 1.35rem;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+h3 {
+  margin: 16px 0 6px;
+  font-size: 0.98rem;
+}
+
+h4 {
+  margin: 12px 0 4px;
+  font-size: 0.92rem;
+}
+
+p {
+  margin: 6px 0;
+  line-height: 1.45;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.topbar {
+  padding: 14px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  color: #f5f8f4;
+  background: #172c23;
+}
+
+.eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  color: #a9c1b0;
+}
+
+.topbar-meta {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: #cddbd2;
+}
+
+.aviso-fixo {
+  max-width: 40rem;
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: #2a1a05;
+  background: #f6d99a;
+  border-left: 5px solid #b47512;
+  border-radius: 4px;
+}
+
+.aviso-inline {
+  margin-bottom: 12px;
+}
+
+.etapas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 28px;
+  background: #dfe6de;
+  border-bottom: 1px solid #c3d0c4;
+}
+
+.etapa-tab {
+  padding: 8px 14px;
+  color: #17211b;
+  background: #f7f9f6;
+  border: 1px solid #b9c8bc;
+  border-radius: 6px;
+}
+
+.etapa-tab.ativa {
+  color: #f5f8f4;
+  background: #2f6f4f;
+  border-color: #2f6f4f;
+}
+
+.etapa-tab.done {
+  border-left: 5px solid #2f6f4f;
+}
+
+.etapa-tab.blocked {
+  border-left: 5px solid #8a8f8b;
+}
+
+.recarregar {
+  margin-left: auto;
+}
+
+.banner-erro,
+.banner-conflito,
+.banner-sucesso {
+  margin: 12px 28px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.banner-erro {
+  color: #4a1010;
+  background: #f7d9d9;
+  border-left: 5px solid #a02323;
+}
+
+.banner-conflito {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #3c2708;
+  background: #fbe6c2;
+  border-left: 5px solid #b47512;
+}
+
+.banner-sucesso {
+  color: #123322;
+  background: #d5ead9;
+  border-left: 5px solid #2f6f4f;
+}
+
+.conteudo {
+  padding: 16px 28px 48px;
+}
+
+.painel {
+  padding: 18px 20px;
+  background: #ffffff;
+  border: 1px solid #d3ddd4;
+  border-radius: 8px;
+}
+
+.painel-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cabecalho-controles {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.2fr) minmax(280px, 1fr) minmax(300px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.workspace.duas-colunas {
+  grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.4fr);
+}
+
+@media (max-width: 1200px) {
+  .workspace,
+  .workspace.duas-colunas {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cartoes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 12px 0 20px;
+  padding: 0;
+  list-style: none;
+}
+
+.cartao {
+  padding: 14px;
+  background: #f7f9f6;
+  border: 1px solid #d3ddd4;
+  border-left: 5px solid #8a8f8b;
+  border-radius: 6px;
+}
+
+.cartao.available {
+  border-left-color: #b47512;
+}
+
+.cartao.done {
+  border-left-color: #2f6f4f;
+}
+
+.cartao h3 {
+  margin-top: 0;
+}
+
+.cartao-status {
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #4a574d;
+}
+
+.cartao-motivo {
+  font-size: 0.86rem;
+  color: #6b3a06;
+}
+
+.botao-primario,
+.botao-secundario {
+  padding: 9px 16px;
+  border-radius: 6px;
+  border: 1px solid #2f6f4f;
+}
+
+.botao-primario {
+  color: #f5f8f4;
+  background: #2f6f4f;
+}
+
+.botao-secundario {
+  color: #1c3527;
+  background: #ffffff;
+}
+
+.acoes-linha {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.artefatos ul,
+.aditivo-lista,
+.confirmados-lista,
+.memoria,
+.memoria ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.confirmados {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid #d3ddd4;
+}
+
+.confirmados-lista li {
+  margin-bottom: 10px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.digest {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.8em;
+  color: #4a574d;
+}
+
+.dica {
+  font-size: 0.84rem;
+  color: #4a574d;
+}
+
+/* Prancha ------------------------------------------------------------------ */
+
+.zoom-controles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zoom-leitura {
+  min-width: 4rem;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.prancha-canvas {
+  max-height: 72vh;
+  overflow: auto;
+  background: #dfe6de;
+  border: 1px solid #c3d0c4;
+  border-radius: 6px;
+  touch-action: none;
+}
+
+.prancha-canvas.arrastando {
+  cursor: grabbing;
+}
+
+.prancha-stage {
+  position: relative;
+  width: 100%;
+}
+
+.prancha-stage img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+
+.bbox-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.bbox {
+  cursor: pointer;
+}
+
+.bbox rect {
+  fill: transparent;
+  stroke-width: 3;
+}
+
+/* Estado por cor E por forma: item ainda não decidido é tracejado. O número do item
+   nunca mora dentro do retângulo — ele cobriria letra da linha da legenda
+   ("PISO EM(1)CONCRETO" foi o defeito real); `pinPlacement` sempre o ancora fora do
+   bbox, com ou sem o retângulo desenhado. */
+.bbox-proposed rect {
+  stroke: #b47512;
+  stroke-dasharray: 12 8;
+}
+
+.bbox-ambiguous rect {
+  stroke: #a02323;
+  stroke-dasharray: 4 6;
+}
+
+.bbox-confirmed rect {
+  stroke: #2f6f4f;
+}
+
+.bbox-rejected rect {
+  stroke: #5a625c;
+}
+
+.bbox.selecionado rect {
+  stroke-width: 6;
+}
+
+/* Pino numerado: sempre fora do bbox (`pinPlacement`), tanto no modo enxuto (padrão,
+   sem retângulo) quanto no item com retângulo forte. Cor nunca é o único indicador: o
+   número identifica o item e o estado por extenso continua na lista ao lado. */
+.bbox-pino-circulo {
+  stroke: #ffffff;
+  stroke-width: 2;
+}
+
+.bbox.selecionado .bbox-pino-circulo {
+  stroke-width: 4;
+}
+
+.bbox-pino-texto {
+  font-size: 18px;
+  font-weight: 700;
+  fill: #ffffff;
+  pointer-events: none;
+}
+
+.bbox-proposed .bbox-pino-circulo {
+  fill: #b47512;
+}
+
+.bbox-ambiguous .bbox-pino-circulo {
+  fill: #a02323;
+}
+
+.bbox-confirmed .bbox-pino-circulo {
+  fill: #2f6f4f;
+}
+
+.bbox-rejected .bbox-pino-circulo {
+  fill: #5a625c;
+}
+
+/* Listas ------------------------------------------------------------------- */
+
+.itens,
+.codigos {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 640px;
+  overflow: auto;
+}
+
+.item {
+  border-bottom: 1px solid #e2e8e2;
+}
+
+.item-botao {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-left: 5px solid transparent;
+}
+
+.item.proposed .item-botao {
+  border-left-color: #b47512;
+}
+
+.item.ambiguous .item-botao {
+  border-left-color: #a02323;
+}
+
+.item.confirmed .item-botao {
+  border-left-color: #2f6f4f;
+}
+
+.item.rejected .item-botao {
+  border-left-color: #5a625c;
+}
+
+.item.selecionado .item-botao {
+  background: #eaf1ea;
+}
+
+.item-numero {
+  flex: 0 0 1.6rem;
+  height: 1.6rem;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #f5f8f4;
+  background: #2f6f4f;
+  border-radius: 50%;
+}
+
+.item-corpo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.item-rotulo {
+  font-weight: 600;
+}
+
+.item-estado {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #4a574d;
+}
+
+.item-quantidade {
+  font-size: 0.88rem;
+}
+
+.item-raw,
+.item-nota {
+  font-size: 0.8rem;
+  color: #4a574d;
+}
+
+/* Formulários -------------------------------------------------------------- */
+
+.formulario {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.acoes {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #d3ddd4;
+  border-radius: 6px;
+}
+
+.acoes label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+.campo input,
+.campo textarea {
+  padding: 8px 10px;
+  font: inherit;
+  border: 1px solid #b9c8bc;
+  border-radius: 6px;
+}
+
+.campo-dica {
+  font-size: 0.78rem;
+  color: #4a574d;
+}
+
+.campo-aviso {
+  font-size: 0.8rem;
+  color: #6b3a06;
+}
+
+.campo-erro {
+  font-size: 0.85rem;
+  color: #7a1212;
+}
+
+.decisao-registrada {
+  padding: 12px;
+  background: #f7f9f6;
+  border-radius: 6px;
+}
+
+.busca {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.busca .campo {
+  flex: 1;
+}
+
+/* Códigos ------------------------------------------------------------------ */
+
+.codigo-card {
+  padding: 12px;
+  margin-bottom: 10px;
+  background: #f7f9f6;
+  border: 1px solid #d3ddd4;
+  border-radius: 6px;
+}
+
+.codigo-card.escolhido {
+  border-color: #2f6f4f;
+  border-left-width: 5px;
+}
+
+.codigo-topo {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.codigo-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+.codigo-descricao {
+  max-height: 8rem;
+  overflow: auto;
+  font-size: 0.86rem;
+}
+
+.codigo-selos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.selo {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  border: 1px solid #b9c8bc;
+  background: #ffffff;
+}
+
+.selo-execucao_incluida {
+  border-color: #2f6f4f;
+  color: #1c3527;
+}
+
+.selo-somente_material {
+  border-color: #b47512;
+  color: #6b3a06;
+}
+
+.selo-indefinido,
+.selo-neutro {
+  border-color: #8a8f8b;
+  color: #3a423c;
+}
+
+.selo-ok {
+  border-color: #2f6f4f;
+  color: #1c3527;
+}
+
+.selo-atencao {
+  border-color: #a02323;
+  color: #7a1212;
+}
+
+/* Inclusões ------------------------------------------------------------------ */
+/* Chip do que a descrição diz que inclui/não inclui (inclusoes.ts). Cor nunca é o único
+   indicador: o prefixo "Inclui:"/"Não inclui:" vai escrito dentro do próprio chip. */
+
+.inclusoes-lista {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+
+.chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 3px 9px;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-align: left;
+  border-radius: 999px;
+  border: 1px solid;
+}
+
+.chip-inclui {
+  color: #1c3527;
+  background: #e3f0e6;
+  border-color: #2f6f4f;
+}
+
+.chip-nao_inclui,
+.chip-so-fornecimento {
+  color: #6b3a06;
+  background: #fbe6c2;
+  border-color: #b47512;
+}
+
+.chip-expansivel {
+  cursor: pointer;
+  border-radius: 10px;
+}
+
+.chip-expansivel summary {
+  list-style: none;
+  border-radius: 999px;
+}
+
+.chip-expansivel summary::-webkit-details-marker,
+.chip-expansivel summary::marker {
+  display: none;
+  content: "";
+}
+
+.chip-expansivel[open] summary {
+  margin-bottom: 4px;
+}
+
+.chip-texto-completo {
+  margin: 0;
+  padding: 0;
+  font-size: 0.78rem;
+  white-space: normal;
+}
+
+.aditivo {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid #d3ddd4;
+}
+
+.shortlist-vazia {
+  padding: 12px;
+  margin-bottom: 12px;
+  background: #f7f9f6;
+  border-radius: 6px;
+}
+
+/* Upload da prancha e extração automática (etapa Prancha) ------------------- */
+
+.extracao-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* Boletim ------------------------------------------------------------------ */
+
+.obra {
+  margin: 18px 0;
+}
+
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.tabela caption {
+  text-align: left;
+  font-size: 0.8rem;
+  color: #4a574d;
+  padding-bottom: 6px;
+}
+
+.tabela th,
+.tabela td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #e2e8e2;
+  text-align: left;
+  vertical-align: top;
+}
+
+.tabela .numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Descrição legível na linha do boletim: quebra de linha em vez de espremer numa
+   coluna estreita, com os chips de inclusão/exclusão logo abaixo do texto completo. */
+.celula-descricao {
+  min-width: 22rem;
+  white-space: normal;
+}
+
+.boletim-descricao-texto {
+  margin: 0 0 4px;
+}
+
+.tabela tfoot th,
+.tabela tfoot td {
+  font-weight: 700;
+  border-top: 2px solid #b9c8bc;
+}
+
+.total-geral {
+  margin-top: 16px;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
