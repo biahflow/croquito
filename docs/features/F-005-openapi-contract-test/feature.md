@@ -6,8 +6,7 @@
 
 > Selecionada em 2026-08-17 como piloto do primeiro ciclo Planner → Builder → Reviewer com
 > os dois harnesses. A entrada correspondente no [roadmap canônico](../../product/ROADMAP.md)
-> ainda não existe; passa a `READY_FOR_PLANNING` quando ela for criada e este contrato for
-> aprovado.
+> foi criada na mesma data; passa a `READY_FOR_PLANNING` quando este contrato for aprovado.
 
 ## Priority
 

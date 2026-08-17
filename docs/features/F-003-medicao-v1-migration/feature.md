@@ -14,9 +14,10 @@
 > desta feature continua `BLOCKED` de propósito — o desbloqueio depende da aceitação humana
 > do ADR, não da existência do rascunho.
 >
-> A entrada correspondente no [roadmap canônico](../../product/ROADMAP.md) ainda não
-> existe. Este contrato registra o escopo conhecido para que a decomposição futura não
-> parta de zero; ele não autoriza execução.
+> A entrada correspondente no [roadmap canônico](../../product/ROADMAP.md) existe desde
+> 2026-08-17, na tabela "Trabalho de engenharia em andamento". Este contrato registra o
+> escopo conhecido para que a decomposição futura não parta de zero; ele não autoriza
+> execução.
 
 ## Priority
 
