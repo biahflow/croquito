@@ -35,17 +35,19 @@ from starlette.requests import Request
 
 from croquito_core.oidc import OidcIdentity, OidcTokenError, validate_bearer_token
 from croquito_valuation.errors import ValuationValidationError
+from croquito_worker.valuation.round_view import (
+    REVIEWER_ID_MAX_LENGTH as REVIEWER_ID_MAX_LENGTH,
+)
+from croquito_worker.valuation.round_view import REVIEWER_ROLE as REVIEWER_ROLE
 
-REVIEWER_ROLE: Final = "orcamentista"
-"""Único papel deste contexto; ele não vem do corpo da requisição.
-
-Mora aqui, e não no `local_server`, porque no modo hospedado ele é claim de realm exigido
-antes da rota — e o servidor local o importa de volta para carimbar a decisão. Uma
-constante, dois modos: o papel gravado no artefato é o mesmo que o token precisa provar.
-"""
-
-REVIEWER_ID_MAX_LENGTH: Final = 120
-"""Mesmo limite do `--reviewer` do modo local; a identidade muda de origem, não de forma."""
+# `REVIEWER_ROLE` e `REVIEWER_ID_MAX_LENGTH` são lidos de `round_view`, o módulo puro, e o
+# sentido da importação é o que mudou (ADR-0028): elas eram deste módulo, que é a ponte com
+# remoção declarada, e quem morre não pode ser a origem de um vocabulário que fica. Não vão
+# para o `local_server` porque a sessão autenticada da API `/v1` passa a exigir o mesmo
+# papel, e ela não deve importar um módulo de rotas FastAPI para saber o nome dele. O papel
+# continua sendo um só em todos os modos: o que o token precisa provar aqui é o mesmo que o
+# servidor carimba na decisão, e os dois nomes seguem importáveis daqui para quem já os lia
+# deste módulo.
 
 HOSTED_OIDC_ISSUER_ENV: Final = "CROQUITO_MEDICAO_OIDC_ISSUER"
 HOSTED_OIDC_AUDIENCE_ENV: Final = "CROQUITO_MEDICAO_OIDC_AUDIENCE"

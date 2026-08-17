@@ -8,6 +8,14 @@ função de domínio que o comando equivalente chama (`apply_takeoff_decisions`,
 o resultado com os mesmos nomes de arquivo e a mesma escrita atômica. Recusa do domínio
 atravessa intacta, com o código estável, e **não** grava artefato — como no CLI.
 
+O que mora aqui é o ADAPTADOR DE DISCO da rodada: `_Run` (os nomes padrão dos artefatos),
+as recusas com status HTTP, o disparo da extração paga e as rotas. A lógica que não
+depende do diretório saiu para módulos próprios, para poder ser reusada pela migração da
+medição para a API `/v1` (ADR-0028) sem arrastar o servidor junto: `round_view` (payloads
+sobre os modelos), `catalog_search` (busca no catálogo), `round_extraction` (upload,
+ingestão e extração paga sobre um `workdir`) e `suggestions` (cálculo da shortlist).
+Nenhum deles importa `fastapi` nem conhece `_Run`.
+
 Dois modos, uma cadeia de domínio só (`_build_app` é o construtor comum):
 
 - `create_local_app` é o servidor **local** do ADR-0020, da família do `parity`: bind
@@ -30,8 +38,8 @@ Limites declarados, não escondidos:
   no estado em vez de silêncio. O que muda é a FORMA do consentimento: no CLI ele é a
   allowlist de digests que o operador declara; aqui é o próprio ato de subir o PDF na tela,
   com o digest do arquivo enviado registrado no estado e no `extraction-lineage.json`
-  (ver `_authorize_uploaded_page`). Refino pago de código continua fora daqui: é comando
-  do CLI.
+  (ver `round_extraction.authorize_uploaded_page`). Refino pago de código continua fora
+  daqui: é comando do CLI.
 - O `decided_at` de toda decisão é o relógio do **servidor** e o `decision_id` continua
   derivado no domínio. Os modelos de request recusam `reviewer_id`, `decided_at` e
   `decision_id` no corpo (`extra="forbid"`): identidade e carimbo não são dados de entrada.
@@ -52,14 +60,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
-import shutil
-import tempfile
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal
 
@@ -83,45 +87,35 @@ from croquito_valuation.assignment import (
 from croquito_valuation.calc import CalcPlan, build_worksite_valuation
 from croquito_valuation.catalog import (
     DomainSynonyms,
-    LegendNoiseList,
     default_legend_noise,
-    expand_terms,
     file_sha256,
-    lexical_similarity,
-    lexical_stems,
-    lexical_tokens,
-    weighted_query_coverage_score,
 )
 from croquito_valuation.contract import ContractWorkbook
 from croquito_valuation.errors import ValuationValidationError, valuation_errors
-from croquito_valuation.models import (
-    SHA256_PATTERN,
-    PriceCatalog,
-    PriceCatalogEntry,
-    Valuation,
-)
+from croquito_valuation.models import SHA256_PATTERN, PriceCatalog, Valuation
 from croquito_valuation.takeoff import (
     TakeoffDecisionBatch,
     TakeoffDecisionInput,
-    TakeoffItem,
-    TakeoffItemStatus,
     TakeoffPacket,
     apply_takeoff_decisions,
 )
-from croquito_worker.extraction_eval import (
-    ExtractionNotAllowlistedError,
-    bind_page_to_document,
+from croquito_worker.extraction_eval import ExtractionNotAllowlistedError
+from croquito_worker.ingest import PdfManifest
+from croquito_worker.io_utils import atomic_write_text
+from croquito_worker.providers import ProviderAdapter, ProviderExecutionError
+from croquito_worker.valuation.catalog_search import (
+    CATALOG_SEARCH_DEFAULT_LIMIT,
+    CATALOG_SEARCH_MAX_LIMIT,
+    SEMANTIC_AVAILABLE_MESSAGE,
+    SEMANTIC_LIMITED_MESSAGE,
+    SEMANTIC_UNAVAILABLE_MESSAGE,
+    SemanticArm,
 )
-from croquito_worker.ingest import PdfManifest, ingest_pdf
-from croquito_worker.io_utils import atomic_write_bytes, atomic_write_text
-from croquito_worker.providers import (
-    EmbeddingsAdapter,
-    LegendExtractionOutput,
-    ProviderAdapter,
-    ProviderExecution,
-    ProviderExecutionError,
-    ProviderFailureCode,
-    build_extraction_arm,
+from croquito_worker.valuation.catalog_search import (
+    require_query_terms as _require_query_terms,
+)
+from croquito_worker.valuation.catalog_search import (
+    search_catalog as _catalog_search,
 )
 from croquito_worker.valuation.cli import (
     AMENDMENT_DOSSIER_FILENAME,
@@ -136,41 +130,70 @@ from croquito_worker.valuation.cli import (
     VALUATION_FILENAME,
     load_round_synonyms,
 )
-from croquito_worker.valuation.hosted_auth import (
-    REVIEWER_ID_MAX_LENGTH,
-    REVIEWER_ROLE,
-    HostedSessionRefusal,
-    build_reviewer_dependency,
-    hosted_reviewer_id,
-)
-from croquito_worker.valuation.legend_extraction import (
-    LegendExtractionResult,
-    build_legend_request,
-    extractor_label,
-    takeoff_packet_from_legend,
-)
-from croquito_worker.valuation.legend_registration import (
-    LegendRegistrationReport,
-    register_legend_bboxes,
-)
+from croquito_worker.valuation.legend_extraction import LegendExtractionResult
 from croquito_worker.valuation.plate import PLATE_IMAGE_FILENAME
+from croquito_worker.valuation.round_extraction import (
+    ARM_UNAVAILABLE_MESSAGE,
+    MAX_PLATE_PDF_BYTES,
+    PLATE_PAGE_NUMBER,
+    extract_legend_from_upload,
+    ingest_plate_upload,
+    upload_invalid,
+)
+
+# Reexportados com nome explícito: são os nomes que o CLI, os testes e a UI já liam deste
+# módulo antes de a ingestão da prancha virar `round_extraction`.
+from croquito_worker.valuation.round_extraction import (
+    MEDICAO_EXTRACTION_ARM as MEDICAO_EXTRACTION_ARM,
+)
+from croquito_worker.valuation.round_extraction import (
+    PLATE_MANIFEST_FILENAME as PLATE_MANIFEST_FILENAME,
+)
+from croquito_worker.valuation.round_extraction import (
+    PLATE_PDF_FILENAME as PLATE_PDF_FILENAME,
+)
+from croquito_worker.valuation.round_extraction import (
+    build_extraction_adapter as _build_extraction_adapter,
+)
+from croquito_worker.valuation.round_extraction import (
+    execution_payload as _execution_payload,
+)
+from croquito_worker.valuation.round_extraction import (
+    extraction_arm_spec as _extraction_arm_spec,
+)
+from croquito_worker.valuation.round_extraction import (
+    extraction_unavailable as _extraction_unavailable,
+)
+from croquito_worker.valuation.round_extraction import (
+    registration_payload as _registration_payload,
+)
+from croquito_worker.valuation.round_view import (
+    REVIEWER_ID_MAX_LENGTH as REVIEWER_ID_MAX_LENGTH,
+)
+from croquito_worker.valuation.round_view import REVIEWER_ROLE as REVIEWER_ROLE
+from croquito_worker.valuation.round_view import anchor_counts as _anchor_counts
+from croquito_worker.valuation.round_view import anchored_packet as _anchored_packet
+from croquito_worker.valuation.round_view import count_status as _count_status
+from croquito_worker.valuation.round_view import item_payload as _item_payload
+from croquito_worker.valuation.round_view import matching_of as _matching_of
+from croquito_worker.valuation.round_view import parse_quantity as _parse_quantity
+from croquito_worker.valuation.round_view import pending_code_items as _pending_code_items
+from croquito_worker.valuation.round_view import registered_item_ids
+from croquito_worker.valuation.round_view import review_status as _review_status
+from croquito_worker.valuation.round_view import takeoff_counts as _takeoff_counts
 from croquito_worker.valuation.sco_matching import (
     CATALOG_INDEX_FILENAME,
     QUERY_CACHE_FILENAME,
     SEMANTIC_DEGRADABLE_CODES,
     SemanticIndex,
     bind_index_to_catalog,
-    build_hybrid_code_suggestions,
-    catalog_idf_table,
     embeddings_adapter_or_reason,
-    fuse_arms,
     load_semantic_index,
     normalize_query_text,
     read_catalog_index,
     resolve_query_vectors,
-    semantic_topk,
 )
-from croquito_worker.valuation.sco_suggestion import build_code_suggestions
+from croquito_worker.valuation.suggestions import compute_suggestions, require_reviewed_takeoff
 from croquito_worker.valuation.takeoff_overlay import (
     render_takeoff_overlay,
     save_takeoff_overlay,
@@ -187,20 +210,6 @@ LOCAL_WEB_ORIGINS: Final[tuple[str, ...]] = (
 No modo hospedado as origens vêm do ambiente (`hosted_auth.HOSTED_WEB_ORIGINS_ENV`): a
 tela de lá é servida por outro host, e assumir estas seria recusar a UI de produção."""
 
-# `REVIEWER_ROLE` e `REVIEWER_ID_MAX_LENGTH` são importados de `hosted_auth`: o papel virou
-# claim de realm no ADR-0026 e passou a ser exigido ANTES da rota, mas continua sendo o
-# mesmo que este servidor carimba na decisão — uma constante, os dois modos. O nome segue
-# importável daqui para quem já o importava.
-
-CATALOG_SEARCH_DEFAULT_LIMIT: Final = 20
-CATALOG_SEARCH_MAX_LIMIT: Final = 50
-
-CATALOG_SEARCH_MIN_PREFIX: Final = 4
-"""Comprimento mínimo do lado que serve de prefixo no casamento da busca.
-
-Abaixo disso, prefixo vira coincidência: `pis` traria `piscina` para quem procura piso.
-Igualdade de palavra continua valendo em qualquer comprimento."""
-
 _OVERLAY_SKIPPED_NOTE: Final = (
     "overlay não regravado: a imagem da prancha do pacote não está no diretório da "
     "rodada; um overlay antigo, se existir, está desatualizado."
@@ -209,43 +218,8 @@ _OVERLAY_SKIPPED_NOTE: Final = (
 _NO_STORE: Final = {"Cache-Control": "no-store"}
 """Overlay e prancha mudam a cada decisão; cache de navegador mostraria estado velho."""
 
-PLATE_PDF_FILENAME: Final = "prancha-origem.pdf"
-"""PDF do projetista como ele chegou. Artefato local, fora do Git, retenção de 7 dias."""
-
-PLATE_MANIFEST_FILENAME: Final = "manifest.json"
-"""Manifest da ingestão: amarra a página promovida ao documento que o revisor enviou."""
-
 EXTRACTION_LINEAGE_FILENAME: Final = "extraction-lineage.json"
 """Lineage local da chamada paga: provider, modelo, prompt, tokens, custo e consentimento."""
-
-MAX_PLATE_PDF_BYTES: Final = 50 * 1024 * 1024
-"""Teto do upload. Prancha de projetista real fica bem abaixo; acima disso é engano."""
-
-PLATE_INGEST_DPI: Final = 200
-PLATE_INGEST_ROLE: Final = "legenda-quantificada"
-PLATE_PAGE_NUMBER: Final = 1
-"""Uma rodada é uma prancha, e a prancha é a página 1.
-
-PDF com mais páginas não é recusado nem lido às escondidas: a página 1 é promovida e a
-contagem vai declarada no estado, para o orçamentista saber o que ficou de fora."""
-
-MEDICAO_EXTRACTION_ARM: Final = "sonnet=anthropic:claude-sonnet-5"
-"""Braço pago da extração automática: o vencedor da eval paga de 2026-08-13.
-
-Ele é constante e não flag de rota justamente porque trocar de modelo é mudança de IA —
-exige eval comparativa e plano de rollback (`docs/ai/MODEL_ROUTING.md`). A variável de
-ambiente abaixo existe para a próxima rodada de eval, não para escolher modelo por gosto.
-"""
-
-EXTRACTION_ARM_ENV: Final = "CROQUITO_MEDICAO_EXTRACTION_ARM"
-AI_BUDGET_ENV: Final = "CROQUITO_AI_MAX_ESTIMATED_COST_USD"
-
-_PROVIDER_CREDENTIAL_ENV: Final[Mapping[str, str]] = {
-    "anthropic": "CROQUITO_ANTHROPIC_API_KEY",
-    "openai": "CROQUITO_OPENAI_API_KEY",
-}
-"""Credencial exigida por provider. O Bedrock fica de fora porque a cadeia do boto3 não é
-uma variável só; a ausência dela vira `unavailable` pela recusa da própria fábrica."""
 
 ExtractionStatus = Literal["idle", "running", "done", "failed", "unavailable"]
 """Etapa `extracao` do estado. `unavailable` é servidor sem teto/credencial — nunca
@@ -258,18 +232,6 @@ _EXTRACTION_MESSAGES: Final[Mapping[str, str]] = {
     "done": "extração concluída; todo item nasce para a revisão do orçamentista",
 }
 
-_NO_BUDGET_MESSAGE: Final = (
-    "extração automática indisponível: teto de gasto não configurado no servidor"
-)
-_NO_CREDENTIAL_MESSAGE: Final = (
-    "extração automática indisponível: credencial do provider não configurada no servidor"
-)
-_ARM_MISCONFIGURED_MESSAGE: Final = (
-    "extração automática indisponível: braço pago mal configurado no servidor"
-)
-_FIXTURE_ARM_MESSAGE: Final = (
-    "extração automática indisponível: braço fixture não publica pacote de rodada"
-)
 _ALREADY_HAS_PLATE_MESSAGE: Final = (
     "esta rodada já tem prancha; uma rodada é uma prancha. Para enviar outra, suba o "
     "servidor com `serve --root` apontando para um diretório novo"
@@ -358,15 +320,14 @@ def _round_already_has_plate(reason: str) -> LocalServerRefusal:
 
 
 def _upload_invalid(reason: str, details: dict[str, object] | None = None) -> LocalServerRefusal:
-    """Arquivo que não é prancha: recusado antes de qualquer escrita ou renderização."""
-    return LocalServerRefusal(
-        422,
-        ValuationValidationError(
-            "LOCAL_UPLOAD_INVALID",
-            "o arquivo enviado não é um PDF de prancha aceitável",
-            {"reason": reason, **(details or {})},
-        ),
-    )
+    """Arquivo que não é prancha: recusado antes de qualquer escrita ou renderização.
+
+    A recusa é a MESMA que a ingestão levanta (`round_extraction.upload_invalid`), só que
+    embrulhada no envelope do servidor. Os dois desfechos são idênticos no fio — 422,
+    `application/problem+json`, mesmo `code`, `detail` e `details` —, porque o handler de
+    `ValuationValidationError` deste app responde exatamente como o de recusa.
+    """
+    return LocalServerRefusal(422, upload_invalid(reason, details))
 
 
 def _extraction_busy() -> LocalServerRefusal:
@@ -466,108 +427,26 @@ class CalcBuildRequest(_LocalRequest):
     contract_label: str | None = None
 
 
-def _parse_quantity(raw_quantity: str | None) -> Decimal | None:
-    """`Decimal` da quantidade informada pelo revisor; texto ilegível recusa em vez de virar
-    número aproximado."""
-    if raw_quantity is None:
-        return None
-    try:
-        return Decimal(raw_quantity)
-    except InvalidOperation as error:
-        raise ValuationValidationError(
-            "LOCAL_QUANTITY_INVALID",
-            "quantidade informada não é um número decimal exato",
-            {"quantity": raw_quantity},
-        ) from error
+def _registration_report(run: _Run) -> Mapping[str, Any] | None:
+    """Relatório do registro fino da rodada, ou `None` quando não há um legível.
 
-
-def _review_status(packet: TakeoffPacket) -> str:
-    """Espelho de `cli._review_status`."""
-    return "review_required" if packet.pending_items() else "complete"
-
-
-def _takeoff_counts(packet: TakeoffPacket) -> dict[str, int]:
-    """Espelho de `cli._takeoff_counts`: sempre as quatro chaves — zero é informação."""
-    counts = {status.value: 0 for status in TakeoffItemStatus}
-    for item in packet.items:
-        counts[item.status.value] += 1
-    return {"items": len(packet.items), **counts, "pending": len(packet.pending_items())}
-
-
-ANCHOR_REGISTERED: Final = "registered"
-ANCHOR_RAW: Final = "raw"
-
-_REGISTERED_METHODS: Final[frozenset[str]] = frozenset({"rulings", "text_bands"})
-"""Métodos de registro que sustentam uma âncora declarada confiável.
-
-`none` fica de fora de propósito: é o desfecho em que nenhuma transformação passou no
-gate e o que foi assentado veio do casamento residual travado. Ele é honesto no domínio,
-mas não é promessa suficiente para desenhar um retângulo em cima da prancha."""
-
-
-def _registered_item_ids(run: _Run) -> frozenset[str]:
-    """Itens cujo bbox foi reassentado por um método de registro confiável.
-
-    Leitura fail-closed: relatório ausente, ilegível, sem `method` declarado ou com
-    `method` fora do conjunto confiável devolve conjunto **vazio** — todo item volta como
-    `raw`. O motivo é o defeito real da homologação: retângulo desenhado sobre a prancha é
-    lido pela revisora como "o número foi lido aqui", e âncora deslizada engana com a
-    autoridade de um desenho. Na dúvida, a tela precisa poder dizer que não sabe.
+    Ilegível conta como ausente de propósito: quem decide o que fazer com a falta é
+    `round_view.registered_item_ids`, e lá a resposta é fail-closed — nenhum item ganha
+    âncora declarada confiável.
     """
     found = run.read(TAKEOFF_REGISTRATION_REPORT_FILENAME)
     if found is None:
-        return frozenset()
+        return None
     try:
         report = json.loads(found[0])
     except json.JSONDecodeError:
-        return frozenset()
-    if not isinstance(report, dict) or str(report.get("method", "")) not in _REGISTERED_METHODS:
-        return frozenset()
-    adjusted = report.get("adjusted")
-    if not isinstance(adjusted, list):
-        return frozenset()
-    return frozenset(
-        entry["item_id"]
-        for entry in adjusted
-        if isinstance(entry, dict) and isinstance(entry.get("item_id"), str)
-    )
+        return None
+    return report if isinstance(report, dict) else None
 
 
-def _anchored_packet(packet: TakeoffPacket, registered: frozenset[str]) -> dict[str, object]:
-    """Pacote como a tela o recebe, com a âncora de cada item declarada ao lado dele.
-
-    A junção é de **leitura**: o `takeoff-packet.json` em disco não ganha campo nenhum e o
-    domínio não muda. Por isso `packet_sha256` continua sendo o digest dos bytes do
-    arquivo — não desta resposta —, e é ele que a guarda otimista compara na decisão
-    seguinte.
-    """
-    document: dict[str, object] = packet.model_dump(mode="json")
-    items = document.get("items")
-    if isinstance(items, list):
-        for item in items:
-            if isinstance(item, dict):
-                anchored = ANCHOR_REGISTERED if item.get("id") in registered else ANCHOR_RAW
-                item["anchor"] = anchored
-    return document
-
-
-def _anchor_counts(packet: TakeoffPacket, registered: frozenset[str]) -> dict[str, int]:
-    """Quantos itens a tela pode ancorar com garantia e quantos não — zero é informação."""
-    matched = sum(1 for item in packet.items if item.id in registered)
-    return {"anchors_registered": matched, "anchors_raw": len(packet.items) - matched}
-
-
-def _item_payload(item: TakeoffItem) -> dict[str, object]:
-    """Item de takeoff como a tela o lista; `quantity` sai como texto, nunca como float."""
-    return {
-        "item_id": item.id,
-        "label": item.label,
-        "raw_text": item.raw_text,
-        "quantity": None if item.quantity is None else str(item.quantity),
-        "unit": item.unit,
-        "note": item.note,
-        "status": item.status.value,
-    }
+def _registered_item_ids(run: _Run) -> frozenset[str]:
+    """Itens ancorados com garantia nesta rodada; adaptador de disco de `round_view`."""
+    return registered_item_ids(_registration_report(run))
 
 
 @dataclass(frozen=True, slots=True)
@@ -763,71 +642,6 @@ class _Run:
         return matches[0] if len(matches) == 1 else None
 
 
-def _pending_code_items(
-    packet: TakeoffPacket, assignments: CodeAssignmentSet | None
-) -> list[TakeoffItem]:
-    """Itens confirmados no takeoff que ainda não receberam decisão de código."""
-    decided = set() if assignments is None else {item.item_id for item in assignments.assignments}
-    return [item for item in packet.confirmed_items() if item.id not in decided]
-
-
-def _term_matches_description(term: str, tokens: frozenset[str]) -> bool:
-    """Um termo da busca casa com a descrição por PALAVRA, nunca por pedaço de palavra.
-
-    Igualdade sempre vale. Prefixo vale nos dois sentidos — "grama" acha "gramado" e
-    "gramado" acha "grama" — a partir de `CATALOG_SEARCH_MIN_PREFIX` caracteres do lado
-    que serve de prefixo, que é o que separa flexão de palavra de coincidência de letras.
-
-    O piso existe por causa do defeito real da homologação: "gramado" trazia
-    "**pro**gramado**r** de computador", porque a busca casava substring sem fronteira de
-    palavra. Substring deixou de ser critério — "gramado" não é token de "programador",
-    e nenhum dos dois é prefixo do outro.
-    """
-    if term in tokens:
-        return True
-    if len(term) < CATALOG_SEARCH_MIN_PREFIX:
-        return False
-    return any(
-        token.startswith(term)
-        or (len(token) >= CATALOG_SEARCH_MIN_PREFIX and term.startswith(token))
-        for token in tokens
-    )
-
-
-def _matching_of(suggestions: CodeSuggestionSet) -> str:
-    """`hybrid` ou `lexical` derivado do próprio conjunto, nunca do estado do processo.
-
-    Derivar do artefato é o que faz a resposta continuar verdadeira quando ela vem do
-    arquivo gravado por outra sessão — inclusive uma que tinha teto de gasto e esta não
-    tem."""
-    return "hybrid" if suggestions.semantic is not None else "lexical"
-
-
-def _require_query_terms(query: str) -> tuple[str, ...]:
-    """Palavras utilizáveis da busca; consulta sem nenhuma recusa ANTES de qualquer gasto.
-
-    A ordem importa: a rota valida a consulta antes de pedir vetor, senão um `-` digitado
-    por engano viraria chamada paga só para ser recusado logo depois.
-    """
-    terms = lexical_tokens(query)
-    if not terms:
-        raise ValuationValidationError(
-            "LOCAL_SEARCH_QUERY_EMPTY",
-            "busca exige ao menos uma palavra com dois caracteres ou mais",
-            {"query": query},
-        )
-    return terms
-
-
-SEMANTIC_AVAILABLE_MESSAGE: Final = "busca semântica disponível"
-SEMANTIC_LIMITED_MESSAGE: Final = "busca semântica limitada às consultas já embutidas"
-SEMANTIC_UNAVAILABLE_MESSAGE: Final = "busca semântica indisponível"
-"""Prefixos das três situações do braço semântico, sempre com o motivo colado.
-
-Nenhuma delas é erro: a tela continua funcionando com o braço léxico. O que não pode
-acontecer é a busca piorar sem ninguém saber por quê — daí o motivo viajar no `/state`, na
-resposta da busca e no banner do `serve`."""
-
 SEMANTIC_NOT_REQUESTED_MESSAGE: Final = (
     "busca semântica não solicitada nesta consulta (arm=lexical)"
 )
@@ -835,34 +649,8 @@ SEMANTIC_NOT_REQUESTED_MESSAGE: Final = (
 léxico puro, então nenhum vetor é resolvido — zero chamada de embedding e zero escrita
 de `query-cache.json`, mesmo quando a rodada tem índice, teto de gasto e credencial."""
 
-SemanticStatus = Literal["available", "limited", "unavailable"]
 
-
-@dataclass(frozen=True, slots=True)
-class _Semantic:
-    """Situação do braço semântico da rodada, resolvida a cada requisição.
-
-    `index` presente e `adapter` ausente é o estado `limited`: consulta já embutida no
-    cache continua respondendo pelo híbrido, consulta nova cai no léxico com aviso. É o
-    estado de um servidor sem teto de gasto rodando sobre uma rodada que já foi indexada —
-    útil de verdade, e por isso não é tratado como indisponível.
-    """
-
-    index: SemanticIndex | None
-    adapter: EmbeddingsAdapter | None
-    status: SemanticStatus
-    message: str
-
-    def payload(self) -> dict[str, object]:
-        return {
-            "status": self.status,
-            "message": self.message,
-            "index_present": self.index is not None,
-            "model_id": None if self.index is None else self.index.model_id,
-        }
-
-
-def _semantic_state(run: _Run, catalog: PriceCatalog) -> _Semantic:
+def _semantic_state(run: _Run, catalog: PriceCatalog) -> SemanticArm:
     """Índice e via de embeddings da rodada, com o motivo quando algum deles falta.
 
     Índice ilegível ou de outro catálogo **não** derruba a tela: vira indisponibilidade
@@ -872,12 +660,12 @@ def _semantic_state(run: _Run, catalog: PriceCatalog) -> _Semantic:
     """
     index_path = run.path(CATALOG_INDEX_FILENAME)
     if not index_path.is_file():
-        return _Semantic(None, None, "unavailable", f"{SEMANTIC_UNAVAILABLE_MESSAGE}: sem índice")
+        return SemanticArm(None, None, "unavailable", f"{SEMANTIC_UNAVAILABLE_MESSAGE}: sem índice")
     try:
         index = run.index_cache.load(index_path, catalog)
     except (ValuationValidationError, ValidationError) as error:
         domain = error if isinstance(error, ValuationValidationError) else _domain_error(error)
-        return _Semantic(
+        return SemanticArm(
             None,
             None,
             "unavailable",
@@ -885,12 +673,14 @@ def _semantic_state(run: _Run, catalog: PriceCatalog) -> _Semantic:
         )
     adapter, reason = embeddings_adapter_or_reason()
     if adapter is None:
-        return _Semantic(index, None, "limited", f"{SEMANTIC_LIMITED_MESSAGE}: {reason}")
-    return _Semantic(index, adapter, "available", f"{SEMANTIC_AVAILABLE_MESSAGE}: {index.model_id}")
+        return SemanticArm(index, None, "limited", f"{SEMANTIC_LIMITED_MESSAGE}: {reason}")
+    return SemanticArm(
+        index, adapter, "available", f"{SEMANTIC_AVAILABLE_MESSAGE}: {index.model_id}"
+    )
 
 
 def _semantic_query_vector(
-    run: _Run, semantic: _Semantic, query: str
+    run: _Run, semantic: SemanticArm, query: str
 ) -> tuple[tuple[float, ...] | None, str | None]:
     """Vetor da consulta pelo cache da rodada, pagando só pelo que ainda não existe.
 
@@ -916,204 +706,14 @@ def _semantic_query_vector(
     return resolved.by_query.get(normalize_query_text(query)), None
 
 
-def _result_payload(
-    entry: PriceCatalogEntry,
-    *,
-    origin: str,
-    coverage: float,
-    semantic_score: float | None,
-) -> dict[str, object]:
-    """Um resultado da busca com a evidência de por que ele está ali.
-
-    A descrição volta **inteira**: é ela que diz se o código é de execução ou de mero
-    fornecimento, e cortá-la esconderia justamente a diferença que o orçamentista precisa
-    ver.
-    """
-    return {
-        "code": entry.code,
-        "unit": entry.unit,
-        "unit_price": str(entry.unit_price),
-        "description": entry.description,
-        "origin": origin,
-        "lexical_score": coverage,
-        "semantic_score": semantic_score,
-    }
-
-
-def _catalog_search(
-    catalog: PriceCatalog,
-    query: str,
-    limit: int,
-    synonyms: DomainSynonyms | None = None,
-    *,
-    noise: LegendNoiseList | None = None,
-    semantic: _Semantic | None = None,
-    query_vec: Sequence[float] | None = None,
-    semantic_warning: str | None = None,
-) -> dict[str, object]:
-    """Busca determinística por palavra-chave sobre o catálogo, ordenada por relevância.
-
-    Normalização é a mesma da sugestão lexical (`lexical_tokens`: NFKD sem acento,
-    `casefold`, tokens de dois caracteres ou mais), então a tela e o ranking enxergam o
-    texto do mesmo jeito. Um item casa quando **todas** as palavras da busca casam com
-    palavras da descrição (`_term_matches_description`) — ou quando o código começa por
-    uma delas, que é como se procura `AD0405` direto. Com `synonyms`, cada palavra da busca
-    ganha um GRUPO de equivalentes (`expand_terms`): o casamento por palavra passa a valer
-    se QUALQUER termo do grupo casar, então uma busca por "refletor" também encontra
-    catálogo escrito só com "projetor" — mas continua exigindo uma correspondência por
-    palavra ORIGINAL da busca (nenhum termo expandido relaxa a exigência das demais).
-
-    A ordem do braço léxico é por COBERTURA PONDERADA da consulta
-    (`weighted_query_coverage_score`, o mesmo scorer do braço léxico da shortlist), com
-    `lexical_similarity` desempatando e o código fechando o desempate. A cobertura entrou
-    no lugar do Dice puro por causa do achado medido na Fase 1 do M7: o Dice pune a
-    descrição longa, e no catálogo real isso empurrava o código certo para o rank 346
-    porque a descrição dele é um parágrafo. O peso por IDF veio depois, na 2.1, porque
-    cobrir a palavra comum não pode valer o mesmo que cobrir a rara. Devolver na ordem do
-    catálogo, como antes de tudo isso, escondia o item certo atrás de homônimos: a página é
-    cortada em `limit` **depois** do ranking. `total_matches` continua contando o conjunto
-    casado por palavra. Com `noise` (rodada 2.2), o peso de um radical de ESTADO da legenda
-    ("existente", "a ser recuperar") é amortecido na cobertura ponderada — não muda quem
-    entra na página, mas limpa a COMPOSIÇÃO dela: "REFLETOR EXISTENTE" caiu de 10/20 para
-    0/20 itens cujo único mérito era conter "existente" (ver
-    `tests/valuation/golden/matcher-golden-v1.json`, `note_phase_2_2`).
-
-    Com `query_vec` (a rodada tem índice, teto de gasto e credencial), a lista casada por
-    palavra vira UM braço e o kNN semântico vira o outro, fundidos por RRF: a resposta sai
-    com `matching: "hybrid"`, cada resultado declara de qual braço veio (`origin`) e um
-    código que nenhuma palavra da busca casa pode aparecer, que é o ponto do braço
-    semântico. Sem vetor, `matching: "lexical"` e o motivo vai em `semantic_notes` — a
-    busca nunca quebra por causa do braço pago.
-
-    `expanded_terms` só aparece na resposta quando a expansão acrescentou algum termo — é
-    o que deixa visível, por exemplo, que "refletor" virou também "projetor".
-    """
-    terms = _require_query_terms(query)
-    # `expand_terms` casa GRUPOS de sinônimo por radical (`lexical_stems`), não pela grafia
-    # crua — "alambrado" só bate o grupo porque o radical dele é "alambra". Por isso a
-    # expansão é feita PALAVRA A PALAVRA (nunca com a frase inteira de uma vez): assim a
-    # origem de cada termo expandido fica sem ambiguidade — é sempre a palavra da busca que
-    # acabou de ser expandida, nunca uma mistura das várias palavras digitadas.
-    term_groups: dict[str, tuple[str, ...]] = {}
-    combined_origins: dict[str, set[str]] = {}
-    for term in terms:
-        term_stem = lexical_stems(term)
-        term_expansion = expand_terms(term_stem, synonyms)
-        extras = [candidate for candidate in term_expansion.terms if candidate not in term_stem]
-        term_groups[term] = (term, *extras)
-        for extra_term, sources in term_expansion.origins.items():
-            combined_origins.setdefault(extra_term, set()).update(sources)
-
-    matches: list[tuple[float, float, str]] = []
-    coverage_by_code: dict[str, float] = {}
-    entries_by_code = {entry.code: entry for entry in catalog.entries}
-    idf = catalog_idf_table(catalog, synonyms)
-    for entry in catalog.entries:
-        tokens = frozenset(lexical_tokens(entry.description))
-        code = "".join(lexical_tokens(entry.code))
-        by_description = all(
-            any(_term_matches_description(candidate, tokens) for candidate in term_groups[term])
-            for term in terms
-        )
-        by_code = any(code.startswith(term) for term in terms)
-        if not (by_description or by_code):
-            continue
-        coverage = weighted_query_coverage_score(
-            query, entry.description, idf=idf, synonyms=synonyms, noise=noise
-        )
-        coverage_by_code[entry.code] = coverage
-        matches.append(
-            (
-                coverage,
-                lexical_similarity(query, entry.description, synonyms=synonyms),
-                entry.code,
-            )
-        )
-    matches.sort(key=lambda found: (-found[0], -found[1], found[2]))
-    lexical_codes = [code for _coverage, _similarity, code in matches[:limit]]
-
-    notes = [] if semantic_warning is None else [semantic_warning]
-    results: list[dict[str, object]]
-    semantic_scored: list[tuple[str, float]] = []
-    if semantic is not None and semantic.index is not None and query_vec is not None:
-        semantic_scored = semantic_topk(query_vec, semantic.index, limit)
-        matching = "hybrid"
-        results = []
-        for fused in fuse_arms(lexical_codes, semantic_scored, k=limit):
-            found = entries_by_code.get(fused.code)
-            if found is None:  # pragma: no cover - índice amarrado ao catálogo por digest
-                continue
-            # O resultado que veio só do braço semântico não passou pelo filtro por palavra,
-            # então a cobertura dele ainda não foi medida; devolver 0.0 sem medir seria dizer
-            # que ele não tem nenhuma palavra da busca, o que nem sempre é verdade.
-            if fused.code not in coverage_by_code:
-                coverage_by_code[fused.code] = weighted_query_coverage_score(
-                    query, found.description, idf=idf, synonyms=synonyms, noise=noise
-                )
-            results.append(
-                _result_payload(
-                    found,
-                    origin=fused.origin,
-                    coverage=coverage_by_code[fused.code],
-                    semantic_score=fused.semantic_score,
-                )
-            )
-    else:
-        matching = "lexical"
-        results = [
-            _result_payload(
-                entries_by_code[code],
-                origin="lexical",
-                coverage=coverage_by_code.get(code, 0.0),
-                semantic_score=None,
-            )
-            for code in lexical_codes
-        ]
-
-    result: dict[str, object] = {
-        "query": query,
-        "terms": list(terms),
-        "limit": limit,
-        "matching": matching,
-        "total_matches": len(matches),
-        "semantic_matches": len(semantic_scored),
-        "semantic_notes": notes,
-        "results": results,
-    }
-    if combined_origins:
-        result["expanded_terms"] = {
-            term: sorted(sources) for term, sources in combined_origins.items()
-        }
-    return result
-
-
 # --------------------------------------------------------------------------------------
 # Prancha do projetista: upload, ingestão local e extração paga automática
 # --------------------------------------------------------------------------------------
-
-_FALLBACK_DATASET_ID: Final = "prancha-local"
 
 _MULTI_PAGE_NOTE: Final = (
     "PDF com {pages} páginas: só a página 1 virou prancha desta rodada; as demais não "
     "foram lidas nem enviadas"
 )
-
-_ARM_UNAVAILABLE_MESSAGE: Final = (
-    "extração automática indisponível: teto de gasto ou credencial do provider recusados "
-    "pelo servidor"
-)
-
-
-def _dataset_id(root: Path) -> str:
-    """Identificador da rodada para a ingestão, derivado do nome do diretório.
-
-    O manifest tem contrato fechado para esse campo (`[a-z0-9][a-z0-9-]{2,63}`), então nome
-    de pasta com acento, espaço ou maiúscula vira slug. Nome que não sobrevive à
-    normalização cai num rótulo declarado em vez de derrubar o upload do orçamentista — é
-    o mesmo identificador que vai para `plate_id`, e ele identifica a rodada, não o cliente.
-    """
-    slug = re.sub(r"[^a-z0-9]+", "-", root.name.lower()).strip("-")[:64]
-    return slug if re.fullmatch(r"[a-z0-9][a-z0-9-]{2,63}", slug) else _FALLBACK_DATASET_ID
 
 
 async def _read_upload(file: UploadFile) -> bytes:
@@ -1138,225 +738,16 @@ async def _read_upload(file: UploadFile) -> bytes:
     return b"".join(chunks)
 
 
-def _promote_first_page(run: _Run, pdf_path: Path) -> PdfManifest:
-    """Renderiza o PDF num temporário da rodada e promove a página 1 mais o manifest.
-
-    Renderizar fora do lugar final e mover depois é o que impede a rodada de ficar com
-    meia prancha: só entram no diretório o PNG da página que o manifest declara e o
-    próprio manifest. O resto da ingestão (contact sheet, demais páginas) é descartado —
-    esta rodada é de uma prancha só.
-    """
-    workspace = Path(tempfile.mkdtemp(dir=run.root, prefix=".prancha-ingest-"))
-    try:
-        manifest, manifest_path = ingest_pdf(
-            pdf_path,
-            workspace,
-            dataset_id=_dataset_id(run.root),
-            role=PLATE_INGEST_ROLE,
-            dpi=PLATE_INGEST_DPI,
-        )
-        page = manifest.pages[PLATE_PAGE_NUMBER - 1]
-        rendered = manifest_path.parent / page.render_file
-        if file_sha256(rendered) != page.image_sha256:  # pragma: no cover - ingestão coerente
-            raise _upload_invalid("a página renderizada não confere com o manifest da ingestão")
-        os.replace(rendered, run.path(page.render_file))
-        os.replace(manifest_path, run.path(PLATE_MANIFEST_FILENAME))
-        return manifest
-    except (ValueError, RuntimeError) as error:
-        # PDF protegido por senha, sem páginas ou ilegível para o renderizador.
-        raise _upload_invalid(str(error)[:200], {"stage": "ingest"}) from error
-    finally:
-        shutil.rmtree(workspace, ignore_errors=True)
-
-
-def _ingest_plate_upload(run: _Run, *, filename: str | None, payload: bytes) -> PdfManifest:
-    """Grava a prancha enviada e devolve o manifest da ingestão.
-
-    Validação antes de qualquer escrita (extensão, tamanho e assinatura do arquivo) e
-    desfazimento depois de qualquer falha: ingestão que não fecha remove o PDF, e a rodada
-    volta a ser exatamente o que era antes do clique.
-    """
-    name = (filename or "").strip()
-    if not name.lower().endswith(".pdf"):
-        raise _upload_invalid("o arquivo precisa ser um PDF (.pdf)", {"filename": name})
-    if not payload:
-        raise _upload_invalid("arquivo vazio")
-    if not payload.startswith(b"%PDF-"):
-        raise _upload_invalid("assinatura de PDF ausente no início do arquivo")
-
-    pdf_path = run.path(PLATE_PDF_FILENAME)
-    atomic_write_bytes(pdf_path, payload)
-    try:
-        return _promote_first_page(run, pdf_path)
-    except Exception:
-        pdf_path.unlink(missing_ok=True)
-        raise
-
-
-def _extraction_arm_spec() -> str:
-    """Braço pago em uso. A env é o escape declarado para a próxima eval comparativa."""
-    return os.environ.get(EXTRACTION_ARM_ENV, "").strip() or MEDICAO_EXTRACTION_ARM
-
-
-def _missing_extraction_envs(arm_spec: str) -> list[str]:
-    """Variáveis obrigatórias que faltam para a extração paga poder sequer começar."""
-    provider = arm_spec.partition("=")[2].partition(":")[0]
-    required = [AI_BUDGET_ENV]
-    credential = _PROVIDER_CREDENTIAL_ENV.get(provider)
-    if credential is not None:
-        required.append(credential)
-    return [name for name in required if not os.environ.get(name, "").strip()]
-
-
-def _extraction_unavailable(arm_spec: str) -> ValuationValidationError | None:
-    """Motivo de a extração paga não poder ser tentada, ou `None` quando ela pode.
-
-    É esta pré-checagem que garante o freio principal: **nunca** existe tentativa sem teto
-    de gasto declarado no ambiente do servidor. Ela roda antes da thread e antes de
-    qualquer byte sair da máquina, e o que ela devolve vira estado visível na tela.
-    """
-    missing = _missing_extraction_envs(arm_spec)
-    if not missing:
-        return None
-    return ValuationValidationError(
-        "LOCAL_EXTRACTION_UNAVAILABLE",
-        _NO_BUDGET_MESSAGE if AI_BUDGET_ENV in missing else _NO_CREDENTIAL_MESSAGE,
-        {"missing_env": missing, "arm": arm_spec},
-    )
-
-
-def _build_extraction_adapter(arm_spec: str) -> tuple[str, str, ProviderAdapter]:
-    """Monta o braço pago `NOME=PROVIDER:MODELO` da extração automática.
-
-    Espelho de `cli._build_paid_arm` com os códigos deste servidor: forma inválida e
-    provider `fixture` recusam antes de qualquer rede — observação fabricada não vira
-    pacote de rodada —, e a `ValueError` de `build_extraction_arm` (teto de gasto ausente
-    ou credencial faltando) vira recusa de domínio em vez de erro de servidor.
-
-    É também o seam de teste do módulo: o teste troca esta fábrica por um adapter fixture,
-    e nenhuma chamada externa acontece na suíte.
-    """
-    name, separator, target = arm_spec.partition("=")
-    provider, model_separator, model_id = target.partition(":")
-    if not name or not separator or not provider or not model_separator or not model_id:
-        raise ValuationValidationError(
-            "LOCAL_EXTRACTION_ARM_INVALID",
-            _ARM_MISCONFIGURED_MESSAGE,
-            {"arm": arm_spec},
-        )
-    if provider == "fixture":
-        raise ValuationValidationError(
-            "LOCAL_EXTRACTION_ARM_FIXTURE_FORBIDDEN",
-            _FIXTURE_ARM_MESSAGE,
-            {"arm": arm_spec},
-        )
-    try:
-        adapter = build_extraction_arm(provider=provider, model_id=model_id)
-    except ValueError as error:
-        raise ValuationValidationError(
-            "LOCAL_EXTRACTION_UNAVAILABLE",
-            _ARM_UNAVAILABLE_MESSAGE,
-            {"arm": arm_spec, "reason": str(error)},
-        ) from error
-    return name, model_id, adapter
-
-
-def _authorize_uploaded_page(manifest_path: Path, page_sha256: str) -> str:
-    """Autoriza a página consentida pelo upload e devolve o digest do documento.
-
-    A allowlist global (`CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS`) **não se aplica a este
-    fluxo**, e a dispensa é decisão registrada, não esquecimento: naquela via o
-    consentimento é a variável de ambiente que um operador declara antes de mandar o
-    documento de um cliente para fora; nesta via o consentimento é o próprio ato do
-    orçamentista de subir a prancha na tela, e o digest nasce do arquivo que ele acabou de
-    enviar — ele vai para o estado e para o `extraction-lineage.json`, onde fica auditável.
-    Dispensar a allowlist não dispensa o outro amarrado, e por isso ele continua aqui: a
-    imagem enviada tem de ser a página que o manifest da ingestão declara
-    (`bind_page_to_document`), senão um PNG largado no diretório viraria evidência de um
-    documento que ninguém enviou.
-    """
-    return bind_page_to_document(manifest_path, page_sha256)
-
-
 def _extract_legend_from_upload(
     run: _Run, manifest: PdfManifest, adapter: ProviderAdapter
 ) -> LegendExtractionResult:
-    """Extrai a legenda da prancha consentida pelo upload.
+    """Extração da legenda da prancha consentida, no diretório desta rodada.
 
-    Compõe as MESMAS peças de `legend_extraction.run_legend_extraction` — pedido,
-    chamada, mapeamento observação→takeoff e registro fino do bbox contra a tinta —
-    trocando **só** o portão de consentimento (`_authorize_uploaded_page` no lugar de
-    `authorize_page`). O caminho pago do CLI fica intocado; a parity entre as duas
-    montagens é prendida por teste, para que elas não possam divergir em silêncio.
+    Adaptador de disco de `round_extraction.extract_legend_from_upload`, que não conhece a
+    rodada do servidor. O nome privado continua aqui porque é o seam que a suíte troca:
+    nenhuma chamada externa acontece nos testes.
     """
-    page = manifest.pages[PLATE_PAGE_NUMBER - 1]
-    image_path = run.path(page.render_file).resolve(strict=True)
-    image_sha256 = hashlib.sha256(image_path.read_bytes()).hexdigest()
-    source_sha256 = _authorize_uploaded_page(run.path(PLATE_MANIFEST_FILENAME), image_sha256)
-
-    request, width, height = build_legend_request(image_path)
-    execution = adapter.execute(request)
-    output = execution.output
-    if not isinstance(output, LegendExtractionOutput):  # pragma: no cover - contrato do adapter
-        raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
-    packet = takeoff_packet_from_legend(
-        output,
-        plate_id=_dataset_id(run.root),
-        page_number=PLATE_PAGE_NUMBER,
-        image_sha256=image_sha256,
-        source_pdf_sha256=source_sha256,
-        image_width=width,
-        image_height=height,
-        extractor=extractor_label(execution.provider.value, execution.model_id),
-        extractor_version=execution.prompt.prompt_version,
-    )
-    registered, registration = register_legend_bboxes(image_path, packet)
-    return LegendExtractionResult(
-        packet=registered,
-        execution=execution,
-        source_sha256=source_sha256,
-        registration=registration,
-    )
-
-
-def _execution_payload(execution: ProviderExecution) -> dict[str, object]:
-    """Lineage e custo de uma chamada paga. Espelho de `cli._execution_payload`.
-
-    IDs, versão de prompt, tokens, custo e latência — nunca a resposta bruta nem o que foi
-    enviado.
-    """
-    usage = execution.usage
-    return {
-        "provider": execution.provider.value,
-        "model_id": execution.model_id,
-        "prompt_version": execution.prompt.prompt_version,
-        "input_digest": execution.input_digest,
-        "latency_ms": execution.latency_ms,
-        "input_tokens": usage.input_tokens,
-        "output_tokens": usage.output_tokens,
-        "estimated_cost_usd": (
-            None if usage.estimated_cost_usd is None else str(usage.estimated_cost_usd)
-        ),
-    }
-
-
-def _registration_payload(registration: LegendRegistrationReport) -> dict[str, object]:
-    """Relatório do registro fino no mesmo formato de `cli.run_register_takeoff`.
-
-    `method` viaja junto porque é ele que decide se a âncora de um item pode ser
-    declarada confiável para a tela (`_registered_item_ids`): relatório sem método
-    declarado não sustenta retângulo desenhado sobre a prancha.
-    """
-    return {
-        "adjusted": registration.adjusted,
-        "unmatched_item_ids": registration.unmatched_item_ids,
-        "band_count": registration.band_count,
-        "method": registration.method,
-        "global_scale": registration.global_scale,
-        "global_shift_px": registration.global_shift_px,
-        "shift_score": registration.shift_score,
-        "shift_confidence": registration.shift_confidence,
-    }
+    return extract_legend_from_upload(run.root, manifest, adapter)
 
 
 def _publish_extraction(
@@ -1510,7 +901,7 @@ def _trigger_extraction(run: _Run, manifest: PdfManifest) -> ValuationValidation
             run,
             ValuationValidationError(
                 "LOCAL_EXTRACTION_UNAVAILABLE",
-                _ARM_UNAVAILABLE_MESSAGE,
+                ARM_UNAVAILABLE_MESSAGE,
                 {"arm": arm_spec, "error": type(error).__name__},
             ),
             manifest,
@@ -1805,10 +1196,6 @@ def _state_payload(run: _Run, *, reviewer_id: str) -> dict[str, object]:
     }
 
 
-def _count_status(assignments: CodeAssignmentSet, status: str) -> int:
-    return sum(1 for assignment in assignments.assignments if assignment.status == status)
-
-
 def _semantic_payload(run: _Run) -> dict[str, object]:
     """Etapa `busca_semantica` do estado: disponível, limitada ao cache ou indisponível.
 
@@ -1837,49 +1224,21 @@ def _compute_suggestions_response(run: _Run) -> dict[str, object]:
     digest-base que a rota de recompute exige antes de chegar aqui.
 
     Pending do takeoff continua bloqueando os dois: computar sobre revisão incompleta
-    congelaria em disco uma shortlist sem os itens que ainda vão ser confirmados.
+    congelaria em disco uma shortlist sem os itens que ainda vão ser confirmados. A guarda
+    é conferida aqui, antes de carregar catálogo e contrato, para que a recusa que o
+    orçamentista vê seja a revisão incompleta — e não a falta de outro artefato.
     """
     packet, _digest = run.require_packet()
-    pending = packet.pending_items()
-    if pending:
-        raise ValuationValidationError(
-            "LOCAL_TAKEOFF_REVIEW_INCOMPLETE",
-            "sugestão de código exige a revisão do takeoff concluída",
-            {"pending_item_ids": [item.id for item in pending]},
-        )
+    require_reviewed_takeoff(packet)
     catalog = run.require_catalog()
-    contract = run.contract()
-    synonyms = run.synonyms()
-    semantic = _semantic_state(run, catalog)
-    computed: CodeSuggestionSet | None = None
-    notes: list[str] = []
-    if semantic.index is None:
-        notes.append(semantic.message)
-    else:
-        try:
-            resolved = resolve_query_vectors(
-                [item.label for item in packet.confirmed_items()],
-                index=semantic.index,
-                cache_path=run.path(QUERY_CACHE_FILENAME),
-                adapter=semantic.adapter,
-            )
-            computed = build_hybrid_code_suggestions(
-                packet,
-                catalog,
-                contract,
-                index=semantic.index,
-                query_vectors=resolved.by_query,
-                synonyms=synonyms,
-                noise=default_legend_noise(),
-            )
-        except ValuationValidationError as error:
-            if error.code not in SEMANTIC_DEGRADABLE_CODES:
-                raise
-            notes.append(f"{SEMANTIC_UNAVAILABLE_MESSAGE}: {error.code}")
-        except ProviderExecutionError as error:
-            notes.append(f"{SEMANTIC_UNAVAILABLE_MESSAGE}: provider {error.code.value}")
-    if computed is None:
-        computed = build_code_suggestions(packet, catalog, contract, synonyms=synonyms)
+    computed, notes = compute_suggestions(
+        packet,
+        catalog,
+        run.contract(),
+        run.synonyms(),
+        semantic=_semantic_state(run, catalog),
+        query_cache_path=run.path(QUERY_CACHE_FILENAME),
+    )
     document = _document(computed)
     atomic_write_text(run.path(CODE_SUGGESTIONS_FILENAME), document)
     return {
@@ -2052,7 +1411,7 @@ def _build_app(
         if run.extraction.is_running():
             raise _round_already_has_plate("a rodada já tem uma prancha em processamento")
         payload = await _read_upload(file)
-        manifest = _ingest_plate_upload(run, filename=file.filename, payload=payload)
+        manifest = ingest_plate_upload(run.root, filename=file.filename, payload=payload)
         _trigger_extraction(run, manifest)
         return _state_payload(run, reviewer_id=reviewer_of(request))
 
@@ -2487,7 +1846,19 @@ def create_hosted_app(
     `GET /healthz` fica **fora** da dependency, no roteador do próprio app: o probe do host
     não tem sessão e não entrega dado nenhum. É a única rota sem token, e ela é declarada
     aqui, à vista, em vez de virar uma exceção escondida dentro da dependency.
+
+    O import de `hosted_auth` é tardio de propósito, e é o que desarma a dependência
+    invertida: o modo hospedado é ponte com remoção declarada (ADR-0026, ADR-0028) e lê
+    daqui o papel do revisor, então importá-lo no topo fecharia um ciclo. O servidor
+    local, que sobrevive, não referencia o módulo hospedado em lugar nenhum — apagá-lo é
+    apagar esta função e este import.
     """
+    from croquito_worker.valuation.hosted_auth import (
+        HostedSessionRefusal,
+        build_reviewer_dependency,
+        hosted_reviewer_id,
+    )
+
     run = _Run(root=_round_root(root))
     require_reviewer = build_reviewer_dependency(issuer=issuer, audience=audience)
     application = _build_app(
