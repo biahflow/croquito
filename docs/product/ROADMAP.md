@@ -20,7 +20,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 
 | ID | Prioridade | Estado | Contrato |
 | --- | --- | --- | --- |
-| F-001 | HIGH | IN_PROGRESS | [Clarificação do roadmap canônico e ambientes](../features/F-001-roadmap-clarification/feature.md) |
+| F-001 | HIGH | DONE | [Clarificação do roadmap canônico e ambientes](../features/F-001-roadmap-clarification/feature.md) |
 | F-002 | HIGH | DONE | [Contrato `/v1` da medição](../features/F-002-medicao-v1-contract/feature.md) |
 | F-003 | HIGH | READY_FOR_PLANNING | [Migração da medição para a API `/v1` autenticada](../features/F-003-medicao-v1-migration/feature.md) |
 | F-004 | HIGH | DONE | [Runner de migrations revisadas](../features/F-004-migrations-runner/feature.md) |
@@ -208,10 +208,14 @@ independente. Nenhuma linha afirma estado remoto.
 
 Cada ambiente é lido em três eixos separados, que não se substituem: o que o repositório
 **configura**, o que a documentação **afirma** e o que foi **verificado remotamente**.
-Nenhuma verificação remota foi executada por F-001 — nem foi autorizada.
+
+A verificação remota da homologação foi autorizada e executada em 2026-08-17, e seu resultado está
+no eixo correspondente. Ela observa a borda pública e nada além dela: rota que responde prova o
+proxy e a SPA daquela rota, não o estado interno de Cloud Run, buckets, Pub/Sub ou PostgreSQL.
+Produção AWS e ambiente local continuam sem verificação remota.
 
 | Contexto | Configuração versionada | Afirmação documental | Estado remoto verificado |
 | --- | --- | --- | --- |
 | Produção AWS | `infra/` (Terraform: S3 SSE-KMS, filas/DLQ, KMS, logs) descreve o desenho em `sa-east-1`. | [AWS Deployment](../architecture/AWS_DEPLOYMENT.md) declara que o desenho-alvo de produção **nunca foi aplicado**; o [Status](../STATUS.md) declara que não há serviços AWS reais. [ADR-0002](../adr/0002-aws-managed-architecture.md) segue valendo como decisão de produção, com a escolha em aberto. | Nenhum. Nada no repositório prova recursos AWS aplicados, e nenhuma consulta a conta AWS foi feita. |
-| Homologação GCP | [`.github/workflows/deploy-hml.yml`](../../.github/workflows/deploy-hml.yml) configura o deploy no projeto `biahflow-hml`, região `us-east1`, para os serviços `croquito-*-hml`; [`deploy/nginx.conf`](../../deploy/nginx.conf) fixa a borda pública. Configuração de deploy não é prova de deploy. | [HML](../operations/HML.md) tem a seção “O que está no ar”, que **afirma** rotas públicas, serviços Cloud Run, buckets, tópico Pub/Sub e PostgreSQL gerenciado em operação; o [Status](../STATUS.md) afirma, no presente, que a homologação em GCP hospeda o servidor de medição como ponte declarada. Fontes: [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md) e [ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md). Isso é afirmação documental, não verificação. | Nenhum. F-001 não executou os comandos de smoke de [HML](../operations/HML.md) nem qualquer chamada externa; o estado atual dos serviços permanece não verificado por esta feature. |
+| Homologação GCP | [`.github/workflows/deploy-hml.yml`](../../.github/workflows/deploy-hml.yml) configura o deploy no projeto `biahflow-hml`, região `us-east1`, para os serviços `croquito-*-hml`; [`deploy/nginx.conf`](../../deploy/nginx.conf) fixa a borda pública. Configuração de deploy não é prova de deploy. | [HML](../operations/HML.md) tem a seção “O que está no ar”, que **afirma** rotas públicas, serviços Cloud Run, buckets, tópico Pub/Sub e PostgreSQL gerenciado em operação; o [Status](../STATUS.md) afirma, no presente, que a homologação em GCP hospeda o servidor de medição como ponte declarada. Fontes: [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md) e [ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md). Isso é afirmação documental, não verificação. | **Fumaça manual de [HML](../operations/HML.md) executada em 2026-08-17T20:40Z**, sem credencial e sem `gcloud`: `GET /revisao/` e `GET /medicao/` respondem **200**; `GET /api/healthz` responde **404** e `GET /auth/realms/croquito/.well-known/openid-configuration` responde **503**, os dois de forma persistente (reexecutados). Verificado: as duas SPAs e o nginx estão de pé, e a sessão autenticada **não sobe hoje**. Não verificado: estado interno de Cloud Run, buckets, Pub/Sub e PostgreSQL, e `croquito-jobs-hml`, que não tem fumaça externa por construção. A divergência contra a afirmação documental está registrada na [seção 11 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md) e pende de trabalho próprio. |
 | Desenvolvimento local | `docker-compose.local.yml` e o [Makefile](../../Makefile) definem PostgreSQL, LocalStack e Keycloak, com bootstrap por `make db-init`. | [Local Development](../engineering/LOCAL_DEVELOPMENT.md) e o [Status](../STATUS.md) descrevem esse ambiente como iniciado e validado localmente. | Não aplicável. Nenhuma afirmação é feita sobre a máquina de qualquer operador. |

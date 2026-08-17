@@ -2,11 +2,19 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > Decisão humana de 2026-08-17 registrada na
-> [seção 10 de evidence.md](evidence.md). Passa a `DONE` quando o resultado de `make check`
-> for registrado; a decisão humana não substitui evidência determinística.
+> [seção 10 de evidence.md](evidence.md). Passava a `DONE` quando o resultado de `make check`
+> fosse registrado; a decisão humana não substitui evidência determinística.
+>
+> **Fechada em 2026-08-17** ([seção 11](evidence.md)): `make check` exit 0 registrado, o que fecha
+> o achado E3; as 34 chaves do inventário reconferidas por script contra o commit base e contra o
+> roadmap do HEAD, sem divergência; a divergência de estado entre o roadmap e este contrato
+> resolvida. A verificação de estado remoto do GCP autorizada pela decisão 5 foi executada e
+> preencheu o terceiro eixo da reconciliação — com uma divergência entre a afirmação documental de
+> [HML](../../operations/HML.md) e o estado observado, registrada como achado e deixada para
+> trabalho próprio.
 
 ## Priority
 

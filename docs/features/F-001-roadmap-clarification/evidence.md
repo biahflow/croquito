@@ -1,8 +1,8 @@
 # F-001 — Pacote de evidências
 
-Status: `READY_FOR_HUMAN_REVIEW`
+Status: `DONE`
 Responsável: Engineering
-Última revisão: 2026-08-17 (decisão humana, seção 10)
+Última revisão: 2026-08-17 (fechamento, seção 11)
 
 Este documento consolida referências estáveis ao contrato, ao plano, à baseline, à
 execução, à validação e à revisão de F-001. Ele não substitui as fontes de evidência
@@ -114,7 +114,9 @@ O que é verificável independentemente da evidência ausente de R0 está regist
 | `make check` | R0 | **Sem evidência.** Exigido por F001-T03; nenhum resultado foi registrado pelo Builder. |
 | `make check` | R1 | **Exit 0.** `ruff check`, `ruff format --check`, `mypy` (166 arquivos, sem problemas), `check_docs` (103 arquivos Markdown), `schema_export --check`, `contracts:check`, build de `@croquito/web` e `@croquito/medicao`, `terraform fmt -check`. |
 | Conferência verbatim das 34 chaves | R1 | Script de comparação contra `git show HEAD:docs/product/ROADMAP.md`: 34 chaves, únicas, na ordem original, presentes em `plan.md` e na tabela do roadmap; entrada F-001 ausente do inventário. |
-| Verificação de estado remoto | R0 e R1 | **Não executada e não autorizada.** Nenhuma chamada externa foi feita. |
+| Verificação de estado remoto | R0 e R1 | **Não executada e não autorizada.** Nenhuma chamada externa foi feita. Autorizada na seção 10 e executada no fechamento — ver seção 11. |
+| `make check` | Fechamento (2026-08-17) | **Exit 0.** `ruff check`, `ruff format --check`, `mypy` estrito (173 arquivos, sem problemas), `check_docs` (113 arquivos Markdown), `schema_export --check`, `contracts:check`, builds de `@croquito/web` e `@croquito/medicao`, `terraform fmt -check`. **Fecha o achado E3.** |
+| Reconferência das 34 chaves | Fechamento (2026-08-17) | Script de comparação contra **dois** alvos: `git show a92fda7:docs/product/ROADMAP.md` (commit base) e o `ROADMAP.md` do HEAD. Zero divergência nos dois; numeração 1–34 única; o roadmap tem exatamente 34 bullets de nível 0 nas seções de conteúdo; distribuição 21 `PLANEJADO` / 5 `EM OPERAÇÃO/HOMOLOGAÇÃO` / 4 `EXCLUÍDO` / 3 `IMPLEMENTADO` / 1 `UNKNOWN`. |
 
 ## 7. Revisão da rodada R0
 
@@ -160,6 +162,10 @@ Ao fim de R1, `git status --short --branch` sobre o commit `a92fda7` mostra apen
 
 Nenhum commit, nenhuma mudança em `docs/STATUS.md`, ADRs, código, `infra/` ou workflows.
 F-001 permanece `IN_PROGRESS`, aguardando aprovação humana.
+
+> Esta seção é o registro do estado **ao fim de R1**, preservado como executado. O estado atual
+> da feature é o do topo deste documento; a linha do roadmap que ainda dizia `IN_PROGRESS` foi
+> corrigida no fechamento (seção 11).
 
 ## 9. Desvios, riscos e decisões humanas pendentes
 
@@ -219,3 +225,53 @@ resultado for registrado aqui, com a baseline aplicável. Até então o estado �
 A decisão 4 autoriza a criação de entradas de backlog com ID estável no roadmap canônico. Essa
 alteração é trabalho subsequente e **não** entra no diff de F-001, para não misturar escopos no
 mesmo commit de `docs/product/ROADMAP.md`.
+
+## 11. Fechamento em 2026-08-17
+
+### Condição restante cumprida
+
+`make check` foi executado e registrado na seção 6, com exit 0. Isso fecha o achado E3, que era a
+única condição declarada para `DONE`.
+
+A execução é sobre o commit `cbb1fab`, e não sobre o worktree de R1 — a diferença está declarada
+porque importa. O que a torna aplicável a F-001 é verificável: `git diff beb59db..HEAD` sobre
+`docs/features/F-001-roadmap-clarification/` é **vazio** (os três artefatos estão intocados desde
+o commit da feature), e no `ROADMAP.md` a única alteração posterior está na seção "Trabalho de
+engenharia em andamento", que o inventário declara explicitamente fora do congelamento. A
+reconferência das 34 chaves contra o roadmap do HEAD, registrada na seção 6, prova isso de forma
+independente.
+
+### `SOURCE_OF_TRUTH_CONFLICT` resolvido
+
+`docs/product/ROADMAP.md` declarava F-001 como `IN_PROGRESS` enquanto o `feature.md` declarava
+`READY_FOR_HUMAN_REVIEW` — conflito entre as duas fontes que o
+[Project Context](../../engineering/PROJECT_CONTEXT.md) manda resolver por decisão humana. A
+decisão 3 da seção 10 já continha a resposta; o roadmap passa a `DONE` junto com o contrato.
+
+### Verificação de estado remoto executada (decisão 5)
+
+A "Fumaça manual" de [HML](../../operations/HML.md) foi executada em **2026-08-17T20:40Z**, contra a
+borda pública, sem credencial e sem `gcloud`. Só código HTTP é registrado — nenhum corpo de
+resposta, nenhum token, nenhuma URL assinada:
+
+| Rota | Resultado |
+| --- | --- |
+| `GET /api/healthz` | **404** |
+| `GET /auth/realms/croquito/.well-known/openid-configuration` | **503** |
+| `GET /revisao/` | 200 |
+| `GET /medicao/` | 200 |
+
+As duas falhas foram reexecutadas com timeout maior e se repetiram, então não são partida a frio.
+
+**Alcance do que isso prova.** O smoke observa a borda pública, que é o nginx. Rota que responde
+200 prova que o proxy e a SPA correspondente estão de pé; ela não prova estado interno de Cloud
+Run, buckets, Pub/Sub ou PostgreSQL, que continuam **não verificados**. O `croquito-jobs-hml` não
+tem fumaça externa por construção.
+
+**Divergência registrada, não corrigida.** A seção "O que está no ar" do
+[HML](../../operations/HML.md) afirma no presente que a API e o Keycloak estão em operação. O
+estado verificado contradiz a afirmação em dois pontos: `/api/healthz` responde 404 — comportamento
+compatível com o problema de borda já conhecido do ambiente — e o endpoint de descoberta OIDC
+responde 503, o que significa que **a sessão autenticada de homologação não sobe hoje**. Corrigir o
+ambiente ou o documento é trabalho próprio, com decisão humana: F-001 registra o fato e não o
+resolve, exatamente como seu contrato exige.
