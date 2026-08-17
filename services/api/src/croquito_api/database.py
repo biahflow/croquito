@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -425,6 +426,112 @@ class IdempotencyRecord(Base):
     key: Mapped[str] = mapped_column(String(255))
     request_hash: Mapped[str] = mapped_column(String(64))
     response_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class ValuationRoundRecord(Base):
+    """Raiz da rodada de medição de obra (ADR-0028 D1), escopada por tenant.
+
+    Deliberadamente **sem** chave estrangeira para ``projects``: a fronteira do contexto
+    delimitado da medição (ADR-0016) vale também no modelo relacional, e a obra permanece
+    atributo da rodada (``worksite_key``/``worksite_name``), não entidade própria (D8).
+
+    Catálogo e prancha entram por referência ao object store, nunca por conteúdo: o
+    catálogo real tem megabytes e o índice de embeddings dezenas deles, e a regra de blobs
+    do D2 manda o binário para o store com digest e metadado no banco.
+    """
+
+    __tablename__ = "valuation_rounds"
+    __table_args__ = (
+        # Índice da listagem com cursor opaco (`GET /v1/valuation-rounds`): o desempate por
+        # `id` faz parte da chave porque duas rodadas podem nascer no mesmo instante.
+        Index("ix_valuation_rounds_tenant_created", "tenant_id", "created_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    worksite_key: Mapped[str] = mapped_column(String(64))
+    worksite_name: Mapped[str] = mapped_column(String(120))
+    reference_label: Mapped[str] = mapped_column(String(120))
+    period_number: Mapped[int] = mapped_column(Integer)
+    """O número da medição; atributo da rodada, e não da rota que constrói o cálculo."""
+    address: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    contract_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="OPEN")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    """Contador ÚNICO de toda a cadeia da rodada (D3): takeoff, códigos, boletim e dossiê
+    pertencem à mesma cadeia causal, e só ato humano o incrementa. Artefato derivado
+    persistido sem decisão humana não avança esta versão."""
+    catalog_upload_id: Mapped[str] = mapped_column(ForeignKey("uploads.id"))
+    catalog_object_key: Mapped[str] = mapped_column(String(512))
+    catalog_source_sha256: Mapped[str] = mapped_column(String(64))
+    """O catálogo é instalado na CRIAÇÃO e é imutável na rodada, por isso as três colunas
+    são obrigatórias: trocar de catálogo é abrir rodada nova (API Contract, "Medição de
+    obra").  Isso NÃO torna morto o código `CATALOG_REQUIRED` do ADR-0028 D4 — ele nomeia a
+    precondição de o catálogo INSTALADO não estar utilizável agora (objeto fora do store,
+    digest divergente), que é falha de configuração e não de cadeia.  Rodada sem a coluna
+    preenchida não existe por construção, e afrouxar isto depois seria `ALTER` numa linha
+    forward-only: se um dia a rodada precisar nascer sem catálogo, é decisão de contrato."""
+
+    catalog_summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    """Resumo pequeno do catálogo instalado (contagem de entradas, referência); o catálogo
+    inteiro fica no object store e nunca nesta coluna."""
+    plate_upload_id: Mapped[str | None] = mapped_column(ForeignKey("uploads.id"), nullable=True)
+    plate_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    plate_source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    plate_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    extraction_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    extraction_status: Mapped[str] = mapped_column(String(16), default="idle")
+    """`idle` | `queued` | `running` | `done` | `failed`. O comando de fila da extração paga
+    (D7) é estado da raiz, no precedente de `ExportArtifactRecord.status`, e não tabela
+    própria: há no máximo uma extração em voo por rodada."""
+    extraction_failure_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    extraction_requested_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    extraction_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class ValuationRoundRevisionRecord(Base):
+    """Estado imutável da cadeia de medição numa versão da rodada (ADR-0028 D2).
+
+    Append-only: mutação cria linha nova e nenhuma coluna JSON é atualizada no lugar. O
+    conteúdo dessas colunas é artefato de trabalho do cliente — quantitativo, código,
+    preço, memória de cálculo — e **nunca** é copiado para log de aplicação; o que pode ser
+    registrado é id opaco, etapa, digest e contagem.
+    """
+
+    __tablename__ = "valuation_round_revisions"
+    __table_args__ = (UniqueConstraint("round_id", "version", name="uq_valuation_round_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    round_id: Mapped[str] = mapped_column(ForeignKey("valuation_rounds.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    parent_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    takeoff_packet_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    takeoff_registration_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    """Relatório do registro fino de bbox: é ele que separa âncora `registered` de `raw`."""
+    code_suggestions_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    code_assignments_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    valuation_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    amendment_dossier_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    extraction_lineage_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    artifact_refs_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    """Chaves de objeto sob o prefixo do tenant (prancha, overlay); nunca URL assinada."""
+    artifact_digests_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

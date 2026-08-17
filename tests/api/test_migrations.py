@@ -15,6 +15,7 @@ import os
 import types
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -22,7 +23,8 @@ import sqlalchemy as sa
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import MetaData, create_engine, event, inspect, make_url, text
+from alembic.script import ScriptDirectory
+from sqlalchemy import Engine, MetaData, create_engine, event, inspect, make_url, text
 
 from croquito_api import bootstrap
 from croquito_api.bootstrap import (
@@ -69,11 +71,49 @@ def schema_url() -> Iterator[str]:
         admin.dispose()
 
 
-def _statements_of(engine: Any) -> list[str]:
-    """Registra o SQL emitido no engine, para provar ausência de DDL."""
+def _head_revision() -> str:
+    """A cabeça da linha de revisões, lida do próprio diretório de versões.
+
+    Depois da adoção o banco fica em `head`, não na baseline: o carimbo é o ponto de
+    PARTIDA, e `apply_migrations` aplica o que falta em seguida. Enquanto a `0001` era a
+    única revisão, os dois valores coincidiam e o teste não distinguia um do outro.
+    """
+    script = ScriptDirectory.from_config(build_config("postgresql+psycopg://ignorada/ignorada"))
+    head = script.get_current_head()
+    assert head is not None
+    return head
+
+
+def _baseline_era_schema(schema_url: str) -> None:
+    """Recria um banco ANTERIOR ao runner: as tabelas da `0001` e nenhum controle de versão.
+
+    `Database.create_schema()` não serve mais de simulação: ele cria o modelo de HOJE, que
+    desde F-003 tem tabelas nascidas depois da baseline (`valuation_rounds`). Um banco real
+    anterior ao runner foi criado pelo bootstrap aditivo da época e tem exatamente o schema
+    da `0001` — carimbá-lo e aplicar o que falta é justamente o que a adoção existe para
+    fazer. Aplicar a revisão e derrubar a tabela de versão reproduz esse estado sem
+    duplicar DDL aqui.
+    """
+    command.upgrade(build_config(schema_url), BASELINE_REVISION)
+    engine = create_engine(schema_url, future=True)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(f"DROP TABLE {VERSION_TABLE}"))
+    finally:
+        engine.dispose()
+
+
+@contextmanager
+def _recorded_statements() -> Iterator[list[str]]:
+    """Registra o SQL de qualquer engine enquanto o bloco durar, para provar ausência de DDL.
+
+    O ouvinte é na CLASSE `Engine`, não no engine que o teste cria: o runner não migra pelo
+    engine que recebe — ele só o inspeciona —, e `command.stamp`/`command.upgrade` abrem o
+    seu próprio dentro de `migrations/env.py`. Escutando apenas o engine local, a lista
+    chegava sempre vazia e as asserções de DDL passavam por vacuidade.
+    """
     recorded: list[str] = []
 
-    @event.listens_for(engine, "before_cursor_execute")
     def _record(
         _connection: Any,
         _cursor: Any,
@@ -84,7 +124,18 @@ def _statements_of(engine: Any) -> list[str]:
     ) -> None:
         recorded.append(statement.strip().lower())
 
-    return recorded
+    event.listen(Engine, "before_cursor_execute", _record)
+    try:
+        yield recorded
+    finally:
+        event.remove(Engine, "before_cursor_execute", _record)
+
+    assert recorded, (
+        "O gravador de SQL não viu nenhuma instrução. Toda asserção de DDL feita sobre esta "
+        "lista seria vacuamente verdadeira — foi exatamente esse o defeito que este helper "
+        "veio corrigir, e ele volta em silêncio se o runner passar a executar por um "
+        "caminho que este ouvinte não alcança."
+    )
 
 
 @requires_postgres
@@ -113,11 +164,11 @@ def test_segunda_execucao_nao_emite_ddl(schema_url: str) -> None:
         first.dispose()
 
     second = create_engine(schema_url, future=True)
-    recorded = _statements_of(second)
-    try:
-        assert apply_migrations(second, schema_url) == "versionado"
-    finally:
-        second.dispose()
+    with _recorded_statements() as recorded:
+        try:
+            assert apply_migrations(second, schema_url) == "versionado"
+        finally:
+            second.dispose()
 
     ddl = [statement for statement in recorded if statement.startswith(_DDL_VERBS)]
     assert ddl == []
@@ -125,38 +176,53 @@ def test_segunda_execucao_nao_emite_ddl(schema_url: str) -> None:
 
 @requires_postgres
 def test_banco_anterior_ao_runner_e_carimbado(schema_url: str) -> None:
-    """Adoção: banco criado por `create_schema()` mantém tabelas e dados."""
-    database = Database(schema_url)
-    database.create_schema()
-    with database.engine.begin() as connection:
-        connection.execute(
-            text(
-                "INSERT INTO projects "
-                "(id, tenant_id, name, default_unit, status, created_by, created_at, expires_at) "
-                "VALUES ('p-1', 't-1', 'Praça', 'm', 'ACTIVE', 'u-1', now(), now())"
+    """Adoção: banco anterior ao runner mantém tabelas e dados."""
+    _baseline_era_schema(schema_url)
+    seed = create_engine(schema_url, future=True)
+    try:
+        with seed.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO projects (id, tenant_id, name, default_unit, status, "
+                    "created_by, created_at, expires_at) "
+                    "VALUES ('p-1', 't-1', 'Praça', 'm', 'ACTIVE', 'u-1', now(), now())"
+                )
             )
-        )
-    database.engine.dispose()
+    finally:
+        seed.dispose()
 
     engine = create_engine(schema_url, future=True)
-    recorded = _statements_of(engine)
+    with _recorded_statements() as recorded:
+        try:
+            assert apply_migrations(engine, schema_url) == "adotado"
+        finally:
+            engine.dispose()
+
+    engine = create_engine(schema_url, future=True)
     try:
-        assert apply_migrations(engine, schema_url) == "adotado"
         with engine.connect() as connection:
             version = connection.execute(
                 text(f"SELECT version_num FROM {VERSION_TABLE}")
             ).scalar_one()
             surviving = connection.execute(text("SELECT name FROM projects")).scalar_one()
-        assert version == BASELINE_REVISION
+        assert version == _head_revision()
         assert surviving == "Praça"
         assert set(Base.metadata.tables) <= set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
 
-    # A única DDL do carimbo é a criação da tabela de versão; nenhuma tabela de domínio é
-    # recriada nem alterada.
+    # A adoção não recria nem altera o que já existia: nenhum `ALTER`/`DROP`, e as únicas
+    # tabelas criadas são a de versão e as nascidas DEPOIS da baseline, que o `upgrade`
+    # logo após o carimbo cria. Nenhuma tabela da baseline aparece como criada.
     ddl = [statement for statement in recorded if statement.startswith(_DDL_VERBS)]
-    assert all(VERSION_TABLE in statement for statement in ddl), ddl
+    assert [statement for statement in ddl if statement.startswith(("alter ", "drop "))] == []
+    created = {
+        statement.removeprefix("create table ").split("(")[0].split()[0].strip('"')
+        for statement in ddl
+        if statement.startswith("create table ")
+    }
+    assert VERSION_TABLE in created, ddl
+    assert created & set(BASELINE_TABLES) == set(), created
 
 
 @requires_postgres
@@ -208,15 +274,17 @@ def test_tabela_nascida_depois_da_baseline_nao_impede_adocao(
 ) -> None:
     """Carimbar afirma "este banco está no estado da 0001" — o modelo de hoje não é a régua.
 
-    Cenário de F-003: a migration que criar as tabelas da medição acrescenta tabela ao modelo
-    sem acrescentá-la à baseline. O banco de homologação, anterior ao runner e em dia com a
-    baseline, não tem essa tabela e não deveria: é o `upgrade` logo depois do carimbo que a
-    cria. Medir a adoção contra `Base.metadata` faria o portão recusar exatamente o banco que
-    ele existe para adotar, e o deploy pararia.
+    Cenário de F-003, agora real: a `0002` acrescentou `valuation_rounds` e
+    `valuation_round_revisions` ao modelo sem acrescentá-las à baseline. O banco de
+    homologação, anterior ao runner e em dia com a baseline, não tem essas tabelas e não
+    deveria: é o `upgrade` logo depois do carimbo que as cria. Medir a adoção contra
+    `Base.metadata` faria o portão recusar exatamente o banco que ele existe para adotar, e
+    o deploy pararia.
+
+    A tabela fictícia continua no teste para que ele siga valendo para a PRÓXIMA revisão que
+    criar tabela, e não só para a `0002`.
     """
-    database = Database(schema_url)
-    database.create_schema()
-    database.engine.dispose()
+    _baseline_era_schema(schema_url)
 
     futuro = MetaData()
     for table in Base.metadata.tables.values():
@@ -231,7 +299,48 @@ def test_tabela_nascida_depois_da_baseline_nao_impede_adocao(
             version = connection.execute(
                 text(f"SELECT version_num FROM {VERSION_TABLE}")
             ).scalar_one()
-        assert version == BASELINE_REVISION
+        assert version == _head_revision()
+    finally:
+        engine.dispose()
+
+
+def test_toda_revisao_e_forward_only() -> None:
+    """ADR-0029 D2: não existe `downgrade`, e cada revisão nova precisa continuar assim.
+
+    A regra vale para a linha inteira, não só para a baseline: uma revisão que trouxesse um
+    `downgrade` funcional abriria em ambiente hospedado exatamente o caminho que a decisão
+    fechou, e o template de revisão nova é fácil de editar sem perceber.
+    """
+    script = ScriptDirectory.from_config(build_config("postgresql+psycopg://ignorada/ignorada"))
+    revisions = list(script.walk_revisions())
+    assert len(revisions) >= 2, "a linha de revisões encolheu; esperava baseline mais F-003"
+    for revision in revisions:
+        with pytest.raises(NotImplementedError):
+            revision.module.downgrade()
+
+
+@requires_postgres
+def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: str) -> None:
+    """As tabelas do ADR-0028 D2 não estão na baseline, e o índice da listagem existe.
+
+    O gate de drift prova que migration e modelo coincidem, mas coincidiriam também se o
+    índice composto faltasse nos DOIS lados. A listagem com cursor opaco de
+    `GET /v1/valuation-rounds` ordena por `(tenant_id, created_at, id)`, e é esse índice
+    que a sustenta.
+    """
+    command.upgrade(build_config(schema_url), BASELINE_REVISION)
+    engine = create_engine(schema_url, future=True)
+    try:
+        assert "valuation_rounds" not in set(inspect(engine).get_table_names())
+        command.upgrade(build_config(schema_url), "head")
+        inspector = inspect(engine)
+        criadas = set(inspector.get_table_names()) - {VERSION_TABLE} - set(BASELINE_TABLES)
+        assert criadas == {"valuation_rounds", "valuation_round_revisions"}
+        indices = {
+            index["name"]: tuple(index["column_names"])
+            for index in inspector.get_indexes("valuation_rounds")
+        }
+        assert indices["ix_valuation_rounds_tenant_created"] == ("tenant_id", "created_at", "id")
     finally:
         engine.dispose()
 
