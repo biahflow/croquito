@@ -2,7 +2,7 @@
 
 Status: Proposed  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-14
+Última revisão: 2026-08-17
 
 Este documento é a referência canônica do contexto delimitado `valuation`
 (`packages/valuation/src/croquito_valuation/` e
@@ -50,6 +50,7 @@ sem tocar o scene graph ([ADR-0016](../adr/0016-valuation-bounded-context.md)).
 | Composição de custo | `CostComposition` / `CompositionLine` | Preço que o orçamentista monta por coeficientes (mão de obra, insumo, equipamento); compilada a catálogo `origin=composition` |
 | Orçamento-base | `Estimate` / `EstimateLine` | Orçamento de pré-licitação com cascata de fontes declarada e proveniência por linha; sem contrato, saldo ou aprovação de medição |
 | Cascata de fontes | `ensure_price_cascade` / `CatalogSource` | Ordem de catálogos declarada por quem monta o orçamento (nunca em código); uma fonte por origem |
+| Rodada de medição | `ValuationRound` | Uma prancha levada do takeoff ao boletim e ao dossiê; hoje é o diretório `--root` do servidor, e é a entidade raiz proposta para `/v1` ([ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md), `Proposed`) |
 
 Vocabulário proibido neste contexto, porque já significa outra coisa no repositório:
 `Measurement*` (cota do scene graph), `*Budget*` (teto de gasto de IA em `providers.py`)
@@ -359,7 +360,9 @@ lexical continua sendo o fallback permanente, com ou sem provider.
   decisões referencia itens por `ti_...` derivado de `plate_id` + rótulo. Versionamento e
   pinagem de pacote por revisão — o equivalente ao `base_version` da cena — é da futura
   sessão autenticada; o CLI não tem esse mecanismo, e essa é uma limitação declarada, não
-  escondida.
+  escondida. O desenho dessa sessão passou a existir em rascunho no
+  [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md) (`Proposed`), que propõe uma linha
+  única de `base_version` por rodada no lugar dos digests de artefato.
 - **Sugestão lexical é observação e fallback permanente.** `suggest_codes` só roda sobre
   itens confirmados, prioriza unidade compatível e presença no contrato, nunca confirma;
   item sem candidato sai em `unmatched_item_ids`. O refino do M5 reordena a shortlist,

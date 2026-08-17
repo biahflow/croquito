@@ -9,6 +9,11 @@
 > pode alcançar `READY_FOR_PLANNING` — um plano produzido agora conteria decisões
 > arquiteturais que o Planner não tem autoridade para tomar.
 >
+> Em 2026-08-17 esse desenho passou a existir **como rascunho**:
+> [ADR-0028](../../adr/0028-medicao-na-api-v1-autenticada.md), status `Proposed`. O status
+> desta feature continua `BLOCKED` de propósito — o desbloqueio depende da aceitação humana
+> do ADR, não da existência do rascunho.
+>
 > A entrada correspondente no [roadmap canônico](../../product/ROADMAP.md) ainda não
 > existe. Este contrato registra o escopo conhecido para que a decomposição futura não
 > parta de zero; ele não autoriza execução.

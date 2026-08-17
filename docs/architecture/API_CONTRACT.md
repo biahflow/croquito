@@ -2,7 +2,7 @@
 
 Status: Accepted for MVP  
 Responsável: Backend / Frontend  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-17
 
 Base path: `/v1`  
 Autenticação: JWT bearer OIDC  
@@ -553,6 +553,157 @@ ou não aproximada, `403 FORBIDDEN` quando o papel não puder aprovar tecnicamen
 A resposta retorna a nova revisão aprovada. A `SceneApproval` completa é persistida e
 serializada no pacote CAD. Nunca retorna ou aceita o papel profissional no payload.
 
+## Medição de obra
+
+> **Estado: proposto, não implementado.** Esta seção descreve o contrato decidido em
+> [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md), que está `Proposed`. Nenhuma
+> destas rotas existe em `services/api` hoje: a cadeia de medição roda no servidor de
+> homologação ([ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md)), e a
+> migração é trabalho de [F-003](../features/F-003-medicao-v1-migration/feature.md). Um teste
+> de paridade entre rotas reais e esta página deve tratar a seção como pendente até lá.
+
+A medição de obra é um contexto delimitado próprio
+([ADR-0016](../adr/0016-valuation-bounded-context.md)) e não pende de `job`: a raiz é a
+**rodada** (`ValuationRound`), que leva uma prancha do levantamento de quantitativos ao
+boletim e ao dossiê do aditivo.
+
+Regras que valem em toda a seção:
+
+- Papel exigido: `orcamentista`. Quem revisa takeoff e confirma código não é quem aprova
+  cena; papel ausente devolve `403 FORBIDDEN`.
+- `tenant_id` vem do JWT. Rodada de outro tenant devolve `404 NOT_FOUND`.
+- Toda mutação exige `Idempotency-Key` e `base_version`; versão divergente devolve
+  `409 REVISION_CONFLICT`. A versão é **da rodada**, uma só para toda a cadeia.
+- O carimbo de identidade é sempre do servidor: o corpo recusa `reviewer_id`,
+  `reviewer_role`, `decided_at` e `decision_id`.
+- Invariante de domínio de `packages/valuation` devolve `422 DOMAIN_VALIDATION_FAILED` com o
+  código de domínio (`TAKEOFF_*`, `CALC_*`, `ASSIGNMENT_*`, `AMENDMENT_DOSSIER_*`,
+  `CATALOG_*`) em `details`. A API não republica o vocabulário do domínio.
+
+### `POST /v1/valuation-rounds`
+
+Entrada: `worksite_key`, `worksite_name`, `catalog_upload_id`, `reference_label`.  
+Saída: `round_id`, `version=1`, `status`, `created_at`.
+
+O catálogo de preços é instalado na criação e é imutável na rodada: trocar de catálogo é
+abrir rodada nova. Erros: `422 DOMAIN_VALIDATION_FAILED` para catálogo ilegível ou inválido.
+
+### `GET /v1/valuation-rounds`
+
+Lista as rodadas do tenant, com cursor opaco. Devolve `round_id`, `worksite_key`,
+`reference_label`, `version`, `status` e etapa corrente da cadeia.
+
+### `GET /v1/valuation-rounds/{round_id}`
+
+Estado da rodada: `version`, catálogo instalado, etapas (prancha, extração, takeoff, códigos,
+boletim, dossiê) por presença e digest de artefato, e o estado da extração paga
+(`idle`, `queued`, `running`, `done`, `failed`). É por aqui que o cliente acompanha o
+comando assíncrono da extração.
+
+### `POST /v1/valuation-rounds/{round_id}/plate`
+
+Entrada: `upload_id`, `base_version`. O PDF sobe por `POST /v1/uploads/presign` e nunca em
+JSON. Uma rodada tem no máximo uma prancha: segunda chamada devolve
+`409 ROUND_PLATE_ALREADY_PRESENT`.
+
+Erros: `422 INVALID_UPLOAD` quando o objeto não é PDF legível de prancha,
+`409 REVISION_CONFLICT` por versão movida.
+
+### `GET /v1/valuation-rounds/{round_id}/plate`
+
+Retorna metadados da prancha e `image_url`: URL assinada de curta duração para o PNG
+promovido, sob o prefixo do tenant, nunca registrada em log nem em auditoria. Prancha ainda
+não ingerida devolve `409 ROUND_STAGE_NOT_READY`.
+
+### `POST /v1/valuation-rounds/{round_id}/plate/extractions`
+
+Enfileira a extração paga da legenda e retorna `202` com `extraction_id` e `status`. Exige
+`Idempotency-Key` e `base_version`. Extração já em voo na rodada devolve
+`409 EXTRACTION_IN_PROGRESS`.
+
+A extração é chamada paga de provider: vale a autorização contratual por tenant
+([ADR-0012](../adr/0012-contractual-ai-processing-entitlements.md)),
+`403 AI_PROCESSING_NOT_AUTHORIZED` sem entitlement e `503 PROVIDER_UNAVAILABLE` quando o
+ambiente não tem provider configurado. Fila indisponível devolve
+`503 PROCESSING_UNAVAILABLE`, com o comando repetível. Resposta bruta de provider nunca
+volta ao cliente; o lineage (modelo, tokens, custo) fica no estado da rodada.
+
+### `GET /v1/valuation-rounds/{round_id}/takeoff`
+
+Retorna o `TakeoffPacket` da rodada, com a âncora de evidência por item e o digest do pacote.
+Sem extração publicada devolve `409 ROUND_STAGE_NOT_READY`.
+
+### `GET /v1/valuation-rounds/{round_id}/takeoff/overlay`
+
+Retorna `image_url` assinada do overlay das âncoras sobre a prancha, no mesmo regime da
+imagem da prancha.
+
+### `POST /v1/valuation-rounds/{round_id}/takeoff/decisions`
+
+Entrada: `base_version` e uma decisão do orçamentista sobre um item — `item_id`,
+`action` (`confirm` ou `reject`), `quantity`, `unit`, `note`, `item_note`. `quantity` viaja
+como **texto**, porque quantidade é `Decimal` exato neste contexto e um `float` de JSON já
+teria perdido a escala escrita.
+
+Decisão do orçamentista é imutável: item já confirmado ou rejeitado devolve
+`422 DOMAIN_VALIDATION_FAILED` com `TAKEOFF_ITEM_ALREADY_REVIEWED` em `details`. Correção de
+decisão é ato declarado, não sobrescrita.
+
+A resposta traz a rodada em versão nova, com o pacote regravado e o overlay atualizado.
+
+### `GET /v1/valuation-rounds/{round_id}/code-suggestions`
+
+Shortlist determinística de código SCO por item confirmado
+([ADR-0021](../adr/0021-hybrid-sco-code-retrieval.md)) — observação, nunca decisão. Revisão de
+takeoff incompleta devolve `409 TAKEOFF_REVIEW_INCOMPLETE`; rodada sem catálogo devolve
+`409 CATALOG_REQUIRED`.
+
+### `POST /v1/valuation-rounds/{round_id}/code-suggestions/recompute`
+
+Recalcula a shortlist. Exige `Idempotency-Key` e `base_version`. Shortlist já refinada por
+modelo pago não é recalculada por caminho determinístico:
+`409 SUGGESTIONS_ALREADY_REFINED`.
+
+### `GET /v1/valuation-rounds/{round_id}/catalog/search`
+
+Busca no catálogo instalado. Parâmetros: `q`, `limit`, `arm`. Consulta sem termo utilizável
+devolve `422 CATALOG_QUERY_EMPTY`; rodada sem catálogo, `409 CATALOG_REQUIRED`.
+
+### `GET /v1/valuation-rounds/{round_id}/code-assignments`
+
+Retorna o `CodeAssignmentSet` corrente e os itens confirmados ainda sem decisão de código.
+
+### `POST /v1/valuation-rounds/{round_id}/code-assignments/decisions`
+
+Entrada: `base_version`, `item_id`, `action` (`confirm` ou `reject`), `code` e `note`.
+Confirmação exige `code`; rejeição exige justificativa e recusa `code`. Item não confirmado no
+takeoff, código fora do catálogo instalado, item já decidido ou unidade incompatível sem nota
+devolvem `422 DOMAIN_VALIDATION_FAILED` com o código `ASSIGNMENT_*` correspondente em
+`details`.
+
+### `POST /v1/valuation-rounds/{round_id}/calc`
+
+Constrói o boletim e a memória de cálculo a partir do takeoff confirmado e das confirmações
+de código. Exige `Idempotency-Key` e `base_version`. Não aprova nada: aprovação nominal é ato
+próprio e não pertence a esta rota. Confirmação de código pendente devolve
+`422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`.
+
+### `GET /v1/valuation-rounds/{round_id}/bulletin`
+
+Retorna o boletim com totais **recomputados** na leitura, nunca lidos como estavam gravados.
+Boletim ainda não construído devolve `409 ROUND_STAGE_NOT_READY`.
+
+### `POST /v1/valuation-rounds/{round_id}/amendment-dossier`
+
+Constrói o dossiê do aditivo com os itens confirmados cujo código foi rejeitado, com a
+justificativa humana ([ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)). O
+dossiê não carrega campo de preço por construção. Decisão de código pendente devolve
+`422 DOMAIN_VALIDATION_FAILED` com `AMENDMENT_DOSSIER_ASSIGNMENTS_INCOMPLETE`.
+
+### `GET /v1/valuation-rounds/{round_id}/amendment-dossier`
+
+Retorna o dossiê revalidado. Dossiê não construído devolve `409 ROUND_STAGE_NOT_READY`.
+
 ## Exports
 
 O pacote CAD é sempre construído fora do request path, por comando idempotente no
@@ -609,6 +760,16 @@ nem em auditoria. Artefato de outro tenant retorna `404`.
 `RECTIFICATION_TARGET_STALE`, `RECTIFICATION_ALREADY_APPLIED`,
 `CHAT_SESSION_CLOSED`, `CHAT_TURN_PENDING`, `CHAT_ANCHOR_UNKNOWN`,
 `IDEMPOTENCY_KEY_REUSED`.
+
+Propostos pelo [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md) para a seção
+"Medição de obra", ainda **não** implementados e por isso listados à parte:
+`ROUND_STAGE_NOT_READY`, `ROUND_PLATE_ALREADY_PRESENT`, `EXTRACTION_IN_PROGRESS`,
+`SUGGESTIONS_ALREADY_REFINED`, `TAKEOFF_REVIEW_INCOMPLETE`, `CATALOG_QUERY_EMPTY`,
+`CATALOG_REQUIRED`. Passam para a lista acima quando as rotas existirem.
+
+Os códigos de invariante de `packages/valuation` (`TAKEOFF_*`, `CALC_*`, `ASSIGNMENT_*`,
+`AMENDMENT_DOSSIER_*`, `CATALOG_*`) não são códigos de API: viajam em `details` do
+`DOMAIN_VALIDATION_FAILED`.
 
 ## Paginação e limites
 

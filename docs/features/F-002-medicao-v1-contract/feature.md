@@ -2,12 +2,16 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_HUMAN_REVIEW`
 
 > Contrato aprovado pela decisão humana de 2026-08-17, registrada na
-> [seção 10 de evidence.md de F-001](../F-001-roadmap-clarification/evidence.md). A entrada
-> correspondente no [roadmap canônico](../../product/ROADMAP.md) ainda não existe e é
-> pré-requisito para o planejamento: sem ela, o Planner não tem fonte canônica de seleção.
+> [seção 10 de evidence.md de F-001](../F-001-roadmap-clarification/evidence.md), e executado
+> na mesma data: o rascunho é o [ADR-0028](../../adr/0028-medicao-na-api-v1-autenticada.md)
+> (`Proposed`), a seção de contrato está no
+> [API Contract](../../architecture/API_CONTRACT.md) sob "Medição de obra", e a apuração do
+> inventário e as quatro decisões de portão humano estão em [evidence.md](evidence.md).
+> A feature passa a `DONE` quando o ADR for aceito por ato humano — nenhum agente move um ADR
+> de `Proposed` para `Accepted`.
 
 ## Priority
 
