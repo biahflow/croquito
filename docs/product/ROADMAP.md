@@ -23,7 +23,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-001 | HIGH | IN_PROGRESS | [Clarificação do roadmap canônico e ambientes](../features/F-001-roadmap-clarification/feature.md) |
 | F-002 | HIGH | DONE | [Contrato `/v1` da medição](../features/F-002-medicao-v1-contract/feature.md) |
 | F-003 | HIGH | READY_FOR_PLANNING | [Migração da medição para a API `/v1` autenticada](../features/F-003-medicao-v1-migration/feature.md) |
-| F-004 | HIGH | READY_FOR_HUMAN_REVIEW | [Runner de migrations revisadas](../features/F-004-migrations-runner/feature.md) |
+| F-004 | HIGH | DONE | [Runner de migrations revisadas](../features/F-004-migrations-runner/feature.md) |
 | F-005 | HIGH | DONE | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
@@ -36,8 +36,9 @@ F-004 nasce na mesma data, também por seleção humana: o esquema da medição 
 executar F-003 exige antes o runner de migrations que o
 [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md) registra como requisito de produção em
 falta. A decisão técnica é o [ADR-0029](../adr/0029-runner-de-migrations-revisadas.md),
-**aceito por ato humano em 2026-08-17**, e a implementação foi entregue na mesma data
-(`be82529`); o que resta em F-004 é a revisão humana.
+**aceito por ato humano em 2026-08-17**, e a implementação foi entregue e revisada na mesma
+data. O que resta em F-004 não é código: o primeiro deploy de homologação com o runner, que é
+o que exercita o carimbo contra o banco real.
 
 ## Agora — MVP privado
 

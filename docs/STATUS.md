@@ -826,7 +826,10 @@ criar tabela. O que o runner traz junto:
 - O banco declara em que versão está; banco defasado deixa de ser indistinguível de banco
   em dia.
 - Banco anterior ao runner é **adotado por carimbo**, nunca recriado, e só depois de
-  conferir as colunas mais recentes — se faltar qualquer uma, o comando recusa.
+  conferir que ele corresponde à baseline: todas as tabelas da revisão `0001` e todas as
+  colunas mais recentes — se faltar qualquer uma, o comando recusa. A régua é a baseline, e
+  não o modelo do dia: tabela que nasce em revisão posterior não existe no banco legado e é
+  criada pelo `upgrade` logo depois do carimbo.
 - Modelo alterado sem a migration correspondente reprova o CI: um PostgreSQL de serviço
   aplica as migrations em banco limpo e a diferença contra `Base.metadata` precisa ser vazia.
 - `Database.create_schema()` voltou a ser só `create_all`, para teste e banco novo.

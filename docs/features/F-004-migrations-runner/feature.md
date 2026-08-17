@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > Selecionada por decisão humana de 2026-08-17, na sequência da aceitação do
 > [ADR-0028](../../adr/0028-medicao-na-api-v1-autenticada.md): o esquema da medição está
@@ -17,9 +17,18 @@
 > carimbo conferido e gate de drift com PostgreSQL no CI), com a validação determinística em
 > [evidence.md](evidence.md). O estado ficou desatualizado neste contrato até 2026-08-17, quando
 > a correção foi feita junto do fechamento de
-> [F-005](../F-005-openapi-contract-test/feature.md). A transição para `DONE` depende da revisão
-> humana, que ainda não ocorreu: a evidência registra revisão do modelo, e o risco residual
-> declarado na seção 6 (FK ausente em banco adotado) continua aberto.
+> [F-005](../F-005-openapi-contract-test/feature.md).
+>
+> **Revisão humana concluída em 2026-08-17.** Ela encontrou um defeito latente no portão de
+> adoção — a conferência media o banco legado contra `Base.metadata` em vez da baseline, o que
+> travaria o primeiro deploy assim que F-003 criasse tabela nova — corrigido antes do fechamento
+> (seção 7 do [evidence.md](evidence.md)). `make check` e `make test` verdes, suíte completa com
+> PostgreSQL sem nenhum skip. A feature passa a `DONE`.
+>
+> **Continua aberto, por decisão explícita:** o risco residual da seção 6 do
+> [evidence.md](evidence.md) — `ai_processing_consents.entitlement_id` sem `REFERENCES` em banco
+> adotado. Fechá-lo é trabalho próprio, porque exige levantar linhas órfãs no banco real de
+> homologação antes de escrever a migration.
 
 ## Priority
 

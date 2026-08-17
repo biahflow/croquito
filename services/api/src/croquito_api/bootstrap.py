@@ -15,7 +15,7 @@ Três estados de banco, e o terceiro é o perigoso:
 2. Sem tabela de versão e sem nenhuma tabela conhecida — aplica desde a baseline.
 3. Sem tabela de versão e COM tabelas — é banco anterior ao runner. Ele é carimbado na
    baseline, sem recriar nada, mas só depois de conferir que ele corresponde à baseline:
-   todas as tabelas do modelo presentes, e todas as colunas que o bootstrap aditivo
+   todas as tabelas da revisão `0001` presentes, e todas as colunas que o bootstrap aditivo
    anterior acrescentava também. Se faltar qualquer uma, o comando recusa: carimbar banco
    defasado como se estivesse em dia apenas adiaria a falha.
 
@@ -24,6 +24,13 @@ Três estados de banco, e o terceiro é o perigoso:
    parou de ser atualizado antes de uma tabela nascer tem todas as colunas legadas em dia
    e ainda assim está defasado. Carimbá-lo faria a tabela ausente nunca mais ser criada,
    porque a baseline que a descreve já constaria como aplicada.
+
+   A régua dessa conferência é `BASELINE_TABLES`, e não `Base.metadata`. As duas coincidem
+   enquanto a `0001` for a única revisão, mas divergem na primeira migration que criar
+   tabela — F-003, com as tabelas da medição. Medir contra o modelo faria o portão exigir
+   do banco anterior ao runner uma tabela que ele não pode ter, recusando adoção legítima
+   e parando o deploy, quando essa tabela é criada pelo `upgrade` imediatamente depois do
+   carimbo.
 """
 
 from __future__ import annotations
@@ -43,6 +50,32 @@ BASELINE_REVISION = "0001"
 #: Nome padrão da tabela de controle do Alembic. Não é sobrescrito em lugar nenhum, e
 #: mudá-lo faria todo banco existente parecer não versionado.
 VERSION_TABLE = "alembic_version"
+
+#: Tabelas que a revisão `0001` cria — a régua da adoção. Ela descreve a BASELINE e
+#: deliberadamente **não** acompanha `Base.metadata`: tabela que nasce numa revisão posterior
+#: não existe no banco anterior ao runner e não deve existir, porque é o `upgrade` logo depois
+#: do carimbo que a cria. `test_baseline_tables_corresponde_a_revisao_0001` impede que esta
+#: lista se desencontre da revisão que ela descreve.
+BASELINE_TABLES: frozenset[str] = frozenset(
+    {
+        "ai_processing_consents",
+        "approvals",
+        "audit_events",
+        "chat_sessions",
+        "chat_turns",
+        "export_artifacts",
+        "idempotency_records",
+        "jobs",
+        "projects",
+        "proposal_decisions",
+        "review_decisions",
+        "review_revisions",
+        "scene_revisions",
+        "tenant_ai_processing_entitlements",
+        "trace_solves",
+        "uploads",
+    }
+)
 
 #: Colunas que os blocos de `ALTER TABLE … ADD COLUMN` do bootstrap aditivo acrescentavam.
 #: São elas que distinguem um banco anterior ao runner porém em dia de um banco defasado.
@@ -91,11 +124,15 @@ def build_config(database_url: str) -> Config:
 
 
 def _adoption_gaps(engine: Engine, existing_tables: set[str]) -> list[str]:
-    """O que impede carimbar este banco na baseline: tabela ausente ou coluna ausente."""
+    """O que impede carimbar este banco na baseline: tabela ausente ou coluna ausente.
+
+    A régua é `BASELINE_TABLES`, não `Base.metadata`. Carimbar afirma "este banco está no
+    estado da revisão 0001"; exigir dele uma tabela que só nasce numa revisão posterior
+    recusaria justamente o banco que a adoção existe para aceitar — e essa tabela é criada
+    pelo `upgrade` logo em seguida.
+    """
     inspector = inspect(engine)
-    gaps: list[str] = [
-        f"tabela {table}" for table in sorted(set(Base.metadata.tables) - existing_tables)
-    ]
+    gaps: list[str] = [f"tabela {table}" for table in sorted(BASELINE_TABLES - existing_tables)]
     for table, columns in LEGACY_ADDITIVE_COLUMNS.items():
         if table not in existing_tables:
             continue
@@ -110,7 +147,10 @@ def apply_migrations(engine: Engine, database_url: str) -> str:
     existing_tables = set(inspect(engine).get_table_names())
     if VERSION_TABLE in existing_tables:
         state = "versionado"
-    elif not existing_tables & set(Base.metadata.tables):
+    elif not existing_tables & (BASELINE_TABLES | set(Base.metadata.tables)):
+        # União, e não só a baseline: banco que carregue qualquer tabela conhecida — inclusive
+        # de revisão posterior — não é vazio, e tratá-lo como tal aplicaria DDL sobre schema
+        # que já existe.
         state = "vazio"
     else:
         gaps = _adoption_gaps(engine, existing_tables)

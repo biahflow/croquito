@@ -12,18 +12,22 @@ depende de ordem, e nenhum enxerga o estado deixado por outro.
 from __future__ import annotations
 
 import os
+import types
 import uuid
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import create_engine, event, inspect, make_url, text
+from sqlalchemy import MetaData, create_engine, event, inspect, make_url, text
 
+from croquito_api import bootstrap
 from croquito_api.bootstrap import (
     BASELINE_REVISION,
+    BASELINE_TABLES,
     VERSION_TABLE,
     SchemaAdoptionError,
     apply_migrations,
@@ -196,6 +200,58 @@ def test_tabela_nova_ausente_recusa_mesmo_com_colunas_legadas_em_dia(schema_url:
         assert VERSION_TABLE not in set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
+
+
+@requires_postgres
+def test_tabela_nascida_depois_da_baseline_nao_impede_adocao(
+    schema_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Carimbar afirma "este banco está no estado da 0001" — o modelo de hoje não é a régua.
+
+    Cenário de F-003: a migration que criar as tabelas da medição acrescenta tabela ao modelo
+    sem acrescentá-la à baseline. O banco de homologação, anterior ao runner e em dia com a
+    baseline, não tem essa tabela e não deveria: é o `upgrade` logo depois do carimbo que a
+    cria. Medir a adoção contra `Base.metadata` faria o portão recusar exatamente o banco que
+    ele existe para adotar, e o deploy pararia.
+    """
+    database = Database(schema_url)
+    database.create_schema()
+    database.engine.dispose()
+
+    futuro = MetaData()
+    for table in Base.metadata.tables.values():
+        table.to_metadata(futuro)
+    sa.Table("valuation_rounds_futura", futuro, sa.Column("id", sa.String(36), primary_key=True))
+    monkeypatch.setattr(bootstrap, "Base", types.SimpleNamespace(metadata=futuro))
+
+    engine = create_engine(schema_url, future=True)
+    try:
+        assert apply_migrations(engine, schema_url) == "adotado"
+        with engine.connect() as connection:
+            version = connection.execute(
+                text(f"SELECT version_num FROM {VERSION_TABLE}")
+            ).scalar_one()
+        assert version == BASELINE_REVISION
+    finally:
+        engine.dispose()
+
+
+@requires_postgres
+def test_baseline_tables_corresponde_a_revisao_0001(schema_url: str) -> None:
+    """`BASELINE_TABLES` é dado declarado; este teste impede que ele apodreça.
+
+    A constante descreve o schema da revisão `0001` e **não** acompanha `Base.metadata`. Uma
+    revisão futura que mexesse na baseline, ou um nome escrito errado, passaria despercebido
+    sem esta conferência — e o portão de adoção é justamente o que não pode mentir.
+    """
+    command.upgrade(build_config(schema_url), BASELINE_REVISION)
+    engine = create_engine(schema_url, future=True)
+    try:
+        criadas = set(inspect(engine).get_table_names()) - {VERSION_TABLE}
+    finally:
+        engine.dispose()
+
+    assert criadas == set(BASELINE_TABLES)
 
 
 @requires_postgres

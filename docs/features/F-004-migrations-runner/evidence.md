@@ -1,12 +1,13 @@
 # F-004 — Pacote de evidências
 
-Status: `READY_FOR_HUMAN_REVIEW`
+Status: `DONE`
 Responsável: Engineering
 Última revisão: 2026-08-17
 
-> Implementação entregue em `be82529`. A revisão registrada na seção 5 é a do modelo; a revisão
-> humana que transita a feature para `DONE` continua pendente, junto da decisão sobre o risco
-> residual da seção 6.
+> Implementação entregue em `be82529`. A **revisão humana ocorreu em 2026-08-17** e encontrou um
+> defeito latente no portão de adoção, corrigido antes do fechamento (seção 7). O risco residual
+> da seção 6 permanece aberto por decisão explícita: fechá-lo depende de levantamento no banco
+> real de homologação.
 
 Este documento registra a autorização humana, a baseline e a validação determinística de F-004.
 Ele não é aprovação humana.
@@ -70,6 +71,17 @@ por outro projeto e nenhum contêiner alheio foi derrubado.
 | Runner **dentro da imagem** contra PostgreSQL real | `schema migrado (estado inicial do banco: vazio)` e, na segunda execução, `versionado` |
 | `docker build -f docker/python.Dockerfile` | sucesso; prova que as migrations viajam no pacote instalado |
 
+Revalidação após a correção da revisão humana (seção 7), com PostgreSQL 17 descartável em porta
+própria — nenhum contêiner alheio foi tocado:
+
+| Portão | Resultado |
+| --- | --- |
+| `uv run pytest tests/api/test_migrations.py -v` com PostgreSQL | 10 passed (eram 8) |
+| `uv run pytest` com `CROQUITO_TEST_POSTGRES_URL` | 1298 passed, 0 skipped |
+| `make check` | exit 0 |
+| `make test` sem PostgreSQL | exit 0 — os testes do runner voltam a pular, como projetado |
+| Testes coletados | 1296 → **1298** (+2) |
+
 ## 5. Revisão: achado corrigido antes do commit
 
 A revisão linha a linha encontrou um furo no caminho de adoção, reproduzido por script antes de
@@ -110,3 +122,36 @@ O fechamento é uma migration forward-only que crie a constraint quando ausente.
 escrita aqui porque exige decisão humana sobre linha órfã: se houver `entitlement_id` apontando
 para entitlement inexistente, a criação da FK falha e para o deploy. É trabalho próprio, com o
 levantamento das linhas antes.
+
+**Decisão da revisão humana de 2026-08-17: manter aberto.** Escrever a migration exige antes
+levantar as linhas órfãs no banco real de homologação, o que é ato humano com acesso que nenhuma
+sessão de agente tem. O risco continua registrado aqui, e não em nota de rodapé de commit.
+
+## 7. Revisão humana: defeito no portão de adoção, corrigido antes do fechamento
+
+**Sintoma.** `_adoption_gaps` conferia o banco anterior ao runner contra `Base.metadata`
+**corrente**, exigindo dele toda tabela do modelo de hoje. Como a `0001` é a única revisão, as
+duas listas coincidiam (16 tabelas de cada lado) e nenhum teste acusava.
+
+**Consequência, com gatilho já agendado.** A docstring de `0001_baseline.py` declara que as
+tabelas da medição ficaram de fora de propósito, para F-003. Quando a migration `0002` as criar,
+`Base.metadata` passa a ter 18 tabelas e o banco de homologação — que nunca foi carimbado, porque
+o primeiro deploy com o runner segue sendo ato humano pendente — continua com 16. O runner
+recusaria com `Faltam: tabela valuation_rounds, …` e **pararia o deploy**, mandando "recriar o
+banco ou tratar à mão", quando essas tabelas são exatamente o que o `upgrade` criaria logo depois
+do carimbo. O portão reprovaria o banco que ele existe para adotar.
+
+**Causa.** Confundir duas réguas diferentes. Carimbar afirma "este banco está no estado da
+revisão `0001`" — logo a referência é a baseline, não o modelo. Medir contra o modelo torna o
+portão mais estrito a cada migration nova, e essa estritização não descreve defasagem nenhuma.
+
+**Correção.** `BASELINE_TABLES` declara as 16 tabelas da revisão `0001` e passa a ser a régua da
+adoção; a detecção de banco vazio usa a união da baseline com o modelo, que é mais conservadora.
+Isso é **mais fiel** ao ADR-0029 (D3 fala em conferir contra a baseline) e não contraria nenhuma
+de suas decisões, então não exige ADR novo.
+
+**Prova de que o teste morde.** `test_tabela_nascida_depois_da_baseline_nao_impede_adocao` foi
+escrito antes da correção e reprovou no código antigo exatamente com o sintoma previsto —
+`SchemaAdoptionError: … Faltam: tabela valuation_rounds_futura` — passando depois dela.
+`test_baseline_tables_corresponde_a_revisao_0001` impede que a constante apodreça: ele aplica a
+revisão `0001` num schema limpo e exige igualdade entre as tabelas criadas e a lista declarada.
