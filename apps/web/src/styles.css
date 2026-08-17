@@ -256,9 +256,9 @@ footer {
   font-size: 11px;
 }
 
-/* Navegação para a outra tela do host público (medição), sobre o topbar escuro. O verde
-   da marca é preenchimento e nunca cor de texto: o texto é `--dark-ink-soft` e o estado
-   ativo (hover/foco) sobe para `--dark-ink`, com a borda mais firme. */
+/* Navegação sobre o topbar escuro. O verde da marca é preenchimento e nunca cor de
+   texto: o texto é `--dark-ink-soft` e o estado ativo (hover/foco) sobe para
+   `--dark-ink`, com a borda mais firme. */
 .topbar-link {
   padding: 7px 10px;
   color: var(--dark-ink-soft);
@@ -272,6 +272,26 @@ footer {
 .topbar-link:focus-visible {
   color: var(--dark-ink);
   border-color: var(--dark-line-strong);
+}
+
+/* Alternância entre as jornadas do app (ADR-0028, D9). São botões e não links porque a
+   troca é de estado da casca, sem recarregar a SPA. A jornada aberta é anunciada por
+   `aria-current` e marcada por peso e borda: cor sozinha não indicaria nada a quem não
+   a distingue. */
+.journey-switch {
+  display: flex;
+  gap: 6px;
+  margin-right: 4px;
+}
+
+.journey-switch .topbar-link {
+  background: transparent;
+}
+
+.journey-switch .topbar-link[aria-current="page"] {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+  font-weight: 750;
 }
 
 .demo-pill {
@@ -2135,4 +2155,30 @@ footer {
 .export-controls a {
   color: var(--accent-text);
   font-weight: 750;
+}
+
+/*
+ * Escopo da jornada de medição (ADR-0028, D9). Hoje ele veste só o estado declarado de
+ * "ainda não migrou"; é aqui que a folha de `apps/medicao/src/styles.css` entra quando as
+ * telas chegarem — ANINHADA neste seletor, e não concatenada na raiz.
+ *
+ * Três coisas precisam acontecer na mesma mudança que trouxer aquela folha:
+ *
+ * - O bloco `:root` de tokens NÃO vem junto. Ele é cópia declarada dos tokens do topo
+ *   deste arquivo (o comentário da outra folha diz isso com todas as letras), e a fusão
+ *   existe justamente para acabar com a cópia: token da marca passa a ter um lugar só.
+ * - `.app-shell`, `.topbar`, `.topbar-link` e `.eyebrow` também não vêm: a casca é uma
+ *   só e já os define acima. O que era topbar da medição vira jornada dentro dela.
+ * - `.workspace` é a colisão de verdade — grid de duas colunas aqui, de três lá. Sob
+ *   este escopo, `.jornada-medicao .workspace` (0,2,0) ganha de `.workspace` (0,1,0) sem
+ *   renomear classe de nenhum dos dois lados.
+ */
+.jornada-medicao {
+  padding: 22px 32px;
+}
+
+.jornada-medicao p {
+  max-width: 46rem;
+  margin-top: 6px;
+  color: var(--ink-secondary);
 }
