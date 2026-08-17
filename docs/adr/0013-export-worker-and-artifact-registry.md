@@ -1,6 +1,6 @@
 # ADR-0013: Export DXF executa no worker com registro próprio de artefatos
 
-Status: Proposed  
+Status: Accepted
 Data: 2026-08-10  
 Responsável: Engineering
 

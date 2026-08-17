@@ -1,6 +1,6 @@
 # ADR-0014: Reconhecimento nominal de critério de escopo na aprovação
 
-Status: Proposed  
+Status: Accepted
 Data: 2026-08-10  
 Responsável: Product / Engineering
 
