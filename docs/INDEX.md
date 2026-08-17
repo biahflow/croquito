@@ -146,6 +146,7 @@ o desenho AWS é o alvo de produção e não descreve o que está no ar.
 
 ### Engenharia
 
+- [Project Context](engineering/PROJECT_CONTEXT.md)
 - [Local Development](engineering/LOCAL_DEVELOPMENT.md)
 - [Coding Standards](engineering/CODING_STANDARDS.md)
 - [Testing Strategy](engineering/TESTING_STRATEGY.md)

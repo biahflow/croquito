@@ -1,8 +1,12 @@
-# Estado do produto
+# Estado do produto (vista derivada)
 
 Status: Active  
 Responsável: Product / Engineering  
 Última revisão: 2026-08-17 (M8 do contexto de medição)
+
+> Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
+> trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
+> lifecycle e evidências está no [Project Context](engineering/PROJECT_CONTEXT.md).
 
 ## Marco atual
 
@@ -781,7 +785,7 @@ nominal e exportação auditada aberta no AutoCAD — foi percorrido de ponta a 
 no Campo do Guaxindiba em 2026-08-13. O próximo passo de validação é o teste por
 um segundo profissional e a repetição do ciclo nos demais golden cases.
 
-### Roadmap declarado da medição hospedada
+### Contexto de transição da medição hospedada
 
 A homologação em GCP ([ADR-0025](adr/0025-homologacao-em-gcp-cloud-run.md)) hospeda o
 servidor local de medição com autenticação mínima e rodadas em bucket via FUSE

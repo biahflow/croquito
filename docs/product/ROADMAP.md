@@ -4,6 +4,18 @@ Status: Active
 Responsável: Product  
 Última revisão: 2026-08-17
 
+## Uso no ciclo de engenharia
+
+Este é o roadmap canônico do repositório e o equivalente documentado de `ROADMAP.md`
+da Engineering OS. Ele decide **o que** está planejado; não é um Feature Contract nem
+uma autorização de execução. Um item novo selecionado por humano recebe ID estável,
+prioridade, estado do ciclo e, quando existir, referência a
+`docs/features/<feature-id>/feature.md` conforme o
+[Project Context](../engineering/PROJECT_CONTEXT.md).
+
+Os marcos históricos abaixo permanecem como registro de produto. Eles não são
+retroativamente convertidos em features nem selecionados automaticamente por agentes.
+
 ## Agora — MVP privado
 
 - Golden dataset e eval harness.
@@ -102,4 +114,3 @@ Deliberadamente fora do v1, com as portas de extensão já reservadas no modelo:
 - Inferência automática de dimensões inexistentes.
 - Substituição de responsabilidade técnica do engenheiro.
 - BIM/IFC ou modelagem 3D.
-
