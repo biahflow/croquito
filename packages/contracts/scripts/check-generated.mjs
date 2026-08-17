@@ -4,12 +4,24 @@ import { dirname, join } from "node:path";
 import { renderContract } from "./render.mjs";
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), "..");
-const output = join(packageDir, "src", "scene.generated.ts");
-const generated = await renderContract(join(packageDir, "scene.schema.json"));
-const current = await readFile(output, "utf8").catch(() => "");
+const manifest = JSON.parse(
+  await readFile(join(packageDir, "contracts.manifest.json"), "utf8"),
+);
 
-if (current !== generated) {
-  console.error("Contrato TypeScript desatualizado. Execute `make contracts`.");
-  process.exitCode = 1;
+const stale = [];
+for (const entry of manifest) {
+  const schemaPath = join(packageDir, entry.schema);
+  const outputPath = join(packageDir, entry.typescript);
+  const generated = await renderContract(schemaPath);
+  const current = await readFile(outputPath, "utf8").catch(() => "");
+  if (current !== generated) {
+    stale.push(entry.typescript);
+  }
 }
 
+if (stale.length > 0) {
+  for (const path of stale) {
+    console.error(`Contrato TypeScript desatualizado: ${path}. Execute \`make contracts\`.`);
+  }
+  process.exitCode = 1;
+}

@@ -5,7 +5,17 @@
   "type": "module",
   "exports": {
     "./scene": "./src/scene.generated.ts",
-    "./scene.schema.json": "./scene.schema.json"
+    "./scene.schema.json": "./scene.schema.json",
+    "./takeoff-packet": "./src/takeoff-packet.generated.ts",
+    "./takeoff-packet.schema.json": "./schemas/takeoff-packet.schema.json",
+    "./code-suggestions": "./src/code-suggestions.generated.ts",
+    "./code-suggestions.schema.json": "./schemas/code-suggestions.schema.json",
+    "./code-assignments": "./src/code-assignments.generated.ts",
+    "./code-assignments.schema.json": "./schemas/code-assignments.schema.json",
+    "./valuation": "./src/valuation.generated.ts",
+    "./valuation.schema.json": "./schemas/valuation.schema.json",
+    "./amendment-dossier": "./src/amendment-dossier.generated.ts",
+    "./amendment-dossier.schema.json": "./schemas/amendment-dossier.schema.json"
   },
   "scripts": {
     "generate": "node scripts/generate.mjs",

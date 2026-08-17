@@ -1,0 +1,317 @@
+{
+  "$defs": {
+    "CodeCandidate": {
+      "additionalProperties": false,
+      "description": "Um código do catálogo elegível para um item, com o porquê da ordem.\n\nA forma exigida do `code` depende de `catalog_origin`, pelo mesmo desenho de\n`PriceCatalogEntry.validate_code_for_origin`: origem `sco` exige o padrão SCO estrito\n(não a forma nua do contrato — só código com preço publicado é candidato, e a forma nua\nnunca tem preço), as demais o superset estrutural não-SCO. Os defaults (`sco`/`None`)\npreservam byte a byte todo artefato M1-M7 relido sem os campos novos.\n\n`catalog_sha256` é a proveniência do candidato quando a shortlist nasce de uma CASCATA\nde fontes (orçamento-base, `suggest_codes_over_cascade`): com um catálogo só, o digest\njá está no cabeçalho do conjunto e o campo continua vazio.\n\n`refinement_note` só existe depois de `apply_refinement`: é a justificativa do refino\npago para a ordem publicada, anotada no candidato que ficou em primeiro. Ela é\nobservação anexada ao candidato, nunca um campo que altere preço, unidade ou score.",
+      "properties": {
+        "catalog_origin": {
+          "$ref": "#/$defs/PriceOrigin",
+          "default": "sco"
+        },
+        "catalog_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catalog Sha256"
+        },
+        "code": {
+          "maxLength": 30,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "in_contract": {
+          "title": "In Contract",
+          "type": "boolean"
+        },
+        "lexical_score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Lexical Score",
+          "type": "number"
+        },
+        "refinement_note": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Refinement Note"
+        },
+        "status": {
+          "const": "suggested",
+          "default": "suggested",
+          "title": "Status",
+          "type": "string"
+        },
+        "unit": {
+          "maxLength": 20,
+          "minLength": 1,
+          "title": "Unit",
+          "type": "string"
+        },
+        "unit_compatible": {
+          "title": "Unit Compatible",
+          "type": "boolean"
+        },
+        "unit_price": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Unit Price",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "description",
+        "unit",
+        "unit_price",
+        "unit_compatible",
+        "in_contract",
+        "lexical_score"
+      ],
+      "title": "CodeCandidate",
+      "type": "object"
+    },
+    "CodeSuggestion": {
+      "additionalProperties": false,
+      "description": "As sugestões elegíveis de um item, já ordenadas e cortadas em `max_candidates_per_item`.",
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/CodeCandidate"
+          },
+          "minItems": 1,
+          "title": "Candidates",
+          "type": "array"
+        },
+        "item_id": {
+          "pattern": "^ti_[a-f0-9]{16}$",
+          "title": "Item Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "candidates"
+      ],
+      "title": "CodeSuggestion",
+      "type": "object"
+    },
+    "PriceOrigin": {
+      "description": "Fonte de preço de um catálogo: onde a cotação nasceu.\n\nRegra da orçamentista (M8): em obra LICITADA (`Valuation`/`WorksiteBulletin`), o\ncontrato manda e preço nunca vem da EMOP (`BULLETIN_PRICE_ORIGIN_FORBIDDEN` em\n`calc.py`/`workbook_writer.py`). A cadeia SCO → EMOP → composição só vale\nPRÉ-licitação (orçamento-base, fase futura); um catálogo carrega só UMA origem\n(`CATALOG_ORIGIN_MIXED`) — mistura de fontes acontece na cascata, nunca dentro dele.",
+      "enum": [
+        "sco",
+        "emop",
+        "composition"
+      ],
+      "title": "PriceOrigin",
+      "type": "string"
+    },
+    "SuggestionRefinement": {
+      "additionalProperties": false,
+      "description": "Lineage da chamada paga que reordenou a shortlist de uma prancha.\n\nGuarda o suficiente para reproduzir a auditoria da ordem publicada — quem respondeu,\ncom qual modelo, sob qual versão de prompt e sobre qual payload (`input_digest` é o\nsha256 do texto enviado). `provider` é uma string simples de propósito: o `ADR-0016`\nproíbe este pacote de importar o worker, então o enum de provider fica do lado de lá e\naqui entra só o valor dele.",
+      "properties": {
+        "input_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Input Digest",
+          "type": "string"
+        },
+        "model_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "prompt_version": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Prompt Version",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model_id",
+        "prompt_version",
+        "input_digest"
+      ],
+      "title": "SuggestionRefinement",
+      "type": "object"
+    },
+    "SuggestionSemantics": {
+      "additionalProperties": false,
+      "description": "Lineage do braço semântico que participou da fusão.\n\nEmbedding não tem prompt: o que identifica a ordem produzida é o modelo, a dimensão do\nespaço e o digest do índice do catálogo usado (`catalog-embeddings.json`). O digest do\npróprio catálogo já viaja em `CodeSuggestionSet.catalog_sha256`, e é o índice que fica\namarrado a ele — trocar de índice sem trocar de catálogo aparece aqui.\n\n`provider` é string simples pelo mesmo motivo de `SuggestionRefinement.provider`: o\n`ADR-0016` proíbe este pacote de importar o enum de provider do worker.",
+      "properties": {
+        "dims": {
+          "maximum": 8192,
+          "minimum": 1,
+          "title": "Dims",
+          "type": "integer"
+        },
+        "index_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Index Sha256",
+          "type": "string"
+        },
+        "model_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model_id",
+        "dims",
+        "index_sha256"
+      ],
+      "title": "SuggestionSemantics",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.croquito.local/valuation/code-suggestions/1.1.0.json",
+  "additionalProperties": false,
+  "description": "Pacote de sugestões de uma prancha: observação, nunca decisão.\n\n`suggester_version` conta a origem da ordem publicada, em duas dimensões independentes:\nquem MONTOU a shortlist (lexical determinístico ou fusão híbrida) e se ela foi\n**reordenada** depois por provider pago (sufixo `+llm-rerank-v1`). Os dois blocos de\nlineage seguem a mesma regra de existir se e somente se o estágio aconteceu:\n`refinement` para a chamada de refino, `semantic` para o braço de embeddings. É o que\nimpede o artefato de dizer \"refinado\" ou \"híbrido\" sem lineage — ou de carregar lineage\nde uma chamada que não aconteceu.\n\nO `Literal` de `suggester_version` aceita `hybrid-sco-suggester-v1` E\n`hybrid-sco-suggester-v2` (mais as formas `+llm-rerank-v1` de ambas): um artefato\ngravado antes do bump para `v2` (rodada 2.2, amortecimento de ruído de legenda)\ncontinua válido ao ser relido, e `validate_semantic_lineage` reconhece as duas versões\ncomo híbridas pelo prefixo de família `SCO_HYBRID_SUGGESTER_FAMILY`, não pela versão\ncorrente — só a produção NOVA escreve `v2`.\n\nCom `lexical-cascade-sco-suggester-v1` (orçamento-base, `suggest_codes_over_cascade`) o\nconjunto abrange mais de um catálogo: `catalog_sha256` do cabeçalho é o do catálogo\n**cabeça** da cascata e a proveniência autoritativa passa a ser a de cada candidato\n(`CodeCandidate.catalog_origin`/`catalog_sha256`). O cabeçalho continua existindo\nporque ele amarra o conjunto à rodada; ele não afirma que todo candidato veio dali.",
+  "properties": {
+    "catalog_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Catalog Sha256",
+      "type": "string"
+    },
+    "contract_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Contract Sha256"
+    },
+    "image_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Image Sha256",
+      "type": "string"
+    },
+    "page_number": {
+      "minimum": 1,
+      "title": "Page Number",
+      "type": "integer"
+    },
+    "plate_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Plate Id",
+      "type": "string"
+    },
+    "refinement": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SuggestionRefinement"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "safety_notes": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 3,
+      "title": "Safety Notes",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.1.0",
+      "default": "1.1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "semantic": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SuggestionSemantics"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "suggester_version": {
+      "default": "lexical-sco-suggester-v1",
+      "enum": [
+        "lexical-sco-suggester-v1",
+        "lexical-sco-suggester-v1+llm-rerank-v1",
+        "lexical-cascade-sco-suggester-v1",
+        "hybrid-sco-suggester-v1",
+        "hybrid-sco-suggester-v1+llm-rerank-v1",
+        "hybrid-sco-suggester-v2",
+        "hybrid-sco-suggester-v2+llm-rerank-v1"
+      ],
+      "title": "Suggester Version",
+      "type": "string"
+    },
+    "suggestions": {
+      "items": {
+        "$ref": "#/$defs/CodeSuggestion"
+      },
+      "title": "Suggestions",
+      "type": "array"
+    },
+    "unmatched_item_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unmatched Item Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "plate_id",
+    "page_number",
+    "image_sha256",
+    "catalog_sha256",
+    "suggestions",
+    "unmatched_item_ids",
+    "safety_notes"
+  ],
+  "title": "Croquito Code Suggestion Set",
+  "type": "object"
+}

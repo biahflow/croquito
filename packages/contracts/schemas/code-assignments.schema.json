@@ -1,0 +1,191 @@
+{
+  "$defs": {
+    "CodeAssignment": {
+      "additionalProperties": false,
+      "description": "Resultado imutável da confirmação/rejeição de código de um item.\n\n`catalog_sha256` carrega adiante a fonte citada na confirmação (vazio quando a rodada\ntem um catálogo só, como em toda a medição licitada). É por ele que o orçamento-base\nsabe, linha a linha, de qual tabela o preço veio — `build_worksite_estimate` exige a\ncitação e recusa a que não estiver na cascata.",
+      "properties": {
+        "catalog_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catalog Sha256"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code"
+        },
+        "decision": {
+          "$ref": "#/$defs/ReviewerDecision"
+        },
+        "item_id": {
+          "pattern": "^ti_[a-f0-9]{16}$",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "confirmed",
+            "rejected"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "unit_compatible": {
+          "title": "Unit Compatible",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "item_id",
+        "status",
+        "unit_compatible",
+        "decision"
+      ],
+      "title": "CodeAssignment",
+      "type": "object"
+    },
+    "ReviewerDecision": {
+      "additionalProperties": false,
+      "description": "Decisão humana rastreável do orçamentista.\n\nDuplicação local deliberada do `HumanDecision` do contexto de cena: o ADR-0016 mantém\nos dois contextos separados, e uma decisão sobre medição não é uma decisão sobre\ngeometria. O que se repete é a forma, não o significado.",
+      "properties": {
+        "action": {
+          "enum": [
+            "confirm",
+            "reject"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        },
+        "decision_id": {
+          "pattern": "^vd_[a-f0-9]{16}$",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "reviewer_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Reviewer Id",
+          "type": "string"
+        },
+        "reviewer_role": {
+          "const": "orcamentista",
+          "title": "Reviewer Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision_id",
+        "action",
+        "reviewer_id",
+        "reviewer_role",
+        "decided_at"
+      ],
+      "title": "ReviewerDecision",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.croquito.local/valuation/code-assignments/1.0.0.json",
+  "additionalProperties": false,
+  "description": "Conjunto imutável de confirmações/rejeições de código de uma prancha.",
+  "properties": {
+    "assignments": {
+      "items": {
+        "$ref": "#/$defs/CodeAssignment"
+      },
+      "title": "Assignments",
+      "type": "array"
+    },
+    "catalog_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Catalog Sha256",
+      "type": "string"
+    },
+    "contract_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Contract Sha256"
+    },
+    "image_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Image Sha256",
+      "type": "string"
+    },
+    "page_number": {
+      "minimum": 1,
+      "title": "Page Number",
+      "type": "integer"
+    },
+    "plate_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Plate Id",
+      "type": "string"
+    },
+    "safety_notes": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "title": "Safety Notes",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "plate_id",
+    "page_number",
+    "image_sha256",
+    "catalog_sha256",
+    "assignments",
+    "safety_notes"
+  ],
+  "title": "Croquito Code Assignment Set",
+  "type": "object"
+}

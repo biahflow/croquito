@@ -60,7 +60,7 @@ dev-worker-fixtures:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run croquito-demo local-worker-once --fixtures
 
 contracts:
-	uv run python -m croquito_core.schema_export --output packages/contracts/scene.schema.json
+	uv run python -m croquito_core.schema_export --output-dir packages/contracts
 	npm run contracts:generate
 
 # Regenera o snapshot versionado do OpenAPI (tests/api/openapi.snapshot.json) a partir da
@@ -75,7 +75,7 @@ check:
 	uv run ruff format --check .
 	uv run mypy packages/core/src packages/valuation/src services/api/src services/worker/src tests
 	uv run python scripts/check_docs.py
-	uv run python -m croquito_core.schema_export --check packages/contracts/scene.schema.json
+	uv run python -m croquito_core.schema_export --check-dir packages/contracts
 	npm run contracts:check
 	npm run web:check
 	npm run medicao:check

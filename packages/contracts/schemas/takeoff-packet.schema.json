@@ -1,0 +1,316 @@
+{
+  "$defs": {
+    "PlateBox": {
+      "additionalProperties": false,
+      "description": "Espelho de `PixelBox`: recorte em pixels da prancha onde o item foi lido.",
+      "properties": {
+        "bottom": {
+          "exclusiveMinimum": 0,
+          "title": "Bottom",
+          "type": "integer"
+        },
+        "left": {
+          "minimum": 0,
+          "title": "Left",
+          "type": "integer"
+        },
+        "right": {
+          "exclusiveMinimum": 0,
+          "title": "Right",
+          "type": "integer"
+        },
+        "top": {
+          "minimum": 0,
+          "title": "Top",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "left",
+        "top",
+        "right",
+        "bottom"
+      ],
+      "title": "PlateBox",
+      "type": "object"
+    },
+    "PlateEvidence": {
+      "additionalProperties": false,
+      "description": "Espelho de `EvidenceRegion`: âncora da prancha para a linha da legenda lida.",
+      "properties": {
+        "bbox": {
+          "$ref": "#/$defs/PlateBox"
+        },
+        "coordinate_space": {
+          "const": "source_image_pixels",
+          "default": "source_image_pixels",
+          "title": "Coordinate Space",
+          "type": "string"
+        },
+        "image_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Image Sha256",
+          "type": "string"
+        },
+        "page_number": {
+          "minimum": 1,
+          "title": "Page Number",
+          "type": "integer"
+        },
+        "plate_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Plate Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plate_id",
+        "page_number",
+        "image_sha256",
+        "bbox"
+      ],
+      "title": "PlateEvidence",
+      "type": "object"
+    },
+    "ReviewerDecision": {
+      "additionalProperties": false,
+      "description": "Decisão humana rastreável do orçamentista.\n\nDuplicação local deliberada do `HumanDecision` do contexto de cena: o ADR-0016 mantém\nos dois contextos separados, e uma decisão sobre medição não é uma decisão sobre\ngeometria. O que se repete é a forma, não o significado.",
+      "properties": {
+        "action": {
+          "enum": [
+            "confirm",
+            "reject"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        },
+        "decision_id": {
+          "pattern": "^vd_[a-f0-9]{16}$",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "reviewer_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Reviewer Id",
+          "type": "string"
+        },
+        "reviewer_role": {
+          "const": "orcamentista",
+          "title": "Reviewer Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision_id",
+        "action",
+        "reviewer_id",
+        "reviewer_role",
+        "decided_at"
+      ],
+      "title": "ReviewerDecision",
+      "type": "object"
+    },
+    "TakeoffItem": {
+      "additionalProperties": false,
+      "description": "Uma linha da legenda quantificada, do estado observado ao confirmado pelo orçamentista.\n\nEspelho de `DimensionReading`. `source` é a porta discriminada reservada no roadmap\n(`docs/product/ROADMAP.md`) para quando o quantitativo puder nascer do scene graph\naprovado em vez da extração de legenda.",
+      "properties": {
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewerDecision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "evidence": {
+          "$ref": "#/$defs/PlateEvidence"
+        },
+        "extractor": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Extractor",
+          "type": "string"
+        },
+        "extractor_version": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Extractor Version",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^ti_[a-f0-9]{16}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "quantity": {
+          "anyOf": [
+            {
+              "gt": 0,
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantity"
+        },
+        "raw_text": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Raw Text",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "legend_extraction",
+            "manual"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/TakeoffItemStatus"
+        },
+        "unit": {
+          "maxLength": 20,
+          "minLength": 1,
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "evidence",
+        "raw_text",
+        "label",
+        "unit",
+        "source",
+        "extractor",
+        "extractor_version",
+        "status"
+      ],
+      "title": "TakeoffItem",
+      "type": "object"
+    },
+    "TakeoffItemStatus": {
+      "description": "Espelho de `ReadingStatus`: estado de revisão de uma linha da legenda.\n\n`AMBIGUOUS` é a linha cuja extração identificou o elemento mas não conseguiu ler a\nquantidade — por isso ela nunca carrega `quantity`.",
+      "enum": [
+        "proposed",
+        "ambiguous",
+        "confirmed",
+        "rejected"
+      ],
+      "title": "TakeoffItemStatus",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.croquito.local/valuation/takeoff-packet/1.0.0.json",
+  "additionalProperties": false,
+  "description": "Pacote de takeoff de uma prancha: espelho de `ReviewPacket`.\n\nO JSON canônico é a fonte de verdade da extração; `safety_status` fixo lembra que a\ndecisão do orçamentista continua obrigatória e nada aqui é quantitativo aprovado.",
+  "properties": {
+    "image_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Image Sha256",
+      "type": "string"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/TakeoffItem"
+      },
+      "minItems": 1,
+      "title": "Items",
+      "type": "array"
+    },
+    "page_number": {
+      "minimum": 1,
+      "title": "Page Number",
+      "type": "integer"
+    },
+    "plate_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Plate Id",
+      "type": "string"
+    },
+    "safety_notes": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "title": "Safety Notes",
+      "type": "array"
+    },
+    "safety_status": {
+      "const": "human_review_required",
+      "default": "human_review_required",
+      "title": "Safety Status",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_pdf_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Source Pdf Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "plate_id",
+    "page_number",
+    "image_sha256",
+    "source_pdf_sha256",
+    "items",
+    "safety_notes"
+  ],
+  "title": "Croquito Takeoff Packet",
+  "type": "object"
+}
