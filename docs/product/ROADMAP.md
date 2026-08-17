@@ -35,8 +35,8 @@ medição existe em `/v1`: a decisão está tomada, a implementação não come�
 F-004 nasce na mesma data, também por seleção humana: o esquema da medição está decidido, mas
 executar F-003 exige antes o runner de migrations que o
 [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md) registra como requisito de produção em
-falta. A decisão técnica é o [ADR-0029](../adr/0029-runner-de-migrations-revisadas.md), ainda
-`Proposed`.
+falta. A decisão técnica é o [ADR-0029](../adr/0029-runner-de-migrations-revisadas.md),
+**aceito por ato humano em 2026-08-17**.
 
 ## Agora — MVP privado
 

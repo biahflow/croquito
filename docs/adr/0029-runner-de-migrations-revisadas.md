@@ -1,6 +1,6 @@
 # ADR-0029: Runner de migrations revisadas com Alembic
 
-Status: Proposed  
+Status: Accepted  
 Data: 2026-08-17  
 Responsável: Engineering
 

@@ -9,9 +9,9 @@
 > decidido, e a ausência de runner é o portão que separa planejar
 > [F-003](../F-003-medicao-v1-migration/feature.md) de executá-la.
 >
-> A decisão técnica está no rascunho [ADR-0029](../../adr/0029-runner-de-migrations-revisadas.md),
-> status `Proposed`. A implementação não começa antes da aceitação humana desse ADR — o guardrail
-> global de banco proíbe introduzir tecnologia de banco sem ADR.
+> A decisão técnica é o [ADR-0029](../../adr/0029-runner-de-migrations-revisadas.md),
+> **aceito por ato humano em 2026-08-17**. O guardrail global de banco, que proíbe introduzir
+> tecnologia de banco sem ADR, está satisfeito, e a implementação está liberada.
 
 ## Priority
 
@@ -118,8 +118,8 @@ tabela.
 
 ## Dependencies
 
-- [ADR-0029](../../adr/0029-runner-de-migrations-revisadas.md) — aceitação humana é bloqueante
-  para a implementação.
+- [ADR-0029](../../adr/0029-runner-de-migrations-revisadas.md) — aceito em 2026-08-17; era a
+  dependência bloqueante da implementação.
 - [ADR-0025](../../adr/0025-homologacao-em-gcp-cloud-run.md) (esteira, Neon, job de banco),
   [ADR-0028](../../adr/0028-medicao-na-api-v1-autenticada.md) (esquema que vai usar o runner).
 - `services/api/src/croquito_api/{bootstrap.py,database.py}`, `docker/python.Dockerfile`,
@@ -144,7 +144,7 @@ tabela.
 ## Human Gates
 
 - Aceitação do [ADR-0029](../../adr/0029-runner-de-migrations-revisadas.md) antes de qualquer
-  código. Um agente nunca move um ADR de `Proposed` para `Accepted`.
+  código. Um agente nunca move um ADR de `Proposed` para `Accepted`. **Cumprido em 2026-08-17.**
 - Aprovação deste contrato e criação de sua entrada no roadmap canônico.
 - Primeiro deploy de homologação com o runner: é ele que exercita o caminho de adoção contra o
   banco real.
