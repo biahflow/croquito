@@ -1,8 +1,12 @@
 # F-004 — Pacote de evidências
 
-Status: `IN_PROGRESS`
+Status: `READY_FOR_HUMAN_REVIEW`
 Responsável: Engineering
 Última revisão: 2026-08-17
+
+> Implementação entregue em `be82529`. A revisão registrada na seção 5 é a do modelo; a revisão
+> humana que transita a feature para `DONE` continua pendente, junto da decisão sobre o risco
+> residual da seção 6.
 
 Este documento registra a autorização humana, a baseline e a validação determinística de F-004.
 Ele não é aprovação humana.

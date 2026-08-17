@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_HUMAN_REVIEW`
 
 > Selecionada por decisão humana de 2026-08-17, na sequência da aceitação do
 > [ADR-0028](../../adr/0028-medicao-na-api-v1-autenticada.md): o esquema da medição está
@@ -12,6 +12,14 @@
 > A decisão técnica é o [ADR-0029](../../adr/0029-runner-de-migrations-revisadas.md),
 > **aceito por ato humano em 2026-08-17**. O guardrail global de banco, que proíbe introduzir
 > tecnologia de banco sem ADR, está satisfeito, e a implementação está liberada.
+>
+> **A implementação foi entregue em `be82529`** (Alembic, adoção de banco preexistente por
+> carimbo conferido e gate de drift com PostgreSQL no CI), com a validação determinística em
+> [evidence.md](evidence.md). O estado ficou desatualizado neste contrato até 2026-08-17, quando
+> a correção foi feita junto do fechamento de
+> [F-005](../F-005-openapi-contract-test/feature.md). A transição para `DONE` depende da revisão
+> humana, que ainda não ocorreu: a evidência registra revisão do modelo, e o risco residual
+> declarado na seção 6 (FK ausente em banco adotado) continua aberto.
 
 ## Priority
 
