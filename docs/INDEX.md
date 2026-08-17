@@ -52,6 +52,9 @@ Este arquivo é o roteador de contexto para humanos e agentes. Leia
 4. [ADR-0016](adr/0016-valuation-bounded-context.md)
 5. [ADR-0018](adr/0018-valuation-consolidation-and-balance-semantics.md)
 6. [ADR-0021](adr/0021-hybrid-sco-code-retrieval.md)
+7. [ADR-0020](adr/0020-local-homologation-server-for-valuation.md) (UI local + servidor de homologação)
+8. [ADR-0027](adr/0027-price-source-provenance-and-bid-boundary.md) (fontes de preço, aditivo e pré-licitação)
+9. `apps/medicao/AGENTS.md`
 
 ### Alterar IA
 

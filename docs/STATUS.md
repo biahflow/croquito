@@ -2,7 +2,7 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-13 (M6 do contexto de medição)
+Última revisão: 2026-08-17 (M8 do contexto de medição)
 
 ## Marco atual
 
@@ -683,6 +683,49 @@ O que resta do M6 **não é código**: a homologação real pela orçamentista d
 sobre a rodada da Toca (ato humano). A rodada real está estacionada no elo da
 confirmação de código exatamente para esse ato; se ela preferir decidir a revisão do
 zero, a re-extração paga custa ~US$ 0,05 dentro do teto já autorizado.
+
+### M8 em código: a fronteira licitada × pré-licitação
+
+A regra da orçamentista (2026-08-13) virou mecanismo em três fases
+([ADR-0027](adr/0027-price-source-provenance-and-bid-boundary.md)), todas offline:
+
+- **Dossiê do aditivo (obra licitada).** A lista de "candidatos a aditivo", antes só
+  seção derivada na tela, virou artefato de domínio: `build_amendment_dossier` cruza as
+  rejeições de código com os itens confirmados do takeoff (rejeição na revisão do
+  takeoff nunca é aditivo), exige a nota da rejeição como justificativa, recusa rodada
+  com decisão de código pendente (artefato de fechamento, complemento do boletim) e não
+  tem campo de preço por construção — item de dossiê incoerente com a decisão recusa na
+  releitura. CLI `build-amendment-dossier`, rotas locais `POST /dossier/build` +
+  `GET /dossier` (espelhos do par do boletim) e a tela exibindo o dossiê do servidor,
+  com a lista do cliente rebaixada a prévia declarada. RE-RA segue só leitura; o pedido
+  à prefeitura segue ato humano (VAL-08).
+- **Proveniência de fonte de preço + catálogo EMOP.** `PriceOrigin`
+  (`sco`/`emop`/`composition`) em catálogo e entrada, com default `sco` que relê todo
+  artefato M1–M7 sem migração; um catálogo é uma fonte só (`CATALOG_ORIGIN_MIXED`) e a
+  forma do código é validada pela origem. O guardrail da licitada existe em dois pontos
+  (`BULLETIN_PRICE_ORIGIN_FORBIDDEN` em `build_worksite_bulletin` e no escritor da
+  planilha): preço de EMOP ou composição nunca chega à medição. `import-emop` lê o .DBF
+  (dBASE III, leitor mínimo interno, stdlib) com o layout inteiro como dado
+  (`EmopCatalogLayout`) e fixture sintética fonte-única; o catálogo digital real é pago
+  (assinatura GRE, ato comercial pendente) e o formato real fecha como dado no layout.
+- **Composição manual + orçamento-base.** `CostComposition` com preço unitário sempre
+  recomputado (truncamento conservador por linha, documentado com o caso em que
+  truncar-por-linha ≠ truncar-no-fim) compilada a catálogo `origin=composition` amarrado
+  por digest à fonte (`import-compositions`). O orçamento-base (`build-estimate`) monta
+  o `Estimate` sobre a cascata declarada nos `--catalog` (ordem é dado; origem duplicada
+  recusa), com **proveniência por linha** (origem, digest, data-base — releitura recusa
+  fonte fora da cascata), confirmação citando a fonte (`ASSIGNMENT_CATALOG_REQUIRED`),
+  item sem preço declarado em `unpriced_item_ids` e a mesma memória de cálculo do
+  boletim. Sem contrato, saldo ou aprovação de medição — e com as vias pagas recusando
+  ou degradando declaradamente sobre cascata. Demo determinística
+  `make valuation-estimate-demo` (5 linhas nas três origens, 1 item sem preço) com
+  golden novo; `make valuation-demo` permaneceu byte-idêntico e o id de decisão
+  histórico não mudou (VAL-09).
+
+Portões do M8: `make check` e `make test` verdes ponta a ponta (pytest 1165 → 1277;
+vitest web 346; medição 126 → 127), goldens M1/M4 e matcher intocados. O que resta do
+M8 não é código: a importação do .DBF real da EMOP depende da assinatura GRE, e o
+primeiro dossiê de aditivo real depende da rodada da Toca homologada.
 
 ## Decisões aceitas
 

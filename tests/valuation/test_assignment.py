@@ -7,6 +7,8 @@ o refino inteiro em vez de virarem shortlist nova.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
@@ -15,18 +17,24 @@ import pytest
 from pydantic import ValidationError
 
 from croquito_valuation.assignment import (
+    SCO_CASCADE_SUGGESTER_VERSION,
     SCO_REFINED_SUGGESTER_VERSION,
     SCO_SUGGESTER_VERSION,
+    CodeAssignment,
     CodeAssignmentBatch,
     CodeAssignmentInput,
     CodeAssignmentSet,
+    CodeCandidate,
     CodeSuggestionSet,
     SuggestionConfig,
     SuggestionRefinement,
     SuggestionSemantics,
     apply_code_assignments,
+    apply_code_assignments_over_cascade,
     apply_refinement,
+    ensure_price_cascade,
     suggest_codes,
+    suggest_codes_over_cascade,
 )
 from croquito_valuation.catalog import (
     DomainSynonyms,
@@ -41,7 +49,12 @@ from croquito_valuation.catalog import (
 )
 from croquito_valuation.contract import ContractLine, ContractWorkbook
 from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
-from croquito_valuation.models import PriceCatalog, PriceCatalogEntry, ReviewerDecision
+from croquito_valuation.models import (
+    PriceCatalog,
+    PriceCatalogEntry,
+    PriceOrigin,
+    ReviewerDecision,
+)
 from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
@@ -1208,3 +1221,310 @@ def test_the_refined_set_survives_a_json_round_trip() -> None:
 
     assert restored == refined
     assert restored.schema_version == "1.1.0"
+
+
+# --------------------------------------------------------------------------------------
+# M8: retrocompatibilidade dos campos de fonte (artefato antigo continua legível)
+# --------------------------------------------------------------------------------------
+
+
+def _emop_entry(
+    *,
+    code: str = "EMOP.CE.001",
+    unit: str = "m",
+    description: str = "ALAMBRADO SINTETICO EMOP",
+) -> PriceCatalogEntry:
+    return PriceCatalogEntry(
+        code=code,
+        description=description,
+        unit=unit,
+        unit_price=Decimal("70.00"),
+        family_code="CE",
+        family_name="CERCAS EMOP",
+        subgroup_code="CE02",
+        subgroup_name="ALAMBRADOS EMOP",
+        origin=PriceOrigin.EMOP,
+    )
+
+
+def _emop_catalog(
+    entries: list[PriceCatalogEntry] | None = None, *, source_sha256: str = _OTHER_CATALOG_DIGEST
+) -> PriceCatalog:
+    return PriceCatalog(
+        source_label="CATALOGO EMOP SINTETICO",
+        reference_month="2026-06",
+        source_sha256=source_sha256,
+        entries=entries if entries is not None else [_emop_entry()],
+        origin=PriceOrigin.EMOP,
+    )
+
+
+def test_a_candidate_written_before_m8_is_read_back_as_a_sco_candidate() -> None:
+    """Artefato M1-M7 não tem os campos de fonte; os defaults os relêem sem migração."""
+    candidate = CodeCandidate.model_validate(
+        {
+            "code": "CE04100010(/)",
+            "description": "ALAMBRADO GALVANIZADO",
+            "unit": "m",
+            "unit_price": "50.00",
+            "unit_compatible": True,
+            "in_contract": True,
+            "lexical_score": 0.5,
+            "status": "suggested",
+            "refinement_note": None,
+        }
+    )
+
+    assert candidate.catalog_origin is PriceOrigin.SCO
+    assert candidate.catalog_sha256 is None
+
+
+def test_a_candidate_code_is_validated_against_the_origin_of_its_catalog() -> None:
+    payload = {
+        "code": "EMOP.CE.001",
+        "description": "ALAMBRADO SINTETICO EMOP",
+        "unit": "m",
+        "unit_price": "70.00",
+        "unit_compatible": True,
+        "in_contract": False,
+        "lexical_score": 0.5,
+    }
+
+    with pytest.raises(ValidationError) as raised:
+        CodeCandidate.model_validate(payload)
+
+    assert valuation_error_codes(raised.value) == ["CANDIDATE_CODE_INVALID_FOR_ORIGIN"]
+    assert CodeCandidate.model_validate({**payload, "catalog_origin": "emop"}).code == "EMOP.CE.001"
+
+
+def test_an_assignment_written_before_m8_is_read_back_without_a_cited_source() -> None:
+    assignment = CodeAssignment.model_validate(
+        {
+            "item_id": _ITEM_1,
+            "status": "confirmed",
+            "code": "CE04100010(/)",
+            "unit_compatible": True,
+            "decision": _decision().model_dump(),
+        }
+    )
+
+    assert assignment.catalog_sha256 is None
+
+
+def test_the_single_catalog_flow_keeps_writing_assignments_without_a_source() -> None:
+    """O fluxo da medição não mudou: sem citação na entrada, nada de fonte na saída."""
+    packet = _packet()
+    batch = CodeAssignmentBatch(assignments=[_assignment_input()])
+
+    result = apply_code_assignments(packet, batch, _catalog())
+
+    assert result.assignments[0].catalog_sha256 is None
+    assert result.contract_sha256 is None
+
+
+def test_the_decision_id_of_a_decision_without_a_cited_source_did_not_change() -> None:
+    """O id é o digest do conteúdo da decisão; a chave nova só entra quando existe.
+
+    O gabarito abaixo é a forma HISTÓRICA do conteúdo digerido (sem `catalog_sha256`):
+    incluir a chave com `null` mudaria o id de toda decisão já gravada no M4-M7.
+    """
+    packet = _packet()
+    batch = CodeAssignmentBatch(assignments=[_assignment_input()])
+    canonical = json.dumps(
+        {
+            "item_id": _ITEM_1,
+            "action": "confirm",
+            "code": "CE04100010(/)",
+            "reviewer_id": _REVIEWER,
+            "reviewer_role": "orcamentista",
+            "decided_at": _DECIDED_AT.isoformat(),
+            "note": None,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    expected = f"vd_{hashlib.sha256(canonical.encode()).hexdigest()[:16]}"
+
+    result = apply_code_assignments(packet, batch, _catalog())
+
+    assert result.assignments[0].decision.decision_id == expected
+
+
+def test_citing_the_source_makes_it_another_decision() -> None:
+    packet = _packet()
+    catalog = _catalog()
+    plain = apply_code_assignments(
+        packet, CodeAssignmentBatch(assignments=[_assignment_input()]), catalog
+    )
+    cited = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(assignments=[_assignment_input(catalog_sha256=catalog.source_sha256)]),
+        catalog,
+    )
+
+    assert cited.assignments[0].catalog_sha256 == catalog.source_sha256
+    assert cited.assignments[0].decision.decision_id != plain.assignments[0].decision.decision_id
+
+
+def test_a_cited_source_that_is_not_the_catalog_of_the_round_is_refused() -> None:
+    packet = _packet()
+    batch = CodeAssignmentBatch(
+        assignments=[_assignment_input(catalog_sha256=_OTHER_CATALOG_DIGEST)]
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments(packet, batch, _catalog())
+
+    assert raised.value.code == "ASSIGNMENT_CATALOG_UNKNOWN"
+
+
+def test_a_non_sco_code_without_a_cited_source_is_refused_on_input() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _assignment_input(code="EMOP.CE.001")
+
+    assert valuation_error_codes(raised.value) == ["ASSIGNMENT_CODE_INVALID"]
+
+
+def test_a_non_sco_code_with_a_cited_source_passes_the_structural_check() -> None:
+    decision = _assignment_input(code="EMOP.CE.001", catalog_sha256=_OTHER_CATALOG_DIGEST)
+
+    assert decision.code == "EMOP.CE.001"
+
+
+def test_a_rejection_cannot_cite_a_source() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _assignment_input(action="reject", code=None, catalog_sha256=_CATALOG_DIGEST)
+
+    assert valuation_error_codes(raised.value) == ["ASSIGNMENT_CATALOG_ON_REJECT"]
+
+
+# --------------------------------------------------------------------------------------
+# M8: sugestão e confirmação sobre a cascata de fontes
+# --------------------------------------------------------------------------------------
+
+
+def test_a_cascade_with_two_catalogs_of_the_same_origin_is_refused() -> None:
+    with pytest.raises(ValuationValidationError) as raised:
+        ensure_price_cascade([_catalog(), _catalog(source_sha256=_OTHER_CATALOG_DIGEST)])
+
+    assert raised.value.code == "ESTIMATE_CASCADE_ORIGIN_DUPLICATE"
+
+
+def test_the_cascade_shortlist_keeps_the_declared_order_and_declares_each_source() -> None:
+    packet = _packet()
+    sco = _catalog()
+    emop = _emop_catalog()
+
+    suggestions = suggest_codes_over_cascade(packet, [sco, emop])
+
+    candidates = suggestions.suggestions[0].candidates
+    assert [candidate.catalog_origin for candidate in candidates] == [
+        PriceOrigin.SCO,
+        PriceOrigin.EMOP,
+    ]
+    assert [candidate.catalog_sha256 for candidate in candidates] == [
+        sco.source_sha256,
+        emop.source_sha256,
+    ]
+    assert suggestions.suggester_version == SCO_CASCADE_SUGGESTER_VERSION
+    assert suggestions.catalog_sha256 == sco.source_sha256
+    assert suggestions.contract_sha256 is None
+    # Pré-licitação não tem contrato: nenhum candidato é marcado como contratado.
+    assert all(candidate.in_contract is False for candidate in candidates)
+
+
+def test_an_item_without_a_candidate_in_any_source_stays_unmatched_in_the_cascade() -> None:
+    packet = _packet([_confirmed_item(label="ELEMENTO SEM PARENTESCO LEXICAL ALGUM")])
+
+    suggestions = suggest_codes_over_cascade(
+        packet,
+        [
+            _catalog([_catalog_entry(description="ZZZZZZZZ")]),
+            _emop_catalog([_emop_entry(description="ZZZZZZZZ")]),
+        ],
+    )
+
+    assert suggestions.suggestions == []
+    assert suggestions.unmatched_item_ids == [_ITEM_1]
+
+
+def test_the_cascade_confirmation_records_the_source_of_each_item() -> None:
+    packet = _packet([_confirmed_item(item_id=_ITEM_1), _confirmed_item(item_id=_ITEM_2)])
+    sco = _catalog()
+    emop = _emop_catalog()
+    batch = CodeAssignmentBatch(
+        assignments=[
+            _assignment_input(item_id=_ITEM_1, catalog_sha256=sco.source_sha256),
+            _assignment_input(
+                item_id=_ITEM_2, code="EMOP.CE.001", catalog_sha256=emop.source_sha256
+            ),
+        ]
+    )
+
+    result = apply_code_assignments_over_cascade(packet, batch, [sco, emop])
+
+    assert [assignment.catalog_sha256 for assignment in result.assignments] == [
+        sco.source_sha256,
+        emop.source_sha256,
+    ]
+    # O cabeçalho fica com o catálogo CABEÇA da cascata; a fonte de cada linha é a citada.
+    assert result.catalog_sha256 == sco.source_sha256
+    assert result.contract_sha256 is None
+
+
+def test_the_cascade_confirmation_requires_the_source_to_be_cited() -> None:
+    packet = _packet()
+    batch = CodeAssignmentBatch(assignments=[_assignment_input()])
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments_over_cascade(packet, batch, [_catalog(), _emop_catalog()])
+
+    assert raised.value.code == "ASSIGNMENT_CATALOG_REQUIRED"
+
+
+def test_the_cascade_confirmation_refuses_a_source_outside_the_cascade() -> None:
+    packet = _packet()
+    batch = CodeAssignmentBatch(assignments=[_assignment_input(catalog_sha256="9" * 64)])
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments_over_cascade(packet, batch, [_catalog(), _emop_catalog()])
+
+    assert raised.value.code == "ASSIGNMENT_CATALOG_UNKNOWN"
+
+
+def test_the_cascade_confirmation_refuses_a_code_absent_from_the_cited_source() -> None:
+    """O código existe na cascata, mas em outro catálogo — a citação é que manda."""
+    packet = _packet()
+    emop = _emop_catalog()
+    batch = CodeAssignmentBatch(
+        assignments=[_assignment_input(code="CE04100010(/)", catalog_sha256=emop.source_sha256)]
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments_over_cascade(packet, batch, [_catalog(), emop])
+
+    assert raised.value.code == "ASSIGNMENT_CODE_NOT_IN_CATALOG"
+
+
+def test_the_cascade_confirmation_refuses_an_incompatible_unit_without_note() -> None:
+    packet = _packet()
+    emop = _emop_catalog([_emop_entry(unit="un")])
+    batch = CodeAssignmentBatch(
+        assignments=[_assignment_input(code="EMOP.CE.001", catalog_sha256=emop.source_sha256)]
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments_over_cascade(packet, batch, [_catalog(), emop])
+
+    assert raised.value.code == "ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE"
+
+
+def test_the_cascade_rejection_carries_no_source_at_all() -> None:
+    packet = _packet()
+    batch = CodeAssignmentBatch(assignments=[_assignment_input(action="reject", code=None)])
+
+    result = apply_code_assignments_over_cascade(packet, batch, [_catalog(), _emop_catalog()])
+
+    assert result.assignments[0].status == "rejected"
+    assert result.assignments[0].catalog_sha256 is None

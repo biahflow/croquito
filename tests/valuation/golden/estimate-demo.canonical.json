@@ -1,0 +1,213 @@
+{
+  "address": "RUA SINTETICA 400 — BAIRRO SINTETICO",
+  "calc_sheets": [
+    {
+      "blocks": [
+        {
+          "deductions": [],
+          "label": "QUANTIDADE CONFIRMADA",
+          "operands": [
+            {
+              "name": "QUANTIDADE",
+              "unit": "m2",
+              "value": "61.20"
+            }
+          ],
+          "recipe": "direct_quantity",
+          "subtotal": "61.20"
+        }
+      ],
+      "item_number": "1",
+      "total_quantity": "61.20",
+      "worksite_key": "praca-sintetica-oeste-orcamento"
+    },
+    {
+      "blocks": [
+        {
+          "deductions": [],
+          "label": "QUANTIDADE CONFIRMADA",
+          "operands": [
+            {
+              "name": "QUANTIDADE",
+              "unit": "m2",
+              "value": "1234.50"
+            }
+          ],
+          "recipe": "direct_quantity",
+          "subtotal": "1234.50"
+        }
+      ],
+      "item_number": "2",
+      "total_quantity": "1234.50",
+      "worksite_key": "praca-sintetica-oeste-orcamento"
+    },
+    {
+      "blocks": [
+        {
+          "deductions": [],
+          "label": "ALAMBRADO DA QUADRA SINTETICA",
+          "operands": [
+            {
+              "name": "EXTENSÃO",
+              "unit": "m",
+              "value": "48.75"
+            },
+            {
+              "name": "ALTURA",
+              "unit": "m",
+              "value": "1.20"
+            }
+          ],
+          "recipe": "perimeter_times_height",
+          "subtotal": "58.50"
+        }
+      ],
+      "item_number": "3",
+      "total_quantity": "58.50",
+      "worksite_key": "praca-sintetica-oeste-orcamento"
+    },
+    {
+      "blocks": [
+        {
+          "deductions": [],
+          "label": "QUANTIDADE CONFIRMADA",
+          "operands": [
+            {
+              "name": "QUANTIDADE",
+              "unit": "un",
+              "value": "4"
+            }
+          ],
+          "recipe": "direct_quantity",
+          "subtotal": "4.00"
+        }
+      ],
+      "item_number": "4",
+      "total_quantity": "4.00",
+      "worksite_key": "praca-sintetica-oeste-orcamento"
+    },
+    {
+      "blocks": [
+        {
+          "deductions": [],
+          "label": "QUANTIDADE CONFIRMADA",
+          "operands": [
+            {
+              "name": "QUANTIDADE",
+              "unit": "m2",
+              "value": "18.40"
+            }
+          ],
+          "recipe": "direct_quantity",
+          "subtotal": "18.40"
+        }
+      ],
+      "item_number": "5",
+      "total_quantity": "18.40",
+      "worksite_key": "praca-sintetica-oeste-orcamento"
+    }
+  ],
+  "cascade": [
+    {
+      "origin": "sco",
+      "reference_month": "2026-01",
+      "source_label": "MAPÃO SINTÉTICO FGV06 (fixture)",
+      "source_sha256": "<sha256:catalogo-sco>"
+    },
+    {
+      "origin": "emop",
+      "reference_month": "2026-06",
+      "source_label": "CATALOGO EMOP SINTETICO (fixture)",
+      "source_sha256": "<sha256:catalogo-emop>"
+    },
+    {
+      "origin": "composition",
+      "reference_month": "2026-07",
+      "source_label": "COMPOSICOES SINTETICAS DO ORCAMENTISTA (fixture)",
+      "source_sha256": "<sha256:catalogo-composition>"
+    }
+  ],
+  "image_sha256": "<sha256:prancha-imagem>",
+  "lines": [
+    {
+      "catalog_sha256": "<sha256:catalogo-sco>",
+      "code": "AD04050060(/)",
+      "description": "PISO INTERTRAVADO SINTETICO 10CM TRAFEGO",
+      "item_number": "1",
+      "price_origin": "sco",
+      "quantity": "61.20",
+      "reference_month": "2026-01",
+      "source_label": "MAPÃO SINTÉTICO FGV06 (fixture)",
+      "total": "8029.44",
+      "unit": "m2",
+      "unit_price": "131.20"
+    },
+    {
+      "catalog_sha256": "<sha256:catalogo-composition>",
+      "code": "COMP.GRAMADO.001",
+      "description": "EXECUCAO DE GRAMADO SINTETICO EM PLACAS, INCLUSIVE PREPARO",
+      "item_number": "2",
+      "price_origin": "composition",
+      "quantity": "1234.50",
+      "reference_month": "2026-07",
+      "source_label": "COMPOSICOES SINTETICAS DO ORCAMENTISTA (fixture)",
+      "total": "35491.87",
+      "unit": "m2",
+      "unit_price": "28.75"
+    },
+    {
+      "catalog_sha256": "<sha256:catalogo-sco>",
+      "code": "CE02100010(/)",
+      "description": "ALAMBRADO SINTETICO TELA GALVANIZADA 2POL",
+      "item_number": "3",
+      "price_origin": "sco",
+      "quantity": "58.50",
+      "reference_month": "2026-01",
+      "source_label": "MAPÃO SINTÉTICO FGV06 (fixture)",
+      "total": "7508.47",
+      "unit": "m2",
+      "unit_price": "128.35"
+    },
+    {
+      "catalog_sha256": "<sha256:catalogo-emop>",
+      "code": "EMOP.CE.001",
+      "description": "MOBILIARIO SINTETICO EMOP",
+      "item_number": "4",
+      "price_origin": "emop",
+      "quantity": "4",
+      "reference_month": "2026-06",
+      "source_label": "CATALOGO EMOP SINTETICO (fixture)",
+      "total": "3920.00",
+      "unit": "UN",
+      "unit_price": "980.00"
+    },
+    {
+      "catalog_sha256": "<sha256:catalogo-emop>",
+      "code": "EMOP.AD.001",
+      "description": "PAVIMENTAÇÃO SINTÉTICA EMOP TIPO 1",
+      "item_number": "5",
+      "price_origin": "emop",
+      "quantity": "18.40",
+      "reference_month": "2026-06",
+      "source_label": "CATALOGO EMOP SINTETICO (fixture)",
+      "total": "2271.48",
+      "unit": "M2",
+      "unit_price": "123.45"
+    }
+  ],
+  "page_number": 1,
+  "plate_id": "plate-sintetica-v1",
+  "safety_notes": [
+    "Orçamento-base de PRÉ-licitação: não é medição, não tem contrato nem saldo e não passa pelo portão de exportação da medição.",
+    "Cada linha declara a origem, o catálogo e a data-base do preço; conferir a data-base antes de usar o valor.",
+    "Item confirmado sem preço em nenhuma fonte fica declarado em unpriced_item_ids; ele exige composição nova, nunca preço de item parecido."
+  ],
+  "schema_version": "1.0.0",
+  "source_pdf_sha256": "<sha256:prancha-pdf>",
+  "total_amount": "57221.26",
+  "unpriced_item_ids": [
+    "ti_d16efef092c62fc9"
+  ],
+  "worksite_key": "praca-sintetica-oeste-orcamento",
+  "worksite_name": "PRACA SINTETICA OESTE (ORCAMENTO-BASE)"
+}

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { App } from "./App";
+import { AVISO_DOSSIE_GERADO, AVISO_DOSSIE_PREVIA } from "./labels";
 
 /**
  * Render estático do primeiro estado: sem servidor local, a tela não inventa rodada.
@@ -67,5 +68,19 @@ describe("App", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain('href="/revisao/"');
+  });
+
+  /**
+   * A seção do dossiê do aditivo vive dentro da etapa "códigos", que só renderiza depois
+   * de `takeoff !== null` (resposta do servidor). Sem servidor, nem o botão de gerar o
+   * dossiê nem os dois avisos (prévia/gerado) podem aparecer — nenhum dossiê é fabricado.
+   */
+  it("não mostra o dossiê do aditivo nem seus avisos antes de ler o estado da rodada", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    expect(html).not.toContain("Gerar dossiê do aditivo");
+    expect(html).not.toContain("Regerar dossiê do aditivo");
+    expect(html).not.toContain(AVISO_DOSSIE_PREVIA);
+    expect(html).not.toContain(AVISO_DOSSIE_GERADO);
   });
 });

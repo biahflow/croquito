@@ -393,6 +393,12 @@ pré-marcado), confirma ou rejeita o código de cada item com a descrição comp
 catálogo, busca por palavra-chave sempre à mão e a distinção fornecimento × execução
 sinalizada como dica de leitura declarada; item rejeitado por falta de código no
 SCO/contrato entra na lista visível de candidatos a aditivo (regra da obra licitada).
+Essa lista é prévia calculada na tela — o **dossiê do aditivo** oficial nasce no
+servidor, pelo mesmo gesto de fechamento do boletim: com toda decisão de código
+registrada, "Gerar dossiê do aditivo" grava o artefato com a justificativa de cada
+rejeição (a nota do orçamentista) e a tela passa a exibir a lista do servidor, sem
+preço em nenhum campo — o pedido de RE-RA à prefeitura continua sendo ato humano
+([ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)).
 O boletim e a memória exibem exclusivamente números recomputados pelo servidor, com o
 aviso permanente de que medição sem aprovação não exporta. Identidade e horário da
 decisão são do servidor local; a tela não os envia. Ferramenta local declarada — a

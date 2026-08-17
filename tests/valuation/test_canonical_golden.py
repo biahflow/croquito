@@ -1,6 +1,6 @@
 """O canônico da medição sintética é determinístico e está versionado.
 
-São dois goldens, e eles respondem perguntas diferentes:
+São três goldens, e eles respondem perguntas diferentes:
 
 - `valuation-demo.canonical.json` (M1) descreve a pasta de **uma obra**, sem consolidado
   contratual. O conteúdo comparado é montado pela fixture (catálogo sintético → medição →
@@ -9,19 +9,58 @@ São dois goldens, e eles respondem perguntas diferentes:
 - `valuation-demo-m4.canonical.json` descreve a pasta consolidada que a cadeia completa
   produz — PLANILHA GERAL, RE-RA e um par BM/MEMÓRIA por obra, inclusive a obra que nasce
   do takeoff —, e esse é comparado contra o comando `demo` rodando in-process.
+- `estimate-demo.canonical.json` (M8) descreve o **orçamento-base** que o comando
+  `estimate-demo` publica: as três origens de preço, a proveniência de cada linha, o item
+  que nenhuma fonte precificou e os totais. Ele não é planilha nenhuma — é o `estimate.json`
+  em si, que é a fonte de verdade daquela cadeia.
+
+O golden do orçamento passa por uma canonicalização mínima e declarada: cada digest de
+FONTE vira um rótulo do papel dele (`<sha256:catalogo-emop>`, `<sha256:prancha-pdf>`…). Os
+bytes de duas fontes sintéticas não se repetem entre execuções — o pymupdf grava
+identificadores novos a cada `save` e o openpyxl carimba a hora nos membros do .zip —,
+então fixá-los transformaria o golden num detector de relógio. O que ele fixa é a
+estrutura, os valores e as RELAÇÕES: uma linha que passasse a apontar para outra fonte
+mudaria de rótulo e reprovaria.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from croquito_valuation.canonical import canonicalize_workbook
-from croquito_worker.valuation.cli import run_valuation_demo
+from croquito_worker.valuation.cli import EstimateDemoResult, run_estimate_demo, run_valuation_demo
 from tests.valuation.builders import build_fixture, write_fixture_workbook
 
 GOLDEN_PATH = Path(__file__).parent / "golden" / "valuation-demo.canonical.json"
 GOLDEN_M4_PATH = Path(__file__).parent / "golden" / "valuation-demo-m4.canonical.json"
+GOLDEN_ESTIMATE_PATH = Path(__file__).parent / "golden" / "estimate-demo.canonical.json"
+
+_SHA256_RE = re.compile(r"[a-f0-9]{64}")
+
+
+def canonical_estimate(result: EstimateDemoResult) -> dict[str, object]:
+    """O `estimate.json` da demo com cada digest de fonte trocado pelo papel que ele tem.
+
+    A troca é feita pelos digests que a própria execução produziu, então ela não pode
+    "consertar" uma proveniência errada: um digest que não fosse o da fonte declarada
+    sobraria no texto e a asserção final o pegaria.
+    """
+    labels = {
+        result.estimate.image_sha256: "<sha256:prancha-imagem>",
+        result.estimate.source_pdf_sha256: "<sha256:prancha-pdf>",
+        **{
+            catalog.source_sha256: f"<sha256:catalogo-{catalog.origin.value}>"
+            for catalog in result.cascade
+        },
+    }
+    text = result.estimate.model_dump_json()
+    for digest, label in labels.items():
+        text = text.replace(digest, label)
+    leftover = _SHA256_RE.search(text)
+    assert leftover is None, f"digest não declarado no orçamento: {leftover.group()}"
+    return dict(json.loads(text))
 
 
 def _canonical_of_fixture(output_dir: Path) -> dict[str, object]:
@@ -129,6 +168,43 @@ def test_the_m4_golden_carries_the_consolidation_evidence() -> None:
     amendment = {cell["ref"]: cell for cell in sheets["MAPÃO - PREFEITURA"]["cells"]}
     assert amendment["I4"]["value"] == "1ª RE-RA"
     assert amendment["I5"]["value"] == "5.00"
+
+
+def test_estimate_demo_canonical_matches_the_versioned_golden(tmp_path: Path) -> None:
+    result = run_estimate_demo(tmp_path / "estimate-demo")
+
+    assert canonical_estimate(result) == json.loads(
+        GOLDEN_ESTIMATE_PATH.read_text(encoding="utf-8")
+    )
+
+
+def test_the_estimate_golden_carries_the_three_price_origins_and_the_unpriced_item() -> None:
+    """O que este golden existe para fixar: a fronteira do ADR-0027 em forma de dado.
+
+    Três fontes na mesma cascata, cada linha declarando de qual veio, e o item que nenhuma
+    delas precificou saindo declarado em vez de precificado por semelhança.
+    """
+    golden = json.loads(GOLDEN_ESTIMATE_PATH.read_text(encoding="utf-8"))
+
+    assert [source["origin"] for source in golden["cascade"]] == ["sco", "emop", "composition"]
+    # A ordem é a dos itens confirmados na prancha, não a da cascata: piso e alambrado
+    # ficam no SCO, o gramado sai por composição e o mobiliário/emborrachado pela EMOP.
+    assert [line["price_origin"] for line in golden["lines"]] == [
+        "sco",
+        "composition",
+        "sco",
+        "emop",
+        "emop",
+    ]
+    # Cada linha aponta para a fonte da própria origem, pelo rótulo canonicalizado.
+    for line in golden["lines"]:
+        assert line["catalog_sha256"] == f"<sha256:catalogo-{line['price_origin']}>"
+    # O gramado sai pela composição manual: preço somado de coeficientes, não de tabela.
+    lawn = next(line for line in golden["lines"] if line["price_origin"] == "composition")
+    assert lawn["unit_price"] == "28.75"
+    assert lawn["total"] == "35491.87"
+    assert len(golden["unpriced_item_ids"]) == 1
+    assert golden["total_amount"] == "57221.26"
 
 
 def test_golden_carries_the_truncation_evidence() -> None:

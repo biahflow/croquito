@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
@@ -39,6 +40,13 @@ ITEM_NUMBER_PATTERN: Final = r"^\d{1,3}(\.\d{1,3}){0,3}$"
 WORKSITE_KEY_PATTERN: Final = r"^[a-z0-9][a-z0-9-]{2,63}$"
 REFERENCE_MONTH_PATTERN: Final = r"^\d{4}-\d{2}$"
 SHA256_PATTERN: Final = r"^[a-f0-9]{64}$"
+NON_SCO_CODE_PATTERN: Final = r"^[A-Z0-9][A-Z0-9./()-]{1,29}$"
+"""Superset ESTRUTURAL do código de origem EMOP/composição: maiúsculas e dígitos com
+pontuação limitada (`./()-`), sem espaço, 2 a 30 caracteres. Só garante estrutura — o
+padrão REAL de um código EMOP é dado do layout do importador
+(`EmopCatalogLayout.code_pattern`, `croquito_valuation.emop`) e revalida cada linha na
+fronteira da leitura; mesmo desenho de `WorkbookTemplate.extra_code_patterns` para o
+código contratual nu (`sco.py`, `CONTRACT_CODE_PATTERN`)."""
 
 MAX_DESCRIPTION_LENGTH: Final = 2000
 """Tamanho máximo da descrição copiada do catálogo do cliente.
@@ -84,10 +92,31 @@ class ValuationContractModel(BaseModel):
     )
 
 
-class PriceCatalogEntry(ValuationContractModel):
-    """Item de preço do catálogo público, já normalizado."""
+class PriceOrigin(StrEnum):
+    """Fonte de preço de um catálogo: onde a cotação nasceu.
 
-    code: str = Field(pattern=SCO_CODE_PATTERN)
+    Regra da orçamentista (M8): em obra LICITADA (`Valuation`/`WorksiteBulletin`), o
+    contrato manda e preço nunca vem da EMOP (`BULLETIN_PRICE_ORIGIN_FORBIDDEN` em
+    `calc.py`/`workbook_writer.py`). A cadeia SCO → EMOP → composição só vale
+    PRÉ-licitação (orçamento-base, fase futura); um catálogo carrega só UMA origem
+    (`CATALOG_ORIGIN_MIXED`) — mistura de fontes acontece na cascata, nunca dentro dele.
+    """
+
+    SCO = "sco"
+    EMOP = "emop"
+    COMPOSITION = "composition"
+
+
+class PriceCatalogEntry(ValuationContractModel):
+    """Item de preço do catálogo público, já normalizado.
+
+    `code` não tem mais o formato fixado no `Field`: a forma exigida depende de `origin`
+    (`validate_code_for_origin`), porque só a origem `sco` tem o formato fechado do
+    catálogo público. O default de `origin` (`sco`) preserva byte a byte a validação de
+    todo artefato M1-M7 relido sem o campo novo.
+    """
+
+    code: str = Field(min_length=1, max_length=30)
     description: str = Field(min_length=1, max_length=MAX_DESCRIPTION_LENGTH)
     unit: str = Field(min_length=1, max_length=20)
     unit_price: ExactDecimal = Field(ge=0)
@@ -95,16 +124,29 @@ class PriceCatalogEntry(ValuationContractModel):
     family_name: str = Field(min_length=1, max_length=200)
     subgroup_code: str = Field(min_length=1, max_length=20)
     subgroup_name: str = Field(min_length=1, max_length=200)
+    origin: PriceOrigin = PriceOrigin.SCO
+
+    @model_validator(mode="after")
+    def validate_code_for_origin(self) -> PriceCatalogEntry:
+        pattern = SCO_CODE_PATTERN if self.origin == PriceOrigin.SCO else NON_SCO_CODE_PATTERN
+        if re.fullmatch(pattern, self.code) is None:
+            raise ValuationValidationError(
+                "CATALOG_CODE_INVALID_FOR_ORIGIN",
+                "código do catálogo não tem o formato esperado para a origem declarada",
+                {"code": self.code, "origin": self.origin.value},
+            )
+        return self
 
 
 class PriceCatalog(ValuationContractModel):
-    """Catálogo de preços importado de uma planilha de referência."""
+    """Catálogo de preços importado de uma planilha de referência ou tabela externa."""
 
     id: UUID = Field(default_factory=new_uuid7)
     source_label: str = Field(min_length=1, max_length=200)
     reference_month: str = Field(pattern=REFERENCE_MONTH_PATTERN)
     source_sha256: str = Field(pattern=SHA256_PATTERN)
     entries: list[PriceCatalogEntry] = Field(min_length=1)
+    origin: PriceOrigin = PriceOrigin.SCO
 
     @model_validator(mode="after")
     def validate_unique_codes(self) -> PriceCatalog:
@@ -119,6 +161,18 @@ class PriceCatalog(ValuationContractModel):
                 "CATALOG_DUPLICATE_CODE",
                 "catálogo possui código repetido",
                 {"codes": sorted(set(duplicated))},
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_origin_consistency(self) -> PriceCatalog:
+        mismatched = sorted({entry.code for entry in self.entries if entry.origin != self.origin})
+        if mismatched:
+            raise ValuationValidationError(
+                "CATALOG_ORIGIN_MIXED",
+                "catálogo mistura entradas de mais de uma origem de preço; um catálogo é "
+                "sempre uma fonte só — mistura de fontes acontece na cascata (fase futura)",
+                {"origin": self.origin.value, "codes": mismatched},
             )
         return self
 

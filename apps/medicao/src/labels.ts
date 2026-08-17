@@ -43,6 +43,20 @@ export const AVISO_ADITIVO =
   "pedido de aditivo (RE-RA) para a prefeitura. Esta lista é o insumo dessa conversa.";
 
 /**
+ * Enquanto `GET /dossier` ainda não tem artefato: a lista de candidatos calculada nesta
+ * tela é só prévia, nunca o dossiê. O dossiê nasce no servidor, fecha a rodada (exige
+ * decisão de código para todo item confirmado) e é ele quem instrui o pedido de aditivo.
+ */
+export const AVISO_DOSSIE_PREVIA =
+  "Prévia calculada nesta tela — ainda não é o dossiê. Gere o dossiê para o servidor " +
+  "fechar a lista oficial com a justificativa de cada rejeição.";
+
+/** Mostrado com o dossiê já gravado na rodada: a lista abaixo passou a vir do servidor. */
+export const AVISO_DOSSIE_GERADO =
+  "Dossiê gravado nesta rodada. Ele não precifica nenhum item e não cria nem altera " +
+  "pedido de aditivo (RE-RA) — a solicitação à prefeitura continua sendo ato humano.";
+
+/**
  * Item com `anchor !== "registered"` (`itemAnchor`): a bbox ainda não passou pelo
  * registro fino contra a prancha, então o retângulo não é desenhado — decidir por ele
  * seria confiar numa localização não confirmada.
@@ -229,6 +243,15 @@ const ERROR_MESSAGES: LookupTable = {
   CALC_NO_ITEMS: "Não há item medido para montar o boletim desta obra.",
   MODEL_VALIDATION_FAILED:
     "O documento gravado na rodada não corresponde ao contrato do modelo.",
+  // Dossiê do aditivo.
+  AMENDMENT_DOSSIER_ASSIGNMENTS_INCOMPLETE:
+    "Há item confirmado sem decisão de código; o dossiê não é montado pela metade.",
+  AMENDMENT_DOSSIER_JUSTIFICATION_MISSING:
+    "Há rejeição de código sem nota registrada; a nota é a justificativa do aditivo.",
+  AMENDMENT_DOSSIER_UNKNOWN_ITEM:
+    "Há confirmação de código para um item que não está confirmado no takeoff desta rodada.",
+  AMENDMENT_DOSSIER_PACKET_MISMATCH:
+    "As confirmações de código desta rodada pertencem a outra prancha.",
 };
 
 /**

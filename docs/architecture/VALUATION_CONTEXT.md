@@ -44,12 +44,18 @@ sem tocar o scene graph ([ADR-0016](../adr/0016-valuation-bounded-context.md)).
 | Sugestão de código | `CodeSuggestion` / `CodeCandidate` | Shortlist lexical determinística por item confirmado; observação, nunca decisão |
 | Confirmação de código | `CodeAssignment` | Ato humano rastreável que liga item confirmado a código do catálogo (ou o rejeita) |
 | Plano de cálculo | `CalcPlan` / `CalcBlockPlan` | Decomposição declarada da quantidade confirmada em operandos da memória |
+| Dossiê do aditivo | `AmendmentDossier` / `AmendmentDossierItem` | Itens confirmados no takeoff cujo código foi rejeitado, com a justificativa humana; instrui o pedido de RE-RA e nunca precifica |
+| Origem de preço | `PriceOrigin` | Fonte da cotação de um catálogo: `sco`, `emop` ou `composition`; um catálogo carrega uma origem só |
+| Catálogo EMOP | `EmopCatalogLayout` / `read_emop_catalog` | Tabela estadual paga (assinatura GRE, .DBF) importada com layout como dado; vale só pré-licitação |
+| Composição de custo | `CostComposition` / `CompositionLine` | Preço que o orçamentista monta por coeficientes (mão de obra, insumo, equipamento); compilada a catálogo `origin=composition` |
+| Orçamento-base | `Estimate` / `EstimateLine` | Orçamento de pré-licitação com cascata de fontes declarada e proveniência por linha; sem contrato, saldo ou aprovação de medição |
+| Cascata de fontes | `ensure_price_cascade` / `CatalogSource` | Ordem de catálogos declarada por quem monta o orçamento (nunca em código); uma fonte por origem |
 
 Vocabulário proibido neste contexto, porque já significa outra coisa no repositório:
 `Measurement*` (cota do scene graph), `*Budget*` (teto de gasto de IA em `providers.py`)
 e `Job` (job do pipeline de cena).
 
-## Fluxo dos sete comandos
+## Fluxo dos comandos da cadeia
 
 | # | Comando | O que faz | Marco |
 |---|---|---|---|
@@ -60,6 +66,17 @@ e `Job` (job do pipeline de cena).
 | 5 | `confirm-codes` | Orçamentista confirma ou rejeita código item a item, fail-closed e sem re-decisão | **M4** |
 | 6 | `build-calc` | Monta memória de cálculo e boletim canônicos da obra a partir do takeoff confirmado + códigos confirmados (medição sem aprovação) | **M4** |
 | 7 | `export-valuation` | Render auditado em xlsx, atrás do portão de aprovação e saldo | **M2** |
+| 8 | `build-amendment-dossier` | Materializa o dossiê do aditivo (RE-RA) a partir das rejeições de código de itens confirmados; artefato de fechamento da rodada, nunca precifica | **M8** |
+| 9 | `import-compositions` | Compila as composições manuais (`CompositionSet`, preço sempre recomputado) num catálogo `origin=composition` amarrado por digest à fonte | **M8** |
+| 10 | `build-estimate` | Monta o orçamento-base de pré-licitação sobre a cascata de `--catalog` declarada, com proveniência por linha e item sem preço declarado | **M8** |
+
+`suggest-codes` e `confirm-codes` aceitam `--catalog` repetível desde o M8: com um
+catálogo é a medição de sempre (nenhum comportamento mudou); com vários é o
+orçamento-base — cada candidato e cada confirmação citam a fonte, o consolidado
+contratual é proibido (`ESTIMATE_CASCADE_CONTRACT_FORBIDDEN`), o braço semântico degrada
+declaradamente para lexical (`SEMANTIC_CASCADE_UNSUPPORTED`) e o refino pago recusa
+(`SUGGEST_REFINE_CASCADE_UNSUPPORTED`) em vez de misturar fontes num payload. A demo
+determinística da cadeia é `make valuation-estimate-demo`, com golden próprio.
 
 Ao lado do `import-workbook` completo existe `import-catalog`: lê só a aba de catálogo e
 publica só `catalog.json` + `catalog-import-report.json` (com `consolidado:
@@ -68,6 +85,17 @@ RE-RA, então nunca vê nem contorna o portão semântico do consolidado
 (`CONTRACT_SEMANTICS_DIVERGENT`) — o catálogo é dado de referência para
 `suggest-codes`/`confirm-codes`/`build-calc`, mas medição real exportável continua
 exigindo o `import-workbook` completo.
+
+Na mesma família existe `import-emop` (M8): lê o catálogo EMOP de um arquivo `.DBF`
+(dBASE III, leitor mínimo interno) com o layout inteiro declarado como dado
+(`EmopCatalogLayout`: campos, encoding, regex do código, data-base) e publica
+`catalog.json` com `origin=emop` + `emop-import-report.json`. O catálogo digital EMOP
+real é **pago** (assinatura GRE); nada dele existe no repositório — a fixture é
+sintética e o formato real fecha como dado no layout quando o arquivo existir. Cada
+importação gera um catálogo novo amarrado por digest com `reference_month` próprio;
+não existe troca silenciosa de preço. Esse catálogo **nunca** entra na cadeia da
+medição licitada (ver invariante abaixo)
+([ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)).
 
 Ao lado do `extract-legend` por fixture existe o caminho **pago** da mesma etapa:
 `extract-legend-real` lê a legenda de uma prancha de cliente com um provider externo. Ele
@@ -282,6 +310,34 @@ lexical continua sendo o fallback permanente, com ou sem provider.
   cria nem altera aditivo. Vigente divergindo entre a PLANILHA GERAL e a aba da prefeitura
   recusa a importação, com a divergência classificada como `GENERAL_AMENDED_DIVERGENT` no
   dossiê ([ADR-0018](../adr/0018-valuation-consolidation-and-balance-semantics.md)).
+- **A medição licitada só aceita preço do SCO.** `PriceCatalog`/`PriceCatalogEntry`
+  carregam `origin` (`sco` | `emop` | `composition`, default `sco` — artefatos M1–M7
+  releem sem migração); um catálogo é uma fonte só (`CATALOG_ORIGIN_MIXED`) e a forma
+  do código é validada pela origem (`CATALOG_CODE_INVALID_FOR_ORIGIN`).
+  `build_worksite_bulletin` e o escritor da planilha recusam catálogo de origem
+  diferente de `sco` (`BULLETIN_PRICE_ORIGIN_FORBIDDEN`): item fora do contrato vira
+  dossiê de aditivo, nunca preço de outra tabela — a cadeia SCO → EMOP → composição
+  vale só pré-licitação
+  ([ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)).
+- **O orçamento-base declara a fonte de cada preço.** A cascata é dado (ordem declarada
+  por quem monta o orçamento; origem duplicada recusa `ESTIMATE_CASCADE_ORIGIN_DUPLICATE`),
+  toda confirmação cita o catálogo de onde o código veio (`ASSIGNMENT_CATALOG_REQUIRED` /
+  `ASSIGNMENT_CATALOG_UNKNOWN`) e cada `EstimateLine` carrega origem, digest e data-base —
+  a releitura recusa linha apontando fonte fora da cascata
+  (`ESTIMATE_LINE_SOURCE_UNKNOWN`). Item sem preço em fonte alguma sai declarado em
+  `unpriced_item_ids` (candidato a composição nova), nunca precificado por semelhança. O
+  preço unitário de composição é sempre recomputado com truncamento conservador por linha
+  (`COMPOSITION_TOTAL_MISMATCH`)
+  ([ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)).
+- **O dossiê do aditivo instrui, nunca precifica.** `build_amendment_dossier` cruza as
+  rejeições de código (`CodeAssignment.status == "rejected"`) com os itens confirmados do
+  takeoff — rejeição na revisão do takeoff nunca é aditivo — e exige a nota da rejeição
+  como justificativa (`AMENDMENT_DOSSIER_JUSTIFICATION_MISSING`). É artefato de
+  fechamento: item confirmado sem decisão de código recusa
+  (`AMENDMENT_DOSSIER_ASSIGNMENTS_INCOMPLETE`); dossiê sem nenhuma rejeição é vazio e
+  válido. Nenhum modelo do dossiê tem campo de preço, por construção, e nada aqui cria ou
+  altera `Amendment`
+  ([ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)).
 - **A GERAL gerada fecha com a soma dos boletins.** O valor consolidado do período é
   `TRUNC(Σ quantidade × preço)` por código. Quando isso não bate com a soma dos totais dos
   boletins — o mesmo código medido em mais de uma obra pode derivar um centavo — o escritor
