@@ -19,7 +19,10 @@ Responsável: Engineering / QA / AI
 
 ### Contrato
 
-- OpenAPI snapshots/breaking changes.
+- OpenAPI snapshots/breaking changes: `tests/api/test_openapi_contract.py` compara o
+  documento gerado contra `tests/api/openapi.snapshot.json` e a superfície `/v1` exposta
+  contra o [API Contract](../architecture/API_CONTRACT.md); atualização deliberada do
+  snapshot é `make openapi-snapshot`.
 - Provider adapter contract com fixtures sintéticas.
 - Cada contrato de provider cobre resposta válida, schema inválido, timeout e 429
   sem retry para obter resultado conveniente.

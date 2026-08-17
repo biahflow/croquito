@@ -781,4 +781,8 @@ Os códigos de invariante de `packages/valuation` (`TAKEOFF_*`, `CALC_*`, `ASSIG
 
 - Campos aditivos não quebram `/v1`.
 - Remoção ou mudança semântica exige `/v2` ou período de migração.
-- OpenAPI gerado deve ser comparado em CI para detectar breaking changes.
+- OpenAPI gerado deve ser comparado em CI para detectar breaking changes. O snapshot
+  versionado vive em `tests/api/openapi.snapshot.json`, comparado contra o documento gerado
+  por `tests/api/test_openapi_contract.py`. O mesmo teste compara a superfície `/v1`
+  exposta com esta página. Mudança intencional na superfície da API se atualiza com
+  `make openapi-snapshot`, cujo diff deve ser revisado antes de commitar.

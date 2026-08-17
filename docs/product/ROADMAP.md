@@ -24,7 +24,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-002 | HIGH | DONE | [Contrato `/v1` da medição](../features/F-002-medicao-v1-contract/feature.md) |
 | F-003 | HIGH | READY_FOR_PLANNING | [Migração da medição para a API `/v1` autenticada](../features/F-003-medicao-v1-migration/feature.md) |
 | F-004 | HIGH | READY_FOR_PLANNING | [Runner de migrations revisadas](../features/F-004-migrations-runner/feature.md) |
-| F-005 | HIGH | READY_FOR_SPEC | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
+| F-005 | HIGH | DONE | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002

@@ -44,6 +44,17 @@ obrigatória — o CI compara as duas e reprova divergência.
 4. [HML (job de banco na esteira)](operations/HML.md)
 5. `services/api/AGENTS.md`
 
+### Alterar a superfície da API
+
+Rota `/v1` nova, removida ou alterada em `services/api/src/croquito_api/main.py`? O API
+Contract e o snapshot versionado precisam concordar com a aplicação — o teste de
+paridade compara as duas fontes e reprova divergência.
+
+1. [API Contract](architecture/API_CONTRACT.md) — seção "Compatibilidade"
+2. `tests/api/test_openapi_contract.py` (snapshot + paridade `/v1` × API Contract)
+3. `services/api/AGENTS.md`
+4. [Testing Strategy](engineering/TESTING_STRATEGY.md) — seção "Contrato"
+
 ### Implementar processamento e CAD
 
 1. [Data Flow](architecture/DATA_FLOW.md)

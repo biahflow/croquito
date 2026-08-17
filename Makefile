@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: setup dev dev-api dev-web dev-medicao dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local contracts infra-check
+.PHONY: setup dev dev-api dev-web dev-medicao dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local contracts openapi-snapshot infra-check
 
 setup:
 	uv sync --all-groups
@@ -62,6 +62,13 @@ dev-worker-fixtures:
 contracts:
 	uv run python -m croquito_core.schema_export --output packages/contracts/scene.schema.json
 	npm run contracts:generate
+
+# Regenera o snapshot versionado do OpenAPI (tests/api/openapi.snapshot.json) a partir da
+# própria aplicação, com settings fixos e sintéticos (services/api/src/croquito_api/
+# openapi_export.py). É um ato deliberado: rode só quando a mudança na superfície `/v1` for
+# intencional, e revise o diff. `tests/api/test_openapi_contract.py` é o gate que cobra isso.
+openapi-snapshot:
+	uv run python -m croquito_api.openapi_export --output tests/api/openapi.snapshot.json
 
 check:
 	uv run ruff check .

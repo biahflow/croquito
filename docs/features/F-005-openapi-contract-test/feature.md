@@ -2,11 +2,25 @@
 
 ## Status
 
-`READY_FOR_SPEC`
+`DONE`
 
 > Selecionada em 2026-08-17 como piloto do primeiro ciclo Planner → Builder → Reviewer com
 > os dois harnesses. A entrada correspondente no [roadmap canônico](../../product/ROADMAP.md)
 > foi criada na mesma data; passa a `READY_FOR_PLANNING` quando este contrato for aprovado.
+>
+> **2026-08-17.** O responsável aprovou o contrato e o plano, e decidiu os dois pontos de
+> desenho abertos como `Unknowns`: as 5 divergências preexistentes reveladas pelo gate são
+> congeladas como exceção declarada de baseline (não corrigidas nesta feature), e o snapshot
+> vive em `tests/api/openapi.snapshot.json`, regenerado por alvo `make` próprio
+> (`make openapi-snapshot`). A implementação foi executada sob esse plano e transitou para
+> `READY_FOR_HUMAN_REVIEW`; ver [evidence.md](evidence.md) para a baseline e a validação
+> determinística.
+>
+> **Revisão humana concluída em 2026-08-17**, com um achado corrigido antes do commit (chave de
+> path item lida como método HTTP, seção 6 do [evidence.md](evidence.md)) e as provas de que o
+> gate morde reexecutadas depois da correção. `make check` e `make test` verdes; a feature passa
+> a `DONE`. As 5 divergências de baseline seguem congeladas e pendentes de decisão humana, uma a
+> uma — são trabalho próprio, não pendência desta feature.
 
 ## Priority
 
