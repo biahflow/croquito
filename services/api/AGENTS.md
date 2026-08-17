@@ -21,7 +21,15 @@ chama modelos nem gera DXF no request path.
 - Não retornar provider raw responses.
 - StartExecution persiste intent/IDs antes de responder.
 - Não manter transação de banco durante chamada AWS externa longa.
-- Migrations seguem expand/contract quando houver rolling deploy.
+- Migrations são revisões Alembic em `src/croquito_api/migrations/versions/`, aplicadas por
+  `croquito_api.bootstrap` ([ADR-0029](../../docs/adr/0029-runner-de-migrations-revisadas.md)).
+  São forward-only: `downgrade` não existe em ambiente hospedado.
+- Mudou modelo em `database.py`? Gere a revisão (`make db-revision MESSAGE=...`) e revise o
+  arquivo gerado. O CI compara migrations com `Base.metadata` e reprova divergência.
+- Migrations seguem expand/contract quando houver rolling deploy; remover coluna é trabalho
+  posterior ao que parou de usá-la e exige aprovação humana explícita.
+- `Database.create_schema()` só cria schema do zero (teste e banco novo); não use para
+  evoluir banco existente.
 
 ## Testes mínimos
 

@@ -17,8 +17,6 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     event,
-    inspect,
-    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -457,87 +455,13 @@ class Database:
         self.sessions = sessionmaker(self.engine, expire_on_commit=False)
 
     def create_schema(self) -> None:
-        # `create_all` já é aditivo para TABELA nova (`chat_sessions`/`chat_turns` entram
-        # por aqui, sem DDL própria); os blocos abaixo existem para COLUNA nova em tabela
-        # que um volume local antigo já tem.
+        """Cria o schema do zero: serve a suíte de testes e banco novo, nada além disso.
+
+        Evoluir banco que já existe é trabalho do runner de migrations
+        (`croquito_api.bootstrap`, ADR-0029). Este método não altera tabela existente: em
+        banco desatualizado ele não faz nada, e é o runner que detecta e recusa esse caso.
+        """
         Base.metadata.create_all(self.engine)
-        # The local scaffold predates a migration runner. Keep this additive
-        # upgrade explicit so existing local Docker volumes can adopt the new
-        # job metadata without reset or destructive DDL.
-        existing_columns = {column["name"] for column in inspect(self.engine).get_columns("jobs")}
-        missing_columns = {
-            "page_count": "INTEGER",
-            "failure_code": "VARCHAR(80)",
-        }
-        with self.engine.begin() as connection:
-            for name, definition in missing_columns.items():
-                if name not in existing_columns:
-                    connection.execute(text(f"ALTER TABLE jobs ADD COLUMN {name} {definition}"))
-        review_columns = {
-            column["name"] for column in inspect(self.engine).get_columns("review_revisions")
-        }
-        review_additions = {
-            "proposals_json": "JSON",
-            "calibration_json": "JSON",
-            "proposal_decisions_json": "JSON",
-            "trace_acceptance_json": "JSON",
-            "required_criteria_texts_json": "JSON",
-        }
-        with self.engine.begin() as connection:
-            for name, definition in review_additions.items():
-                if name not in review_columns:
-                    connection.execute(
-                        text(f"ALTER TABLE review_revisions ADD COLUMN {name} {definition}")
-                    )
-        approval_columns = {
-            column["name"] for column in inspect(self.engine).get_columns("approvals")
-        }
-        with self.engine.begin() as connection:
-            if "approval_json" not in approval_columns:
-                connection.execute(text("ALTER TABLE approvals ADD COLUMN approval_json JSON"))
-            # A local volume created before the constraint may hold duplicate versions; the
-            # index creation fails loudly instead of hiding a scene-versioning conflict.
-            connection.execute(
-                text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_scene_version "
-                    "ON scene_revisions (job_id, version)"
-                )
-            )
-        decision_columns = {
-            column["name"] for column in inspect(self.engine).get_columns("review_decisions")
-        }
-        decision_additions = {
-            "decision_id": "VARCHAR(32)",
-            "rectifies_decision_id": "VARCHAR(32)",
-        }
-        with self.engine.begin() as connection:
-            for name, definition in decision_additions.items():
-                if name not in decision_columns:
-                    connection.execute(
-                        text(f"ALTER TABLE review_decisions ADD COLUMN {name} {definition}")
-                    )
-            # Uma revisão de leitura registra um ato por leitura; duplicata num volume
-            # local antigo falha alto aqui em vez de esconder decisão concorrente.
-            connection.execute(
-                text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_review_decision_reading "
-                    "ON review_decisions (review_revision_id, reading_id)"
-                )
-            )
-        authorization_columns = {
-            column["name"] for column in inspect(self.engine).get_columns("ai_processing_consents")
-        }
-        authorization_additions = {
-            "authorization_source": "VARCHAR(32)",
-            "entitlement_id": "VARCHAR(36)",
-            "agreement_reference": "VARCHAR(128)",
-        }
-        with self.engine.begin() as connection:
-            for name, definition in authorization_additions.items():
-                if name not in authorization_columns:
-                    connection.execute(
-                        text(f"ALTER TABLE ai_processing_consents ADD COLUMN {name} {definition}")
-                    )
 
     def session(self) -> Generator[Session, None, None]:
         database_session = self.sessions()

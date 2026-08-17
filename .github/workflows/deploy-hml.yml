@@ -105,9 +105,10 @@ jobs:
       # e na forma separada por espaço o parser do gcloud leria o próprio valor como se
       # fosse outra flag.
       #
-      # `bootstrap.py` é aditivo (`create_all` mais colunas novas declaradas) e não
-      # apaga nada. Ele é o inicializador do ambiente local promovido a HML de forma
-      # declarada; o runner de migrations revisadas é lacuna registrada no ADR-0025.
+      # `bootstrap.py` é o runner de migrations revisadas (ADR-0029): aplica as revisões
+      # que faltam, adota por carimbo o banco anterior ao runner — recusando carimbar um
+      # banco defasado — e é forward-only, sem caminho de `downgrade`. Reverter é apontar
+      # a revisão anterior da imagem (ADR-0025).
       # Falhar aqui **para o deploy**, antes de qualquer revisão nova entrar no ar.
       - name: Inicializa o schema
         run: |

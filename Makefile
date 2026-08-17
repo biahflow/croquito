@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: setup dev dev-api dev-web dev-medicao dev-worker dev-worker-fixtures dev-services down-services db-init check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local contracts infra-check
+.PHONY: setup dev dev-api dev-web dev-medicao dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local contracts infra-check
 
 setup:
 	uv sync --all-groups
@@ -21,8 +21,21 @@ dev-services:
 down-services:
 	docker compose -f docker-compose.local.yml down
 
+# Runner de migrations revisadas (ADR-0029): aplica as revisões que faltam, adota banco
+# anterior ao runner por carimbo e recusa banco defasado. Mesmo comando que o job de banco
+# da esteira executa.
 db-init:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run python -m croquito_api.bootstrap
+
+# Gera revisão nova por autogenerate comparando `Base.metadata` com o banco apontado por
+# CROQUITO_DATABASE_URL. Este é o ÚNICO uso do `alembic.ini` da raiz — o runtime não o lê.
+# O arquivo gerado precisa ser revisto à mão: autogenerate erra em detalhe de índice e
+# tipo, e é a revisão humana que o gate de drift do CI cobra depois.
+db-revision:
+	@test -n "$(MESSAGE)" || { echo "uso: make db-revision MESSAGE=<descricao curta>"; exit 2; }
+	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run alembic revision --autogenerate -m "$(MESSAGE)"
+	uv run ruff check --fix services/api/src/croquito_api/migrations/versions
+	uv run ruff format services/api/src/croquito_api/migrations/versions
 
 dev-api:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run uvicorn croquito_api.main:app --reload --port 8000

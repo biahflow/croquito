@@ -2,7 +2,7 @@
 
 Status: Accepted  
 Responsável: Platform / Engineering  
-Última revisão: 2026-08-14
+Última revisão: 2026-08-17
 
 Fonte única do ambiente hospedado. A decisão e as alternativas estão no
 [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md); o desenho AWS de
@@ -67,8 +67,22 @@ desenvolvimento não é possível — e não é para ser.
 - **Manual**: `workflow_dispatch` (aba Actions → deploy-hml → Run workflow).
 
 A ordem é sempre: construir e publicar as imagens com tag `$GITHUB_SHA` → **job de banco**
-(`croquito-db-init-hml`, bootstrap aditivo) → API → worker → Keycloak → medição → nginx →
-fumaça. Falha no job de banco para o deploy antes de qualquer revisão nova entrar no ar.
+(`croquito-db-init-hml`, runner de migrations) → API → worker → Keycloak → medição → nginx
+→ fumaça. Falha no job de banco para o deploy antes de qualquer revisão nova entrar no ar.
+
+### O job de banco
+
+`python -m croquito_api.bootstrap` é o runner de migrations revisadas decidido no
+[ADR-0029](../adr/0029-runner-de-migrations-revisadas.md): ele aplica com Alembic as
+revisões que faltam, e as revisões viajam dentro do pacote `croquito_api`, na mesma imagem
+da API. Ele reconhece três estados de banco: com controle de versão (aplica o que falta),
+vazio (aplica desde a baseline) e anterior ao runner (**carimba** na baseline, sem recriar
+nada). O terceiro caminho é fail-closed — antes de carimbar, o runner confere que as
+colunas que o bootstrap aditivo acrescentava estão presentes e **recusa** um banco
+defasado em vez de carimbá-lo como se estivesse em dia.
+
+O primeiro deploy com o runner é o que exercita o caminho de carimbo contra o banco real do
+ambiente; a rodada da orçamentista não é recriada em nenhuma hipótese.
 
 Imagem é sempre endereçada pelo SHA do commit; `latest` não é usado em lugar nenhum.
 
@@ -107,10 +121,12 @@ Duas camadas, nesta ordem.
 
 2. **Definitivo** — `git revert` do commit e novo deploy pela esteira.
 
-Ressalva de banco: o bootstrap é **aditivo**, então voltar a revisão anterior da aplicação
-não desfaz coluna criada. Coluna nova é ignorada por código antigo; o que não existe hoje é
-caminho automatizado para alteração ou remoção (lacuna declarada no
-[ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md)).
+Ressalva de banco: as migrations são **forward-only** por decisão
+([ADR-0029](../adr/0029-runner-de-migrations-revisadas.md), D2). Voltar a revisão anterior
+da aplicação não desfaz DDL aplicada, e não existe `downgrade` em ambiente hospedado:
+reverter é apontar a revisão anterior da imagem, e o código antigo precisa tolerar o schema
+novo — que é o que expand/contract garante. Coluna sai em trabalho posterior ao que parou
+de usá-la, nunca no mesmo, e remoção continua exigindo aprovação humana explícita.
 
 ## Fumaça manual
 
@@ -142,4 +158,8 @@ login do dia espere o servidor nascer. É uma escolha de operação, não uma ex
   ausência de `base_version` real e de multi-tenant na medição.
 - **Retenção de sete dias** precisa estar no ciclo de vida dos buckets, e não apenas na
   política escrita.
-- **Migrations revisadas**: o ambiente usa bootstrap aditivo, descrito acima.
+
+A lacuna "migrations revisadas", declarada no
+[ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md) e aberta desde então, foi **fechada**
+pelo [ADR-0029](../adr/0029-runner-de-migrations-revisadas.md): o job de banco descrito
+acima é o runner. O que continua exigindo ato humano é a DDL destrutiva.

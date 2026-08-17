@@ -808,6 +808,34 @@ sendo o caminho real da homologação. A execução é
 [F-003](features/F-003-medicao-v1-migration/feature.md), que a aceitação do ADR levou a
 `READY_FOR_PLANNING`.
 
+### Runner de migrations revisadas
+
+Desde 2026-08-17 o schema do banco evolui por migrations revisadas
+([ADR-0029](adr/0029-runner-de-migrations-revisadas.md), execução em
+[F-004](features/F-004-migrations-runner/feature.md)). O runner é o Alembic, com as revisões
+dentro de `croquito_api.migrations` — distribuídas na mesma imagem da API — e aplicadas por
+`python -m croquito_api.bootstrap`, que é o comando que o job de banco da esteira já
+executava. A revisão `0001` é a baseline: descreve o schema que antes nascia de
+`create_all` mais cinco blocos de `ALTER TABLE` condicional.
+
+Com isso a lacuna declarada no [ADR-0025](adr/0025-homologacao-em-gcp-cloud-run.md) —
+"um runner de migrations revisadas continua sendo requisito de produção" — deixa de existir,
+e [F-003](features/F-003-medicao-v1-migration/feature.md) perde o portão que a impedia de
+criar tabela. O que o runner traz junto:
+
+- O banco declara em que versão está; banco defasado deixa de ser indistinguível de banco
+  em dia.
+- Banco anterior ao runner é **adotado por carimbo**, nunca recriado, e só depois de
+  conferir as colunas mais recentes — se faltar qualquer uma, o comando recusa.
+- Modelo alterado sem a migration correspondente reprova o CI: um PostgreSQL de serviço
+  aplica as migrations em banco limpo e a diferença contra `Base.metadata` precisa ser vazia.
+- `Database.create_schema()` voltou a ser só `create_all`, para teste e banco novo.
+- Migrations são forward-only: não há `downgrade` em ambiente hospedado, e remover coluna
+  segue exigindo aprovação humana explícita.
+
+**Ato humano pendente**: o primeiro deploy de homologação com o runner, que é o que
+exercita o caminho de carimbo contra o banco real do ambiente.
+
 ## Condição para avançar ao processamento real
 
 - PDFs mantidos fora do Git. **Atendido localmente.**

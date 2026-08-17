@@ -2,7 +2,7 @@
 
 Status: Accepted  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-17
 
 Este arquivo é o roteador de contexto para humanos e agentes. Leia
 [STATUS.md](STATUS.md) em seguida e carregue somente o conjunto relevante.
@@ -30,6 +30,18 @@ Este arquivo é o roteador de contexto para humanos e agentes. Leia
 2. [API Contract](architecture/API_CONTRACT.md)
 3. [Processing Workflows](architecture/PROCESSING_WORKFLOWS.md)
 4. [Security](../SECURITY.md)
+5. `services/api/AGENTS.md`
+
+### Alterar o schema do banco
+
+Modelo em `services/api/src/croquito_api/database.py` mudou? A migration correspondente é
+obrigatória — o CI compara as duas e reprova divergência.
+
+1. [ADR-0029](adr/0029-runner-de-migrations-revisadas.md) (runner, adoção de banco antigo,
+   forward-only)
+2. [Domain Model](architecture/DOMAIN_MODEL.md)
+3. [Deployment and Rollback](operations/DEPLOYMENT_AND_ROLLBACK.md)
+4. [HML (job de banco na esteira)](operations/HML.md)
 5. `services/api/AGENTS.md`
 
 ### Implementar processamento e CAD
@@ -76,7 +88,8 @@ o desenho AWS é o alvo de produção e não descreve o que está no ar.
 4. [Processing Workflows](architecture/PROCESSING_WORKFLOWS.md)
 5. [Observability](operations/OBSERVABILITY.md)
 6. [Deployment and Rollback](operations/DEPLOYMENT_AND_ROLLBACK.md)
-7. `infra/AGENTS.md`
+7. [ADR-0029](adr/0029-runner-de-migrations-revisadas.md) (runner de migrations do job de banco)
+8. `infra/AGENTS.md`
 
 ### Revisar segurança e privacidade
 

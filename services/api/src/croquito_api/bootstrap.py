@@ -1,20 +1,136 @@
-"""Inicializa o schema de forma aditiva: ambiente local e homologação.
+"""Aplica as migrations revisadas do schema da API (ADR-0029).
 
-Produção continua exigindo migrations revisadas — este comando cria tabela e coluna
-novas, e não sabe alterar nem remover nada. O uso em homologação é decisão declarada
-(ADR-0025), com o job de banco rodando antes de cada revisão da API; o runner de
-migrations é lacuna registrada no mesmo ADR.
+Este é o comando que o job de banco da esteira executa antes de cada revisão nova da API
+(`.github/workflows/deploy-hml.yml`) e que `make db-init` executa no ambiente local. Ele
+falha fechado: erro aqui para o deploy antes de qualquer código novo entrar no ar.
+
+Em runtime NÃO se usa o CLI do Alembic nem se lê `alembic.ini`. A imagem instala os
+pacotes com `--no-editable`, então não há diretório de trabalho confiável nem arquivo de
+configuração: a configuração é montada em Python e o caminho das migrations é resolvido
+pelo próprio pacote instalado.
+
+Três estados de banco, e o terceiro é o perigoso:
+
+1. Com tabela de versão — aplica o que falta.
+2. Sem tabela de versão e sem nenhuma tabela conhecida — aplica desde a baseline.
+3. Sem tabela de versão e COM tabelas — é banco anterior ao runner. Ele é carimbado na
+   baseline, sem recriar nada, mas só depois de conferir que ele corresponde à baseline:
+   todas as tabelas do modelo presentes, e todas as colunas que o bootstrap aditivo
+   anterior acrescentava também. Se faltar qualquer uma, o comando recusa: carimbar banco
+   defasado como se estivesse em dia apenas adiaria a falha.
+
+   A conferência de TABELA não é redundante com a de coluna. Tabela nova nunca teve bloco
+   de `ALTER` — ela entrava pelo `create_all` do bootstrap antigo —, então um banco que
+   parou de ser atualizado antes de uma tabela nascer tem todas as colunas legadas em dia
+   e ainda assim está defasado. Carimbá-lo faria a tabela ausente nunca mais ser criada,
+   porque a baseline que a descreve já constaria como aplicada.
 """
 
+from __future__ import annotations
+
+import importlib.resources
+
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import Engine, create_engine, inspect
+
 from croquito_api.config import ApiSettings
-from croquito_api.database import Database
+from croquito_api.database import Base
+
+#: Revisão que descreve o schema anterior ao runner; é nela que um banco antigo é carimbado.
+BASELINE_REVISION = "0001"
+
+#: Nome padrão da tabela de controle do Alembic. Não é sobrescrito em lugar nenhum, e
+#: mudá-lo faria todo banco existente parecer não versionado.
+VERSION_TABLE = "alembic_version"
+
+#: Colunas que os blocos de `ALTER TABLE … ADD COLUMN` do bootstrap aditivo acrescentavam.
+#: São elas que distinguem um banco anterior ao runner porém em dia de um banco defasado.
+LEGACY_ADDITIVE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "jobs": ("page_count", "failure_code"),
+    "review_revisions": (
+        "proposals_json",
+        "calibration_json",
+        "proposal_decisions_json",
+        "trace_acceptance_json",
+        "required_criteria_texts_json",
+    ),
+    "approvals": ("approval_json",),
+    "review_decisions": ("decision_id", "rectifies_decision_id"),
+    "ai_processing_consents": (
+        "authorization_source",
+        "entitlement_id",
+        "agreement_reference",
+    ),
+}
+
+
+class SchemaAdoptionError(RuntimeError):
+    """Banco anterior ao runner que não corresponde à baseline; carimbar seria mentir."""
+
+    def __init__(self, missing: list[str]) -> None:
+        self.missing = missing
+        super().__init__(
+            "Banco anterior ao runner de migrations está defasado e NÃO foi carimbado. "
+            "Faltam: " + ", ".join(missing) + ". "
+            "Caminho: recriar o banco (ambiente local, dado sintético) ou tratá-lo à mão "
+            "com aprovação humana antes de rodar este comando de novo (ADR-0029)."
+        )
+
+
+def build_config(database_url: str) -> Config:
+    """Configuração do Alembic sem `alembic.ini`, com as migrations do pacote instalado."""
+    config = Config()
+    config.set_main_option(
+        "script_location", str(importlib.resources.files("croquito_api.migrations"))
+    )
+    # A URL viaja por `attributes` e não por `sqlalchemy.url`: assim ela não é escrita em
+    # nenhum arquivo nem aparece na representação da configuração.
+    config.attributes["sqlalchemy.url"] = database_url
+    return config
+
+
+def _adoption_gaps(engine: Engine, existing_tables: set[str]) -> list[str]:
+    """O que impede carimbar este banco na baseline: tabela ausente ou coluna ausente."""
+    inspector = inspect(engine)
+    gaps: list[str] = [
+        f"tabela {table}" for table in sorted(set(Base.metadata.tables) - existing_tables)
+    ]
+    for table, columns in LEGACY_ADDITIVE_COLUMNS.items():
+        if table not in existing_tables:
+            continue
+        present = {column["name"] for column in inspector.get_columns(table)}
+        gaps.extend(f"{table}.{column}" for column in columns if column not in present)
+    return gaps
+
+
+def apply_migrations(engine: Engine, database_url: str) -> str:
+    """Leva o banco até `head` e devolve o estado reconhecido, para log e teste."""
+    config = build_config(database_url)
+    existing_tables = set(inspect(engine).get_table_names())
+    if VERSION_TABLE in existing_tables:
+        state = "versionado"
+    elif not existing_tables & set(Base.metadata.tables):
+        state = "vazio"
+    else:
+        gaps = _adoption_gaps(engine, existing_tables)
+        if gaps:
+            raise SchemaAdoptionError(gaps)
+        command.stamp(config, BASELINE_REVISION)
+        state = "adotado"
+    command.upgrade(config, "head")
+    return state
 
 
 def main() -> None:
     settings = ApiSettings.from_environment()
-    database = Database(settings.database_url)
-    database.create_schema()
-    print("schema local inicializado")
+    engine = create_engine(settings.database_url, future=True)
+    try:
+        state = apply_migrations(engine, settings.database_url)
+    finally:
+        engine.dispose()
+    # Nada de URL nem credencial no log: só o estado reconhecido.
+    print(f"schema migrado (estado inicial do banco: {state})")
 
 
 if __name__ == "__main__":
