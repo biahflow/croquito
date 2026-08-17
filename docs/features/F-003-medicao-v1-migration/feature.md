@@ -2,8 +2,15 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`IN_PROGRESS`
 
+> O plano de execução ([plan.md](plan.md)) e a execução foram aprovados por ato humano em
+> 2026-08-17, junto de quatro decisões registradas ali: escopo integral numa rodada, nenhuma
+> migração das rodadas do bucket de homologação, a shortlist persistida sem avançar a versão
+> da rodada, e o braço semântico da busca atrás do entitlement contratual. As três primeiras
+> fecham decisões que o [ADR-0028](../../adr/0028-medicao-na-api-v1-autenticada.md) havia
+> deixado explicitamente em aberto.
+>
 > Esta feature esteve `BLOCKED` por [F-002](../F-002-medicao-v1-contract/feature.md) enquanto
 > o desenho de rota, persistência e `base_version` não existia em fonte versionada: um plano
 > produzido antes disso conteria decisões arquiteturais que o Planner não tem autoridade para
