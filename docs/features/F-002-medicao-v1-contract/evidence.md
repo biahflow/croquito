@@ -1,8 +1,8 @@
 # F-002 — Pacote de evidências
 
-Status: `READY_FOR_HUMAN_REVIEW`
+Status: `DONE`
 Responsável: Engineering
-Última revisão: 2026-08-17
+Última revisão: 2026-08-17 (aceitação humana do ADR-0028, seção 9)
 
 Este documento registra a autorização humana, a baseline, a apuração do inventário de rotas e
 a validação determinística de F-002. Ele não é aprovação humana e **não** aceita o ADR que a
@@ -13,7 +13,7 @@ feature produziu.
 | Artefato | Fonte |
 | --- | --- |
 | Feature Contract | [feature.md](feature.md) |
-| Rascunho de ADR (`Proposed`) | [ADR-0028](../../adr/0028-medicao-na-api-v1-autenticada.md) |
+| ADR produzido pela feature (`Accepted` em 2026-08-17, ver seção 9) | [ADR-0028](../../adr/0028-medicao-na-api-v1-autenticada.md) |
 | Seção de contrato | [API Contract](../../architecture/API_CONTRACT.md), seção "Medição de obra" |
 | Índice de ADRs atualizado | [docs/adr/README.md](../../adr/README.md) |
 | Glossário do contexto | [Valuation Context](../../architecture/VALUATION_CONTEXT.md), entrada `Rodada de medição` |
@@ -110,9 +110,10 @@ nenhum ponto desta entrega.
 - **Aceitar o ADR-0028.** Ato humano.
 - **Implementar qualquer coisa**: rota, tabela, migration, contrato TS gerado, tela, realm.
 - **Entrada na [matriz de rastreabilidade](../../engineering/TRACEABILITY.md).** A matriz mapeia
-  requisito → design → decisão → **verificação**; um ADR `Proposed` sem implementação não tem
-  verificação a citar. A linha é criada junto da execução de F-003. O passo 5 do processo de ADR
-  fica cumprido pela metade de forma declarada, não por omissão.
+  requisito → design → decisão → **verificação**; um ADR sem implementação não tem verificação
+  a citar, e isso continua verdade depois da aceitação — o motivo nunca foi o status, foi a
+  ausência de código e teste. A linha é criada junto da execução de F-003. O passo 5 do
+  processo de ADR fica cumprido pela metade de forma declarada, não por omissão.
 - **Mudar o status `BLOCKED` de F-003.** O desbloqueio depende da aceitação do ADR, não da
   existência do rascunho.
 
@@ -149,3 +150,41 @@ que decide contrato e não implementa nada.
 As entradas de backlog de F-002, F-003 e F-005 no roadmap canônico vão em **commit próprio**,
 separado tanto do commit que versiona o trabalho de F-001 quanto do commit desta entrega, como
 determina a seção 10 do evidence de F-001.
+
+## 9. Aceitação humana do ADR-0028
+
+**2026-08-17.** O responsável pelo produto **aceitou o ADR-0028**, depois de a tensão da
+decisão D9 lhe ser apresentada nominalmente: as telas de medição passam a viver em `apps/web`,
+o que contraria a rejeição que o [ADR-0020](../../adr/0020-local-homologation-server-for-valuation.md)
+fez daquele app no M6. A aceitação foi dada com essa tensão à vista, e ela permanece escrita
+dentro do próprio ADR.
+
+Este é o ato humano que as seções 2 e 6 registravam como pendente. Ele não altera nada do que
+está acima: as seções 1 a 8 continuam preservadas como executadas, inclusive as frases que
+descrevem o ADR como `Proposed` — elas eram verdadeiras no momento da entrega, e reescrevê-las
+apagaria o registro do processo.
+
+### O que a aceitação muda
+
+| Alvo | Antes | Depois |
+| --- | --- | --- |
+| `docs/adr/0028-medicao-na-api-v1-autenticada.md` | `Proposed` | `Accepted`; **só a linha de status mudou** — o corpo do ADR congela |
+| F-002 (esta feature) | `READY_FOR_HUMAN_REVIEW` | `DONE` |
+| F-003 | `BLOCKED` | `READY_FOR_PLANNING` |
+
+Na mesma decisão o responsável escolheu que o trabalho **permanece na branch local**
+`docs/f-002-medicao-v1-contract`, sem push, sem PR e sem merge.
+
+### O que a aceitação NÃO muda
+
+- **Nada está implementado.** Nenhuma rota de medição existe em `services/api`, nenhuma tabela
+  foi criada, nenhum contrato TS foi gerado e nenhuma tela migrou. A ponte hospedada do
+  [ADR-0026](../../adr/0026-medicao-hospedada-sessao-autenticada-minima.md) continua sendo o
+  caminho real da homologação, e a condição de remoção dela segue por cumprir.
+- **Os demais portões humanos de F-003 continuam de pé**, porque são de execução e não de
+  planejamento: decisão sobre o runner de migrations revisadas antes de qualquer tabela
+  (lacuna do [ADR-0025](../../adr/0025-homologacao-em-gcp-cloud-run.md)), remoção do serviço
+  hospedado e da rota de borda, e alteração de realm Keycloak.
+- **O ADR passa a ser imutável.** Rever qualquer uma das nove decisões exige ADR novo com
+  `Supersedes`, conforme o [AGENTS.md](../../../AGENTS.md) da raiz — inclusive a D9, se o
+  estado de `apps/web` reprovar a escolha na hora de executar.

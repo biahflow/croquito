@@ -43,7 +43,7 @@ e NFRs. Um ADR aceito é imutável; correção material exige novo ADR com
 | [0025](0025-homologacao-em-gcp-cloud-run.md) | Homologação hospedada em GCP (Cloud Run) | Accepted |
 | [0026](0026-medicao-hospedada-sessao-autenticada-minima.md) | Medição hospedada com sessão autenticada mínima | Accepted |
 | [0027](0027-price-source-provenance-and-bid-boundary.md) | Fontes de preço com proveniência e a fronteira licitada × pré-licitação | Accepted |
-| [0028](0028-medicao-na-api-v1-autenticada.md) | Medição de obra na API `/v1` autenticada | Proposed |
+| [0028](0028-medicao-na-api-v1-autenticada.md) | Medição de obra na API `/v1` autenticada | Accepted |
 
 ## Processo
 

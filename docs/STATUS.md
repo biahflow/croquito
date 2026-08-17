@@ -799,12 +799,14 @@ sem rename no FUSE, uma instância só, uma rodada por ambiente) estão declarad
 ADR-0026 e não devem ganhar investimento além do necessário para a homologação
 remota.
 
-Desde 2026-08-17 o desenho dessa migração existe em rascunho:
-[ADR-0028](adr/0028-medicao-na-api-v1-autenticada.md) (`Proposed`) decide entidade raiz,
+Desde 2026-08-17 o desenho dessa migração está decidido:
+[ADR-0028](adr/0028-medicao-na-api-v1-autenticada.md) (`Accepted`) fixa entidade raiz,
 persistência, `base_version`, códigos de erro e destino das telas, e a seção "Medição de obra"
-do [API Contract](architecture/API_CONTRACT.md) descreve as rotas propostas. Nada disso está
-implementado, e a execução ([F-003](features/F-003-medicao-v1-migration/feature.md)) segue
-bloqueada até o ADR ser aceito por ato humano.
+do [API Contract](architecture/API_CONTRACT.md) descreve as rotas decididas. **Nada disso está
+implementado**: nenhuma rota de medição existe em `services/api`, e a ponte hospedada continua
+sendo o caminho real da homologação. A execução é
+[F-003](features/F-003-medicao-v1-migration/feature.md), que a aceitação do ADR levou a
+`READY_FOR_PLANNING`.
 
 ## Condição para avançar ao processamento real
 

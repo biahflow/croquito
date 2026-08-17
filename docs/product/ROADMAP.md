@@ -21,14 +21,15 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | ID | Prioridade | Estado | Contrato |
 | --- | --- | --- | --- |
 | F-001 | HIGH | IN_PROGRESS | [Clarificação do roadmap canônico e ambientes](../features/F-001-roadmap-clarification/feature.md) |
-| F-002 | HIGH | READY_FOR_HUMAN_REVIEW | [Contrato `/v1` da medição](../features/F-002-medicao-v1-contract/feature.md) |
-| F-003 | HIGH | BLOCKED | [Migração da medição para a API `/v1` autenticada](../features/F-003-medicao-v1-migration/feature.md) |
+| F-002 | HIGH | DONE | [Contrato `/v1` da medição](../features/F-002-medicao-v1-contract/feature.md) |
+| F-003 | HIGH | READY_FOR_PLANNING | [Migração da medição para a API `/v1` autenticada](../features/F-003-medicao-v1-migration/feature.md) |
 | F-005 | HIGH | READY_FOR_SPEC | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
-entregou o rascunho [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md) (`Proposed`);
-F-003 permanece `BLOCKED` até a aceitação humana desse ADR.
+entregou o [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md), **aceito por ato humano
+em 2026-08-17**, o que fechou F-002 e destravou o planejamento de F-003. Nenhuma rota de
+medição existe em `/v1`: a decisão está tomada, a implementação não começou.
 
 ## Agora — MVP privado
 

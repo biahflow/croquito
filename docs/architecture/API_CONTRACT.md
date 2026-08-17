@@ -555,8 +555,8 @@ serializada no pacote CAD. Nunca retorna ou aceita o papel profissional no paylo
 
 ## Medição de obra
 
-> **Estado: proposto, não implementado.** Esta seção descreve o contrato decidido em
-> [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md), que está `Proposed`. Nenhuma
+> **Estado: decidido, não implementado.** Esta seção descreve o contrato do
+> [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md), aceito em 2026-08-17. Nenhuma
 > destas rotas existe em `services/api` hoje: a cadeia de medição roda no servidor de
 > homologação ([ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md)), e a
 > migração é trabalho de [F-003](../features/F-003-medicao-v1-migration/feature.md). Um teste
@@ -761,7 +761,7 @@ nem em auditoria. Artefato de outro tenant retorna `404`.
 `CHAT_SESSION_CLOSED`, `CHAT_TURN_PENDING`, `CHAT_ANCHOR_UNKNOWN`,
 `IDEMPOTENCY_KEY_REUSED`.
 
-Propostos pelo [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md) para a seção
+Decididos pelo [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md) para a seção
 "Medição de obra", ainda **não** implementados e por isso listados à parte:
 `ROUND_STAGE_NOT_READY`, `ROUND_PLATE_ALREADY_PRESENT`, `EXTRACTION_IN_PROGRESS`,
 `SUGGESTIONS_ALREADY_REFINED`, `TAKEOFF_REVIEW_INCOMPLETE`, `CATALOG_QUERY_EMPTY`,

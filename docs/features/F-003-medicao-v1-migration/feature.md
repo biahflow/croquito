@@ -2,22 +2,23 @@
 
 ## Status
 
-`BLOCKED`
+`READY_FOR_PLANNING`
 
-> Bloqueada por [F-002](../F-002-medicao-v1-contract/feature.md): o desenho de rota,
-> persistência e `base_version` não existe em fonte versionada. Sem ele, esta feature não
-> pode alcançar `READY_FOR_PLANNING` — um plano produzido agora conteria decisões
-> arquiteturais que o Planner não tem autoridade para tomar.
+> Esta feature esteve `BLOCKED` por [F-002](../F-002-medicao-v1-contract/feature.md) enquanto
+> o desenho de rota, persistência e `base_version` não existia em fonte versionada: um plano
+> produzido antes disso conteria decisões arquiteturais que o Planner não tem autoridade para
+> tomar.
 >
-> Em 2026-08-17 esse desenho passou a existir **como rascunho**:
-> [ADR-0028](../../adr/0028-medicao-na-api-v1-autenticada.md), status `Proposed`. O status
-> desta feature continua `BLOCKED` de propósito — o desbloqueio depende da aceitação humana
-> do ADR, não da existência do rascunho.
+> O desbloqueio ocorreu em 2026-08-17, com a **aceitação humana** do
+> [ADR-0028](../../adr/0028-medicao-na-api-v1-autenticada.md), que satisfaz o portão
+> "aceitação do ADR de F-002 antes de qualquer planejamento". A entrada no
+> [roadmap canônico](../../product/ROADMAP.md) existe desde a mesma data.
 >
-> A entrada correspondente no [roadmap canônico](../../product/ROADMAP.md) existe desde
-> 2026-08-17, na tabela "Trabalho de engenharia em andamento". Este contrato registra o
-> escopo conhecido para que a decomposição futura não parta de zero; ele não autoriza
-> execução.
+> Os demais portões humanos continuam de pé e são de **execução**, não de planejamento: a
+> decisão sobre o runner de migrations revisadas antes de qualquer tabela (lacuna registrada
+> no [ADR-0025](../../adr/0025-homologacao-em-gcp-cloud-run.md)), a remoção do serviço
+> hospedado e da rota de borda, e qualquer alteração de realm Keycloak. Planejar é permitido;
+> criar tabela, mexer em produção ou tocar realm, não.
 
 ## Priority
 

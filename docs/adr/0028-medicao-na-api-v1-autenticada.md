@@ -1,6 +1,6 @@
 # ADR-0028: Medição de obra na API `/v1` autenticada
 
-Status: Proposed  
+Status: Accepted  
 Data: 2026-08-17  
 Responsável: Product / Engineering
 
