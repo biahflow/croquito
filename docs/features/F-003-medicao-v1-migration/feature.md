@@ -127,7 +127,9 @@ sustentam:
 
 - [F-002](../F-002-medicao-v1-contract/feature.md) — bloqueante.
 - Runner de migrations revisadas (lacuna do ADR-0025) — precisa de decisão antes de
-  qualquer tabela de produção.
+  qualquer tabela de produção. Desde 2026-08-17 tem contrato próprio,
+  [F-004](../F-004-migrations-runner/feature.md), com a decisão técnica no
+  [ADR-0029](../../adr/0029-runner-de-migrations-revisadas.md) (`Proposed`).
 - Teste de compatibilidade de OpenAPI, exigido pela Testing Strategy e pelo API Contract e
   hoje ausente em `tests/api/`.
 - Concessão do papel `orcamentista`, procedimento em

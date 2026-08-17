@@ -23,6 +23,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-001 | HIGH | IN_PROGRESS | [Clarificação do roadmap canônico e ambientes](../features/F-001-roadmap-clarification/feature.md) |
 | F-002 | HIGH | DONE | [Contrato `/v1` da medição](../features/F-002-medicao-v1-contract/feature.md) |
 | F-003 | HIGH | READY_FOR_PLANNING | [Migração da medição para a API `/v1` autenticada](../features/F-003-medicao-v1-migration/feature.md) |
+| F-004 | HIGH | READY_FOR_PLANNING | [Runner de migrations revisadas](../features/F-004-migrations-runner/feature.md) |
 | F-005 | HIGH | READY_FOR_SPEC | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
@@ -30,6 +31,12 @@ Origem da seleção: decisão humana de 2026-08-17, registrada na
 entregou o [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md), **aceito por ato humano
 em 2026-08-17**, o que fechou F-002 e destravou o planejamento de F-003. Nenhuma rota de
 medição existe em `/v1`: a decisão está tomada, a implementação não começou.
+
+F-004 nasce na mesma data, também por seleção humana: o esquema da medição está decidido, mas
+executar F-003 exige antes o runner de migrations que o
+[ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md) registra como requisito de produção em
+falta. A decisão técnica é o [ADR-0029](../adr/0029-runner-de-migrations-revisadas.md), ainda
+`Proposed`.
 
 ## Agora — MVP privado
 
