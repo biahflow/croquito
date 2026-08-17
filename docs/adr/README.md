@@ -42,6 +42,7 @@ e NFRs. Um ADR aceito é imutável; correção material exige novo ADR com
 | [0024](0024-rebranding-to-croquito.md) | Rebranding do produto para croquito | Accepted |
 | [0025](0025-homologacao-em-gcp-cloud-run.md) | Homologação hospedada em GCP (Cloud Run) | Accepted |
 | [0026](0026-medicao-hospedada-sessao-autenticada-minima.md) | Medição hospedada com sessão autenticada mínima | Accepted |
+| [0027](0027-price-source-provenance-and-bid-boundary.md) | Fontes de preço com proveniência e a fronteira licitada × pré-licitação | Proposed |
 
 ## Processo
 

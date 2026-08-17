@@ -954,11 +954,14 @@ segundo mapa possa divergir dele. O item cujo código o demo rejeita (o gramado)
 fora: onde o gabarito não tem código, não existe acerto a medir."""
 
 
-def _item_for_label(packet: TakeoffPacket, label: str) -> TakeoffItem:
+def item_for_label(packet: TakeoffPacket, label: str) -> TakeoffItem:
     """Item da prancha pelo rótulo da legenda; rótulo ausente falha alto.
 
     A fixture cita o rótulo impresso, não a posição: mexer na legenda da prancha sem
     mexer aqui recusa em vez de decidir sobre o item errado.
+
+    Público porque a fixture do orçamento-base (`estimate_fixture.py`) decide sobre os
+    mesmos itens da mesma prancha e precisa citá-los da mesma forma.
     """
     for item in packet.items:
         if item.label == label:
@@ -981,7 +984,7 @@ def build_demo_takeoff_decisions(packet: TakeoffPacket) -> TakeoffDecisionBatch:
     return TakeoffDecisionBatch(
         decisions=[
             TakeoffDecisionInput(
-                item_id=_item_for_label(packet, decision.label).id,
+                item_id=item_for_label(packet, decision.label).id,
                 action=decision.action,
                 reviewer_id=SYNTHETIC_TAKEOFF_REVIEWER,
                 reviewer_role="orcamentista",
@@ -1005,7 +1008,7 @@ def build_demo_code_assignments(packet: TakeoffPacket) -> CodeAssignmentBatch:
     return CodeAssignmentBatch(
         assignments=[
             CodeAssignmentInput(
-                item_id=_item_for_label(packet, assignment.label).id,
+                item_id=item_for_label(packet, assignment.label).id,
                 action=assignment.action,
                 code=assignment.code,
                 reviewer_id=SYNTHETIC_TAKEOFF_REVIEWER,
@@ -1028,7 +1031,7 @@ def build_demo_calc_plan(packet: TakeoffPacket) -> CalcPlan:
     return CalcPlan(
         plans=[
             ItemCalcPlan(
-                item_id=_item_for_label(packet, _FENCE_LABEL).id,
+                item_id=item_for_label(packet, _FENCE_LABEL).id,
                 blocks=[
                     CalcBlockPlan(
                         label="ALAMBRADO DA QUADRA SINTETICA",

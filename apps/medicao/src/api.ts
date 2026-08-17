@@ -208,6 +208,7 @@ export type RunState = {
   takeoff: RunStateTakeoff;
   codes: RunStateCodes;
   bulletin: { present: boolean; valuation_sha256: string | null };
+  dossier: { present: boolean; dossier_sha256: string | null };
 };
 
 export type TakeoffResponse = {
@@ -373,6 +374,43 @@ export type BulletinResponse = {
   valuation_sha256: string;
   /** Total da medição; é propriedade do domínio, calculada no servidor. */
   total_amount: string;
+};
+
+/**
+ * Item confirmado no takeoff cujo código foi rejeitado: candidato a aditivo já fechado
+ * pelo servidor. Nenhum campo de preço existe aqui, por construção — o dossiê instrui o
+ * pedido de aditivo (RE-RA), nunca precifica.
+ */
+export type AmendmentDossierItem = {
+  item_id: string;
+  label: string;
+  raw_text: string;
+  /** `Decimal` em texto, como toda quantidade nesta tela. */
+  quantity: string;
+  unit: string;
+  item_note: string | null;
+  /** A nota da rejeição de código (`decision.note`); nunca inventada pela tela. */
+  justification: string;
+  decision: ReviewerDecision;
+};
+
+export type AmendmentDossier = {
+  schema_version: string;
+  plate_id: string;
+  page_number: number;
+  image_sha256: string;
+  source_pdf_sha256: string;
+  catalog_sha256: string;
+  contract_sha256: string | null;
+  /** Vazio é desfecho normal: rodada sem nenhuma rejeição de código não tem aditivo. */
+  items: AmendmentDossierItem[];
+  safety_notes: string[];
+};
+
+export type DossierResponse = {
+  dossier: AmendmentDossier;
+  dossier_sha256: string;
+  item_count: number;
 };
 
 /** Envelope de erro do servidor local: `{code, detail, details}` em problem+json. */
@@ -736,6 +774,20 @@ export function postCalcBuild(draft: CalcBuildDraft): Promise<BulletinResponse> 
 
 export function getBulletin(): Promise<BulletinResponse> {
   return request<BulletinResponse>("/bulletin");
+}
+
+/**
+ * Monta o dossiê do aditivo (`POST /dossier/build`). Espelho de `POST /calc/build`
+ * (`postCalcBuild`): a rota real que ele espelha não tem guarda de digest-base — ela
+ * sempre reconstrói do estado ATUAL do takeoff e das confirmações de código já gravados
+ * na rodada, sem corpo a enviar, como `extractPlate`.
+ */
+export function postDossierBuild(): Promise<DossierResponse> {
+  return request<DossierResponse>("/dossier/build", { method: "POST" });
+}
+
+export function getDossier(): Promise<DossierResponse> {
+  return request<DossierResponse>("/dossier");
 }
 
 /** Rotas de imagem sem parâmetro de caminho: a UI escolhe a etapa, nunca o arquivo. */

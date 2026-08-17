@@ -15,6 +15,7 @@ import {
   fetchImageObjectUrl,
   getBulletin,
   getCodes,
+  getDossier,
   getState,
   getSuggestions,
   getTakeoff,
@@ -26,6 +27,7 @@ import {
   plateImageSource,
   postCalcBuild,
   postCodeDecision,
+  postDossierBuild,
   postSuggestionsRecompute,
   postTakeoffDecision,
   searchCatalog,
@@ -37,6 +39,7 @@ import {
   type CodeCandidate,
   type CodesResponse,
   type CodeSuggestionSet,
+  type DossierResponse,
   type ExtractionState,
   type RunState,
   type TakeoffItem,
@@ -58,6 +61,8 @@ import {
 import {
   assignmentStatusLabel,
   AVISO_ADITIVO,
+  AVISO_DOSSIE_GERADO,
+  AVISO_DOSSIE_PREVIA,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
   AVISO_QUANTIDADE_AMBIGUA,
   avisoDaFerramenta,
@@ -405,6 +410,7 @@ export function App() {
   const [suggestionsSha256, setSuggestionsSha256] = useState<string | null>(null);
   const [codes, setCodes] = useState<CodesResponse | null>(null);
   const [bulletin, setBulletin] = useState<BulletinResponse | null>(null);
+  const [dossier, setDossier] = useState<DossierResponse | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -544,6 +550,7 @@ export function App() {
         setSuggestionsSha256(null);
       }
       setBulletin(nextState.bulletin.present ? await getBulletin() : null);
+      setDossier(nextState.dossier.present ? await getDossier() : null);
     } catch (error) {
       setAlertMessage(describeError(error));
     } finally {
@@ -1066,6 +1073,34 @@ export function App() {
       setSubmitting(false);
     }
   };
+
+  /**
+   * Gera o dossiê do aditivo (`POST /dossier/build`). Mesma condição de elegibilidade do
+   * botão de montar boletim (`jornada` → etapa `boletim` não bloqueada): o dossiê é o
+   * outro artefato de FECHAMENTO da rodada e exige a mesma revisão completa com todo
+   * código decidido.
+   */
+  const gerarDossie = async () => {
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const response = await postDossierBuild();
+      setDossier(response);
+      setToast("Dossiê do aditivo gravado na rodada.");
+      await atualizarEstado();
+    } catch (error) {
+      if (isStateMoved(error)) {
+        setStateMoved(true);
+      } else {
+        setAlertMessage(describeError(error));
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const boletimEtapa = jornada.etapas.find((etapa) => etapa.id === "boletim") ?? null;
+  const dossieDisponivel = boletimEtapa !== null && boletimEtapa.status !== "blocked";
 
   const shortlist =
     selectedPending === null
@@ -1865,24 +1900,79 @@ export function App() {
               <section className="aditivo" aria-label="Candidatos a aditivo">
                 <h3>Sem código no contrato — candidatos a aditivo</h3>
                 <p className="dica">{AVISO_ADITIVO}</p>
-                {rejeitados.length === 0 && semCandidatoPendentes.length === 0 ? (
-                  <p>Nenhum item nesta condição até agora.</p>
+                {dossier === null ? (
+                  <>
+                    <p className="dica">{AVISO_DOSSIE_PREVIA}</p>
+                    {rejeitados.length === 0 && semCandidatoPendentes.length === 0 ? (
+                      <p>Nenhum item nesta condição até agora.</p>
+                    ) : (
+                      <ul className="aditivo-lista">
+                        {rejeitados.map((assignment) => (
+                          <li key={assignment.item_id}>
+                            <strong>{labelDoItem(assignment.item_id)}</strong> —{" "}
+                            {assignmentStatusLabel(assignment.status)}.{" "}
+                            {assignment.decision.note ?? "sem nota registrada"}
+                          </li>
+                        ))}
+                        {semCandidatoPendentes.map((itemId) => (
+                          <li key={itemId}>
+                            <strong>{labelDoItem(itemId)}</strong> — a shortlist não achou
+                            candidato; busque no catálogo antes de tratar como aditivo.
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {dossieDisponivel ? (
+                      <button
+                        type="button"
+                        className="botao-secundario"
+                        onClick={() => void gerarDossie()}
+                        disabled={submitting}
+                      >
+                        {submitting ? "Gerando…" : "Gerar dossiê do aditivo"}
+                      </button>
+                    ) : (
+                      <p className="cartao-motivo">
+                        Gerar o dossiê exige a mesma condição do boletim:{" "}
+                        {boletimEtapa?.blockedReason ??
+                          "revisão do takeoff e decisão de código completas"}
+                        .
+                      </p>
+                    )}
+                  </>
                 ) : (
-                  <ul className="aditivo-lista">
-                    {rejeitados.map((assignment) => (
-                      <li key={assignment.item_id}>
-                        <strong>{labelDoItem(assignment.item_id)}</strong> —{" "}
-                        {assignmentStatusLabel(assignment.status)}.{" "}
-                        {assignment.decision.note ?? "sem nota registrada"}
-                      </li>
-                    ))}
-                    {semCandidatoPendentes.map((itemId) => (
-                      <li key={itemId}>
-                        <strong>{labelDoItem(itemId)}</strong> — a shortlist não achou
-                        candidato; busque no catálogo antes de tratar como aditivo.
-                      </li>
-                    ))}
-                  </ul>
+                  <>
+                    <p className="dica">{AVISO_DOSSIE_GERADO}</p>
+                    <p>
+                      Dossiê gerado nesta rodada · sha256{" "}
+                      <span className="digest" title={dossier.dossier_sha256}>
+                        {shortDigest(dossier.dossier_sha256)}
+                      </span>
+                    </p>
+                    {dossier.dossier.items.length === 0 ? (
+                      <p>Nenhum item entrou no dossiê nesta rodada.</p>
+                    ) : (
+                      <ul className="aditivo-lista">
+                        {dossier.dossier.items.map((item) => (
+                          <li key={item.item_id}>
+                            <strong>{item.label}</strong> —{" "}
+                            {formatQuantityText(item.quantity, unitLabel(item.unit))}
+                            <p className="codigo-descricao">{item.justification}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {dossieDisponivel ? (
+                      <button
+                        type="button"
+                        className="botao-secundario"
+                        onClick={() => void gerarDossie()}
+                        disabled={submitting}
+                      >
+                        {submitting ? "Gerando…" : "Regerar dossiê do aditivo"}
+                      </button>
+                    ) : null}
+                  </>
                 )}
               </section>
             </article>

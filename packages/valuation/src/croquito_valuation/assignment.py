@@ -21,6 +21,13 @@ A confirmação (`apply_code_assignments`) é fail-closed e imutável, no mesmo 
 `apply_takeoff_decisions`: recusa item desconhecido, item ainda não confirmado no
 takeoff, re-decisão sobre item já decidido, código fora do catálogo ou do contrato, e
 unidade incompatível sem nota explícita do orçamentista.
+
+O M8 acrescenta as irmãs de CASCATA — `suggest_codes_over_cascade` e
+`apply_code_assignments_over_cascade` —, que são o mesmo ato sobre mais de uma fonte de
+preço (SCO → EMOP → composição). Elas existem só na pré-licitação (`ADR-0027`): a medição
+de obra licitada continua com um catálogo só, contrato e nada mais, e nenhuma linha do
+caminho de um catálogo mudou de comportamento. O que a cascata muda é que a fonte deixa de
+ser implícita — cada candidato e cada confirmação declaram de qual catálogo vieram.
 """
 
 from __future__ import annotations
@@ -40,9 +47,12 @@ from croquito_valuation.contract import ContractWorkbook
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.models import (
     MAX_DESCRIPTION_LENGTH,
+    NON_SCO_CODE_PATTERN,
     SHA256_PATTERN,
     ExactDecimal,
     PriceCatalog,
+    PriceCatalogEntry,
+    PriceOrigin,
     ReviewerDecision,
     ValuationContractModel,
 )
@@ -58,6 +68,16 @@ sinônimo). Um artefato 1.1.0 antigo continua carregável pelo mesmo `CodeSugges
 `expanded_terms` da CAMADA do servidor local (observação de busca), não do suggester."""
 ASSIGNMENT_SCHEMA_VERSION: Final = "1.0.0"
 SCO_SUGGESTER_VERSION: Final = "lexical-sco-suggester-v1"
+
+SCO_CASCADE_SUGGESTER_VERSION: Final = "lexical-cascade-sco-suggester-v1"
+"""A shortlist lexical montada sobre a CASCATA de fontes do orçamento-base (M8).
+
+Mesmo algoritmo do `lexical-sco-suggester-v1`, rodado uma vez por catálogo da cascata e
+concatenado na ordem dela — o que muda é o universo de códigos, não o ranqueamento. A
+versão é própria porque quem lê o artefato precisa saber, pelo cabeçalho, que os
+candidatos vêm de fontes diferentes e que cada um declara a sua
+(`CodeCandidate.catalog_origin`/`catalog_sha256`). Nada disso vale para a medição licitada:
+a cascata só existe pré-licitação (`ADR-0027`)."""
 
 SCO_HYBRID_SUGGESTER_FAMILY: Final = "hybrid-sco-suggester-"
 """Prefixo estável da FAMÍLIA de suggesters híbridos, através de todas as versões.
@@ -117,15 +137,22 @@ resposta obediente com flags longas era recusada por defeito nosso.
 class CodeCandidate(ValuationContractModel):
     """Um código do catálogo elegível para um item, com o porquê da ordem.
 
-    `code` exige o padrão SCO estrito (não a forma nua do contrato): só código com preço
-    publicado no catálogo é candidato, e a forma nua nunca tem preço.
+    A forma exigida do `code` depende de `catalog_origin`, pelo mesmo desenho de
+    `PriceCatalogEntry.validate_code_for_origin`: origem `sco` exige o padrão SCO estrito
+    (não a forma nua do contrato — só código com preço publicado é candidato, e a forma nua
+    nunca tem preço), as demais o superset estrutural não-SCO. Os defaults (`sco`/`None`)
+    preservam byte a byte todo artefato M1-M7 relido sem os campos novos.
+
+    `catalog_sha256` é a proveniência do candidato quando a shortlist nasce de uma CASCATA
+    de fontes (orçamento-base, `suggest_codes_over_cascade`): com um catálogo só, o digest
+    já está no cabeçalho do conjunto e o campo continua vazio.
 
     `refinement_note` só existe depois de `apply_refinement`: é a justificativa do refino
     pago para a ordem publicada, anotada no candidato que ficou em primeiro. Ela é
     observação anexada ao candidato, nunca um campo que altere preço, unidade ou score.
     """
 
-    code: str = Field(pattern=SCO_CODE_PATTERN)
+    code: str = Field(min_length=1, max_length=30)
     description: str = Field(min_length=1, max_length=MAX_DESCRIPTION_LENGTH)
     unit: str = Field(min_length=1, max_length=20)
     unit_price: ExactDecimal = Field(ge=0)
@@ -134,6 +161,21 @@ class CodeCandidate(ValuationContractModel):
     lexical_score: float = Field(ge=0, le=1)
     status: Literal["suggested"] = "suggested"
     refinement_note: str | None = Field(default=None, max_length=_REFINEMENT_NOTE_MAX_LENGTH)
+    catalog_origin: PriceOrigin = PriceOrigin.SCO
+    catalog_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def validate_code_for_origin(self) -> CodeCandidate:
+        pattern = (
+            SCO_CODE_PATTERN if self.catalog_origin == PriceOrigin.SCO else NON_SCO_CODE_PATTERN
+        )
+        if re.fullmatch(pattern, self.code) is None:
+            raise ValuationValidationError(
+                "CANDIDATE_CODE_INVALID_FOR_ORIGIN",
+                "código do candidato não tem o formato esperado para a origem do catálogo",
+                {"code": self.code, "catalog_origin": self.catalog_origin.value},
+            )
+        return self
 
 
 class CodeSuggestion(ValuationContractModel):
@@ -194,6 +236,12 @@ class CodeSuggestionSet(ValuationContractModel):
     continua válido ao ser relido, e `validate_semantic_lineage` reconhece as duas versões
     como híbridas pelo prefixo de família `SCO_HYBRID_SUGGESTER_FAMILY`, não pela versão
     corrente — só a produção NOVA escreve `v2`.
+
+    Com `lexical-cascade-sco-suggester-v1` (orçamento-base, `suggest_codes_over_cascade`) o
+    conjunto abrange mais de um catálogo: `catalog_sha256` do cabeçalho é o do catálogo
+    **cabeça** da cascata e a proveniência autoritativa passa a ser a de cada candidato
+    (`CodeCandidate.catalog_origin`/`catalog_sha256`). O cabeçalho continua existindo
+    porque ele amarra o conjunto à rodada; ele não afirma que todo candidato veio dali.
     """
 
     schema_version: Literal["1.1.0"] = SUGGESTION_SCHEMA_VERSION
@@ -205,6 +253,7 @@ class CodeSuggestionSet(ValuationContractModel):
     suggester_version: Literal[
         "lexical-sco-suggester-v1",
         "lexical-sco-suggester-v1+llm-rerank-v1",
+        "lexical-cascade-sco-suggester-v1",
         "hybrid-sco-suggester-v1",
         "hybrid-sco-suggester-v1+llm-rerank-v1",
         "hybrid-sco-suggester-v2",
@@ -363,6 +412,7 @@ def suggest_codes(
                     unit_compatible=unit_compatible,
                     in_contract=in_contract,
                     lexical_score=score,
+                    catalog_origin=catalog.origin,
                 )
             )
         if not eligible:
@@ -390,6 +440,94 @@ def suggest_codes(
         image_sha256=packet.image_sha256,
         catalog_sha256=catalog.source_sha256,
         contract_sha256=contract.source_sha256 if contract else None,
+        suggestions=suggestions,
+        unmatched_item_ids=unmatched_item_ids,
+        safety_notes=list(_SUGGESTION_SAFETY_NOTES),
+    )
+
+
+def ensure_price_cascade(cascade: Sequence[PriceCatalog]) -> None:
+    """Portão da cascata de fontes do orçamento-base: ordem é dado, uma origem por fonte.
+
+    A ORDEM é a que o chamador declarou (a sequência de `--catalog` do comando), nunca uma
+    preferência embutida em código: "SCO primeiro" é decisão de quem monta o orçamento, não
+    do módulo (`ADR-0027`). O que se recusa aqui é a cascata que não teria leitura única —
+    vazia, ou com duas fontes da mesma origem, caso em que "o preço veio da EMOP" deixaria
+    de identificar de qual arquivo ele veio.
+
+    Mora neste módulo porque os dois atos daqui (sugerir e confirmar código) já operam
+    sobre a cascata; `estimate.py` reusa o mesmo portão antes de montar o orçamento.
+    """
+    if not cascade:
+        raise ValuationValidationError(
+            "ESTIMATE_CASCADE_EMPTY",
+            "orçamento-base exige ao menos um catálogo na cascata de fontes",
+            {},
+        )
+    origins = [catalog.origin.value for catalog in cascade]
+    duplicated = sorted({origin for origin in origins if origins.count(origin) > 1})
+    if duplicated:
+        raise ValuationValidationError(
+            "ESTIMATE_CASCADE_ORIGIN_DUPLICATE",
+            "cascata tem mais de um catálogo da mesma origem de preço; a origem deixaria "
+            "de identificar a fonte do preço de cada linha",
+            {"origins": duplicated},
+        )
+
+
+def suggest_codes_over_cascade(
+    packet: TakeoffPacket,
+    cascade: Sequence[PriceCatalog],
+    *,
+    config: SuggestionConfig | None = None,
+    synonyms: DomainSynonyms | None = None,
+) -> CodeSuggestionSet:
+    """Shortlist lexical sobre a cascata de fontes; observação, como a de um catálogo só.
+
+    O algoritmo é o mesmo de `suggest_codes`, rodado uma vez por catálogo: o que muda é o
+    universo de códigos. Os candidatos saem na ordem da CASCATA (todos os do primeiro
+    catálogo, depois os do segundo), cada bloco com o ranqueamento interno que a via lexical
+    produziu — misturar os blocos por score faria a ordem das fontes, que é decisão
+    declarada de quem monta o orçamento, ser desempatada por similaridade de texto.
+
+    O corte de `max_candidates_per_item` vale POR fonte, de propósito: uma fonte não pode
+    ser espremida para fora da shortlist por outra que ficou na frente da cascata.
+
+    Não há contrato aqui: pré-licitação não tem contrato, então `in_contract` é sempre
+    falso e `contract_sha256` fica vazio. Cada candidato declara a origem e o digest do
+    catálogo de onde veio.
+    """
+    ensure_price_cascade(cascade)
+
+    candidates_by_item: dict[str, list[CodeCandidate]] = {}
+    for catalog in cascade:
+        for suggestion in suggest_codes(
+            packet, catalog, None, config=config, synonyms=synonyms
+        ).suggestions:
+            # `catalog_origin` já vem carimbado da construção (é ele que valida a forma do
+            # código); aqui só entra o digest, que é o que distingue duas fontes da MESMA
+            # origem em rodadas diferentes.
+            candidates_by_item.setdefault(suggestion.item_id, []).extend(
+                candidate.model_copy(update={"catalog_sha256": catalog.source_sha256})
+                for candidate in suggestion.candidates
+            )
+
+    suggestions: list[CodeSuggestion] = []
+    unmatched_item_ids: list[str] = []
+    for item in packet.confirmed_items():
+        candidates = candidates_by_item.get(item.id)
+        if not candidates:
+            unmatched_item_ids.append(item.id)
+            continue
+        suggestions.append(CodeSuggestion(item_id=item.id, candidates=candidates))
+
+    return CodeSuggestionSet(
+        plate_id=packet.plate_id,
+        page_number=packet.page_number,
+        image_sha256=packet.image_sha256,
+        catalog_sha256=cascade[0].source_sha256,
+        contract_sha256=None,
+        suggester_version=SCO_CASCADE_SUGGESTER_VERSION,
         suggestions=suggestions,
         unmatched_item_ids=unmatched_item_ids,
         safety_notes=list(_SUGGESTION_SAFETY_NOTES),
@@ -513,6 +651,21 @@ def apply_refinement(
     )
 
 
+def _is_structural_code(code: str, *, cited_catalog: bool) -> bool:
+    """A estrutura mínima que um código confirmado precisa ter na ENTRADA da decisão.
+
+    Sem catálogo citado, a fonte é o catálogo único da rodada e o formato exigido continua
+    sendo o SCO exato — é a medição licitada e todo o M4-M7. Com catálogo citado, a rodada
+    tem mais de uma fonte e o formato exato depende da origem daquela fonte, que este
+    modelo não conhece: aqui basta o superset estrutural (SCO **ou** não-SCO) e a checagem
+    forte acontece onde o catálogo existe (`apply_code_assignments_over_cascade`,
+    `build_worksite_estimate`).
+    """
+    if re.fullmatch(SCO_CODE_PATTERN, code) is not None:
+        return True
+    return cited_catalog and re.fullmatch(NON_SCO_CODE_PATTERN, code) is not None
+
+
 class CodeAssignmentInput(ValuationContractModel):
     """Decisão do orçamentista sobre o código de um item; espelho de `TakeoffDecisionInput`.
 
@@ -520,11 +673,20 @@ class CodeAssignmentInput(ValuationContractModel):
     validador de modelo para que a falha suba como `ASSIGNMENT_CODE_INVALID` (código
     estável), em vez do erro genérico de padrão que o Pydantic devolveria sem o embrulho
     de `ValuationValidationError`.
+
+    `catalog_sha256` é a fonte que o orçamentista citou ao confirmar o código, e só faz
+    sentido quando existe mais de uma (orçamento-base, `apply_code_assignments_over_cascade`):
+    ausente — o default, que é o da medição licitada e de todo artefato M4-M7 — a fonte é o
+    único catálogo da rodada. A citação muda o que a ESTRUTURA do código precisa ser: sem
+    ela vale o padrão SCO exato de sempre; com ela basta o superset estrutural, porque um
+    código EMOP ou de composição não tem a forma do SCO. Quem checa que o código realmente
+    pertence ao catálogo citado é a aplicação, onde o catálogo existe.
     """
 
     item_id: str = Field(pattern=_ITEM_ID_PATTERN)
     action: Literal["confirm", "reject"]
     code: str | None = None
+    catalog_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     reviewer_id: str = Field(min_length=1, max_length=120)
     reviewer_role: Literal["orcamentista"]
     decided_at: datetime
@@ -555,10 +717,18 @@ class CodeAssignmentInput(ValuationContractModel):
                 "rejeição de código não deve informar código",
                 {"item_id": self.item_id, "code": self.code},
             )
-        if self.code is not None and re.fullmatch(SCO_CODE_PATTERN, self.code) is None:
+        if self.action == "reject" and self.catalog_sha256 is not None:
+            raise ValuationValidationError(
+                "ASSIGNMENT_CATALOG_ON_REJECT",
+                "rejeição de código não cita fonte de preço; ela é a recusa de todas",
+                {"item_id": self.item_id, "catalog_sha256": self.catalog_sha256},
+            )
+        if self.code is not None and not _is_structural_code(
+            self.code, cited_catalog=self.catalog_sha256 is not None
+        ):
             raise ValuationValidationError(
                 "ASSIGNMENT_CODE_INVALID",
-                "código informado não tem a estrutura de um código SCO com preço publicado",
+                "código informado não tem a estrutura de um código com preço publicado",
                 {"item_id": self.item_id, "code": self.code},
             )
         return self
@@ -582,11 +752,18 @@ class CodeAssignmentBatch(ValuationContractModel):
 
 
 class CodeAssignment(ValuationContractModel):
-    """Resultado imutável da confirmação/rejeição de código de um item."""
+    """Resultado imutável da confirmação/rejeição de código de um item.
+
+    `catalog_sha256` carrega adiante a fonte citada na confirmação (vazio quando a rodada
+    tem um catálogo só, como em toda a medição licitada). É por ele que o orçamento-base
+    sabe, linha a linha, de qual tabela o preço veio — `build_worksite_estimate` exige a
+    citação e recusa a que não estiver na cascata.
+    """
 
     item_id: str = Field(pattern=_ITEM_ID_PATTERN)
     status: Literal["confirmed", "rejected"]
     code: str | None = None
+    catalog_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     unit_compatible: bool
     decision: ReviewerDecision
 
@@ -603,6 +780,12 @@ class CodeAssignment(ValuationContractModel):
             raise ValuationValidationError(
                 "ASSIGNMENT_STATE_INVALID",
                 "assignment rejeitado não pode carregar código e exige decisão de rejeição",
+                {"item_id": self.item_id},
+            )
+        elif self.catalog_sha256 is not None:
+            raise ValuationValidationError(
+                "ASSIGNMENT_STATE_INVALID",
+                "assignment rejeitado não cita fonte de preço; a rejeição vale para todas",
                 {"item_id": self.item_id},
             )
         return self
@@ -641,17 +824,26 @@ _ASSIGNMENT_SAFETY_NOTES: Final = (
 
 
 def _assignment_decision_id(item: TakeoffItem, decision: CodeAssignmentInput) -> str:
-    """Id determinístico da decisão: espelho de `_decision_id` de `takeoff.py`."""
+    """Id determinístico da decisão: espelho de `_decision_id` de `takeoff.py`.
+
+    `catalog_sha256` entra no conteúdo digerido **só quando existe**: citar outra fonte é
+    outra decisão, mas incluir a chave com `null` mudaria o id de toda decisão M4-M7 já
+    gravada, que continua sendo a mesma decisão. A omissão é a compatibilidade, não uma
+    lacuna do conteúdo.
+    """
+    payload: dict[str, object] = {
+        "item_id": item.id,
+        "action": decision.action,
+        "code": decision.code,
+        "reviewer_id": decision.reviewer_id,
+        "reviewer_role": decision.reviewer_role,
+        "decided_at": decision.decided_at.isoformat(),
+        "note": decision.note,
+    }
+    if decision.catalog_sha256 is not None:
+        payload["catalog_sha256"] = decision.catalog_sha256
     canonical = json.dumps(
-        {
-            "item_id": item.id,
-            "action": decision.action,
-            "code": decision.code,
-            "reviewer_id": decision.reviewer_id,
-            "reviewer_role": decision.reviewer_role,
-            "decided_at": decision.decided_at.isoformat(),
-            "note": decision.note,
-        },
+        payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -659,25 +851,18 @@ def _assignment_decision_id(item: TakeoffItem, decision: CodeAssignmentInput) ->
     return f"vd_{hashlib.sha256(canonical.encode()).hexdigest()[:16]}"
 
 
-def apply_code_assignments(
+def _ensure_batch_decidable(
     packet: TakeoffPacket,
     batch: CodeAssignmentBatch,
-    catalog: PriceCatalog,
-    contract: ContractWorkbook | None = None,
+    previous: CodeAssignmentSet | None,
     *,
-    previous: CodeAssignmentSet | None = None,
-) -> CodeAssignmentSet:
-    """Cria um novo `CodeAssignmentSet` imutável; nunca muta `packet`, `batch` ou `previous`.
+    expected_catalog_sha256: str,
+) -> None:
+    """Pré-checagens comuns às duas confirmações de código (medição e orçamento-base).
 
-    Fail-closed, na ordem: divergência de pacote/catálogo com `previous`, item
-    desconhecido no pacote, item não confirmado no takeoff, re-decisão de item já
-    presente em `previous`, e por fim as checagens específicas de confirmação (código no
-    catálogo, código no contrato, unidade compatível ou nota explícita).
-
-    Divergência de preço/unidade entre catálogo e contrato não é checada aqui: o portão
-    de exportação (`Valuation.export_errors`) já responde por isso via
-    `LINE_PRICE_NOT_IN_CONTRACT`/`LINE_UNIT_NOT_IN_CONTRACT`; duplicar a checagem aqui
-    adiantaria uma decisão que o portão já toma de forma auditável.
+    Na ordem: divergência de prancha/catálogo com `previous`, item desconhecido no pacote,
+    item ainda não confirmado no takeoff e re-decisão de item já decidido. Nada aqui olha
+    para código ou preço — isso é da confirmação em si, que difere entre as duas cadeias.
     """
     if previous is not None:
         if (
@@ -697,11 +882,11 @@ def apply_code_assignments(
                     "previous_image_sha256": previous.image_sha256,
                 },
             )
-        if previous.catalog_sha256 != catalog.source_sha256:
+        if previous.catalog_sha256 != expected_catalog_sha256:
             raise ValuationValidationError(
                 "ASSIGNMENT_CATALOG_MISMATCH",
                 "conjunto de assignments anterior foi calculado com outro catálogo",
-                {"expected": catalog.source_sha256, "previous": previous.catalog_sha256},
+                {"expected": expected_catalog_sha256, "previous": previous.catalog_sha256},
             )
 
     known_ids = {item.id for item in packet.items}
@@ -738,6 +923,97 @@ def apply_code_assignments(
             {"item_ids": already_decided},
         )
 
+
+def _rejected_assignment(
+    item: TakeoffItem, input_assignment: CodeAssignmentInput
+) -> CodeAssignment:
+    """Rejeição de código: nenhum preço, nenhuma fonte, decisão humana preservada."""
+    return CodeAssignment(
+        item_id=item.id,
+        status="rejected",
+        code=None,
+        catalog_sha256=None,
+        unit_compatible=False,
+        decision=ReviewerDecision(
+            decision_id=_assignment_decision_id(item, input_assignment),
+            action="reject",
+            reviewer_id=input_assignment.reviewer_id,
+            reviewer_role=input_assignment.reviewer_role,
+            decided_at=input_assignment.decided_at,
+            note=input_assignment.note,
+        ),
+    )
+
+
+def _confirmed_assignment(
+    item: TakeoffItem,
+    input_assignment: CodeAssignmentInput,
+    entry: PriceCatalogEntry,
+    *,
+    catalog_sha256: str | None,
+) -> CodeAssignment:
+    """Confirmação de código já resolvida contra a entrada de catálogo escolhida.
+
+    A unidade incompatível sem nota recusa aqui, nas duas cadeias: o orçamentista pode
+    medir em unidade diferente da tabela, mas nunca em silêncio.
+    """
+    code = entry.code
+    unit_compatible = normalize_unit(item.unit) == normalize_unit(entry.unit)
+    if not unit_compatible and input_assignment.note is None:
+        raise ValuationValidationError(
+            "ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE",
+            "unidade do item diverge da unidade do catálogo; confirme com nota explícita",
+            {
+                "item_id": item.id,
+                "code": code,
+                "item_unit": item.unit,
+                "catalog_unit": entry.unit,
+            },
+        )
+    return CodeAssignment(
+        item_id=item.id,
+        status="confirmed",
+        code=code,
+        catalog_sha256=catalog_sha256,
+        unit_compatible=unit_compatible,
+        decision=ReviewerDecision(
+            decision_id=_assignment_decision_id(item, input_assignment),
+            action="confirm",
+            reviewer_id=input_assignment.reviewer_id,
+            reviewer_role=input_assignment.reviewer_role,
+            decided_at=input_assignment.decided_at,
+            note=input_assignment.note,
+        ),
+    )
+
+
+def apply_code_assignments(
+    packet: TakeoffPacket,
+    batch: CodeAssignmentBatch,
+    catalog: PriceCatalog,
+    contract: ContractWorkbook | None = None,
+    *,
+    previous: CodeAssignmentSet | None = None,
+) -> CodeAssignmentSet:
+    """Cria um novo `CodeAssignmentSet` imutável; nunca muta `packet`, `batch` ou `previous`.
+
+    Fail-closed, na ordem: divergência de pacote/catálogo com `previous`, item
+    desconhecido no pacote, item não confirmado no takeoff, re-decisão de item já
+    presente em `previous`, e por fim as checagens específicas de confirmação (código no
+    catálogo, código no contrato, unidade compatível ou nota explícita).
+
+    Divergência de preço/unidade entre catálogo e contrato não é checada aqui: o portão
+    de exportação (`Valuation.export_errors`) já responde por isso via
+    `LINE_PRICE_NOT_IN_CONTRACT`/`LINE_UNIT_NOT_IN_CONTRACT`; duplicar a checagem aqui
+    adiantaria uma decisão que o portão já toma de forma auditável.
+
+    A rodada aqui tem **um** catálogo. Uma decisão pode citá-lo (`catalog_sha256`), e nesse
+    caso a citação é conferida contra ele (`ASSIGNMENT_CATALOG_UNKNOWN`) e carregada adiante
+    no assignment; decisão sem citação — o caso de toda a medição — continua exatamente como
+    antes. Confirmação sobre mais de uma fonte é `apply_code_assignments_over_cascade`.
+    """
+    _ensure_batch_decidable(packet, batch, previous, expected_catalog_sha256=catalog.source_sha256)
+
     assignments_by_item = {assignment.item_id: assignment for assignment in batch.assignments}
     new_assignments: list[CodeAssignment] = []
     for item in packet.items:
@@ -746,27 +1022,18 @@ def apply_code_assignments(
             continue
 
         if input_assignment.action == "reject":
-            decision = ReviewerDecision(
-                decision_id=_assignment_decision_id(item, input_assignment),
-                action="reject",
-                reviewer_id=input_assignment.reviewer_id,
-                reviewer_role=input_assignment.reviewer_role,
-                decided_at=input_assignment.decided_at,
-                note=input_assignment.note,
-            )
-            new_assignments.append(
-                CodeAssignment(
-                    item_id=item.id,
-                    status="rejected",
-                    code=None,
-                    unit_compatible=False,
-                    decision=decision,
-                )
-            )
+            new_assignments.append(_rejected_assignment(item, input_assignment))
             continue
 
         code = input_assignment.code
         assert code is not None  # garantido por ASSIGNMENT_CODE_REQUIRED no modelo de input
+        cited_catalog = input_assignment.catalog_sha256
+        if cited_catalog is not None and cited_catalog != catalog.source_sha256:
+            raise ValuationValidationError(
+                "ASSIGNMENT_CATALOG_UNKNOWN",
+                "decisão cita uma fonte de preço que não é o catálogo desta rodada",
+                {"item_id": item.id, "cited": cited_catalog, "available": catalog.source_sha256},
+            )
         if not catalog.has_code(code):
             raise ValuationValidationError(
                 "ASSIGNMENT_CODE_NOT_IN_CATALOG",
@@ -792,35 +1059,12 @@ def apply_code_assignments(
                     },
                 )
 
-        entry = catalog.entry_for(code)
-        unit_compatible = normalize_unit(item.unit) == normalize_unit(entry.unit)
-        if not unit_compatible and input_assignment.note is None:
-            raise ValuationValidationError(
-                "ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE",
-                "unidade do item diverge da unidade do catálogo; confirme com nota explícita",
-                {
-                    "item_id": item.id,
-                    "code": code,
-                    "item_unit": item.unit,
-                    "catalog_unit": entry.unit,
-                },
-            )
-
-        decision = ReviewerDecision(
-            decision_id=_assignment_decision_id(item, input_assignment),
-            action="confirm",
-            reviewer_id=input_assignment.reviewer_id,
-            reviewer_role=input_assignment.reviewer_role,
-            decided_at=input_assignment.decided_at,
-            note=input_assignment.note,
-        )
         new_assignments.append(
-            CodeAssignment(
-                item_id=item.id,
-                status="confirmed",
-                code=code,
-                unit_compatible=unit_compatible,
-                decision=decision,
+            _confirmed_assignment(
+                item,
+                input_assignment,
+                catalog.entry_for(code),
+                catalog_sha256=cited_catalog,
             )
         )
 
@@ -831,6 +1075,95 @@ def apply_code_assignments(
         image_sha256=packet.image_sha256,
         catalog_sha256=catalog.source_sha256,
         contract_sha256=contract.source_sha256 if contract else None,
+        assignments=[*previous_assignments, *new_assignments],
+        safety_notes=list(_ASSIGNMENT_SAFETY_NOTES),
+    )
+
+
+def apply_code_assignments_over_cascade(
+    packet: TakeoffPacket,
+    batch: CodeAssignmentBatch,
+    cascade: Sequence[PriceCatalog],
+    *,
+    previous: CodeAssignmentSet | None = None,
+) -> CodeAssignmentSet:
+    """Confirmação de código do ORÇAMENTO-BASE: a decisão cita de qual fonte veio o preço.
+
+    Irmã de `apply_code_assignments`, com as mesmas pré-checagens fail-closed
+    (`_ensure_batch_decidable`) e a mesma regra de unidade. As diferenças são as da
+    pré-licitação:
+
+    - a rodada tem mais de uma fonte, então **toda confirmação cita** a sua
+      (`ASSIGNMENT_CATALOG_REQUIRED`) — resolver o código "na ordem da cascata" faria a
+      máquina escolher a tabela que precifica o item, e essa escolha é do orçamentista;
+    - a citação precisa estar na cascata (`ASSIGNMENT_CATALOG_UNKNOWN`) e o código precisa
+      existir naquele catálogo (`ASSIGNMENT_CODE_NOT_IN_CATALOG`), nunca em outro dela;
+    - não há contrato: contrato é da obra licitada, e lá a cascata não existe (`ADR-0027`).
+
+    O cabeçalho do conjunto (`catalog_sha256`) fica com o catálogo CABEÇA da cascata, que é
+    o que amarra o conjunto à rodada; a fonte de cada linha é a citada em cada assignment.
+    """
+    ensure_price_cascade(cascade)
+    catalogs_by_digest = {catalog.source_sha256: catalog for catalog in cascade}
+    _ensure_batch_decidable(
+        packet, batch, previous, expected_catalog_sha256=cascade[0].source_sha256
+    )
+
+    assignments_by_item = {assignment.item_id: assignment for assignment in batch.assignments}
+    new_assignments: list[CodeAssignment] = []
+    for item in packet.items:
+        input_assignment = assignments_by_item.get(item.id)
+        if input_assignment is None:
+            continue
+
+        if input_assignment.action == "reject":
+            new_assignments.append(_rejected_assignment(item, input_assignment))
+            continue
+
+        code = input_assignment.code
+        assert code is not None  # garantido por ASSIGNMENT_CODE_REQUIRED no modelo de input
+        cited_catalog = input_assignment.catalog_sha256
+        if cited_catalog is None:
+            raise ValuationValidationError(
+                "ASSIGNMENT_CATALOG_REQUIRED",
+                "com mais de uma fonte de preço, a confirmação precisa citar de qual "
+                "catálogo o código veio",
+                {"item_id": item.id, "code": code},
+            )
+        catalog = catalogs_by_digest.get(cited_catalog)
+        if catalog is None:
+            raise ValuationValidationError(
+                "ASSIGNMENT_CATALOG_UNKNOWN",
+                "decisão cita uma fonte de preço que não está na cascata desta rodada",
+                {
+                    "item_id": item.id,
+                    "cited": cited_catalog,
+                    "available": [entry.source_sha256 for entry in cascade],
+                },
+            )
+        if not catalog.has_code(code):
+            raise ValuationValidationError(
+                "ASSIGNMENT_CODE_NOT_IN_CATALOG",
+                "código confirmado não existe no catálogo citado pela decisão",
+                {"item_id": item.id, "code": code, "catalog_sha256": cited_catalog},
+            )
+
+        new_assignments.append(
+            _confirmed_assignment(
+                item,
+                input_assignment,
+                catalog.entry_for(code),
+                catalog_sha256=cited_catalog,
+            )
+        )
+
+    previous_assignments = list(previous.assignments) if previous is not None else []
+    return CodeAssignmentSet(
+        plate_id=packet.plate_id,
+        page_number=packet.page_number,
+        image_sha256=packet.image_sha256,
+        catalog_sha256=cascade[0].source_sha256,
+        contract_sha256=None,
         assignments=[*previous_assignments, *new_assignments],
         safety_notes=list(_ASSIGNMENT_SAFETY_NOTES),
     )

@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: setup dev dev-api dev-web dev-medicao dev-worker dev-worker-fixtures dev-services down-services db-init check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local contracts infra-check
+.PHONY: setup dev dev-api dev-web dev-medicao dev-worker dev-worker-fixtures dev-services down-services db-init check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local contracts infra-check
 
 setup:
 	uv sync --all-groups
@@ -80,6 +80,12 @@ solver-eval:
 
 valuation-demo:
 	uv run croquito-valuation demo --output output/valuation-demo
+
+# Cadeia de PRÉ-licitação (ADR-0027): catálogo SCO sintético + catálogo EMOP sintético
+# (.DBF, pelo importador real) + composição manual formam a cascata do orçamento-base.
+# Offline e determinística como as demais demos; nenhuma chamada paga.
+valuation-estimate-demo:
+	uv run croquito-valuation estimate-demo --output output/valuation-estimate-demo
 
 valuation-eval:
 	uv run croquito-valuation takeoff-eval --output output/valuation-eval

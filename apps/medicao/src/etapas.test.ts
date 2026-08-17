@@ -61,6 +61,7 @@ function estado(overrides: {
       ...overrides.codes,
     },
     bulletin: { present: false, valuation_sha256: null, ...overrides.bulletin },
+    dossier: { present: false, dossier_sha256: null },
   };
 }
 

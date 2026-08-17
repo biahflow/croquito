@@ -203,6 +203,22 @@ def test_writer_refuses_a_price_that_is_not_in_the_catalog(tmp_path: Path) -> No
     assert raised.value.code == "LINE_PRICE_NOT_IN_CATALOG"
 
 
+def test_the_writer_refuses_a_catalog_whose_origin_is_not_sco(tmp_path: Path) -> None:
+    """Segunda linha de defesa do guardrail da licitada: o escritor recebe catálogo
+    próprio na hora de gravar a pasta, e ele também nunca aceita origem fora do SCO."""
+    fixture = build_fixture(tmp_path)
+    payload = fixture.catalog.model_dump()
+    payload["origin"] = "emop"
+    for entry in payload["entries"]:
+        entry["origin"] = "emop"
+    emop_catalog = PriceCatalog.model_validate(payload)
+
+    with pytest.raises(ValuationValidationError) as raised:
+        plan_workbook(fixture.valuation, emop_catalog, fixture.template)
+
+    assert raised.value.code == "BULLETIN_PRICE_ORIGIN_FORBIDDEN"
+
+
 @dataclass(frozen=True, slots=True)
 class _MultiWorksiteFixture:
     """Consolidado importado, catálogo do contrato e a medição de três obras."""

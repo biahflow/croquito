@@ -31,6 +31,7 @@ from croquito_valuation.assignment import (
     SuggestionRefinement,
     apply_refinement,
     suggest_codes,
+    suggest_codes_over_cascade,
 )
 from croquito_valuation.catalog import DomainSynonyms
 from croquito_valuation.contract import ContractWorkbook
@@ -86,6 +87,23 @@ def build_code_suggestions(
     é o chamador (CLI/`local_server`), via `croquito_worker.valuation.cli.load_round_synonyms`.
     """
     return suggest_codes(packet, catalog, contract, config=config, synonyms=synonyms)
+
+
+def build_cascade_code_suggestions(
+    packet: TakeoffPacket,
+    cascade: Sequence[PriceCatalog],
+    *,
+    config: SuggestionConfig | None = None,
+    synonyms: DomainSynonyms | None = None,
+) -> CodeSuggestionSet:
+    """Shortlist lexical do ORÇAMENTO-BASE: mesma via determinística, várias fontes.
+
+    Ponto único de sugestão do worker também para a cascata (ver docstring do módulo).
+    Nenhum provider entra aqui: o refino pago e o braço semântico continuam sendo do
+    caminho de um catálogo só, e o comando declara essa degradação em vez de inventar uma
+    chamada paga sobre catálogo não-SCO.
+    """
+    return suggest_codes_over_cascade(packet, cascade, config=config, synonyms=synonyms)
 
 
 def _transmitted_description(description: str) -> str:

@@ -71,6 +71,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.requests import Request
 
+from croquito_valuation.amendment_dossier import AmendmentDossier, build_amendment_dossier
 from croquito_valuation.assignment import (
     LLM_RERANK_SUFFIX,
     CodeAssignmentBatch,
@@ -123,6 +124,7 @@ from croquito_worker.providers import (
     build_extraction_arm,
 )
 from croquito_worker.valuation.cli import (
+    AMENDMENT_DOSSIER_FILENAME,
     CALC_PLAN_FILENAME,
     CATALOG_FILENAME,
     CODE_ASSIGNMENTS_FILENAME,
@@ -1738,6 +1740,7 @@ def _state_payload(run: _Run, *, reviewer_id: str) -> dict[str, object]:
     assignments_found = run.assignments()
     suggestions_digest = run.digest(CODE_SUGGESTIONS_FILENAME)
     valuation_digest = run.digest(VALUATION_FILENAME)
+    dossier_digest = run.digest(AMENDMENT_DOSSIER_FILENAME)
 
     artifacts: dict[str, str] = {}
     for filename in (
@@ -1748,6 +1751,7 @@ def _state_payload(run: _Run, *, reviewer_id: str) -> dict[str, object]:
         CODE_ASSIGNMENTS_FILENAME,
         CALC_PLAN_FILENAME,
         VALUATION_FILENAME,
+        AMENDMENT_DOSSIER_FILENAME,
     ):
         digest = run.digest(filename)
         if digest is not None:
@@ -1797,6 +1801,7 @@ def _state_payload(run: _Run, *, reviewer_id: str) -> dict[str, object]:
         "takeoff": takeoff,
         "codes": codes,
         "bulletin": {"present": valuation_digest is not None, "valuation_sha256": valuation_digest},
+        "dossier": {"present": dossier_digest is not None, "dossier_sha256": dossier_digest},
     }
 
 
@@ -2397,6 +2402,46 @@ def _build_app(
             "valuation": valuation.model_dump(mode="json"),
             "valuation_sha256": digest,
             "total_amount": str(valuation.total_amount),
+        }
+
+    @router.post("/dossier/build", tags=["bulletin"])
+    async def build_dossier() -> dict[str, object]:
+        """Monta o dossiê do aditivo a partir do takeoff confirmado e das confirmações de código.
+
+        Espelho de `POST /calc/build`: o dossiê é o outro artefato de FECHAMENTO da rodada,
+        nascido dos MESMOS dois artefatos-base (`takeoff-packet.json`,
+        `code-assignments.json`). Ele nunca precifica e nunca cria ou altera
+        `Amendment`/RE-RA (ADR-0018, leitura apenas). Como `POST /calc/build`, esta rota
+        não tem guarda de digest-base própria: ela sempre reconstrói do estado ATUAL dos
+        dois artefatos de origem, os mesmos que o boletim já lê sem guarda — recalcular
+        sobrescreve `amendment-dossier.json` com o resultado corrente.
+        """
+        packet, _digest = run.require_packet()
+        assignments_found = run.assignments()
+        if assignments_found is None:
+            raise _artifact_missing(CODE_ASSIGNMENTS_FILENAME)
+        dossier = build_amendment_dossier(packet, assignments_found[0])
+        document = _document(dossier)
+        atomic_write_text(run.path(AMENDMENT_DOSSIER_FILENAME), document)
+        return {
+            "dossier": dossier.model_dump(mode="json"),
+            "dossier_sha256": _digest_of(document),
+            "item_count": len(dossier.items),
+        }
+
+    @router.get("/dossier", tags=["bulletin"])
+    async def read_dossier() -> dict[str, object]:
+        """Dossiê gravado, revalidado na leitura: espelho de `GET /bulletin`.
+
+        Arquivo que não passa na revalidação é 422 — a tela nunca renderiza dossiê
+        inválido; ausente é 404, como todo artefato de entrada desta rodada.
+        """
+        text, digest = run.require(AMENDMENT_DOSSIER_FILENAME)
+        dossier = AmendmentDossier.model_validate_json(text)
+        return {
+            "dossier": dossier.model_dump(mode="json"),
+            "dossier_sha256": digest,
+            "item_count": len(dossier.items),
         }
 
     application.include_router(router)

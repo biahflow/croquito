@@ -26,6 +26,7 @@ from croquito_valuation.models import (
     CalcRecipe,
     PriceCatalog,
     PriceCatalogEntry,
+    PriceOrigin,
     ReviewerDecision,
 )
 from croquito_valuation.takeoff import (
@@ -425,6 +426,42 @@ def test_assignments_from_another_catalog_are_refused() -> None:
         )
 
     assert raised.value.code == "CALC_CATALOG_MISMATCH"
+
+
+def test_bulletin_refuses_a_catalog_whose_origin_is_not_sco() -> None:
+    """A cadeia da medição licitada é SEMPRE SCO: EMOP/composição só valem pré-licitação."""
+    item = _confirmed_item()
+    packet = _packet([item])
+    entry = PriceCatalogEntry(
+        code="EMOP.CE.001",
+        description="ITEM SINTETICO EMOP",
+        unit="m2",
+        unit_price=Decimal("50.00"),
+        family_code="CE",
+        family_name="SERVICOS SINTETICOS EMOP",
+        subgroup_code="CE0410",
+        subgroup_name="ITENS SINTETICOS EMOP",
+        origin=PriceOrigin.EMOP,
+    )
+    catalog = PriceCatalog(
+        source_label="CATALOGO EMOP SINTETICO",
+        reference_month="2026-01",
+        source_sha256=_CATALOG_DIGEST,
+        entries=[entry],
+        origin=PriceOrigin.EMOP,
+    )
+    assignments = _assignment_set(packet, catalog, [_assignment(item.id, code=entry.code)])
+
+    with pytest.raises(ValuationValidationError) as raised:
+        build_worksite_bulletin(
+            packet,
+            assignments,
+            catalog,
+            worksite_key=_WORKSITE_KEY,
+            worksite_name=_WORKSITE_NAME,
+        )
+
+    assert raised.value.code == "BULLETIN_PRICE_ORIGIN_FORBIDDEN"
 
 
 def test_plan_for_a_rejected_item_is_refused() -> None:

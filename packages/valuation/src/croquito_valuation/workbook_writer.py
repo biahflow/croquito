@@ -43,6 +43,7 @@ from croquito_valuation.models import (
     CalcBlock,
     ExactDecimal,
     PriceCatalog,
+    PriceOrigin,
     Valuation,
     ValuationContractModel,
     WorksiteBulletin,
@@ -218,7 +219,19 @@ def _formula(
 
 
 def _validate_against_catalog(bulletin: WorksiteBulletin, catalog: PriceCatalog) -> None:
-    """A pasta é autocontida, mas o preço impresso continua sendo o do catálogo."""
+    """A pasta é autocontida, mas o preço impresso continua sendo o do catálogo.
+
+    Segunda linha de defesa do guardrail da licitada (`calc.py::build_worksite_bulletin`
+    já recusa antes): o catálogo que o escritor recebe na hora de gravar a pasta também
+    precisa ser o SCO — preço de EMOP ou composição nunca chega à planilha da medição.
+    """
+    if catalog.origin != PriceOrigin.SCO:
+        raise ValuationValidationError(
+            "BULLETIN_PRICE_ORIGIN_FORBIDDEN",
+            "medição de obra licitada não aceita catálogo cuja origem não seja o SCO; "
+            "item fora do contrato vira dossiê de aditivo, nunca preço de outra tabela",
+            {"origin": catalog.origin.value},
+        )
     for line in bulletin.lines:
         if not catalog.has_code(line.code):
             raise ValuationValidationError(

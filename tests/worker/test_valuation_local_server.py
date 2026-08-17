@@ -62,6 +62,7 @@ from croquito_worker.providers import (
 )
 from croquito_worker.valuation import local_server
 from croquito_worker.valuation.cli import (
+    AMENDMENT_DOSSIER_FILENAME,
     CATALOG_FILENAME,
     CODE_ASSIGNMENTS_FILENAME,
     CODE_SUGGESTIONS_FILENAME,
@@ -540,6 +541,125 @@ def test_calc_build_refuses_a_confirmed_item_without_a_code_decision(
     assert response.status_code == 422
     assert response.json()["code"] == "CALC_ASSIGNMENT_MISSING"
     assert _snapshot(reviewed_root) == before
+
+
+def test_dossier_build_and_read_carry_the_rejected_code_item_with_its_justification(
+    client: TestClient, root: Path
+) -> None:
+    """Espelho de `test_full_flow_from_review_to_bulletin` para o outro artefato de
+    fechamento da rodada: o gramado (código rejeitado por falta de cotação) vira o único
+    item do dossiê, com a nota da rejeição como justificativa — nunca preço."""
+    _review_takeoff(client)
+    _confirm_codes(client)
+    lawn_id = _item_ids(client)[_LAWN]
+
+    built = client.post("/dossier/build")
+
+    assert built.status_code == 200
+    assert (root / AMENDMENT_DOSSIER_FILENAME).is_file()
+    payload = built.json()
+    assert payload["item_count"] == 1
+    assert payload["dossier_sha256"] == _snapshot(root)[AMENDMENT_DOSSIER_FILENAME]
+    (item,) = payload["dossier"]["items"]
+    assert item["item_id"] == lawn_id
+    assert item["label"] == _LAWN
+    assert item["justification"] == "sem cotação aplicável no contrato sintético"
+    assert "price" not in json.dumps(payload["dossier"])
+    assert "unit_price" not in json.dumps(payload["dossier"])
+
+    read = client.get("/dossier")
+    assert read.status_code == 200
+    assert read.json() == payload
+    assert client.get("/state").json()["dossier"] == {
+        "present": True,
+        "dossier_sha256": payload["dossier_sha256"],
+    }
+
+
+def test_dossier_build_without_any_rejection_is_a_valid_empty_dossier(
+    reviewed_client: TestClient,
+) -> None:
+    # Mesmo `_CODE_REVIEW`, mas o gramado ganha um código válido em vez de ser rejeitado:
+    # esta rodada não tem nenhuma rejeição de código, então o dossiê é válido e vazio.
+    lawn_confirmed: tuple[str, dict[str, str]] = (
+        _LAWN,
+        {"action": "confirm", "code": "AD04050060(/)"},
+    )
+    all_confirmed = tuple(
+        lawn_confirmed if label == _LAWN else (label, decision) for label, decision in _CODE_REVIEW
+    )
+    identifiers = _item_ids(reviewed_client)
+    base: str | None = None
+    for label, decision in all_confirmed:
+        body: dict[str, object] = {"item_id": identifiers[label], **decision}
+        if base is not None:
+            body["base_assignments_sha256"] = base
+        response = reviewed_client.post("/codes/decisions", json=body)
+        assert response.status_code == 200, (label, response.json())
+        base = response.json()["assignments_sha256"]
+
+    built = reviewed_client.post("/dossier/build")
+
+    assert built.status_code == 200
+    assert built.json()["dossier"]["items"] == []
+    assert built.json()["item_count"] == 0
+
+
+def test_dossier_build_refuses_without_a_code_assignment_set_and_writes_nothing(
+    client: TestClient, root: Path
+) -> None:
+    """Sem `code-assignments.json` na rodada, o dossiê recusa como artefato ausente — o
+    mesmo caminho que `POST /calc/build` já usa para o mesmo artefato-base."""
+    before = _snapshot(root)
+
+    response = client.post("/dossier/build")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "code": "LOCAL_ARTIFACT_MISSING",
+        "detail": "artefato de entrada ausente no diretório da rodada",
+        "details": {"artifact": CODE_ASSIGNMENTS_FILENAME},
+    }
+    assert _snapshot(root) == before
+
+
+def test_dossier_read_before_it_is_built_is_404(client: TestClient) -> None:
+    response = client.get("/dossier")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "LOCAL_ARTIFACT_MISSING"
+
+
+def test_dossier_read_revalidates_and_a_tampered_file_is_422(
+    client: TestClient, root: Path
+) -> None:
+    _review_takeoff(client)
+    _confirm_codes(client)
+    client.post("/dossier/build")
+    (root / AMENDMENT_DOSSIER_FILENAME).write_text("{}", encoding="utf-8")
+
+    response = client.get("/dossier")
+
+    assert response.status_code == 422
+
+
+def test_dossier_build_has_no_base_digest_guard_like_calc_build(
+    client: TestClient, root: Path
+) -> None:
+    """`POST /dossier/build` é espelho do `POST /calc/build` real (não da descrição textual
+    do spec de handoff): o par `/calc/build`/`/bulletin` NÃO exige `base_*_sha256` no
+    corpo — ele só lê os artefatos-base atuais e sobrescreve o artefato de saída. Este
+    teste prova que o dossiê segue o MESMO contrato, sem inventar uma guarda que a rota
+    espelhada não tem."""
+    _review_takeoff(client)
+    _confirm_codes(client)
+
+    first = client.post("/dossier/build", json={})
+    assert first.status_code == 200
+    second = client.post("/dossier/build")
+    assert second.status_code == 200
+    # As duas chamadas recomputam do mesmo estado-base e publicam o mesmo conteúdo.
+    assert first.json()["dossier_sha256"] == second.json()["dossier_sha256"]
 
 
 def test_suggestions_before_the_review_is_complete_are_refused_and_write_nothing(

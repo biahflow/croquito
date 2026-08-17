@@ -27,6 +27,7 @@ from croquito_valuation.models import (
     CalcRecipe,
     CalcSheet,
     PriceCatalog,
+    PriceOrigin,
     Valuation,
     ValuationContractModel,
     WorksiteBulletin,
@@ -113,6 +114,28 @@ def _build_block(plan: CalcBlockPlan) -> CalcBlock:
     )
 
 
+def build_calc_blocks(
+    item_plan: ItemCalcPlan | None, *, quantity: Decimal, unit: str
+) -> list[CalcBlock]:
+    """Blocos de memória de um item: os do plano, ou o bloco único de quantidade direta.
+
+    Ponto único da decomposição impressa na memória, usado pelas duas cadeias — o boletim
+    da medição licitada (`build_worksite_bulletin`) e o orçamento-base de pré-licitação
+    (`estimate.py`). O que se decompõe é a quantidade CONFIRMADA; item sem plano recebe o
+    bloco direto para que todo item tenha memória, mesmo sem detalhamento explícito.
+    """
+    if item_plan is None:
+        return [
+            CalcBlock(
+                label=DEFAULT_BLOCK_LABEL,
+                recipe=CalcRecipe.DIRECT_QUANTITY,
+                operands=[CalcOperand(name=DEFAULT_OPERAND_NAME, value=quantity, unit=unit)],
+                subtotal=quantity_round(quantity),
+            )
+        ]
+    return [_build_block(block_plan) for block_plan in item_plan.blocks]
+
+
 def build_worksite_bulletin(
     packet: TakeoffPacket,
     assignments: CodeAssignmentSet,
@@ -154,6 +177,17 @@ def build_worksite_bulletin(
             "CALC_CATALOG_MISMATCH",
             "conjunto de assignments foi calculado com outro catálogo",
             {"expected": catalog.source_sha256, "declared": assignments.catalog_sha256},
+        )
+    if catalog.origin != PriceOrigin.SCO:
+        # O boletim É a cadeia da medição de obra licitada por definição: o contrato
+        # manda, e preço nunca vem da EMOP (nem de composição). Item fora do
+        # contrato/SCO vira dossiê de aditivo (`amendment_dossier.py`), nunca preço de
+        # outra tabela — a cadeia SCO → EMOP → composição só vale pré-licitação.
+        raise ValuationValidationError(
+            "BULLETIN_PRICE_ORIGIN_FORBIDDEN",
+            "medição de obra licitada não aceita catálogo cuja origem não seja o SCO; "
+            "item fora do contrato vira dossiê de aditivo, nunca preço de outra tabela",
+            {"origin": catalog.origin.value},
         )
 
     confirmed_items = packet.confirmed_items()
@@ -224,20 +258,7 @@ def build_worksite_bulletin(
         item_numbers[item.id] = item_number
         quantity = _confirmed_quantity(item)
 
-        item_plan = plan_by_item.get(item.id)
-        if item_plan is not None:
-            blocks = [_build_block(block_plan) for block_plan in item_plan.blocks]
-        else:
-            blocks = [
-                CalcBlock(
-                    label=DEFAULT_BLOCK_LABEL,
-                    recipe=CalcRecipe.DIRECT_QUANTITY,
-                    operands=[
-                        CalcOperand(name=DEFAULT_OPERAND_NAME, value=quantity, unit=item.unit)
-                    ],
-                    subtotal=quantity_round(quantity),
-                )
-            ]
+        blocks = build_calc_blocks(plan_by_item.get(item.id), quantity=quantity, unit=item.unit)
 
         total_quantity = quantity_round(sum((block.subtotal for block in blocks), Decimal(0)))
         if total_quantity != quantity:

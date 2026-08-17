@@ -71,11 +71,14 @@ from typing import Final
 
 from pydantic import BaseModel, ValidationError
 
+from croquito_valuation.amendment_dossier import AmendmentDossier, build_amendment_dossier
 from croquito_valuation.assignment import (
     CodeAssignmentBatch,
     CodeAssignmentSet,
     CodeSuggestionSet,
     apply_code_assignments,
+    apply_code_assignments_over_cascade,
+    ensure_price_cascade,
 )
 from croquito_valuation.bulletin_compare import compare_bulletin, read_bulletin_lines
 from croquito_valuation.calc import (
@@ -90,11 +93,19 @@ from croquito_valuation.catalog import (
     DomainSynonyms,
     default_domain_synonyms,
     default_legend_noise,
+    file_sha256,
     read_price_catalog,
 )
+from croquito_valuation.composition import CompositionSet, compile_compositions
 from croquito_valuation.contract import ContractWorkbook
 from croquito_valuation.contract_diagnosis import ContractSemanticsError
+from croquito_valuation.emop import (
+    EmopCatalogLayout,
+    read_emop_catalog,
+    read_emop_catalog_with_report,
+)
 from croquito_valuation.errors import ValuationValidationError, valuation_errors
+from croquito_valuation.estimate import Estimate, build_worksite_estimate
 from croquito_valuation.models import PriceCatalog, Valuation
 from croquito_valuation.takeoff import (
     TakeoffDecisionBatch,
@@ -120,6 +131,14 @@ from croquito_worker.providers import (
     ProviderExecutionError,
     build_embeddings_adapter,
     build_extraction_arm,
+)
+from croquito_worker.valuation.emop_fixture import emop_fixture_layout, write_emop_dbf
+from croquito_worker.valuation.estimate_fixture import (
+    SYNTHETIC_ESTIMATE_WORKSITE_ADDRESS,
+    SYNTHETIC_ESTIMATE_WORKSITE_KEY,
+    SYNTHETIC_ESTIMATE_WORKSITE_NAME,
+    build_demo_estimate_assignments,
+    build_synthetic_composition_set,
 )
 from croquito_worker.valuation.extraction_eval import (
     ValuationExtractionEvalReport,
@@ -149,10 +168,12 @@ from croquito_worker.valuation.sco_matching import (
     resolve_query_vectors,
 )
 from croquito_worker.valuation.sco_suggestion import (
+    build_cascade_code_suggestions,
     build_code_suggestions,
     refine_code_suggestions,
 )
 from croquito_worker.valuation.synthetic import (
+    SYNTHETIC_CATALOG_LABEL,
     SYNTHETIC_CONTRACT_LABEL,
     SYNTHETIC_CONTRACT_SOURCE_LABEL,
     SYNTHETIC_REFERENCE_MONTH,
@@ -167,6 +188,7 @@ from croquito_worker.valuation.synthetic import (
     build_demo_code_assignments,
     build_demo_takeoff_decisions,
     build_synthetic_approval,
+    build_synthetic_catalog_workbook,
     build_synthetic_multi_valuation,
     build_synthetic_previous_mapao,
 )
@@ -183,6 +205,10 @@ CONTRACT_FILENAME = "contract-workbook.json"
 IMPORT_REPORT_FILENAME = "import-report.json"
 IMPORT_DIAGNOSIS_FILENAME = "import-diagnosis.json"
 CATALOG_IMPORT_REPORT_FILENAME = "catalog-import-report.json"
+EMOP_IMPORT_REPORT_FILENAME = "emop-import-report.json"
+COMPOSITIONS_FILENAME = "compositions.json"
+COMPOSITIONS_IMPORT_REPORT_FILENAME = "compositions-import-report.json"
+ESTIMATE_FILENAME = "estimate.json"
 WORKBOOK_FILENAME = "medicao.xlsx"
 VALUATION_FILENAME = "valuation.json"
 AUDIT_FILENAME = "audit.json"
@@ -196,6 +222,17 @@ CODE_SUGGESTIONS_FILENAME = "code-suggestions.json"
 CODE_ASSIGNMENT_DECISIONS_FILENAME = "code-assignment-decisions.json"
 CODE_ASSIGNMENTS_FILENAME = "code-assignments.json"
 CALC_PLAN_FILENAME = "calc-plan.json"
+AMENDMENT_DOSSIER_FILENAME = "amendment-dossier.json"
+ESTIMATE_DEMO_SCO_SOURCE_FILENAME = "sco-catalogo-sintetico.xlsx"
+ESTIMATE_DEMO_EMOP_SOURCE_FILENAME = "emop-catalogo-sintetico.dbf"
+CATALOG_SCO_FILENAME = "catalog-sco.json"
+CATALOG_EMOP_FILENAME = "catalog-emop.json"
+CATALOG_COMPOSITION_FILENAME = "catalog-composition.json"
+"""Nomes da demo do orçamento-base: um catálogo por fonte, nunca um `catalog.json` só.
+
+A cascata é dado ordenado e cada fonte é um arquivo próprio — juntar as três num arquivo
+com o nome padrão apagaria a fronteira que o `ADR-0027` existe para manter visível."""
+
 SYNONYMS_FILENAME = "synonyms.json"
 """Sinônimos de domínio opcionais da rodada (`DomainSynonyms`). Quando o diretório da
 rodada não tem este arquivo, `load_round_synonyms` cai no seed empacotado
@@ -237,6 +274,73 @@ class ValuationCatalogImportResult:
     template: WorkbookTemplate
     catalog: PriceCatalog
     report: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class ValuationEmopImportResult:
+    """Artefatos produzidos pela importação isolada do catálogo EMOP (.DBF).
+
+    Sem `template`: o layout do EMOP é `EmopCatalogLayout`, não `WorkbookTemplate` — o
+    catálogo EMOP nunca vem de uma planilha do MAPÃO. `catalog.origin` sai sempre
+    `PriceOrigin.EMOP`; é esse dado que os guardrails da cadeia licitada
+    (`BULLETIN_PRICE_ORIGIN_FORBIDDEN`) usam para recusar este catálogo em
+    `build-calc`/`export-valuation`.
+    """
+
+    catalog_path: Path
+    report_path: Path
+    layout: EmopCatalogLayout
+    catalog: PriceCatalog
+    report: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class ValuationCompositionImportResult:
+    """Artefatos produzidos pela compilação das composições manuais em catálogo.
+
+    Sem `template` e sem `layout`: composição não vem de planilha nem de .DBF, ela É o
+    documento canônico de entrada. `catalog.origin` sai sempre `PriceOrigin.COMPOSITION`, e
+    é esse dado que o guardrail da medição licitada (`BULLETIN_PRICE_ORIGIN_FORBIDDEN`) usa
+    para recusar este catálogo em `build-calc`/`export-valuation`.
+    """
+
+    catalog_path: Path
+    report_path: Path
+    composition_set: CompositionSet
+    catalog: PriceCatalog
+    report: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class BuildEstimateResult:
+    """Orçamento-base de uma obra montado sobre a cascata, sem contrato e sem aprovação."""
+
+    estimate: Estimate
+    estimate_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class EstimateDemoResult:
+    """Cadeia do orçamento-base percorrida ponta a ponta sobre a prancha sintética.
+
+    `cascade` sai na ordem em que as fontes foram declaradas — é ela que o orçamento
+    publicado carrega no manifesto e que dá sentido à proveniência de cada linha.
+    """
+
+    plate: PlateArtifacts
+    packet: TakeoffPacket
+    packet_path: Path
+    takeoff_decisions_path: Path
+    cascade: tuple[PriceCatalog, ...]
+    catalog_paths: tuple[Path, ...]
+    suggestions_path: Path
+    assignment_decisions_path: Path
+    assignments_path: Path
+    assignments: CodeAssignmentSet
+    calc_plan_path: Path
+    compositions_path: Path
+    estimate: Estimate
+    estimate_path: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,6 +470,14 @@ class BuildCalcResult:
     valuation: Valuation
     valuation_path: Path
     excluded_item_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BuildAmendmentDossierResult:
+    """Dossiê do aditivo montado do takeoff confirmado e das confirmações de código."""
+
+    dossier: AmendmentDossier
+    dossier_path: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -629,6 +741,100 @@ def run_import_catalog(
         catalog_path=catalog_path,
         report_path=report_path,
         template=template,
+        catalog=catalog,
+        report=report,
+    )
+
+
+def run_import_emop(
+    input_path: Path,
+    output_dir: Path,
+    layout: EmopCatalogLayout,
+) -> ValuationEmopImportResult:
+    """Importa o catálogo EMOP (.DBF) offline, sem tocar em nada da cadeia da medição.
+
+    O catálogo publicado nasce com `origin=PriceOrigin.EMOP`. Nenhum guardrail é
+    contornado por este comando: `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (`calc.py`,
+    `workbook_writer.py`) continua recusando este catálogo em `build-calc` e
+    `export-valuation` — a cadeia SCO → EMOP → composição só vale pré-licitação
+    (orçamento-base, fase futura). O catálogo digital EMOP real é pago (assinatura GRE);
+    não existe layout default aqui, `--layout` é sempre obrigatório.
+    """
+    catalog, notes = read_emop_catalog_with_report(input_path, layout)
+    report: dict[str, object] = {
+        "source_sha256": catalog.source_sha256,
+        "layout_label": layout.source_label,
+        "catalog_entries": len(catalog.entries),
+        "family_count": len({entry.family_code for entry in catalog.entries}),
+        "subgroup_count": len({entry.subgroup_code for entry in catalog.entries}),
+        "deleted_records": {
+            "count": notes.deleted_count,
+            "rows": list(notes.deleted_rows),
+        },
+        "consolidado": "not_imported",
+        "note": (
+            "catálogo EMOP importado isoladamente, origin=emop: a cadeia da medição "
+            "licitada nunca aceita este catálogo (BULLETIN_PRICE_ORIGIN_FORBIDDEN); a "
+            "cadeia SCO -> EMOP -> composição vale só pré-licitação (fase futura). Este "
+            "comando NÃO produz contract-workbook.json."
+        ),
+    }
+    catalog_path = output_dir / CATALOG_FILENAME
+    report_path = output_dir / EMOP_IMPORT_REPORT_FILENAME
+    atomic_write_text(catalog_path, _document(catalog))
+    atomic_write_text(report_path, _serialize(report))
+    return ValuationEmopImportResult(
+        catalog_path=catalog_path,
+        report_path=report_path,
+        layout=layout,
+        catalog=catalog,
+        report=report,
+    )
+
+
+def run_import_compositions(input_path: Path, output_dir: Path) -> ValuationCompositionImportResult:
+    """Compila as composições manuais do orçamentista num catálogo `origin=composition`.
+
+    A entrada é o documento canônico `CompositionSet` (não há planilha a interpretar aqui:
+    a composição nasce estruturada). O preço unitário de cada composição é **recomputado**
+    na validação do modelo — divergência recusa (`COMPOSITION_TOTAL_MISMATCH`) e nada é
+    publicado. O catálogo publicado fica amarrado por digest ao arquivo de origem, e
+    reimportar o mesmo arquivo devolve o mesmo id.
+
+    Como o `import-emop`, este comando não contorna nenhum guardrail: a cadeia da medição
+    licitada continua recusando este catálogo (`BULLETIN_PRICE_ORIGIN_FORBIDDEN`); a
+    cascata SCO → EMOP → composição vale só pré-licitação (`ADR-0027`).
+    """
+    composition_set = CompositionSet.model_validate_json(input_path.read_text(encoding="utf-8"))
+    source_sha256 = file_sha256(input_path)
+    catalog = compile_compositions(composition_set, source_sha256=source_sha256)
+    line_kinds: dict[str, int] = {}
+    for composition in composition_set.compositions:
+        for line in composition.lines:
+            line_kinds[line.kind] = line_kinds.get(line.kind, 0) + 1
+    report: dict[str, object] = {
+        "source_sha256": source_sha256,
+        "source_label": composition_set.source_label,
+        "reference_month": composition_set.reference_month,
+        "compositions": len(composition_set.compositions),
+        "composition_lines": dict(sorted(line_kinds.items())),
+        "catalog_entries": len(catalog.entries),
+        "consolidado": "not_imported",
+        "note": (
+            "composições compiladas em catálogo origin=composition: a cadeia da medição "
+            "licitada nunca aceita este catálogo (BULLETIN_PRICE_ORIGIN_FORBIDDEN); a "
+            "cascata SCO -> EMOP -> composição vale só pré-licitação (build-estimate). "
+            "Este comando NÃO produz contract-workbook.json."
+        ),
+    }
+    catalog_path = output_dir / CATALOG_FILENAME
+    report_path = output_dir / COMPOSITIONS_IMPORT_REPORT_FILENAME
+    atomic_write_text(catalog_path, _document(catalog))
+    atomic_write_text(report_path, _serialize(report))
+    return ValuationCompositionImportResult(
+        catalog_path=catalog_path,
+        report_path=report_path,
+        composition_set=composition_set,
         catalog=catalog,
         report=report,
     )
@@ -954,6 +1160,17 @@ def _load_catalog(path: Path) -> PriceCatalog:
     return PriceCatalog.model_validate_json(path.read_text(encoding="utf-8"))
 
 
+def _load_cascade(paths: Sequence[Path]) -> tuple[PriceCatalog, ...]:
+    """Cascata de fontes na ORDEM em que os `--catalog` foram declarados.
+
+    A ordem é dado do comando, não preferência do código (`ADR-0027`); o portão do domínio
+    (`ensure_price_cascade`) recusa cascata vazia ou com duas fontes da mesma origem.
+    """
+    cascade = tuple(_load_catalog(path) for path in paths)
+    ensure_price_cascade(cascade)
+    return cascade
+
+
 def _load_contract(path: Path | None) -> ContractWorkbook | None:
     """Consolidado contratual é opcional na sugestão e na confirmação, como no domínio."""
     if path is None:
@@ -974,6 +1191,16 @@ def load_round_synonyms(round_dir: Path) -> DomainSynonyms:
 
 
 SEMANTIC_DISABLED_BY_FLAG: Final = "braço semântico desligado por --no-semantic"
+
+SEMANTIC_CASCADE_UNSUPPORTED: Final = (
+    "braço semântico não cobre cascata de fontes; o índice de embeddings é de um catálogo só"
+)
+"""Degradação DECLARADA da sugestão com mais de um `--catalog` (orçamento-base).
+
+O índice de embeddings é construído por catálogo (`index-catalog`), então não existe
+vizinhança semântica sobre a cascata inteira sem uma rodada paga nova por fonte. Em vez de
+inventar essa chamada, a shortlist sai lexical e o motivo viaja no relatório — a mesma
+regra do índice ausente e do teto de gasto ausente."""
 
 
 def run_index_catalog(catalog_path: Path, output_dir: Path) -> IndexCatalogResult:
@@ -1026,7 +1253,7 @@ def run_index_catalog(catalog_path: Path, output_dir: Path) -> IndexCatalogResul
 
 def run_suggest_codes(
     packet_path: Path,
-    catalog_path: Path,
+    catalog_paths: Sequence[Path],
     contract_path: Path | None,
     output_dir: Path,
     *,
@@ -1056,9 +1283,16 @@ def run_suggest_codes(
     escrita acontece só no fim: se o refino recusar ou o provider falhar, o diretório de
     saída fica intacto — publicar a lexical em silêncio faria o comando mentir sobre o que
     foi feito.
+
+    Com mais de um `--catalog` (a cascata do orçamento-base) a shortlist abrange todas as
+    fontes na ordem declarada e cada candidato diz de qual veio. As duas vias PAGAS ficam
+    de fora desse caminho: o braço semântico degrada declaradamente para lexical
+    (`SEMANTIC_CASCADE_UNSUPPORTED`, porque o índice é de um catálogo só) e o refino é
+    recusado (`SUGGEST_REFINE_CASCADE_UNSUPPORTED`) em vez de mandar um payload de fontes
+    misturadas para um provider treinado a reordenar shortlist de uma tabela.
     """
     packet = load_takeoff_packet(packet_path)
-    catalog = _load_catalog(catalog_path)
+    cascade = _load_cascade(catalog_paths)
     contract = _load_contract(contract_path)
     synonyms = load_round_synonyms(output_dir)
     index_path = output_dir / CATALOG_INDEX_FILENAME
@@ -1069,6 +1303,26 @@ def run_suggest_codes(
     embedded_queries = 0
     suggestions: CodeSuggestionSet | None = None
 
+    if len(cascade) > 1:
+        if refine_arm is not None:
+            raise ValuationValidationError(
+                "SUGGEST_REFINE_CASCADE_UNSUPPORTED",
+                "refino pago não cobre cascata de fontes; rode a shortlist determinística "
+                "ou refine uma fonte por vez",
+                {"catalogs": len(cascade)},
+            )
+        suggestions = build_cascade_code_suggestions(packet, cascade, synonyms=synonyms)
+        semantic_reason = SEMANTIC_CASCADE_UNSUPPORTED
+        suggestions_path = output_dir / CODE_SUGGESTIONS_FILENAME
+        atomic_write_text(suggestions_path, _document(suggestions))
+        return CodeSuggestionResult(
+            suggestions=suggestions,
+            suggestions_path=suggestions_path,
+            matching=matching,
+            semantic_reason=semantic_reason,
+        )
+
+    catalog = cascade[0]
     if not semantic:
         semantic_reason = SEMANTIC_DISABLED_BY_FLAG
     elif not index_path.is_file():
@@ -1159,7 +1413,7 @@ def run_extract_legend_real(
 def run_confirm_codes(
     packet_path: Path,
     decisions_path: Path,
-    catalog_path: Path,
+    catalog_paths: Sequence[Path],
     contract_path: Path | None,
     previous_path: Path | None,
     output_dir: Path,
@@ -1168,17 +1422,33 @@ def run_confirm_codes(
 
     Com `--previous`, o conjunto anterior é carregado adiante e re-decisão sobre item já
     decidido é recusada pelo domínio — a confirmação não é sobrescrita aqui.
+
+    Com um `--catalog` é a confirmação da medição de sempre. Com mais de um, é a do
+    orçamento-base: cada confirmação precisa citar de qual fonte veio o código
+    (`ASSIGNMENT_CATALOG_REQUIRED`) e o consolidado contratual passa a ser **proibido**
+    (`ESTIMATE_CASCADE_CONTRACT_FORBIDDEN`) — contrato é da obra licitada, e lá a cascata
+    não existe (`ADR-0027`).
     """
     packet = load_takeoff_packet(packet_path)
     batch = CodeAssignmentBatch.model_validate_json(decisions_path.read_text(encoding="utf-8"))
-    catalog = _load_catalog(catalog_path)
+    cascade = _load_cascade(catalog_paths)
     contract = _load_contract(contract_path)
     previous = (
         None
         if previous_path is None
         else CodeAssignmentSet.model_validate_json(previous_path.read_text(encoding="utf-8"))
     )
-    assignments = apply_code_assignments(packet, batch, catalog, contract, previous=previous)
+    if len(cascade) > 1:
+        if contract is not None:
+            raise ValuationValidationError(
+                "ESTIMATE_CASCADE_CONTRACT_FORBIDDEN",
+                "consolidado contratual é da cadeia licitada; o orçamento-base com cascata "
+                "de fontes não tem contrato",
+                {"catalogs": len(cascade)},
+            )
+        assignments = apply_code_assignments_over_cascade(packet, batch, cascade, previous=previous)
+    else:
+        assignments = apply_code_assignments(packet, batch, cascade[0], contract, previous=previous)
     assignments_path = output_dir / CODE_ASSIGNMENTS_FILENAME
     atomic_write_text(assignments_path, _document(assignments))
     return CodeAssignmentResult(assignments=assignments, assignments_path=assignments_path)
@@ -1246,6 +1516,166 @@ def run_build_calc(
         valuation=valuation,
         valuation_path=valuation_path,
         excluded_item_ids=_excluded_item_ids(packet, assignments),
+    )
+
+
+def run_build_amendment_dossier(
+    packet_path: Path,
+    assignments_path: Path,
+    output_dir: Path,
+) -> BuildAmendmentDossierResult:
+    """Monta o dossiê do aditivo a partir do takeoff confirmado e das confirmações de código.
+
+    O dossiê instrui o pedido de aditivo de contrato (RE-RA); ele nunca precifica e nunca
+    cria ou altera `Amendment`. Fail-closed: qualquer recusa não publica nenhum artefato,
+    nem parcial.
+    """
+    packet = load_takeoff_packet(packet_path)
+    assignments = CodeAssignmentSet.model_validate_json(
+        assignments_path.read_text(encoding="utf-8")
+    )
+    dossier = build_amendment_dossier(packet, assignments)
+    dossier_path = output_dir / AMENDMENT_DOSSIER_FILENAME
+    atomic_write_text(dossier_path, _document(dossier))
+    return BuildAmendmentDossierResult(dossier=dossier, dossier_path=dossier_path)
+
+
+def run_build_estimate(
+    packet_path: Path,
+    assignments_path: Path,
+    catalog_paths: Sequence[Path],
+    output_dir: Path,
+    *,
+    worksite_key: str,
+    worksite_name: str,
+    address: str | None,
+    calc_plan_path: Path | None,
+) -> BuildEstimateResult:
+    """Monta o orçamento-base da obra sobre a cascata declarada e publica `estimate.json`.
+
+    Irmão de `build-calc` do outro lado da fronteira: aqui não há período, contrato, saldo
+    nem aprovação — nada disso existe antes da licitação. O que existe é a proveniência por
+    linha (origem, catálogo e data-base) e a lista declarada de itens que nenhuma fonte
+    precificou. Recusa fechada não publica nada.
+    """
+    packet = load_takeoff_packet(packet_path)
+    assignments = CodeAssignmentSet.model_validate_json(
+        assignments_path.read_text(encoding="utf-8")
+    )
+    cascade = _load_cascade(catalog_paths)
+    calc_plan = (
+        None
+        if calc_plan_path is None
+        else CalcPlan.model_validate_json(calc_plan_path.read_text(encoding="utf-8"))
+    )
+    result = build_worksite_estimate(
+        packet,
+        assignments,
+        cascade,
+        worksite_key=worksite_key,
+        worksite_name=worksite_name,
+        address=address,
+        calc_plan=calc_plan,
+    )
+    estimate_path = output_dir / ESTIMATE_FILENAME
+    atomic_write_text(estimate_path, _document(result.estimate))
+    return BuildEstimateResult(estimate=result.estimate, estimate_path=estimate_path)
+
+
+def run_estimate_demo(output_dir: Path) -> EstimateDemoResult:
+    """Percorre a cadeia do orçamento-base sobre a fixture sintética, com as três origens.
+
+    Catálogo SCO sintético (planilha) + catálogo EMOP sintético (.DBF, pelo importador
+    real) + composição manual compilada → prancha sintética → extração da legenda →
+    revisão do orçamentista → shortlist lexical sobre a cascata → confirmação de código
+    citando a fonte de cada item → orçamento-base auditável.
+
+    Determinística de ponta a ponta: os digests das três fontes e o da imagem da prancha se
+    repetem a cada execução, e as decisões humanas sintéticas têm data fixa. O único digest
+    que não se repete é o do PDF (o pymupdf grava identificadores novos a cada `save`), e é
+    por isso que o golden do orçamento fixa a estrutura e as relações, não aquele byte.
+
+    Cada fonte é publicada no seu próprio `catalog-*.json`: juntar as três apagaria a
+    fronteira licitada x pré-licitação dentro do artefato.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    sco_source_path = build_synthetic_catalog_workbook(
+        output_dir / ESTIMATE_DEMO_SCO_SOURCE_FILENAME
+    )
+    sco_catalog = read_price_catalog(
+        sco_source_path,
+        default_template(),
+        source_label=SYNTHETIC_CATALOG_LABEL,
+        reference_month=SYNTHETIC_REFERENCE_MONTH,
+    )
+    emop_source_path = write_emop_dbf(output_dir / ESTIMATE_DEMO_EMOP_SOURCE_FILENAME)
+    emop_catalog = read_emop_catalog(emop_source_path, emop_fixture_layout())
+    compositions_path = output_dir / COMPOSITIONS_FILENAME
+    composition_set = build_synthetic_composition_set()
+    atomic_write_text(compositions_path, _document(composition_set))
+    composition_catalog = compile_compositions(
+        composition_set, source_sha256=file_sha256(compositions_path)
+    )
+
+    cascade = (sco_catalog, emop_catalog, composition_catalog)
+    catalog_paths = (
+        output_dir / CATALOG_SCO_FILENAME,
+        output_dir / CATALOG_EMOP_FILENAME,
+        output_dir / CATALOG_COMPOSITION_FILENAME,
+    )
+    for catalog, catalog_path in zip(cascade, catalog_paths, strict=True):
+        atomic_write_text(catalog_path, _document(catalog))
+
+    plate = render_synthetic_plate(output_dir)
+    proposed = extract_takeoff_fixture(plate)
+    decisions = build_demo_takeoff_decisions(proposed)
+    takeoff_decisions_path = output_dir / TAKEOFF_DECISIONS_FILENAME
+    atomic_write_text(takeoff_decisions_path, _document(decisions))
+    reviewed = apply_takeoff_decisions(proposed, decisions)
+    packet_path, _ = _publish_takeoff(reviewed, plate.image_path, output_dir)
+
+    suggestions = build_cascade_code_suggestions(reviewed, cascade)
+    suggestions_path = output_dir / CODE_SUGGESTIONS_FILENAME
+    atomic_write_text(suggestions_path, _document(suggestions))
+
+    assignment_batch = build_demo_estimate_assignments(reviewed, cascade)
+    assignment_decisions_path = output_dir / CODE_ASSIGNMENT_DECISIONS_FILENAME
+    atomic_write_text(assignment_decisions_path, _document(assignment_batch))
+    assignments = apply_code_assignments_over_cascade(reviewed, assignment_batch, cascade)
+    assignments_path = output_dir / CODE_ASSIGNMENTS_FILENAME
+    atomic_write_text(assignments_path, _document(assignments))
+
+    calc_plan = build_demo_calc_plan(reviewed)
+    calc_plan_path = output_dir / CALC_PLAN_FILENAME
+    atomic_write_text(calc_plan_path, _document(calc_plan))
+    result = build_worksite_estimate(
+        reviewed,
+        assignments,
+        cascade,
+        worksite_key=SYNTHETIC_ESTIMATE_WORKSITE_KEY,
+        worksite_name=SYNTHETIC_ESTIMATE_WORKSITE_NAME,
+        address=SYNTHETIC_ESTIMATE_WORKSITE_ADDRESS,
+        calc_plan=calc_plan,
+    )
+    estimate_path = output_dir / ESTIMATE_FILENAME
+    atomic_write_text(estimate_path, _document(result.estimate))
+
+    return EstimateDemoResult(
+        plate=plate,
+        packet=reviewed,
+        packet_path=packet_path,
+        takeoff_decisions_path=takeoff_decisions_path,
+        cascade=cascade,
+        catalog_paths=catalog_paths,
+        suggestions_path=suggestions_path,
+        assignment_decisions_path=assignment_decisions_path,
+        assignments_path=assignments_path,
+        assignments=assignments,
+        calc_plan_path=calc_plan_path,
+        compositions_path=compositions_path,
+        estimate=result.estimate,
+        estimate_path=estimate_path,
     )
 
 
@@ -1335,6 +1765,49 @@ def _command_import_catalog(args: argparse.Namespace) -> int:
             source_label=args.source_label,
             reference_month=args.reference_month,
         )
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    _print(
+        {
+            "input": str(args.input),
+            "catalog": str(result.catalog_path),
+            "report": str(result.report_path),
+            **result.report,
+        }
+    )
+    return 0
+
+
+def _command_import_emop(args: argparse.Namespace) -> int:
+    try:
+        layout = EmopCatalogLayout.model_validate_json(
+            Path(args.layout).read_text(encoding="utf-8")
+        )
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    output_dir = Path(args.output)
+    try:
+        result = run_import_emop(Path(args.input), output_dir, layout)
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    _print(
+        {
+            "input": str(args.input),
+            "catalog": str(result.catalog_path),
+            "report": str(result.report_path),
+            **result.report,
+        }
+    )
+    return 0
+
+
+def _command_import_compositions(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output)
+    try:
+        result = run_import_compositions(Path(args.input), output_dir)
     except (ValuationValidationError, ValidationError) as error:
         _print(_refused_payload(error))
         return 2
@@ -1677,7 +2150,7 @@ def _command_suggest_codes(args: argparse.Namespace) -> int:
     try:
         result = run_suggest_codes(
             Path(args.packet),
-            Path(args.catalog),
+            _catalog_paths(args),
             None if args.contract is None else Path(args.contract),
             Path(args.output),
             refine_arm=args.refine_arm,
@@ -1834,12 +2307,17 @@ def _command_extraction_eval(args: argparse.Namespace) -> int:
     return 0 if report.passed else 1
 
 
+def _catalog_paths(args: argparse.Namespace) -> tuple[Path, ...]:
+    """`--catalog` repetível: a ordem digitada é a ordem da cascata, e nunca é reordenada."""
+    return tuple(Path(value) for value in args.catalog)
+
+
 def _command_confirm_codes(args: argparse.Namespace) -> int:
     try:
         result = run_confirm_codes(
             Path(args.packet),
             Path(args.decisions),
-            Path(args.catalog),
+            _catalog_paths(args),
             None if args.contract is None else Path(args.contract),
             None if args.previous is None else Path(args.previous),
             Path(args.output),
@@ -1888,6 +2366,87 @@ def _command_build_calc(args: argparse.Namespace) -> int:
             "excluded": list(result.excluded_item_ids),
             "total_amount": str(result.valuation.total_amount),
             "output": str(result.valuation_path),
+        }
+    )
+    return 0
+
+
+def _command_build_amendment_dossier(args: argparse.Namespace) -> int:
+    try:
+        result = run_build_amendment_dossier(
+            Path(args.packet),
+            Path(args.assignments),
+            Path(args.output),
+        )
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    _print(
+        {
+            "status": "ok",
+            "items": len(result.dossier.items),
+            "output": str(result.dossier_path),
+        }
+    )
+    return 0
+
+
+def _estimate_payload(estimate: Estimate) -> dict[str, object]:
+    """Resumo do orçamento publicado: quanto, de onde e o que ficou sem preço."""
+    by_origin: dict[str, int] = {}
+    for line in estimate.lines:
+        by_origin[line.price_origin.value] = by_origin.get(line.price_origin.value, 0) + 1
+    return {
+        "worksite_key": estimate.worksite_key,
+        "lines": len(estimate.lines),
+        "lines_by_origin": dict(sorted(by_origin.items())),
+        "cascade": [source.origin.value for source in estimate.cascade],
+        "unpriced": list(estimate.unpriced_item_ids),
+        "total_amount": str(estimate.total_amount),
+    }
+
+
+def _command_build_estimate(args: argparse.Namespace) -> int:
+    try:
+        result = run_build_estimate(
+            Path(args.packet),
+            Path(args.assignments),
+            _catalog_paths(args),
+            Path(args.output),
+            worksite_key=args.worksite_key,
+            worksite_name=args.worksite_name,
+            address=args.address,
+            calc_plan_path=None if args.calc_plan is None else Path(args.calc_plan),
+        )
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    _print(
+        {
+            "status": "ok",
+            **_estimate_payload(result.estimate),
+            "output": str(result.estimate_path),
+        }
+    )
+    return 0
+
+
+def _command_estimate_demo(args: argparse.Namespace) -> int:
+    try:
+        result = run_estimate_demo(Path(args.output))
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    _print(
+        {
+            "status": "ok",
+            "plate_id": result.packet.plate_id,
+            "catalogs": [str(path) for path in result.catalog_paths],
+            "compositions": str(result.compositions_path),
+            "suggestions": str(result.suggestions_path),
+            "assignments": str(result.assignments_path),
+            **_estimate_payload(result.estimate),
+            "output": str(result.estimate_path),
         }
     )
     return 0
@@ -2023,6 +2582,26 @@ def _add_template_option(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_catalog_option(parser: argparse.ArgumentParser) -> None:
+    """`--catalog` repetível: um catálogo é a medição; vários são a cascata do orçamento.
+
+    A ORDEM digitada é a cascata (`ADR-0027`), e é por isso que a opção é `append` em vez
+    de uma lista com ordenação própria: o comando não reordena o que o orçamentista
+    declarou.
+    """
+    parser.add_argument(
+        "--catalog",
+        type=Path,
+        action="append",
+        required=True,
+        metavar="CATALOG",
+        help=(
+            "catalog.json da fonte de preço; repetível para a cascata do orçamento-base "
+            "(a ordem digitada é a ordem das fontes). Com um só, é a cadeia da medição"
+        ),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Parser dos comandos da cadeia de medição e das ferramentas fora dela.
 
@@ -2083,6 +2662,39 @@ def build_parser() -> argparse.ArgumentParser:
         default=SYNTHETIC_REFERENCE_MONTH,
         help="mês de referência do catálogo importado, no formato AAAA-MM",
     )
+
+    import_emop = subcommands.add_parser(
+        "import-emop",
+        help="importa o catálogo EMOP (.DBF) offline; origin=emop nunca entra na medição",
+        description=(
+            "Lê uma tabela .DBF (dBASE III) do catálogo EMOP a partir de um layout "
+            "declarado (--layout, obrigatório: o catálogo digital EMOP é pago e não "
+            "existe layout default real neste repositório). Publica SÓ catalog.json "
+            "(origin=emop) + emop-import-report.json. O guardrail "
+            "BULLETIN_PRICE_ORIGIN_FORBIDDEN recusa este catálogo em "
+            "build-calc/export-valuation: a cadeia SCO -> EMOP -> composição vale só "
+            "pré-licitação (fase futura)."
+        ),
+    )
+    import_emop.add_argument("--input", type=Path, required=True)
+    import_emop.add_argument("--layout", type=Path, required=True)
+    import_emop.add_argument("--output", type=Path, required=True)
+
+    import_compositions = subcommands.add_parser(
+        "import-compositions",
+        help="compila composições manuais em catálogo origin=composition; nunca entra na medição",
+        description=(
+            "Lê um CompositionSet (JSON canônico: linhas de mão de obra, insumo e "
+            "equipamento com coeficiente) e publica SÓ catalog.json (origin=composition) + "
+            "compositions-import-report.json. O preço unitário de cada composição é "
+            "recomputado — soma truncada linha a linha — e divergência recusa "
+            "(COMPOSITION_TOTAL_MISMATCH) sem publicar nada. O guardrail "
+            "BULLETIN_PRICE_ORIGIN_FORBIDDEN recusa este catálogo em "
+            "build-calc/export-valuation: composição vale só pré-licitação."
+        ),
+    )
+    import_compositions.add_argument("--input", type=Path, required=True)
+    import_compositions.add_argument("--output", type=Path, required=True)
 
     export_valuation = subcommands.add_parser(
         "export-valuation",
@@ -2195,7 +2807,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="sugere códigos do catálogo para os itens confirmados; observação, não decisão",
     )
     suggest_codes_command.add_argument("--packet", type=Path, required=True)
-    suggest_codes_command.add_argument("--catalog", type=Path, required=True)
+    _add_catalog_option(suggest_codes_command)
     suggest_codes_command.add_argument(
         "--contract",
         type=Path,
@@ -2249,7 +2861,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     confirm_codes_command.add_argument("--packet", type=Path, required=True)
     confirm_codes_command.add_argument("--decisions", type=Path, required=True)
-    confirm_codes_command.add_argument("--catalog", type=Path, required=True)
+    _add_catalog_option(confirm_codes_command)
     confirm_codes_command.add_argument(
         "--contract",
         type=Path,
@@ -2284,6 +2896,54 @@ def build_parser() -> argparse.ArgumentParser:
         help="plano de memória por item; sem ele cada item recebe quantidade direta",
     )
     build_calc_command.add_argument("--output", type=Path, required=True)
+
+    build_estimate_command = subcommands.add_parser(
+        "build-estimate",
+        help="monta o orçamento-base da obra sobre a cascata de fontes; PRÉ-licitação",
+        description=(
+            "Irmão do `build-calc` do outro lado da fronteira do ADR-0027: monta o "
+            "orçamento-base de PRÉ-licitação, com proveniência por linha (origem, catálogo "
+            "e data-base) e a lista declarada de itens que nenhuma fonte precificou. A "
+            "ordem dos --catalog é a cascata; duas fontes da mesma origem recusam. Sem "
+            "contrato, sem saldo, sem período e sem aprovação — nada disso existe antes da "
+            "licitação, e o estimate.json publicado NÃO é medição."
+        ),
+    )
+    build_estimate_command.add_argument("--packet", type=Path, required=True)
+    build_estimate_command.add_argument("--assignments", type=Path, required=True)
+    _add_catalog_option(build_estimate_command)
+    build_estimate_command.add_argument("--worksite-key", required=True)
+    build_estimate_command.add_argument("--worksite-name", required=True)
+    build_estimate_command.add_argument("--address", default=None)
+    build_estimate_command.add_argument(
+        "--calc-plan",
+        type=Path,
+        default=None,
+        help="plano de memória por item; sem ele cada item recebe quantidade direta",
+    )
+    build_estimate_command.add_argument("--output", type=Path, required=True)
+
+    estimate_demo = subcommands.add_parser(
+        "estimate-demo",
+        help="percorre a cadeia do orçamento-base sintético com as três origens de preço",
+        description=(
+            "Demonstração determinística da cadeia de PRÉ-licitação: catálogo SCO "
+            "sintético, catálogo EMOP sintético (.DBF, pelo importador real) e uma "
+            "composição manual compilada formam a cascata; a prancha sintética entra pelo "
+            "mesmo caminho do `demo`. O estimate.json publicado tem linha de cada origem e "
+            "um item declarado em unpriced_item_ids. Nenhum dado de cliente e nenhuma "
+            "chamada paga."
+        ),
+    )
+    estimate_demo.add_argument("--output", type=Path, required=True)
+
+    build_amendment_dossier_command = subcommands.add_parser(
+        "build-amendment-dossier",
+        help="monta o dossiê do aditivo (RE-RA) a partir das rejeições de código; nunca precifica",
+    )
+    build_amendment_dossier_command.add_argument("--packet", type=Path, required=True)
+    build_amendment_dossier_command.add_argument("--assignments", type=Path, required=True)
+    build_amendment_dossier_command.add_argument("--output", type=Path, required=True)
 
     extract_legend_real = subcommands.add_parser(
         "extract-legend-real",
@@ -2388,6 +3048,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _command_import_workbook(args)
     if args.command == "import-catalog":
         return _command_import_catalog(args)
+    if args.command == "import-emop":
+        return _command_import_emop(args)
+    if args.command == "import-compositions":
+        return _command_import_compositions(args)
     if args.command == "export-valuation":
         return _command_export_valuation(args)
     if args.command == "demo":
@@ -2412,6 +3076,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _command_confirm_codes(args)
     if args.command == "build-calc":
         return _command_build_calc(args)
+    if args.command == "build-estimate":
+        return _command_build_estimate(args)
+    if args.command == "estimate-demo":
+        return _command_estimate_demo(args)
+    if args.command == "build-amendment-dossier":
+        return _command_build_amendment_dossier(args)
     if args.command == "extract-legend-real":
         return _command_extract_legend_real(args)
     if args.command == "serve":

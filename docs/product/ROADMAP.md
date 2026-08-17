@@ -2,7 +2,7 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-12
+Última revisão: 2026-08-17
 
 ## Agora — MVP privado
 
@@ -59,8 +59,14 @@ próximos marcos — **dois momentos com regras de preço diferentes**:
   ranking, e a garantia virando gate de eval — golden set com `recall@20 = 100%`.
   Candidatos sempre com origem e score declarados; confirmar segue ato humano; sem
   chave/teto, o léxico permanece como fallback funcional declarado.
-- **M8 — fontes de preço pré-licitação**: o bloco EMOP + composição acima, consumindo a
-  mesma UI depois.
+- **M8 — fronteira licitada × pré-licitação** (entregue em código em 2026-08-17,
+  [ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)): dossiê do
+  aditivo como artefato de fechamento da rodada licitada (VAL-08); `PriceOrigin` +
+  importador EMOP offline (.DBF com layout como dado; o arquivo real depende da
+  assinatura GRE) + guardrail `BULLETIN_PRICE_ORIGIN_FORBIDDEN`; composição manual
+  compilada a catálogo e orçamento-base (`build-estimate`) com cascata declarada e
+  proveniência por linha (VAL-09). A UI do orçamento-base e o `.xlsx` no modelo da
+  prefeitura ficam para marco futuro, quando houver exemplar real como template.
 
 ## Próximo — medição além do v1
 

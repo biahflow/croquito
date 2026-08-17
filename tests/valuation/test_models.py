@@ -16,6 +16,7 @@ from croquito_valuation.models import (
     CalcSheet,
     PriceCatalog,
     PriceCatalogEntry,
+    PriceOrigin,
     Valuation,
     WorksiteBulletin,
 )
@@ -231,6 +232,89 @@ def test_catalog_refuses_duplicated_code() -> None:
         )
 
     assert valuation_error_codes(raised.value) == ["CATALOG_DUPLICATE_CODE"]
+
+
+# --------------------------------------------------------------------------------------
+# origem de preço (M8): default sco ao reler artefato antigo, validação do código por
+# origem e coerência de origem dentro de um catálogo
+# --------------------------------------------------------------------------------------
+
+_CATALOG_ENTRY_JSON_WITHOUT_ORIGIN: dict[str, object] = {
+    "code": "AD04050050(/)",
+    "description": "PISO INTERTRAVADO SINTETICO 6CM",
+    "unit": "m2",
+    "unit_price": "89.30",
+    "family_code": "AD",
+    "family_name": "PAVIMENTACAO SINTETICA",
+    "subgroup_code": "AD0405",
+    "subgroup_name": "PISO INTERTRAVADO SINTETICO",
+}
+
+
+def test_catalog_entry_defaults_to_sco_origin_when_rereading_json_without_the_field() -> None:
+    """Todo artefato M1-M7 relido sem `origin` continua válido, sempre como `sco`."""
+    entry = PriceCatalogEntry.model_validate(_CATALOG_ENTRY_JSON_WITHOUT_ORIGIN)
+
+    assert entry.origin == PriceOrigin.SCO
+
+
+def test_catalog_defaults_to_sco_origin_when_rereading_json_without_the_field() -> None:
+    payload = {
+        "source_label": "teste",
+        "reference_month": "2026-01",
+        "source_sha256": "0" * 64,
+        "entries": [_CATALOG_ENTRY_JSON_WITHOUT_ORIGIN],
+    }
+
+    catalog = PriceCatalog.model_validate(payload)
+
+    assert catalog.origin == PriceOrigin.SCO
+    assert catalog.entries[0].origin == PriceOrigin.SCO
+
+
+def test_an_sco_shaped_code_with_emop_origin_passes_the_structural_check() -> None:
+    """Origem `emop`/`composition` usa o superset estrutural: um código SCO cabe nele."""
+    entry = PriceCatalogEntry.model_validate({**_catalog_entry().model_dump(), "origin": "emop"})
+
+    assert entry.origin == PriceOrigin.EMOP
+    assert entry.code == "AD04050050(/)"
+
+
+@pytest.mark.parametrize("origin", ["sco", "emop", "composition"])
+def test_a_code_with_space_or_lowercase_is_refused_regardless_of_origin(origin: str) -> None:
+    payload = {**_catalog_entry().model_dump(), "code": "ad 0405", "origin": origin}
+
+    with pytest.raises(ValidationError) as raised:
+        PriceCatalogEntry.model_validate(payload)
+
+    assert valuation_error_codes(raised.value) == ["CATALOG_CODE_INVALID_FOR_ORIGIN"]
+
+
+def test_a_non_sco_code_with_sco_origin_is_refused() -> None:
+    payload = {**_catalog_entry().model_dump(), "code": "EMOP.AD.001"}
+
+    with pytest.raises(ValidationError) as raised:
+        PriceCatalogEntry.model_validate(payload)
+
+    assert valuation_error_codes(raised.value) == ["CATALOG_CODE_INVALID_FOR_ORIGIN"]
+
+
+def test_catalog_refuses_entries_whose_origin_does_not_match_the_catalog() -> None:
+    """Um catálogo é uma fonte só; mistura de origem acontece na cascata (fase futura)."""
+    sco_entry = _catalog_entry(code="AD04050050(/)")
+    emop_entry = PriceCatalogEntry.model_validate(
+        {**_catalog_entry().model_dump(), "code": "EMOP.AD.001", "origin": "emop"}
+    )
+
+    with pytest.raises(ValidationError) as raised:
+        PriceCatalog(
+            source_label="teste",
+            reference_month="2026-01",
+            source_sha256="0" * 64,
+            entries=[sco_entry, emop_entry],
+        )
+
+    assert valuation_error_codes(raised.value) == ["CATALOG_ORIGIN_MIXED"]
 
 
 def _bulletin(worksite_key: str = _WORKSITE_KEY) -> WorksiteBulletin:
