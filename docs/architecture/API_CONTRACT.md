@@ -36,7 +36,16 @@ papéis somente dos claims assinados.
 
 Entrada: `filename`, `content_type`, `size_bytes`, `sha256`.  
 Saída: `upload_id`, `object_key`, `url`, headers obrigatórios e `expires_at`.
-Os headers incluem `Content-Type: application/pdf` e, quando o storage assina
+
+`content_type` aceita dois tipos, e só eles: `application/pdf` (a prancha do croqui e a
+da medição) e `application/json` (o catálogo de preços que a rodada de medição instala na
+criação — [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md) D6 tratou só da
+prancha). A extensão de `filename` precisa casar com o tipo declarado: `.pdf` com tipo de
+JSON, `.json` com tipo de PDF ou qualquer outra extensão devolvem
+`422 INVALID_UPLOAD`. Quem consome o upload continua exigindo o que aceita —
+`POST /v1/jobs` recusa upload que não seja PDF com o mesmo `422 INVALID_UPLOAD`.
+
+Os headers incluem `Content-Type` com o tipo declarado e, quando o storage assina
 checksum, `x-amz-checksum-sha256` (SHA-256 em base64). O cliente envia no PUT
 exatamente os headers devolvidos, nem mais nem menos: no perfil de storage sem
 checksum assinado (`CROQUITO_STORAGE_FLAVOR=gcs`, interoperabilidade XML do Cloud

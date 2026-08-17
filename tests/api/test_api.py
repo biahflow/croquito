@@ -6,7 +6,7 @@ import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 from uuid import UUID
 
 import pytest
@@ -32,7 +32,7 @@ from croquito_api.database import (
     TraceSolveRecord,
     UploadRecord,
 )
-from croquito_api.main import create_app
+from croquito_api.main import UPLOAD_CONTENT_TYPES, PresignUploadRequest, create_app
 from croquito_core.models import (
     Entity,
     EntityKind,
@@ -268,6 +268,120 @@ def test_upload_and_job_are_tenant_scoped(tmp_path: Path, monkeypatch) -> None: 
     assert client.get(f"/v1/jobs/{job_id}", headers=_headers("tenant-a")).status_code == 200
     assert client.get(f"/v1/jobs/{job_id}", headers=_headers("tenant-b")).status_code == 404
     assert create.headers["X-Request-ID"]
+
+
+def test_presign_assina_o_catalogo_json_da_rodada_de_medicao(tmp_path: Path) -> None:
+    """O catálogo de preços da rodada sobe pelo mesmo presign, como objeto JSON.
+
+    O ADR-0028 D6 escreveu "presign sem alteração" pensando na prancha e deixou o catálogo
+    (`catalog_upload_id`) sem porta de entrada nenhuma; o tipo declarado é o que fecha a
+    lacuna sem criar um segundo caminho de ingestão.
+    """
+    client = _client(tmp_path)
+    catalog = b'{"source_label": "SCO"}'
+
+    presign = client.post(
+        "/v1/uploads/presign",
+        headers=_headers("tenant-a"),
+        json={
+            "filename": "catalogo SCO 2026-01.json",
+            "content_type": "application/json",
+            "size_bytes": len(catalog),
+            "sha256": hashlib.sha256(catalog).hexdigest(),
+        },
+    )
+
+    assert presign.status_code == 200
+    assert presign.json()["object_key"].endswith("/catalogo-SCO-2026-01.json")
+    assert presign.json()["headers"]["Content-Type"] == "application/json"
+
+
+@pytest.mark.parametrize(
+    ("filename", "content_type"),
+    [
+        ("catalogo.pdf", "application/json"),
+        ("levantamento.json", "application/pdf"),
+        ("levantamento.txt", "application/pdf"),
+    ],
+)
+def test_presign_recusa_extensao_que_nao_casa_com_o_tipo(
+    tmp_path: Path, filename: str, content_type: str
+) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/v1/uploads/presign",
+        headers=_headers("tenant-a"),
+        json={
+            "filename": filename,
+            "content_type": content_type,
+            "size_bytes": 1024,
+            "sha256": "a" * 64,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_UPLOAD"
+
+
+def test_presign_recusa_tipo_fora_da_lista(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/v1/uploads/presign",
+        headers=_headers("tenant-a"),
+        json={
+            "filename": "planilha.xlsx",
+            "content_type": "application/vnd.ms-excel",
+            "size_bytes": 1024,
+            "sha256": "a" * 64,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_o_tipo_declarado_no_contrato_e_o_mesmo_que_a_rota_conhece() -> None:
+    """Um tipo novo entra nos dois lugares ou em nenhum: extensão sem tipo é buraco."""
+    assert set(get_args(PresignUploadRequest.model_fields["content_type"].annotation)) == set(
+        UPLOAD_CONTENT_TYPES
+    )
+
+
+def test_job_recusa_upload_que_nao_e_pdf(tmp_path: Path) -> None:
+    """O presign passou a assinar JSON; o caminho do croqui continua exigindo PDF."""
+    client = _client(tmp_path)
+    catalog = b'{"source_label": "SCO"}'
+    presign = client.post(
+        "/v1/uploads/presign",
+        headers=_headers("tenant-a"),
+        json={
+            "filename": "catalogo.json",
+            "content_type": "application/json",
+            "size_bytes": len(catalog),
+            "sha256": hashlib.sha256(catalog).hexdigest(),
+        },
+    )
+    assert presign.status_code == 200
+    cast(FakeObjectStore, cast(Any, client.app).state.artifact_store).put_direct(
+        object_key=presign.json()["object_key"],
+        body=catalog,
+        content_type="application/json",
+    )
+
+    response = client.post(
+        "/v1/jobs",
+        headers=_headers("tenant-a"),
+        json={
+            "upload_id": presign.json()["upload_id"],
+            "project_name": "Guaxindiba",
+            "default_unit": "m",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_UPLOAD"
+    assert client.get("/v1/projects", headers=_headers("tenant-a")).json() == []
 
 
 def test_mutation_requires_jwt_and_idempotency_key(tmp_path: Path) -> None:

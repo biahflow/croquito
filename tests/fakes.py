@@ -44,8 +44,17 @@ class FakeObjectStore:
         return self.objects[object_key].body
 
     # --- API boundary ------------------------------------------------------------------
-    def presign_pdf_upload(self, *, object_key: str, checksum_sha256: str) -> str:
+    def presign_upload(
+        self, *, object_key: str, checksum_sha256: str, content_type: str = "application/pdf"
+    ) -> str:
         return f"https://storage.invalid/{object_key}?checksum={checksum_sha256}"
+
+    def read_object(self, *, object_key: str, max_bytes: int) -> bytes | None:
+        """Leitura limitada do objeto, como o `ArtifactStore`: um byte a mais que o teto."""
+        stored = self.objects.get(object_key)
+        if stored is None:
+            return None
+        return stored.body[: max_bytes + 1]
 
     def head_upload(self, *, object_key: str) -> UploadedObject | None:
         stored = self.objects.get(object_key)

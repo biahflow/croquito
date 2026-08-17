@@ -7,11 +7,11 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Final, Literal, cast
 from uuid import UUID
 
 import boto3
@@ -130,9 +130,21 @@ class MetaResponse(ApiModel):
     scene_schema_version: str
 
 
+#: Tipos que o presign assina, com a extensão que cada um exige no nome do arquivo.
+#: O PDF é a prancha e o croqui; o JSON é o catálogo de preços que a rodada de medição
+#: instala na criação (ADR-0028 D6 tratou só da prancha e deixou o catálogo sem porta).
+#: Um tipo novo aqui é decisão de contrato, não conveniência de rota.
+UPLOAD_CONTENT_TYPES: Final[Mapping[str, str]] = {
+    "application/pdf": ".pdf",
+    "application/json": ".json",
+}
+
+PDF_CONTENT_TYPE: Final = "application/pdf"
+
+
 class PresignUploadRequest(ApiModel):
     filename: str = Field(min_length=1, max_length=255)
-    content_type: str = Field(pattern=r"^application/pdf$")
+    content_type: Literal["application/pdf", "application/json"]
     size_bytes: int = Field(gt=0, le=100_000_000)
     sha256: str = Field(pattern=r"^[a-fA-F0-9]{64}$")
 
@@ -638,15 +650,31 @@ def _problem(code: str, http_status: int, detail: str) -> HTTPException:
     return HTTPException(status_code=http_status, detail={"code": code, "detail": detail})
 
 
-def _safe_filename(filename: str) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip(".-")
-    if not normalized.lower().endswith(".pdf"):
+def _safe_filename(filename: str, content_type: str) -> str:
+    """Nome normalizado cuja extensão CASA com o tipo declarado no presign.
+
+    A extensão é conferida contra o tipo, e não contra uma lista fixa, porque os dois
+    viajam no mesmo corpo: `.pdf` com tipo de JSON e `.json` com tipo de PDF são a mesma
+    incoerência, e aceitar qualquer uma delas deixaria o objeto gravado com um tipo que
+    contradiz o nome — e é pelo tipo que a criação do job e a instalação do catálogo
+    decidem o que aquele upload é.
+    """
+    extension = UPLOAD_CONTENT_TYPES.get(content_type)
+    if extension is None:  # pragma: no cover - o contrato do request já restringe o tipo
         raise _problem(
             "INVALID_UPLOAD",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Arquivo precisa ter extensão PDF.",
+            "Tipo de conteúdo não aceito para upload.",
         )
-    return normalized or "documento.pdf"
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip(".-")
+    if not normalized.lower().endswith(extension):
+        raise _problem(
+            "INVALID_UPLOAD",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Arquivo precisa ter extensão {extension.removeprefix('.').upper()} "
+            f"para o tipo {content_type}.",
+        )
+    return normalized or f"documento{extension}"
 
 
 def _request_hash(payload: BaseModel) -> str:
@@ -1654,7 +1682,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         if existing is not None:
             return PresignUploadResponse.model_validate(existing)
         upload_id = new_uuid7()
-        safe_filename = _safe_filename(payload.filename)
+        safe_filename = _safe_filename(payload.filename, payload.content_type)
         object_key = f"tenants/{principal.tenant_id}/uploads/{upload_id}/{safe_filename}"
         expires_at = datetime.now(UTC) + timedelta(minutes=15)
         record = UploadRecord(
@@ -1668,11 +1696,12 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         checksum_sha256 = base64.b64encode(bytes.fromhex(payload.sha256)).decode("ascii")
         artifact_store: ArtifactStore = application.state.artifact_store
-        url = artifact_store.presign_pdf_upload(
+        url = artifact_store.presign_upload(
             object_key=object_key,
             checksum_sha256=checksum_sha256,
+            content_type=payload.content_type,
         )
-        headers = {"Content-Type": payload.content_type}
+        headers: dict[str, str] = {"Content-Type": payload.content_type}
         if runtime_settings.storage_flavor == "s3":
             # O header entra na assinatura só no S3; enviá-lo ao GCS faria o PUT falhar.
             headers["x-amz-checksum-sha256"] = checksum_sha256
@@ -1745,6 +1774,15 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         if upload.status != "PRESIGNED":
             raise _problem(
                 "INVALID_UPLOAD", status.HTTP_422_UNPROCESSABLE_ENTITY, "Upload indisponível."
+            )
+        if upload.content_type != PDF_CONTENT_TYPE:
+            # O presign passou a assinar mais de um tipo (o catálogo da medição é JSON), e
+            # a conferência de tipo abaixo só compara o objeto com o que foi declarado —
+            # ela não sabe o que ESTA rota aceita. O croqui continua sendo PDF e só.
+            raise _problem(
+                "INVALID_UPLOAD",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Upload precisa ser um PDF.",
             )
 
         expected_checksum = base64.b64encode(bytes.fromhex(upload.sha256)).decode("ascii")

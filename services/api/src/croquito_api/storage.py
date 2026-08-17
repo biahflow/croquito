@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import boto3
 from botocore.config import Config
@@ -38,11 +39,18 @@ class ArtifactStore:
             ),
         )
 
-    def presign_pdf_upload(self, *, object_key: str, checksum_sha256: str) -> str:
+    def presign_upload(self, *, object_key: str, checksum_sha256: str, content_type: str) -> str:
+        """Assina o PUT do tipo declarado; o `ContentType` entra na assinatura.
+
+        O tipo é parâmetro porque a rodada de medição instala um catálogo JSON pelo mesmo
+        presign (ADR-0028 D6 tratou só da prancha), e o cliente envia no PUT exatamente os
+        headers devolvidos. Quem decide quais tipos existem é a rota, que já os valida
+        contra a extensão do arquivo antes de chegar aqui.
+        """
         params: dict[str, Any] = {
             "Bucket": self.bucket,
             "Key": object_key,
-            "ContentType": "application/pdf",
+            "ContentType": content_type,
         }
         if self.flavor == "s3":
             # `x-amz-checksum-sha256` amarra o digest declarado à própria assinatura. O
@@ -74,6 +82,29 @@ class ArtifactStore:
             content_type=content_type,
             checksum_sha256=checksum if isinstance(checksum, str) else None,
         )
+
+    def read_object(self, *, object_key: str, max_bytes: int) -> bytes | None:
+        """Bytes de um objeto privado, limitados, ou `None` quando ele não está no store.
+
+        Só artefato PEQUENO de aplicação passa por aqui — hoje, o catálogo de preços
+        instalado na rodada de medição. Byte de cliente (PDF da prancha, PNG promovido)
+        continua saindo por URL assinada: a API não faz streaming de conteúdo.
+
+        A leitura pede um byte a mais que o teto de propósito: é assim que quem chama
+        distingue "objeto do tamanho esperado" de "objeto maior que o limite" sem ter
+        carregado o excesso na memória do processo.
+        """
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=object_key)
+        except (BotoCoreError, ClientError):
+            return None
+        body: Any = response.get("Body")
+        if body is None:  # pragma: no cover - resposta fora do contrato do S3
+            return None
+        # O fechamento é explícito porque a leitura para no teto e deixa o resto do corpo
+        # pendurado: sem ele, a conexão só volta ao pool quando o coletor passar.
+        with closing(body):
+            return cast(bytes, body.read(max_bytes + 1))
 
     def presign_private_read(self, *, object_key: str) -> str:
         """Returns a short-lived URL only after the route has checked ownership."""

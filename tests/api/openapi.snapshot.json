@@ -2510,7 +2510,10 @@
         "additionalProperties": false,
         "properties": {
           "content_type": {
-            "pattern": "^application/pdf$",
+            "enum": [
+              "application/pdf",
+              "application/json"
+            ],
             "title": "Content Type",
             "type": "string"
           },
