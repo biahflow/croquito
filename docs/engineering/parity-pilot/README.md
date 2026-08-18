@@ -30,6 +30,8 @@ de aceite 4 exigia que `git diff --stat` mostrasse o arquivo novo do relatório,
 não rastreado não aparece em `git diff`, e o contrato ao mesmo tempo proibia mexer no índice.
 `TASK_CONTRACT_NOT_PORTABLE` — defeito do contrato, não do executor. O comportamento foi o
 prescrito: devolver em vez de resolver por conversa ou de encenar o critério com `git add -N`.
+A devolução formal do executor está preservada verbatim em
+[return-r1-codex.md](return-r1-codex.md); a primeira alternativa que ele propôs é a adotada.
 Conserto na revisão r2 do [contrato](task.md), feito no repositório, visível. É o primeiro
 resultado material do piloto: o gate de portabilidade morde.
 
