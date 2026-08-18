@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_BUILD`
+`IN_PROGRESS`
 
 > Selecionada por decisão humana de 2026-08-18. A ordem acordada era executar depois da
 > [F-006](../F-006-hml-conserto/feature.md), e ela está satisfeita: a F-006 fechou `DONE` em
@@ -219,7 +219,8 @@ Todos resolvidos na rodada de planejamento de 2026-08-18 — nenhum por suposiç
 - ~~Aprovação do **texto** da tela~~ — **aprovado em 2026-08-18**; o conjunto está no
   [Task Contract da T3](tasks/T3-tela-de-login.md) e no [mock](mock/README.md).
 - ~~Definição da prioridade de F-007 no roadmap~~ — **definida `HIGH` em 2026-08-18**.
-- Autorização para a execução começar, dado que a ordem acordada é depois da F-006.
+- ~~Autorização para a execução começar~~ — **autorizada por ato humano em 2026-08-18**,
+  com o plano congelado e os contratos derivados.
 - Deploy da imagem nova do Keycloak em homologação.
 
 ## References
