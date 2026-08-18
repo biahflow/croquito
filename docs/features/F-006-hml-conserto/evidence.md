@@ -297,6 +297,56 @@ levanta o Keycloak sozinho**. Com `min_instances` já em 1, o Terraform não ter
 criar revisão nova, e revisão em execução não relê segredo. Quem levanta é o deploy da
 aplicação, que publica todos os serviços com a imagem do SHA.
 
+## 3.3 O ambiente subiu — e o "bug de GFE" tem explicação definitiva (2026-08-18)
+
+Depois do apply corrigido e do deploy, `make smoke-hml`:
+
+```
+ok     /revisao/ — SPA da revisão publicada pelo nginx
+ok     /medicao/ — endereço herdado da medição levando à jornada nova
+ok     /api/v1/meta — API viva atrás do proxy same-origin
+ok     /auth/realms/croquito/.well-known/openid-configuration — Keycloak de pé com o issuer da borda
+```
+
+O job de banco passou, `croquito-scene-hml` serve `croquito-python:3ad5a81` (revisão `00004`)
+e `/api/v1/projects` responde **401** — autenticação exigida, que é o comportamento correto.
+
+### O que a primeira execução da fumaça pegou: dois defeitos meus
+
+A fumaça falhou no deploy, e as duas falhas eram do **verificador**, não do ambiente. Vale
+registrar, porque é o tipo de erro que passaria por "ambiente quebrado":
+
+1. **`/medicao/` não serve SPA — ele redireciona.** A F-003 transformou a medição em jornada de
+   `apps/web`, e o nginx passou a devolver `302 /revisao/?rodada=` para o endereço herdado. Eu
+   tinha escrito a verificação contra o estado antigo (duas SPAs). Agora ela confere o
+   redirecionamento **sem segui-lo** — seguindo, não daria para distinguir "redireciona certo"
+   de "serve a página errada".
+
+2. **`/api/healthz` nunca poderia funcionar.** O Cloud Run **reserva `/healthz` na raiz de todo
+   serviço**. Como o proxy remove o prefixo, `/api/healthz` chega ao Cloud Run exatamente como
+   o path reservado e a requisição não alcança o container.
+
+A prova de (2), por comparação de corpos:
+
+| requisição | quem responde |
+|---|---|
+| `/api/healthzz` | **FastAPI** — `problem+json` com `code: HTTP_ERROR` |
+| `/api/healthz` | **Google** — página `Error 404 (Not Found)!!1` |
+| `/nao-existe` direto no `run.app` do web | **nginx** — `404 Not Found … nginx/1.29.8` |
+| `/healthz` direto no `run.app` do web | **Google** — a mesma página de erro |
+
+A última linha é a que fecha: nem o nginx, que é o container daquele serviço, recebe `/healthz`.
+
+Uma hipótese intermediária foi levantada e **descartada por medição**: "o path do startup probe
+é interceptado". O probe do Keycloak é `/auth/realms/master`, e essa rota responde `200` pela
+borda. Não é o probe; é o path `/healthz` na raiz.
+
+**Isto encerra o "bug de roteamento no GFE" de 2026-08-14**, que motivou renomear
+`croquito-api-hml` para `croquito-scene-hml`. Não era bug de plataforma, e o rename não tinha
+como resolver: a fumaça apontava para um caminho que o Cloud Run não entrega. A verificação
+externa passou a usar `/api/v1/meta`, que exige que a API se identifique como `croquito-api`;
+`/healthz` segue válido para o startup probe, que chama o container direto.
+
 ## 4. Não entregue (e por quê)
 
 - **O apply**, que é ato humano com plano revisado.

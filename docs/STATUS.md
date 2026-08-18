@@ -864,12 +864,15 @@ criar tabela. O que o runner traz junto:
 exercita o caminho de carimbo contra o banco real do ambiente. Ele está bloqueado pelo
 ambiente fora do ar, descrito a seguir.
 
-### A homologação em GCP está fora do ar desde 2026-08-14
+### A homologação em GCP ficou fora do ar de 2026-08-14 a 2026-08-18
 
-Medido em 2026-08-18 com consulta somente-leitura à borda pública e ao projeto
-`biahflow-hml`. `/revisao/` e `/medicao/` respondem 200; `/api/healthz` responde 404 e o
-discovery OIDC responde 503 — ou seja, **a sessão autenticada de homologação não sobe**. É a
-confirmação da fumaça de 2026-08-17 registrada em F-001, agora com causa.
+**Restabelecida em 2026-08-18**, com `make smoke-hml` verde nas quatro rotas: a jornada
+responde, o endereço herdado da medição redireciona, a API se identifica e o Keycloak anuncia o
+issuer da borda. O registro abaixo é de como ela caiu — mantido porque a explicação errada
+custou uma rodada inteira de diagnóstico.
+
+Durante a queda, medido em 2026-08-18: `/revisao/` e `/medicao/` respondiam 200; a API e o
+discovery OIDC, não. É a confirmação da fumaça de 2026-08-17 registrada em F-001, com causa.
 
 A causa raiz é uma só, e não é a que o erro sugere: **o endereço do banco nos secrets aponta
 para um endpoint do Neon que não existe mais**. Todos os consumidores relatam
@@ -893,12 +896,13 @@ deploy com o runner vai **criar o schema desde a baseline**, não carimbar banco
 —, e o realm do Keycloak nasce sem usuário nenhum, o que torna obrigatória a recriação do
 usuário da orçamentista e do papel `orcamentista`.
 
-Dois registros do repositório caíram junto com o diagnóstico. O "bug de plataforma no GFE"
-anotado em `deploy/nginx.conf` não explica o 404 de hoje — quem responde por trás do proxy é o
-container de exemplo — e a causa conhecida de 404 naquele caminho, resolução de DNS para o
-ingress interno, já estava resolvida no stack de infraestrutura por uma zona privada `run.app`
-**antes** do rename que aquele comentário justifica. E o stack ainda declarava
-`croquito-medicao-hml`, que já não existe no projeto — o próximo apply o teria recriado.
+Dois registros do repositório caíram junto com o diagnóstico. O **"bug de plataforma no GFE"
+não existe**: o Cloud Run reserva `/healthz` na raiz de todo serviço, e como o proxy remove o
+prefixo, `/api/healthz` chega como o path reservado e nunca alcança o container — o 404 vem do
+Google, não do FastAPI. A fumaça que verificava aquele caminho jamais poderia passar, e foi ela
+que motivou o rename de serviço em 2026-08-14. A verificação externa passou a usar
+`/api/v1/meta`. E o stack ainda declarava `croquito-medicao-hml`, que já não existe no projeto
+— o próximo apply o teria recriado.
 
 O conserto é a [F-006](features/F-006-hml-conserto/feature.md), com a decisão técnica no
 [ADR-0031](adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md): o valor das

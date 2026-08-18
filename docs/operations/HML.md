@@ -42,10 +42,13 @@ Cada serviço roda com a própria conta de serviço
 
 ## Estado verificado
 
-**Última verificação: 2026-08-18, `make smoke-hml` — as duas SPAs respondem; API e Keycloak
-não.** `/api/healthz` responde 404 e o discovery OIDC responde 503, ou seja, a sessão
-autenticada de homologação não sobe. É o mesmo resultado da fumaça de 2026-08-17T20:40Z
-registrada na [seção 11 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md).
+**Última verificação: 2026-08-18, `make smoke-hml` — as quatro rotas verdes.** A jornada
+responde, o endereço herdado da medição redireciona, a API se identifica e o Keycloak anuncia
+o issuer desta borda: a sessão autenticada de homologação **está de pé**, depois de quatro dias
+fora do ar.
+
+O que segue abaixo é o registro de como ela caiu, mantido porque a explicação errada custou
+uma rodada inteira de diagnóstico.
 
 A causa foi diagnosticada em 2026-08-18 e está no
 [ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md): o endereço do banco
@@ -177,12 +180,20 @@ make smoke-hml BASE_URL=https://<serviço>.run.app  # direto no Cloud Run, sem a
 ```
 
 É o mesmo `scripts/smoke_hml.py` que o passo final da esteira roda, e ele não precisa de
-credencial nenhuma. As quatro rotas (`/revisao/`, `/medicao/`, `/api/healthz` e o discovery
+credencial nenhuma. As quatro rotas (`/revisao/`, `/medicao/`, `/api/v1/meta` e o discovery
 OIDC) passam pelo nginx, que é o único serviço público; se elas respondem **com o conteúdo
-certo**, o proxy same-origin e as duas SPAs estão de pé.
+certo**, o proxy same-origin, a jornada e a sessão autenticada estão de pé.
 
-O conteúdo importa e não é preciosismo: o health precisa ser o JSON da API, o discovery
-precisa anunciar o issuer da borda pública e cada SPA precisa referenciar os próprios assets.
+**Não use `/api/healthz` para verificar a API daqui de fora.** O Cloud Run reserva `/healthz`
+na raiz de todo serviço, e como o proxy remove o prefixo, esse caminho nunca chega ao
+container: o 404 vem do Google, não do FastAPI. O `/healthz` continua servindo ao startup
+probe, que chama o container direto. Era este o "bug de roteamento no GFE" que motivou o
+rename de serviço em 2026-08-14 — não era bug, e o rename não tinha como resolver.
+
+O conteúdo importa e não é preciosismo: a API precisa se identificar como `croquito-api`, o
+discovery precisa anunciar o issuer da borda pública, a SPA precisa referenciar os próprios
+assets e `/medicao/` precisa **redirecionar** para a jornada nova (`/revisao/?rodada=`) — o
+endereço herdado da SPA que a F-003 aposentou, e que continua em favoritos de quem homologou.
 Um `200` sozinho não prova nada — o container de exemplo do Cloud Run responde `200` em quase
 todo caminho, e foi ele que ficou no lugar da API por quatro dias
 ([ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md), D5).
