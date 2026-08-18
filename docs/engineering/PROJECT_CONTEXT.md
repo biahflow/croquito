@@ -72,7 +72,7 @@ decisões humanas. Ele não substitui as fontes de evidência atribuídas a cada
 | Evals sintéticas | `make vision-eval`, `make solver-eval` e evals de valuation | mudanças de IA/CV/solver/medição conforme escopo |
 | Demo | `make demo` | vertical slice sintético |
 | Infraestrutura | `terraform -chdir=infra init -backend=false` e `terraform -chdir=infra validate` | validação sem apply |
-| CI | `.github/workflows/ci.yml` | profiles executados em integração contínua |
+| CI | [`.github/workflows/quality.yml`](../../.github/workflows/quality.yml) | os profiles acima, num portão só; chamado por `ci.yml` no PR e por `deploy-hml.yml` antes de publicar |
 
 Os detalhes, pré-requisitos e limites de cada comando permanecem em
 [Local Development](LOCAL_DEVELOPMENT.md), no [Makefile](../../Makefile) e nos runbooks.
