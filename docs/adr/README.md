@@ -53,6 +53,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0031](0031-segredo-de-homologacao-gerenciado-por-terraform.md) | Segredo de homologação gerenciado por Terraform | Accepted |
 | [0032](0032-porta-de-entrada-e-estado-sem-sessao.md) | Porta de entrada própria e estado sem sessão | Accepted |
 | [0033](0033-conta-por-convite-e-login-federado.md) | Conta por convite e login federado que vincula | Accepted |
+| [0034](0034-camada-global-vendorizada-e-pinada.md) | Camada global da Engineering OS vendorizada e pinada | Proposed |
 
 ## Processo
 

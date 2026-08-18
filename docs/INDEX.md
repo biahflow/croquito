@@ -182,6 +182,9 @@ o desenho AWS é o alvo de produção e não descreve o que está no ar.
 - [Traceability](engineering/TRACEABILITY.md)
 - [Dependency Policy](engineering/DEPENDENCY_POLICY.md)
 - [Review Checklist](engineering/REVIEW_CHECKLIST.md)
+- [Engineering OS (camada global pinada)](engineering-os/README.md)
+- [Proveniência do snapshot](engineering-os/PROVENANCE.md)
+- [Piloto de paridade de harness](engineering/parity-pilot/README.md)
 
 ### Operação
 

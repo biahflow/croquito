@@ -73,6 +73,9 @@ croquito_valuation = ["data/*.json"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+# Espelho pinado da camada global da Engineering OS (ADR-0034): é cópia fiel da origem e
+# não é reformatado por nós. O `check_docs.py` continua validando os links dele.
+extend-exclude = ["docs/engineering-os"]
 src = [
   "packages/core/src",
   "packages/valuation/src",

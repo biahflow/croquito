@@ -6,7 +6,8 @@ Responsável: Engineering / Product
 
 Uma mudança está pronta quando todos os itens aplicáveis foram atendidos.
 
-Este DoD soma-se ao Definition of Done global da Engineering OS
+Este DoD soma-se ao
+[Definition of Done global](../engineering-os/core/definition-of-done.md) da Engineering OS
 (`BASELINE → CHANGE → FINAL`, `BUILD REPORT` por tarefa) e o especializa para este
 produto; ele não o substitui nem enfraquece.
 
