@@ -2,7 +2,7 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-17
+Última revisão: 2026-08-18
 
 ## Uso no ciclo de engenharia
 
@@ -25,7 +25,9 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-003 | HIGH | DONE | [Migração da medição para a API `/v1` autenticada](../features/F-003-medicao-v1-migration/feature.md) |
 | F-004 | HIGH | DONE | [Runner de migrations revisadas](../features/F-004-migrations-runner/feature.md) |
 | F-005 | HIGH | DONE | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
-| F-006 | HIGH | READY_FOR_HUMAN_REVIEW | [Conserto e verificação da homologação em GCP](../features/F-006-hml-conserto/feature.md) |
+| F-006 | HIGH | DONE | [Conserto e verificação da homologação em GCP](../features/F-006-hml-conserto/feature.md) |
+| F-007 | HIGH | READY_FOR_PLANNING | [Porta de entrada: tela de login com marca](../features/F-007-tela-de-login/feature.md) |
+| F-008 | HIGH | BLOCKED | [Ciclo de vida de conta: convite, recuperação de senha e Google](../features/F-008-ciclo-de-vida-de-conta/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -51,7 +53,8 @@ produção que o ambiente no chão impedia**. O diagnóstico daquele dia achou u
 que derruba o Keycloak e barra a esteira no job de banco desde 2026-08-14 — e uma secundária: a
 API está servindo o container de exemplo do Cloud Run. A senha gravada estava correta o tempo
 todo; o proxy do Neon é que responde a endpoint desconhecido com falha de autenticação. A decisão técnica é o
-[ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md) (`Proposed`), que
+[ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md) (`Accepted` por ato
+humano em 2026-08-18), que
 move o valor das credenciais de homologação para o Terraform do repositório central de
 infraestrutura. Evidência em
 [evidence.md](../features/F-006-hml-conserto/evidence.md).
@@ -62,8 +65,34 @@ do carimbo do Alembic não era atendível com banco vazio e segue como ato abert
 correções fora do escopo original entraram na mesma rodada, cada uma por ter janela própria:
 Keycloak e aplicação compartilhavam o schema `public` — e consertar isso depois do primeiro
 usuário do realm custaria esse usuário —, e o deploy corria em paralelo com o portão de
-qualidade em vez de esperá-lo. O que falta para `DONE` é ato humano: aceitar o ADR-0031 e as
-pendências da seção 5 do evidence.
+qualidade em vez de esperá-lo. O ADR foi aceito e as pendências operacionais foram declaradas
+concluídas pelo responsável humano; F-006 está `DONE`. O critério do carimbo do Alembic continua
+explicitamente não atendível neste deploy e segue como follow-up de F-004.
+
+F-007 nasce em 2026-08-18, por seleção humana: o produto não tem porta de entrada.
+`deploy/nginx.conf` manda a raiz do host para `/revisao/`, e ali a SPA sem sessão mostra a casca
+da revisão vazia, com o "Entrar" reduzido a um botão de segunda ordem na topbar. Duas decisões
+humanas da mesma data fixam o desenho: a raiz passa a levar a `/login`, e a marca acompanha a
+jornada inteira — inclusive a página do Keycloak, cujo `loginTheme` é `null` nos dois realms. A
+prioridade é `HIGH`, **definida por ato humano em 2026-08-18**, e a ordem acordada é **depois da
+F-006**, porque sem homologação no ar nenhum critério da feature é verificável em ambiente real. A
+decisão técnica é o [ADR-0032](../adr/0032-porta-de-entrada-e-estado-sem-sessao.md), **aceito por
+ato humano em 2026-08-18**. Contrato em
+[feature.md](../features/F-007-tela-de-login/feature.md).
+
+F-008 nasce em 2026-08-18, na mesma conversa, quando a pergunta virou "e o esqueci a senha, e o
+autocadastro?". A investigação mostrou que o autocadastro **agrava** o problema que ele pretendia
+resolver: `tenant_id` é atributo do usuário levado ao token pelo mapper `tenant-id`, e
+`identity_from_claims` em `packages/core/src/croquito_core/oidc.py` recusa token sem esse claim —
+uma conta auto-cadastrada autentica e toma `401` em toda chamada. O
+[ADR-0011](../adr/0011-oidc-portable-identity.md) já havia decidido o caminho: convite, com o
+vínculo atribuído pelo `tenant_admin`. Decisão humana de 2026-08-18: **convite, não autocadastro**;
+Google como método de login de conta que já existe, sem criação automática. A feature nasce
+`BLOCKED` porque `smtpServer` está ausente nos dois realms e o provedor de e-mail e o domínio
+remetente ainda não foram escolhidos — sem isso, nenhum dos três fluxos existe, e é o D8 do
+[ADR-0033](../adr/0033-conta-por-convite-e-login-federado.md), **aceito por ato humano em
+2026-08-18**, que registra essa pendência. Contrato em
+[feature.md](../features/F-008-ciclo-de-vida-de-conta/feature.md).
 
 ## Agora — MVP privado
 

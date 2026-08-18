@@ -3,7 +3,8 @@
 Estas regras estendem o [AGENTS.md](../../AGENTS.md). Leia também
 [FDD](../../docs/product/FDD.md),
 [API Contract](../../docs/architecture/API_CONTRACT.md) e
-[Human in the Loop](../../docs/ai/HUMAN_IN_THE_LOOP.md).
+[Human in the Loop](../../docs/ai/HUMAN_IN_THE_LOOP.md). Para criar ou reestilizar tela, leia
+antes o [Design System](../../docs/engineering/DESIGN_SYSTEM.md).
 
 Para mexer na jornada de medição (`src/medicao/`), leia também
 [Valuation Context](../../docs/architecture/VALUATION_CONTEXT.md), a seção "Medição de
