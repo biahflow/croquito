@@ -2,7 +2,22 @@
 
 ## Status
 
-`IN PROGRESS`
+`READY_FOR_HUMAN_REVIEW`
+
+> **2026-08-18, medido**: o ambiente subiu e a fumaça prova que subiu — quatro rotas verdes na
+> esteira, com o discovery anunciando o issuer da borda pública, e os quatro serviços servindo
+> `:3acbcc1`. Cinco dos seis critérios de aceite estão atendidos; o critério 4 (o **carimbo**
+> do Alembic contra banco preexistente) não é atendível por este deploy, como `Unknowns` já
+> declarava, e segue como ato aberto de [F-004](../F-004-migrations-runner/feature.md).
+>
+> Uma correção fora do escopo original entrou na mesma rodada, e a janela para fazê-la sem
+> perda era exatamente esta: Keycloak e aplicação **compartilhavam o schema `public`**, ao
+> contrário do que `HML.md` afirmava. Detalhe e medições na seção 3.4 do
+> [evidence](evidence.md).
+>
+> O que separa esta feature de `DONE` é ato humano: a aceitação do
+> [ADR-0031](../../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md), hoje
+> `Proposed`, e as pendências da seção 5 do evidence.
 
 > Selecionada por decisão humana de 2026-08-18, a partir do levantamento de features abertas:
 > as cinco features anteriores estão `DONE`, e o que restava delas eram atos de produção que o

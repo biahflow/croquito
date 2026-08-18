@@ -25,7 +25,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-003 | HIGH | DONE | [Migração da medição para a API `/v1` autenticada](../features/F-003-medicao-v1-migration/feature.md) |
 | F-004 | HIGH | DONE | [Runner de migrations revisadas](../features/F-004-migrations-runner/feature.md) |
 | F-005 | HIGH | DONE | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
-| F-006 | HIGH | IN PROGRESS | [Conserto e verificação da homologação em GCP](../features/F-006-hml-conserto/feature.md) |
+| F-006 | HIGH | READY_FOR_HUMAN_REVIEW | [Conserto e verificação da homologação em GCP](../features/F-006-hml-conserto/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -55,6 +55,15 @@ todo; o proxy do Neon é que responde a endpoint desconhecido com falha de auten
 move o valor das credenciais de homologação para o Terraform do repositório central de
 infraestrutura. Evidência em
 [evidence.md](../features/F-006-hml-conserto/evidence.md).
+
+**O ambiente subiu em 2026-08-18** e a fumaça da esteira prova as quatro rotas, com os quatro
+serviços servindo a mesma imagem por SHA. Cinco dos seis critérios estão atendidos; o critério
+do carimbo do Alembic não era atendível com banco vazio e segue como ato aberto de F-004. Duas
+correções fora do escopo original entraram na mesma rodada, cada uma por ter janela própria:
+Keycloak e aplicação compartilhavam o schema `public` — e consertar isso depois do primeiro
+usuário do realm custaria esse usuário —, e o deploy corria em paralelo com o portão de
+qualidade em vez de esperá-lo. O que falta para `DONE` é ato humano: aceitar o ADR-0031 e as
+pendências da seção 5 do evidence.
 
 ## Agora — MVP privado
 
@@ -234,5 +243,5 @@ AWS e ambiente local continuam sem verificação remota.
 | Contexto | Configuração versionada | Afirmação documental | Estado remoto verificado |
 | --- | --- | --- | --- |
 | Produção AWS | `infra/` (Terraform: S3 SSE-KMS, filas/DLQ, KMS, logs) descreve o desenho em `sa-east-1`. | [AWS Deployment](../architecture/AWS_DEPLOYMENT.md) declara que o desenho-alvo de produção **nunca foi aplicado**; o [Status](../STATUS.md) declara que não há serviços AWS reais. [ADR-0002](../adr/0002-aws-managed-architecture.md) segue valendo como decisão de produção, com a escolha em aberto. | Nenhum. Nada no repositório prova recursos AWS aplicados, e nenhuma consulta a conta AWS foi feita. |
-| Homologação GCP | A casca do ambiente é Terraform no repositório `biahflow/infra` (stack `envs/hml/croquito`); aqui, [`.github/workflows/deploy-hml.yml`](../../.github/workflows/deploy-hml.yml) configura imagem e revisão dos serviços `croquito-*-hml` e [`deploy/nginx.conf`](../../deploy/nginx.conf) fixa a borda pública. Configuração de deploy não é prova de deploy. | [HML](../operations/HML.md) deixou de afirmar disponibilidade: a seção “O que está publicado” descreve o desenho e a seção “Estado verificado” carrega data e medição. Fontes: [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md) e [ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md). | **Fumaça de 2026-08-18 (`make smoke-hml`), confirmando a de 2026-08-17T20:40Z**: `/revisao/` e `/medicao/` respondem **200**; `/api/healthz` responde **404** e o discovery OIDC responde **503**. A consulta `gcloud` da mesma data mostrou a causa: `neondb_owner` recusado por senha derruba o Keycloak no boot e fez o job `croquito-db-init-hml` falhar em 2026-08-17T14:12, barrando a esteira desde 2026-08-14; e `croquito-scene-hml` serve `cloudrun/container/hello` desde 2026-08-14T23:56, com a revisão anterior — a imagem real — tendo subido com sucesso. Verificado também que `croquito-medicao-hml` **não existe mais** no projeto. Não verificado: conteúdo de bucket, entrega do Pub/Sub e o estado interno do PostgreSQL. Conserto em [F-006](../features/F-006-hml-conserto/feature.md). |
+| Homologação GCP | A casca do ambiente é Terraform no repositório `biahflow/infra` (stack `envs/hml/croquito`); aqui, [`.github/workflows/deploy-hml.yml`](../../.github/workflows/deploy-hml.yml) configura imagem e revisão dos serviços `croquito-*-hml` e [`deploy/nginx.conf`](../../deploy/nginx.conf) fixa a borda pública. Configuração de deploy não é prova de deploy. | [HML](../operations/HML.md) deixou de afirmar disponibilidade: a seção “O que está publicado” descreve o desenho e a seção “Estado verificado” carrega data e medição. Fontes: [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md) e [ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md). | **Fumaça da esteira em 2026-08-18T14:06, quatro rotas verdes**: `/revisao/`, `/medicao/`, `/api/v1/meta` e o discovery OIDC, este anunciando `https://croquito-hml.biahflow.ai/auth/realms/croquito` — a sessão autenticada está de pé, depois de quatro dias fora do ar. Os quatro serviços servem a mesma imagem por SHA (`:3acbcc1`), não mais o `cloudrun/container/hello`. Estado interno do PostgreSQL verificado nesta data e antes só suposto: as 19 tabelas da aplicação no schema `croquito` com `alembic_version` = `0002`, as 88 do Keycloak em `keycloak`, e `public` vazio depois da limpeza — antes disso os dois componentes dividiam `public`, ao contrário do que a documentação afirmava. `/api/healthz` segue **404** e isso deixou de ser defeito: o Cloud Run reserva `/healthz` na raiz de todo serviço e a requisição nunca alcança o container, então a verificação externa usa `/api/v1/meta`. Não verificado: conteúdo de bucket e entrega do Pub/Sub. Ainda medido só da esteira e do `run.app`: a borda pública `croquito-hml.biahflow.ai` não é alcançável da máquina do operador desta sessão. Registro em [F-006](../features/F-006-hml-conserto/feature.md). |
 | Desenvolvimento local | `docker-compose.local.yml` e o [Makefile](../../Makefile) definem PostgreSQL, LocalStack e Keycloak, com bootstrap por `make db-init`. | [Local Development](../engineering/LOCAL_DEVELOPMENT.md) e o [Status](../STATUS.md) descrevem esse ambiente como iniciado e validado localmente. | Não aplicável. Nenhuma afirmação é feita sobre a máquina de qualquer operador. |
