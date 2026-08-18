@@ -2,13 +2,13 @@
 
 ## Status
 
-`IN_PROGRESS`
+`READY_FOR_HUMAN_REVIEW`
 
-> Selecionada por decisão humana de 2026-08-18. A ordem acordada era executar depois da
-> [F-006](../F-006-hml-conserto/feature.md), e ela está satisfeita: a F-006 fechou `DONE` em
-> 2026-08-18, com o ambiente de volta ao ar, de modo que os critérios desta feature voltaram a
-> ser verificáveis fora do stack local. O que falta para começar é a autorização humana de
-> início.
+> Selecionada, planejada e executada por decisões humanas de 2026-08-18. As seis tasks do
+> [plano](plan.md) estão integradas e revisadas, a validação integrada está verde — inclusive
+> o smoke headless atravessando o login real com `?job` preservado — e o pacote de revisão
+> está em [evidence.md](evidence.md). O que falta é a decisão humana final: merge, que também
+> exerce o gate de deploy da imagem nova do Keycloak pela esteira.
 >
 > Decisões humanas de 2026-08-18 que moldam o escopo: a raiz do host passa a levar a uma porta
 > de entrada própria (`/login`); a marca acompanha a jornada **inteira**, inclusive a página do
