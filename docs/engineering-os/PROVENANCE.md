@@ -12,7 +12,7 @@ gerado pelo script.
 
 | Campo | Valor |
 |---|---|
-| Commit de origem | `2d0d09d21d31a0b633ef0132e31f2c3469fbc8aa` |
+| Commit de origem | `72360d46c62ce0ed115c7733feb590a07ffd9fc3` |
 | Estado da origem | `clean` |
 | Sincronizado em | 2026-08-18 |
 | Caminho de origem | `~/workspace/engineeringOS` |

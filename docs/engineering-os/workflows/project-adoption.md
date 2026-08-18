@@ -215,6 +215,17 @@ Old backlog items may remain `BACKLOG` or `READY_FOR_SPEC`; compliance does not 
 
 An explicit Project Context exception, such as a documented alternative roadmap location, may be compliant. Semantic consistency matters more than cosmetic filesystem uniformity. If a future Engineering OS change is incompatible with an adopted standard, perform a new compliance check; this workflow defines no versioning engine.
 
+## Distribution and pinning
+
+Adoption is not complete while the global layer is reachable only from the operator's
+machine. A compliant project makes the layer reachable from its own checkout — the
+recommended mechanism is the complete pinned mirror described in
+[`adapters/README.md`](../adapters/README.md): full copy, provenance record naming the
+source commit, deliberate reviewed resynchronization. References from project documents to
+global rules should point at the mirror, so the project's own documentation gates validate
+them; a textual mention of a global document that no link can reach is dead text, not a
+reference.
+
 ## Global and project responsibilities
 
 Global Engineering OS defines adoption process, target semantics, compliance criteria, migration safety, and human gates. The project supplies its actual files, architecture, commands, roadmap, history, and documented exceptions. Do not move project-specific knowledge into the Global layer.

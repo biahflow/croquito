@@ -33,6 +33,12 @@ must leave alone. Name them; an unnamed exclusion gets absorbed.
 
 Verifiable criteria. Each one states how it is checked, not only what should be true.
 
+Every criterion must be executable literally as written: run each command a criterion names
+before publishing the contract. A criterion that cannot pass as written — a command that
+does not show what the criterion expects, a check the granted capabilities forbid — is
+returned as `TASK_CONTRACT_NOT_PORTABLE` by a correct executor, at the cost of a full
+contract round trip.
+
 ## Validation
 
 The validation profiles this task must run, with the project's real commands, and the
