@@ -26,7 +26,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-004 | HIGH | DONE | [Runner de migrations revisadas](../features/F-004-migrations-runner/feature.md) |
 | F-005 | HIGH | DONE | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
 | F-006 | HIGH | DONE | [Conserto e verificação da homologação em GCP](../features/F-006-hml-conserto/feature.md) |
-| F-007 | HIGH | PLANNING | [Porta de entrada: tela de login com marca](../features/F-007-tela-de-login/feature.md) |
+| F-007 | HIGH | READY_FOR_BUILD | [Porta de entrada: tela de login com marca](../features/F-007-tela-de-login/feature.md) |
 | F-008 | HIGH | BLOCKED | [Ciclo de vida de conta: convite, recuperação de senha e Google](../features/F-008-ciclo-de-vida-de-conta/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na

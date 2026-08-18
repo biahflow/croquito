@@ -2,7 +2,7 @@
 
 ## Status
 
-`PLANNING`
+`READY_FOR_BUILD`
 
 > Selecionada por decisão humana de 2026-08-18. A ordem acordada era executar depois da
 > [F-006](../F-006-hml-conserto/feature.md), e ela está satisfeita: a F-006 fechou `DONE` em
@@ -175,23 +175,23 @@ exatamente na jornada que a pessoa pediu — inclusive quando ela chegou por um 
 
 ## Unknowns
 
-Não decididos. Nenhum deve ser respondido por suposição.
+Todos resolvidos na rodada de planejamento de 2026-08-18 — nenhum por suposição:
 
-- **Como `/login` se representa em `route.ts`.** O módulo declara hoje que a rota é derivada
-  **só** da query e que "parâmetro desconhecido não é jornada"; rota por path é conceito que
-  ele não tem. Terceiro `kind` de `Route`, ou uma camada acima da jornada — não decidido.
-- **Onde mora o rebote de `/revisao/` sem sessão.** O nginx não enxerga sessão: ela vive em
-  `sessionStorage`. Logo o rebote é do React — mas então existe um primeiro paint antes da
-  decisão, e o que se vê nesse instante é escolha de desenho, não detalhe de implementação.
-- **Formato do tema no Keycloak 26.2** e em que fase da imagem ele entra (antes do
-  `kc.sh build` ou na fase de runtime). Verificar na versão fixada; não inferir de versões
-  anteriores.
-- **O texto da tela.** O visual foi aprovado; nenhuma linha de copy foi. Continuam abertos o
-  título, a promessa, o rótulo do CTA, a mensagem de ambiente indisponível e a frase que
-  explica que a conta nasce por convite.
-- **Se a pílula de ambiente aparece só em homologação** ou também em produção.
-- **Se `/medicao/`, que hoje redireciona para `?rodada=`, muda de comportamento** para quem
-  chega sem sessão.
+- ~~Como `/login` se representa em `route.ts`~~ — **delimitado no
+  [Task Contract da T2](tasks/T2-estado-login-e-rebote.md)**: camada acima da jornada
+  (preferida, preserva o contrato do módulo) ou terceiro `kind`; a escolha fica registrada
+  no código e no BUILD REPORT.
+- ~~Onde mora o rebote de `/revisao/` sem sessão~~ — **no React, depois de `readSession()`**
+  (a borda não enxerga sessão; o ADR-0032 rejeitou o rebote no nginx). O primeiro paint é
+  estado neutro mínimo em T2; T3 o veste.
+- ~~Formato do tema no Keycloak 26.2~~ — **resolvido por verificação dentro da T4** (passo 1
+  do contrato), nunca por inferência.
+- ~~O texto da tela~~ — **aprovado por ato humano em 2026-08-18**; conjunto fixado no
+  [Task Contract da T3](tasks/T3-tela-de-login.md).
+- ~~A pílula de ambiente~~ — **só em homologação**, decisão humana de 2026-08-18.
+- ~~`/medicao/` sem sessão~~ — **resolvido por estrutura**: a borda já redireciona
+  `/medicao/` para `/revisao/?rodada=`, que cai na regra de rebote preservando a query;
+  nenhum comportamento novo.
 
 ## Risks
 
@@ -216,7 +216,8 @@ Não decididos. Nenhum deve ser respondido por suposição.
 - ~~Aceitação do ADR-0032~~ — **aceito por ato humano em 2026-08-18**.
 - ~~Aprovação do visual da tela~~ — **aprovado em 2026-08-18**, sobre a revisão 2 do
   [mock](mock/README.md), versionado junto deste contrato.
-- Aprovação do **texto** da tela, ainda pendente.
+- ~~Aprovação do **texto** da tela~~ — **aprovado em 2026-08-18**; o conjunto está no
+  [Task Contract da T3](tasks/T3-tela-de-login.md) e no [mock](mock/README.md).
 - ~~Definição da prioridade de F-007 no roadmap~~ — **definida `HIGH` em 2026-08-18**.
 - Autorização para a execução começar, dado que a ordem acordada é depois da F-006.
 - Deploy da imagem nova do Keycloak em homologação.

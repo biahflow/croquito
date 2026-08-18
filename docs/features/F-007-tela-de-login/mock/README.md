@@ -1,6 +1,6 @@
 # Mock aprovado da F-007 — porta de entrada
 
-Status: Aprovado (visual)  
+Status: Aprovado (visual e texto)  
 Responsável: Product / Engineering  
 Última revisão: 2026-08-18
 
@@ -27,10 +27,12 @@ mostram o resultado conferido na data.
 **Aprovado por decisão humana de 2026-08-18: o visual.** Composição, hierarquia, o peso do CTA,
 o croqui vetorial, o card do Keycloak e o comportamento responsivo.
 
-**Não aprovado: o texto.** Nenhuma linha de copy passou por gate — título, promessa, rótulo do
-CTA, a frase sobre conta por convite, a mensagem de ambiente indisponível e os e-mails. A única
-frase que não é proposta é "Do croqui ao orçamento.", que vem da descrição do produto. O
-Feature Contract mantém isso como `Unknown` e como gate próprio.
+**Aprovado por decisão humana de 2026-08-18, na rodada de planejamento: o texto.** O conjunto
+— promessa "Do croqui ao orçamento." (que já vinha da descrição do produto), CTA "Entrar",
+frase do convite, mensagem de ambiente indisponível e título da aba — está fixado, palavra por
+palavra, no [Task Contract da T3](../tasks/T3-tela-de-login.md). Aprovação de texto é escopada
+como a visual: os e-mails do tema **não** têm copy aprovada (o vestuário é da T4; o conteúdo
+real é da F-008, com gate próprio). Mudar qualquer linha do conjunto reabre o gate.
 
 ## Como ler este mock ao implementar
 
