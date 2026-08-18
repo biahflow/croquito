@@ -1,6 +1,6 @@
 """Fumaça da borda pública de homologação.
 
-Só HTTP, sem credencial, sem `gcloud`: as quatro rotas passam pelo nginx, que é o único
+Só HTTP, sem credencial, sem `gcloud`: as seis rotas passam pelo nginx, que é o único
 serviço público, e provam que o proxy same-origin e as duas SPAs estão de pé.
 
 Cada rota é verificada pelo **conteúdo**, não só pelo código de status. A razão está no
@@ -200,6 +200,17 @@ def conferir_redirect(destino_esperado: str) -> Callable[[Resposta], None]:
 
 def montar_verificacoes(issuer_base: str) -> list[Verificacao]:
     return [
+        Verificacao(
+            rota="/",
+            o_que_prova="raiz do produto levando à porta de entrada",
+            conferir=conferir_redirect("/login"),
+            seguir_redirect=False,
+        ),
+        Verificacao(
+            rota="/login",
+            o_que_prova="porta de entrada servindo a SPA da revisão",
+            conferir=conferir_spa("revisao"),
+        ),
         Verificacao(
             rota="/revisao/",
             o_que_prova="SPA da revisão publicada pelo nginx",
