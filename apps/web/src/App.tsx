@@ -12,7 +12,7 @@ import {
 } from "./auth";
 import { CroquiApp } from "./CroquiApp";
 import { MedicaoApp } from "./medicao/MedicaoApp";
-import { readRoute, routeSearch, type Route } from "./route";
+import { entryRedirect, readRoute, routeSearch, type Route } from "./route";
 import logoDark from "./assets/croquito-logo-dark.svg";
 
 const CROQUI_ROOT: Route = { kind: "croqui", jobId: "" };
@@ -21,6 +21,28 @@ function currentRoute(): Route {
   return typeof window === "undefined"
     ? CROQUI_ROOT
     : readRoute(window.location.search);
+}
+
+/**
+ * Põe a URL no lugar que o ADR-0032 declara: sem sessão, a porta de entrada; com sessão,
+ * a jornada. A decisão inteira — inclusive a exceção do retorno do OIDC, que é o que
+ * separa produto de produto inacessível — é pura e mora em `route.ts`; aqui só o efeito.
+ *
+ * `replaceState` e não `location.assign`: recarregar a página jogaria fora o estado do
+ * OIDC, que vive em memória, e é o mesmo mecanismo que a casca já usa para navegar.
+ */
+function applyEntryRedirect(hasSession: boolean): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const target = entryRedirect(
+    window.location,
+    hasSession,
+    import.meta.env.BASE_URL,
+  );
+  if (target !== null) {
+    window.history.replaceState(null, "", target);
+  }
 }
 
 /**
@@ -40,6 +62,11 @@ export function App() {
 
   useEffect(() => {
     if (!isOidcConfigured()) {
+      // Sem OIDC configurado não há sessão possível, e o estado sem sessão é a porta de
+      // entrada: é lá que "você não entrou" e "o ambiente está fora do ar" se distinguem
+      // (ADR-0032, D3). A exceção do retorno do OIDC vale aqui também — este caminho não
+      // passou por `readSession()`, então a URL pode ainda carregar `code`+`state`.
+      applyEntryRedirect(false);
       return;
     }
     void (async () => {
@@ -53,12 +80,16 @@ export function App() {
             error instanceof Error ? error.message : String(error)
           }`,
         );
+        applyEntryRedirect(false);
         return;
       }
       // Só agora a URL é confiável: `readSession` limpa o retorno do OIDC e devolve o
       // job que viajou no `state`. Ler a rota antes disso abriria a jornada errada.
       setRoute(currentRoute());
       setSession(currentSession);
+      // O rebote entra DEPOIS dessa ordem, e a ordem é o que o mantém seguro: quando ele
+      // corre, o código de uso único já foi gasto e `code`/`state` já saíram da URL.
+      applyEntryRedirect(currentSession !== null);
     })();
     return onSessionRenewed(setSession);
   }, []);
@@ -105,13 +136,15 @@ export function App() {
   // tenant. O seletor abre jornada, então ele só aparece quando existe jornada a abrir.
   const autenticado = session !== null;
 
-  // Tela anônima das duas jornadas: nenhuma evidência, decisão ou rodada é exibida sem
-  // sessão.
-  const telaAnonima = (
+  // O estado sem sessão é a porta de entrada (`/login`, ADR-0032 D3), e não mais a casca
+  // vazia de uma jornada: nenhuma evidência, decisão ou rodada existe antes da sessão.
+  // PLACEHOLDER declarado: o texto e o visual aprovados, e a retirada da casca das
+  // jornadas daqui, são da T3 — esta task entrega o estado e o rebote.
+  const telaLogin = (
     <section className="context-bar">
       <div>
-        <span className="eyebrow">REVISÃO PROTEGIDA</span>
-        <h1>Acesse uma revisão autenticada</h1>
+        <span className="eyebrow">ENTRADA</span>
+        <h1>Entre para continuar</h1>
       </div>
     </section>
   );
@@ -207,7 +240,7 @@ export function App() {
       {/* A medição fala com a API `/v1` autenticada (ADR-0028): a sessão desce por prop e
           a rodada aberta vem da URL, para sobreviver a um reload. */}
       {!session ? (
-        telaAnonima
+        telaLogin
       ) : route.kind === "medicao" ? (
         <MedicaoApp
           session={session}
