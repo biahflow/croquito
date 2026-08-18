@@ -2,8 +2,8 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-18 (medição migrada para a API `/v1`, F-003; homologação de volta ao ar
-e verificada, F-006)
+Última revisão: 2026-08-18 (medição migrada para a API `/v1`, F-003; F-006 concluída após os
+atos humanos de homologação)
 
 > Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
 > trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
@@ -912,6 +912,11 @@ ninguém atualiza. O stack passou a declarar a **branch** do Neon por nome e der
 e a senha — nenhum hostname escrito à mão, que foi o que quebrou.
 A fumaça da borda (`make smoke-hml`) passou a verificar **conteúdo** e não só status — um
 `200` do container de exemplo não é a API — e roda igual na esteira e na máquina do operador.
+
+O ADR-0031 foi aceito por ato humano em 2026-08-18, e o responsável humano confirmou a
+conclusão do role mapping, da desativação segura da HMAC antiga e do merge do PR #4. F-006 está
+`DONE`. O carimbo do Alembic contra banco preexistente continua não atendível neste deploy e é
+follow-up de F-004.
 
 **O ambiente voltou em 2026-08-18**, e a fumaça da esteira das 14:06 prova as quatro rotas,
 com o discovery anunciando o issuer da borda pública e os quatro serviços servindo a mesma
