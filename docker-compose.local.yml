@@ -45,6 +45,13 @@ services:
       # diretório em ordem alfabética e ignora o segundo realm de mesmo nome, o ambiente
       # local subiria sem o usuário de desenvolvimento.
       - ./keycloak/croquito-realm.json:/opt/keycloak/data/import/croquito-realm.json:ro
+      # O tema `croquito` é artefato de imagem em homologação (ADR-0032, D8), mas aqui a
+      # imagem é a estoque: sem esta montagem o realm local apontaria `loginTheme` para um
+      # tema que não existe no container, e o Keycloak cairia no tema padrão sem avisar.
+      # Tema em diretório NÃO exige `kc.sh build` — só JAR em `providers/` exige (guia do
+      # desenvolvedor da 26.2, capítulo Themes) —, e `start-dev` não cacheia tema, então
+      # editar o arquivo e recarregar a página basta.
+      - ./keycloak/themes/croquito:/opt/keycloak/themes/croquito:ro
 
 volumes:
   postgres-data:

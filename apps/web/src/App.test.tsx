@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { App } from "./App";
+import { App, isHomologationHost } from "./App";
+import { entryRedirect, LOGIN_PATH } from "./route";
 
 /**
  * As duas jornadas têm o mesmo regime: sessão OIDC ou nada. A medição já teve um caminho
@@ -9,14 +10,19 @@ import { App } from "./App";
  *
  * O render estático cai sempre na rota do croqui (sem `window`, `currentRoute()` devolve a
  * raiz) e neste ambiente não há `VITE_OIDC_*` — é, portanto, o regime sem sessão, no qual
- * NENHUMA das duas jornadas é alcançável.
+ * NENHUMA das duas jornadas é alcançável, e no qual a porta de entrada mostra o estado de
+ * ambiente indisponível.
  */
 describe("App", () => {
   it("na rota do croqui sem sessão, nenhuma jornada é exposta", () => {
     const html = renderToStaticMarkup(<App />);
 
-    expect(html).toContain("Acesse uma revisão autenticada");
-    expect(html).toContain("OIDC não está configurado");
+    // A porta, com o texto aprovado em 2026-08-18 (Task Contract da T3).
+    expect(html).toContain("Do croqui ao orçamento.");
+    expect(html).toContain(
+      "O ambiente está indisponível agora. Tente de novo em instantes — se " +
+        "persistir, avise a operação.",
+    );
     // Nada do croqui.
     expect(html).not.toContain("DXF bloqueado");
     expect(html).not.toContain("UUID do job");
@@ -24,27 +30,65 @@ describe("App", () => {
     expect(html).not.toContain("Campo do Guaxindiba");
     expect(html).not.toContain("Simulação de decisão");
     expect(html).not.toContain("Projetos e revisões");
-    // Nada da medição: os dois cabeçalhos possíveis da jornada começam por aqui.
+    // Nada da medição: os dois cabeçalhos possíveis da jornada começam por aqui. E, de
+    // quebra, a pílula de ambiente ausente fora do host de homologação (sem `window`, o
+    // hostname corrente é vazio).
     expect(html).not.toContain("HOMOLOGAÇÃO");
   });
 
   /**
-   * O seletor abre jornada, e sem sessão não existe jornada a abrir — inclusive a da
-   * medição, que deixou de ter caminho sem sessão quando o servidor local saiu. Oferecer a
-   * alternância aqui prometeria uma tela que a próxima chamada recusaria com 401.
+   * ADR-0032, D3: `/login` é o único lugar onde o produto se apresenta sem sessão, e
+   * NENHUMA peça da casca das jornadas é renderizada antes de haver sessão. Não é estética:
+   * a casca anuncia versão de schema e alterna jornadas que a próxima chamada recusaria com
+   * 401. Cada asserção abaixo nomeia uma peça citada na decisão.
    */
-  it("sem sessão, não oferece a alternância de jornada", () => {
+  it("sem sessão, nenhuma peça da casca das jornadas é renderizada", () => {
     const html = renderToStaticMarkup(<App />);
 
+    expect(html).not.toContain("app-shell");
+    expect(html).not.toContain("topbar");
+    expect(html).not.toContain("schema-pill");
+    expect(html).not.toContain("identity-pill");
     expect(html).not.toContain('aria-label="Jornadas"');
     expect(html).not.toContain(">Medição<");
-    expect(html).toContain("Acesse uma revisão autenticada");
+    expect(html).toContain("Do croqui ao orçamento.");
+  });
+
+  /**
+   * Critério 9 da F-007: sem identity provider configurado no realm, o botão do login
+   * federado NÃO é renderizado — nem desabilitado, nem oculto por CSS. Nenhum dos dois
+   * realms (`keycloak/croquito-realm.json`, `keycloak/croquito-hml-realm.json`) declara
+   * `identityProviders`, então é ausência do DOM que se afirma aqui.
+   */
+  it("sem identity provider no realm, o botão do Google não existe no DOM", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    expect(html).not.toContain("Entrar com Google");
+    expect(html).not.toContain("login-button-federated");
+    expect(html).not.toContain("login-federated");
+    // O CTA próprio continua lá — o que falta é o provedor, não a porta.
+    expect(html).toContain("login-cta");
+  });
+
+  /**
+   * A pílula de ambiente aparece SÓ em homologação (decisão humana de 2026-08-18). O
+   * mecanismo escolhido é o hostname, e é ele que este teste exerce: nenhuma variável de
+   * ambiente nova foi criada para exibir um rótulo.
+   */
+  it("a pílula de ambiente é derivada do host de homologação", () => {
+    expect(isHomologationHost("croquito-hml.biahflow.ai")).toBe(true);
+    // Produção, desenvolvimento e qualquer vizinho de domínio ficam de fora.
+    expect(isHomologationHost("croquito.biahflow.ai")).toBe(false);
+    expect(isHomologationHost("localhost")).toBe(false);
+    expect(isHomologationHost("")).toBe(false);
+    expect(isHomologationHost("evil-croquito-hml.biahflow.ai")).toBe(false);
   });
 
   /**
    * Substitui o teste que afirmava o link entre as duas origens: com as jornadas dentro
-   * do mesmo build (ADR-0028, D9) não existe segunda origem para linkar, e a marca
-   * continua apontando para a base desta SPA — que é também o `redirect_uri` do login.
+   * do mesmo build (ADR-0028, D9) não existe segunda origem para linkar. A marca deixou de
+   * ser um link porque a topbar saiu do estado sem sessão (D3), então o que a porta afirma
+   * agora é mais forte: antes da sessão não há link para jornada nenhuma.
    */
   it("não linka uma segunda origem: a medição é jornada, não outro app", () => {
     expect(import.meta.env.BASE_URL).toBe("/revisao/");
@@ -52,6 +96,97 @@ describe("App", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).not.toContain('href="/medicao/"');
-    expect(html).toContain('href="/revisao/"');
+    // Nenhuma âncora: o único `href` do render é o `<link rel="preload">` que o React emite
+    // para o wordmark, e ele resolve sob a base desta SPA — não sob uma segunda origem.
+    expect(html).not.toContain("<a ");
+    expect(html).toContain('href="/revisao/');
+  });
+});
+
+/**
+ * A regra de porta de entrada do ADR-0032 (D3/D4) é decisão pura e mora em `route.ts`; a
+ * casca só a aplica com `replaceState` depois de `readSession()`. Os testes ficam aqui,
+ * junto do estado sem sessão que eles governam, e não em `route.test.ts`, que cobre a
+ * jornada. Eles rodam sem DOM porque a decisão é pura — o ambiente de teste do workspace
+ * é `node`, e o efeito no `history` é alcançado pelo smoke headless, o único teste que
+ * atravessa o redirect de verdade.
+ */
+describe("rebote da porta de entrada", () => {
+  const JOB = "0198f0a1-2b3c-7d4e-8f90-1a2b3c4d5e6f";
+  const JORNADA = "/revisao/";
+
+  /**
+   * O risco nº 1 da feature: sem esta exceção, o retorno do OIDC — que chega ANTES de
+   * existir sessão em memória — é rebatido para `/login` e o login nunca fecha. Remover a
+   * exceção de `entryRedirect` faz este teste falhar; é o critério 5 do contrato.
+   */
+  it("nunca rebate o retorno do OIDC, mesmo sem sessão", () => {
+    expect(
+      entryRedirect(
+        { pathname: JORNADA, search: "?code=abc123&state=xyz789" },
+        false,
+        JORNADA,
+      ),
+    ).toBeNull();
+    // O caso que o smoke headless persegue: link `?job=` que atravessou o login.
+    expect(
+      entryRedirect(
+        { pathname: JORNADA, search: `?job=${JOB}&code=abc123&state=xyz789` },
+        false,
+        JORNADA,
+      ),
+    ).toBeNull();
+  });
+
+  /**
+   * A exceção é estreita de propósito: só a URL que tem os DOIS parâmetros é retorno do
+   * OIDC. Um `?code=` solto num link qualquer não compra passagem para dentro.
+   */
+  it("não confunde parâmetro solto com retorno do OIDC", () => {
+    expect(
+      entryRedirect({ pathname: JORNADA, search: "?code=abc123" }, false, JORNADA),
+    ).toBe(`${LOGIN_PATH}?code=abc123`);
+    expect(
+      entryRedirect({ pathname: JORNADA, search: "?state=xyz789" }, false, JORNADA),
+    ).toBe(`${LOGIN_PATH}?state=xyz789`);
+  });
+
+  it("sem sessão, leva a jornada para /login preservando a query original", () => {
+    expect(
+      entryRedirect({ pathname: JORNADA, search: `?job=${JOB}` }, false, JORNADA),
+    ).toBe(`${LOGIN_PATH}?job=${JOB}`);
+    // A raiz da SPA e a medição caem na mesma regra; `?rodada=` vazio é jornada declarada
+    // e precisa sobreviver ao salto tanto quanto o `?job`.
+    expect(entryRedirect({ pathname: JORNADA, search: "" }, false, JORNADA)).toBe(
+      LOGIN_PATH,
+    );
+    expect(
+      entryRedirect({ pathname: JORNADA, search: "?rodada=" }, false, JORNADA),
+    ).toBe(`${LOGIN_PATH}?rodada=`);
+  });
+
+  it("com sessão, tira /login da frente e devolve a jornada com a query", () => {
+    expect(entryRedirect({ pathname: LOGIN_PATH, search: "" }, true, JORNADA)).toBe(
+      JORNADA,
+    );
+    expect(
+      entryRedirect({ pathname: LOGIN_PATH, search: `?job=${JOB}` }, true, JORNADA),
+    ).toBe(`${JORNADA}?job=${JOB}`);
+    // Em desenvolvimento a SPA é servida na raiz; o destino é `BASE_URL`, não `/revisao/`
+    // escrito à mão.
+    expect(entryRedirect({ pathname: LOGIN_PATH, search: "" }, true, "/")).toBe("/");
+  });
+
+  it("não rebate quem já está no lugar certo", () => {
+    expect(
+      entryRedirect({ pathname: LOGIN_PATH, search: `?job=${JOB}` }, false, JORNADA),
+    ).toBeNull();
+    expect(
+      entryRedirect({ pathname: JORNADA, search: `?job=${JOB}` }, true, JORNADA),
+    ).toBeNull();
+    // `/login/` digitado com barra é o mesmo lugar, e rebatê-lo seria um loop.
+    expect(
+      entryRedirect({ pathname: `${LOGIN_PATH}/`, search: "" }, false, JORNADA),
+    ).toBeNull();
   });
 });

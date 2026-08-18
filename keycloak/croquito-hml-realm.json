@@ -2,6 +2,8 @@
   "realm": "croquito",
   "enabled": true,
   "displayName": "Croquito HML",
+  "loginTheme": "croquito",
+  "emailTheme": "croquito",
   "sslRequired": "external",
   "bruteForceProtected": true,
   "accessTokenLifespan": 3600,

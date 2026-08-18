@@ -14,6 +14,13 @@
  *
  * Parâmetro desconhecido não é jornada e não é preservado: `routeSearch` escreve só o que
  * `Route` carrega, então navegar limpa a query de tudo que não seja a jornada.
+ *
+ * Desde o ADR-0032 existe também UM estado de caminho, a porta de entrada (`/login`), e ele
+ * é representado FORA de `Route`, numa camada acima da jornada: `Route` continua derivando
+ * só da query, e o que entra aqui é a decisão pura de rebote (`entryRedirect`), que a casca
+ * executa com `history.replaceState` depois de ler a sessão. A alternativa considerada era
+ * um terceiro `kind` em `Route`; ela foi recusada porque `/login` não é jornada — não tem
+ * forma canônica de query, não é alternável pelo seletor e não sobrevive a `routeSearch`.
  */
 
 export type Route =
@@ -25,6 +32,68 @@ export const JOB_PARAM = "job";
 
 /** Marca da medição, em português como o resto do vocabulário dessa jornada. */
 export const ROUND_PARAM = "rodada";
+
+/**
+ * Caminho da porta de entrada (ADR-0032, D1/D2). A borda serve nele o MESMO `index.html`
+ * da SPA, com os assets continuando sob `BASE_URL`; em desenvolvimento o fallback do Vite
+ * faz o mesmo. Ele é onde se CLICA para entrar e não é `redirect_uri` (D5): `/login` não
+ * entra nos `redirectUris` de realm nenhum, e aparecer ali é sinal de desenho errado.
+ */
+export const LOGIN_PATH = "/login";
+
+/**
+ * Os parâmetros que o retorno do OIDC carrega na query. Quem os consome é `readSession()`
+ * em `auth.ts`; aqui eles só são reconhecidos, nunca lidos nem registrados.
+ */
+const OIDC_RETURN_PARAMS = ["code", "state"] as const;
+
+/** `/login/` digitado com barra é o mesmo lugar; a borda casa só a forma exata. */
+function isLoginPath(pathname: string): boolean {
+  return pathname === LOGIN_PATH || pathname === `${LOGIN_PATH}/`;
+}
+
+/** `""`, `"?"` e `"job=x"` são a mesma query escrita de três jeitos. */
+function normalizeSearch(search: string): string {
+  if (!search || search === "?") {
+    return "";
+  }
+  return search.startsWith("?") ? search : `?${search}`;
+}
+
+/**
+ * Para onde a URL corrente deve ser reescrita, ou `null` quando ela já está no lugar
+ * certo. Função pura de propósito: a regra que fecha (ou não) um loop de login precisa ser
+ * verificável sem DOM. Quem aplica o resultado é a casca, com `history.replaceState` —
+ * redirecionar com reload jogaria fora o estado do OIDC, que vive em memória.
+ *
+ * `journeyPath` é onde a SPA está montada (`import.meta.env.BASE_URL`): `/revisao/` no
+ * build servido pelo nginx, `/` em desenvolvimento.
+ */
+export function entryRedirect(
+  location: { readonly pathname: string; readonly search: string },
+  hasSession: boolean,
+  journeyPath: string,
+): string | null {
+  const search = normalizeSearch(location.search);
+  // A EXCEÇÃO VEM PRIMEIRO, e é decisão (ADR-0032, D4), não otimização. O retorno do OIDC
+  // chega em `/revisao/?code=…&state=…` num instante em que ainda NÃO existe sessão em
+  // memória: `readSession()` só a estabelece depois de `signinRedirectCallback()`. Rebater
+  // essa URL manda o código de autorização para uma tela que não sabe gastá-lo e fecha um
+  // loop de login que tranca todos para fora, inclusive quem consertaria.
+  const params = new URLSearchParams(search);
+  if (OIDC_RETURN_PARAMS.every((name) => params.has(name))) {
+    return null;
+  }
+  if (!hasSession && !isLoginPath(location.pathname)) {
+    // Vai a query ORIGINAL inteira, não a canônica da jornada: o `?job=<uuid>` do link
+    // entregue precisa sobreviver ao salto para depois viajar no `state` do login.
+    return `${LOGIN_PATH}${search}`;
+  }
+  if (hasSession && isLoginPath(location.pathname)) {
+    return `${journeyPath}${search}`;
+  }
+  return null;
+}
 
 /**
  * `search` é a query com ou sem `?` (aceita `window.location.search` direto).

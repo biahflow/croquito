@@ -155,14 +155,16 @@ async function run() {
   try {
     await page.goto(target, { waitUntil: "domcontentloaded" });
 
-    const signIn = page.getByRole("button", { name: "Entrar" });
+    const signIn = page
+      .locator("main.login")
+      .getByRole("button", { name: "Entrar", exact: true });
     await signIn.waitFor({ state: "visible" });
     if (await page.getByText("OIDC não está configurado").isVisible()) {
       throw new SmokeFailure(
         "OIDC não está configurado no web: copie apps/web/.env.local.example para apps/web/.env.local.",
       );
     }
-    step("tela anônima de pé; entrando pelo Keycloak");
+    step("tela de login de pé; entrando pelo Keycloak");
     await signIn.click();
 
     // Formulário de login do Keycloak; os campos têm os nomes padrão do tema.

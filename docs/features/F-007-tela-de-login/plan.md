@@ -213,4 +213,33 @@ caminho crítico justificado por esforço relativo e dependência.
 
 ## Desvios do plano
 
-Nenhum registrado. Após o congelamento, mudanças entram aqui como `PLAN_DEVIATION`.
+```text
+PLAN_DEVIATION 1 (2026-08-18, durante a validação da T5)
+task: T5 (validação integrada, executada pelo operador após BUILDER_VALIDATION_BLOCKED)
+planejado: smoke headless verde contra o stack local com os usuários de fixture versionados.
+real: defeito PRÉ-EXISTENTE de baseline — os usuários de fixture do realm local
+  (engenheiro.local, orcamentista.local) nascem sem email/firstName/lastName, e o
+  Keycloak 26 dispara a required action VERIFY_PROFILE no primeiro login de um import
+  limpo, bloqueando o fluxo em "Update Account Information". Execuções antigas passavam
+  contra um container cujo banco já tinha o perfil completado à mão.
+impacto: nenhuma task do plano podia fechar o critério 6 sem tocar arquivo fora dos escopos
+  congelados (keycloak/croquito-realm.json).
+resolução: expansão mínima e consciente de escopo — seis linhas de dados sintéticos
+  (email @example.invalid, nome e sobrenome) nos dois usuários de fixture do realm LOCAL;
+  o realm de homologação não foi tocado. Com o conserto e reimport limpo, o headless
+  passou de ponta a ponta. Registrado também em evidence.md.
+```
+
+```text
+PLAN_DEVIATION 2 (2026-08-18, execução da T5)
+task: T5
+planejado: validação completa pelo executor designado (Codex/gpt-5.6-sol).
+real: BUILDER_VALIDATION_BLOCKED — a porta 5432 do host estava ocupada pelo postgres de
+  outro projeto, e o executor corretamente se recusou a tocá-lo. Implementação entregue
+  íntegra; validação de stack executada pelo operador (sessão Claude Code) com override
+  temporário de porta (postgres do croquito em 15432), sem tocar o projeto alheio.
+impacto: a evidência de validação da T5 tem dois autores — o BUILD REPORT do executor
+  (portões estáticos) e a validação integrada do operador (smoke-local 2×, headless verde
+  com ?job preservado). Ambos preservados separadamente, como manda execution.md.
+resolução: nenhuma mudança de escopo; registro de autoria dividida da evidência.
+```

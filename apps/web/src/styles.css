@@ -54,7 +54,6 @@
 
 body {
   margin: 0;
-  min-width: 1180px;
   min-height: 100vh;
   background:
     radial-gradient(circle at 8% 0%, rgba(0, 200, 119, 0.1), transparent 28rem),
@@ -70,8 +69,348 @@ button {
   cursor: pointer;
 }
 
+/*
+ * O piso de 1180px é das JORNADAS, e por isso mora na casca delas e não mais no `body`.
+ * Prancha com viewport, camadas e painel de decisão continua sendo desktop por declaração
+ * (ADR-0032, D6); a porta de entrada é a exceção declarada, responsiva de 360px a desktop,
+ * e o piso não pode alcançá-la — ela é a tela que se abre no celular só para conferir se o
+ * ambiente está no ar. Como `.app-shell` só é renderizada com sessão, a exceção não é uma
+ * media query a manter em duas folhas: é uma consequência de onde a regra vive.
+ *
+ * Exceção NOVA exige decisão nova; ela não se estende por analogia a outra tela.
+ */
 .app-shell {
+  min-width: 1180px;
   min-height: 100vh;
+}
+
+/* ===========================================================================
+ * PORTA DE ENTRADA (`/login`) — F-007 / ADR-0032, D3 e D6.
+ *
+ * COR: só a tabela de tokens do Design System, com as cinco regras de uso valendo aqui
+ * como valem no resto do produto. `--accent` aparece em PREENCHIMENTO (o CTA, com
+ * `--accent-ink` por cima; os nós do croqui) e nunca como cor de texto; o verde de texto
+ * e de traço fino sobre claro é `--accent-text`. As três cores do alerta são as MESMAS de
+ * `.app-alert`, mais abaixo nesta folha: erro é cor de domínio (regra 4) e o produto não
+ * ganha uma segunda paleta de erro por causa de uma tela nova.
+ *
+ * TAMANHO, ESPAÇAMENTO E RAIO: valores APROVADOS NA REVISÃO 2 DO MOCK
+ * (`docs/features/F-007-tela-de-login/mock/`, aprovação humana de 2026-08-18), e não
+ * citações de escala — o Design System registra que o projeto ainda não tem escala
+ * tipográfica, de espaçamento nem de raio, e inventar uma é decisão de design com portão
+ * próprio. Mudá-los aqui é mudar o artefato aprovado.
+ * =========================================================================== */
+.login {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  background: var(--surface);
+}
+
+/* Painel de marca. O gradiente é o mesmo verde do `body`, com a opacidade que o mock
+   aprovou sobre a superfície escura. */
+.login-showcase {
+  position: relative;
+  overflow: hidden;
+  padding: 44px 46px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  color: var(--dark-ink);
+  background:
+    radial-gradient(circle at 12% 4%, rgba(0, 200, 119, 0.2), transparent 30rem),
+    var(--dark);
+}
+
+/* Malha de prancha técnica, esmaecida para o centro. Puramente decorativa: ela é um
+   `<div aria-hidden>` e não carrega significado nenhum. */
+.login-showcase-grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(var(--dark-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--dark-line) 1px, transparent 1px);
+  background-size: 34px 34px;
+  -webkit-mask-image: radial-gradient(circle at 70% 60%, #000, transparent 72%);
+  mask-image: radial-gradient(circle at 70% 60%, #000, transparent 72%);
+}
+
+.login-showcase > *:not(.login-showcase-grid) {
+  position: relative;
+}
+
+.login-wordmark {
+  display: block;
+  height: 27px;
+  /* O wordmark tem viewBox fixo (620 × 150): sem largura declarada ele estica e o desenho
+     recentra dentro do próprio viewBox. */
+  width: 112px;
+}
+
+/* A promessa é o `h1` da página: o maior peso tipográfico da porta, na serifada que dá ao
+   produto tom de documento. Sobrescreve o `h1` global (25px, margin-top 4px). */
+.login-promise {
+  margin: 0;
+  max-width: 13ch;
+  font-size: 37px;
+  line-height: 1.16;
+  letter-spacing: -0.01em;
+}
+
+.login-croqui {
+  width: 320px;
+  max-width: 100%;
+  margin: 10px -6px 0 0;
+  align-self: flex-end;
+  opacity: 0.92;
+}
+
+/* Verde vetor sobre a superfície escura, onde ele é traço de desenho e não texto. A ordem
+   importa: `.login-croqui-far` vem por último para vencer a opacidade das duas anteriores
+   nos elementos que carregam as duas classes. */
+.login-croqui-line,
+.login-croqui-dim {
+  stroke: var(--accent);
+}
+
+.login-croqui-node {
+  fill: var(--accent);
+}
+
+.login-croqui-detail {
+  stroke: var(--dark-ink);
+  opacity: 0.38;
+}
+
+.login-croqui-line {
+  opacity: 0.85;
+}
+
+.login-croqui-dim {
+  opacity: 0.7;
+}
+
+.login-croqui-far {
+  opacity: 0.45;
+}
+
+.login-panel {
+  padding: 44px 46px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: var(--surface);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 376px;
+  margin: 0 auto;
+}
+
+.login-mark {
+  display: block;
+  width: 46px;
+  height: 46px;
+  border-radius: 11px;
+}
+
+/*
+ * "Entrar" é o objeto de maior peso da página — o contrário do `button-quiet` espremido na
+ * topbar que o ADR-0032 descreve como o problema. Preenchimento `--accent` com
+ * `--accent-ink` por cima, exatamente como a regra 1 manda.
+ */
+.login-cta {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 24px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 14.5px;
+  font-weight: 750;
+  box-shadow: 0 6px 18px rgba(0, 116, 74, 0.24);
+}
+
+.login-cta svg {
+  width: 16px;
+  height: 16px;
+}
+
+.login-cta:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+/* O foco precisa aparecer sobre o preenchimento verde: `--ink` é o que sobrevive a ele. */
+.login-cta:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
+/* Desabilitado é o único papel em que `--muted` é texto (regra 3), e ele só acontece com o
+   ambiente fora do ar — estado que o alerta acima do botão já explica por extenso. */
+.login-cta:disabled {
+  cursor: not-allowed;
+  color: var(--muted);
+  background: var(--line);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/*
+ * Espaço do login federado (F-008 / ADR-0033). O bloco e a forma do botão nascem aqui para
+ * que a tela aprovada não precise ser redesenhada quando o provedor entrar; hoje nada disso
+ * é renderizado, porque nenhum realm declara `identityProviders` — critério 9 da F-007 é
+ * ausência do DOM, não `display: none`.
+ */
+.login-federated {
+  margin-top: 15px;
+}
+
+.login-divider {
+  height: 1px;
+  background: var(--line);
+}
+
+.login-button-federated {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 15px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 14.5px;
+  font-weight: 700;
+}
+
+.login-button-federated:hover {
+  background: var(--surface-subtle);
+}
+
+.login-rule {
+  margin: 24px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.login-env {
+  margin: 15px 0 0;
+}
+
+/* Pílula de ambiente, só em homologação (decisão humana de 2026-08-18). Verde de texto e
+   de borda sobre claro é `--accent-text` / `--accent-line`, nunca `--accent`. */
+.login-env-pill {
+  display: inline-block;
+  padding: 4px 9px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.login-invite {
+  margin: 9px 0 0;
+  color: var(--ink-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+/* Ambiente fora do ar é um ESTADO da tela, com forma e ícone próprios, e não um parágrafo
+   solto acima de uma casca vazia: separar "você não entrou" de "o ambiente caiu" é o que
+   custou quatro dias silenciosos na F-006. Cores idênticas às de `.app-alert`. */
+.login-alert {
+  margin: 20px 0 0;
+  padding: 13px 15px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: #7d2f26;
+  background: #fbeeec;
+  border: 1px solid #e0b4ad;
+  border-radius: 9px;
+  font-size: 12.5px;
+  line-height: 1.58;
+}
+
+.login-alert-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+}
+
+/*
+ * A EXCEÇÃO DE RESPONSIVIDADE, e ela para nesta tela (ADR-0032, D6). O painel de marca vira
+ * cabeçalho, o croqui sai — decoração não disputa altura com o CTA — e o card sobe para o
+ * topo do painel claro, de modo que "Entrar" continue alcançável sem rolagem em 390px.
+ */
+@media (max-width: 900px) {
+  .login {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .login-showcase {
+    padding: 24px 24px 26px;
+    display: block;
+    background:
+      radial-gradient(circle at 18% 0%, rgba(0, 200, 119, 0.22), transparent 17rem),
+      var(--dark);
+  }
+
+  .login-showcase-grid {
+    display: none;
+  }
+
+  .login-wordmark {
+    height: 22px;
+    width: 91px;
+  }
+
+  .login-promise {
+    margin-top: 17px;
+    max-width: none;
+    font-size: 24px;
+    line-height: 1.2;
+  }
+
+  .login-croqui {
+    display: none;
+  }
+
+  .login-panel {
+    padding: 24px 24px 26px;
+  }
+
+  /* O mock aprovado ancora o CTA na parte baixa da tela do celular, com o espaço vazio
+     ACIMA dele: é onde o polegar alcança. A margem automática no próprio CTA empurra o
+     bloco de ação para baixo sem precisar de um espaçador no DOM — e deixa o alerta de
+     ambiente fora do ar no topo, junto da marca, que é onde ele é lido primeiro. */
+  .login-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .login-cta {
+    margin-top: auto;
+  }
 }
 
 .topbar {

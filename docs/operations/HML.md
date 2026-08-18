@@ -20,7 +20,8 @@ Projeto `biahflow-hml`, região `us-east1`, registro
 
 | Rota pública | Serviço Cloud Run | Ingress | O que é |
 |---|---|---|---|
-| `https://croquito-hml.biahflow.ai/` | `croquito-web-hml` | público | nginx: serve as SPAs e faz proxy do resto |
+| `/` | `croquito-web-hml` | público | `302 /login`, porta de entrada do produto |
+| `/login` | `croquito-web-hml` | público | SPA de entrada; o build é servido em `/revisao/` |
 | `/revisao/` | `croquito-web-hml` | público | SPA da sessão de cena (`apps/web`) |
 | `/medicao/` | `croquito-web-hml` | público | jornada de medição, na mesma SPA (`apps/web`) |
 | `/api/` | `croquito-scene-hml` | interno | API FastAPI (`croquito_api.main:app`), inclusive as rotas de medição |
@@ -218,7 +219,17 @@ make smoke-hml BASE_URL=https://<serviço>.run.app  # direto no Cloud Run, sem a
 É o mesmo `scripts/smoke_hml.py` que o passo final da esteira roda, e ele não precisa de
 credencial nenhuma. As quatro rotas (`/revisao/`, `/medicao/`, `/api/v1/meta` e o discovery
 OIDC) passam pelo nginx, que é o único serviço público; se elas respondem **com o conteúdo
-certo**, o proxy same-origin, a jornada e a sessão autenticada estão de pé.
+certo**, o proxy same-origin, a jornada e a sessão autenticada estão de pé. A porta nova
+também deve ser conferida manualmente:
+
+```bash
+BASE_URL=https://croquito-hml.biahflow.ai
+curl -sS --max-redirs 0 -D - -o /dev/null "$BASE_URL/" | grep -E '^HTTP/.* 302|^Location: /login'
+curl -fsS "$BASE_URL/login" | grep -F '/revisao/assets/'
+```
+
+O primeiro comando confirma `302` relativo para `/login`; o segundo confirma que `/login`
+entrega o HTML da SPA e mantém os assets sob `/revisao/`.
 
 **Não use `/api/healthz` para verificar a API daqui de fora.** O Cloud Run reserva `/healthz`
 na raiz de todo serviço, e como o proxy remove o prefixo, esse caminho nunca chega ao

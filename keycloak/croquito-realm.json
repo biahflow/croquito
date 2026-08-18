@@ -2,6 +2,8 @@
   "realm": "croquito",
   "enabled": true,
   "displayName": "Croquito Local",
+  "loginTheme": "croquito",
+  "emailTheme": "croquito",
   "accessTokenLifespan": 3600,
   "ssoSessionIdleTimeout": 28800,
   "ssoSessionMaxLifespan": 43200,
@@ -55,6 +57,9 @@
     {
       "username": "engenheiro.local",
       "enabled": true,
+      "email": "engenheiro.local@example.invalid",
+      "firstName": "Engenheiro",
+      "lastName": "Local",
       "emailVerified": true,
       "attributes": {"tenant_id": ["tenant-local"]},
       "realmRoles": ["engineer", "tenant_admin"],
@@ -65,6 +70,9 @@
     {
       "username": "orcamentista.local",
       "enabled": true,
+      "email": "orcamentista.local@example.invalid",
+      "firstName": "Orcamentista",
+      "lastName": "Local",
       "emailVerified": true,
       "attributes": {"tenant_id": ["tenant-local"]},
       "realmRoles": ["orcamentista"],
