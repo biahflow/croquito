@@ -2,6 +2,8 @@
   "realm": "croquito",
   "enabled": true,
   "displayName": "Croquito Local",
+  "loginTheme": "croquito",
+  "emailTheme": "croquito",
   "accessTokenLifespan": 3600,
   "ssoSessionIdleTimeout": 28800,
   "ssoSessionMaxLifespan": 43200,

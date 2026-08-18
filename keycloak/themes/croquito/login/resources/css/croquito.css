@@ -1,0 +1,475 @@
+/*
+ * Tema `croquito` — repintura do tema `keycloak.v2` da Keycloak 26.2.
+ *
+ * Esta folha é TODO o vestuário das páginas de login. Nenhum `.ftl` é sobrescrito: o DOM
+ * abaixo é o que o `template.ftl`, o `field.ftl` e o `buttons.ftl` da v2 já montam, e é por
+ * isso que `#kc-form-login` e `input[name='username']` — o que o smoke headless procura —
+ * continuam existindo sem nenhum cuidado especial da nossa parte.
+ *
+ * Como a v2 usa UM shell para todas as páginas de login, repintar o shell veste também
+ * `login-reset-password`, `login-update-password`, `login-verify-email` e
+ * `login-page-expired`, que a F-008 vai alcançar. Nada aqui é específico de página.
+ *
+ * Cor: todo valor vem da tabela de tokens de docs/engineering/DESIGN_SYSTEM.md, lida em
+ * 2026-08-18, verbatim de apps/web/src/styles.css. As regras da folha valem aqui:
+ *   1. `--accent` só em PREENCHIMENTO, sempre com `--accent-ink` por cima (2,2:1 sobre
+ *      branco — nunca serve de cor de texto sobre claro);
+ *   2. texto e traço fino em verde sobre claro usam `--accent-text` (5,8:1);
+ *   3. texto secundário sobre claro usa `--ink-secondary` (6,2:1); `--muted` é ícone,
+ *      borda de controle, placeholder e desabilitado;
+ *   4. cor de domínio (erro, aviso, sucesso) não é marca e mantém matiz própria;
+ *   5. cor nunca é o único portador de significado.
+ *
+ * A ÚNICA cor fora da tabela é o véu verde do fundo escuro, `rgba(0, 200, 119, .16)`, que
+ * é `--accent` com alfa. Ele não é valor novo decidido aqui: é o mesmo do mock aprovado
+ * por decisão humana em 2026-08-18 (docs/features/F-007-tela-de-login/mock/login.html,
+ * regra `.kc`).
+ *
+ * Tamanho, espaçamento e raio são valores novos, e o Design System registra por quê: o
+ * projeto ainda não tem escala tipográfica, de espaçamento nem de raio. Os valores abaixo
+ * são os do mock aprovado, não uma escala inventada aqui.
+ */
+
+:root {
+  /* Tokens da marca — tabela do Design System, verbatim. */
+  --croquito-surface: #ffffff;
+  --croquito-surface-subtle: #f4f4f1;
+  --croquito-ink: #14181d;
+  --croquito-ink-secondary: #5b6169;
+  --croquito-muted: #9aa0a8;
+  --croquito-line: #e5e5e0;
+  --croquito-accent: #00c877;
+  --croquito-accent-hover: #00b169;
+  --croquito-accent-ink: #0e1116;
+  --croquito-accent-text: #00744a;
+  --croquito-accent-soft: #e6f6ee;
+  --croquito-accent-line: #9bdcc0;
+  /* Só o fundo é escuro: todo texto do tema vive sobre o card branco, então os tokens de
+     tinta sobre escuro não entram aqui — declarar token que ninguém usa é convidar alguém
+     a usá-lo sem conferir contraste. */
+  --croquito-dark: #0e1116;
+
+  --croquito-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --croquito-serif: Georgia, "Times New Roman", serif;
+
+  /* A v2 desenha um filete azul da PatternFly no topo do card e usa o fundo da marca
+     Keycloak. Os dois são apagados aqui, não escondidos por cima. */
+  --keycloak-card-top-color: var(--croquito-accent);
+  --keycloak-bg-logo-url: none;
+
+  /* Tokens GLOBAIS da PatternFly remapeados para a marca. Isto é o que evita uma folha de
+     mil linhas: as utilidades da PatternFly (`.pf-v5-u-color-200`, por exemplo) declaram
+     `!important`, então repintá-las seletor a seletor viraria uma escada de `!important`.
+     Trocar o token na raiz repinta a cascata inteira de uma vez — inclusive as telas que a
+     F-008 ainda vai habilitar e que ninguém aqui viu.
+
+     `--pf-v5-global--primary-color--100` recebe `--accent-text`, e não `--accent`, porque
+     a PatternFly usa esse token TAMBÉM em texto e traço. `--accent` tem 2,2:1 sobre branco
+     e a regra 1 da folha o proíbe fora de preenchimento; o preenchimento do CTA é tratado
+     no seu próprio bloco, mais abaixo. */
+  --pf-v5-global--Color--100: var(--croquito-ink);
+  --pf-v5-global--Color--200: var(--croquito-ink-secondary);
+  --pf-v5-global--link--Color: var(--croquito-accent-text);
+  --pf-v5-global--link--Color--hover: var(--croquito-accent-text);
+  --pf-v5-global--link--Color--visited: var(--croquito-accent-text);
+  --pf-v5-global--primary-color--100: var(--croquito-accent-text);
+  --pf-v5-global--BorderColor--100: var(--croquito-line);
+  --pf-v5-global--BackgroundColor--100: var(--croquito-surface);
+  --pf-v5-global--BackgroundColor--200: var(--croquito-surface-subtle);
+  --pf-v5-global--FontFamily--text: var(--croquito-sans);
+  --pf-v5-global--FontFamily--heading: var(--croquito-serif);
+  --pf-v5-global--FontFamily--redhatVF--text: var(--croquito-sans);
+  --pf-v5-global--FontFamily--redhatVF--heading: var(--croquito-serif);
+}
+
+/* ---------------------------------------------------------------- página */
+
+html.login-pf {
+  background-color: var(--croquito-dark);
+}
+
+/* Um único bloco para o `body`, e ele usa o mesmo `#keycloak-bg` que o `template.ftl` da
+   v2 escreve. Separar "a cor" de "o véu" em duas regras não funciona aqui: a regra do id
+   (1,0,1) vence qualquer regra de classe posterior, e o `background` abreviado da primeira
+   apagaria a imagem da segunda sem erro nenhum de sintaxe. */
+body#keycloak-bg {
+  background-color: var(--croquito-dark);
+  background-image: radial-gradient(ellipse 60rem 34rem at 50% -4rem,
+    rgba(0, 200, 119, .16), transparent 70%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  background-size: auto;
+  min-height: 100vh;
+  color: var(--croquito-ink);
+  font-family: var(--croquito-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-synthesis: none;
+}
+
+.pf-v5-c-login {
+  padding-block: 44px;
+}
+
+.pf-v5-c-login__container {
+  grid-template-columns: min(376px, 100%);
+  justify-content: center;
+}
+
+/* O cabeçalho da v2 renderiza `loginTitleHtml`, que é o `displayNameHtml` do realm — vazio
+   nos dois realms do Croquito. Sem conteúdo, ele só abriria um vão acima do card. A marca
+   entra dentro do card, como no mock aprovado. */
+#kc-header {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- card */
+
+.pf-v5-c-login__main {
+  background: var(--croquito-surface);
+  border-radius: 15px;
+  box-shadow: 0 26px 60px rgba(0, 0, 0, .42);
+  overflow: hidden;
+}
+
+.pf-v5-c-login__main-header {
+  border-top: 0;
+  display: block;
+  padding: 30px 28px 20px;
+  text-align: center;
+}
+
+/* O símbolo da marca — quadrado vetorial verde sobre grafite — acima do título, como no
+   mock. Decorativo: o nome acessível da página é o `<h1>` logo abaixo, e repetir "Croquito"
+   num `alt` só duplicaria leitura de tela. */
+.pf-v5-c-login__main-header::before {
+  content: "";
+  display: block;
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 15px;
+  background: url("../img/croquito-mark.svg") no-repeat center / contain;
+}
+
+#kc-page-title {
+  font-family: var(--croquito-serif);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--croquito-ink);
+  letter-spacing: -.01em;
+}
+
+.pf-v5-c-login__main-body {
+  padding: 0 28px 30px;
+}
+
+.pf-v5-c-login__main-footer {
+  padding: 0 28px;
+}
+
+.pf-v5-c-login__main-footer:empty {
+  padding: 0;
+}
+
+/* O `template.ftl` da v2 tem DOIS `__main-footer`: um aninhado dentro do `__main-body`
+   (onde entram os provedores federados e o bloco de informação) e um irmão do body. O
+   aninhado somava a calha do body à sua própria, e o "Entrar com Google" saía 28px mais
+   estreito que o CTA logo acima — dois botões em bloco com larguras diferentes. */
+.pf-v5-c-login__main-body .pf-v5-c-login__main-footer {
+  padding-inline: 0;
+}
+
+/* ---------------------------------------------------------------- campos */
+
+.pf-v5-c-form {
+  --pf-v5-c-form--GridGap: 16px;
+}
+
+.pf-v5-c-form__label,
+.pf-v5-c-form__label-text {
+  font-size: 10.5px;
+  font-weight: 850;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--croquito-ink-secondary);
+}
+
+.pf-v5-c-form__group-label {
+  padding-bottom: 6px;
+}
+
+.pf-v5-c-form-control {
+  border: 1px solid var(--croquito-line);
+  border-radius: 9px;
+  background: var(--croquito-surface-subtle);
+  font-family: var(--croquito-sans);
+  font-size: 13.5px;
+  color: var(--croquito-ink);
+  min-height: 42px;
+  padding-inline: 12px;
+  align-items: center;
+}
+
+/* A PatternFly desenha o traço de foco num `::after` azul, colado embaixo do campo.
+   Ele é apagado aqui e substituído pelo indicador da marca, abaixo — não removido sem
+   troca: campo sem foco visível é regressão de acessibilidade, não simplificação. */
+.pf-v5-c-form-control::after {
+  border-bottom-color: transparent;
+}
+
+/* O foco é indicado por traço em `--accent-text` (5,8:1 sobre branco), não pelo `outline`
+   azul do navegador nem por um halo pálido: indicador que só se vê de perto não indica. */
+.pf-v5-c-form-control:focus-within {
+  background: var(--croquito-surface);
+  border-color: var(--croquito-accent-line);
+  outline: 2px solid var(--croquito-accent-text);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px var(--croquito-accent-soft);
+}
+
+.pf-v5-c-form-control > input:focus {
+  outline: none;
+}
+
+/* Campo com erro continua vermelho MESMO com foco. Sem isto o anel verde do foco cobria a
+   borda de erro e a página dizia duas coisas ao mesmo tempo: o texto acusava credencial
+   inválida e o campo sinalizava "ok". */
+.pf-v5-c-form-control.pf-m-error,
+.pf-v5-c-form-control.pf-m-error:focus-within {
+  border-color: #a3322a;
+  outline-color: #a3322a;
+  box-shadow: 0 0 0 3px #fdf3f2;
+}
+
+.pf-v5-c-form-control > input {
+  font-size: 13.5px;
+  color: var(--croquito-ink);
+  background: transparent;
+}
+
+.pf-v5-c-form-control input::placeholder {
+  color: var(--croquito-muted);
+}
+
+/* O botão de mostrar/ocultar senha da v2 fica colado ao campo; sem isso ele herda o
+   controle cinza da PatternFly e destoa do campo ao lado. */
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control {
+  --pf-v5-c-button--m-control--BackgroundColor: var(--croquito-surface-subtle);
+  --pf-v5-c-button--m-control--BorderTopColor: var(--croquito-line);
+  --pf-v5-c-button--m-control--BorderRightColor: var(--croquito-line);
+  --pf-v5-c-button--m-control--BorderBottomColor: var(--croquito-line);
+  --pf-v5-c-button--m-control--BorderLeftColor: var(--croquito-line);
+  --pf-v5-c-button--m-control--after--BorderBottomColor: var(--croquito-line);
+  color: var(--croquito-ink-secondary);
+  border-radius: 0 9px 9px 0;
+  min-height: 42px;
+}
+
+/* A caixa marcada é preenchimento, e por isso pode usar `--accent` — mas a marca de
+   confirmação por cima dela é desenhada pelo navegador em branco, e branco sobre `--accent`
+   dá 2,0:1. `--accent-text` é o preenchimento que deixa esse "v" legível. */
+.pf-v5-c-check__input,
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--croquito-accent-text);
+}
+
+.pf-v5-c-check__label {
+  font-size: 12.5px;
+  color: var(--croquito-ink-secondary);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+/* ---------------------------------------------------------------- botões */
+
+/* A PatternFly abre o grupo de ações com uma calha negativa (`margin: -8px` no grupo,
+   `margin: 8px` no botão) para separar vários botões lado a lado. Aqui há um botão só, em
+   bloco, e a calha o deixava 16px mais largo que os campos acima. */
+.pf-v5-c-form__actions {
+  display: block;
+  margin: 0;
+  padding-top: 4px;
+}
+
+.pf-v5-c-form__actions > .pf-v5-c-button {
+  margin: 0;
+}
+
+/* A PatternFly não desenha a borda do botão no próprio elemento: desenha num `::after`,
+   controlado por `--pf-v5-c-button--after--*`. Escrever `border:` no botão não substitui
+   nada — a borda azul continua por cima. Todo ajuste de borda daqui para baixo passa por
+   essas variáveis, e é por isso que elas aparecem em vez de `border`. */
+.pf-v5-c-button {
+  --pf-v5-c-button--after--BorderRadius: 9px;
+  --pf-v5-c-button--after--BorderWidth: 1px;
+  --pf-v5-c-button--after--BorderColor: var(--croquito-line);
+  font-family: var(--croquito-sans);
+  border-radius: 9px;
+  font-size: 13.5px;
+  font-weight: 750;
+}
+
+/* O CTA é o objeto de maior peso da página: preenchimento `--accent` com `--accent-ink`
+   por cima, exatamente como a regra 1 da folha manda. */
+.pf-v5-c-button.pf-m-primary {
+  --pf-v5-c-button--m-primary--BackgroundColor: var(--croquito-accent);
+  --pf-v5-c-button--m-primary--Color: var(--croquito-accent-ink);
+  --pf-v5-c-button--m-primary--hover--BackgroundColor: var(--croquito-accent-hover);
+  --pf-v5-c-button--m-primary--hover--Color: var(--croquito-accent-ink);
+  --pf-v5-c-button--m-primary--focus--BackgroundColor: var(--croquito-accent-hover);
+  --pf-v5-c-button--m-primary--focus--Color: var(--croquito-accent-ink);
+  --pf-v5-c-button--m-primary--active--BackgroundColor: var(--croquito-accent-hover);
+  --pf-v5-c-button--m-primary--active--Color: var(--croquito-accent-ink);
+  min-height: 44px;
+  box-shadow: 0 6px 18px rgba(0, 116, 74, .24);
+}
+
+.pf-v5-c-button.pf-m-primary,
+.pf-v5-c-button.pf-m-secondary,
+.pf-v5-c-button.pf-m-block {
+  width: 100%;
+}
+
+/* Botão de provedor federado (o "Entrar com Google" que a F-008 liga): peso de opção,
+   não de CTA — borda fina sobre superfície branca. */
+.pf-v5-c-button.pf-m-secondary {
+  --pf-v5-c-button--m-secondary--BackgroundColor: var(--croquito-surface);
+  --pf-v5-c-button--m-secondary--Color: var(--croquito-ink);
+  --pf-v5-c-button--m-secondary--after--BorderColor: var(--croquito-line);
+  --pf-v5-c-button--m-secondary--hover--BackgroundColor: var(--croquito-surface-subtle);
+  --pf-v5-c-button--m-secondary--hover--Color: var(--croquito-ink);
+  --pf-v5-c-button--m-secondary--hover--after--BorderColor: var(--croquito-muted);
+  --pf-v5-c-button--m-secondary--focus--BackgroundColor: var(--croquito-surface-subtle);
+  --pf-v5-c-button--m-secondary--focus--Color: var(--croquito-ink);
+  --pf-v5-c-button--m-secondary--focus--after--BorderColor: var(--croquito-muted);
+  --pf-v5-c-button--m-secondary--active--BackgroundColor: var(--croquito-surface-subtle);
+  --pf-v5-c-button--m-secondary--active--Color: var(--croquito-ink);
+  --pf-v5-c-button--m-secondary--active--after--BorderColor: var(--croquito-muted);
+  min-height: 44px;
+  font-weight: 700;
+}
+
+/* Dentro do grupo de ações, a ação secundária é sempre "voltar" — "Voltar para o login",
+   em `login-reset-password`. No mock aprovado ela é um link de texto, e não um segundo
+   botão em bloco competindo com o CTA. Aqui ela já É um `<a>`; só o vestuário da
+   PatternFly a fazia parecer botão.
+   O recorte é deliberado: `pf-m-secondary` também veste o botão de provedor federado
+   ("Entrar com Google"), que no mock CONTINUA sendo botão com borda — e ele vive em
+   `#kc-social-providers`, fora deste seletor. */
+.pf-v5-c-form__actions .pf-v5-c-button.pf-m-secondary {
+  --pf-v5-c-button--m-secondary--BackgroundColor: transparent;
+  --pf-v5-c-button--m-secondary--Color: var(--croquito-accent-text);
+  --pf-v5-c-button--m-secondary--after--BorderColor: transparent;
+  --pf-v5-c-button--m-secondary--hover--BackgroundColor: transparent;
+  --pf-v5-c-button--m-secondary--hover--Color: var(--croquito-accent-text);
+  --pf-v5-c-button--m-secondary--hover--after--BorderColor: transparent;
+  --pf-v5-c-button--m-secondary--focus--BackgroundColor: transparent;
+  --pf-v5-c-button--m-secondary--focus--Color: var(--croquito-accent-text);
+  --pf-v5-c-button--m-secondary--focus--after--BorderColor: transparent;
+  --pf-v5-c-button--m-secondary--active--BackgroundColor: transparent;
+  --pf-v5-c-button--m-secondary--active--Color: var(--croquito-accent-text);
+  --pf-v5-c-button--m-secondary--active--after--BorderColor: transparent;
+  min-height: 0;
+  margin-top: 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+/* Verde de TEXTO é `--accent-text`, nunca `--accent` (regra 2). Vale para "Esqueci minha
+   senha", "Voltar para o login" e para o link de reenvio de e-mail. */
+.pf-v5-c-button.pf-m-link,
+.pf-v5-c-login a,
+.pf-v5-c-login__main a {
+  color: var(--croquito-accent-text);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.pf-v5-c-login a:hover,
+.pf-v5-c-login__main a:hover {
+  text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------- textos de apoio */
+
+.pf-v5-c-login__main-body,
+.pf-v5-c-helper-text__item-text,
+.pf-v5-c-form__helper-text,
+#kc-info-wrapper,
+#kc-info-wrapper span {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--croquito-ink-secondary);
+}
+
+.pf-v5-c-login__main-footer-band,
+.pf-v5-c-login__main-footer-band-item {
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--croquito-ink-secondary);
+}
+
+/* O separador que a v2 usa entre o formulário e os provedores federados. */
+.pf-v5-c-login__main-footer hr,
+#kc-social-providers hr {
+  border: 0;
+  border-top: 1px solid var(--croquito-line);
+}
+
+/* ---------------------------------------------------------------- estados
+
+   Regra 4 do Design System: cor de domínio não é marca. Erro, aviso, sucesso e informação
+   mantêm a matiz da PatternFly; só o raio, a tipografia e o espaçamento entram no sistema.
+   Regra 5: o estado continua escrito por extenso, e o ícone da v2 continua no lugar — a
+   cor nunca é o único portador. */
+.pf-v5-c-alert {
+  border-radius: 9px;
+  font-size: 12.5px;
+}
+
+.pf-v5-c-alert__title {
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.pf-v5-c-helper-text__item.pf-m-error .pf-v5-c-helper-text__item-text {
+  color: #a3322a;
+}
+
+/* ---------------------------------------------------------------- alcance
+
+   A porta de entrada é responsiva por decisão (ADR-0032, D6) e a página do Keycloak faz
+   parte dela: `min-width: 1180px` do app NÃO vale aqui. */
+@media (max-width: 480px) {
+  /* A calha lateral é o que faz o card continuar sendo um card no celular: sem ela a
+     PatternFly encosta o branco nas duas bordas e a página vira uma folha sem moldura. */
+  .pf-v5-c-login {
+    padding-block: 24px;
+    padding-inline: 16px;
+  }
+
+  .pf-v5-c-login__container {
+    grid-template-columns: 100%;
+  }
+
+  .pf-v5-c-login__main {
+    border-radius: 13px;
+  }
+
+  .pf-v5-c-login__main-header {
+    padding: 26px 20px 0;
+  }
+
+  .pf-v5-c-login__main-body {
+    padding: 0 20px 26px;
+  }
+
+  .pf-v5-c-login__main-footer {
+    padding: 0 20px;
+  }
+}
