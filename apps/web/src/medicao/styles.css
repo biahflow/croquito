@@ -1,66 +1,28 @@
 /*
- * Folha enxuta da UI de homologação. Ela segue a família visual do app de revisão
- * (`apps/web`), mas é independente: os dois apps não compartilham build.
+ * Folha da jornada de medição, importada por `apps/web/src/styles.css` (ADR-0028, D9).
+ *
+ * O arquivo inteiro está ANINHADO em `.jornada-medicao` — a chave abre logo abaixo e
+ * fecha na última linha. É o que a folha da casca já previa: sob este escopo,
+ * `.jornada-medicao .workspace` (0,2,0) ganha de `.workspace` (0,1,0) sem renomear
+ * classe de nenhum dos dois lados. O corpo NÃO foi reindentado de propósito: reindentar
+ * 800 linhas apagaria a detecção de rename deste movimento, e aninhamento em CSS não
+ * depende de indentação.
+ *
+ * O que ficou para trás na mudança que trouxe esta folha para cá, e por quê:
+ * - O bloco `:root` de tokens da marca, `*` e `body`: são globais e a casca já os define.
+ * - `.app-shell` e `.topbar`: a casca é uma só e já os define; o que era topbar da
+ *   medição vira cabeçalho da jornada dentro dela.
+ * - `.eyebrow` e `.topbar-link` VIERAM, ao contrário do que o comentário da casca previa,
+ *   porque as versões de lá são calibradas para outro uso e herdá-las seria regressão:
+ *   `.eyebrow` da casca é `--ink-secondary` (superfície clara) e aqui ele aparece sobre o
+ *   topbar escuro; `.topbar-link` da casca veste `<a>` e não zera o `background`, mas
+ *   aqui ele veste também o `<button>` "Sair".
  *
  * Regra que o CSS precisa respeitar: cor nunca é o único indicador. Todo estado tem
  * texto ao lado, e no overlay da prancha o traço muda de forma (tracejado enquanto o
  * item não foi decidido) além de mudar de cor.
  */
-
-/*
- * Identidade "Grafite técnico" do croquito — bloco copiado de `apps/web/src/styles.css`
- * (os dois apps não compartilham build; a paleta é mantida por cópia).
- *
- * Regras de uso, na ordem em que importam:
- * - `--accent` (verde vetor) só em PREENCHIMENTO (aba ativa, botão primário, número do
- *   item) com `--accent-ink` por cima; ele tem 2,2:1 sobre branco e nunca é cor de texto.
- * - Verde de texto, de traço fino e de indicador de estado (barra da etapa concluída,
- *   retângulo/pino confirmado) usa `--accent-text` (5,8:1 sobre branco; o pino carrega
- *   número branco, que precisa de fundo escuro).
- * - Texto secundário sobre claro usa `--ink-secondary`; `--muted` fica em borda de
- *   controle e desabilitado.
- * - Âmbar (proposto/aviso), vermelho (ambíguo/erro) e cinza (rejeitado/bloqueado) são
- *   cor de estado, não de marca: matiz e distinção preservados, junto com o
- *   `stroke-dasharray` que diferencia o item ainda não decidido.
- */
-:root {
-  --bg: #fafaf8;
-  --surface: #ffffff;
-  --surface-subtle: #f4f4f1;
-  --surface-sunken: #efefeb;
-  --ink: #14181d;
-  --ink-secondary: #5b6169;
-  --muted: #9aa0a8;
-  --line: #e5e5e0;
-  --accent: #00c877;
-  --accent-hover: #00b169;
-  --accent-ink: #0e1116;
-  --accent-text: #00744a;
-  --accent-soft: #e6f6ee;
-  --accent-line: #9bdcc0;
-  --dark: #0e1116;
-  --dark-ink: #f2f4f7;
-  --dark-ink-soft: rgba(242, 244, 247, 0.72);
-  --dark-line: rgba(242, 244, 247, 0.12);
-  --dark-line-strong: rgba(242, 244, 247, 0.34);
-
-  color: var(--ink);
-  background: var(--bg);
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  min-height: 100vh;
-  background: var(--bg);
-}
+.jornada-medicao {
 
 button,
 a {
@@ -108,20 +70,6 @@ p {
   line-height: 1.45;
 }
 
-.app-shell {
-  min-height: 100vh;
-}
-
-.topbar {
-  padding: 14px 28px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  color: var(--dark-ink);
-  background: var(--dark);
-}
-
 .eyebrow {
   font-size: 0.7rem;
   letter-spacing: 0.14em;
@@ -140,9 +88,11 @@ p {
   gap: 10px;
 }
 
-/* Navegação entre as duas telas do host público e sessão, sobre o topbar escuro. O verde
-   da marca é preenchimento e nunca cor de texto: aqui o texto é `--dark-ink-soft`, e o
-   estado ativo (hover/foco) sobe para `--dark-ink` com a borda mais firme. */
+/* Sessão sobre o topbar escuro desta jornada. O verde da marca é preenchimento e nunca
+   cor de texto: aqui o texto é `--dark-ink-soft`, e o estado ativo (hover/foco) sobe para
+   `--dark-ink` com a borda mais firme. O `.topbar-link` da casca não serve: lá ele veste
+   `<a>`, e aqui veste também o `<button>` "Sair", que sem `background: transparent`
+   apareceria com o cinza padrão do navegador. */
 .topbar-link {
   padding: 7px 10px;
   color: var(--dark-ink-soft);
@@ -878,4 +828,7 @@ p {
   margin-top: 16px;
   font-size: 1.05rem;
   font-weight: 700;
+}
+
+/* Fecha o `.jornada-medicao` aberto no topo do arquivo. */
 }

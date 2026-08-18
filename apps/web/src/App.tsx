@@ -11,6 +11,7 @@ import {
   signOut,
 } from "./auth";
 import { CroquiApp } from "./CroquiApp";
+import { MedicaoApp } from "./medicao/MedicaoApp";
 import { readRoute, routeSearch, type Route } from "./route";
 import logoDark from "./assets/croquito-logo-dark.svg";
 
@@ -23,29 +24,33 @@ function currentRoute(): Route {
 }
 
 /**
- * Jornada da medição de obra. Ainda não migrou: as telas de revisão de takeoff,
- * confirmação de código e boletim continuam em `apps/medicao`, contra o servidor de
- * medição. Esta tela declara o estado em vez de simular a jornada — nenhuma rodada é
- * lida, nenhum número é exibido e nada aqui é dado de obra.
+ * As duas jornadas têm regimes de autenticação DIFERENTES, e a assimetria é deliberada.
+ * Ela mora aqui, pura e testável, porque quem ler `App.tsx` depois vai querer reduzi-la a
+ * uma condição só — e reduzir apaga um dos dois caminhos.
  *
- * Exportada para o teste: a casca só alcança as jornadas com sessão, e a renderização
- * estática não tem como criar uma.
+ * - **Croqui exige sessão, sempre.** Evidência e decisão de cena são de tenant
+ *   autenticado; sem OIDC configurado o app já mostrava a tela anônima antes desta casca
+ *   existir, e isso não muda.
+ * - **Medição exige sessão QUANDO há OIDC configurado** — o modo hospedado do
+ *   ADR-0026 e, adiante, a API `/v1` do ADR-0028 (D9). Sem OIDC configurado, este é o
+ *   caminho local do **ADR-0020**: `croquito-valuation serve` na máquina da orçamentista,
+ *   sem autenticação, com a identidade do revisor vindo da flag do processo. O ADR-0028
+ *   declara explicitamente que NÃO supersede o ADR-0020, e a F-003 lista a remoção do
+ *   servidor local como fora de escopo: fechar esta jornada atrás de uma sessão que
+ *   naquele caminho nunca existe seria removê-lo por tabela.
+ *
+ * `hasSession` é booleano de propósito: a renovação silenciosa troca o objeto da sessão, e
+ * o que decide o acesso é haver uma, não qual é.
  */
-export function MedicaoJourney() {
-  return (
-    <section className="jornada-medicao" aria-labelledby="medicao-indisponivel">
-      <span className="eyebrow">MEDIÇÃO DE OBRA</span>
-      <h1 id="medicao-indisponivel">
-        A jornada de medição ainda não está nesta build
-      </h1>
-      <p>
-        As telas de revisão de takeoff, confirmação de código, boletim e dossiê
-        do aditivo continuam no app de homologação da medição e migram para cá
-        nas próximas etapas desta feature. Nenhuma rodada é lida ou exibida por
-        esta tela.
-      </p>
-    </section>
-  );
+export function journeyIsOpen(
+  kind: Route["kind"],
+  hasSession: boolean,
+  oidcConfigured: boolean,
+): boolean {
+  if (hasSession) {
+    return true;
+  }
+  return kind === "medicao" && !oidcConfigured;
 }
 
 /**
@@ -112,6 +117,24 @@ export function App() {
     setSessionNotice(notice);
   }, []);
 
+  const oidcConfigured = isOidcConfigured();
+  const medicaoAberta = journeyIsOpen("medicao", session !== null, oidcConfigured);
+  // O seletor abre jornada; ele aparece quando existe jornada a abrir. Com OIDC e sem
+  // sessão não existe nenhuma, e ele some — como antes desta assimetria.
+  const trocaDeJornada =
+    medicaoAberta || journeyIsOpen("croqui", session !== null, oidcConfigured);
+
+  // Tela anônima das duas jornadas: nenhuma evidência, decisão ou rodada é exibida sem a
+  // sessão que a jornada pedida exige.
+  const telaAnonima = (
+    <section className="context-bar">
+      <div>
+        <span className="eyebrow">REVISÃO PROTEGIDA</span>
+        <h1>Acesse uma revisão autenticada</h1>
+      </div>
+    </section>
+  );
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -126,11 +149,12 @@ export function App() {
           <small>Revisão humana autenticada</small>
         </a>
         <div className="topbar-actions">
-          {/* Alternar jornada é navegação dentro da sessão; sem sessão não há o que abrir
-              e o seletor não aparece. O estado ativo é escrito em `aria-current`, não só
-              pintado. Trocar de jornada fecha a que estava aberta — a URL passa a
-              declarar a jornada nova, e nada fica aberto por baixo do que se vê. */}
-          {session ? (
+          {/* Alternar jornada só faz sentido quando há jornada aberta; o seletor segue
+              `journeyIsOpen`, não a sessão sozinha. O estado ativo é escrito em
+              `aria-current`, não só pintado. Trocar de jornada fecha a que estava aberta —
+              a URL passa a declarar a jornada nova, e nada fica aberto por baixo do que se
+              vê. */}
+          {trocaDeJornada ? (
             <nav className="journey-switch" aria-label="Jornadas">
               <button
                 className="topbar-link"
@@ -200,19 +224,20 @@ export function App() {
         </p>
       ) : null}
 
-      {session ? (
-        route.kind === "croqui" ? (
-          <CroquiApp session={session} onSessionLost={handleSessionLost} />
+      {/* A medição ainda fala com o servidor de medição, não com a API `/v1`: este passo
+          moveu as telas de diretório e a troca de contrato é a rodada seguinte da F-003.
+          A base do servidor é lida em `medicao/api.ts`, e a sessão desce por prop —
+          `null` no caminho local do ADR-0020, e é assim que ela chega ao header. */}
+      {route.kind === "medicao" ? (
+        medicaoAberta ? (
+          <MedicaoApp session={session} />
         ) : (
-          <MedicaoJourney />
+          telaAnonima
         )
+      ) : session ? (
+        <CroquiApp session={session} onSessionLost={handleSessionLost} />
       ) : (
-        <section className="context-bar">
-          <div>
-            <span className="eyebrow">REVISÃO PROTEGIDA</span>
-            <h1>Acesse uma revisão autenticada</h1>
-          </div>
-        </section>
+        telaAnonima
       )}
     </main>
   );

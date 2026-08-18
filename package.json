@@ -4,7 +4,6 @@
   "version": "0.1.0",
   "workspaces": [
     "apps/web",
-    "apps/medicao",
     "packages/contracts"
   ],
   "scripts": {
@@ -12,10 +11,7 @@
     "contracts:check": "npm --workspace @croquito/contracts run check",
     "web:dev": "npm --workspace @croquito/web run dev",
     "web:check": "npm --workspace @croquito/web run check",
-    "web:test": "npm --workspace @croquito/web run test",
-    "medicao:dev": "npm --workspace @croquito/medicao run dev",
-    "medicao:check": "npm --workspace @croquito/medicao run check",
-    "medicao:test": "npm --workspace @croquito/medicao run test"
+    "web:test": "npm --workspace @croquito/web run test"
   }
 }
 

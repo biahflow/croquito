@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: setup dev dev-api dev-web dev-medicao dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local contracts openapi-snapshot infra-check
+.PHONY: setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local contracts openapi-snapshot infra-check
 
 setup:
 	uv sync --all-groups
@@ -43,12 +43,6 @@ dev-api:
 dev-web:
 	npm run web:dev
 
-# UI local de homologação da medição (porta 5174). Ela fala com o servidor local
-# `croquito-valuation serve` (porta 8801), não com a API do croqui, por isso fica
-# fora do `make dev`.
-dev-medicao:
-	npm run medicao:dev
-
 dev-worker:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run croquito-demo local-worker-once
 
@@ -78,13 +72,11 @@ check:
 	uv run python -m croquito_core.schema_export --check-dir packages/contracts
 	npm run contracts:check
 	npm run web:check
-	npm run medicao:check
 	$(MAKE) infra-check
 
 test:
 	uv run pytest
 	npm run web:test
-	npm run medicao:test
 
 demo:
 	uv run croquito-demo synthetic --output output/demo

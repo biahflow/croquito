@@ -1,16 +1,19 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { App } from "./App";
+import { MedicaoApp } from "./MedicaoApp";
 import { AVISO_DOSSIE_GERADO, AVISO_DOSSIE_PREVIA } from "./labels";
 
 /**
  * Render estático do primeiro estado: sem servidor local, a tela não inventa rodada.
  * `renderToStaticMarkup` não roda efeitos, então isto é exatamente o que a orçamentista
  * vê antes de qualquer resposta do `GET /state`.
+ *
+ * `session={null}` é o caminho local do ADR-0020 — a casca entrega a sessão, e neste
+ * ambiente (sem `VITE_OIDC_*`) não há nenhuma para entregar.
  */
-describe("App", () => {
+describe("MedicaoApp", () => {
   it("declara a natureza local da ferramenta e oferece recarregar, sem dado de obra", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<MedicaoApp session={null} />);
 
     expect(html).toContain(
       "Ferramenta local de homologação — medição sem aprovação; aprovar e exportar são atos separados.",
@@ -21,7 +24,7 @@ describe("App", () => {
   });
 
   it("não mostra etapa alcançável nem número de medição antes de ler o estado", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<MedicaoApp session={null} />);
 
     expect(html).toContain("Etapa bloqueada");
     expect(html).not.toContain("em aberto");
@@ -37,11 +40,16 @@ describe("App", () => {
     expect(html).not.toContain("AD04");
   });
 
-  it("sem OIDC configurado não pede login: o caminho do servidor local não muda", () => {
-    const html = renderToStaticMarkup(<App />);
+  /**
+   * A porta de login saiu daqui (é da casca) e a sessão virou prop. Sem sessão, a jornada
+   * não exibe identidade nem oferece sair: é a tela local do ADR-0020, que nunca teve
+   * essas coisas. O que ela NÃO pode fazer é inventá-las de volta.
+   */
+  it("sem sessão não mostra identidade nem sair: o caminho do servidor local não muda", () => {
+    const html = renderToStaticMarkup(<MedicaoApp session={null} />);
 
-    expect(html).not.toContain("Sessão da orçamentista");
-    expect(html).not.toContain("Verificando a sessão");
+    expect(html).not.toContain("Sessão:");
+    expect(html).not.toContain(">Sair<");
     expect(html).not.toContain(">Entrar<");
   });
 
@@ -51,23 +59,10 @@ describe("App", () => {
    * busca autenticada acontece.
    */
   it("sem OIDC o aviso continua sendo o da ferramenta local, sem object URL", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<MedicaoApp session={null} />);
 
     expect(html).not.toContain("Homologação remota autenticada");
     expect(html).not.toContain("blob:");
-  });
-
-  /**
-   * O `base` do Vite é o de produção fora do `vite dev` (aqui, `/medicao/`), que é
-   * exatamente a condição em que as duas telas dividem a origem. Em desenvolvimento
-   * (`base` = `/`) cada app tem a sua porta e o link não é renderizado.
-   */
-  it("oferece a ida para a revisão quando as duas telas dividem a origem", () => {
-    expect(import.meta.env.BASE_URL).toBe("/medicao/");
-
-    const html = renderToStaticMarkup(<App />);
-
-    expect(html).toContain('href="/revisao/"');
   });
 
   /**
@@ -76,7 +71,7 @@ describe("App", () => {
    * dossiê nem os dois avisos (prévia/gerado) podem aparecer — nenhum dossiê é fabricado.
    */
   it("não mostra o dossiê do aditivo nem seus avisos antes de ler o estado da rodada", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<MedicaoApp session={null} />);
 
     expect(html).not.toContain("Gerar dossiê do aditivo");
     expect(html).not.toContain("Regerar dossiê do aditivo");

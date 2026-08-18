@@ -77,7 +77,8 @@ Monorepo Python + TypeScript. `pyproject.toml` na raiz é único e declara quatr
 Python via `packages/core/src`, `packages/valuation/src`, `services/api/src`,
 `services/worker/src`, e dois entry points (`croquito-demo` para a cadeia do croqui,
 `croquito-valuation` para a cadeia de medição); `package.json` usa npm workspaces para
-`apps/web`, `apps/medicao` e `packages/contracts`.
+`apps/web` e `packages/contracts`. `apps/web` carrega as duas jornadas numa sessão só —
+croqui e medição (`src/medicao/`), ADR-0028 D9.
 
 ### O scene graph é a fonte geométrica
 

@@ -29,7 +29,7 @@ export const apiBaseUrl =
   import.meta.env.VITE_MEDICAO_API_BASE_URL ?? "http://localhost:8801";
 
 /**
- * Fonte do access token da sessão (`apps/medicao/src/auth.ts`), injetada pela tela.
+ * Fonte do access token da sessão (`apps/web/src/auth.ts`), injetada pela tela.
  *
  * O módulo de API não conhece OIDC: ele pergunta o token a quem tem a sessão e manda o
  * `Authorization` quando existe resposta. Sem provider — o caminho do servidor local, que

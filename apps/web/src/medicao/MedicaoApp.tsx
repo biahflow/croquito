@@ -45,7 +45,7 @@ import {
   type TakeoffItem,
   type TakeoffResponse,
 } from "./api";
-import { isOidcConfigured, onSessionRenewed, readSession, signIn, signOut } from "./auth";
+import { isOidcConfigured, signOut } from "../auth";
 import { BUSCA_DEBOUNCE_MS, consultaIncremental, resumoDaBusca } from "./busca";
 import { derivarEtapas, etapaStatusLabel, type Etapa, type EtapaId } from "./etapas";
 import { classifyExecucao } from "./execucao";
@@ -386,18 +386,22 @@ function EstadoExtracao({
   );
 }
 
-export function App() {
-  // Sessão do modo hospedado (ADR-0026). Sem OIDC configurado — o servidor local na
-  // máquina do operador — `oidcAtivo` é `false` e tudo abaixo é inerte: nenhuma tela de
-  // login, nenhum header a mais, exatamente o comportamento do ADR-0020.
+/**
+ * A sessão é da casca, não desta jornada: quem lê o OIDC, consome o authorization code
+ * (que é de uso único) e renova o token é `App.tsx`. Aqui ela chega pronta.
+ *
+ * `null` é estado legítimo, e é o que separa esta jornada da do croqui: sem OIDC
+ * configurado a ferramenta é local (ADR-0020, `croquito-valuation serve` na máquina da
+ * orçamentista), não existe sessão para exibir e nenhum header a mais é enviado.
+ */
+export function MedicaoApp({ session }: { session: User | null }) {
+  // Modo hospedado (ADR-0026). Sem OIDC configurado — o servidor local na máquina do
+  // operador — `oidcAtivo` é `false` e tudo ligado à sessão fica inerte: nenhum header a
+  // mais, exatamente o comportamento do ADR-0020.
   const oidcAtivo = isOidcConfigured();
-  const [session, setSession] = useState<User | null>(null);
-  // `false` só enquanto a sessão armazenada ainda não foi lida: sem isto, a volta do
-  // redirect pisca "Entrar" antes de reconhecer quem já entrou.
-  const [sessionChecked, setSessionChecked] = useState(!oidcAtivo);
-  const [authError, setAuthError] = useState<string | null>(null);
-  // O token é lido no instante da chamada (o `automaticSilentRenew` troca o objeto da
-  // sessão sem avisar quem já capturou o valor), então o provider consulta esta ref.
+  // O token é lido no instante da chamada (o `automaticSilentRenew` da casca troca o
+  // objeto da sessão sem avisar quem já capturou o valor), então o provider consulta esta
+  // ref.
   const sessionRef = useRef<User | null>(null);
 
   // Estado servido pela rodada; nada aqui é derivado de cálculo local.
@@ -489,38 +493,15 @@ export function App() {
     sessionRef.current = session;
   }, [session]);
 
-  // Liga o `Authorization` das chamadas à sessão desta tela e o desliga ao desmontar. Sem
-  // OIDC nenhum provider é registrado: o módulo de API continua sem mandar header.
+  // Liga o `Authorization` das chamadas à sessão que a casca entregou e o desliga ao
+  // desmontar. Sem OIDC nenhum provider é registrado: o módulo de API continua sem mandar
+  // header, que é o caminho local do ADR-0020.
   useEffect(() => {
     if (!oidcAtivo) {
       return;
     }
     setAccessTokenProvider(() => sessionRef.current?.access_token ?? null);
     return () => setAccessTokenProvider(null);
-  }, [oidcAtivo]);
-
-  // Lê a sessão armazenada (ou fecha a volta do redirect) e acompanha a renovação
-  // silenciosa. Falha aqui é de OIDC, e é dita como tal — erro de servidor tem outra causa
-  // e outro lugar na tela.
-  useEffect(() => {
-    if (!oidcAtivo) {
-      return;
-    }
-    const parar = onSessionRenewed((renewed) => setSession(renewed));
-    void (async () => {
-      try {
-        setSession(await readSession());
-      } catch (error) {
-        setAuthError(
-          `Não foi possível validar a sessão: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      } finally {
-        setSessionChecked(true);
-      }
-    })();
-    return parar;
   }, [oidcAtivo]);
 
   const carregarEstado = useCallback(async () => {
@@ -1125,52 +1106,12 @@ export function App() {
     (itemId) => pendingItems.some((item) => item.item_id === itemId),
   );
 
-  // Porta do modo hospedado: sem sessão, nada da rodada é lido nem exibido — nem nome de
-  // obra, nem caminho de artefato. Todos os hooks acima já rodaram, então esta saída
-  // antecipada não altera a ordem de nenhum deles.
-  if (!autenticado) {
-    return (
-      <div className="app-shell">
-        <header className="topbar">
-          <div>
-            <span className="eyebrow">HOMOLOGAÇÃO DA MEDIÇÃO</span>
-            <h1>{sessionChecked ? "Entrar" : "Verificando a sessão…"}</h1>
-            <p className="topbar-meta">
-              A rodada só é lida com sessão autenticada.
-            </p>
-          </div>
-        </header>
-        <div className="conteudo">
-          <section className="painel" aria-labelledby="titulo-entrar">
-            <h2 id="titulo-entrar">Sessão da orçamentista</h2>
-            <p>
-              Entre com a identidade do ambiente para revisar o takeoff, confirmar os
-              códigos e montar o boletim. A decisão continua sendo carimbada pelo
-              servidor, agora a partir do seu token.
-            </p>
-            {authError === null ? null : (
-              <p className="banner-erro" role="alert">
-                {authError}
-              </p>
-            )}
-            <div className="acoes-linha">
-              <button
-                type="button"
-                className="botao-primario"
-                onClick={() => void signIn()}
-                disabled={!sessionChecked}
-              >
-                Entrar
-              </button>
-            </div>
-          </section>
-        </div>
-      </div>
-    );
-  }
+  // A porta do modo hospedado — "entre antes de ver a rodada" — saiu daqui: quem barra a
+  // jornada sem sessão é a casca (`App.tsx`), que tem a tela anônima e o botão de entrar.
+  // `autenticado` continua guardando as chamadas ao servidor logo acima.
 
   return (
-    <div className="app-shell">
+    <div className="jornada-medicao">
       <header className="topbar">
         <div>
           <span className="eyebrow">HOMOLOGAÇÃO LOCAL DA MEDIÇÃO</span>
@@ -1189,13 +1130,8 @@ export function App() {
         {/* Aviso permanente: ele não fecha, não recolhe e não expira. */}
         <p className="aviso-fixo">{avisoDaFerramenta(oidcAtivo)}</p>
         <div className="topbar-acoes">
-          {/* As duas SPAs só convivem na mesma origem quando servidas em subrota; em
-              desenvolvimento cada uma tem a sua porta e o link levaria a lugar nenhum. */}
-          {import.meta.env.BASE_URL === "/" ? null : (
-            <a className="topbar-link" href="/revisao/">
-              Revisão
-            </a>
-          )}
+          {/* A ida para a revisão saiu daqui: as duas jornadas viraram uma SPA só, e quem
+              alterna entre elas é o seletor da casca (`App.tsx`), sem recarregar nada. */}
           {session === null ? null : (
             <>
               <span className="topbar-meta">

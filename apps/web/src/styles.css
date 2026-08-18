@@ -1,7 +1,12 @@
+/* Folha da jornada de medição, inteira aninhada em `.jornada-medicao` (ADR-0028, D9). O
+   `@import` precisa ser a primeira regra do arquivo; a ordem não decide nada, porque o
+   escopo dá a ela uma classe a mais de especificidade. */
+@import "./medicao/styles.css";
+
 /*
- * Identidade "Grafite técnico" do croquito. Os tokens abaixo são a paleta da marca; o
- * mesmo bloco vive em `apps/medicao/src/styles.css` por cópia — os dois apps seguem a
- * mesma família visual e não compartilham build.
+ * Identidade "Grafite técnico" do croquito. Os tokens abaixo são a paleta da marca, agora
+ * de um lugar só: a folha da medição deixou de copiá-los quando as duas jornadas viraram
+ * um build.
  *
  * Regras de uso, na ordem em que importam:
  * - `--accent` (verde vetor) só em PREENCHIMENTO (CTA, pílula ativa) com `--accent-ink`
@@ -2158,27 +2163,10 @@ footer {
 }
 
 /*
- * Escopo da jornada de medição (ADR-0028, D9). Hoje ele veste só o estado declarado de
- * "ainda não migrou"; é aqui que a folha de `apps/medicao/src/styles.css` entra quando as
- * telas chegarem — ANINHADA neste seletor, e não concatenada na raiz.
- *
- * Três coisas precisam acontecer na mesma mudança que trouxer aquela folha:
- *
- * - O bloco `:root` de tokens NÃO vem junto. Ele é cópia declarada dos tokens do topo
- *   deste arquivo (o comentário da outra folha diz isso com todas as letras), e a fusão
- *   existe justamente para acabar com a cópia: token da marca passa a ter um lugar só.
- * - `.app-shell`, `.topbar`, `.topbar-link` e `.eyebrow` também não vêm: a casca é uma
- *   só e já os define acima. O que era topbar da medição vira jornada dentro dela.
- * - `.workspace` é a colisão de verdade — grid de duas colunas aqui, de três lá. Sob
- *   este escopo, `.jornada-medicao .workspace` (0,2,0) ganha de `.workspace` (0,1,0) sem
- *   renomear classe de nenhum dos dois lados.
+ * O escopo `.jornada-medicao` que ficava aqui vestia o estado declarado de "ainda não
+ * migrou". As telas chegaram: as regras da jornada agora vivem em
+ * `./medicao/styles.css`, aninhadas naquele seletor e importadas no topo deste arquivo.
+ * Nada da jornada é declarado aqui — o padding e o `p` do estado antigo saíram porque
+ * `.jornada-medicao p` (0,1,1) venceria `.aviso-fixo` (0,1,0) e apagaria a cor do aviso
+ * permanente da medição.
  */
-.jornada-medicao {
-  padding: 22px 32px;
-}
-
-.jornada-medicao p {
-  max-width: 46rem;
-  margin-top: 6px;
-  color: var(--ink-secondary);
-}

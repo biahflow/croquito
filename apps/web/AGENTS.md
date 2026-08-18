@@ -5,10 +5,23 @@ Estas regras estendem o [AGENTS.md](../../AGENTS.md). Leia também
 [API Contract](../../docs/architecture/API_CONTRACT.md) e
 [Human in the Loop](../../docs/ai/HUMAN_IN_THE_LOOP.md).
 
+Para mexer na jornada de medição (`src/medicao/`), leia também
+[Valuation Context](../../docs/architecture/VALUATION_CONTEXT.md), a seção "Medição de
+obra" do [FDD](../../docs/product/FDD.md),
+[ADR-0020](../../docs/adr/0020-local-homologation-server-for-valuation.md),
+[ADR-0026](../../docs/adr/0026-medicao-hospedada-sessao-autenticada-minima.md) e
+[ADR-0028](../../docs/adr/0028-medicao-na-api-v1-autenticada.md).
+
 ## Boundary
 
 O web app apresenta projetos, status, revisão e exportação. Ele não resolve
 geometria, escolhe consenso ou autoriza tenant por conta própria.
+
+Ele carrega duas jornadas numa sessão OIDC só (ADR-0028, D9): a revisão do croqui
+(`src/CroquiApp.tsx`) e a medição de obra (`src/medicao/`), com a fronteira em
+`src/route.ts` e a casca em `src/App.tsx`. A jornada de medição apresenta a rodada, a
+revisão do takeoff, a confirmação de código e o boletim; ela não calcula dinheiro, não
+decide código e não chama provider.
 
 ## Regras
 
@@ -23,6 +36,27 @@ geometria, escolhe consenso ou autoriza tenant por conta própria.
 - Não esconder warning/critical para “limpar” a interface.
 - Não persistir documento ou JWT em storage durável desnecessário.
 - Nunca logar scene, OCR ou signed URLs no browser telemetry.
+- Todo texto visível em português do Brasil; identificadores em inglês.
+- Sem lib de router, estado global, canvas ou UI kit.
+
+## Regras da jornada de medição (`src/medicao/`)
+
+São regras de produto, não do app descartável de onde estas telas vieram: elas valem
+enquanto a jornada existir, e o critério de aceite VAL-07 as cita.
+
+- A tela **nunca** soma, multiplica ou arredonda dinheiro/quantidade: exibe as strings
+  decimais que o servidor mandou (`format.ts` só troca pontuação, e é testado nisso).
+- Mutações sempre citam o digest-base (`base_packet_sha256`/`base_assignments_sha256`)
+  e nunca carregam `reviewer_id`, `reviewer_role`, `decided_at` ou `decision_id` — o
+  servidor recusa e o client não tenta.
+- Decisão é por item; nada nasce pré-marcado; "confirmar tudo" não existe.
+- Cor nunca é o único indicador (estado por extenso + forma no SVG); erro é persistente
+  (`role="alert"`), sucesso pode expirar; `LOCAL_STATE_MOVED` preserva o formulário e
+  oferece recarregar.
+- Chamada que grava artefato no servidor só por gesto explícito do usuário (ex.: o
+  cálculo da shortlist fica atrás de botão que declara o que será gravado).
+- Nenhum dado de obra em `localStorage`; nada de telemetry com conteúdo de catálogo ou
+  medição.
 
 ## Testes mínimos
 
@@ -32,6 +66,10 @@ geometria, escolhe consenso ou autoriza tenant por conta própria.
 - Acessibilidade de issues/properties.
 - E2E fácil, médio e difícil.
 - Performance do canvas conforme NFR.
+- Medição: módulos puros com `*.test.ts` irmão (derivação de etapas, parsing do envelope
+  de erro incl. `LOCAL_STATE_MOVED`, formatação pt-BR com round-trip textual, heurística
+  fornecimento×execução com frases reais do catálogo, viewport) e `MedicaoApp.test.tsx`
+  com SSR estático do estado sem servidor, sem dados fabricados.
 
 ## Smoke headless (local, nunca CI)
 
@@ -74,4 +112,9 @@ opacos. Pergunta e resposta da conversa também não são impressas.
 
 Mudança de comportamento atualiza FDD/acceptance; mudança de contrato atualiza API
 e tipos gerados.
+
+Na jornada de medição, mudança de comportamento atualiza a seção de medição do FDD e os
+critérios VAL-*; mudança no contrato do servidor de medição é feita primeiro em
+`services/worker/src/croquito_worker/valuation/local_server.py` (testes lá) e só depois
+refletida aqui.
 
