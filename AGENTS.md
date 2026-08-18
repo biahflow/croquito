@@ -42,6 +42,10 @@ O [Project Context](docs/engineering/PROJECT_CONTEXT.md) define onde localizar o
 roadmap canônico, o status derivado, os perfis de validação e os artefatos de feature.
 Nenhum agente escolhe prioridade de produto ou inicia item de roadmap sem seleção humana.
 
+A camada global da Engineering OS está vendorizada e pinada em
+[docs/engineering-os](docs/engineering-os/PROVENANCE.md), acessível a qualquer executor deste
+repositório; quem tem o bootstrap pessoal instalado carrega a mesma camada por fora.
+
 - Planner trabalha somente a partir de um Feature Contract aceito e produz o formato
   `FEATURE EXECUTION PLAN` da Engineering OS.
 - Builder executa somente Task Contract autorizado, registra o baseline aplicável e

@@ -2,7 +2,7 @@
 
 Status: Accepted
 Responsável: Engineering / Product
-Última revisão: 2026-08-17
+Última revisão: 2026-08-18
 
 ## Objetivo e precedência
 
@@ -20,10 +20,18 @@ do projeto. Este contexto referencia as fontes existentes; não as duplica nem e
 | Arquitetura e interfaces | [Architecture](../architecture/SYSTEM_ARCHITECTURE.md), contratos e [ADR index](../adr/README.md) |
 | Roteiro de contexto | [Documentation Index](../INDEX.md) |
 | Instruções locais | [Root AGENTS](../../AGENTS.md) e o `AGENTS.md` mais próximo do escopo |
+| Camada global da Engineering OS (pinada) | [docs/engineering-os](../engineering-os/PROVENANCE.md) |
 
 O documento detalhado de cada ADR é a fonte de decisão; o índice é a visão de navegação
 e deve permanecer sincronizado. Conflito entre os dois é `SOURCE_OF_TRUTH_CONFLICT` e
 exige decisão humana antes de ser resolvido.
+
+A cópia vendorizada em `docs/engineering-os/` é **a versão pinada da camada global que vale
+para este repositório**: é o que colaborador novo, CI e agente sem o bootstrap pessoal
+enxergam. O checkout vivo do operador evolui à parte e não muda o que este repositório
+segue; ressincronizar é ato deliberado, registrado no
+[`PROVENANCE.md`](../engineering-os/PROVENANCE.md) e revisado como qualquer outra mudança.
+Decisão registrada no [ADR-0034](../adr/0034-camada-global-vendorizada-e-pinada.md).
 
 ## Intake, lifecycle e artefatos
 
@@ -38,8 +46,16 @@ docs/features/<feature-id>/
 ├── feature.md
 ├── plan.md
 ├── evidence.md
-└── tasks/                 # quando os contratos por tarefa melhorarem a clareza
+└── tasks/                 # um Task Contract por task do plano — obrigatório de F-007 em diante
 ```
+
+Por decisão humana de 2026-08-18, a partir da F-007 todo plano válido emite um Task Contract
+por task em `docs/features/<feature-id>/tasks/`, derivado do
+[template vendorizado](../engineering-os/templates/task.md) e cumprindo os sete requisitos de
+portabilidade de [`execution.md`](../engineering-os/workflows/execution.md) — contrato
+autossuficiente, comandos reais, baseline declarado, escopo delimitado em arquivos, gates
+nomeados, formato de relatório fixo e capacidades verificáveis. Features anteriores não são
+retrofitadas.
 
 O item do roadmap registra ID estável, prioridade, estado e o link para `feature.md`
 quando ele existir. Os estados são os da Engineering OS: `BACKLOG`, `READY_FOR_SPEC`,
@@ -89,3 +105,10 @@ Project Context e `docs/features/README.md`.
 Esta decisão não aprova, altera ou ratifica o status de ADRs; não seleciona feature;
 não autoriza planejamento, implementação, deploy ou mudança de produção; e não
 substitui nenhum gate futuro da Engineering OS ou do projeto.
+
+A decisão humana de 2026-08-18 acrescenta duas regras à adoção. A primeira: a camada global
+passa a ser vendorizada e pinada em `docs/engineering-os/`, sincronizada por
+`scripts/sync_engineering_os.py` — registrada no
+[ADR-0034](../adr/0034-camada-global-vendorizada-e-pinada.md), ainda `Proposed`, com o aceite
+pendente de ato humano. A segunda: de F-007 em diante, todo plano válido emite Task Contracts
+formais em `docs/features/<feature-id>/tasks/`.
