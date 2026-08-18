@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
+    ".": "./src/index.ts",
     "./scene": "./src/scene.generated.ts",
     "./scene.schema.json": "./scene.schema.json",
     "./takeoff-packet": "./src/takeoff-packet.generated.ts",

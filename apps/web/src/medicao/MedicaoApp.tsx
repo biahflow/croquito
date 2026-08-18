@@ -10,7 +10,6 @@ import {
 import type { User } from "oidc-client-ts";
 
 import {
-  codeSearchTerm,
   extractPlate,
   fetchImageObjectUrl,
   getBulletin,
@@ -19,12 +18,8 @@ import {
   getState,
   getSuggestions,
   getTakeoff,
-  isAbortError,
-  isStateMoved,
-  itemAnchor,
   MedicaoApiError,
   PLATE_IMAGE_PATH,
-  plateImageSource,
   postCalcBuild,
   postCodeDecision,
   postDossierBuild,
@@ -48,7 +43,9 @@ import {
 import { isOidcConfigured, signOut } from "../auth";
 import { BUSCA_DEBOUNCE_MS, consultaIncremental, resumoDaBusca } from "./busca";
 import { derivarEtapas, etapaStatusLabel, type Etapa, type EtapaId } from "./etapas";
+import { isAbortError, isStateMoved } from "./errors";
 import { classifyExecucao } from "./execucao";
+import { plateImageSource } from "./images";
 import { extractInclusoes, type Inclusao } from "./inclusoes";
 import {
   formatDecimalText,
@@ -74,6 +71,8 @@ import {
   unitLabel,
   unitMismatchHint,
 } from "./labels";
+import { codeSearchTerm } from "./requests";
+import { itemAnchor } from "./takeoff";
 import {
   bboxRect,
   clampZoom,

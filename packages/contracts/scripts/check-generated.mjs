@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { renderContract } from "./render.mjs";
+import { renderBarrel, renderContract } from "./render.mjs";
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(
@@ -17,6 +17,13 @@ for (const entry of manifest) {
   if (current !== generated) {
     stale.push(entry.typescript);
   }
+}
+
+const barrelPath = join(packageDir, "src", "index.ts");
+const generatedBarrel = renderBarrel(manifest);
+const currentBarrel = await readFile(barrelPath, "utf8").catch(() => "");
+if (currentBarrel !== generatedBarrel) {
+  stale.push("src/index.ts");
 }
 
 if (stale.length > 0) {

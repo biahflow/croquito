@@ -10,13 +10,21 @@
  *
  * - **Identidade e carimbo nunca viajam.** `reviewer_id`, `reviewer_role`, `decided_at` e
  *   `decision_id` são do servidor (`extra="forbid"` recusa o corpo que os traz). Os
- *   construtores de corpo abaixo existem para que isso seja testável, não só prometido.
+ *   construtores de corpo puros que garantem isso vivem em `requests.ts`, para serem
+ *   testáveis sem transporte.
  * - **Mutação sempre cita o digest-base lido.** É a guarda otimista local, o substituto
  *   declarado do `base_version` da API de cena: decisão só entra sobre o estado que esta
  *   tela realmente leu.
  * - **`Decimal` viaja como texto.** Quantidade e dinheiro chegam em string e são exibidos
  *   como string formatada (`format.ts`); nenhum número da medição vira `number` aqui.
  */
+
+import {
+  calcBuildBody,
+  codeDecisionBody,
+  suggestionsRecomputeBody,
+  takeoffDecisionBody,
+} from "./requests";
 
 /**
  * Base do servidor de medição; a UI não fala com mais nada.
@@ -98,15 +106,6 @@ export type TakeoffItem = {
    * ausência como `"raw"`, nunca como confirmado. */
   anchor?: AnchorStatus;
 };
-
-/**
- * Confiabilidade da localização (`evidence.bbox`) de um item na prancha, tolerante à
- * ausência do campo no servidor: sem `anchor`, o lado conservador é `"raw"` — nunca
- * desenhar um retângulo sobre a prancha sem confirmação de que ele está no lugar certo.
- */
-export function itemAnchor(item: TakeoffItem): AnchorStatus {
-  return item.anchor ?? "raw";
-}
 
 export type TakeoffPacket = {
   schema_version: string;
@@ -439,14 +438,6 @@ export class MedicaoApiError extends Error {
 export const STATE_MOVED_CODE = "LOCAL_STATE_MOVED";
 
 /**
- * O artefato mudou no disco depois da leitura desta tela. Não é falha: é o sinal de
- * recarregar antes de decidir de novo — outro processo (o CLI, outra aba) mexeu na rodada.
- */
-export function isStateMoved(error: unknown): boolean {
-  return error instanceof MedicaoApiError && error.code === STATE_MOVED_CODE;
-}
-
-/**
  * Recusa de sessão sem envelope legível (401/403). É código LOCAL, como
  * `LOCAL_RESPONSE_UNREADABLE`: ele só entra quando o servidor não disse nada de
  * aproveitável — envelope do servidor continua vencendo, sempre.
@@ -490,15 +481,6 @@ export async function readProblem(response: Response): Promise<MedicaoApiError> 
     );
   }
   return new MedicaoApiError(response.status, code, detail ?? "", details);
-}
-
-/**
- * `true` quando o erro é o cancelamento de um `AbortController` — nunca falha de rede.
- * A busca incremental cancela a consulta anterior a cada tecla; sem esta distinção, cada
- * cancelamento apareceria na tela como `LOCAL_SERVER_UNREACHABLE`.
- */
-export function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }
 
 /**
@@ -556,37 +538,6 @@ export type TakeoffDecisionDraft = {
   itemNote?: string;
 };
 
-/**
- * Corpo do `POST /takeoff/decisions`.
- *
- * Campo vazio é omitido em vez de ir como string vazia: `""` seria uma correção do dado
- * ("apague o rótulo"), não a ausência de correção. Identidade e horário não aparecem —
- * o servidor recusaria (`extra="forbid"`), e mandá-los seria pedir para carimbar decisão
- * em nome de outra pessoa.
- */
-export function takeoffDecisionBody(
-  draft: TakeoffDecisionDraft,
-): Record<string, string> {
-  const body: Record<string, string> = {
-    item_id: draft.itemId,
-    action: draft.action,
-    base_packet_sha256: draft.basePacketSha256,
-  };
-  const optional: [string, string | undefined][] = [
-    ["quantity", draft.quantity],
-    ["unit", draft.unit],
-    ["note", draft.note],
-    ["item_note", draft.itemNote],
-  ];
-  for (const [key, value] of optional) {
-    const cleaned = value?.trim();
-    if (cleaned) {
-      body[key] = cleaned;
-    }
-  }
-  return body;
-}
-
 export type CodeDecisionDraft = {
   itemId: string;
   action: "confirm" | "reject";
@@ -600,42 +551,6 @@ export type CodeDecisionDraft = {
   baseAssignmentsSha256: string | null;
 };
 
-export function codeDecisionBody(
-  draft: CodeDecisionDraft,
-): Record<string, string> {
-  const body: Record<string, string> = {
-    item_id: draft.itemId,
-    action: draft.action,
-  };
-  const code = draft.code?.trim();
-  if (code) {
-    body.code = code;
-  }
-  const note = draft.note?.trim();
-  if (note) {
-    body.note = note;
-  }
-  if (draft.baseAssignmentsSha256) {
-    body.base_assignments_sha256 = draft.baseAssignmentsSha256;
-  }
-  return body;
-}
-
-/**
- * Termo de busca para recuperar a descrição completa de um código já confirmado, via
- * `GET /catalog/search`. O servidor tokeniza o código (`lexical_tokens`, NFKD sem
- * acento) e descarta token com menos de dois caracteres, então o sufixo de variante
- * entre parênteses (`(A)`, `(B)`, `(/)`) já sai da busca sozinho na maioria dos casos —
- * esta função só existe para o caso em que ele não sair: remove o sufixo primeiro e,
- * se sobrar vazio (código malformado), cai nos dez primeiros caracteres, que é o
- * tamanho do código base SCO.
- */
-export function codeSearchTerm(code: string): string {
-  const trimmed = code.trim();
-  const withoutSuffix = trimmed.replace(/\([^)]*\)\s*$/, "").trim();
-  return withoutSuffix.length > 0 ? withoutSuffix : trimmed.slice(0, 10);
-}
-
 export type CalcBuildDraft = {
   worksiteKey: string;
   worksiteName: string;
@@ -644,27 +559,6 @@ export type CalcBuildDraft = {
   address?: string;
   contractLabel?: string;
 };
-
-/** Corpo do `POST /calc/build`; `period_number` é o único inteiro do contrato. */
-export function calcBuildBody(
-  draft: CalcBuildDraft,
-): Record<string, string | number> {
-  const body: Record<string, string | number> = {
-    worksite_key: draft.worksiteKey.trim(),
-    worksite_name: draft.worksiteName.trim(),
-    period_number: Number(draft.periodNumber.trim()),
-    reference_label: draft.referenceLabel.trim(),
-  };
-  const address = draft.address?.trim();
-  if (address) {
-    body.address = address;
-  }
-  const contractLabel = draft.contractLabel?.trim();
-  if (contractLabel) {
-    body.contract_label = contractLabel;
-  }
-  return body;
-}
 
 export function getState(): Promise<RunState> {
   return request<RunState>("/state");
@@ -713,21 +607,6 @@ export function postTakeoffDecision(
  */
 export function getSuggestions(): Promise<SuggestionsResponse> {
   return request<SuggestionsResponse>("/suggestions");
-}
-
-/**
- * Corpo do `POST /suggestions/recompute`. A chave só entra quando há digest-base a
- * citar — omitida, e não vazia, porque o servidor recusa `base_suggestions_sha256`
- * citado sem shortlist prévia (`LOCAL_BASE_DIGEST_UNEXPECTED`).
- */
-export function suggestionsRecomputeBody(
-  baseSuggestionsSha256: string | null,
-): Record<string, string> {
-  const body: Record<string, string> = {};
-  if (baseSuggestionsSha256) {
-    body.base_suggestions_sha256 = baseSuggestionsSha256;
-  }
-  return body;
 }
 
 /**
@@ -827,17 +706,4 @@ export async function fetchImageObjectUrl(path: string): Promise<string> {
     throw await readProblem(response);
   }
   return URL.createObjectURL(await response.blob());
-}
-
-/**
- * `src` da prancha antes de qualquer busca: a URL direta no caminho local, `null` no
- * hospedado.
- *
- * Sem sessão OIDC (o servidor local do ADR-0020, que não autentica) a imagem continua
- * vindo pela URL direta — nenhum fetch a mais, nenhum object URL a revogar, exatamente o
- * que a ferramenta local sempre fez. Com sessão, o `null` é o estado honesto: ainda não há
- * imagem, porque ela só existe depois da busca autenticada.
- */
-export function plateImageSource(oidcAtivo: boolean): string | null {
-  return oidcAtivo ? null : plateImageUrl;
 }
