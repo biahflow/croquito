@@ -2,7 +2,7 @@
 
 Status: Accepted  
 Responsável: Platform / Engineering  
-Última revisão: 2026-08-14
+Última revisão: 2026-08-18
 
 Como administrar identidade no ambiente hospedado ([HML](HML.md)). A decisão de hospedar
 o Keycloak em subpath está no
@@ -75,7 +75,7 @@ No console, com o realm `croquito` selecionado (canto superior esquerdo):
 
 - **Users → (usuário) → Attributes**: `tenant_id` com o valor esperado.
 - **Users → (usuário) → Role mapping**: os papéis atribuídos aparecem como realm roles.
-- Login pelo produto: entrar em `https://croquito-hml.biahflow.ai/revisao/` e ver a lista
+- Login pelo produto: entrar em `https://croquito-hml.biahflow.ai/login` e ver a lista
   de projetos do tenant. Lista vazia com login bem-sucedido normalmente significa
   `tenant_id` diferente do que criou os projetos — não é falta de papel.
 
