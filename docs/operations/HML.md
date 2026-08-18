@@ -30,7 +30,7 @@ Projeto `biahflow-hml`, região `us-east1`, registro
 Recursos de apoio: bucket `croquito-hml-artifacts` (documentos, previews e pacotes
 exportados); tópico `projects/biahflow-hml/topics/croquito-hml-processing`; segredos
 `croquito-hml-*` no Secret Manager; PostgreSQL gerenciado (Neon) para a API e para o
-Keycloak, em schemas separados.
+Keycloak, cada um no seu schema — veja [Os dois schemas do banco](#os-dois-schemas-do-banco).
 
 Nada disso é criado por este repositório: a casca do ambiente — serviços, bucket, Pub/Sub,
 DNS, segredos e a chave HMAC — é Terraform em `biahflow/infra`, stack `envs/hml/croquito`.
@@ -124,6 +124,42 @@ O primeiro deploy com o runner é o que exercita o caminho de carimbo contra o b
 ambiente; a rodada da orçamentista não é recriada em nenhuma hipótese.
 
 Imagem é sempre endereçada pelo SHA do commit; `latest` não é usado em lugar nenhum.
+
+### Os dois schemas do banco
+
+Um banco (`neondb`), dois schemas, e **nenhum dos dois é `public`**:
+
+| Schema | Dono | Quem aponta para ele |
+|---|---|---|
+| `croquito` | API, worker e job de banco | `options=-csearch_path=croquito` no DSN de `croquito-hml-database-url` |
+| `keycloak` | Keycloak | `KC_DB_SCHEMA=keycloak` no deploy **e** `currentSchema=keycloak` no JDBC |
+
+Os dois DSNs são compostos pelo Terraform em `biahflow/infra`
+([ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md)); `KC_DB_SCHEMA`
+mora no deploy porque é opção de runtime do container, não credencial.
+
+**`KC_DB_SCHEMA` é o que move o DDL do Keycloak; `currentSchema` não.** O parâmetro do JDBC
+muda o `search_path` da sessão, e o Liquibase do Keycloak cria tabela no schema padrão dele,
+que é `public` até alguém dizer o contrário. Entre 2026-08-18 e o conserto deste documento o
+DSN dizia `currentSchema=keycloak`, o schema `keycloak` não existia, e as ~88 tabelas do
+Keycloak conviviam em `public` com as 19 da aplicação. Criar o schema sem mais nada teria
+sido pior que deixar como estava: o Keycloak passaria a olhar para um schema vazio e perderia
+realm e usuários.
+
+**Os schemas são criados fora do código**, junto com a branch do Neon — o stack de infra lê o
+banco e não manda nele (ADR-0031, D1.1). Ao nascer um ambiente, uma vez:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS croquito;
+CREATE SCHEMA IF NOT EXISTS keycloak;
+```
+
+Esquecer esse passo não corrompe nada: `search_path` com um schema só e sem `public` no fim
+faz `current_schema()` virar NULL, o job de banco falha em `no schema has been selected to
+create in` e o deploy para antes de publicar revisão nova. É a mesma escolha de falhar
+fechado do runner de migrations — o que não se pode admitir é a queda silenciosa para
+`public`.
+
 
 ## Como ver o que aconteceu
 

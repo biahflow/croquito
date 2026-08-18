@@ -52,7 +52,10 @@ No console, com o realm `croquito` selecionado (canto superior esquerdo):
      (`error-user-attribute-required`). Isso é deliberado: `tenant_id` é o que isola dado de
      cliente, e a API só o aceita vindo do token.
    - Use o **mesmo valor** de `tenant_id` para todas as pessoas da mesma organização; um
-     caractere diferente cria um segundo tenant vazio.
+     caractere diferente cria um segundo tenant vazio. Não há tabela de tenants e nada
+     valida esse campo: quem erra o valor loga com sucesso e vê uma lista vazia.
+   - **Nesta homologação o valor é `tenant-biahflow`** — é o time testando o produto.
+     `tenant-scalle` e afins ficam para quando o ambiente simular um cliente real.
 2. **Role mapping → Assign role → Filter by realm roles**, e atribua o que a pessoa faz:
    - `engineer` — decide leituras, aceita traçado, aprova cena e exporta DXF. É o papel que
      a sessão de cena exige.
@@ -75,6 +78,19 @@ No console, com o realm `croquito` selecionado (canto superior esquerdo):
 - Login pelo produto: entrar em `https://croquito-hml.biahflow.ai/revisao/` e ver a lista
   de projetos do tenant. Lista vazia com login bem-sucedido normalmente significa
   `tenant_id` diferente do que criou os projetos — não é falta de papel.
+
+## Onde os dados do Keycloak moram
+
+No schema `keycloak` do banco de homologação, separado do schema `croquito` da aplicação
+([HML](HML.md#os-dois-schemas-do-banco)). Quem escolhe esse schema é `KC_DB_SCHEMA` no
+deploy — o `currentSchema` do JDBC sozinho não move o DDL do Liquibase, e foi por isso que
+as tabelas do Keycloak já nasceram uma vez em `public`.
+
+Consequência para quem opera: **trocar o schema do Keycloak equivale a apagar o realm.** Um
+schema vazio é banco novo para ele — realm reimportado do
+[`croquito-hml-realm.json`](../../keycloak/croquito-hml-realm.json), admin de bootstrap
+recriado a partir do segredo, e **todo usuário criado à mão perdido**. Mudança de schema é
+combinada antes com quem usa o ambiente, como a recriação de realm descrita abaixo.
 
 ## Mudança no realm depois que ele já existe
 
