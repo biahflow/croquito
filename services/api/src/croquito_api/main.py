@@ -28,6 +28,7 @@ from pydantic import (
     RootModel,
     ValidationError,
     field_validator,
+    model_validator,
 )
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -62,19 +63,27 @@ from croquito_api.storage import ArtifactStore
 from croquito_api.valuation_rounds import (
     CATALOG_MAX_BYTES,
     STAGE_TAKEOFF,
+    CatalogCache,
     RoundRefusal,
     append_revision,
+    assignments_of,
+    compute_round_suggestions,
     current_stage,
     document_digest,
     head_revision,
+    load_catalog,
     load_round,
     require_base_version,
     require_document,
     require_plate,
+    require_reviewed_packet,
     require_takeoff_overlay,
     require_takeoff_packet,
+    require_unrefined_suggestions,
     round_state_payload,
+    search_round_catalog,
     signed_artifact_url,
+    suggestions_of,
     takeoff_overlay_state,
 )
 from croquito_core.errors import DomainValidationError
@@ -93,11 +102,19 @@ from croquito_core.models import (
     SceneRevision,
     UnitCode,
 )
+from croquito_valuation.assignment import (
+    CodeAssignmentBatch,
+    CodeAssignmentInput,
+    CodeAssignmentSet,
+    CodeSuggestionSet,
+    apply_code_assignments,
+)
 from croquito_valuation.errors import ValuationValidationError, valuation_errors
 from croquito_valuation.models import PriceCatalog
 from croquito_valuation.takeoff import (
     TakeoffDecisionBatch,
     TakeoffDecisionInput,
+    TakeoffPacket,
     apply_takeoff_decisions,
 )
 from croquito_worker.association import AssociationSet
@@ -148,6 +165,10 @@ from croquito_worker.tracing import (
     TraceDetailGroup,
     keep_apart_proposal_ids,
 )
+from croquito_worker.valuation.catalog_search import (
+    CATALOG_SEARCH_DEFAULT_LIMIT,
+    CATALOG_SEARCH_MAX_LIMIT,
+)
 from croquito_worker.valuation.round_extraction import (
     PLATE_IMAGE_REF,
     extraction_arm_spec,
@@ -159,7 +180,11 @@ from croquito_worker.valuation.round_view import (
 from croquito_worker.valuation.round_view import (
     anchor_counts,
     anchored_packet,
+    count_status,
+    item_payload,
+    matching_of,
     parse_quantity,
+    pending_code_items,
     registered_item_ids,
     review_status,
     takeoff_counts,
@@ -740,6 +765,47 @@ class TakeoffDecisionRequest(ApiModel):
     item_note: str | None = Field(default=None, max_length=300)
 
 
+class RecomputeSuggestionsRequest(ApiModel):
+    """Recompute explícito da shortlist de código: o corpo é só a guarda de concorrência.
+
+    O recompute é ATO humano — ele descarta a shortlist anterior e a substitui pelo
+    algoritmo corrente —, e por isso exige `base_version` e avança a versão da rodada. A
+    leitura que calcula a shortlist pela primeira vez não é ato nenhum e não pede corpo.
+    """
+
+    base_version: int = Field(ge=1)
+
+
+class CodeAssignmentDecisionRequest(ApiModel):
+    """Uma decisão do orçamentista sobre o código SCO de um item confirmado no takeoff.
+
+    O carimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`,
+    `decided_at` e `decision_id` são recusados pelo `extra="forbid"` do `ApiModel`: a
+    identidade vem do `Principal` e o instante, do servidor.
+
+    Duas regras são de CONTRATO e ficam aqui; nenhuma outra é. O `pattern` de `item_id`
+    repete o do domínio para que um id malformado seja `422` de fronteira em vez de estourar
+    no meio da rota, e a justificativa obrigatória na rejeição é exigência desta API (o
+    domínio aceita nota vazia): rejeitar um código sem dizer por quê deixaria o item fora do
+    boletim e fora do dossiê do aditivo sem nenhum motivo registrado. Código no catálogo,
+    unidade compatível, item já decidido e item não confirmado no takeoff continuam sendo
+    recusa do domínio, que esta rota não reimplementa.
+    """
+
+    base_version: int = Field(ge=1)
+    item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
+    action: Literal["confirm", "reject"]
+    code: str | None = Field(default=None, min_length=1, max_length=30)
+    note: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_rejection_note(self) -> CodeAssignmentDecisionRequest:
+        if self.action == "reject" and self.note is None:
+            # Mensagem fixa: nada do corpo recusado volta ao cliente pelo erro de contrato.
+            raise ValueError("rejeição de código exige justificativa em `note`")
+        return self
+
+
 class ValuationDocumentResponse(RootModel[dict[str, Any]]):
     """Resposta de medição cuja FORMA vem do domínio, guardada para o `Idempotency-Key`.
 
@@ -1121,12 +1187,20 @@ def _round_refusal_problem(refusal: RoundRefusal) -> HTTPException:
 
 
 def _valuation_domain_problem(error: ValuationValidationError) -> HTTPException:
-    """Invariante de `packages/valuation` como `422 DOMAIN_VALIDATION_FAILED` (ADR-0028 D4)."""
+    """Invariante de `packages/valuation` como `422 DOMAIN_VALIDATION_FAILED` (ADR-0028 D4).
+
+    `code` é escrito por ÚLTIMO de propósito: os detalhes das invariantes de código de
+    catálogo carregam a chave `code` com o código SCO recusado (`ASSIGNMENT_CODE_INVALID`,
+    `ASSIGNMENT_CODE_NOT_IN_CATALOG`, `ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE`), e com a
+    ordem invertida era o código do catálogo que saía em `details.code` — o cliente lia
+    `"CE04100010(/)"` onde o contrato promete o nome da invariante, e o nome não saía em
+    lugar nenhum. Aqui `details.code` significa uma coisa só: a invariante que recusou.
+    """
     return _problem(
         "DOMAIN_VALIDATION_FAILED",
         status.HTTP_422_UNPROCESSABLE_ENTITY,
         error.message,
-        {"code": error.code, **error.details},
+        {**error.details, "code": error.code},
     )
 
 
@@ -1149,6 +1223,27 @@ def _valuation_model_problem(error: ValidationError) -> HTTPException:
         "A decisão não corresponde ao contrato do modelo.",
         {"code": "MODEL_VALIDATION_FAILED"},
     )
+
+
+def _commit_valuation_revision(session: Session) -> None:
+    """Fecha a mutação da rodada; corrida na cadeia é conflito de versão, não erro 500.
+
+    A guarda otimista de `base_version` é conferida em MEMÓRIA, antes da gravação: duas
+    mutações que leram a mesma versão passam as duas por ela e vão disputar a mesma posição
+    da cadeia append-only, onde `uq_valuation_round_version` arbitra. Quem perde recebeu, de
+    fato, uma rodada que mudou depois da leitura dele — que é exatamente o que
+    `REVISION_CONFLICT` diz. É o mesmo desfecho que as rotas de revisão do croqui já dão à
+    corrida equivalente, e não um caso especial da medição.
+    """
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise _problem(
+            "REVISION_CONFLICT",
+            status.HTTP_409_CONFLICT,
+            "Uma decisão concorrente criou uma revisão mais recente.",
+        ) from error
 
 
 def _load_valuation_round(
@@ -1983,6 +2078,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
     application.state.queue = queue_adapter
     application.state.artifact_store = ArtifactStore(runtime_settings)
     application.state.settings = runtime_settings
+    # Catálogo decodificado por digest, com a vida da aplicação: a busca de código é
+    # consultada a cada tecla e decodificar 2,4 MB de JSON por requisição tornaria a etapa
+    # mais usada da tela a mais cara. Preso à aplicação, e não ao módulo, para que duas
+    # aplicações do mesmo processo (a suíte inteira) não compartilhem catálogo decodificado.
+    application.state.catalog_cache = CatalogCache()
 
     @application.middleware("http")
     async def request_correlation(request: Request, call_next: Any) -> Any:
@@ -4821,6 +4921,68 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             **anchor_counts(packet, registered),
         }
 
+    def _round_catalog(record: ValuationRoundRecord) -> PriceCatalog:
+        """Catálogo instalado na rodada, decodificado uma vez por digest.
+
+        O catálogo é imutável na rodada e o cache é chaveado pelo digest instalado, então
+        duas rodadas com o mesmo catálogo compartilham a decodificação de propósito —
+        conteúdo idêntico byte a byte por construção. Objeto sumido, divergente do digest ou
+        ilegível recusa com `CATALOG_REQUIRED`: é falha de ambiente, não do ato.
+        """
+        return load_catalog(
+            application.state.artifact_store, record, cache=application.state.catalog_cache
+        )
+
+    def _suggestions_payload(
+        record: ValuationRoundRecord,
+        *,
+        document: Mapping[str, Any],
+        suggestions: CodeSuggestionSet,
+        computed: bool,
+        notes: list[str],
+    ) -> dict[str, Any]:
+        """Shortlist como a tela a recebe, com o digest do que está GRAVADO na revisão.
+
+        `computed` distingue a shortlist recém-calculada da que já estava lá, e `matching` é
+        derivado do `suggester_version` do próprio conjunto (`matching_of`): assim a resposta
+        continua verdadeira quando ela vem do artefato gravado por outra sessão — inclusive
+        uma que tinha índice semântico e esta não tem.
+        """
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "suggestions": suggestions.model_dump(mode="json"),
+            "suggestions_sha256": document_digest(document),
+            "computed": computed,
+            "matching": matching_of(suggestions),
+            "semantic_notes": notes,
+        }
+
+    def _assignments_payload(
+        record: ValuationRoundRecord,
+        *,
+        packet: TakeoffPacket,
+        assignments: CodeAssignmentSet | None,
+        document: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Decisões de código da rodada e o que ainda falta decidir.
+
+        Conjunto inexistente **não** é erro: a rodada com takeoff revisado e nenhuma decisão
+        de código é o estado normal de quem acabou de chegar nesta etapa, e é `pending_items`
+        que diz o que ela tem pela frente. Zero é informação: as contagens sempre saem.
+        """
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "assignments": None if assignments is None else assignments.model_dump(mode="json"),
+            "assignments_sha256": None if document is None else document_digest(document),
+            "confirmed": 0 if assignments is None else count_status(assignments, "confirmed"),
+            "rejected": 0 if assignments is None else count_status(assignments, "rejected"),
+            "pending_items": [
+                item_payload(item) for item in pending_code_items(packet, assignments)
+            ],
+        }
+
     def _plate_response(
         record: ValuationRoundRecord, revision: ValuationRoundRevisionRecord | None, *, tenant: str
     ) -> ValuationPlateResponse:
@@ -5380,12 +5542,319 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             request_id=request.state.request_id,
         )
         # A decisão fica durável ANTES da fila, e nenhuma transação atravessa a publicação.
-        session.commit()
+        _commit_valuation_revision(session)
         _enqueue_takeoff_overlay_rerender(
             round_id=record.id,
             tenant_id=principal.tenant_id,
             packet_sha256=packet_sha256,
         )
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/code-suggestions",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def get_valuation_code_suggestions(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Shortlist de código por item confirmado: observação, nunca decisão (ADR-0021).
+
+        Calculada UMA vez e persistida; leitura seguinte serve o que está gravado
+        (`computed: false`). A gravação entra na cadeia de revisões **sem avançar a versão da
+        rodada** (decisão humana de 2026-08-17): a shortlist é artefato derivado, e se um
+        `GET` movesse o token de concorrência, a próxima decisão do orçamentista levaria
+        `409` por algo que ele não fez.
+
+        Nenhuma chamada paga acontece aqui: o braço semântico depende de índice publicado na
+        rodada, que nenhuma rota publica, e o motivo viaja em `semantic_notes`.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        stored = None if revision is None else revision.code_suggestions_json
+        if stored is not None:
+            try:
+                # Artefato gravado que não valida é recusa, e não recálculo silencioso: a
+                # cura dele é o recompute explícito, que é ato humano e declarado.
+                suggestions = CodeSuggestionSet.model_validate(stored)
+            except ValidationError as error:
+                raise _valuation_model_problem(error) from error
+            return _suggestions_payload(
+                record, document=stored, suggestions=suggestions, computed=False, notes=[]
+            )
+
+        packet = require_takeoff_packet(revision)
+        require_reviewed_packet(packet)
+        computed, notes = compute_round_suggestions(packet, _round_catalog(record))
+        document = computed.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_suggestions_json": document},
+            advance_version=False,
+        )
+        # `updated_at` da rodada continua marcando o último ato humano: a leitura que calcula
+        # a shortlist não é um, e a cadeia de revisões carimba o próprio instante.
+        response = _suggestions_payload(
+            record, document=document, suggestions=computed, computed=True, notes=notes
+        )
+        try:
+            session.commit()
+        except IntegrityError:
+            # Duas leituras simultâneas — e a tela faz polling — calculam a mesma shortlist
+            # e disputam a mesma posição da cadeia. Perder essa corrida não é falha de
+            # ninguém: o cálculo é determinístico, quem chegou antes gravou o mesmo
+            # artefato, e servir o dele é a resposta certa. Um `500` aqui transformaria
+            # concorrência normal de tela em erro de servidor.
+            session.rollback()
+            revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+            stored = None if revision is None else revision.code_suggestions_json
+            if stored is None:
+                raise
+            return _suggestions_payload(
+                record,
+                document=stored,
+                suggestions=CodeSuggestionSet.model_validate(stored),
+                computed=False,
+                notes=[],
+            )
+        return response
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/code-suggestions/recompute",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def recompute_valuation_code_suggestions(
+        round_id: UUID,
+        payload: RecomputeSuggestionsRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Recalcula a shortlist do zero pelo algoritmo corrente e avança a rodada.
+
+        Ao contrário do `GET`, este é ato humano: ele descarta a shortlist anterior, então
+        exige `base_version` e move o token de concorrência da rodada.
+
+        Shortlist que já carrega refino pago recusa com `409 SUGGESTIONS_ALREADY_REFINED` —
+        recalcular descartaria o lineage da chamada paga. Artefato gravado que não valida
+        como `CodeSuggestionSet` **não** cai nessa guarda: o recompute é exatamente a cura
+        dele.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.suggestions-recompute:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        require_reviewed_packet(packet)
+        require_unrefined_suggestions(suggestions_of(revision))
+        computed, notes = compute_round_suggestions(packet, _round_catalog(record))
+        document = computed.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_suggestions_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _suggestions_payload(
+            record, document=document, suggestions=computed, computed=True, notes=notes
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_CODE_SUGGESTIONS_RECOMPUTED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/catalog/search",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def search_valuation_catalog(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        q: Annotated[str, Query(min_length=1, max_length=200)],
+        limit: Annotated[
+            int, Query(ge=1, le=CATALOG_SEARCH_MAX_LIMIT)
+        ] = CATALOG_SEARCH_DEFAULT_LIMIT,
+        arm: Annotated[Literal["lexical", "hybrid"], Query()] = "lexical",
+    ) -> dict[str, Any]:
+        """Busca no catálogo instalado, léxica por padrão (decisão humana de 2026-08-17).
+
+        `arm=hybrid` é braço PAGO e passa pelo mesmo portão da extração: sem autorização
+        contratual do tenant, `403 AI_PROCESSING_NOT_AUTHORIZED` (ADR-0012). Com ela, a
+        resposta ainda é `503 PROVIDER_UNAVAILABLE` — o braço semântico depende de índice de
+        embeddings publicado na rodada e nenhuma rota de `/v1` publica esse índice hoje.
+        Isso é estado honesto, não falha: cair no léxico fingindo ser híbrido esconderia do
+        orçamentista que a vizinhança semântica não participou do que ele está lendo. E
+        nenhuma chamada de embedding acontece dentro de um `GET`, com ou sem índice.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        if arm == "hybrid":
+            _require_active_ai_entitlement(
+                session,
+                principal,
+                real_providers_enabled=runtime_settings.real_providers_enabled,
+            )
+            raise _problem(
+                "PROVIDER_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "A busca semântica não está disponível nesta rodada.",
+                {"code": "SEMANTIC_INDEX_ABSENT"},
+            )
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            **search_round_catalog(_round_catalog(record), q, limit),
+        }
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/code-assignments",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def get_valuation_code_assignments(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Decisões de código da rodada e os itens confirmados que ainda esperam por uma."""
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        return _assignments_payload(
+            record,
+            packet=packet,
+            assignments=assignments_of(revision),
+            document=None if revision is None else revision.code_assignments_json,
+        )
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/code-assignments/decisions",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def decide_valuation_item_code(
+        round_id: UUID,
+        payload: CodeAssignmentDecisionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Confirma ou rejeita o código de UM item, acumulando sobre o conjunto anterior.
+
+        Acumular item a item é a semântica do domínio: é ele quem recusa a re-decisão
+        (`ASSIGNMENT_ITEM_ALREADY_DECIDED`) e quem carrega adiante as confirmações já
+        registradas. A rota não confere código, unidade nem estado do item — ela só monta a
+        decisão com a identidade do `Principal` e o instante do servidor.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.code-decisions:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        previous = assignments_of(revision)
+        catalog = _round_catalog(record)
+        try:
+            decision = CodeAssignmentInput(
+                item_id=payload.item_id,
+                action=payload.action,
+                code=payload.code,
+                reviewer_id=principal.subject,
+                reviewer_role=VALUATION_REVIEWER_ROLE,
+                decided_at=datetime.now(UTC),
+                note=payload.note,
+            )
+            batch = CodeAssignmentBatch(assignments=[decision])
+        except ValidationError as error:
+            # Invariante do domínio embrulhada pelo validador: o código estável sai, a
+            # mensagem do Pydantic não — ela pode ecoar o valor recusado.
+            raise _valuation_model_problem(error) from error
+        # Sem consolidado contratual: a rodada guarda catálogo, e o portão de exportação é
+        # que responde por preço e unidade contra o contrato quando ele existir.
+        assignments = apply_code_assignments(packet, batch, catalog, previous=previous)
+
+        document = assignments.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_assignments_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _assignments_payload(
+            record, packet=packet, assignments=assignments, document=document
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_ITEM_CODE_DECIDED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
         return response
 
     return application

@@ -1,4 +1,4 @@
-"""Rotas `/v1/valuation-rounds` de F-003 (T6/T7/T9): criação, prancha e takeoff.
+"""Rotas `/v1/valuation-rounds` de F-003 (T6/T7/T9/T10): rodada, prancha, takeoff e códigos.
 
 O que estes testes protegem, além do caminho feliz:
 
@@ -12,7 +12,11 @@ O que estes testes protegem, além do caminho feliz:
 - **chamada paga**: entitlement revogado não enfileira, extração em voo recusa, e a fila
   indisponível devolve `503` com o intent já durável;
 - **overlay do takeoff**: a decisão do orçamentista nunca espera pelo desenho, e um desenho
-  do pacote anterior jamais é servido como se fosse do corrente (ADR-0030).
+  do pacote anterior jamais é servido como se fosse do corrente (ADR-0030);
+- **shortlist de código**: um `GET` que calcula o artefato derivado não move o token de
+  concorrência da rodada, e o refino pago nunca é descartado por recompute determinístico;
+- **braço semântico**: híbrido é braço pago — sem entitlement é `403`, e com entitlement e
+  sem índice publicado é `503` declarado, nunca léxico fingindo ser híbrido.
 """
 
 from __future__ import annotations
@@ -40,8 +44,13 @@ from croquito_api.database import (
     ValuationRoundRevisionRecord,
 )
 from croquito_api.main import create_app
-from croquito_api.valuation_rounds import document_digest
+from croquito_api.valuation_rounds import append_revision, document_digest
 from croquito_core.ids import new_uuid7
+from croquito_valuation.assignment import (
+    LLM_RERANK_SUFFIX,
+    CodeSuggestionSet,
+    SuggestionRefinement,
+)
 from croquito_valuation.models import PriceCatalog, PriceCatalogEntry
 from croquito_valuation.takeoff import (
     PlateBox,
@@ -117,7 +126,8 @@ def _observed_queue(client: TestClient) -> FakeQueue:
     return queue
 
 
-def _catalog_bytes() -> bytes:
+def _catalog_bytes(*, unit: str = "m") -> bytes:
+    """Catálogo sintético de uma entrada; `unit` existe para exercitar a unidade divergente."""
     catalog = PriceCatalog(
         source_label="CATALOGO SINTETICO",
         reference_month="2026-01",
@@ -126,7 +136,7 @@ def _catalog_bytes() -> bytes:
             PriceCatalogEntry(
                 code="CE04100010(/)",
                 description="ALAMBRADO GALVANIZADO",
-                unit="m",
+                unit=unit,
                 unit_price=Decimal("50.00"),
                 family_code="CE",
                 family_name="SERVICOS SINTETICOS",
@@ -166,14 +176,14 @@ def _presign_and_put(
 
 
 def _catalog_upload(
-    client: TestClient, *, tenant: str = _TENANT, key: str = "catalogo-001"
+    client: TestClient, *, tenant: str = _TENANT, key: str = "catalogo-001", unit: str = "m"
 ) -> dict[str, Any]:
     return _presign_and_put(
         client,
         tenant=tenant,
         filename="catalogo.json",
         content_type="application/json",
-        payload=_catalog_bytes(),
+        payload=_catalog_bytes(unit=unit),
         key=key,
     )
 
@@ -209,9 +219,10 @@ def _create_round(
     *,
     tenant: str = _TENANT,
     key: str = "rodada-001",
+    catalog_unit: str = "m",
     **overrides: Any,
 ) -> dict[str, Any]:
-    upload = _catalog_upload(client, tenant=tenant, key=f"catalogo-{key}")
+    upload = _catalog_upload(client, tenant=tenant, key=f"catalogo-{key}", unit=catalog_unit)
     response = client.post(
         "/v1/valuation-rounds",
         headers=_headers(tenant, key=key),
@@ -1469,3 +1480,732 @@ def test_a_decisao_registra_auditoria_sem_url_assinada_nem_conteudo(tmp_path: Pa
         assert len(decided) == 1
         assert decided[0].resource_id == published["round_id"]
         assert all(set(audit.metadata_json) == {"request_id"} for audit in audits)
+
+
+# --- códigos: shortlist, busca e decisão ------------------------------------------------
+
+_CATALOG_CODE = "CE04100010(/)"
+_CODE_OUT_OF_CATALOG = "CE04100099(/)"
+
+
+def _round_with_confirmed_item(
+    client: TestClient, *, catalog_unit: str = "m", key: str = "rodada-codigos"
+) -> dict[str, Any]:
+    """Rodada com o takeoff publicado e o único item já confirmado pelo orçamentista.
+
+    O item é confirmado pela ROTA de decisão, e não escrito à mão: é a revisão completa do
+    takeoff que abre a etapa de código, e fabricá-la direto no banco esconderia justamente a
+    precondição que a shortlist exige.
+    """
+    created = _create_round(client, key=key, catalog_unit=catalog_unit)
+    published = _publish_takeoff(client, created["round_id"], _takeoff_packet())
+    decided = _decide(
+        client,
+        created["round_id"],
+        base_version=published["version"],
+        quantity="10.00",
+        key=f"{key}-takeoff",
+    )
+    assert decided.status_code == 200, decided.text
+    return {"round_id": created["round_id"], "version": decided.json()["version"]}
+
+
+def _revisions(client: TestClient) -> list[ValuationRoundRevisionRecord]:
+    with _database(client).sessions() as session:
+        return list(
+            session.scalars(
+                select(ValuationRoundRevisionRecord).order_by(ValuationRoundRevisionRecord.version)
+            ).all()
+        )
+
+
+def _round_version(client: TestClient, round_id: str) -> int:
+    with _database(client).sessions() as session:
+        record = session.get(ValuationRoundRecord, round_id)
+        assert record is not None
+        return record.version
+
+
+def _suggestions(client: TestClient, round_id: str) -> Any:
+    return client.get(f"/v1/valuation-rounds/{round_id}/code-suggestions", headers=_headers())
+
+
+def _decide_code(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    tenant: str = _TENANT,
+    key: str = "codigo-001",
+    **body: Any,
+) -> Any:
+    payload: dict[str, Any] = {
+        "base_version": base_version,
+        "item_id": _ITEM_CLEAR,
+        "action": "confirm",
+        "code": _CATALOG_CODE,
+    }
+    payload.update(body)
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/code-assignments/decisions",
+        headers=_headers(tenant, key=key),
+        json=payload,
+    )
+
+
+def test_a_shortlist_e_calculada_uma_vez_e_nao_avanca_a_versao_da_rodada(tmp_path: Path) -> None:
+    """Artefato derivado entra na cadeia sem mover o token de concorrência (decisão de
+    2026-08-17): um `GET` que avançasse a versão faria a decisão seguinte levar `409`."""
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+
+    first = _suggestions(client, prepared["round_id"])
+
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["computed"] is True
+    assert body["matching"] == "lexical"
+    assert body["version"] == prepared["version"]
+    assert body["semantic_notes"], "o motivo do braço ausente precisa viajar na resposta"
+    suggestions = CodeSuggestionSet.model_validate(body["suggestions"])
+    assert [item.item_id for item in suggestions.suggestions] == [_ITEM_CLEAR]
+    assert suggestions.suggestions[0].candidates[0].code == _CATALOG_CODE
+    # A revisão nova existe (a shortlist ficou gravada) e a versão da rodada não andou.
+    revisions = _revisions(client)
+    assert [revision.version for revision in revisions] == [1, 2, 3]
+    assert revisions[-1].code_suggestions_json is not None
+    assert _round_version(client, prepared["round_id"]) == prepared["version"]
+
+    second = _suggestions(client, prepared["round_id"])
+
+    assert second.status_code == 200
+    assert second.json()["computed"] is False
+    assert second.json()["suggestions_sha256"] == body["suggestions_sha256"]
+    assert second.json()["suggestions"] == body["suggestions"]
+    # Nenhuma revisão nova: a segunda leitura serve o artefato, não o recalcula.
+    assert len(_revisions(client)) == 3
+
+
+def test_a_shortlist_recusa_takeoff_com_revisao_incompleta(tmp_path: Path) -> None:
+    """Shortlist sobre pacote meio revisado congelaria um artefato sem os itens que ainda
+    vão ser confirmados — e a leitura seguinte serviria justamente esse artefato."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client)
+
+    response = _suggestions(client, published["round_id"])
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "TAKEOFF_REVIEW_INCOMPLETE"
+    assert detail["details"]["pending_item_ids"] == [_ITEM_CLEAR]
+    assert len(_revisions(client)) == 1
+
+
+def test_a_shortlist_sem_takeoff_publicado_e_etapa_fora_de_ordem(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client)
+
+    response = _suggestions(client, created["round_id"])
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "ROUND_STAGE_NOT_READY"
+
+
+def test_catalogo_indisponivel_recusa_shortlist_e_busca(tmp_path: Path) -> None:
+    """Catálogo instalado que sumiu do armazenamento é falha de ambiente, não do ato."""
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+    with _database(client).sessions() as session:
+        record = session.get(ValuationRoundRecord, prepared["round_id"])
+        assert record is not None
+        _store(client).objects.pop(record.catalog_object_key)
+
+    shortlist = _suggestions(client, prepared["round_id"])
+    search = client.get(
+        f"/v1/valuation-rounds/{prepared['round_id']}/catalog/search?q=alambrado",
+        headers=_headers(),
+    )
+
+    assert [shortlist.status_code, search.status_code] == [409, 409]
+    for response in (shortlist, search):
+        assert response.json()["detail"]["code"] == "CATALOG_REQUIRED"
+    assert len(_revisions(client)) == 2
+
+
+def test_o_recompute_avanca_a_versao_e_regrava_a_shortlist(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+    first = _suggestions(client, prepared["round_id"])
+    assert first.status_code == 200, first.text
+
+    response = client.post(
+        f"/v1/valuation-rounds/{prepared['round_id']}/code-suggestions/recompute",
+        headers=_headers(key="recompute-001"),
+        json={"base_version": prepared["version"]},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["computed"] is True
+    assert body["version"] == prepared["version"] + 1
+    assert body["suggestions_sha256"] == first.json()["suggestions_sha256"]
+    assert _round_version(client, prepared["round_id"]) == prepared["version"] + 1
+    revisions = _revisions(client)
+    assert [revision.version for revision in revisions] == [1, 2, 3, 4]
+    with _database(client).sessions() as session:
+        audits = session.scalars(select(AuditRecord)).all()
+        recomputed = [
+            audit for audit in audits if audit.action == "VALUATION_CODE_SUGGESTIONS_RECOMPUTED"
+        ]
+        assert len(recomputed) == 1
+        assert all(set(audit.metadata_json) == {"request_id"} for audit in audits)
+
+
+def test_o_recompute_nunca_descarta_o_refino_pago(tmp_path: Path) -> None:
+    """Recalcular por caminho determinístico apagaria o lineage da chamada paga."""
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+    base = CodeSuggestionSet.model_validate(
+        _suggestions(client, prepared["round_id"]).json()["suggestions"]
+    )
+    refined = base.model_copy(
+        update={
+            "suggester_version": base.suggester_version + LLM_RERANK_SUFFIX,
+            "refinement": SuggestionRefinement(
+                provider="anthropic",
+                model_id="claude-sonnet-5",
+                prompt_version="sco-refinement@1.0.1",
+                input_digest="a" * 64,
+            ),
+        }
+    )
+    with _database(client).sessions() as session:
+        head = session.scalars(
+            select(ValuationRoundRevisionRecord).order_by(
+                ValuationRoundRevisionRecord.version.desc()
+            )
+        ).first()
+        assert head is not None
+        head.code_suggestions_json = refined.model_dump(mode="json")
+        session.commit()
+
+    response = client.post(
+        f"/v1/valuation-rounds/{prepared['round_id']}/code-suggestions/recompute",
+        headers=_headers(key="recompute-refinada"),
+        json={"base_version": prepared["version"]},
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "SUGGESTIONS_ALREADY_REFINED"
+    assert detail["details"]["suggester_version"].endswith(LLM_RERANK_SUFFIX)
+    assert len(_revisions(client)) == 3
+    # A shortlist refinada continua sendo servida, com o lineage intacto.
+    served = _suggestions(client, prepared["round_id"]).json()
+    assert served["suggestions"]["refinement"]["model_id"] == "claude-sonnet-5"
+
+
+def test_o_recompute_cura_a_shortlist_que_deixou_de_validar(tmp_path: Path) -> None:
+    """Artefato ilegível não cai na guarda do refino: o recompute é a cura dele.
+
+    Servi-lo, esse sim, é recusa — a tela nunca renderiza o que o domínio não valida.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+    assert _suggestions(client, prepared["round_id"]).status_code == 200
+    with _database(client).sessions() as session:
+        head = session.scalars(
+            select(ValuationRoundRevisionRecord).order_by(
+                ValuationRoundRevisionRecord.version.desc()
+            )
+        ).first()
+        assert head is not None
+        head.code_suggestions_json = {"schema_version": "1.1.0"}
+        session.commit()
+
+    served = _suggestions(client, prepared["round_id"])
+    recomputed = client.post(
+        f"/v1/valuation-rounds/{prepared['round_id']}/code-suggestions/recompute",
+        headers=_headers(key="recompute-corrompida"),
+        json={"base_version": prepared["version"]},
+    )
+
+    assert served.status_code == 422
+    assert served.json()["detail"]["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert recomputed.status_code == 200, recomputed.text
+    assert recomputed.json()["computed"] is True
+    assert _suggestions(client, prepared["round_id"]).json()["computed"] is False
+
+
+def test_recompute_com_base_version_divergente_recusa_sem_gravar(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+
+    response = client.post(
+        f"/v1/valuation-rounds/{prepared['round_id']}/code-suggestions/recompute",
+        headers=_headers(key="recompute-conflito"),
+        json={"base_version": prepared["version"] + 7},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "REVISION_CONFLICT"
+    assert len(_revisions(client)) == 2
+
+
+def test_idempotencia_do_recompute_devolve_a_mesma_resposta(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+    url = f"/v1/valuation-rounds/{prepared['round_id']}/code-suggestions/recompute"
+
+    first = client.post(
+        url, headers=_headers(key="recompute-x"), json={"base_version": prepared["version"]}
+    )
+    second = client.post(
+        url, headers=_headers(key="recompute-x"), json={"base_version": prepared["version"]}
+    )
+    reused = client.post(
+        url, headers=_headers(key="recompute-x"), json={"base_version": prepared["version"] + 1}
+    )
+    headerless = client.post(url, json={"base_version": prepared["version"] + 1})
+
+    assert first.status_code == 200, first.text
+    assert second.json() == first.json()
+    assert reused.status_code == 409
+    assert reused.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+    assert headerless.status_code == 401
+    assert len(_revisions(client)) == 3
+
+
+def test_a_busca_lexica_e_o_padrao_e_declara_o_braco_semantico_ausente(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+
+    response = client.get(
+        f"/v1/valuation-rounds/{prepared['round_id']}/catalog/search?q=alambrado&limit=5",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["matching"] == "lexical"
+    assert body["limit"] == 5
+    assert [result["code"] for result in body["results"]] == [_CATALOG_CODE]
+    assert body["semantic_notes"], "degradar em silêncio esconderia o braço que não rodou"
+    assert body["version"] == prepared["version"]
+
+
+def test_a_busca_sem_termo_utilizavel_recusa(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+
+    response = client.get(
+        f"/v1/valuation-rounds/{prepared['round_id']}/catalog/search?q=-", headers=_headers()
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "CATALOG_QUERY_EMPTY"
+
+
+def test_o_braco_hibrido_exige_entitlement_e_ainda_assim_declara_a_falta_do_indice(
+    tmp_path: Path,
+) -> None:
+    """Híbrido é braço pago: sem contrato, `403`; com contrato e sem índice, `503` honesto."""
+    client = _client(tmp_path, real_providers_enabled=True)
+    prepared = _round_with_confirmed_item(client)
+    url = f"/v1/valuation-rounds/{prepared['round_id']}/catalog/search?q=alambrado&arm=hybrid"
+
+    without = client.get(url, headers=_headers())
+    _grant_entitlement(client)
+    granted = client.get(url, headers=_headers())
+
+    assert without.status_code == 403
+    assert without.json()["detail"]["code"] == "AI_PROCESSING_NOT_AUTHORIZED"
+    assert granted.status_code == 503
+    detail = granted.json()["detail"]
+    assert detail["code"] == "PROVIDER_UNAVAILABLE"
+    assert detail["details"]["code"] == "SEMANTIC_INDEX_ABSENT"
+
+
+def test_as_decisoes_de_codigo_listam_conjunto_ausente_e_pendencia(tmp_path: Path) -> None:
+    """Conjunto inexistente não é erro: é o estado de quem acabou de chegar na etapa."""
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+
+    response = client.get(
+        f"/v1/valuation-rounds/{prepared['round_id']}/code-assignments", headers=_headers()
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["assignments"] is None
+    assert body["assignments_sha256"] is None
+    assert body["confirmed"] == 0
+    assert body["rejected"] == 0
+    assert [item["item_id"] for item in body["pending_items"]] == [_ITEM_CLEAR]
+    # Quantidade sai como TEXTO também aqui: `float` perderia a escala escrita na legenda.
+    assert body["pending_items"][0]["quantity"] == "10.00"
+
+
+def test_as_decisoes_de_codigo_sem_takeoff_publicado_sao_etapa_fora_de_ordem(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client)
+
+    listing = client.get(
+        f"/v1/valuation-rounds/{created['round_id']}/code-assignments", headers=_headers()
+    )
+    decision = _decide_code(client, created["round_id"], base_version=1)
+
+    assert [listing.status_code, decision.status_code] == [409, 409]
+    for response in (listing, decision):
+        detail = response.json()["detail"]
+        assert detail["code"] == "ROUND_STAGE_NOT_READY"
+        assert detail["details"] == {"stage": "takeoff"}
+
+
+def test_a_confirmacao_de_codigo_grava_revisao_e_avanca_a_versao(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+
+    response = _decide_code(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == prepared["version"] + 1
+    assert body["confirmed"] == 1
+    assert body["rejected"] == 0
+    assert body["pending_items"] == []
+    assignment = body["assignments"]["assignments"][0]
+    assert assignment["item_id"] == _ITEM_CLEAR
+    assert assignment["code"] == _CATALOG_CODE
+    assert assignment["unit_compatible"] is True
+    assert assignment["decision"]["reviewer_id"] == "orcamentista-sintetica"
+    assert assignment["decision"]["reviewer_role"] == "orcamentista"
+    revisions = _revisions(client)
+    assert [revision.version for revision in revisions] == [1, 2, 3]
+    assert revisions[-1].code_assignments_json is not None
+    # Append-only: a revisão anterior continua sem decisão de código.
+    assert revisions[-2].code_assignments_json is None
+    with _database(client).sessions() as session:
+        audits = session.scalars(select(AuditRecord)).all()
+        decided = [audit for audit in audits if audit.action == "VALUATION_ITEM_CODE_DECIDED"]
+        assert len(decided) == 1
+        assert decided[0].resource_id == prepared["round_id"]
+        assert all(set(audit.metadata_json) == {"request_id"} for audit in audits)
+
+
+def test_a_rejeicao_de_codigo_exige_justificativa_e_recusa_codigo(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+
+    sem_nota = _decide_code(
+        client,
+        prepared["round_id"],
+        base_version=prepared["version"],
+        key="rejeicao-sem-nota",
+        action="reject",
+        code=None,
+    )
+    com_codigo = _decide_code(
+        client,
+        prepared["round_id"],
+        base_version=prepared["version"],
+        key="rejeicao-com-codigo",
+        action="reject",
+        note="item medido fora do contrato",
+    )
+    aceita = _decide_code(
+        client,
+        prepared["round_id"],
+        base_version=prepared["version"],
+        key="rejeicao-ok",
+        action="reject",
+        code=None,
+        note="item medido fora do contrato",
+    )
+
+    assert sem_nota.status_code == 422
+    assert com_codigo.status_code == 422
+    assert com_codigo.json()["detail"]["details"]["code"] == "ASSIGNMENT_CODE_ON_REJECT"
+    assert aceita.status_code == 200, aceita.text
+    body = aceita.json()
+    assert body["rejected"] == 1
+    assert body["assignments"]["assignments"][0]["code"] is None
+    assert body["pending_items"] == []
+
+
+def test_o_dominio_recusa_re_decisao_codigo_fora_do_catalogo_e_item_nao_confirmado(
+    tmp_path: Path,
+) -> None:
+    """As quatro recusas são do domínio; a rota não republica nenhum desses códigos."""
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+    first = _decide_code(client, prepared["round_id"], base_version=prepared["version"])
+    assert first.status_code == 200, first.text
+    ja_decidido = _decide_code(
+        client, prepared["round_id"], base_version=prepared["version"] + 1, key="codigo-002"
+    )
+    desconhecido = _decide_code(
+        client,
+        prepared["round_id"],
+        base_version=prepared["version"] + 1,
+        key="codigo-003",
+        item_id=_ITEM_AMBIGUOUS,
+    )
+
+    outra = _round_with_confirmed_item(client, key="rodada-fora-catalogo")
+    fora_do_catalogo = _decide_code(
+        client,
+        outra["round_id"],
+        base_version=outra["version"],
+        key="codigo-004",
+        code=_CODE_OUT_OF_CATALOG,
+    )
+
+    proposta = _round_with_takeoff(client)
+    nao_confirmado = _decide_code(
+        client, proposta["round_id"], base_version=proposta["version"], key="codigo-005"
+    )
+
+    assert ja_decidido.status_code == 422
+    assert ja_decidido.json()["detail"]["details"]["code"] == "ASSIGNMENT_ITEM_ALREADY_DECIDED"
+    assert desconhecido.status_code == 422
+    assert desconhecido.json()["detail"]["details"]["code"] == "ASSIGNMENT_UNKNOWN_ITEM"
+    assert fora_do_catalogo.status_code == 422
+    assert fora_do_catalogo.json()["detail"]["details"]["code"] == "ASSIGNMENT_CODE_NOT_IN_CATALOG"
+    assert nao_confirmado.status_code == 422
+    assert nao_confirmado.json()["detail"]["details"]["code"] == "ASSIGNMENT_ITEM_NOT_CONFIRMED"
+
+
+def test_unidade_divergente_sem_nota_recusa_a_confirmacao(tmp_path: Path) -> None:
+    """O orçamentista pode medir em unidade diferente da tabela, mas nunca em silêncio."""
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client, catalog_unit="un")
+
+    sem_nota = _decide_code(client, prepared["round_id"], base_version=prepared["version"])
+    com_nota = _decide_code(
+        client,
+        prepared["round_id"],
+        base_version=prepared["version"],
+        key="codigo-com-nota",
+        note="medido em metro; tabela publica a unidade",
+    )
+
+    assert sem_nota.status_code == 422
+    detail = sem_nota.json()["detail"]
+    assert detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detail["details"]["code"] == "ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE"
+    assert com_nota.status_code == 200, com_nota.text
+    assert com_nota.json()["assignments"]["assignments"][0]["unit_compatible"] is False
+
+
+def test_a_decisao_de_codigo_recusa_carimbo_de_identidade_e_conflito_de_versao(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+
+    for forbidden in ("reviewer_id", "reviewer_role", "decided_at", "decision_id"):
+        response = _decide_code(
+            client,
+            prepared["round_id"],
+            base_version=prepared["version"],
+            key=f"codigo-{forbidden}",
+            **{forbidden: "x"},
+        )
+        assert response.status_code == 422, forbidden
+        assert "extra" in response.text.lower()
+
+    conflito = _decide_code(
+        client, prepared["round_id"], base_version=prepared["version"] + 7, key="codigo-conflito"
+    )
+
+    assert conflito.status_code == 409
+    assert conflito.json()["detail"]["code"] == "REVISION_CONFLICT"
+    assert len(_revisions(client)) == 2
+
+
+def test_idempotencia_da_decisao_de_codigo_devolve_a_mesma_resposta(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+
+    first = _decide_code(client, prepared["round_id"], base_version=prepared["version"])
+    second = _decide_code(client, prepared["round_id"], base_version=prepared["version"])
+    reused = _decide_code(
+        client,
+        prepared["round_id"],
+        base_version=prepared["version"],
+        action="reject",
+        code=None,
+        note="mudou de ideia",
+    )
+    headerless = client.post(
+        f"/v1/valuation-rounds/{prepared['round_id']}/code-assignments/decisions",
+        headers={"Authorization": f"Bearer test:{_TENANT}:orcamentista-sintetica:orcamentista"},
+        json={
+            "base_version": prepared["version"],
+            "item_id": _ITEM_CLEAR,
+            "action": "confirm",
+            "code": _CATALOG_CODE,
+        },
+    )
+
+    assert first.status_code == 200, first.text
+    assert second.json() == first.json()
+    assert reused.status_code == 409
+    assert reused.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+    assert headerless.status_code == 400
+    assert headerless.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
+    assert len(_revisions(client)) == 3
+
+
+def test_papel_e_tenant_valem_nas_rotas_de_codigo(tmp_path: Path) -> None:
+    """Papel antes do lookup, rodada alheia indistinguível de inexistente, e `401` sem token."""
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+    round_id = prepared["round_id"]
+    unknown = str(new_uuid7())
+    engineer = _headers(roles="engineer")
+    intruder = _headers(_OTHER_TENANT, key="intruso-codigos")
+
+    sem_papel = [
+        client.get(f"/v1/valuation-rounds/{unknown}/code-suggestions", headers=engineer),
+        client.post(
+            f"/v1/valuation-rounds/{unknown}/code-suggestions/recompute",
+            headers=engineer,
+            json={"base_version": 1},
+        ),
+        client.get(f"/v1/valuation-rounds/{unknown}/catalog/search?q=alambrado", headers=engineer),
+        client.get(f"/v1/valuation-rounds/{unknown}/code-assignments", headers=engineer),
+        client.post(
+            f"/v1/valuation-rounds/{unknown}/code-assignments/decisions",
+            headers=_headers(roles="engineer", key="codigo-sem-papel"),
+            json={
+                "base_version": 1,
+                "item_id": _ITEM_CLEAR,
+                "action": "confirm",
+                "code": _CATALOG_CODE,
+            },
+        ),
+    ]
+    outro_tenant = [
+        client.get(f"/v1/valuation-rounds/{round_id}/code-suggestions", headers=intruder),
+        client.post(
+            f"/v1/valuation-rounds/{round_id}/code-suggestions/recompute",
+            headers=intruder,
+            json={"base_version": prepared["version"]},
+        ),
+        client.get(f"/v1/valuation-rounds/{round_id}/catalog/search?q=alambrado", headers=intruder),
+        client.get(f"/v1/valuation-rounds/{round_id}/code-assignments", headers=intruder),
+        _decide_code(
+            client,
+            round_id,
+            base_version=prepared["version"],
+            tenant=_OTHER_TENANT,
+            key="codigo-intruso",
+        ),
+    ]
+    sem_token = [
+        client.get(f"/v1/valuation-rounds/{round_id}/code-suggestions"),
+        client.post(
+            f"/v1/valuation-rounds/{round_id}/code-suggestions/recompute",
+            json={"base_version": prepared["version"]},
+        ),
+        client.get(f"/v1/valuation-rounds/{round_id}/catalog/search?q=alambrado"),
+        client.get(f"/v1/valuation-rounds/{round_id}/code-assignments"),
+        client.post(
+            f"/v1/valuation-rounds/{round_id}/code-assignments/decisions",
+            json={
+                "base_version": prepared["version"],
+                "item_id": _ITEM_CLEAR,
+                "action": "confirm",
+                "code": _CATALOG_CODE,
+            },
+        ),
+    ]
+
+    assert [response.status_code for response in sem_papel] == [403] * 5
+    assert all(response.json()["detail"]["code"] == "FORBIDDEN" for response in sem_papel)
+    assert [response.status_code for response in outro_tenant] == [404] * 5
+    assert [response.status_code for response in sem_token] == [401] * 5
+    # Nenhuma das recusas gravou artefato nem moveu a versão da rodada.
+    assert len(_revisions(client)) == 2
+    assert _round_version(client, round_id) == prepared["version"]
+
+
+# --- corrida na cadeia de revisões ------------------------------------------------------
+
+
+def _rival_revision(client: TestClient, round_id: str) -> Any:
+    """Faz uma segunda gravação tomar a posição que esta requisição ia ocupar.
+
+    O `append_revision` real já rodou e a sessão da rota ainda não commitou: inserir aqui,
+    por outra sessão, é o que reproduz a corrida sem depender de threads — a posição da
+    cadeia é decidida por `uq_valuation_round_version`, e não pela ordem em que os dois
+    caminhos começaram.
+    """
+
+    def append_e_perde_a_corrida(*args: Any, **kwargs: Any) -> Any:
+        revision = append_revision(*args, **kwargs)
+        with _database(client).sessions.begin() as rival:
+            rival.add(
+                ValuationRoundRevisionRecord(
+                    id=str(new_uuid7()),
+                    tenant_id=_TENANT,
+                    round_id=round_id,
+                    version=revision.version,
+                    created_by="requisicao-concorrente",
+                    **{
+                        column: value
+                        for column, value in kwargs["changes"].items()
+                        if column != "artifact_refs_json"
+                    },
+                )
+            )
+        return revision
+
+    return append_e_perde_a_corrida
+
+
+def test_leitura_que_perde_a_corrida_da_shortlist_serve_a_do_vencedor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tela faz polling, então duas leituras simultâneas são o caso normal, não o raro.
+
+    As duas calculam a MESMA shortlist — o cálculo é determinístico — e disputam a mesma
+    posição da cadeia. Quem perde serve o artefato de quem chegou antes; devolver `500`
+    transformaria concorrência de tela em falha de servidor.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+    round_id = prepared["round_id"]
+    monkeypatch.setattr("croquito_api.main.append_revision", _rival_revision(client, round_id))
+
+    response = _suggestions(client, round_id)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["computed"] is False
+    # A shortlist servida é a do vencedor, e é uma shortlist de verdade: o item confirmado
+    # continua tendo candidatos, e não um envelope vazio que a corrida deixou pelo caminho.
+    assert body["suggestions"]["suggestions"]
+    # A rodada não mudou de versão por causa de uma leitura, nem com corrida no meio.
+    assert _round_version(client, round_id) == prepared["version"]
+
+
+def test_decisao_de_codigo_que_perde_a_corrida_e_conflito_e_nao_erro_de_servidor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`base_version` é conferido em memória: duas decisões que leram a mesma versão passam
+    as duas pela guarda e vão disputar a mesma posição da cadeia. Quem perde recebeu uma
+    rodada que mudou depois da leitura dele, que é o que `REVISION_CONFLICT` diz."""
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+    round_id = prepared["round_id"]
+    monkeypatch.setattr("croquito_api.main.append_revision", _rival_revision(client, round_id))
+
+    response = _decide_code(client, round_id, base_version=prepared["version"])
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "REVISION_CONFLICT"

@@ -4,8 +4,9 @@ Este módulo é a camada de aplicação de `/v1/valuation-rounds` (ADR-0028) **s
 nada aqui recebe `Request`, monta `Response` ou conhece código de status por si só. O que
 mora aqui é o que precisa ser testável sem subir a aplicação — leitura da cabeça da
 rodada, o append da revisão nova, o estado por etapa que a tela lê, as precondições da
-cadeia e as duas fronteiras de artefato (catálogo lido do object store, URL assinada de
-leitura privada).
+cadeia, as duas fronteiras de artefato (catálogo lido do object store, URL assinada de
+leitura privada) e as duas saídas derivadas da etapa de código (shortlist e busca), que
+chamam os módulos puros do worker com o que a rodada de `/v1` tem — e só com isso.
 
 Três regras atravessam tudo o que sai daqui:
 
@@ -26,10 +27,12 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import os
 import threading
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Final, Protocol
 
 from pydantic import ValidationError
@@ -38,10 +41,21 @@ from sqlalchemy.orm import Session
 
 from croquito_api.database import ValuationRoundRecord, ValuationRoundRevisionRecord
 from croquito_core.ids import new_uuid7
-from croquito_valuation.assignment import CodeAssignmentSet
+from croquito_valuation.assignment import (
+    LLM_RERANK_SUFFIX,
+    CodeAssignmentSet,
+    CodeSuggestionSet,
+)
+from croquito_valuation.catalog import default_domain_synonyms, default_legend_noise
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.models import PriceCatalog
 from croquito_valuation.takeoff import TakeoffPacket
+from croquito_worker.valuation.catalog_search import (
+    SEMANTIC_UNAVAILABLE_MESSAGE,
+    SemanticArm,
+    require_query_terms,
+    search_catalog,
+)
 from croquito_worker.valuation.round_extraction import (
     TAKEOFF_OVERLAY_DIGEST,
     TAKEOFF_OVERLAY_PACKET_DIGEST,
@@ -62,10 +76,14 @@ from croquito_worker.valuation.round_view import (
     review_status,
     takeoff_counts,
 )
+from croquito_worker.valuation.suggestions import compute_suggestions, require_reviewed_takeoff
 
 ROUND_STAGE_NOT_READY: Final = "ROUND_STAGE_NOT_READY"
 REVISION_CONFLICT: Final = "REVISION_CONFLICT"
 CATALOG_REQUIRED: Final = "CATALOG_REQUIRED"
+CATALOG_QUERY_EMPTY: Final = "CATALOG_QUERY_EMPTY"
+TAKEOFF_REVIEW_INCOMPLETE: Final = "TAKEOFF_REVIEW_INCOMPLETE"
+SUGGESTIONS_ALREADY_REFINED: Final = "SUGGESTIONS_ALREADY_REFINED"
 
 STAGE_CREATED: Final = "created"
 STAGE_PLATE: Final = "plate"
@@ -161,6 +179,36 @@ def catalog_required(reason: str, details: Mapping[str, object] | None = None) -
     e o conteúdo que deixou de validar — nunca "a rodada não tem catálogo".
     """
     return RoundRefusal(409, CATALOG_REQUIRED, reason, details)
+
+
+def require_reviewed_packet(packet: TakeoffPacket) -> None:
+    """Shortlist só sobre takeoff inteiramente revisado (`409 TAKEOFF_REVIEW_INCOMPLETE`).
+
+    Quem recusa continua sendo `require_reviewed_takeoff`, do módulo que o servidor de
+    medição também usa: aqui só a recusa muda de vocabulário, porque em `/v1` "falta revisar
+    o takeoff" é ORDEM da cadeia — o orçamentista tem o que fazer para sair dela — e não
+    invariante violada. Computar sobre pacote meio revisado congelaria uma shortlist sem os
+    itens que ainda vão ser confirmados, e a leitura seguinte serviria esse artefato
+    incompleto sem recalcular.
+    """
+    try:
+        require_reviewed_takeoff(packet)
+    except ValuationValidationError as error:
+        raise RoundRefusal(409, TAKEOFF_REVIEW_INCOMPLETE, error.message, error.details) from error
+
+
+def require_search_terms(query: str) -> tuple[str, ...]:
+    """Palavras utilizáveis da consulta (`422 CATALOG_QUERY_EMPTY`), antes de qualquer busca.
+
+    Espelha `require_reviewed_packet`: a recusa é a do módulo compartilhado
+    (`require_query_terms`), com o código estável de `/v1` no lugar do vocabulário do
+    servidor local. É `422` e não `409` porque o que está errado é o pedido, não a etapa da
+    rodada — nada que o orçamentista decida na cadeia faz `-` virar uma busca.
+    """
+    try:
+        return require_query_terms(query)
+    except ValuationValidationError as error:
+        raise RoundRefusal(422, CATALOG_QUERY_EMPTY, error.message, error.details) from error
 
 
 def load_round(session: Session, *, round_id: str, tenant_id: str) -> ValuationRoundRecord | None:
@@ -326,6 +374,103 @@ def require_assignments(revision: ValuationRoundRevisionRecord | None) -> CodeAs
             detail="a rodada ainda não tem decisão de código registrada",
         )
     return assignments
+
+
+SEMANTIC_ARM_ABSENT: Final = (
+    f"{SEMANTIC_UNAVAILABLE_MESSAGE}: a rodada da API não publica índice de embeddings"
+)
+"""Motivo declarado do braço semântico nas duas saídas de código (shortlist e busca).
+
+O índice de embeddings é artefato do CLI local (39 MB) e nenhuma rota de `/v1` o publica —
+a F-003 não migra dado nenhum. Dizer isso na resposta é o contrário de degradar em
+silêncio: a shortlist e a busca continuam sendo as lexicais, e o cliente sabe por quê."""
+
+_NO_QUERY_CACHE: Final = Path(os.devnull)
+"""Cache de vetores inexistente, passado a `compute_suggestions` para ser NÃO usado.
+
+A via paga só é tentada quando a rodada tem índice (`SemanticArm.index`), e a rodada de
+`/v1` nunca tem; o cache é insumo dessa via e não artefato de decisão. O dispositivo nulo
+está aqui para que um caminho que tentasse usá-lo não escrevesse em lugar nenhum — e, mesmo
+se tentasse, `adapter=None` recusa a consulta ausente em vez de embuti-la."""
+
+
+def suggestions_of(revision: ValuationRoundRevisionRecord | None) -> CodeSuggestionSet | None:
+    """Shortlist gravada, ou `None` quando ela não existe **ou não valida mais**.
+
+    Ilegível conta como ausente de propósito, e só para quem PERGUNTA pelo conteúdo: é
+    assim que a guarda de refino pago (`require_unrefined_suggestions`) deixa o recompute
+    curar um artefato corrompido, em vez de recusá-lo para sempre por causa de um campo que
+    ninguém consegue ler. Quem SERVE a shortlist não passa por aqui: lá, artefato ilegível
+    é recusa, porque a tela não pode renderizar o que o domínio não valida.
+    """
+    if revision is None or revision.code_suggestions_json is None:
+        return None
+    try:
+        return CodeSuggestionSet.model_validate(revision.code_suggestions_json)
+    except (ValuationValidationError, ValidationError):
+        return None
+
+
+def require_unrefined_suggestions(suggestions: CodeSuggestionSet | None) -> None:
+    """Recusa recalcular por caminho determinístico uma shortlist com refino pago.
+
+    Recalcular descartaria o lineage da chamada paga — quem respondeu, com qual modelo e
+    sob qual prompt —, e esse lineage é a única prova de por que a ordem publicada é aquela.
+    O critério é o sufixo que o próprio domínio carimba no `suggester_version`; refinar de
+    novo continua sendo comando do CLI.
+    """
+    if suggestions is None or not suggestions.suggester_version.endswith(LLM_RERANK_SUFFIX):
+        return
+    raise RoundRefusal(
+        409,
+        SUGGESTIONS_ALREADY_REFINED,
+        "a shortlist já carrega refino pago; recalcular descartaria o lineage da chamada",
+        {"suggester_version": suggestions.suggester_version},
+    )
+
+
+def compute_round_suggestions(
+    packet: TakeoffPacket, catalog: PriceCatalog
+) -> tuple[CodeSuggestionSet, list[str]]:
+    """Shortlist recalculada do zero pelo algoritmo corrente; nenhuma chamada paga acontece.
+
+    Mesmo cálculo do servidor de medição (`compute_suggestions`), com as três coisas que na
+    rodada de `/v1` só podem ser estas: sinônimos do seed empacotado (não há `synonyms.json`
+    de diretório), consolidado contratual ausente — a rodada guarda catálogo, não contrato —
+    e braço semântico declarado indisponível, porque nenhuma rota publica índice de
+    embeddings. A revisão completa do takeoff é precondição e continua sendo conferida lá
+    dentro.
+    """
+    return compute_suggestions(
+        packet,
+        catalog,
+        None,
+        default_domain_synonyms(),
+        semantic=SemanticArm(None, None, "unavailable", SEMANTIC_ARM_ABSENT),
+        query_cache_path=_NO_QUERY_CACHE,
+    )
+
+
+def search_round_catalog(catalog: PriceCatalog, query: str, limit: int) -> dict[str, Any]:
+    """Busca léxica pura no catálogo instalado (decisão humana de 2026-08-17).
+
+    O léxico é o padrão de `/v1` e o único braço que esta função conhece: o híbrido depende
+    de índice publicado na rodada e de entitlement contratual, e quem confere as duas coisas
+    é a rota — nunca esta função, que jamais resolve vetor nem toca provider. O motivo do
+    braço ausente viaja na resposta (`semantic_notes`), como no servidor de medição: a busca
+    nunca degrada em silêncio.
+    """
+    require_search_terms(query)
+    return search_catalog(
+        catalog,
+        query,
+        limit,
+        default_domain_synonyms(),
+        noise=default_legend_noise(),
+        semantic=None,
+        query_vec=None,
+        semantic_warning=SEMANTIC_ARM_ABSENT,
+    )
 
 
 def require_document(
