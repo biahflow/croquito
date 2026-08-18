@@ -277,6 +277,27 @@
         "title": "ArcGeometry",
         "type": "object"
       },
+      "AssociatePlateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "upload_id": {
+            "format": "uuid",
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "base_version"
+        ],
+        "title": "AssociatePlateRequest",
+        "type": "object"
+      },
       "AssociationCandidate": {
         "additionalProperties": false,
         "properties": {
@@ -416,6 +437,38 @@
           "safety_notes"
         ],
         "title": "AssociationSet",
+        "type": "object"
+      },
+      "BuildAmendmentDossierRequest": {
+        "additionalProperties": false,
+        "description": "Construção do dossiê do aditivo: espelho de `BuildValuationCalcRequest`.\n\nO dossiê nasce dos MESMOS dois artefatos-base do boletim (pacote de takeoff e conjunto\nde códigos) e não recebe nada além da guarda de concorrência: ele não precifica por\nconstrução (ADR-0027) e não tem rótulo próprio a receber.\n\nComo no boletim, `base_version` é mudança pretendida: `/dossier/build` reconstrói sem\nguarda, e em `/v1` a reconstrução é ato humano que avança a versão da rodada.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "BuildAmendmentDossierRequest",
+        "type": "object"
+      },
+      "BuildValuationCalcRequest": {
+        "additionalProperties": false,
+        "description": "Construção do boletim e da memória de cálculo: o corpo é só a guarda de concorrência.\n\nA identidade da obra NÃO entra por aqui. No servidor de medição (`POST /calc/build`),\n`worksite_key`, `worksite_name`, `period_number`, `reference_label`, `address` e\n`contract_label` viajavam no payload; em `/v1` eles são atributos da RODADA (decisão\nhumana de 2026-08-17, colunas de `ValuationRoundRecord`) e é de lá que o cálculo os lê.\nAceitá-los aqui deixaria o cliente reescrever a identidade da obra no meio da cadeia —\nquem recusa é o `extra=\"forbid\"` do `ApiModel`, não uma lista negra.\n\n`base_version` é MUDANÇA pretendida desta migração (F-003, achado 7): `/calc/build` não\ntem guarda de concorrência nenhuma e sempre reconstrói do estado corrente dos dois\nartefatos de origem. Em `/v1` a construção é ato humano da cadeia — ela avança a versão\nda rodada e pode devolver `409 REVISION_CONFLICT`.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "BuildValuationCalcRequest",
         "type": "object"
       },
       "ChatAnchors": {
@@ -842,6 +895,63 @@
         "title": "CircleGeometry",
         "type": "object"
       },
+      "CodeAssignmentDecisionRequest": {
+        "additionalProperties": false,
+        "description": "Uma decisão do orçamentista sobre o código SCO de um item confirmado no takeoff.\n\nO carimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`,\n`decided_at` e `decision_id` são recusados pelo `extra=\"forbid\"` do `ApiModel`: a\nidentidade vem do `Principal` e o instante, do servidor.\n\nDuas regras são de CONTRATO e ficam aqui; nenhuma outra é. O `pattern` de `item_id`\nrepete o do domínio para que um id malformado seja `422` de fronteira em vez de estourar\nno meio da rota, e a justificativa obrigatória na rejeição é exigência desta API (o\ndomínio aceita nota vazia): rejeitar um código sem dizer por quê deixaria o item fora do\nboletim e fora do dossiê do aditivo sem nenhum motivo registrado. Código no catálogo,\nunidade compatível, item já decidido e item não confirmado no takeoff continuam sendo\nrecusa do domínio, que esta rota não reimplementa.",
+        "properties": {
+          "action": {
+            "enum": [
+              "confirm",
+              "reject"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "item_id": {
+            "pattern": "^ti_[a-f0-9]{16}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "base_version",
+          "item_id",
+          "action"
+        ],
+        "title": "CodeAssignmentDecisionRequest",
+        "type": "object"
+      },
       "Constraint": {
         "additionalProperties": false,
         "properties": {
@@ -978,6 +1088,21 @@
           "project_name"
         ],
         "title": "CreateJobRequest",
+        "type": "object"
+      },
+      "CreatePlateExtractionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "CreatePlateExtractionRequest",
         "type": "object"
       },
       "CreateProposalCalibrationRequest": {
@@ -1232,6 +1357,75 @@
           "proposal_ids"
         ],
         "title": "CreateTraceSolveRequest",
+        "type": "object"
+      },
+      "CreateValuationRoundRequest": {
+        "additionalProperties": false,
+        "description": "Rodada nova: a obra, o catálogo instalado e os rótulos que o boletim exige.\n\n`period_number`, `address` e `contract_label` são atributos da RODADA (decisão humana de\n2026-08-17): nenhuma rota do contrato os recebia e sem eles o boletim não fecha. O\ncarimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`, `decided_at` e\n`decision_id` são recusados pelo `extra=\"forbid\"` do `ApiModel`, não por lista negra.\n\n`worksite_key` repete o padrão que o domínio exige de `WorksiteBulletin`\n(`WORKSITE_KEY_PATTERN`) porque a chave é IMUTÁVEL na rodada: aceitá-la livre aqui faria\numa rodada nascer válida com `PRAÇA X` e só quebrar no `POST /calc`, dezenas de decisões\ndepois, quando já não há o que corrigir sem abrir rodada nova.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "catalog_upload_id": {
+            "format": "uuid",
+            "title": "Catalog Upload Id",
+            "type": "string"
+          },
+          "contract_label": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contract Label"
+          },
+          "period_number": {
+            "maximum": 999.0,
+            "minimum": 1.0,
+            "title": "Period Number",
+            "type": "integer"
+          },
+          "reference_label": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Reference Label",
+            "type": "string"
+          },
+          "worksite_key": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,63}$",
+            "title": "Worksite Key",
+            "type": "string"
+          },
+          "worksite_name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Worksite Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worksite_key",
+          "worksite_name",
+          "catalog_upload_id",
+          "reference_label",
+          "period_number"
+        ],
+        "title": "CreateValuationRoundRequest",
         "type": "object"
       },
       "DecideProposalBatchRequest": {
@@ -2968,6 +3162,22 @@
         "title": "ReadingStatus",
         "type": "string"
       },
+      "RecomputeSuggestionsRequest": {
+        "additionalProperties": false,
+        "description": "Recompute explícito da shortlist de código: o corpo é só a guarda de concorrência.\n\nO recompute é ATO humano — ele descarta a shortlist anterior e a substitui pelo\nalgoritmo corrente —, e por isso exige `base_version` e avança a versão da rodada. A\nleitura que calcula a shortlist pela primeira vez não é ato nenhum e não pede corpo.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "RecomputeSuggestionsRequest",
+        "type": "object"
+      },
       "RectifyReadingCommand": {
         "additionalProperties": false,
         "description": "Correção declarada de uma decisão já registrada.\n\nNão existe ação `correct` aqui: o desfecho da leitura é `confirm` ou `reject`, e o\nque muda em relação ao registro anterior viaja nos mesmos campos da decisão. O alvo\né citado nominalmente e a justificativa é obrigatória — quem corrige o registro de\num profissional escreve por quê.",
@@ -3740,6 +3950,87 @@
         "title": "SubmitReviewDecisionsRequest",
         "type": "object"
       },
+      "TakeoffDecisionRequest": {
+        "additionalProperties": false,
+        "description": "Uma decisão do orçamentista sobre um item do takeoff.\n\n`quantity` viaja como TEXTO porque quantidade é `Decimal` exato neste contexto: um\n`float` de JSON já teria perdido a escala escrita na legenda antes de chegar aqui.\n\nO carimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`,\n`decided_at` e `decision_id` são recusados pelo `extra=\"forbid\"` do `ApiModel`, não por\nlista negra: a identidade vem do `Principal` e o instante, do servidor.\n\nO padrão de `item_id` repete o do domínio (`TakeoffDecisionInput`) de propósito: ele é\no que faz um id malformado ser `422` de contrato na fronteira, em vez de estourar o\nvalidador do domínio no meio da rota.",
+        "properties": {
+          "action": {
+            "enum": [
+              "confirm",
+              "reject"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "item_id": {
+            "pattern": "^ti_[a-f0-9]{16}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_note": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Note"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "base_version",
+          "item_id",
+          "action"
+        ],
+        "title": "TakeoffDecisionRequest",
+        "type": "object"
+      },
       "TextGeometry": {
         "additionalProperties": false,
         "properties": {
@@ -4168,6 +4459,275 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "ValuationExtractionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "extraction_id": {
+            "format": "uuid",
+            "title": "Extraction Id",
+            "type": "string"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "round_id",
+          "version",
+          "extraction_id",
+          "status"
+        ],
+        "title": "ValuationExtractionResponse",
+        "type": "object"
+      },
+      "ValuationPlateResponse": {
+        "additionalProperties": false,
+        "description": "Metadados da prancha; a imagem sai por URL assinada e nunca pelo request path (D5).",
+        "properties": {
+          "image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Url"
+          },
+          "page_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Count"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "source_sha256": {
+            "title": "Source Sha256",
+            "type": "string"
+          },
+          "upload_id": {
+            "format": "uuid",
+            "title": "Upload Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "round_id",
+          "version",
+          "upload_id",
+          "source_sha256"
+        ],
+        "title": "ValuationPlateResponse",
+        "type": "object"
+      },
+      "ValuationRoundPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ValuationRoundSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ValuationRoundPage",
+        "type": "object"
+      },
+      "ValuationRoundResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "round_id",
+          "version",
+          "status",
+          "created_at"
+        ],
+        "title": "ValuationRoundResponse",
+        "type": "object"
+      },
+      "ValuationRoundSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "extraction_status": {
+            "title": "Extraction Status",
+            "type": "string"
+          },
+          "period_number": {
+            "title": "Period Number",
+            "type": "integer"
+          },
+          "reference_label": {
+            "title": "Reference Label",
+            "type": "string"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "worksite_key": {
+            "title": "Worksite Key",
+            "type": "string"
+          },
+          "worksite_name": {
+            "title": "Worksite Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "round_id",
+          "worksite_key",
+          "worksite_name",
+          "reference_label",
+          "period_number",
+          "version",
+          "status",
+          "stage",
+          "extraction_status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ValuationRoundSummary",
+        "type": "object"
+      },
+      "ValuationTakeoffOverlayResponse": {
+        "additionalProperties": false,
+        "description": "Overlay das âncoras: URL assinada, digest do desenho e a idade dele (ADR-0030).\n\n`packet_sha256` é o pacote CORRENTE da rodada e `overlay_packet_sha256` é o pacote que\noriginou o desenho; `stale` é a comparação dos dois, feita na leitura. Os três viajam\njuntos porque a marca sozinha não diz ao cliente o que mudou nem quando ele já pode\nparar de esperar pelo re-render.",
+        "properties": {
+          "image_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Sha256"
+          },
+          "image_url": {
+            "title": "Image Url",
+            "type": "string"
+          },
+          "overlay_packet_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overlay Packet Sha256"
+          },
+          "packet_sha256": {
+            "title": "Packet Sha256",
+            "type": "string"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "round_id",
+          "version",
+          "image_url",
+          "packet_sha256",
+          "stale"
+        ],
+        "title": "ValuationTakeoffOverlayResponse",
         "type": "object"
       },
       "VisionProposal": {
@@ -5995,6 +6555,1159 @@
         "summary": "Presign Upload",
         "tags": [
           "uploads"
+        ]
+      }
+    },
+    "/v1/valuation-rounds": {
+      "get": {
+        "description": "Rodadas do tenant, da mais recente para a mais antiga, com cursor opaco.",
+        "operationId": "list_valuation_rounds_v1_valuation_rounds_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationRoundPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Valuation Rounds",
+        "tags": [
+          "valuation"
+        ]
+      },
+      "post": {
+        "description": "Abre a rodada e instala o catálogo, que é imutável nela: trocar é abrir outra.",
+        "operationId": "create_valuation_round_v1_valuation_rounds_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateValuationRoundRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationRoundResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Valuation Round",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}": {
+      "get": {
+        "description": "Estado da rodada por etapa; é por aqui que a tela acompanha a extração paga.",
+        "operationId": "get_valuation_round_v1_valuation_rounds__round_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Valuation Round V1 Valuation Rounds  Round Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Valuation Round",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/amendment-dossier": {
+      "get": {
+        "description": "Dossiê gravado, revalidado na leitura: espelho de `GET /bulletin`.\n\nDossiê ainda não construído é `409 ROUND_STAGE_NOT_READY`; dossiê que não passa na\nrevalidação é `422` — a tela nunca renderiza dossiê inválido.",
+        "operationId": "get_valuation_amendment_dossier_v1_valuation_rounds__round_id__amendment_dossier_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Valuation Amendment Dossier V1 Valuation Rounds  Round Id  Amendment Dossier Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Valuation Amendment Dossier",
+        "tags": [
+          "valuation"
+        ]
+      },
+      "post": {
+        "description": "Constrói o dossiê do aditivo: itens confirmados cujo código foi REJEITADO.\n\nEspelho de `POST /calc`: o dossiê é o outro artefato de fechamento da rodada e\nnasce dos mesmos dois artefatos-base — pacote de takeoff e conjunto de códigos. Ele\nnão carrega campo de preço por construção e nunca cria nem altera `Amendment`/RE-RA\n(ADR-0027, ADR-0018): pedir o aditivo à prefeitura é ato contratual humano, fora\ndeste sistema.\n\nRejeição na revisão do TAKEOFF não é aditivo — item que não se mede não vira\npedido. O que entra aqui é só a rejeição de CÓDIGO de um item confirmado no\ntakeoff, com a justificativa que o orçamentista registrou.\n\nConjunto de códigos inexistente é `409 ROUND_STAGE_NOT_READY`; item confirmado sem\ndecisão de código é `422 DOMAIN_VALIDATION_FAILED` com\n`AMENDMENT_DOSSIER_ASSIGNMENTS_INCOMPLETE`, porque o dossiê é artefato de\nfechamento e não publica foto parcial da rodada.\n\nA guarda de `base_version` é mudança pretendida desta migração; ver\n`BuildAmendmentDossierRequest`.",
+        "operationId": "build_valuation_amendment_dossier_v1_valuation_rounds__round_id__amendment_dossier_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildAmendmentDossierRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Build Valuation Amendment Dossier V1 Valuation Rounds  Round Id  Amendment Dossier Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Build Valuation Amendment Dossier",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/bulletin": {
+      "get": {
+        "description": "Boletim gravado, com os totais recomputados na leitura pelos validadores do modelo.\n\nBoletim ainda não construído é `409 ROUND_STAGE_NOT_READY`; boletim que não passa na\nrevalidação é `422`, nunca um `200` com número que ninguém conferiu.",
+        "operationId": "get_valuation_bulletin_v1_valuation_rounds__round_id__bulletin_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Valuation Bulletin V1 Valuation Rounds  Round Id  Bulletin Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Valuation Bulletin",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/calc": {
+      "post": {
+        "description": "Constrói boletim e memória de cálculo do takeoff confirmado e dos códigos decididos.\n\nA identidade da obra vem da RODADA (`worksite_key`, `worksite_name`,\n`period_number`, `reference_label`, `address`, `contract_label`), nunca do corpo:\nem `/v1` esses rótulos são colunas de `ValuationRoundRecord` e o corpo carrega só a\nguarda de concorrência.\n\n`calc_plan=None` de propósito: o plano de cálculo é artefato de DIRETÓRIO do\nservidor de medição e a rodada de `/v1` não o publica. Sem ele, cada item recebe o\nbloco de quantidade direta que o próprio domínio gera — nunca uma receita suposta.\n\nEsta rota **não aprova nada**: aprovação nominal da medição é ato próprio, com\nportão de saldo e contrato, e não pertence à construção do boletim.\n\nDuas recusas se parecem e não são a mesma coisa. Conjunto de códigos ainda\ninexistente é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem, o orçamentista tem\no que fazer para sair dela. Conjunto existente com item confirmado sem decisão é\n`422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`: invariante do\ndomínio, e quem a levanta é `packages/valuation`. Catálogo com origem diferente do\nSCO fecha a medição licitada em `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (ADR-0027) —\nitem fora do contrato vira dossiê de aditivo, nunca preço de outra tabela.\n\nA guarda de `base_version` é mudança pretendida desta migração; ver\n`BuildValuationCalcRequest`.",
+        "operationId": "build_valuation_calc_v1_valuation_rounds__round_id__calc_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildValuationCalcRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Build Valuation Calc V1 Valuation Rounds  Round Id  Calc Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Build Valuation Calc",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/catalog/search": {
+      "get": {
+        "description": "Busca no catálogo instalado, léxica por padrão (decisão humana de 2026-08-17).\n\n`arm=hybrid` é braço PAGO e passa pelo mesmo portão da extração: sem autorização\ncontratual do tenant, `403 AI_PROCESSING_NOT_AUTHORIZED` (ADR-0012). Com ela, a\nresposta ainda é `503 PROVIDER_UNAVAILABLE` — o braço semântico depende de índice de\nembeddings publicado na rodada e nenhuma rota de `/v1` publica esse índice hoje.\nIsso é estado honesto, não falha: cair no léxico fingindo ser híbrido esconderia do\norçamentista que a vizinhança semântica não participou do que ele está lendo. E\nnenhuma chamada de embedding acontece dentro de um `GET`, com ou sem índice.",
+        "operationId": "search_valuation_catalog_v1_valuation_rounds__round_id__catalog_search_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "arm",
+            "required": false,
+            "schema": {
+              "default": "lexical",
+              "enum": [
+                "lexical",
+                "hybrid"
+              ],
+              "title": "Arm",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Search Valuation Catalog V1 Valuation Rounds  Round Id  Catalog Search Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Valuation Catalog",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/code-assignments": {
+      "get": {
+        "description": "Decisões de código da rodada e os itens confirmados que ainda esperam por uma.",
+        "operationId": "get_valuation_code_assignments_v1_valuation_rounds__round_id__code_assignments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Valuation Code Assignments V1 Valuation Rounds  Round Id  Code Assignments Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Valuation Code Assignments",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/code-assignments/decisions": {
+      "post": {
+        "description": "Confirma ou rejeita o código de UM item, acumulando sobre o conjunto anterior.\n\nAcumular item a item é a semântica do domínio: é ele quem recusa a re-decisão\n(`ASSIGNMENT_ITEM_ALREADY_DECIDED`) e quem carrega adiante as confirmações já\nregistradas. A rota não confere código, unidade nem estado do item — ela só monta a\ndecisão com a identidade do `Principal` e o instante do servidor.",
+        "operationId": "decide_valuation_item_code_v1_valuation_rounds__round_id__code_assignments_decisions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodeAssignmentDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Decide Valuation Item Code V1 Valuation Rounds  Round Id  Code Assignments Decisions Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Decide Valuation Item Code",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/code-suggestions": {
+      "get": {
+        "description": "Shortlist de código por item confirmado: observação, nunca decisão (ADR-0021).\n\nCalculada UMA vez e persistida; leitura seguinte serve o que está gravado\n(`computed: false`). A gravação entra na cadeia de revisões **sem avançar a versão da\nrodada** (decisão humana de 2026-08-17): a shortlist é artefato derivado, e se um\n`GET` movesse o token de concorrência, a próxima decisão do orçamentista levaria\n`409` por algo que ele não fez.\n\nNenhuma chamada paga acontece aqui: o braço semântico depende de índice publicado na\nrodada, que nenhuma rota publica, e o motivo viaja em `semantic_notes`.",
+        "operationId": "get_valuation_code_suggestions_v1_valuation_rounds__round_id__code_suggestions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Valuation Code Suggestions V1 Valuation Rounds  Round Id  Code Suggestions Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Valuation Code Suggestions",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/code-suggestions/recompute": {
+      "post": {
+        "description": "Recalcula a shortlist do zero pelo algoritmo corrente e avança a rodada.\n\nAo contrário do `GET`, este é ato humano: ele descarta a shortlist anterior, então\nexige `base_version` e move o token de concorrência da rodada.\n\nShortlist que já carrega refino pago recusa com `409 SUGGESTIONS_ALREADY_REFINED` —\nrecalcular descartaria o lineage da chamada paga. Artefato gravado que não valida\ncomo `CodeSuggestionSet` **não** cai nessa guarda: o recompute é exatamente a cura\ndele.",
+        "operationId": "recompute_valuation_code_suggestions_v1_valuation_rounds__round_id__code_suggestions_recompute_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecomputeSuggestionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Recompute Valuation Code Suggestions V1 Valuation Rounds  Round Id  Code Suggestions Recompute Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Recompute Valuation Code Suggestions",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/plate": {
+      "get": {
+        "description": "Metadados e URL assinada da página promovida; a URL não vai para log nem auditoria.",
+        "operationId": "get_valuation_plate_v1_valuation_rounds__round_id__plate_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationPlateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Valuation Plate",
+        "tags": [
+          "valuation"
+        ]
+      },
+      "post": {
+        "description": "Associa o PDF já enviado pelo presign; a API não renderiza nem lê a prancha.\n\nA ingestão da página — render a 200 DPI, manifest, digest da imagem — é trabalho do\nworker: aqui o PDF é só conferido contra o que o presign declarou.",
+        "operationId": "associate_valuation_plate_v1_valuation_rounds__round_id__plate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssociatePlateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationPlateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Associate Valuation Plate",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/plate/extractions": {
+      "post": {
+        "description": "Enfileira a extração paga da legenda; nenhum provider é chamado no request path.",
+        "operationId": "create_valuation_plate_extraction_v1_valuation_rounds__round_id__plate_extractions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePlateExtractionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationExtractionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Valuation Plate Extraction",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/takeoff": {
+      "get": {
+        "description": "Pacote de takeoff da rodada, com a âncora de evidência de cada item.",
+        "operationId": "get_valuation_takeoff_v1_valuation_rounds__round_id__takeoff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Valuation Takeoff V1 Valuation Rounds  Round Id  Takeoff Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Valuation Takeoff",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/takeoff/decisions": {
+      "post": {
+        "description": "Aplica UMA decisão do orçamentista, grava a revisão nova e enfileira o overlay.\n\nA decisão é ato humano: ela avança o contador da rodada e o da cadeia de revisões.\nO overlay, não — ele é consequência, e é reconstruído fora do request path\n(ADR-0030). Entre a decisão e o desenho novo, a resposta já declara o overlay\nvencido, para que a tela não mostre o desenho anterior como se fosse deste pacote.",
+        "operationId": "decide_valuation_takeoff_item_v1_valuation_rounds__round_id__takeoff_decisions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TakeoffDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Decide Valuation Takeoff Item V1 Valuation Rounds  Round Id  Takeoff Decisions Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Decide Valuation Takeoff Item",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/takeoff/overlay": {
+      "get": {
+        "description": "URL assinada do overlay e a idade dele; overlay vencido é `200`, nunca erro.\n\nEsconder a divergência seria pior do que mostrá-la: o desenho anterior continua\nsendo a única visão de onde cada número foi lido (ADR-0030). A URL assinada segue o\nregime da imagem da prancha — prefixo do tenant conferido antes do presign, e nunca\nregistrada em log nem em auditoria (ADR-0028 D5).",
+        "operationId": "get_valuation_takeoff_overlay_v1_valuation_rounds__round_id__takeoff_overlay_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationTakeoffOverlayResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Valuation Takeoff Overlay",
+        "tags": [
+          "valuation"
         ]
       }
     }

@@ -57,12 +57,13 @@ def documented_routes(markdown: str) -> dict[str, str]:
                 continue
             mentions.setdefault(f"{method} {path}", []).append(state)
     # Uma rota é PENDENTE só quando TODAS as suas menções estão em seção pendente. A mesma
-    # rota aparece em seções de estado diferente no documento real: `POST /v1/uploads/presign`
-    # é documentada em "Uploads" (`API_CONTRACT.md:35`, vigente) e citada de novo dentro de
-    # "Medição de obra" (`:605`, pendente), porque a prancha da medição sobe por ela. Decidir
-    # pela primeira menção daria o resultado certo hoje apenas porque "Uploads" vem antes no
-    # arquivo: reordenar as seções acusaria uma rota exposta como pendente, erro inventado
-    # numa rota correta. Gate que falha sem motivo é gate que alguém desliga.
+    # rota pode aparecer em seções de estado diferente — caso real até a publicação da
+    # medição em T12: `POST /v1/uploads/presign` é documentada em "Uploads" (vigente) e era
+    # citada de novo dentro de "Medição de obra" (então pendente), porque a prancha da
+    # medição sobe por ela. Decidir pela primeira menção teria dado o resultado certo só
+    # porque "Uploads" vem antes no arquivo: reordenar as seções acusaria uma rota exposta
+    # como pendente, erro inventado numa rota correta. Gate que falha sem motivo é gate que
+    # alguém desliga. Ver `test_rota_citada_em_secao_pendente_e_em_secao_vigente_continua_vigente`.
     return {
         route: "PENDENTE" if all(state == "PENDENTE" for state in states) else "VIGENTE"
         for route, states in mentions.items()
@@ -359,9 +360,11 @@ def test_secao_pendente_com_rota_ja_exposta_exige_remover_o_aviso() -> None:
 def test_rota_citada_em_secao_pendente_e_em_secao_vigente_continua_vigente() -> None:
     """Estado não pode depender da ordem das seções no arquivo.
 
-    Caso real: `POST /v1/uploads/presign` é documentada em "Uploads" e citada de novo dentro
-    de "Medição de obra", que é pendente. Ela está exposta hoje; tratá-la como pendente faria
-    o gate acusar erro inventado numa rota correta.
+    Teste do PARSER (`documented_routes`), não da medição: usa markdown sintético, não o
+    documento real. Exemplo histórico (a seção "Medição de obra" já foi pendente, antes de
+    T12): `POST /v1/uploads/presign` é documentada em "Uploads" e citada de novo dentro de
+    uma seção pendente, porque a prancha da medição sobe por ela. Tratá-la como pendente por
+    causa dessa segunda menção faria o gate acusar erro inventado numa rota correta.
     """
     markdown = (
         "## Medição de obra\n\n"
@@ -403,21 +406,47 @@ def test_excecao_de_baseline_que_deixou_de_existir_reprova() -> None:
     )
 
 
-def test_as_rotas_da_medicao_estao_todas_pendentes() -> None:
-    """Ancora o estado de hoje: `/v1/valuation-rounds` é só contrato decidido (ADR-0028).
+# As 18 rotas de medição do ADR-0028 (F-003, T12). Listadas explicitamente para que uma rota
+# esquecida no futuro — em qualquer um dos dois lados — apareça como falha nomeada, e não como
+# conjunto que encolheu em silêncio.
+ROTAS_DE_MEDICAO: frozenset[str] = frozenset(
+    {
+        "POST /v1/valuation-rounds",
+        "GET /v1/valuation-rounds",
+        "GET /v1/valuation-rounds/{round_id}",
+        "POST /v1/valuation-rounds/{round_id}/plate",
+        "GET /v1/valuation-rounds/{round_id}/plate",
+        "POST /v1/valuation-rounds/{round_id}/plate/extractions",
+        "GET /v1/valuation-rounds/{round_id}/takeoff",
+        "GET /v1/valuation-rounds/{round_id}/takeoff/overlay",
+        "POST /v1/valuation-rounds/{round_id}/takeoff/decisions",
+        "GET /v1/valuation-rounds/{round_id}/code-suggestions",
+        "POST /v1/valuation-rounds/{round_id}/code-suggestions/recompute",
+        "GET /v1/valuation-rounds/{round_id}/catalog/search",
+        "GET /v1/valuation-rounds/{round_id}/code-assignments",
+        "POST /v1/valuation-rounds/{round_id}/code-assignments/decisions",
+        "POST /v1/valuation-rounds/{round_id}/calc",
+        "GET /v1/valuation-rounds/{round_id}/bulletin",
+        "POST /v1/valuation-rounds/{round_id}/amendment-dossier",
+        "GET /v1/valuation-rounds/{round_id}/amendment-dossier",
+    }
+)
 
-    Nenhuma rota de medição existe em `services/api` — é trabalho de F-003 — e o API
-    Contract precisa continuar declarando a seção "Medição de obra" como pendente até lá.
+
+def test_as_rotas_da_medicao_estao_todas_vigentes_e_expostas() -> None:
+    """Ancora o estado de hoje: as 18 rotas do ADR-0028 estão publicadas (F-003, T12).
+
+    Inverte o que este teste afirmava antes da publicação (nenhuma rota exposta, todas
+    PENDENTE no contrato): agora exige o oposto dos dois lados, nomeando cada uma das 18
+    rotas, para que uma rota que suma de qualquer lado no futuro reprove nomeada — e não
+    como contagem que encolheu em silêncio.
     """
     documented = documented_routes(API_CONTRACT_PATH.read_text(encoding="utf-8"))
-    rotas_de_medicao = {
+    rotas_de_medicao_no_contrato = {
         rota: estado
         for rota, estado in documented.items()
         if rota.split(" ", 1)[1].startswith("/v1/valuation-rounds")
     }
-
-    assert rotas_de_medicao, "Nenhuma rota /v1/valuation-rounds encontrada no API Contract."
-    assert all(estado == "PENDENTE" for estado in rotas_de_medicao.values()), rotas_de_medicao
 
     documento = json.loads(snapshot_text())
     exposed = exposed_routes(documento)
@@ -425,6 +454,25 @@ def test_as_rotas_da_medicao_estao_todas_pendentes() -> None:
         rota for rota in exposed if rota.split(" ", 1)[1].startswith("/v1/valuation-rounds")
     }
 
-    assert expostas_de_medicao == set(), (
-        f"Rota(s) de medição inesperadamente expostas pela aplicação: {sorted(expostas_de_medicao)}"
+    faltando_no_contrato = sorted(ROTAS_DE_MEDICAO - rotas_de_medicao_no_contrato.keys())
+    assert faltando_no_contrato == [], (
+        f"Rota(s) de medição ausentes do API Contract: {faltando_no_contrato}"
+    )
+
+    nao_vigentes = sorted(
+        rota for rota in ROTAS_DE_MEDICAO if rotas_de_medicao_no_contrato.get(rota) != "VIGENTE"
+    )
+    assert nao_vigentes == [], (
+        f"Rota(s) de medição não marcadas VIGENTE no API Contract: {nao_vigentes}"
+    )
+
+    faltando_exposicao = sorted(ROTAS_DE_MEDICAO - expostas_de_medicao)
+    assert faltando_exposicao == [], (
+        f"Rota(s) de medição documentadas mas não expostas pela aplicação: {faltando_exposicao}"
+    )
+
+    expostas_a_mais = sorted(expostas_de_medicao - ROTAS_DE_MEDICAO)
+    assert expostas_a_mais == [], (
+        "Rota(s) de medição expostas pela aplicação e ausentes desta lista fechada — "
+        f"atualize ROTAS_DE_MEDICAO: {expostas_a_mais}"
     )

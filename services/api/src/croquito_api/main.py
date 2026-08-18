@@ -640,20 +640,6 @@ class ChatSessionSummaryResponse(ApiModel):
     turn_count: int = Field(ge=0)
 
 
-VALUATION_ROUTES_PUBLISHED: Final = False
-"""Interruptor TEMPORÁRIO de F-003: as rotas de medição existem, mas fora do OpenAPI.
-
-O gate de contrato (`tests/api/test_openapi_contract.py`) compara a superfície `/v1` com o
-API Contract nas duas direções, e a pendência da seção "Medição de obra" é por SEÇÃO: não
-existe estado válido com parte das 18 rotas exposta e o resto ainda marcada
-"Estado: decidido, não implementado.". Enquanto a cadeia não está inteira, as rotas nascem
-com `include_in_schema=False` — o mesmo recurso que `/healthz` já usa — e o documento
-continua descrevendo exatamente o que o contrato descreve.
-
-Esta constante é para ser DELETADA junto com cada `include_in_schema=` que a cita, no passo
-que publica a seção (T12), e não para ser virada para `True` e esquecida: a publicação
-mexe no API Contract, no snapshot e no teste que hoje ancora a ausência das rotas."""
-
 CATALOG_CONTENT_TYPE: Final = "application/json"
 
 
@@ -4895,8 +4881,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
 
     # -- Medição de obra (ADR-0028) -----------------------------------------------------
-    # Todas fora do documento OpenAPI até a seção inteira ser publicada; ver
-    # `VALUATION_ROUTES_PUBLISHED`.
 
     def _enqueue_plate_extraction(*, round_id: str, extraction_id: str, tenant_id: str) -> None:
         """Publica o comando com o intent já durável; falha de transporte é 503 repetível."""
@@ -5124,7 +5108,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         response_model=ValuationRoundResponse,
         status_code=status.HTTP_201_CREATED,
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def create_valuation_round(
         payload: CreateValuationRoundRequest,
@@ -5209,7 +5192,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds",
         response_model=ValuationRoundPage,
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def list_valuation_rounds(
         principal: AuthenticatedPrincipal,
@@ -5272,7 +5254,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def get_valuation_round(
         round_id: UUID,
@@ -5289,7 +5270,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/plate",
         response_model=ValuationPlateResponse,
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def associate_valuation_plate(
         round_id: UUID,
@@ -5367,7 +5347,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/plate",
         response_model=ValuationPlateResponse,
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def get_valuation_plate(
         round_id: UUID,
@@ -5385,7 +5364,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         response_model=ValuationExtractionResponse,
         status_code=status.HTTP_202_ACCEPTED,
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def create_valuation_plate_extraction(
         round_id: UUID,
@@ -5496,7 +5474,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/takeoff",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def get_valuation_takeoff(
         round_id: UUID,
@@ -5513,7 +5490,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/takeoff/overlay",
         response_model=ValuationTakeoffOverlayResponse,
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def get_valuation_takeoff_overlay(
         round_id: UUID,
@@ -5564,7 +5540,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/takeoff/decisions",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def decide_valuation_takeoff_item(
         round_id: UUID,
@@ -5658,7 +5633,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/code-suggestions",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def get_valuation_code_suggestions(
         round_id: UUID,
@@ -5733,7 +5707,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/code-suggestions/recompute",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def recompute_valuation_code_suggestions(
         round_id: UUID,
@@ -5807,7 +5780,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/catalog/search",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def search_valuation_catalog(
         round_id: UUID,
@@ -5853,7 +5825,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/code-assignments",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def get_valuation_code_assignments(
         round_id: UUID,
@@ -5876,7 +5847,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/code-assignments/decisions",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def decide_valuation_item_code(
         round_id: UUID,
@@ -5965,7 +5935,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/calc",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def build_valuation_calc(
         round_id: UUID,
@@ -6063,7 +6032,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/bulletin",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def get_valuation_bulletin(
         round_id: UUID,
@@ -6092,7 +6060,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/amendment-dossier",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def build_valuation_amendment_dossier(
         round_id: UUID,
@@ -6174,7 +6141,6 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         "/v1/valuation-rounds/{round_id}/amendment-dossier",
         response_model=dict[str, Any],
         tags=["valuation"],
-        include_in_schema=VALUATION_ROUTES_PUBLISHED,
     )
     async def get_valuation_amendment_dossier(
         round_id: UUID,

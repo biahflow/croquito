@@ -2,7 +2,7 @@
 
 Status: Accepted for MVP  
 Responsável: Backend / Frontend  
-Última revisão: 2026-08-17
+Última revisão: 2026-08-18
 
 Base path: `/v1`  
 Autenticação: JWT bearer OIDC  
@@ -564,13 +564,6 @@ serializada no pacote CAD. Nunca retorna ou aceita o papel profissional no paylo
 
 ## Medição de obra
 
-> **Estado: decidido, não implementado.** Esta seção descreve o contrato do
-> [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md), aceito em 2026-08-17. Nenhuma
-> destas rotas existe em `services/api` hoje: a cadeia de medição roda no servidor de
-> homologação ([ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md)), e a
-> migração é trabalho de [F-003](../features/F-003-medicao-v1-migration/feature.md). Um teste
-> de paridade entre rotas reais e esta página deve tratar a seção como pendente até lá.
-
 A medição de obra é um contexto delimitado próprio
 ([ADR-0016](../adr/0016-valuation-bounded-context.md)) e não pende de `job`: a raiz é a
 **rodada** (`ValuationRound`), que leva uma prancha do levantamento de quantitativos ao
@@ -591,8 +584,15 @@ Regras que valem em toda a seção:
 
 ### `POST /v1/valuation-rounds`
 
-Entrada: `worksite_key`, `worksite_name`, `catalog_upload_id`, `reference_label`.  
+Entrada: `worksite_key`, `worksite_name`, `catalog_upload_id`, `reference_label`,
+`period_number`, `address` (opcional), `contract_label` (opcional).  
 Saída: `round_id`, `version=1`, `status`, `created_at`.
+
+`worksite_key` segue `WORKSITE_KEY_PATTERN` (`^[a-z0-9][a-z0-9-]{2,63}$`), o mesmo padrão
+que o domínio exige de `WorksiteBulletin`: a chave é imutável na rodada e aceitá-la livre
+aqui faria uma rodada nascer válida e só quebrar em `POST .../calc`, dezenas de decisões
+depois. `period_number`, `address` e `contract_label` são atributos da RODADA — nenhum
+deles viaja em `POST .../calc`, que lê todos da rodada.
 
 O catálogo de preços é instalado na criação e é imutável na rodada: trocar de catálogo é
 abrir rodada nova. Erros: `422 DOMAIN_VALIDATION_FAILED` para catálogo ilegível ou inválido.
@@ -686,6 +686,14 @@ modelo pago não é recalculada por caminho determinístico:
 Busca no catálogo instalado. Parâmetros: `q`, `limit`, `arm`. Consulta sem termo utilizável
 devolve `422 CATALOG_QUERY_EMPTY`; rodada sem catálogo, `409 CATALOG_REQUIRED`.
 
+`arm=lexical` é o padrão. `arm=hybrid` é braço PAGO e passa pelo mesmo portão da extração:
+sem autorização contratual do tenant, `403 AI_PROCESSING_NOT_AUTHORIZED`
+([ADR-0012](../adr/0012-contractual-ai-processing-entitlements.md)). Com entitlement, a
+resposta ainda é `503 PROVIDER_UNAVAILABLE` — o braço semântico depende de índice de
+embeddings publicado na rodada e nenhuma rota de `/v1` publica esse índice hoje. Isso é
+estado honesto, não falha: a busca nunca degrada em silêncio para o léxico fingindo ser
+híbrida.
+
 ### `GET /v1/valuation-rounds/{round_id}/code-assignments`
 
 Retorna o `CodeAssignmentSet` corrente e os itens confirmados ainda sem decisão de código.
@@ -700,10 +708,16 @@ devolvem `422 DOMAIN_VALIDATION_FAILED` com o código `ASSIGNMENT_*` corresponde
 
 ### `POST /v1/valuation-rounds/{round_id}/calc`
 
+Entrada: **só** `base_version`. `worksite_key`, `worksite_name`, `period_number`,
+`reference_label`, `address` e `contract_label` são atributos da rodada, recebidos em
+`POST /v1/valuation-rounds`, e não voltam a viajar aqui — quem os quiser mudar abre rodada
+nova.
+
 Constrói o boletim e a memória de cálculo a partir do takeoff confirmado e das confirmações
-de código. Exige `Idempotency-Key` e `base_version`. Não aprova nada: aprovação nominal é ato
-próprio e não pertence a esta rota. Confirmação de código pendente devolve
-`422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`.
+de código. Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para
+versão divergente. Não aprova nada: aprovação nominal é ato próprio e não pertence a esta
+rota. Confirmação de código pendente devolve `422 DOMAIN_VALIDATION_FAILED` com
+`CALC_ASSIGNMENT_MISSING`.
 
 ### `GET /v1/valuation-rounds/{round_id}/bulletin`
 
@@ -712,9 +726,13 @@ Boletim ainda não construído devolve `409 ROUND_STAGE_NOT_READY`.
 
 ### `POST /v1/valuation-rounds/{round_id}/amendment-dossier`
 
+Entrada: **só** `base_version`, espelho de `POST .../calc`: o dossiê nasce dos mesmos dois
+artefatos-base do boletim e não recebe rótulo próprio.
+
 Constrói o dossiê do aditivo com os itens confirmados cujo código foi rejeitado, com a
 justificativa humana ([ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)). O
-dossiê não carrega campo de preço por construção. Decisão de código pendente devolve
+dossiê não carrega campo de preço por construção. Exige `Idempotency-Key` e `base_version`,
+com `409 REVISION_CONFLICT` para versão divergente. Decisão de código pendente devolve
 `422 DOMAIN_VALIDATION_FAILED` com `AMENDMENT_DOSSIER_ASSIGNMENTS_INCOMPLETE`.
 
 ### `GET /v1/valuation-rounds/{round_id}/amendment-dossier`
@@ -776,13 +794,10 @@ nem em auditoria. Artefato de outro tenant retorna `404`.
 `READING_ALREADY_DECIDED`, `READING_NOT_DECIDED`,
 `RECTIFICATION_TARGET_STALE`, `RECTIFICATION_ALREADY_APPLIED`,
 `CHAT_SESSION_CLOSED`, `CHAT_TURN_PENDING`, `CHAT_ANCHOR_UNKNOWN`,
-`IDEMPOTENCY_KEY_REUSED`.
-
-Decididos pelo [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md) para a seção
-"Medição de obra", ainda **não** implementados e por isso listados à parte:
+`IDEMPOTENCY_KEY_REUSED`,
 `ROUND_STAGE_NOT_READY`, `ROUND_PLATE_ALREADY_PRESENT`, `EXTRACTION_IN_PROGRESS`,
 `SUGGESTIONS_ALREADY_REFINED`, `TAKEOFF_REVIEW_INCOMPLETE`, `CATALOG_QUERY_EMPTY`,
-`CATALOG_REQUIRED`. Passam para a lista acima quando as rotas existirem.
+`CATALOG_REQUIRED`.
 
 Os códigos de invariante de `packages/valuation` (`TAKEOFF_*`, `CALC_*`, `ASSIGNMENT_*`,
 `AMENDMENT_DOSSIER_*`, `CATALOG_*`) não são códigos de API: viajam em `details` do
