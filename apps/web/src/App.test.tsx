@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { App } from "./App";
+import { App, isHomologationHost } from "./App";
 import { entryRedirect, LOGIN_PATH } from "./route";
 
 /**
@@ -10,14 +10,19 @@ import { entryRedirect, LOGIN_PATH } from "./route";
  *
  * O render estático cai sempre na rota do croqui (sem `window`, `currentRoute()` devolve a
  * raiz) e neste ambiente não há `VITE_OIDC_*` — é, portanto, o regime sem sessão, no qual
- * NENHUMA das duas jornadas é alcançável.
+ * NENHUMA das duas jornadas é alcançável, e no qual a porta de entrada mostra o estado de
+ * ambiente indisponível.
  */
 describe("App", () => {
   it("na rota do croqui sem sessão, nenhuma jornada é exposta", () => {
     const html = renderToStaticMarkup(<App />);
 
-    expect(html).toContain("Entre para continuar");
-    expect(html).toContain("OIDC não está configurado");
+    // A porta, com o texto aprovado em 2026-08-18 (Task Contract da T3).
+    expect(html).toContain("Do croqui ao orçamento.");
+    expect(html).toContain(
+      "O ambiente está indisponível agora. Tente de novo em instantes — se " +
+        "persistir, avise a operação.",
+    );
     // Nada do croqui.
     expect(html).not.toContain("DXF bloqueado");
     expect(html).not.toContain("UUID do job");
@@ -25,27 +30,65 @@ describe("App", () => {
     expect(html).not.toContain("Campo do Guaxindiba");
     expect(html).not.toContain("Simulação de decisão");
     expect(html).not.toContain("Projetos e revisões");
-    // Nada da medição: os dois cabeçalhos possíveis da jornada começam por aqui.
+    // Nada da medição: os dois cabeçalhos possíveis da jornada começam por aqui. E, de
+    // quebra, a pílula de ambiente ausente fora do host de homologação (sem `window`, o
+    // hostname corrente é vazio).
     expect(html).not.toContain("HOMOLOGAÇÃO");
   });
 
   /**
-   * O seletor abre jornada, e sem sessão não existe jornada a abrir — inclusive a da
-   * medição, que deixou de ter caminho sem sessão quando o servidor local saiu. Oferecer a
-   * alternância aqui prometeria uma tela que a próxima chamada recusaria com 401.
+   * ADR-0032, D3: `/login` é o único lugar onde o produto se apresenta sem sessão, e
+   * NENHUMA peça da casca das jornadas é renderizada antes de haver sessão. Não é estética:
+   * a casca anuncia versão de schema e alterna jornadas que a próxima chamada recusaria com
+   * 401. Cada asserção abaixo nomeia uma peça citada na decisão.
    */
-  it("sem sessão, não oferece a alternância de jornada", () => {
+  it("sem sessão, nenhuma peça da casca das jornadas é renderizada", () => {
     const html = renderToStaticMarkup(<App />);
 
+    expect(html).not.toContain("app-shell");
+    expect(html).not.toContain("topbar");
+    expect(html).not.toContain("schema-pill");
+    expect(html).not.toContain("identity-pill");
     expect(html).not.toContain('aria-label="Jornadas"');
     expect(html).not.toContain(">Medição<");
-    expect(html).toContain("Entre para continuar");
+    expect(html).toContain("Do croqui ao orçamento.");
+  });
+
+  /**
+   * Critério 9 da F-007: sem identity provider configurado no realm, o botão do login
+   * federado NÃO é renderizado — nem desabilitado, nem oculto por CSS. Nenhum dos dois
+   * realms (`keycloak/croquito-realm.json`, `keycloak/croquito-hml-realm.json`) declara
+   * `identityProviders`, então é ausência do DOM que se afirma aqui.
+   */
+  it("sem identity provider no realm, o botão do Google não existe no DOM", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    expect(html).not.toContain("Entrar com Google");
+    expect(html).not.toContain("login-button-federated");
+    expect(html).not.toContain("login-federated");
+    // O CTA próprio continua lá — o que falta é o provedor, não a porta.
+    expect(html).toContain("login-cta");
+  });
+
+  /**
+   * A pílula de ambiente aparece SÓ em homologação (decisão humana de 2026-08-18). O
+   * mecanismo escolhido é o hostname, e é ele que este teste exerce: nenhuma variável de
+   * ambiente nova foi criada para exibir um rótulo.
+   */
+  it("a pílula de ambiente é derivada do host de homologação", () => {
+    expect(isHomologationHost("croquito-hml.biahflow.ai")).toBe(true);
+    // Produção, desenvolvimento e qualquer vizinho de domínio ficam de fora.
+    expect(isHomologationHost("croquito.biahflow.ai")).toBe(false);
+    expect(isHomologationHost("localhost")).toBe(false);
+    expect(isHomologationHost("")).toBe(false);
+    expect(isHomologationHost("evil-croquito-hml.biahflow.ai")).toBe(false);
   });
 
   /**
    * Substitui o teste que afirmava o link entre as duas origens: com as jornadas dentro
-   * do mesmo build (ADR-0028, D9) não existe segunda origem para linkar, e a marca
-   * continua apontando para a base desta SPA — que é também o `redirect_uri` do login.
+   * do mesmo build (ADR-0028, D9) não existe segunda origem para linkar. A marca deixou de
+   * ser um link porque a topbar saiu do estado sem sessão (D3), então o que a porta afirma
+   * agora é mais forte: antes da sessão não há link para jornada nenhuma.
    */
   it("não linka uma segunda origem: a medição é jornada, não outro app", () => {
     expect(import.meta.env.BASE_URL).toBe("/revisao/");
@@ -53,7 +96,10 @@ describe("App", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).not.toContain('href="/medicao/"');
-    expect(html).toContain('href="/revisao/"');
+    // Nenhuma âncora: o único `href` do render é o `<link rel="preload">` que o React emite
+    // para o wordmark, e ele resolve sob a base desta SPA — não sob uma segunda origem.
+    expect(html).not.toContain("<a ");
+    expect(html).toContain('href="/revisao/');
   });
 });
 
