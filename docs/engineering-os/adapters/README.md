@@ -50,6 +50,29 @@ asymmetry between them is a defect: it means the same task carries different rul
 depending on which harness picked it up. [`../workflows/execution.md`](../workflows/execution.md)
 defines what the two harnesses must share for a Task Contract to be portable between them.
 
+## Consumer projects: the pinned mirror
+
+Adapters solve reachability for exactly one machine: the operator's. CI, a new
+collaborator, and an agent running in the cloud never see the rendered bootstrap, so for
+them the global layer does not exist — which violates the execution-artifact requirement in
+[`../core/definition-of-done.md`](../core/definition-of-done.md).
+
+A consumer repository closes that gap by vendoring a **complete pinned mirror** of this
+repository inside its own tree:
+
+- the mirror is a full copy, so internal links between global documents keep resolving;
+- a provenance record names the source commit, the source tree state, and the sync date —
+  while no new sync lands, that commit **is** the global layer for that repository;
+- resynchronizing is a deliberate act performed against a clean source tree, and the
+  resulting diff is reviewed like any other change — never an automatic job;
+- the mirror is excluded from the project's local formatting (fidelity to the source wins)
+  but included in its link validation.
+
+When the operator's live checkout has moved past a project's pin, the two are in visible,
+dated drift: for work inside that project, **the pin is authoritative**, including for an
+executor whose personal bootstrap points at the live checkout. Advancing the pin is a
+reviewed change in the consumer repository, not a side effect of editing this one.
+
 ## Installing is not verifying
 
 A rendered file at the right path is not evidence that a harness loaded it. Confirm in
