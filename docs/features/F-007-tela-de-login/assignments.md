@@ -9,10 +9,16 @@ novo. Reatribuição depois de execução iniciada é `PLAN_DEVIATION`.
 Espec de handoff e revisão linha a linha de todo diff permanecem no modelo principal da
 sessão Claude Code, independentemente do executor.
 
+Emenda de 2026-08-18 (decisão humana, transcrita): o disparo das tasks do Codex passa a
+ser automático via `codex exec`, operado pela sessão Claude Code; e a escada de modelo
+vale também no Codex — `gpt-5.6-luna` para as tasks simples (T1, T6) e `gpt-5.6-sol`
+para a sensível (T5). A qualidade de cada entrega do Luna é avaliada na revisão linha a
+linha e registrada, como na calibração sonnet/opus.
+
 ```text
 HARNESS ASSIGNMENT
 task_id: T1
-harness: Codex (perfil padrão)
+harness: Codex (gpt-5.6-luna)
 assigned_by: Daniel Campos (2026-08-18)
 rationale: S, config declarativa com oráculo direto (curl); segundo exercício real de
            paridade após o PARITY-001.
@@ -47,7 +53,7 @@ rationale: L, com unknown resolvido por verificação (formato do tema 26.2) e a
 ```text
 HARNESS ASSIGNMENT
 task_id: T5
-harness: Codex (perfil padrão)
+harness: Codex (gpt-5.6-sol)
 assigned_by: Daniel Campos (2026-08-18)
 rationale: S e delimitada, com contrato explicitamente anti-afrouxamento; o oráculo é a
            execução real dos dois smokes.
@@ -56,7 +62,7 @@ rationale: S e delimitada, com contrato explicitamente anti-afrouxamento; o orá
 ```text
 HARNESS ASSIGNMENT
 task_id: T6
-harness: Codex (perfil barato)
+harness: Codex (gpt-5.6-luna)
 assigned_by: Daniel Campos (2026-08-18)
 rationale: XS documental com portão determinístico (check_docs).
 ```
