@@ -30,7 +30,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import (
+    BaseHandler,
+    HTTPRedirectHandler,
+    HTTPSHandler,
+    OpenerDirector,
+    Request,
+    build_opener,
+)
 
 BASE_URL_PADRAO = "https://croquito-hml.biahflow.ai"
 REALM = "croquito"
@@ -45,6 +52,7 @@ class VerificacaoFalhou(RuntimeError):
 class Resposta:
     status: int
     corpo: str
+    destino: str = ""
 
 
 @dataclass(frozen=True)
@@ -54,6 +62,7 @@ class Verificacao:
     rota: str
     o_que_prova: str
     conferir: Callable[[Resposta], None]
+    seguir_redirect: bool = True
 
 
 @lru_cache(maxsize=1)
@@ -72,15 +81,43 @@ def contexto_ssl() -> ssl.SSLContext:
     return ssl.create_default_context(cafile=certifi.where())
 
 
-def buscar(url: str) -> Resposta:
-    """GET simples. Status de erro é resposta, não exceção — o corpo dele também informa."""
+class _SemRedirecionar(HTTPRedirectHandler):
+    """Deixa o 3xx chegar como resposta em vez de seguir para o destino."""
+
+    def redirect_request(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+
+def _abridor(seguir_redirect: bool) -> OpenerDirector:
+    """Opener com a confiança de TLS resolvida e o redirecionamento sob controle."""
+    handlers: list[BaseHandler] = [HTTPSHandler(context=contexto_ssl())]
+    if not seguir_redirect:
+        handlers.append(_SemRedirecionar())
+    return build_opener(*handlers)
+
+
+def buscar(url: str, seguir_redirect: bool = True) -> Resposta:
+    """GET simples. Status de erro é resposta, não exceção — o corpo dele também informa.
+
+    `seguir_redirect=False` é o que permite verificar um redirecionamento como
+    comportamento pretendido: seguindo, `/medicao/` devolveria o index da jornada e a
+    verificação não distinguiria "redireciona certo" de "serve a página errada".
+    """
     requisicao = Request(url, headers={"User-Agent": "croquito-smoke-hml"})
     try:
-        with urlopen(requisicao, timeout=TIMEOUT_S, context=contexto_ssl()) as resposta:
+        with _abridor(seguir_redirect).open(requisicao, timeout=TIMEOUT_S) as resposta:
             corpo = resposta.read().decode("utf-8", errors="replace")
-            return Resposta(status=resposta.status, corpo=corpo)
+            return Resposta(
+                status=resposta.status,
+                corpo=corpo,
+                destino=resposta.headers.get("Location", ""),
+            )
     except HTTPError as erro:
-        return Resposta(status=erro.code, corpo=erro.read().decode("utf-8", errors="replace"))
+        return Resposta(
+            status=erro.code,
+            corpo=erro.read().decode("utf-8", errors="replace"),
+            destino=erro.headers.get("Location", ""),
+        )
 
 
 def _exigir_status_200(resposta: Resposta) -> None:
@@ -102,12 +139,22 @@ def _json_ou_falha(resposta: Resposta, de_quem: str) -> dict[str, object]:
     return corpo
 
 
-def conferir_health(resposta: Resposta) -> None:
-    """A API precisa responder o próprio corpo de health, não uma página qualquer."""
+def conferir_api(resposta: Resposta) -> None:
+    """A API precisa se identificar, e não devolver uma página qualquer.
+
+    Por que `/v1/meta` e não `/healthz`: **o Cloud Run reserva `/healthz` na raiz de todo
+    serviço**. Como o proxy da borda remove o prefixo, `/api/healthz` chega ao Cloud Run
+    exatamente como o path reservado, e a requisição nunca alcança o container — o 404 vem do
+    Google, não do FastAPI. Medido em 2026-08-18 pela diferença entre os dois corpos:
+    `/api/healthzz` devolve o `problem+json` da aplicação, `/api/healthz` devolve a página de
+    erro do Google. É essa a explicação do 404 que em 2026-08-14 foi atribuído a um "bug de
+    roteamento no GFE" e motivou renomear o serviço. `/healthz` segue válido para o startup
+    probe, que chama o container direto, sem passar pela borda.
+    """
     _exigir_status_200(resposta)
     corpo = _json_ou_falha(resposta, "a API")
-    if corpo.get("status") != "ok":
-        raise VerificacaoFalhou(f"health sem status ok: {corpo!r}")
+    if corpo.get("service") != "croquito-api":
+        raise VerificacaoFalhou(f"quem responde não se identifica como a API: {corpo!r}")
 
 
 def conferir_descoberta_oidc(issuer_base: str) -> Callable[[Resposta], None]:
@@ -139,6 +186,18 @@ def conferir_spa(nome: str) -> Callable[[Resposta], None]:
     return conferir
 
 
+def conferir_redirect(destino_esperado: str) -> Callable[[Resposta], None]:
+    """O endereço herdado precisa continuar levando à jornada nova, não virar 404."""
+
+    def conferir(resposta: Resposta) -> None:
+        if resposta.status not in (301, 302, 307, 308):
+            raise VerificacaoFalhou(f"status {resposta.status}, esperado redirecionamento")
+        if resposta.destino != destino_esperado:
+            raise VerificacaoFalhou(f"leva a {resposta.destino!r}, esperado {destino_esperado!r}")
+
+    return conferir
+
+
 def montar_verificacoes(issuer_base: str) -> list[Verificacao]:
     return [
         Verificacao(
@@ -148,13 +207,14 @@ def montar_verificacoes(issuer_base: str) -> list[Verificacao]:
         ),
         Verificacao(
             rota="/medicao/",
-            o_que_prova="SPA da medição publicada pelo nginx",
-            conferir=conferir_spa("medicao"),
+            o_que_prova="endereço herdado da medição levando à jornada nova",
+            conferir=conferir_redirect("/revisao/?rodada="),
+            seguir_redirect=False,
         ),
         Verificacao(
-            rota="/api/healthz",
+            rota="/api/v1/meta",
             o_que_prova="API viva atrás do proxy same-origin",
-            conferir=conferir_health,
+            conferir=conferir_api,
         ),
         Verificacao(
             rota=f"/auth/realms/{REALM}/.well-known/openid-configuration",
@@ -181,7 +241,9 @@ def executar(
         motivo = ""
         for tentativa in range(1, tentativas + 1):
             try:
-                verificacao.conferir(buscar(f"{base_url}{verificacao.rota}"))
+                verificacao.conferir(
+                    buscar(f"{base_url}{verificacao.rota}", verificacao.seguir_redirect)
+                )
             except (VerificacaoFalhou, URLError, TimeoutError) as erro:
                 motivo = str(erro) or type(erro).__name__
                 if tentativa < tentativas:
