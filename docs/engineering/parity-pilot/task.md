@@ -51,8 +51,9 @@ Pode alterar:
 2. A seção `## Governança` contém um bullet remetendo ao processo de ADR com link relativo
    válido para `adr/README.md` (checado por leitura e pelo validador de links do item 3).
 3. `uv run python scripts/check_docs.py` termina com exit 0 (checado pela execução).
-4. `git diff --stat` mostra exatamente um arquivo modificado (`docs/INDEX.md`) e um arquivo
-   novo (`docs/engineering/parity-pilot/build-report-codex.md`) (checado pela execução).
+4. `git status --porcelain` mostra exatamente duas linhas: ` M docs/INDEX.md` e
+   `?? docs/engineering/parity-pilot/build-report-codex.md` (checado pela execução; arquivo
+   novo não rastreado não aparece em `git diff`, e o índice do git não deve ser alterado).
 
 ## Validation
 
@@ -106,3 +107,13 @@ Encerre com o `BUILD REPORT` completo exigido pelo
 [contrato do Builder](../../engineering-os/agents/builder.md) — todos os campos presentes,
 `none` onde vazio — e grave o mesmo conteúdo em
 `docs/engineering/parity-pilot/build-report-codex.md`.
+
+## Revisões do contrato
+
+- **r2 (2026-08-18)** — critério de aceite 4 corrigido após achado do executor designado na
+  primeira tentativa: a versão r1 exigia que `git diff --stat` mostrasse o arquivo novo, mas
+  arquivo não rastreado não aparece em `git diff` — critério insatisfazível como escrito
+  (`TASK_CONTRACT_NOT_PORTABLE`). O executor parou e devolveu em vez de remendar por conversa,
+  como manda [`execution.md`](../../engineering-os/workflows/execution.md); o conserto entra
+  aqui, visível, e a execução recomeça sobre esta revisão.
+- **r1 (2026-08-18)** — versão original.
