@@ -1,6 +1,6 @@
 # ADR-0034: Camada global da Engineering OS vendorizada e pinada no repositório
 
-Status: Proposed
+Status: Accepted
 Data: 2026-08-18
 Responsável: Engineering
 
