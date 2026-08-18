@@ -1,0 +1,71 @@
+# O portão de qualidade do repositório, num arquivo só, chamado por quem precisa dele.
+#
+# Ele não tem gatilho próprio de propósito: `workflow_call` significa que só existe como
+# etapa de outro workflow. É isso que faz o portão ser um só — antes ele morava dentro do
+# `ci` e o deploy simplesmente não o esperava, porque `needs` não atravessa workflows.
+#
+# Quem chama: `ci.yml` (em PR) e `deploy-hml.yml` (antes de publicar qualquer coisa).
+name: quality
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    # PostgreSQL existe aqui para um portão só: o gate de drift do runner de migrations
+    # (ADR-0029) aplica as migrations em banco limpo e exige diferença VAZIA contra
+    # `Base.metadata`. Sem serviço no ar o teste pula — comportamento de máquina de
+    # desenvolvedor, não do CI. Senha efêmera do container de serviço, nunca um segredo.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: croquito
+          POSTGRES_USER: croquito
+          POSTGRES_PASSWORD: ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U croquito -d croquito"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.13.0"
+      - run: uv sync --all-groups --locked
+      - run: npm ci
+      - run: make check
+      # A variável liga os testes do runner de migrations; sem ela eles pulariam.
+      - run: make test
+        env:
+          CROQUITO_TEST_POSTGRES_URL: postgresql+psycopg://croquito:ci-only@127.0.0.1:5432/croquito
+      - run: make vision-eval
+      - run: make solver-eval
+      - run: make demo
+      - run: terraform -chdir=infra init -backend=false
+      - run: terraform -chdir=infra validate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demonstracoes-sinteticas
+          path: |
+            output/demo/
+            output/vision-eval/
+            output/solver-eval/
+          if-no-files-found: error

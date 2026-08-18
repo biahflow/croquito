@@ -54,7 +54,16 @@ env:
   REGISTRO: us-east1-docker.pkg.dev/biahflow-hml/hml
 
 jobs:
+  # O portão antes de qualquer imagem ser construída. Ele é o mesmo `quality.yml` que o PR
+  # roda; o que muda é que aqui ele **bloqueia** — `needs` faz o deploy nem começar se
+  # `make check`, `make test` ou os evals reprovarem. Sem isto, o merge disparava os dois
+  # workflows em paralelo e a imagem subia sem ninguém ter conferido o commit que ela
+  # carrega; `workflow_dispatch` e push direto na `main` não tinham portão nenhum.
+  quality:
+    uses: ./.github/workflows/quality.yml
+
   deploy:
+    needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
