@@ -35,6 +35,12 @@ COMMANDS: list[tuple[str, dict[str, str]]] = [
         {"trace_solve_id": "trace-1", "job_id": "job-1", "tenant_id": "tenant-a"},
     ),
     ("enqueue_chat_turn", {"chat_turn_id": "turn-1", "job_id": "job-1", "tenant_id": "tenant-a"}),
+    (
+        # A medição não tem `job_id` e nunca terá (ADR-0016); o envelope precisa ser
+        # idêntico nos dois transportes justamente porque ele é diferente dos outros.
+        "enqueue_valuation_plate_extraction",
+        {"round_id": "round-1", "extraction_id": "extraction-1", "tenant_id": "tenant-a"},
+    ),
 ]
 
 
@@ -79,6 +85,7 @@ def test_pubsub_publishes_the_same_bodies_as_sqs(
         "export_scene_package",
         "solve_trace_scene",
         "answer_chat_turn",
+        "extract_valuation_plate",
     ]
     assert {topic for topic, _data in publisher.published} == {TOPIC}
 

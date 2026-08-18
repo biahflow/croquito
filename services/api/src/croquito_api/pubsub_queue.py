@@ -111,6 +111,19 @@ class PubSubProcessingQueue:
             }
         )
 
+    def enqueue_valuation_plate_extraction(
+        self, *, round_id: str, extraction_id: str, tenant_id: str
+    ) -> None:
+        """Publica a extração paga da legenda; o corpo é o mesmo do SQS, byte a byte."""
+        self._publish(
+            {
+                "command": "extract_valuation_plate",
+                "round_id": round_id,
+                "extraction_id": extraction_id,
+                "tenant_id": tenant_id,
+            }
+        )
+
     def enqueue_chat_turn(self, *, chat_turn_id: str, job_id: str, tenant_id: str) -> None:
         """Publishes the chat turn; no model is ever called from the request path."""
         self._publish(

@@ -17,11 +17,11 @@ from uuid import UUID
 import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -46,9 +46,22 @@ from croquito_api.database import (
     TenantAiProcessingEntitlementRecord,
     TraceSolveRecord,
     UploadRecord,
+    ValuationRoundRecord,
+    ValuationRoundRevisionRecord,
 )
 from croquito_api.pubsub_queue import PubSubProcessingQueue, QueuePublishError
 from croquito_api.storage import ArtifactStore
+from croquito_api.valuation_rounds import (
+    CATALOG_MAX_BYTES,
+    RoundRefusal,
+    current_stage,
+    head_revision,
+    load_round,
+    require_base_version,
+    require_plate,
+    round_state_payload,
+    signed_artifact_url,
+)
 from croquito_core.errors import DomainValidationError
 from croquito_core.ids import new_uuid7
 from croquito_core.models import (
@@ -65,6 +78,8 @@ from croquito_core.models import (
     SceneRevision,
     UnitCode,
 )
+from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.models import PriceCatalog
 from croquito_worker.association import AssociationSet
 from croquito_worker.criteria import (
     FALLBACK_CRITERION_MESSAGE,
@@ -113,6 +128,12 @@ from croquito_worker.tracing import (
     TraceDetailGroup,
     keep_apart_proposal_ids,
 )
+from croquito_worker.valuation.round_extraction import (
+    PLATE_IMAGE_REF,
+    extraction_arm_spec,
+    extraction_unavailable,
+)
+from croquito_worker.valuation.round_view import REVIEWER_ROLE as VALUATION_REVIEWER_ROLE
 from croquito_worker.vision import VisionProposalSet
 
 
@@ -559,6 +580,94 @@ class ChatSessionSummaryResponse(ApiModel):
     turn_count: int = Field(ge=0)
 
 
+VALUATION_ROUTES_PUBLISHED: Final = False
+"""Interruptor TEMPORÁRIO de F-003: as rotas de medição existem, mas fora do OpenAPI.
+
+O gate de contrato (`tests/api/test_openapi_contract.py`) compara a superfície `/v1` com o
+API Contract nas duas direções, e a pendência da seção "Medição de obra" é por SEÇÃO: não
+existe estado válido com parte das 18 rotas exposta e o resto ainda marcada
+"Estado: decidido, não implementado.". Enquanto a cadeia não está inteira, as rotas nascem
+com `include_in_schema=False` — o mesmo recurso que `/healthz` já usa — e o documento
+continua descrevendo exatamente o que o contrato descreve.
+
+Esta constante é para ser DELETADA junto com cada `include_in_schema=` que a cita, no passo
+que publica a seção (T12), e não para ser virada para `True` e esquecida: a publicação
+mexe no API Contract, no snapshot e no teste que hoje ancora a ausência das rotas."""
+
+CATALOG_CONTENT_TYPE: Final = "application/json"
+
+
+class CreateValuationRoundRequest(ApiModel):
+    """Rodada nova: a obra, o catálogo instalado e os rótulos que o boletim exige.
+
+    `period_number`, `address` e `contract_label` são atributos da RODADA (decisão humana de
+    2026-08-17): nenhuma rota do contrato os recebia e sem eles o boletim não fecha. O
+    carimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`, `decided_at` e
+    `decision_id` são recusados pelo `extra="forbid"` do `ApiModel`, não por lista negra.
+    """
+
+    worksite_key: str = Field(min_length=1, max_length=64)
+    worksite_name: str = Field(min_length=1, max_length=120)
+    catalog_upload_id: UUID
+    reference_label: str = Field(min_length=1, max_length=120)
+    period_number: int = Field(ge=1, le=999)
+    address: str | None = Field(default=None, min_length=1, max_length=200)
+    contract_label: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class ValuationRoundResponse(ApiModel):
+    round_id: UUID
+    version: int
+    status: str
+    created_at: datetime
+
+
+class ValuationRoundSummary(ApiModel):
+    round_id: UUID
+    worksite_key: str
+    worksite_name: str
+    reference_label: str
+    period_number: int
+    version: int
+    status: str
+    stage: str
+    extraction_status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ValuationRoundPage(ApiModel):
+    items: list[ValuationRoundSummary]
+    next_cursor: str | None = None
+
+
+class AssociatePlateRequest(ApiModel):
+    upload_id: UUID
+    base_version: int = Field(ge=1)
+
+
+class ValuationPlateResponse(ApiModel):
+    """Metadados da prancha; a imagem sai por URL assinada e nunca pelo request path (D5)."""
+
+    round_id: UUID
+    version: int
+    upload_id: UUID
+    source_sha256: str
+    page_count: int | None = None
+    image_url: str | None = None
+
+
+class CreatePlateExtractionRequest(ApiModel):
+    base_version: int = Field(ge=1)
+
+
+class ValuationExtractionResponse(ApiModel):
+    round_id: UUID
+    version: int
+    extraction_id: UUID
+    status: str
+
+
 class ProcessingQueue:
     """Adaptador pequeno para SQS; sem fila configurada, falha fechado."""
 
@@ -621,6 +730,29 @@ class ProcessingQueue:
             ),
         )
 
+    def enqueue_valuation_plate_extraction(
+        self, *, round_id: str, extraction_id: str, tenant_id: str
+    ) -> None:
+        """Publica a extração paga da legenda; nenhum provider é chamado no request path.
+
+        O envelope não tem `job_id` de propósito: o ADR-0016 proíbe `Job` no vocabulário da
+        medição, e é por isso que o despacho do worker roteia por comando ANTES de exigir
+        aquele campo.
+        """
+        if self.queue_url is None:
+            return
+        self.client.send_message(
+            QueueUrl=self.queue_url,
+            MessageBody=json.dumps(
+                {
+                    "command": "extract_valuation_plate",
+                    "round_id": round_id,
+                    "extraction_id": extraction_id,
+                    "tenant_id": tenant_id,
+                }
+            ),
+        )
+
     def enqueue_chat_turn(self, *, chat_turn_id: str, job_id: str, tenant_id: str) -> None:
         """Publishes the chat turn; no model is ever called from the request path."""
         if self.queue_url is None:
@@ -646,8 +778,22 @@ QueueAdapter = ProcessingQueue | PubSubProcessingQueue
 QUEUE_TRANSPORT_ERRORS = (BotoCoreError, ClientError, QueuePublishError)
 
 
-def _problem(code: str, http_status: int, detail: str) -> HTTPException:
-    return HTTPException(status_code=http_status, detail={"code": code, "detail": detail})
+def _problem(
+    code: str,
+    http_status: int,
+    detail: str,
+    details: Mapping[str, object] | None = None,
+) -> HTTPException:
+    """Erro com código estável; `details` carrega o vocabulário de domínio, quando há um.
+
+    O `details` existe para o `DOMAIN_VALIDATION_FAILED` da medição (ADR-0028 D4): o código
+    de invariante de `packages/valuation` viaja DENTRO do erro, porque a API não republica o
+    vocabulário do domínio na sua lista de códigos.
+    """
+    body: dict[str, Any] = {"code": code, "detail": detail}
+    if details:
+        body["details"] = dict(details)
+    return HTTPException(status_code=http_status, detail=body)
 
 
 def _safe_filename(filename: str, content_type: str) -> str:
@@ -847,6 +993,213 @@ def _require_active_ai_entitlement(
             "O tenant não possui autorização contratual ativa para processamento externo.",
         )
     return entitlement
+
+
+def _require_valuation_reviewer(principal: Principal) -> str:
+    """Papel `orcamentista`, exigido em TODA rota de medição — inclusive de leitura (D8).
+
+    É a primeira coisa que cada rota faz, antes de qualquer lookup: quem não tem o papel não
+    descobre, pela diferença entre `403` e `404`, se uma rodada existe.
+    """
+    if not principal.has_role(VALUATION_REVIEWER_ROLE):
+        raise _problem(
+            "FORBIDDEN",
+            status.HTTP_403_FORBIDDEN,
+            f"Papel {VALUATION_REVIEWER_ROLE} é obrigatório nas rotas de medição.",
+        )
+    return VALUATION_REVIEWER_ROLE
+
+
+def _round_refusal_problem(refusal: RoundRefusal) -> HTTPException:
+    """Traduz a precondição da rodada no problem+json de sempre, sem inventar formato."""
+    return _problem(refusal.code, refusal.http_status, refusal.detail, refusal.details)
+
+
+def _valuation_domain_problem(error: ValuationValidationError) -> HTTPException:
+    """Invariante de `packages/valuation` como `422 DOMAIN_VALIDATION_FAILED` (ADR-0028 D4)."""
+    return _problem(
+        "DOMAIN_VALIDATION_FAILED",
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        error.message,
+        {"code": error.code, **error.details},
+    )
+
+
+def _load_valuation_round(
+    session: Session, *, round_id: UUID, tenant_id: str
+) -> ValuationRoundRecord:
+    """A rodada do tenant, ou `404`. Rodada de outro tenant é indistinguível de inexistente."""
+    record = load_round(session, round_id=str(round_id), tenant_id=tenant_id)
+    if record is None:
+        raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Rodada de medição não encontrada.")
+    return record
+
+
+def _valuation_round_heads(
+    session: Session, *, tenant_id: str, round_ids: Sequence[str]
+) -> dict[str, ValuationRoundRevisionRecord]:
+    """Cabeça de cada rodada da página, numa consulta só.
+
+    Uma consulta por linha faria a listagem custar N+1 idas ao banco para preencher uma
+    coluna de rótulo — e é justamente a listagem que a tela abre primeiro.
+    """
+    if not round_ids:
+        return {}
+    latest = (
+        select(
+            ValuationRoundRevisionRecord.round_id.label("round_id"),
+            func.max(ValuationRoundRevisionRecord.version).label("version"),
+        )
+        .where(
+            ValuationRoundRevisionRecord.tenant_id == tenant_id,
+            ValuationRoundRevisionRecord.round_id.in_(round_ids),
+        )
+        .group_by(ValuationRoundRevisionRecord.round_id)
+        .subquery()
+    )
+    records = session.scalars(
+        select(ValuationRoundRevisionRecord)
+        .join(
+            latest,
+            and_(
+                ValuationRoundRevisionRecord.round_id == latest.c.round_id,
+                ValuationRoundRevisionRecord.version == latest.c.version,
+            ),
+        )
+        .where(ValuationRoundRevisionRecord.tenant_id == tenant_id)
+    )
+    return {record.round_id: record for record in records}
+
+
+def _encode_round_cursor(record: ValuationRoundRecord) -> str:
+    """Cursor opaco sobre `(created_at, id)` — a mesma chave do índice da listagem.
+
+    O carimbo sai do valor que o próprio banco devolveu, e não de um `datetime` montado
+    aqui: é isso que faz a comparação da página seguinte usar exatamente a representação
+    que aquele banco guarda, com ou sem fuso.
+    """
+    raw = f"{record.created_at.isoformat()}|{record.id}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+def _decode_round_cursor(cursor: str) -> tuple[datetime, str]:
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+        stamp, separator, identifier = raw.partition("|")
+        if not separator or not identifier:
+            raise ValueError("cursor sem separador")
+        return datetime.fromisoformat(stamp), identifier
+    except (ValueError, UnicodeDecodeError) as error:
+        raise _problem(
+            "DOMAIN_VALIDATION_FAILED",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Cursor de paginação inválido.",
+            {"code": "CURSOR_INVALID"},
+        ) from error
+
+
+def _require_valuation_upload(
+    session: Session,
+    application: FastAPI,
+    *,
+    upload_id: UUID,
+    principal: Principal,
+    content_type: str,
+    storage_flavor: str,
+) -> UploadRecord:
+    """Upload do tenant, verificado contra o objeto realmente gravado.
+
+    Mesma conferência da criação de job (tipo declarado, tamanho e checksum), com o tipo
+    aceito vindo de quem chama: a rodada instala catálogo JSON e associa prancha PDF pelo
+    mesmo presign, e cada uma delas aceita um tipo só.
+    """
+    upload = session.scalar(
+        select(UploadRecord).where(
+            UploadRecord.id == str(upload_id),
+            UploadRecord.tenant_id == principal.tenant_id,
+        )
+    )
+    if upload is None:
+        raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Upload não encontrado.")
+    if upload.status != "PRESIGNED":
+        raise _problem(
+            "INVALID_UPLOAD", status.HTTP_422_UNPROCESSABLE_ENTITY, "Upload indisponível."
+        )
+    if upload.content_type != content_type:
+        raise _problem(
+            "INVALID_UPLOAD",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Upload precisa ter o tipo {content_type}.",
+        )
+    expected_checksum = base64.b64encode(bytes.fromhex(upload.sha256)).decode("ascii")
+    uploaded_object = application.state.artifact_store.head_upload(object_key=upload.object_key)
+    # O checksum remoto não existe na interoperabilidade GCS; lá a integridade é conferida
+    # sobre os bytes lidos (catálogo) ou pelo worker, que relê o documento (prancha).
+    checksum_deferred = storage_flavor == "gcs"
+    if (
+        uploaded_object is None
+        or uploaded_object.content_length != upload.size_bytes
+        or uploaded_object.content_type.lower() != upload.content_type
+        or (not checksum_deferred and uploaded_object.checksum_sha256 != expected_checksum)
+    ):
+        raise _problem(
+            "INVALID_UPLOAD",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Upload ausente, incompleto ou com integridade divergente.",
+        )
+    return upload
+
+
+def _install_catalog(
+    application: FastAPI, upload: UploadRecord
+) -> tuple[PriceCatalog, dict[str, Any]]:
+    """Lê e valida o catálogo instalado na criação da rodada; ilegível recusa a rodada.
+
+    O catálogo é o único artefato que a API lê do object store (ver `read_object`): ele é
+    pequeno, é de aplicação e precisa ser validado ANTES de a rodada existir — uma rodada
+    nasce com catálogo por construção, e um catálogo que não valida aqui viraria uma rodada
+    inutilizável em toda etapa seguinte.
+    """
+    payload = application.state.artifact_store.read_object(
+        object_key=upload.object_key, max_bytes=CATALOG_MAX_BYTES
+    )
+    if payload is None:
+        raise _problem(
+            "INVALID_UPLOAD",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Catálogo ausente no armazenamento.",
+        )
+    if len(payload) > CATALOG_MAX_BYTES:
+        raise _problem(
+            "LIMIT_EXCEEDED",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Catálogo excede o limite de leitura da API.",
+            {"max_bytes": CATALOG_MAX_BYTES},
+        )
+    if hashlib.sha256(payload).hexdigest() != upload.sha256.lower():
+        raise _problem(
+            "INVALID_UPLOAD",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Upload ausente, incompleto ou com integridade divergente.",
+        )
+    try:
+        catalog = PriceCatalog.model_validate_json(payload)
+    except ValidationError as error:
+        # Recusa de contrato do modelo: a mensagem do pydantic pode conter valores do
+        # arquivo, então só o código declarado sai.
+        raise _problem(
+            "DOMAIN_VALIDATION_FAILED",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "O catálogo enviado não pôde ser lido.",
+            {"code": "MODEL_VALIDATION_FAILED"},
+        ) from error
+    summary: dict[str, Any] = {
+        "source_label": catalog.source_label,
+        "reference_month": catalog.reference_month,
+        "source_sha256": catalog.source_sha256,
+        "entries": len(catalog.entries),
+    }
+    return catalog, summary
 
 
 def _require_platform_operator(principal: Principal) -> None:
@@ -1550,6 +1903,23 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 "errors": exception.errors,
             },
         )
+
+    @application.exception_handler(RoundRefusal)
+    async def round_refusal_handler(request: Request, exception: RoundRefusal) -> JSONResponse:
+        """Precondição da rodada de medição no MESMO envelope das demais rotas.
+
+        O núcleo de `valuation_rounds` levanta sem falar HTTP; a tradução acontece aqui, num
+        lugar só, delegando ao handler de erro que já existe — duas rotas não podem responder
+        formatos diferentes para a mesma causa.
+        """
+        return await problem_handler(request, _round_refusal_problem(exception))
+
+    @application.exception_handler(ValuationValidationError)
+    async def valuation_domain_handler(
+        request: Request, exception: ValuationValidationError
+    ) -> JSONResponse:
+        """Invariante de `packages/valuation` como `DOMAIN_VALIDATION_FAILED` (ADR-0028 D4)."""
+        return await problem_handler(request, _valuation_domain_problem(exception))
 
     @application.get("/healthz", response_model=HealthResponse, include_in_schema=False)
     async def health() -> HealthResponse:
@@ -4254,6 +4624,431 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             base_review_version=base_review.version,
             turns=_chat_turns_of(session, chat_session),
         )
+
+    # -- Medição de obra (ADR-0028) -----------------------------------------------------
+    # Todas fora do documento OpenAPI até a seção inteira ser publicada; ver
+    # `VALUATION_ROUTES_PUBLISHED`.
+
+    def _enqueue_plate_extraction(*, round_id: str, extraction_id: str, tenant_id: str) -> None:
+        """Publica o comando com o intent já durável; falha de transporte é 503 repetível."""
+        queue: QueueAdapter = application.state.queue
+        try:
+            queue.enqueue_valuation_plate_extraction(
+                round_id=round_id,
+                extraction_id=extraction_id,
+                tenant_id=tenant_id,
+            )
+        except QUEUE_TRANSPORT_ERRORS as error:
+            raise _problem(
+                "PROCESSING_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Extração registrada; repita o mesmo comando para reenfileirar com segurança.",
+            ) from error
+
+    def _plate_response(
+        record: ValuationRoundRecord, revision: ValuationRoundRevisionRecord | None, *, tenant: str
+    ) -> ValuationPlateResponse:
+        """Metadados da prancha e, quando a página já foi promovida, a URL assinada dela.
+
+        `image_url` nulo é estado honesto e não erro: a página só existe depois que o worker
+        ingere o PDF. Chave gravada fora do prefixo do tenant, essa sim, é tratada como
+        inexistente — e o presign nunca chega a ser chamado.
+        """
+        plate = require_plate(record)
+        refs = {} if revision is None else dict(revision.artifact_refs_json or {})
+        image_key = refs.get(PLATE_IMAGE_REF)
+        image_url: str | None = None
+        if image_key is not None:
+            image_url = signed_artifact_url(
+                application.state.artifact_store, object_key=image_key, tenant_id=tenant
+            )
+            if image_url is None:
+                raise _problem(
+                    "NOT_FOUND",
+                    status.HTTP_404_NOT_FOUND,
+                    "Imagem da prancha não encontrada.",
+                )
+        return ValuationPlateResponse(
+            round_id=UUID(record.id),
+            version=record.version,
+            upload_id=UUID(plate.upload_id),
+            source_sha256=plate.source_sha256,
+            page_count=plate.page_count,
+            image_url=image_url,
+        )
+
+    @application.post(
+        "/v1/valuation-rounds",
+        response_model=ValuationRoundResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def create_valuation_round(
+        payload: CreateValuationRoundRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ValuationRoundResponse:
+        """Abre a rodada e instala o catálogo, que é imutável nela: trocar é abrir outra."""
+        _require_valuation_reviewer(principal)
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation="valuation-rounds.create",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ValuationRoundResponse.model_validate(existing)
+
+        upload = _require_valuation_upload(
+            session,
+            application,
+            upload_id=payload.catalog_upload_id,
+            principal=principal,
+            content_type=CATALOG_CONTENT_TYPE,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        _catalog, summary = _install_catalog(application, upload)
+
+        now = datetime.now(UTC)
+        round_id = new_uuid7()
+        record = ValuationRoundRecord(
+            id=str(round_id),
+            tenant_id=principal.tenant_id,
+            worksite_key=payload.worksite_key,
+            worksite_name=payload.worksite_name,
+            reference_label=payload.reference_label,
+            period_number=payload.period_number,
+            address=payload.address,
+            contract_label=payload.contract_label,
+            status="OPEN",
+            version=1,
+            catalog_upload_id=str(payload.catalog_upload_id),
+            catalog_object_key=upload.object_key,
+            catalog_source_sha256=upload.sha256.lower(),
+            catalog_summary_json=summary,
+            extraction_status="idle",
+            created_by=principal.subject,
+            created_at=now,
+            updated_at=now,
+        )
+        upload.status = "VERIFIED"
+        session.add(record)
+        response = ValuationRoundResponse(
+            round_id=round_id,
+            version=record.version,
+            status=record.status,
+            created_at=now,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation="valuation-rounds.create",
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_ROUND_CREATED",
+            resource_type="valuation_round",
+            resource_id=str(round_id),
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds",
+        response_model=ValuationRoundPage,
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def list_valuation_rounds(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        cursor: str | None = None,
+    ) -> ValuationRoundPage:
+        """Rodadas do tenant, da mais recente para a mais antiga, com cursor opaco."""
+        _require_valuation_reviewer(principal)
+        query = select(ValuationRoundRecord).where(
+            ValuationRoundRecord.tenant_id == principal.tenant_id
+        )
+        if cursor is not None:
+            created_at, identifier = _decode_round_cursor(cursor)
+            # Forma explícita em vez de comparação de tupla: row values dependem da versão
+            # do SQLite, e uma listagem não é lugar de descobrir isso em produção.
+            query = query.where(
+                or_(
+                    ValuationRoundRecord.created_at < created_at,
+                    and_(
+                        ValuationRoundRecord.created_at == created_at,
+                        ValuationRoundRecord.id < identifier,
+                    ),
+                )
+            )
+        records = list(
+            session.scalars(
+                query.order_by(
+                    ValuationRoundRecord.created_at.desc(), ValuationRoundRecord.id.desc()
+                ).limit(limit + 1)
+            )
+        )
+        page = records[:limit]
+        heads = _valuation_round_heads(
+            session,
+            tenant_id=principal.tenant_id,
+            round_ids=[record.id for record in page],
+        )
+        return ValuationRoundPage(
+            items=[
+                ValuationRoundSummary(
+                    round_id=UUID(record.id),
+                    worksite_key=record.worksite_key,
+                    worksite_name=record.worksite_name,
+                    reference_label=record.reference_label,
+                    period_number=record.period_number,
+                    version=record.version,
+                    status=record.status,
+                    stage=current_stage(record, heads.get(record.id)),
+                    extraction_status=record.extraction_status,
+                    created_at=record.created_at,
+                    updated_at=record.updated_at,
+                )
+                for record in page
+            ],
+            next_cursor=_encode_round_cursor(page[-1]) if len(records) > limit and page else None,
+        )
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def get_valuation_round(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Estado da rodada por etapa; é por aqui que a tela acompanha a extração paga."""
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        return round_state_payload(record, revision)
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/plate",
+        response_model=ValuationPlateResponse,
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def associate_valuation_plate(
+        round_id: UUID,
+        payload: AssociatePlateRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ValuationPlateResponse:
+        """Associa o PDF já enviado pelo presign; a API não renderiza nem lê a prancha.
+
+        A ingestão da página — render a 200 DPI, manifest, digest da imagem — é trabalho do
+        worker: aqui o PDF é só conferido contra o que o presign declarou.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.plate:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ValuationPlateResponse.model_validate(existing)
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        if record.plate_object_key is not None:
+            raise _problem(
+                "ROUND_PLATE_ALREADY_PRESENT",
+                status.HTTP_409_CONFLICT,
+                "A rodada já tem uma prancha associada.",
+            )
+        upload = _require_valuation_upload(
+            session,
+            application,
+            upload_id=payload.upload_id,
+            principal=principal,
+            content_type=PDF_CONTENT_TYPE,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        now = datetime.now(UTC)
+        record.plate_upload_id = str(payload.upload_id)
+        record.plate_object_key = upload.object_key
+        record.plate_source_sha256 = upload.sha256.lower()
+        # Associar a prancha é ato humano, e o contador da rodada é o token de concorrência
+        # de toda a cadeia (D3): quem leu a rodada antes disso precisa reler antes de decidir.
+        # Nenhuma revisão nasce aqui — a prancha é coluna da raiz, e revisão guarda artefato.
+        record.version += 1
+        record.updated_at = now
+        upload.status = "VERIFIED"
+        response = _plate_response(record, None, tenant=principal.tenant_id)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_PLATE_ASSOCIATED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/plate",
+        response_model=ValuationPlateResponse,
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def get_valuation_plate(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ValuationPlateResponse:
+        """Metadados e URL assinada da página promovida; a URL não vai para log nem auditoria."""
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        return _plate_response(record, revision, tenant=principal.tenant_id)
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/plate/extractions",
+        response_model=ValuationExtractionResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def create_valuation_plate_extraction(
+        round_id: UUID,
+        payload: CreatePlateExtractionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ValuationExtractionResponse:
+        """Enfileira a extração paga da legenda; nenhum provider é chamado no request path."""
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.extractions:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            replay = ValuationExtractionResponse.model_validate(existing)
+            # Repetir o mesmo comando é o caminho de retomada quando a fila recusou: o
+            # intent já está durável, e o claim atômico do worker garante que uma entrega
+            # extra não repague o provider.
+            _enqueue_plate_extraction(
+                round_id=str(round_id),
+                extraction_id=str(replay.extraction_id),
+                tenant_id=principal.tenant_id,
+            )
+            return replay
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        require_plate(record)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        if revision is not None and revision.takeoff_packet_json is not None:
+            raise _problem(
+                "ROUND_PLATE_ALREADY_PRESENT",
+                status.HTTP_409_CONFLICT,
+                "A rodada já tem pacote de takeoff publicado.",
+            )
+        if record.extraction_status in ("queued", "running"):
+            raise _problem(
+                "EXTRACTION_IN_PROGRESS",
+                status.HTTP_409_CONFLICT,
+                "Já existe uma extração em andamento nesta rodada.",
+            )
+        # Chamada paga de provider: entitlement contratual do tenant primeiro, e sem
+        # enfileirar nada quando ele falta (ADR-0012).
+        _require_active_ai_entitlement(
+            session,
+            principal,
+            real_providers_enabled=runtime_settings.real_providers_enabled,
+        )
+        unavailable = extraction_unavailable(extraction_arm_spec())
+        if unavailable is not None:
+            # Só o código declarado sai: nome de variável de ambiente do servidor é detalhe
+            # de infraestrutura e não pertence à resposta de um cliente.
+            raise _problem(
+                "PROVIDER_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "A extração automática não está disponível neste ambiente.",
+                {"code": unavailable.code},
+            )
+
+        now = datetime.now(UTC)
+        extraction_id = new_uuid7()
+        record.extraction_id = str(extraction_id)
+        record.extraction_status = "queued"
+        record.extraction_failure_code = None
+        record.extraction_requested_by = principal.subject
+        record.extraction_updated_at = now
+        record.version += 1
+        record.updated_at = now
+        response = ValuationExtractionResponse(
+            round_id=round_id,
+            version=record.version,
+            extraction_id=extraction_id,
+            status=record.extraction_status,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_EXTRACTION_REQUESTED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        # O intent é durável ANTES da fila, e nenhuma transação atravessa a publicação.
+        session.commit()
+        _enqueue_plate_extraction(
+            round_id=str(round_id),
+            extraction_id=str(extraction_id),
+            tenant_id=principal.tenant_id,
+        )
+        return response
 
     return application
 

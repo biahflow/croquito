@@ -30,6 +30,7 @@ import json
 import threading
 from collections import OrderedDict
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
 from pydantic import ValidationError
@@ -56,6 +57,7 @@ ROUND_STAGE_NOT_READY: Final = "ROUND_STAGE_NOT_READY"
 REVISION_CONFLICT: Final = "REVISION_CONFLICT"
 CATALOG_REQUIRED: Final = "CATALOG_REQUIRED"
 
+STAGE_CREATED: Final = "created"
 STAGE_PLATE: Final = "plate"
 STAGE_EXTRACTION: Final = "extraction"
 STAGE_TAKEOFF: Final = "takeoff"
@@ -298,6 +300,65 @@ def require_plate_object_key(round_record: ValuationRoundRecord) -> str:
     if round_record.plate_object_key is None:
         raise stage_not_ready(STAGE_PLATE, detail="a rodada ainda não tem prancha associada")
     return round_record.plate_object_key
+
+
+@dataclass(frozen=True, slots=True)
+class PlateRef:
+    """A prancha associada à rodada, com as três colunas conferidas de uma vez só."""
+
+    upload_id: str
+    object_key: str
+    source_sha256: str
+    page_count: int | None
+
+
+def require_plate(round_record: ValuationRoundRecord) -> PlateRef:
+    """A prancha da rodada, ou a recusa de etapa fora de ordem.
+
+    As três colunas são conferidas JUNTAS de propósito: elas são gravadas no mesmo ato de
+    associação, e ler uma delas isolada obrigaria cada chamador a decidir o que fazer com
+    uma prancha meio associada — estado que a rota não sabe produzir e que ninguém deve ter
+    de tratar duas vezes. `page_count` fica de fora dessa exigência porque só a ingestão da
+    página, que é trabalho do worker, o conhece.
+    """
+    if (
+        round_record.plate_object_key is None
+        or round_record.plate_upload_id is None
+        or round_record.plate_source_sha256 is None
+    ):
+        raise stage_not_ready(STAGE_PLATE, detail="a rodada ainda não tem prancha associada")
+    return PlateRef(
+        upload_id=round_record.plate_upload_id,
+        object_key=round_record.plate_object_key,
+        source_sha256=round_record.plate_source_sha256,
+        page_count=round_record.plate_page_count,
+    )
+
+
+def current_stage(
+    round_record: ValuationRoundRecord,
+    revision: ValuationRoundRevisionRecord | None,
+) -> str:
+    """Etapa mais avançada que a rodada alcançou, para a linha da listagem.
+
+    É leitura por PRESENÇA de artefato, na ordem da cadeia — o mesmo critério do estado por
+    etapa, condensado num rótulo só. A extração não aparece aqui: ela é um estado próprio da
+    raiz (`extraction_status`), pode estar em voo enquanto a etapa corrente ainda é a
+    prancha, e escondê-la dentro de um rótulo único faria a lista mentir sobre o que a
+    rodada está fazendo.
+    """
+    if revision is not None:
+        if revision.amendment_dossier_json is not None:
+            return STAGE_DOSSIER
+        if revision.valuation_json is not None:
+            return STAGE_BULLETIN
+        if revision.code_assignments_json is not None:
+            return STAGE_CODE_ASSIGNMENTS
+        if revision.takeoff_packet_json is not None:
+            return STAGE_TAKEOFF
+    if round_record.plate_object_key is not None:
+        return STAGE_PLATE
+    return STAGE_CREATED
 
 
 def signed_artifact_url(

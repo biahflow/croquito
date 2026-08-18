@@ -31,9 +31,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
+from pydantic import ValidationError
+
 from croquito_valuation.catalog import file_sha256
 from croquito_valuation.errors import ValuationValidationError
-from croquito_worker.extraction_eval import bind_page_to_document
+from croquito_worker.extraction_eval import ExtractionNotAllowlistedError, bind_page_to_document
 from croquito_worker.ingest import PdfManifest, ingest_pdf
 from croquito_worker.io_utils import atomic_write_bytes
 from croquito_worker.providers import (
@@ -82,6 +84,32 @@ ambiente abaixo existe para a próxima rodada de eval, não para escolher modelo
 
 EXTRACTION_ARM_ENV: Final = "CROQUITO_MEDICAO_EXTRACTION_ARM"
 AI_BUDGET_ENV: Final = "CROQUITO_AI_MAX_ESTIMATED_COST_USD"
+
+PLATE_IMAGE_REF: Final = "plate_image_key"
+TAKEOFF_OVERLAY_REF: Final = "takeoff_overlay_key"
+"""Nomes das chaves de objeto na revisão da rodada (`artifact_refs_json`).
+
+Moram aqui, e não em cada lado, porque quem ESCREVE (o comando de fila do worker) e quem
+LÊ (a rota que assina a URL) são processos diferentes: um nome divergente não quebraria
+teste nenhum dos dois lados isoladamente e apareceria como imagem que nunca carrega."""
+
+PLATE_IMAGE_DIGEST: Final = "plate_image_sha256"
+TAKEOFF_OVERLAY_DIGEST: Final = "takeoff_overlay_sha256"
+
+
+def round_object_prefix(*, tenant_id: str, round_id: str) -> str:
+    """Prefixo dos blobs da rodada; sempre sob `tenants/{tenant_id}/` (ADR-0028 D2)."""
+    return f"tenants/{tenant_id}/valuation-rounds/{round_id}"
+
+
+def plate_image_object_key(*, tenant_id: str, round_id: str) -> str:
+    """PNG da página promovida — a imagem que a tela vê por URL assinada (D5)."""
+    return f"{round_object_prefix(tenant_id=tenant_id, round_id=round_id)}/plate/page-001.png"
+
+
+def takeoff_overlay_object_key(*, tenant_id: str, round_id: str) -> str:
+    return f"{round_object_prefix(tenant_id=tenant_id, round_id=round_id)}/takeoff/overlay.png"
+
 
 _PROVIDER_CREDENTIAL_ENV: Final[Mapping[str, str]] = {
     "anthropic": "CROQUITO_ANTHROPIC_API_KEY",
@@ -337,6 +365,29 @@ def execution_payload(execution: ProviderExecution) -> dict[str, object]:
             None if usage.estimated_cost_usd is None else str(usage.estimated_cost_usd)
         ),
     }
+
+
+EXTRACTION_FAILED_CODE: Final = "VALUATION_EXTRACTION_FAILED"
+"""Desfecho de quem falhou fora das famílias conhecidas. Nunca some em silêncio."""
+
+
+def extraction_failure_code(error: BaseException) -> str:
+    """Código estável do desfecho de uma extração que não publicou nada.
+
+    Só o CÓDIGO sai daqui: a mensagem da exceção pode carregar trecho da prancha, e o que a
+    rodada guarda em `extraction_failure_code` é lido pela tela e pelo log. A classificação
+    espelha a do servidor de medição (`local_server._extraction_failure`), com o mesmo
+    princípio: falha desconhecida vira código declarado, nunca estado indefinido.
+    """
+    if isinstance(error, ProviderExecutionError):
+        return "PROVIDER_EXECUTION_FAILED"
+    if isinstance(error, ExtractionNotAllowlistedError):
+        return "EXTRACTION_PAGE_NOT_BOUND"
+    if isinstance(error, ValuationValidationError):
+        return error.code
+    if isinstance(error, ValidationError):
+        return "MODEL_VALIDATION_FAILED"
+    return EXTRACTION_FAILED_CODE
 
 
 def registration_payload(registration: LegendRegistrationReport) -> dict[str, object]:

@@ -32,6 +32,7 @@ from croquito_api.valuation_rounds import (
     RoundRefusal,
     append_revision,
     assignments_of,
+    current_stage,
     document_digest,
     head_revision,
     load_catalog,
@@ -39,6 +40,7 @@ from croquito_api.valuation_rounds import (
     require_assignments,
     require_base_version,
     require_document,
+    require_plate,
     require_plate_object_key,
     require_takeoff_packet,
     round_state_payload,
@@ -461,6 +463,68 @@ def test_a_guarda_devolve_o_artefato_quando_a_etapa_existe(tmp_path: Path) -> No
         assert require_document(
             revision, "valuation_json", stage="bulletin", detail="boletim não construído"
         ) == {"schema_version": "1.0.0"}
+
+
+def test_a_prancha_meio_associada_e_tratada_como_ausente(tmp_path: Path) -> None:
+    """As três colunas da prancha são gravadas juntas; ler uma isolada esconderia o buraco."""
+    database = _database(tmp_path)
+    with database.sessions() as session:
+        record = _round(session)
+        record.plate_object_key = f"tenants/{_TENANT}/rounds/{record.id}/plate.pdf"
+        session.commit()
+
+        with pytest.raises(RoundRefusal) as refusal:
+            require_plate(record)
+        assert refusal.value.code == "ROUND_STAGE_NOT_READY"
+
+        # Um upload real do tenant: a coluna é chave estrangeira e o banco a cobra.
+        record.plate_upload_id = record.catalog_upload_id
+        record.plate_source_sha256 = _PDF_DIGEST
+        record.plate_page_count = 3
+        session.commit()
+
+        plate = require_plate(record)
+        assert plate.object_key.endswith("plate.pdf")
+        assert plate.source_sha256 == _PDF_DIGEST
+        assert plate.page_count == 3
+
+
+def test_a_etapa_corrente_e_a_mais_avancada_da_cadeia(tmp_path: Path) -> None:
+    """Rótulo da listagem: presença de artefato na ordem da cadeia, e nada além disso."""
+    database = _database(tmp_path)
+    with database.sessions() as session:
+        record = _round(session)
+        session.commit()
+        assert current_stage(record, None) == "created"
+
+        record.plate_object_key = f"tenants/{_TENANT}/rounds/{record.id}/plate.pdf"
+        # Extração em voo NÃO é etapa: a rodada segue na prancha até haver pacote.
+        record.extraction_status = "running"
+        session.commit()
+        assert current_stage(record, None) == "plate"
+
+        revision = append_revision(
+            session,
+            round_record=record,
+            created_by=_REVIEWER,
+            changes={"takeoff_packet_json": _packet().model_dump(mode="json")},
+        )
+        session.commit()
+        assert current_stage(record, revision) == "takeoff"
+
+        for column, stage in (
+            ("code_assignments_json", "code_assignments"),
+            ("valuation_json", "bulletin"),
+            ("amendment_dossier_json", "amendment_dossier"),
+        ):
+            revision = append_revision(
+                session,
+                round_record=record,
+                created_by=_REVIEWER,
+                changes={column: {"schema_version": "1.0.0"}},
+            )
+            session.commit()
+            assert current_stage(record, revision) == stage
 
 
 # --- estado da rodada ------------------------------------------------------------------
