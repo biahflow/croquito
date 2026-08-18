@@ -170,6 +170,14 @@ jobs:
       # o endereço que o navegador usa — issuer errado quebra a validação em todo o
       # resto. `KC_CACHE=local` porque não há cluster: uma instância, cache no processo.
       #
+      # `KC_DB_SCHEMA` é o que de fato escolhe o schema, e não o `currentSchema` do JDBC.
+      # O `currentSchema` só mexe no `search_path` da sessão; o Liquibase do Keycloak cria e
+      # procura tabela no schema padrão dele, que é `public` quando ninguém diz o contrário.
+      # Sem esta variável, o `currentSchema=keycloak` do DSN foi obedecido pela conexão e
+      # ignorado pelo DDL: as ~88 tabelas do Keycloak nasceram em `public`, misturadas às da
+      # aplicação, e o schema `keycloak` sequer existia. Criar esse schema depois faria o
+      # Keycloak enxergar um schema vazio e perder realm e usuários.
+      #
       # A sonda de subida é folgada de propósito (Keycloak otimizado ainda leva dezenas
       # de segundos e abre conexão com o Neon, que pode estar suspenso). O Cloud Run
       # limita `periodSeconds * failureThreshold` a 240s, então são 24 tentativas de 10s
@@ -185,7 +193,7 @@ jobs:
             --port 8080 \
             --memory 2Gi --cpu 2 --no-cpu-throttling \
             --set-secrets KC_DB_URL=croquito-hml-kc-db-url:latest,KC_DB_USERNAME=croquito-hml-kc-db-user:latest,KC_DB_PASSWORD=croquito-hml-kc-db-password:latest,KC_BOOTSTRAP_ADMIN_PASSWORD=croquito-hml-kc-bootstrap-admin-password:latest \
-            --set-env-vars KC_HOSTNAME=https://croquito-hml.biahflow.ai/auth,KC_HTTP_ENABLED=true,KC_PROXY_HEADERS=xforwarded,KC_CACHE=local,KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+            --set-env-vars KC_HOSTNAME=https://croquito-hml.biahflow.ai/auth,KC_HTTP_ENABLED=true,KC_PROXY_HEADERS=xforwarded,KC_CACHE=local,KC_BOOTSTRAP_ADMIN_USERNAME=admin,KC_DB_SCHEMA=keycloak \
             --startup-probe httpGet.path=/auth/realms/master,httpGet.port=8080,initialDelaySeconds=20,periodSeconds=10,failureThreshold=24,timeoutSeconds=5 \
             --quiet
 
