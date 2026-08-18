@@ -16,18 +16,15 @@ sobre os modelos), `catalog_search` (busca no catálogo), `round_extraction` (up
 ingestão e extração paga sobre um `workdir`) e `suggestions` (cálculo da shortlist).
 Nenhum deles importa `fastapi` nem conhece `_Run`.
 
-Dois modos, uma cadeia de domínio só (`_build_app` é o construtor comum):
+Um modo só: `create_local_app` é o servidor **local** do ADR-0020, da família do `parity`
+— bind padrão em `127.0.0.1`, CORS restrito à UI local e **sem autenticação**. A identidade
+do revisor vem da flag de inicialização (`--reviewer`), não de token: quem sobe o processo
+declara quem está decidindo. Expor esta porta em outra interface publica uma ferramenta sem
+autenticação, e por isso o CLI avisa.
 
-- `create_local_app` é o servidor **local** do ADR-0020, da família do `parity`: bind
-  padrão em `127.0.0.1`, CORS restrito à UI local e **sem autenticação**. A identidade do
-  revisor vem da flag de inicialização (`--reviewer`), não de token: quem sobe o processo
-  declara quem está decidindo.
-- `create_hosted_app` é o modo **hospedado** do ADR-0026, e é o único que pode subir fora
-  da máquina do operador: Bearer JWT obrigatório em toda rota de rodada (`hosted_auth`,
-  sobre o validador compartilhado `croquito_core.oidc`), papel `orcamentista` exigido e
-  `reviewer_id` derivado do token — claim assinado no lugar de argumento de processo. O que
-  muda entre os dois é a ORIGEM da identidade, o CORS e a porta de entrada; nenhuma regra
-  de domínio, nenhum nome de artefato e nenhuma guarda.
+Houve um segundo modo, hospedado e autenticado (ADR-0026), que serviu de ponte enquanto a
+medição não tinha rotas `/v1`. Ele foi removido com a migração (ADR-0028): quem sobe fora da
+máquina do operador é a API autenticada, não este servidor.
 
 Limites declarados, não escondidos:
 - Chama provider em **uma** operação e só nela: a extração da legenda que o upload da
@@ -61,14 +58,14 @@ import hashlib
 import json
 import os
 import threading
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal
 
 import uvicorn
-from fastapi import APIRouter, Depends, FastAPI, File, Query, UploadFile
+from fastapi import APIRouter, FastAPI, File, Query, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -205,10 +202,7 @@ LOCAL_WEB_ORIGINS: Final[tuple[str, ...]] = (
     "http://localhost:5174",
     "http://127.0.0.1:5174",
 )
-"""Origens da UI local de homologação (Fase B). Nada além delas fala com este servidor.
-
-No modo hospedado as origens vêm do ambiente (`hosted_auth.HOSTED_WEB_ORIGINS_ENV`): a
-tela de lá é servida por outro host, e assumir estas seria recusar a UI de produção."""
+"""Origens da UI local de homologação (Fase B). Nada além delas fala com este servidor."""
 
 _OVERLAY_SKIPPED_NOTE: Final = (
     "overlay não regravado: a imagem da prancha do pacote não está no diretório da "
@@ -540,12 +534,11 @@ class _Run:
     """
 
     root: Path
-    reviewer_id: str = ""
-    """Identidade fixa do modo local (ADR-0020).
+    reviewer_id: str
+    """Identidade fixa de quem decide durante toda a vida do processo (ADR-0020).
 
-    Vazia no modo hospedado, onde quem decide é derivado do token a CADA requisição: lá a
-    identidade não é do processo, e por isso ela não pode morar num objeto do processo. Quem
-    lê o revisor de uma requisição é sempre `reviewer_of`, nunca este campo diretamente."""
+    Ela é do PROCESSO, não da requisição: quem sobe o servidor declara quem está decidindo
+    (`--reviewer`), e trocar de revisor é subir outro processo."""
 
     extraction: _ExtractionTracker = field(default_factory=_ExtractionTracker)
     index_cache: _IndexCache = field(default_factory=_IndexCache)
@@ -1115,12 +1108,11 @@ def extraction_banner_note() -> str:
     return unavailable.message
 
 
-def _state_payload(run: _Run, *, reviewer_id: str) -> dict[str, object]:
+def _state_payload(run: _Run) -> dict[str, object]:
     """Etapas da rodada derivadas da EXISTÊNCIA dos artefatos, com os digests atuais.
 
-    `reviewer_id` é parâmetro, e não campo da rodada, porque no modo hospedado ele é da
-    REQUISIÇÃO: a tela precisa mostrar quem vai assinar a próxima decisão, que é quem está
-    logado agora — não quem subiu o processo.
+    O `reviewer_id` exibido é o do processo: a tela mostra quem vai assinar a próxima
+    decisão, e neste servidor quem assina é quem subiu o processo (`--reviewer`).
 
     O `valuation.json` entra aqui só por presença e digest: revalidá-lo é papel do
     `GET /bulletin`, e uma medição ilegível não pode derrubar a tela inteira antes de o
@@ -1177,7 +1169,7 @@ def _state_payload(run: _Run, *, reviewer_id: str) -> dict[str, object]:
     return {
         "server_version": LOCAL_SERVER_VERSION,
         "root": str(run.root),
-        "reviewer_id": reviewer_id,
+        "reviewer_id": run.reviewer_id,
         "reviewer_role": REVIEWER_ROLE,
         "artifacts": artifacts,
         "busca_semantica": _semantic_payload(run),
@@ -1262,49 +1254,18 @@ def _round_root(root: Path) -> Path:
     return resolved
 
 
-def _build_app(
-    run: _Run,
-    *,
-    origins: Sequence[str],
-    reviewer_of: Callable[[Request], str],
-    dependencies: Sequence[Any],
-) -> FastAPI:
-    """Construtor comum dos dois modos; as rotas e o domínio são os MESMOS nos dois.
+def _build_app(run: _Run, *, origins: Sequence[str]) -> FastAPI:
+    """Monta o app e as rotas sobre um diretório de rodada já resolvido.
 
-    Três parâmetros são toda a diferença entre a ferramenta local e o servidor hospedado:
-
-    - `origins` alimenta o CORS. No hospedado a tela é servida pela mesma origem (proxy
-      nginx), então o CORS de lá é quase decorativo — ele é configurado assim mesmo, por
-      defesa em profundidade.
-    - `reviewer_of` responde "quem está decidindo NESTA requisição". No local devolve a
-      identidade do processo (`--reviewer`); no hospedado, a que a dependency derivou do
-      token. É o único lugar de onde o `reviewer_id` carimbado pode vir.
-    - `dependencies` é a porta de entrada: vazia no local (ADR-0020, sem autenticação),
-      `[Depends(require_reviewer)]` no hospedado. Ela vai no ROTEADOR das rotas de rodada,
-      e não no app, para que o `create_hosted_app` possa declarar a prova de vida fora
-      dela — é o que permite o probe do Cloud Run responder sem sessão.
-
-    O modo é derivado de `dependencies`: exigir sessão é o que define o hospedado, e é
-    também o que decide o texto do OpenAPI (dizer "sem autenticação" lá seria mentira) e a
-    liberação do cabeçalho `Authorization` no preflight do CORS.
+    `origins` alimenta o CORS: só a UI local fala com esta porta. Não há segunda porta de
+    entrada e não há sessão — quem decide é a identidade do processo (`run.reviewer_id`), e
+    é dela que sai todo `reviewer_id` carimbado.
     """
-    hosted = bool(dependencies)
     application = FastAPI(
-        title=(
-            "Croquito — homologação hospedada da medição"
-            if hosted
-            else "Croquito — homologação local da medição"
-        ),
+        title="Croquito — homologação local da medição",
         version="0.1.0",
         description=(
-            (
-                "Homologação HOSPEDADA da medição (ADR-0026): Bearer JWT obrigatório, papel "
-                "`orcamentista` exigido e identidade do revisor derivada do token. "
-            )
-            if hosted
-            else "Ferramenta LOCAL de homologação: sem autenticação, sem provider e sem AWS. "
-        )
-        + (
+            "Ferramenta LOCAL de homologação: sem autenticação, sem provider e sem AWS. "
             "Serve e muta os artefatos de um diretório de rodada pelas mesmas funções de "
             "domínio que o CLI `croquito-valuation` usa."
         ),
@@ -1314,9 +1275,9 @@ def _build_app(
         allow_origins=list(origins),
         allow_credentials=False,
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "Authorization"] if hosted else ["Content-Type"],
+        allow_headers=["Content-Type"],
     )
-    router = APIRouter(dependencies=list(dependencies))
+    router = APIRouter()
 
     @application.exception_handler(LocalServerRefusal)
     async def refusal_handler(_request: Request, exception: LocalServerRefusal) -> JSONResponse:
@@ -1351,8 +1312,8 @@ def _build_app(
         )
 
     @router.get("/state", tags=["state"])
-    async def read_state(request: Request) -> dict[str, object]:
-        return _state_payload(run, reviewer_id=reviewer_of(request))
+    async def read_state() -> dict[str, object]:
+        return _state_payload(run)
 
     @router.get("/takeoff", tags=["takeoff"])
     async def read_takeoff() -> dict[str, object]:
@@ -1391,9 +1352,7 @@ def _build_app(
         return FileResponse(overlay_path, media_type="image/png", headers=_NO_STORE)
 
     @router.post("/plates", status_code=202, tags=["plates"])
-    async def upload_plate(
-        request: Request, file: Annotated[UploadFile, File()]
-    ) -> dict[str, object]:
+    async def upload_plate(file: Annotated[UploadFile, File()]) -> dict[str, object]:
         """Recebe o PDF do projetista, ingere a página 1 e dispara a extração paga.
 
         A resposta é o estado da rodada, devolvido **sem esperar** a chamada paga — quem
@@ -1413,10 +1372,10 @@ def _build_app(
         payload = await _read_upload(file)
         manifest = ingest_plate_upload(run.root, filename=file.filename, payload=payload)
         _trigger_extraction(run, manifest)
-        return _state_payload(run, reviewer_id=reviewer_of(request))
+        return _state_payload(run)
 
     @router.post("/plates/extract", status_code=202, tags=["plates"])
-    async def extract_plate(request: Request) -> dict[str, object]:
+    async def extract_plate() -> dict[str, object]:
         """Re-dispara a extração da prancha JÁ ingerida, com a mesma pré-checagem.
 
         Existe para que falha transitória do provider — ou servidor que subiu sem teto de
@@ -1434,12 +1393,10 @@ def _build_app(
         unavailable = _trigger_extraction(run, manifest)
         if unavailable is not None:
             raise LocalServerRefusal(409, unavailable)
-        return _state_payload(run, reviewer_id=reviewer_of(request))
+        return _state_payload(run)
 
     @router.post("/takeoff/decisions", tags=["takeoff"])
-    async def decide_takeoff_item(
-        request: Request, payload: TakeoffDecisionRequest
-    ) -> dict[str, object]:
+    async def decide_takeoff_item(payload: TakeoffDecisionRequest) -> dict[str, object]:
         """Aplica UMA decisão do orçamentista e republica pacote e overlay.
 
         A ordem é a de `cli._publish_takeoff`: o overlay é renderizado em memória antes de
@@ -1452,7 +1409,7 @@ def _build_app(
         decision = TakeoffDecisionInput(
             item_id=payload.item_id,
             action=payload.action,
-            reviewer_id=reviewer_of(request),
+            reviewer_id=run.reviewer_id,
             reviewer_role=REVIEWER_ROLE,
             decided_at=_now(),
             quantity=_parse_quantity(payload.quantity),
@@ -1648,7 +1605,7 @@ def _build_app(
         }
 
     @router.post("/codes/decisions", tags=["codes"])
-    async def decide_item_code(request: Request, payload: CodeDecisionRequest) -> dict[str, object]:
+    async def decide_item_code(payload: CodeDecisionRequest) -> dict[str, object]:
         """Confirma ou rejeita o código de UM item, acumulando sobre o conjunto anterior.
 
         Acumular item a item é a semântica do `--previous` do `confirm-codes`: o domínio
@@ -1692,7 +1649,7 @@ def _build_app(
                     item_id=payload.item_id,
                     action=payload.action,
                     code=payload.code,
-                    reviewer_id=reviewer_of(request),
+                    reviewer_id=run.reviewer_id,
                     reviewer_role=REVIEWER_ROLE,
                     decided_at=_now(),
                     note=payload.note,
@@ -1823,62 +1780,9 @@ def create_local_app(root: Path, reviewer_id: str) -> FastAPI:
             {"length": len(cleaned_reviewer)},
         )
     run = _Run(root=resolved, reviewer_id=cleaned_reviewer)
-    return _build_app(
-        run,
-        origins=LOCAL_WEB_ORIGINS,
-        # A identidade é do PROCESSO neste modo: ela não olha a requisição, e é por isso que
-        # expor esta porta fora de 127.0.0.1 faz o servidor avisar (`LOCAL_SERVER_EXPOSED`).
-        reviewer_of=lambda _request: run.reviewer_id,
-        dependencies=(),
-    )
-
-
-def create_hosted_app(
-    root: Path, *, issuer: str, audience: str, allowed_origins: Sequence[str]
-) -> FastAPI:
-    """Monta o servidor hospedado do ADR-0026 sobre o diretório da rodada.
-
-    A diferença para `create_local_app` é a porta de entrada, e só ela: toda rota de rodada
-    exige Bearer JWT do MESMO realm da sessão de cena, com o papel `orcamentista`, e o
-    `reviewer_id` gravado na decisão vem do claim assinado — nunca de flag. As funções de
-    domínio, os nomes de artefato, a guarda otimista por digest e as recusas são as mesmas.
-
-    `GET /healthz` fica **fora** da dependency, no roteador do próprio app: o probe do host
-    não tem sessão e não entrega dado nenhum. É a única rota sem token, e ela é declarada
-    aqui, à vista, em vez de virar uma exceção escondida dentro da dependency.
-
-    O import de `hosted_auth` é tardio de propósito, e é o que desarma a dependência
-    invertida: o modo hospedado é ponte com remoção declarada (ADR-0026, ADR-0028) e lê
-    daqui o papel do revisor, então importá-lo no topo fecharia um ciclo. O servidor
-    local, que sobrevive, não referencia o módulo hospedado em lugar nenhum — apagá-lo é
-    apagar esta função e este import.
-    """
-    from croquito_worker.valuation.hosted_auth import (
-        HostedSessionRefusal,
-        build_reviewer_dependency,
-        hosted_reviewer_id,
-    )
-
-    run = _Run(root=_round_root(root))
-    require_reviewer = build_reviewer_dependency(issuer=issuer, audience=audience)
-    application = _build_app(
-        run,
-        origins=allowed_origins,
-        reviewer_of=hosted_reviewer_id,
-        dependencies=[Depends(require_reviewer)],
-    )
-
-    @application.exception_handler(HostedSessionRefusal)
-    async def session_handler(_request: Request, exception: HostedSessionRefusal) -> JSONResponse:
-        """Recusa de sessão no MESMO envelope das recusas de domínio; o token nunca aparece."""
-        return _problem(exception.status_code, exception.error)
-
-    @application.get("/healthz", tags=["health"])
-    async def read_health() -> dict[str, str]:
-        """Prova de vida do processo. Sem sessão, sem estado da rodada e sem dado de obra."""
-        return {"status": "ok"}
-
-    return application
+    # A identidade é do PROCESSO: ela não olha a requisição, e é por isso que expor esta
+    # porta fora de 127.0.0.1 faz o servidor avisar (`LOCAL_SERVER_EXPOSED`).
+    return _build_app(run, origins=LOCAL_WEB_ORIGINS)
 
 
 def run_local_server(application: FastAPI, *, host: str, port: int) -> None:

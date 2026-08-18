@@ -1,38 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { App, journeyIsOpen } from "./App";
+import { App } from "./App";
 
 /**
- * A assimetria entre as duas jornadas é regra de produto, não detalhe de render: croqui
- * sempre exige sessão; medição exige sessão só onde há OIDC configurado, porque sem ele o
- * caminho é o servidor local do ADR-0020, que a F-003 declara fora de escopo remover.
+ * As duas jornadas têm o mesmo regime: sessão OIDC ou nada. A medição já teve um caminho
+ * sem sessão (o servidor local do ADR-0020, em outra origem); ele saiu com a migração para
+ * a API `/v1` (ADR-0028), e toda rota de medição é autenticada e por tenant.
  *
- * Ela é testada aqui, e não pelo HTML, porque `isOidcConfigured()` é lido do ambiente do
- * build: o render estático só alcança um dos dois regimes.
- */
-describe("journeyIsOpen", () => {
-  it("com sessão, as duas jornadas abrem", () => {
-    expect(journeyIsOpen("croqui", true, true)).toBe(true);
-    expect(journeyIsOpen("medicao", true, true)).toBe(true);
-    expect(journeyIsOpen("croqui", true, false)).toBe(true);
-    expect(journeyIsOpen("medicao", true, false)).toBe(true);
-  });
-
-  it("com OIDC configurado e sem sessão, nenhuma jornada abre", () => {
-    expect(journeyIsOpen("croqui", false, true)).toBe(false);
-    expect(journeyIsOpen("medicao", false, true)).toBe(false);
-  });
-
-  it("sem OIDC configurado, a medição abre e o croqui continua pedindo sessão", () => {
-    expect(journeyIsOpen("medicao", false, false)).toBe(true);
-    expect(journeyIsOpen("croqui", false, false)).toBe(false);
-  });
-});
-
-/**
- * O render estático cai sempre na rota do croqui (sem `window`, `currentRoute()` devolve
- * a raiz) e neste ambiente não há `VITE_OIDC_*`. É, portanto, o lado exigente da
- * assimetria: croqui sem sessão, que continua fechado.
+ * O render estático cai sempre na rota do croqui (sem `window`, `currentRoute()` devolve a
+ * raiz) e neste ambiente não há `VITE_OIDC_*` — é, portanto, o regime sem sessão, no qual
+ * NENHUMA das duas jornadas é alcançável.
  */
 describe("App", () => {
   it("na rota do croqui sem sessão, nenhuma jornada é exposta", () => {
@@ -52,18 +29,15 @@ describe("App", () => {
   });
 
   /**
-   * O seletor segue `journeyIsOpen`, não a sessão sozinha: sem OIDC configurado a medição
-   * é alcançável (ADR-0020), e sem o seletor a orçamentista teria de digitar `?rodada=` na
-   * barra de endereço para chegar até ela. Com OIDC e sem sessão ele some — coberto pelo
-   * `journeyIsOpen` acima, que é o único regime que este render não alcança.
+   * O seletor abre jornada, e sem sessão não existe jornada a abrir — inclusive a da
+   * medição, que deixou de ter caminho sem sessão quando o servidor local saiu. Oferecer a
+   * alternância aqui prometeria uma tela que a próxima chamada recusaria com 401.
    */
-  it("oferece a alternância de jornada porque a medição local é alcançável", () => {
+  it("sem sessão, não oferece a alternância de jornada", () => {
     const html = renderToStaticMarkup(<App />);
 
-    expect(html).toContain('aria-label="Jornadas"');
-    expect(html).toContain(">Croqui<");
-    expect(html).toContain(">Medição<");
-    // Alcançável não é aberta: a jornada do croqui continua atrás da tela anônima.
+    expect(html).not.toContain('aria-label="Jornadas"');
+    expect(html).not.toContain(">Medição<");
     expect(html).toContain("Acesse uma revisão autenticada");
   });
 

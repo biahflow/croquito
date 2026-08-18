@@ -24,34 +24,6 @@ function currentRoute(): Route {
 }
 
 /**
- * As duas jornadas têm regimes de autenticação DIFERENTES, e a assimetria é deliberada.
- * Ela mora aqui, pura e testável, porque quem ler `App.tsx` depois vai querer reduzi-la a
- * uma condição só — e reduzir apaga um dos dois caminhos.
- *
- * - **Croqui exige sessão, sempre.** Evidência e decisão de cena são de tenant
- *   autenticado; sem OIDC configurado o app já mostrava a tela anônima antes desta casca
- *   existir, e isso não muda.
- * - **Medição exige sessão QUANDO há OIDC configurado** — a API `/v1` do ADR-0028 (D9).
- *   Sem OIDC configurado a jornada continua ALCANÇÁVEL, e é ela quem diz o que falta: as
- *   rotas de medição são todas autenticadas, então a tela pede a sessão em vez de chamar
- *   a API. Fechá-la aqui apagaria a distinção entre "não há jornada" e "entre para abrir
- *   uma rodada", e a remoção do caminho local do ADR-0020 é tarefa própria da F-003.
- *
- * `hasSession` é booleano de propósito: a renovação silenciosa troca o objeto da sessão, e
- * o que decide o acesso é haver uma, não qual é.
- */
-export function journeyIsOpen(
-  kind: Route["kind"],
-  hasSession: boolean,
-  oidcConfigured: boolean,
-): boolean {
-  if (hasSession) {
-    return true;
-  }
-  return kind === "medicao" && !oidcConfigured;
-}
-
-/**
  * Casca do app: uma sessão OIDC, um build, um deploy (ADR-0028, D9). Ela autentica,
  * mostra a identidade e alterna entre as jornadas; quem resolve croqui ou medição são
  * os componentes de jornada, não ela.
@@ -127,15 +99,14 @@ export function App() {
     setSessionNotice(notice);
   }, []);
 
-  const oidcConfigured = isOidcConfigured();
-  const medicaoAberta = journeyIsOpen("medicao", session !== null, oidcConfigured);
-  // O seletor abre jornada; ele aparece quando existe jornada a abrir. Com OIDC e sem
-  // sessão não existe nenhuma, e ele some — como antes desta assimetria.
-  const trocaDeJornada =
-    medicaoAberta || journeyIsOpen("croqui", session !== null, oidcConfigured);
+  // As duas jornadas têm o MESMO regime: sessão OIDC ou nada. A medição já teve um
+  // caminho sem sessão (o servidor local do ADR-0020, falado por outra origem); ele saiu
+  // com a migração para a API `/v1` (ADR-0028), e toda rota de medição é autenticada e por
+  // tenant. O seletor abre jornada, então ele só aparece quando existe jornada a abrir.
+  const autenticado = session !== null;
 
-  // Tela anônima das duas jornadas: nenhuma evidência, decisão ou rodada é exibida sem a
-  // sessão que a jornada pedida exige.
+  // Tela anônima das duas jornadas: nenhuma evidência, decisão ou rodada é exibida sem
+  // sessão.
   const telaAnonima = (
     <section className="context-bar">
       <div>
@@ -159,12 +130,11 @@ export function App() {
           <small>Revisão humana autenticada</small>
         </a>
         <div className="topbar-actions">
-          {/* Alternar jornada só faz sentido quando há jornada aberta; o seletor segue
-              `journeyIsOpen`, não a sessão sozinha. O estado ativo é escrito em
-              `aria-current`, não só pintado. Trocar de jornada fecha a que estava aberta —
-              a URL passa a declarar a jornada nova, e nada fica aberto por baixo do que se
-              vê. */}
-          {trocaDeJornada ? (
+          {/* Alternar jornada só faz sentido quando há jornada aberta, e sem sessão não
+              há nenhuma. O estado ativo é escrito em `aria-current`, não só pintado.
+              Trocar de jornada fecha a que estava aberta — a URL passa a declarar a
+              jornada nova, e nada fica aberto por baixo do que se vê. */}
+          {autenticado ? (
             <nav className="journey-switch" aria-label="Jornadas">
               <button
                 className="topbar-link"
@@ -236,20 +206,16 @@ export function App() {
 
       {/* A medição fala com a API `/v1` autenticada (ADR-0028): a sessão desce por prop e
           a rodada aberta vem da URL, para sobreviver a um reload. */}
-      {route.kind === "medicao" ? (
-        medicaoAberta ? (
-          <MedicaoApp
-            session={session}
-            roundId={route.roundId}
-            onOpenRound={handleOpenRound}
-          />
-        ) : (
-          telaAnonima
-        )
-      ) : session ? (
-        <CroquiApp session={session} onSessionLost={handleSessionLost} />
-      ) : (
+      {!session ? (
         telaAnonima
+      ) : route.kind === "medicao" ? (
+        <MedicaoApp
+          session={session}
+          roundId={route.roundId}
+          onOpenRound={handleOpenRound}
+        />
+      ) : (
+        <CroquiApp session={session} onSessionLost={handleSessionLost} />
       )}
     </main>
   );
