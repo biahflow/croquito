@@ -50,7 +50,9 @@ from croquito_worker.valuation.round_extraction import (
     PLATE_IMAGE_DIGEST,
     PLATE_IMAGE_REF,
     TAKEOFF_OVERLAY_DIGEST,
+    TAKEOFF_OVERLAY_PACKET_DIGEST,
     TAKEOFF_OVERLAY_REF,
+    document_digest,
 )
 from tests.fakes import FakeObjectStore, FakeQueue
 
@@ -270,6 +272,9 @@ def test_a_extracao_publica_pacote_overlay_e_lineage_numa_revisao(tmp_path: Path
         revision.artifact_digests_json[TAKEOFF_OVERLAY_DIGEST]
         == hashlib.sha256(storage.body(overlay_key)).hexdigest()
     )
+    # O overlay nasce do pacote recém-extraído e declara isso: sem esta chave ele nasceria
+    # marcado como vencido na rota que o serve (ADR-0030).
+    assert revision.artifact_digests_json[TAKEOFF_OVERLAY_PACKET_DIGEST] == document_digest(packet)
     assert [put["ContentType"] for put in storage.puts] == ["image/png", "image/png"]
     assert all(put["ServerSideEncryption"] == "AES256" for put in storage.puts)
 

@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import json
 import threading
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -43,6 +42,17 @@ from croquito_valuation.assignment import CodeAssignmentSet
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.models import PriceCatalog
 from croquito_valuation.takeoff import TakeoffPacket
+from croquito_worker.valuation.round_extraction import (
+    TAKEOFF_OVERLAY_DIGEST,
+    TAKEOFF_OVERLAY_PACKET_DIGEST,
+    TAKEOFF_OVERLAY_REF,
+)
+
+# Reexport explícito: o digest canônico de artefato JSON mora do lado do worker porque quem
+# o ESCREVE (o comando de fila) e quem o COMPARA (a rota) são processos diferentes — duas
+# serializações escritas em lados opostos passariam nos testes de cada um e deixariam o
+# overlay permanentemente vencido. Quem lê a rodada continua importando daqui.
+from croquito_worker.valuation.round_extraction import document_digest as document_digest
 from croquito_worker.valuation.round_view import (
     REVIEWER_ROLE,
     anchor_counts,
@@ -239,18 +249,6 @@ def append_revision(
     return revision
 
 
-def document_digest(document: Mapping[str, Any]) -> str:
-    """Digest estável de um artefato guardado em coluna JSON.
-
-    O servidor de medição publica o digest dos BYTES do arquivo da rodada; aqui não há
-    arquivo, e o que a tela precisa é um valor que só mude quando o conteúdo mudar. A
-    serialização é canônica (chaves ordenadas, sem espaço supérfluo) justamente para que o
-    mesmo conteúdo dê sempre o mesmo digest, independente da ordem que o banco devolveu.
-    """
-    encoded = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-
 def takeoff_packet_of(revision: ValuationRoundRevisionRecord | None) -> TakeoffPacket | None:
     if revision is None or revision.takeoff_packet_json is None:
         return None
@@ -271,6 +269,53 @@ def require_takeoff_packet(revision: ValuationRoundRevisionRecord | None) -> Tak
             STAGE_TAKEOFF, detail="a rodada ainda não tem pacote de takeoff publicado"
         )
     return packet
+
+
+def takeoff_overlay_ref(revision: ValuationRoundRevisionRecord | None) -> str | None:
+    """Chave do PNG do overlay gravada na revisão, ou `None` quando não há desenho."""
+    if revision is None:
+        return None
+    key = (revision.artifact_refs_json or {}).get(TAKEOFF_OVERLAY_REF)
+    return key if isinstance(key, str) and key else None
+
+
+def require_takeoff_overlay(revision: ValuationRoundRevisionRecord | None) -> str:
+    """A chave do overlay publicado, ou a recusa de etapa fora de ordem.
+
+    Overlay e pacote nascem no MESMO ato da extração, então rodada sem overlay é rodada
+    sem extração publicada — etapa fora de ordem, e não artefato perdido.
+    """
+    key = takeoff_overlay_ref(revision)
+    if key is None:
+        raise stage_not_ready(
+            STAGE_TAKEOFF, detail="a rodada ainda não tem overlay do takeoff publicado"
+        )
+    return key
+
+
+def takeoff_overlay_state(
+    revision: ValuationRoundRevisionRecord | None, *, packet_sha256: str
+) -> dict[str, Any]:
+    """Idade do overlay DERIVADA na leitura, nunca gravada como verdade (ADR-0030).
+
+    O overlay é reconstruído por comando de fila depois de cada decisão, então entre a
+    decisão e o desenho novo existe uma janela em que o desenho é do pacote anterior.
+    Marcá-la é melhor do que escondê-la: o overlay é a única visão de ONDE cada número foi
+    lido, e servi-lo como se fosse do pacote corrente enganaria com a autoridade de um
+    desenho.
+
+    Overlay publicado antes deste contrato não declara pacote de origem e sai `stale` —
+    desfecho fail-closed de propósito: o próximo re-render o corrige, e até lá a tela
+    prefere duvidar a afirmar.
+    """
+    digests = {} if revision is None else dict(revision.artifact_digests_json or {})
+    origin = digests.get(TAKEOFF_OVERLAY_PACKET_DIGEST)
+    return {
+        "present": takeoff_overlay_ref(revision) is not None,
+        "image_sha256": digests.get(TAKEOFF_OVERLAY_DIGEST),
+        "overlay_packet_sha256": origin,
+        "stale": origin != packet_sha256,
+    }
 
 
 def require_assignments(revision: ValuationRoundRevisionRecord | None) -> CodeAssignmentSet:

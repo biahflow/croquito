@@ -8,6 +8,7 @@ import json
 import math
 import re
 from collections.abc import Generator, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -20,7 +21,14 @@ from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    ValidationError,
+    field_validator,
+)
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -53,14 +61,21 @@ from croquito_api.pubsub_queue import PubSubProcessingQueue, QueuePublishError
 from croquito_api.storage import ArtifactStore
 from croquito_api.valuation_rounds import (
     CATALOG_MAX_BYTES,
+    STAGE_TAKEOFF,
     RoundRefusal,
+    append_revision,
     current_stage,
+    document_digest,
     head_revision,
     load_round,
     require_base_version,
+    require_document,
     require_plate,
+    require_takeoff_overlay,
+    require_takeoff_packet,
     round_state_payload,
     signed_artifact_url,
+    takeoff_overlay_state,
 )
 from croquito_core.errors import DomainValidationError
 from croquito_core.ids import new_uuid7
@@ -78,8 +93,13 @@ from croquito_core.models import (
     SceneRevision,
     UnitCode,
 )
-from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.errors import ValuationValidationError, valuation_errors
 from croquito_valuation.models import PriceCatalog
+from croquito_valuation.takeoff import (
+    TakeoffDecisionBatch,
+    TakeoffDecisionInput,
+    apply_takeoff_decisions,
+)
 from croquito_worker.association import AssociationSet
 from croquito_worker.criteria import (
     FALLBACK_CRITERION_MESSAGE,
@@ -133,7 +153,17 @@ from croquito_worker.valuation.round_extraction import (
     extraction_arm_spec,
     extraction_unavailable,
 )
-from croquito_worker.valuation.round_view import REVIEWER_ROLE as VALUATION_REVIEWER_ROLE
+from croquito_worker.valuation.round_view import (
+    REVIEWER_ROLE as VALUATION_REVIEWER_ROLE,
+)
+from croquito_worker.valuation.round_view import (
+    anchor_counts,
+    anchored_packet,
+    parse_quantity,
+    registered_item_ids,
+    review_status,
+    takeoff_counts,
+)
 from croquito_worker.vision import VisionProposalSet
 
 
@@ -668,6 +698,58 @@ class ValuationExtractionResponse(ApiModel):
     status: str
 
 
+class ValuationTakeoffOverlayResponse(ApiModel):
+    """Overlay das âncoras: URL assinada, digest do desenho e a idade dele (ADR-0030).
+
+    `packet_sha256` é o pacote CORRENTE da rodada e `overlay_packet_sha256` é o pacote que
+    originou o desenho; `stale` é a comparação dos dois, feita na leitura. Os três viajam
+    juntos porque a marca sozinha não diz ao cliente o que mudou nem quando ele já pode
+    parar de esperar pelo re-render.
+    """
+
+    round_id: UUID
+    version: int
+    image_url: str
+    image_sha256: str | None = None
+    packet_sha256: str
+    overlay_packet_sha256: str | None = None
+    stale: bool
+
+
+class TakeoffDecisionRequest(ApiModel):
+    """Uma decisão do orçamentista sobre um item do takeoff.
+
+    `quantity` viaja como TEXTO porque quantidade é `Decimal` exato neste contexto: um
+    `float` de JSON já teria perdido a escala escrita na legenda antes de chegar aqui.
+
+    O carimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`,
+    `decided_at` e `decision_id` são recusados pelo `extra="forbid"` do `ApiModel`, não por
+    lista negra: a identidade vem do `Principal` e o instante, do servidor.
+
+    O padrão de `item_id` repete o do domínio (`TakeoffDecisionInput`) de propósito: ele é
+    o que faz um id malformado ser `422` de contrato na fronteira, em vez de estourar o
+    validador do domínio no meio da rota.
+    """
+
+    base_version: int = Field(ge=1)
+    item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
+    action: Literal["confirm", "reject"]
+    quantity: str | None = Field(default=None, min_length=1, max_length=40)
+    unit: str | None = Field(default=None, min_length=1, max_length=20)
+    note: str | None = Field(default=None, max_length=500)
+    item_note: str | None = Field(default=None, max_length=300)
+
+
+class ValuationDocumentResponse(RootModel[dict[str, Any]]):
+    """Resposta de medição cuja FORMA vem do domínio, guardada para o `Idempotency-Key`.
+
+    As contagens do takeoff nascem de `TakeoffItemStatus`, e recopiá-las como campos fixos
+    aqui faria a API deixar de mostrar um status novo sem que nenhum teste reclamasse. Este
+    envelope existe só para o registro de idempotência poder guardar a resposta inteira;
+    a rota continua devolvendo o dicionário do domínio.
+    """
+
+
 class ProcessingQueue:
     """Adaptador pequeno para SQS; sem fila configurada, falha fechado."""
 
@@ -749,6 +831,29 @@ class ProcessingQueue:
                     "round_id": round_id,
                     "extraction_id": extraction_id,
                     "tenant_id": tenant_id,
+                }
+            ),
+        )
+
+    def enqueue_takeoff_overlay_rerender(
+        self, *, round_id: str, tenant_id: str, packet_sha256: str
+    ) -> None:
+        """Publica o re-render do overlay do takeoff; o desenho nunca sai do request path.
+
+        O digest do pacote viaja no envelope porque é ele que torna o comando seguro de
+        repetir: o worker descarta em silêncio um comando cujo pacote já foi superado por
+        uma decisão posterior (ADR-0030). Sem `job_id`, como todo comando de medição.
+        """
+        if self.queue_url is None:
+            return
+        self.client.send_message(
+            QueueUrl=self.queue_url,
+            MessageBody=json.dumps(
+                {
+                    "command": "rerender_takeoff_overlay",
+                    "round_id": round_id,
+                    "tenant_id": tenant_id,
+                    "packet_sha256": packet_sha256,
                 }
             ),
         )
@@ -1022,6 +1127,27 @@ def _valuation_domain_problem(error: ValuationValidationError) -> HTTPException:
         status.HTTP_422_UNPROCESSABLE_ENTITY,
         error.message,
         {"code": error.code, **error.details},
+    )
+
+
+def _valuation_model_problem(error: ValidationError) -> HTTPException:
+    """Invariante de domínio embrulhada pelo Pydantic, sem devolver a mensagem do validador.
+
+    `ValuationValidationError` é um `ValueError`, então uma invariante levantada dentro de
+    um validador de modelo chega aqui encapsulada — é o caso de confirmar um item
+    `ambiguous` sem quantidade, que é caminho real do orçamentista e não erro de programa.
+    `valuation_errors` recupera a exceção original para que o código de domínio continue
+    saindo em `details`; sem ela, só o código declarado sai, porque a mensagem do Pydantic
+    pode ecoar o valor recusado — e valor recusado, aqui, é trecho de prancha de cliente.
+    """
+    domain = valuation_errors(error)
+    if domain:
+        return _valuation_domain_problem(domain[0])
+    return _problem(
+        "DOMAIN_VALIDATION_FAILED",
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "A decisão não corresponde ao contrato do modelo.",
+        {"code": "MODEL_VALIDATION_FAILED"},
     )
 
 
@@ -4645,6 +4771,56 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 "Extração registrada; repita o mesmo comando para reenfileirar com segurança.",
             ) from error
 
+    def _enqueue_takeoff_overlay_rerender(
+        *, round_id: str, tenant_id: str, packet_sha256: str
+    ) -> None:
+        """Publica o re-render do overlay. Falha de transporte NÃO derruba a decisão.
+
+        A diferença para `_enqueue_plate_extraction` é deliberada (ADR-0030): lá o
+        enfileiramento É o ato, e sem fila não há extração nenhuma; aqui o ato é a decisão
+        do orçamentista, que já está durável quando este comando é publicado. Traduzir a
+        recusa da fila em `503` faria o cliente supor que a decisão não valeu e repeti-la —
+        e a segunda tentativa recusaria o item como já revisado.
+
+        O desfecho de uma publicação perdida é visível sem log: o overlay continua
+        declarando o pacote antigo, ou seja, continua `stale` na rota que o serve.
+        """
+        queue: QueueAdapter = application.state.queue
+        with suppress(*QUEUE_TRANSPORT_ERRORS):
+            queue.enqueue_takeoff_overlay_rerender(
+                round_id=round_id, tenant_id=tenant_id, packet_sha256=packet_sha256
+            )
+
+    def _takeoff_payload(
+        record: ValuationRoundRecord, revision: ValuationRoundRevisionRecord | None
+    ) -> dict[str, Any]:
+        """Pacote da rodada com a âncora de cada item declarada, contagens e digest.
+
+        Espelha o `/takeoff` do servidor de medição pelas MESMAS funções puras, com as
+        chaves em inglês. O digest é o do documento guardado na revisão — não o desta
+        resposta —, para que ele seja idêntico ao que o estado da rodada publica: é por
+        esse valor que a tela sabe se o que ela tem na mão ainda é o pacote corrente.
+        """
+        packet = require_takeoff_packet(revision)
+        stored = require_document(
+            revision,
+            "takeoff_packet_json",
+            stage=STAGE_TAKEOFF,
+            detail="a rodada ainda não tem pacote de takeoff publicado",
+        )
+        registered = registered_item_ids(
+            None if revision is None else revision.takeoff_registration_json
+        )
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "packet": anchored_packet(packet, registered),
+            "packet_sha256": document_digest(stored),
+            "review_status": review_status(packet),
+            **takeoff_counts(packet),
+            **anchor_counts(packet, registered),
+        }
+
     def _plate_response(
         record: ValuationRoundRecord, revision: ValuationRoundRevisionRecord | None, *, tenant: str
     ) -> ValuationPlateResponse:
@@ -5047,6 +5223,168 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             round_id=str(round_id),
             extraction_id=str(extraction_id),
             tenant_id=principal.tenant_id,
+        )
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/takeoff",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def get_valuation_takeoff(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Pacote de takeoff da rodada, com a âncora de evidência de cada item."""
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        return _takeoff_payload(record, revision)
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/takeoff/overlay",
+        response_model=ValuationTakeoffOverlayResponse,
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def get_valuation_takeoff_overlay(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ValuationTakeoffOverlayResponse:
+        """URL assinada do overlay e a idade dele; overlay vencido é `200`, nunca erro.
+
+        Esconder a divergência seria pior do que mostrá-la: o desenho anterior continua
+        sendo a única visão de onde cada número foi lido (ADR-0030). A URL assinada segue o
+        regime da imagem da prancha — prefixo do tenant conferido antes do presign, e nunca
+        registrada em log nem em auditoria (ADR-0028 D5).
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        stored = require_document(
+            revision,
+            "takeoff_packet_json",
+            stage=STAGE_TAKEOFF,
+            detail="a rodada ainda não tem pacote de takeoff publicado",
+        )
+        overlay_key = require_takeoff_overlay(revision)
+        image_url = signed_artifact_url(
+            application.state.artifact_store,
+            object_key=overlay_key,
+            tenant_id=principal.tenant_id,
+        )
+        if image_url is None:
+            raise _problem(
+                "NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Overlay do takeoff não encontrado.",
+            )
+        packet_sha256 = document_digest(stored)
+        state = takeoff_overlay_state(revision, packet_sha256=packet_sha256)
+        return ValuationTakeoffOverlayResponse(
+            round_id=UUID(record.id),
+            version=record.version,
+            image_url=image_url,
+            image_sha256=cast(str | None, state["image_sha256"]),
+            packet_sha256=packet_sha256,
+            overlay_packet_sha256=cast(str | None, state["overlay_packet_sha256"]),
+            stale=cast(bool, state["stale"]),
+        )
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/takeoff/decisions",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def decide_valuation_takeoff_item(
+        round_id: UUID,
+        payload: TakeoffDecisionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Aplica UMA decisão do orçamentista, grava a revisão nova e enfileira o overlay.
+
+        A decisão é ato humano: ela avança o contador da rodada e o da cadeia de revisões.
+        O overlay, não — ele é consequência, e é reconstruído fora do request path
+        (ADR-0030). Entre a decisão e o desenho novo, a resposta já declara o overlay
+        vencido, para que a tela não mostre o desenho anterior como se fosse deste pacote.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.takeoff-decisions:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        try:
+            # Identidade do `Principal` e instante do servidor: o corpo não carimba nenhum
+            # dos dois. A regra de decisão é do domínio e não é reimplementada aqui.
+            decision = TakeoffDecisionInput(
+                item_id=payload.item_id,
+                action=payload.action,
+                reviewer_id=principal.subject,
+                reviewer_role=VALUATION_REVIEWER_ROLE,
+                decided_at=datetime.now(UTC),
+                quantity=parse_quantity(payload.quantity),
+                unit=payload.unit,
+                note=payload.note,
+                item_note=payload.item_note,
+            )
+            reviewed = apply_takeoff_decisions(packet, TakeoffDecisionBatch(decisions=[decision]))
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+
+        document = reviewed.model_dump(mode="json")
+        packet_sha256 = document_digest(document)
+        new_revision = append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"takeoff_packet_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = {
+            **_takeoff_payload(record, new_revision),
+            "overlay": takeoff_overlay_state(new_revision, packet_sha256=packet_sha256),
+        }
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_TAKEOFF_ITEM_DECIDED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        # A decisão fica durável ANTES da fila, e nenhuma transação atravessa a publicação.
+        session.commit()
+        _enqueue_takeoff_overlay_rerender(
+            round_id=record.id,
+            tenant_id=principal.tenant_id,
+            packet_sha256=packet_sha256,
         )
         return response
 

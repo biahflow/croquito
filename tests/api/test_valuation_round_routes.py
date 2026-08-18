@@ -1,4 +1,4 @@
-"""Rotas `/v1/valuation-rounds` de F-003 (T6/T7): criação, listagem, estado e prancha.
+"""Rotas `/v1/valuation-rounds` de F-003 (T6/T7/T9): criação, prancha e takeoff.
 
 O que estes testes protegem, além do caminho feliz:
 
@@ -10,7 +10,9 @@ O que estes testes protegem, além do caminho feliz:
 - **URL assinada**: sai só depois de conferido o prefixo do tenant e nunca entra em
   auditoria — as duas coisas verificadas contra o banco, não contra a resposta;
 - **chamada paga**: entitlement revogado não enfileira, extração em voo recusa, e a fila
-  indisponível devolve `503` com o intent já durável.
+  indisponível devolve `503` com o intent já durável;
+- **overlay do takeoff**: a decisão do orçamentista nunca espera pelo desenho, e um desenho
+  do pacote anterior jamais é servido como se fosse do corrente (ADR-0030).
 """
 
 from __future__ import annotations
@@ -38,11 +40,23 @@ from croquito_api.database import (
     ValuationRoundRevisionRecord,
 )
 from croquito_api.main import create_app
+from croquito_api.valuation_rounds import document_digest
 from croquito_core.ids import new_uuid7
 from croquito_valuation.models import PriceCatalog, PriceCatalogEntry
+from croquito_valuation.takeoff import (
+    PlateBox,
+    PlateEvidence,
+    TakeoffItem,
+    TakeoffItemStatus,
+    TakeoffPacket,
+)
 from croquito_worker.valuation.round_extraction import (
     AI_BUDGET_ENV,
+    PLATE_IMAGE_DIGEST,
     PLATE_IMAGE_REF,
+    TAKEOFF_OVERLAY_DIGEST,
+    TAKEOFF_OVERLAY_PACKET_DIGEST,
+    TAKEOFF_OVERLAY_REF,
 )
 from tests.fakes import FakeObjectStore, FakeQueue, synthetic_pdf
 
@@ -229,6 +243,106 @@ def _allow_paid_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(_ANTHROPIC_KEY_ENV, "chave-de-teste-nunca-usada")
 
 
+_ITEM_CLEAR = "ti_00000000000000a1"
+_ITEM_AMBIGUOUS = "ti_00000000000000a2"
+_IMAGE_DIGEST = "a" * 64
+_OVERLAY_DIGEST = "e" * 64
+
+
+def _takeoff_item(
+    *, item_id: str = _ITEM_CLEAR, status: TakeoffItemStatus = TakeoffItemStatus.PROPOSED
+) -> TakeoffItem:
+    """Item sintético como a extração o publica: proposto, e ambíguo sem quantidade."""
+    ambiguous = status is TakeoffItemStatus.AMBIGUOUS
+    return TakeoffItem(
+        id=item_id,
+        evidence=PlateEvidence(
+            plate_id="rodada-sintetica",
+            page_number=1,
+            image_sha256=_IMAGE_DIGEST,
+            bbox=PlateBox(left=10, top=10, right=210, bottom=60),
+        ),
+        raw_text="ALAMBRADO GALVANIZADO --- m" if ambiguous else "ALAMBRADO GALVANIZADO 10,00 m",
+        label="ALAMBRADO GALVANIZADO",
+        quantity=None if ambiguous else Decimal("10.00"),
+        unit="m",
+        source="legend_extraction",
+        extractor="legend-extractor-sintetico",
+        extractor_version="1.0.0",
+        status=status,
+    )
+
+
+def _takeoff_packet(items: list[TakeoffItem] | None = None) -> TakeoffPacket:
+    return TakeoffPacket(
+        plate_id="rodada-sintetica",
+        page_number=1,
+        image_sha256=_IMAGE_DIGEST,
+        source_pdf_sha256="b" * 64,
+        items=items if items is not None else [_takeoff_item()],
+        safety_notes=[
+            "Extração automática da legenda; quantidade não confirmada.",
+            "Decisão do orçamentista obrigatória antes de qualquer boletim.",
+        ],
+    )
+
+
+def _publish_takeoff(
+    client: TestClient,
+    round_id: str,
+    packet: TakeoffPacket,
+    *,
+    tenant: str = _TENANT,
+    overlay: bool = True,
+    overlay_packet_sha256: str | None = None,
+    overlay_key: str | None = None,
+) -> dict[str, Any]:
+    """Publica pacote e overlay como o comando de fila faria, e avança a rodada.
+
+    O teste escreve a revisão direto porque a extração é PAGA: exercitá-la aqui só para
+    chegar ao takeoff faria cada teste desta seção depender do braço do provider.
+    """
+    document = packet.model_dump(mode="json")
+    digest = document_digest(document)
+    refs = {PLATE_IMAGE_REF: f"tenants/{tenant}/valuation-rounds/{round_id}/plate/page-001.png"}
+    digests = {PLATE_IMAGE_DIGEST: packet.image_sha256}
+    if overlay:
+        refs[TAKEOFF_OVERLAY_REF] = overlay_key or (
+            f"tenants/{tenant}/valuation-rounds/{round_id}/takeoff/overlay.png"
+        )
+        digests[TAKEOFF_OVERLAY_DIGEST] = _OVERLAY_DIGEST
+        digests[TAKEOFF_OVERLAY_PACKET_DIGEST] = overlay_packet_sha256 or digest
+    with _database(client).sessions() as session:
+        record = session.get(ValuationRoundRecord, round_id)
+        assert record is not None
+        session.add(
+            ValuationRoundRevisionRecord(
+                id=str(new_uuid7()),
+                tenant_id=tenant,
+                round_id=round_id,
+                version=1,
+                created_by="valuation-extraction-v1",
+                takeoff_packet_json=document,
+                artifact_refs_json=refs,
+                artifact_digests_json=digests,
+            )
+        )
+        record.version += 1
+        session.commit()
+        version = record.version
+    return {"packet_sha256": digest, "version": version, "refs": refs}
+
+
+def _round_with_takeoff(
+    client: TestClient, packet: TakeoffPacket | None = None, **overrides: Any
+) -> dict[str, Any]:
+    created = _create_round(client)
+    published = _publish_takeoff(
+        client, created["round_id"], packet or _takeoff_packet(), **overrides
+    )
+    return {"round_id": created["round_id"], **published}
+
+
 def _grant_entitlement(client: TestClient, tenant: str = _TENANT) -> None:
     database = _database(client)
     with database.sessions() as session:
@@ -389,9 +503,15 @@ def test_sem_authorization_toda_rota_de_medicao_devolve_401(tmp_path: Path) -> N
             json={"upload_id": str(uuid4()), "base_version": 1},
         ),
         client.post(f"/v1/valuation-rounds/{round_id}/plate/extractions", json={"base_version": 1}),
+        client.get(f"/v1/valuation-rounds/{round_id}/takeoff"),
+        client.get(f"/v1/valuation-rounds/{round_id}/takeoff/overlay"),
+        client.post(
+            f"/v1/valuation-rounds/{round_id}/takeoff/decisions",
+            json={"base_version": 1, "item_id": _ITEM_CLEAR, "action": "confirm"},
+        ),
     ]
 
-    assert [response.status_code for response in responses] == [401] * 6
+    assert [response.status_code for response in responses] == [401] * 9
 
 
 def test_papel_e_exigido_antes_do_lookup_da_rodada(tmp_path: Path) -> None:
@@ -417,9 +537,16 @@ def test_papel_e_exigido_antes_do_lookup_da_rodada(tmp_path: Path) -> None:
             headers=headers,
             json={"base_version": 1},
         ),
+        client.get(f"/v1/valuation-rounds/{unknown}/takeoff", headers=headers),
+        client.get(f"/v1/valuation-rounds/{unknown}/takeoff/overlay", headers=headers),
+        client.post(
+            f"/v1/valuation-rounds/{unknown}/takeoff/decisions",
+            headers=headers,
+            json={"base_version": 1, "item_id": _ITEM_CLEAR, "action": "confirm"},
+        ),
     ]
 
-    assert [response.status_code for response in responses] == [403] * 6
+    assert [response.status_code for response in responses] == [403] * 9
     assert all(response.json()["detail"]["code"] == "FORBIDDEN" for response in responses)
 
 
@@ -442,9 +569,17 @@ def test_rodada_de_outro_tenant_e_404_e_nunca_403(tmp_path: Path) -> None:
         json={"base_version": 1},
     )
     listing = client.get("/v1/valuation-rounds", headers=intruder)
+    takeoff = client.get(f"/v1/valuation-rounds/{round_id}/takeoff", headers=intruder)
+    overlay = client.get(f"/v1/valuation-rounds/{round_id}/takeoff/overlay", headers=intruder)
+    decision = client.post(
+        f"/v1/valuation-rounds/{round_id}/takeoff/decisions",
+        headers=_headers(_OTHER_TENANT, key="intruso-002"),
+        json={"base_version": 1, "item_id": _ITEM_CLEAR, "action": "confirm"},
+    )
 
     assert [state.status_code, plate.status_code, associate.status_code] == [404, 404, 404]
     assert extraction.status_code == 404
+    assert [takeoff.status_code, overlay.status_code, decision.status_code] == [404, 404, 404]
     assert listing.json()["items"] == []
 
 
@@ -865,3 +1000,472 @@ def test_fila_indisponivel_persiste_o_intent_e_o_comando_e_repetivel(
         # A repetição não abre extração nova nem avança a rodada de novo.
         assert record.extraction_id == extraction_id
         assert record.version == 3
+
+
+# --- takeoff: leitura -------------------------------------------------------------------
+
+
+def test_o_takeoff_sai_com_ancora_por_item_contagens_e_digest(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(
+        client,
+        _takeoff_packet(
+            [
+                _takeoff_item(),
+                _takeoff_item(item_id=_ITEM_AMBIGUOUS, status=TakeoffItemStatus.AMBIGUOUS),
+            ]
+        ),
+    )
+
+    response = client.get(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff", headers=_headers()
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["round_id"] == published["round_id"]
+    assert body["version"] == published["version"]
+    assert body["packet_sha256"] == published["packet_sha256"]
+    assert body["review_status"] == "review_required"
+    assert body["items"] == 2
+    assert body["pending"] == 2
+    assert body["proposed"] == 1
+    assert body["ambiguous"] == 1
+    assert body["confirmed"] == 0
+    assert body["rejected"] == 0
+    # Sem relatório de registro fino, nenhuma âncora é confiável (fail-closed).
+    assert body["anchors_registered"] == 0
+    assert body["anchors_raw"] == 2
+    assert [item["anchor"] for item in body["packet"]["items"]] == ["raw", "raw"]
+
+
+def test_o_digest_do_takeoff_e_o_mesmo_que_o_estado_da_rodada_publica(tmp_path: Path) -> None:
+    """Dois valores diferentes fariam a tela achar que o pacote mudou entre duas telas."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client)
+
+    takeoff = client.get(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff", headers=_headers()
+    ).json()
+    state = client.get(f"/v1/valuation-rounds/{published['round_id']}", headers=_headers()).json()
+
+    assert takeoff["packet_sha256"] == state["takeoff"]["packet_sha256"]
+
+
+def test_takeoff_sem_pacote_publicado_e_etapa_fora_de_ordem(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client)
+
+    response = client.get(f"/v1/valuation-rounds/{created['round_id']}/takeoff", headers=_headers())
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "ROUND_STAGE_NOT_READY"
+    assert detail["details"] == {"stage": "takeoff"}
+
+
+# --- takeoff: overlay -------------------------------------------------------------------
+
+
+def test_o_overlay_sai_por_url_assinada_e_declara_o_pacote_de_origem(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client)
+
+    response = client.get(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff/overlay", headers=_headers()
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert published["refs"][TAKEOFF_OVERLAY_REF] in body["image_url"]
+    assert body["image_sha256"] == _OVERLAY_DIGEST
+    assert body["packet_sha256"] == published["packet_sha256"]
+    assert body["overlay_packet_sha256"] == published["packet_sha256"]
+    assert body["stale"] is False
+
+
+def test_overlay_vencido_e_200_com_a_marca_e_nunca_passa_por_corrente(tmp_path: Path) -> None:
+    """Esconder a divergência é pior do que declará-la (ADR-0030)."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, overlay_packet_sha256="f" * 64)
+
+    response = client.get(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff/overlay", headers=_headers()
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stale"] is True
+    assert body["overlay_packet_sha256"] == "f" * 64
+    assert body["packet_sha256"] == published["packet_sha256"]
+    assert body["image_url"]
+
+
+def test_overlay_sem_pacote_de_origem_declarado_sai_vencido(tmp_path: Path) -> None:
+    """Overlay publicado antes deste contrato não afirma frescor que não pode provar."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client)
+    with _database(client).sessions() as session:
+        revision = session.scalars(select(ValuationRoundRevisionRecord)).one()
+        digests = dict(revision.artifact_digests_json)
+        digests.pop(TAKEOFF_OVERLAY_PACKET_DIGEST)
+        revision.artifact_digests_json = digests
+        session.commit()
+
+    body = client.get(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff/overlay", headers=_headers()
+    ).json()
+
+    assert body["stale"] is True
+    assert body["overlay_packet_sha256"] is None
+
+
+def test_overlay_ausente_e_etapa_fora_de_ordem(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, overlay=False)
+    created = _create_round(client, key="rodada-sem-takeoff")
+
+    published_response = client.get(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff/overlay", headers=_headers()
+    )
+    empty_response = client.get(
+        f"/v1/valuation-rounds/{created['round_id']}/takeoff/overlay", headers=_headers()
+    )
+
+    assert [published_response.status_code, empty_response.status_code] == [409, 409]
+    for response in (published_response, empty_response):
+        detail = response.json()["detail"]
+        assert detail["code"] == "ROUND_STAGE_NOT_READY"
+        assert detail["details"] == {"stage": "takeoff"}
+
+
+def test_overlay_fora_do_prefixo_do_tenant_e_404_sem_chamar_o_presign(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(
+        client, overlay_key=f"tenants/{_OTHER_TENANT}/valuation-rounds/x/takeoff/overlay.png"
+    )
+    signed: list[str] = []
+
+    def _recording_presign(*, object_key: str) -> str:
+        signed.append(object_key)
+        return "https://storage.invalid/vazado"
+
+    _store(client).presign_private_read = _recording_presign  # type: ignore[method-assign]
+
+    response = client.get(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff/overlay", headers=_headers()
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "NOT_FOUND"
+    assert signed == []
+
+
+# --- takeoff: decisão do orçamentista ---------------------------------------------------
+
+
+def _decide(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    tenant: str = _TENANT,
+    key: str = "decisao-001",
+    **body: Any,
+) -> Any:
+    payload: dict[str, Any] = {
+        "base_version": base_version,
+        "item_id": _ITEM_CLEAR,
+        "action": "confirm",
+    }
+    payload.update(body)
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/takeoff/decisions",
+        headers=_headers(tenant, key=key),
+        json=payload,
+    )
+
+
+def test_a_decisao_grava_revisao_avanca_a_rodada_e_enfileira_o_overlay(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    queue = _observed_queue(client)
+    published = _round_with_takeoff(client)
+
+    response = _decide(
+        client, published["round_id"], base_version=published["version"], quantity="12.00"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == published["version"] + 1
+    assert body["review_status"] == "complete"
+    assert body["confirmed"] == 1
+    assert body["pending"] == 0
+    item = body["packet"]["items"][0]
+    assert item["status"] == "confirmed"
+    # Quantidade sai como TEXTO: `float` já teria perdido a escala escrita na legenda.
+    assert item["quantity"] == "12.00"
+    assert item["decision"]["reviewer_id"] == "orcamentista-sintetica"
+    assert item["decision"]["reviewer_role"] == "orcamentista"
+    # O overlay é consequência da decisão, não parte dela: até o worker redesenhá-lo, ele
+    # declara o pacote anterior.
+    assert body["overlay"]["stale"] is True
+    assert body["overlay"]["overlay_packet_sha256"] == published["packet_sha256"]
+
+    envelope = json.loads(queue.messages[0]["Body"])
+    assert envelope == {
+        "command": "rerender_takeoff_overlay",
+        "round_id": published["round_id"],
+        "tenant_id": _TENANT,
+        "packet_sha256": body["packet_sha256"],
+    }
+    assert "job_id" not in envelope
+    with _database(client).sessions() as session:
+        record = session.get(ValuationRoundRecord, published["round_id"])
+        assert record is not None
+        assert record.version == published["version"] + 1
+        revisions = session.scalars(
+            select(ValuationRoundRevisionRecord).order_by(ValuationRoundRevisionRecord.version)
+        ).all()
+        assert [revision.version for revision in revisions] == [1, 2]
+        assert revisions[1].created_by == "orcamentista-sintetica"
+        assert revisions[1].parent_revision_id == revisions[0].id
+        # Revisão é append-only: o pacote anterior continua exatamente como estava.
+        assert revisions[0].takeoff_packet_json is not None
+        assert revisions[0].takeoff_packet_json["items"][0]["status"] == "proposed"
+
+
+def test_o_digest_enfileirado_sobrevive_a_ida_e_volta_do_banco(tmp_path: Path) -> None:
+    """O worker recalcula o digest a partir da COLUNA, não do corpo que a rota enviou.
+
+    Se a ida e volta pelo JSON do banco mudasse um único caractere da serialização, todo
+    comando de re-render seria descartado por "pacote defasado" e o overlay ficaria vencido
+    para sempre — falha que nenhum teste de um lado só perceberia.
+    """
+    client = _client(tmp_path)
+    queue = _observed_queue(client)
+    published = _round_with_takeoff(client)
+
+    response = _decide(
+        client, published["round_id"], base_version=published["version"], quantity="12.00"
+    )
+
+    assert response.status_code == 200, response.text
+    enqueued = json.loads(queue.messages[0]["Body"])["packet_sha256"]
+    with _database(client).sessions() as session:
+        head = session.scalars(
+            select(ValuationRoundRevisionRecord).order_by(
+                ValuationRoundRevisionRecord.version.desc()
+            )
+        ).first()
+        assert head is not None
+        assert document_digest(head.takeoff_packet_json or {}) == enqueued
+
+
+def test_a_decisao_com_fila_indisponivel_responde_200_e_deixa_o_overlay_vencido(
+    tmp_path: Path,
+) -> None:
+    """A decisão já está durável quando o comando é publicado: falha de transporte não a
+    derruba, e traduzi-la em `503` faria o cliente repetir um ato que já valeu."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client)
+
+    class _RefusingClient:
+        def send_message(self, **_kwargs: Any) -> None:
+            raise BotoCoreError()
+
+    processing_queue = cast(Any, client.app).state.queue
+    processing_queue.queue_url = "http://localstack/queue"
+    processing_queue.client = _RefusingClient()
+
+    response = _decide(client, published["round_id"], base_version=published["version"])
+
+    assert response.status_code == 200, response.text
+    assert response.json()["overlay"]["stale"] is True
+    with _database(client).sessions() as session:
+        record = session.get(ValuationRoundRecord, published["round_id"])
+        assert record is not None
+        assert record.version == published["version"] + 1
+        assert len(session.scalars(select(ValuationRoundRevisionRecord)).all()) == 2
+    overlay = client.get(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff/overlay", headers=_headers()
+    ).json()
+    assert overlay["stale"] is True
+    assert overlay["overlay_packet_sha256"] == published["packet_sha256"]
+
+
+def test_item_ja_revisado_recusa_com_o_vocabulario_do_dominio(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    _observed_queue(client)
+    published = _round_with_takeoff(client)
+    first = _decide(client, published["round_id"], base_version=published["version"])
+    assert first.status_code == 200, first.text
+
+    response = _decide(
+        client, published["round_id"], base_version=published["version"] + 1, key="decisao-002"
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detail["details"]["code"] == "TAKEOFF_ITEM_ALREADY_REVIEWED"
+
+
+def test_confirmar_item_ambiguo_sem_quantidade_recusa_com_codigo_de_dominio(
+    tmp_path: Path,
+) -> None:
+    """A invariante sobe embrulhada pelo Pydantic; o código de domínio continua saindo."""
+    client = _client(tmp_path)
+    queue = _observed_queue(client)
+    published = _round_with_takeoff(
+        client,
+        _takeoff_packet(
+            [_takeoff_item(item_id=_ITEM_AMBIGUOUS, status=TakeoffItemStatus.AMBIGUOUS)]
+        ),
+    )
+
+    response = _decide(
+        client, published["round_id"], base_version=published["version"], item_id=_ITEM_AMBIGUOUS
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detail["details"]["code"] == "TAKEOFF_ITEM_CONFIRMED_INCOMPLETE"
+    assert list(queue.messages) == []
+    with _database(client).sessions() as session:
+        assert len(session.scalars(select(ValuationRoundRevisionRecord)).all()) == 1
+
+
+def test_quantidade_ilegivel_recusa_antes_de_qualquer_gravacao(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client)
+
+    response = _decide(
+        client, published["round_id"], base_version=published["version"], quantity="doze"
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["details"]["code"] == "LOCAL_QUANTITY_INVALID"
+    with _database(client).sessions() as session:
+        assert len(session.scalars(select(ValuationRoundRevisionRecord)).all()) == 1
+
+
+def test_item_desconhecido_recusa_sem_gravar(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client)
+
+    response = _decide(
+        client,
+        published["round_id"],
+        base_version=published["version"],
+        item_id="ti_00000000000000ff",
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["details"]["code"] == "TAKEOFF_DECISION_UNKNOWN_ITEM"
+
+
+def test_base_version_divergente_na_decisao_recusa_sem_gravar_nada(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    queue = _observed_queue(client)
+    published = _round_with_takeoff(client)
+
+    response = _decide(client, published["round_id"], base_version=published["version"] + 7)
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "REVISION_CONFLICT"
+    assert detail["details"] == {
+        "base_version": published["version"] + 7,
+        "current_version": published["version"],
+    }
+    assert list(queue.messages) == []
+    with _database(client).sessions() as session:
+        record = session.get(ValuationRoundRecord, published["round_id"])
+        assert record is not None
+        assert record.version == published["version"]
+        assert len(session.scalars(select(ValuationRoundRevisionRecord)).all()) == 1
+
+
+def test_decisao_sem_takeoff_publicado_e_etapa_fora_de_ordem(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client)
+
+    response = _decide(client, created["round_id"], base_version=1)
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "ROUND_STAGE_NOT_READY"
+
+
+def test_idempotencia_da_decisao_devolve_a_mesma_resposta(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    queue = _observed_queue(client)
+    published = _round_with_takeoff(client)
+
+    first = _decide(client, published["round_id"], base_version=published["version"])
+    second = _decide(client, published["round_id"], base_version=published["version"])
+    reused = _decide(
+        client, published["round_id"], base_version=published["version"], quantity="9.00"
+    )
+
+    assert first.status_code == 200
+    assert second.json() == first.json()
+    assert reused.status_code == 409
+    assert reused.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+    assert len(queue.messages) == 1
+    with _database(client).sessions() as session:
+        assert len(session.scalars(select(ValuationRoundRevisionRecord)).all()) == 2
+
+
+def test_decisao_sem_idempotency_key_recusa(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client)
+    headers = _headers()
+    headers.pop("Idempotency-Key")
+
+    response = client.post(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff/decisions",
+        headers=headers,
+        json={"base_version": published["version"], "item_id": _ITEM_CLEAR, "action": "confirm"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
+
+
+def test_o_corpo_da_decisao_recusa_o_carimbo_de_identidade(tmp_path: Path) -> None:
+    """Identidade vem do `Principal` e instante do servidor; o corpo não carimba nenhum."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client)
+
+    for forbidden in ("reviewer_id", "reviewer_role", "decided_at", "decision_id"):
+        response = _decide(
+            client,
+            published["round_id"],
+            base_version=published["version"],
+            key=f"decisao-{forbidden}",
+            **{forbidden: "x"},
+        )
+
+        assert response.status_code == 422, forbidden
+        assert "extra" in response.text.lower()
+    with _database(client).sessions() as session:
+        assert len(session.scalars(select(ValuationRoundRevisionRecord)).all()) == 1
+
+
+def test_a_decisao_registra_auditoria_sem_url_assinada_nem_conteudo(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    _observed_queue(client)
+    published = _round_with_takeoff(client)
+
+    assert (
+        _decide(client, published["round_id"], base_version=published["version"]).status_code == 200
+    )
+
+    with _database(client).sessions() as session:
+        audits = session.scalars(select(AuditRecord)).all()
+        decided = [audit for audit in audits if audit.action == "VALUATION_TAKEOFF_ITEM_DECIDED"]
+        assert len(decided) == 1
+        assert decided[0].resource_id == published["round_id"]
+        assert all(set(audit.metadata_json) == {"request_id"} for audit in audits)

@@ -124,6 +124,19 @@ class PubSubProcessingQueue:
             }
         )
 
+    def enqueue_takeoff_overlay_rerender(
+        self, *, round_id: str, tenant_id: str, packet_sha256: str
+    ) -> None:
+        """Publica o re-render do overlay do takeoff; o corpo é o mesmo do SQS, byte a byte."""
+        self._publish(
+            {
+                "command": "rerender_takeoff_overlay",
+                "round_id": round_id,
+                "tenant_id": tenant_id,
+                "packet_sha256": packet_sha256,
+            }
+        )
+
     def enqueue_chat_turn(self, *, chat_turn_id: str, job_id: str, tenant_id: str) -> None:
         """Publishes the chat turn; no model is ever called from the request path."""
         self._publish(

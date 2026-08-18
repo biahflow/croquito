@@ -23,13 +23,14 @@ para HTTP é o adaptador.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from pydantic import ValidationError
 
@@ -95,6 +96,31 @@ teste nenhum dos dois lados isoladamente e apareceria como imagem que nunca carr
 
 PLATE_IMAGE_DIGEST: Final = "plate_image_sha256"
 TAKEOFF_OVERLAY_DIGEST: Final = "takeoff_overlay_sha256"
+
+TAKEOFF_OVERLAY_PACKET_DIGEST: Final = "takeoff_overlay_packet_sha256"
+"""Digest do pacote de takeoff que ORIGINOU o overlay desenhado (ADR-0030).
+
+O overlay declara a própria idade sem coluna nova: ele está *vencido* quando este valor
+difere do digest do pacote corrente da rodada. A comparação é feita na LEITURA, e por isso
+o valor nunca é gravado como "vencido" em lugar nenhum — estado derivado que se pode
+gravar é estado que se pode divergir do que a revisão realmente contém."""
+
+
+def document_digest(document: Mapping[str, Any]) -> str:
+    """Digest estável de um artefato guardado em coluna JSON da revisão.
+
+    Mora neste módulo pelo mesmo motivo dos nomes de chave acima, e com mais força: quem
+    ESCREVE `takeoff_overlay_packet_sha256` (o comando de fila do worker) e quem o COMPARA
+    com o pacote corrente (a rota que serve o overlay) são processos diferentes. Duas
+    serializações canônicas escritas em lados opostos passariam nos testes de cada lado e
+    deixariam o overlay permanentemente vencido em produção.
+
+    A serialização é canônica — chaves ordenadas, sem espaço supérfluo — justamente para
+    que o mesmo conteúdo dê sempre o mesmo digest, independente da ordem em que o banco
+    devolveu as chaves.
+    """
+    encoded = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def round_object_prefix(*, tenant_id: str, round_id: str) -> str:
