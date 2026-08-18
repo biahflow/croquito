@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`PLANNING`
 
 > Selecionada por decisão humana de 2026-08-18. A ordem acordada era executar depois da
 > [F-006](../F-006-hml-conserto/feature.md), e ela está satisfeita: a F-006 fechou `DONE` em
