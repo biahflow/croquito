@@ -1,5 +1,7 @@
 import { UserManager, WebStorageStateStore, type User } from "oidc-client-ts";
 
+import { readRoute, routeSearch } from "./route";
+
 const authority = import.meta.env.VITE_OIDC_AUTHORITY;
 const clientId = import.meta.env.VITE_OIDC_CLIENT_ID;
 const browser = typeof window !== "undefined";
@@ -44,38 +46,58 @@ export function onSessionRenewed(listener: (user: User) => void): () => void {
  * O `state` do OIDC volta como foi mandado. Só o `job` interessa, e ele é lido com
  * desconfiança: qualquer outra forma vira "não veio job". Nada daqui é registrado.
  */
-function jobFromState(state: unknown): string | null {
+export function searchFromState(state: unknown): string | null {
   if (typeof state !== "object" || state === null) {
     return null;
   }
-  const job = (state as { job?: unknown }).job;
-  return typeof job === "string" && job ? job : null;
+  const carried = state as { search?: unknown; job?: unknown };
+  if (typeof carried.search === "string" && carried.search) {
+    return carried.search;
+  }
+  // Forma antiga do `state`, de quando só a jornada do croqui existia. Continua aceita
+  // porque um login iniciado antes desta build pode estar em voo agora, no navegador de
+  // alguém: o `state` viaja pelo Keycloak e volta depois do deploy.
+  const job = carried.job;
+  return typeof job === "string" && job ? `?job=${encodeURIComponent(job)}` : null;
 }
 
 /**
- * Limpa os parâmetros do retorno do OIDC e devolve à URL a revisão que o profissional
- * estava abrindo — sem isso o `?job` do link se perde no redirect e ele reencontra a
- * lista de projetos em vez do croqui.
+ * Limpa os parâmetros do retorno do OIDC e devolve à URL a JORNADA que o profissional
+ * estava abrindo — sem isso o `?job` ou o `?rodada` do link se perde no redirect e ele
+ * reencontra a lista de projetos em vez do croqui, ou o croqui em vez da medição.
+ *
+ * O que viaja no `state` é a query canônica da rota (`route.ts`), e não só o job: desde a
+ * casca de duas jornadas, devolver apenas o `job` mandaria quem abriu um link de medição
+ * sem sessão para a jornada errada depois do login.
  *
  * A URL é lida AGORA, e não antes do `await`: em desenvolvimento o React monta o efeito
  * duas vezes, a segunda chamada falha (o código de autorização é de uso único) e
- * reescrever com a foto velha apagaria o `job` que a primeira acabou de devolver.
+ * reescrever com a foto velha apagaria a rota que a primeira acabou de devolver.
  * Medido no smoke headless contra o stack local, que era o único a alcançar o redirect.
  */
-function restoreUrlAfterRedirect(job: string | null): void {
-  const params = new URLSearchParams(window.location.search);
-  if (job && !params.has("job")) {
-    params.set("job", job);
+export function mergedSearchAfterRedirect(
+  currentSearch: string,
+  carriedSearch: string | null,
+): string {
+  const params = new URLSearchParams(currentSearch);
+  const carried = new URLSearchParams(carriedSearch ?? "");
+  for (const [name, value] of carried) {
+    // A URL corrente manda: se o profissional já está numa jornada declarada, o `state`
+    // não a sequestra. Ele só repõe o que o redirect apagou.
+    if (!params.has(name)) {
+      params.set(name, value);
+    }
   }
   for (const param of ["code", "state", "session_state", "iss"]) {
     params.delete(param);
   }
   const query = params.toString();
-  window.history.replaceState(
-    null,
-    "",
-    query ? `?${query}` : window.location.pathname,
-  );
+  return query ? `?${query}` : "";
+}
+
+function restoreUrlAfterRedirect(carriedSearch: string | null): void {
+  const query = mergedSearchAfterRedirect(window.location.search, carriedSearch);
+  window.history.replaceState(null, "", query || window.location.pathname);
 }
 
 export async function readSession(): Promise<User | null> {
@@ -93,7 +115,7 @@ export async function readSession(): Promise<User | null> {
       // URL reenvia um código já gasto ("Code not valid"); cair para a sessão
       // armazenada é melhor do que derrubar a tela inteira.
     } finally {
-      restoreUrlAfterRedirect(jobFromState(redirected?.state));
+      restoreUrlAfterRedirect(searchFromState(redirected?.state));
     }
   }
   const user = await manager.getUser();
@@ -141,10 +163,12 @@ export async function signIn(): Promise<void> {
   if (!manager) {
     throw new Error("OIDC não está configurado neste ambiente.");
   }
-  // O `redirect_uri` é fixo na base da SPA; o job aberto viaja no `state` e é devolvido à
-  // URL por `readSession`. Objeto simples de propósito: o `state` trafega serializado.
-  const job = new URLSearchParams(window.location.search).get("job");
-  await manager.signinRedirect(job ? { state: { job } } : undefined);
+  // O `redirect_uri` é fixo na base da SPA; a jornada aberta viaja no `state` e é
+  // devolvida à URL por `readSession`. Objeto simples de propósito: o `state` trafega
+  // serializado. Vai a query canônica inteira, e não só o job, porque a medição também é
+  // uma jornada endereçável e um link dela precisa sobreviver ao login.
+  const search = routeSearch(readRoute(window.location.search));
+  await manager.signinRedirect(search ? { state: { search } } : undefined);
 }
 
 export async function signOut(): Promise<void> {

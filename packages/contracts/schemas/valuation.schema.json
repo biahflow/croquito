@@ -1,0 +1,394 @@
+{
+  "$defs": {
+    "BulletinLine": {
+      "additionalProperties": false,
+      "description": "Linha do boletim de medição de uma obra.",
+      "properties": {
+        "code": {
+          "pattern": "^[A-Z]{2}\\d{8}(?:\\((?:/|[A-Z])\\))?$",
+          "title": "Code",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "item_number": {
+          "pattern": "^\\d{1,3}(\\.\\d{1,3}){0,3}$",
+          "title": "Item Number",
+          "type": "string"
+        },
+        "quantity": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Quantity",
+          "type": "string"
+        },
+        "total": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Total",
+          "type": "string"
+        },
+        "unit": {
+          "maxLength": 20,
+          "minLength": 1,
+          "title": "Unit",
+          "type": "string"
+        },
+        "unit_price": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Unit Price",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_number",
+        "code",
+        "description",
+        "unit",
+        "unit_price",
+        "quantity",
+        "total"
+      ],
+      "title": "BulletinLine",
+      "type": "object"
+    },
+    "CalcBlock": {
+      "additionalProperties": false,
+      "description": "Bloco de cálculo de um item: operandos multiplicados menos deduções.",
+      "properties": {
+        "deductions": {
+          "items": {
+            "$ref": "#/$defs/CalcOperand"
+          },
+          "title": "Deductions",
+          "type": "array"
+        },
+        "label": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "operands": {
+          "items": {
+            "$ref": "#/$defs/CalcOperand"
+          },
+          "minItems": 1,
+          "title": "Operands",
+          "type": "array"
+        },
+        "recipe": {
+          "$ref": "#/$defs/CalcRecipe"
+        },
+        "subtotal": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Subtotal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "recipe",
+        "operands",
+        "subtotal"
+      ],
+      "title": "CalcBlock",
+      "type": "object"
+    },
+    "CalcOperand": {
+      "additionalProperties": false,
+      "description": "Parcela impressa da memória de cálculo.\n\n`name` é dado, não identificador: chega em português na planilha (\"PERÍMETRO\").",
+      "properties": {
+        "name": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "value": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "CalcOperand",
+      "type": "object"
+    },
+    "CalcRecipe": {
+      "description": "Receitas de cálculo aceitas na memória; a lista é fechada por marco.",
+      "enum": [
+        "direct_quantity",
+        "length_times_width",
+        "perimeter_times_height",
+        "perim_height_minus_openings",
+        "qty_times_months",
+        "days_times_hours"
+      ],
+      "title": "CalcRecipe",
+      "type": "string"
+    },
+    "CalcSheet": {
+      "additionalProperties": false,
+      "description": "Memória de cálculo de um item do boletim de uma obra.\n\nA obra faz parte da identidade: o mesmo `item_number` se repete entre obras da mesma\nmedição, e só o par `(worksite_key, item_number)` identifica a memória.",
+      "properties": {
+        "blocks": {
+          "items": {
+            "$ref": "#/$defs/CalcBlock"
+          },
+          "minItems": 1,
+          "title": "Blocks",
+          "type": "array"
+        },
+        "item_number": {
+          "pattern": "^\\d{1,3}(\\.\\d{1,3}){0,3}$",
+          "title": "Item Number",
+          "type": "string"
+        },
+        "total_quantity": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Total Quantity",
+          "type": "string"
+        },
+        "worksite_key": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,63}$",
+          "title": "Worksite Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "worksite_key",
+        "item_number",
+        "blocks",
+        "total_quantity"
+      ],
+      "title": "CalcSheet",
+      "type": "object"
+    },
+    "ReviewerDecision": {
+      "additionalProperties": false,
+      "description": "Decisão humana rastreável do orçamentista.\n\nDuplicação local deliberada do `HumanDecision` do contexto de cena: o ADR-0016 mantém\nos dois contextos separados, e uma decisão sobre medição não é uma decisão sobre\ngeometria. O que se repete é a forma, não o significado.",
+      "properties": {
+        "action": {
+          "enum": [
+            "confirm",
+            "reject"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        },
+        "decision_id": {
+          "pattern": "^vd_[a-f0-9]{16}$",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "reviewer_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Reviewer Id",
+          "type": "string"
+        },
+        "reviewer_role": {
+          "const": "orcamentista",
+          "title": "Reviewer Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision_id",
+        "action",
+        "reviewer_id",
+        "reviewer_role",
+        "decided_at"
+      ],
+      "title": "ReviewerDecision",
+      "type": "object"
+    },
+    "ValuationApproval": {
+      "additionalProperties": false,
+      "description": "Aprovação nominal amarrada por digest ao conteúdo exato aprovado.\n\nAprovar um conteúdo e exportar outro é o erro que este modelo existe para impedir:\no digest é recomputado no portão e qualquer edição posterior invalida a aprovação.",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/ReviewerDecision"
+        },
+        "valuation_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Valuation Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision",
+        "valuation_digest"
+      ],
+      "title": "ValuationApproval",
+      "type": "object"
+    },
+    "WorksiteBulletin": {
+      "additionalProperties": false,
+      "description": "Boletim de medição de uma obra.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Address"
+        },
+        "contract_label": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contract Label"
+        },
+        "lines": {
+          "items": {
+            "$ref": "#/$defs/BulletinLine"
+          },
+          "minItems": 1,
+          "title": "Lines",
+          "type": "array"
+        },
+        "total_amount": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Total Amount",
+          "type": "string"
+        },
+        "worksite_key": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,63}$",
+          "title": "Worksite Key",
+          "type": "string"
+        },
+        "worksite_name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Worksite Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "worksite_key",
+        "worksite_name",
+        "lines",
+        "total_amount"
+      ],
+      "title": "WorksiteBulletin",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.croquito.local/valuation/valuation/2.0.0.json",
+  "additionalProperties": false,
+  "description": "Medição de um período: um boletim por obra e as memórias de cálculo de cada item.\n\nNada aqui carrega saldo contratual: o que já foi medido antes vive no\n`ContractWorkbook`, que entra por parâmetro no portão de exportação\n(`export_errors()`/`ensure_exportable()`). O portão falha fechado — medição sem\naprovação nominal válida, fora da sequência de períodos ou acima do saldo não vira\nplanilha publicada. Ver docs/architecture/VALUATION_CONTEXT.md.",
+  "properties": {
+    "approval": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ValuationApproval"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "bulletins": {
+      "items": {
+        "$ref": "#/$defs/WorksiteBulletin"
+      },
+      "minItems": 1,
+      "title": "Bulletins",
+      "type": "array"
+    },
+    "calc_sheets": {
+      "items": {
+        "$ref": "#/$defs/CalcSheet"
+      },
+      "minItems": 1,
+      "title": "Calc Sheets",
+      "type": "array"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "period_number": {
+      "minimum": 1,
+      "title": "Period Number",
+      "type": "integer"
+    },
+    "reference_label": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Reference Label",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "2.0.0",
+      "default": "2.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "period_number",
+    "reference_label",
+    "bulletins",
+    "calc_sheets"
+  ],
+  "title": "Croquito Valuation",
+  "type": "object"
+}

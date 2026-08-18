@@ -1,0 +1,400 @@
+"""Portões do runner de migrations (ADR-0029).
+
+Estes testes exigem PostgreSQL de verdade: SQLite não descreve o schema que as migrations
+produzem, e o gate de drift compara o banco real com `Base.metadata`. Sem a variável de
+ambiente com a URL, eles são PULADOS — `make test` na máquina do desenvolvedor não passa a
+depender de serviço no ar. O CI define a variável, e lá pular seria furar o portão.
+
+Cada teste trabalha num schema PostgreSQL próprio, criado e derrubado por fixture: nenhum
+depende de ordem, e nenhum enxerga o estado deixado por outro.
+"""
+
+from __future__ import annotations
+
+import os
+import types
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
+
+import pytest
+import sqlalchemy as sa
+from alembic import command
+from alembic.autogenerate import compare_metadata
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy import Engine, MetaData, create_engine, event, inspect, make_url, text
+
+from croquito_api import bootstrap
+from croquito_api.bootstrap import (
+    BASELINE_REVISION,
+    BASELINE_TABLES,
+    VERSION_TABLE,
+    SchemaAdoptionError,
+    apply_migrations,
+    build_config,
+)
+from croquito_api.database import Base, Database
+
+POSTGRES_URL_ENV = "CROQUITO_TEST_POSTGRES_URL"
+_POSTGRES_URL = os.getenv(POSTGRES_URL_ENV)
+
+requires_postgres = pytest.mark.skipif(
+    not _POSTGRES_URL,
+    reason=(
+        f"Defina {POSTGRES_URL_ENV} com um PostgreSQL descartável para exercitar as "
+        "migrations (o CI define; localmente é opcional)."
+    ),
+)
+
+_DDL_VERBS = ("create ", "alter ", "drop ")
+
+
+@pytest.fixture
+def schema_url() -> Iterator[str]:
+    """URL apontando para um schema recém-criado e exclusivo deste teste."""
+    assert _POSTGRES_URL is not None
+    base = make_url(_POSTGRES_URL)
+    schema = f"f004_{uuid.uuid4().hex[:12]}"
+    admin = create_engine(base, future=True, isolation_level="AUTOCOMMIT")
+    with admin.connect() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    try:
+        scoped = base.update_query_dict({"options": f"-csearch_path={schema}"})
+        # `hide_password=False`: a representação padrão troca a senha por `***` e o
+        # resultado não seria conectável.
+        yield scoped.render_as_string(hide_password=False)
+    finally:
+        with admin.connect() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        admin.dispose()
+
+
+def _head_revision() -> str:
+    """A cabeça da linha de revisões, lida do próprio diretório de versões.
+
+    Depois da adoção o banco fica em `head`, não na baseline: o carimbo é o ponto de
+    PARTIDA, e `apply_migrations` aplica o que falta em seguida. Enquanto a `0001` era a
+    única revisão, os dois valores coincidiam e o teste não distinguia um do outro.
+    """
+    script = ScriptDirectory.from_config(build_config("postgresql+psycopg://ignorada/ignorada"))
+    head = script.get_current_head()
+    assert head is not None
+    return head
+
+
+def _baseline_era_schema(schema_url: str) -> None:
+    """Recria um banco ANTERIOR ao runner: as tabelas da `0001` e nenhum controle de versão.
+
+    `Database.create_schema()` não serve mais de simulação: ele cria o modelo de HOJE, que
+    desde F-003 tem tabelas nascidas depois da baseline (`valuation_rounds`). Um banco real
+    anterior ao runner foi criado pelo bootstrap aditivo da época e tem exatamente o schema
+    da `0001` — carimbá-lo e aplicar o que falta é justamente o que a adoção existe para
+    fazer. Aplicar a revisão e derrubar a tabela de versão reproduz esse estado sem
+    duplicar DDL aqui.
+    """
+    command.upgrade(build_config(schema_url), BASELINE_REVISION)
+    engine = create_engine(schema_url, future=True)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(f"DROP TABLE {VERSION_TABLE}"))
+    finally:
+        engine.dispose()
+
+
+@contextmanager
+def _recorded_statements() -> Iterator[list[str]]:
+    """Registra o SQL de qualquer engine enquanto o bloco durar, para provar ausência de DDL.
+
+    O ouvinte é na CLASSE `Engine`, não no engine que o teste cria: o runner não migra pelo
+    engine que recebe — ele só o inspeciona —, e `command.stamp`/`command.upgrade` abrem o
+    seu próprio dentro de `migrations/env.py`. Escutando apenas o engine local, a lista
+    chegava sempre vazia e as asserções de DDL passavam por vacuidade.
+    """
+    recorded: list[str] = []
+
+    def _record(
+        _connection: Any,
+        _cursor: Any,
+        statement: str,
+        _parameters: Any,
+        _context: Any,
+        _executemany: bool,
+    ) -> None:
+        recorded.append(statement.strip().lower())
+
+    event.listen(Engine, "before_cursor_execute", _record)
+    try:
+        yield recorded
+    finally:
+        event.remove(Engine, "before_cursor_execute", _record)
+
+    assert recorded, (
+        "O gravador de SQL não viu nenhuma instrução. Toda asserção de DDL feita sobre esta "
+        "lista seria vacuamente verdadeira — foi exatamente esse o defeito que este helper "
+        "veio corrigir, e ele volta em silêncio se o runner passar a executar por um "
+        "caminho que este ouvinte não alcança."
+    )
+
+
+@requires_postgres
+def test_baseline_nao_diverge_dos_modelos(schema_url: str) -> None:
+    """Gate de drift: modelo alterado sem migration correspondente reprova aqui."""
+    engine = create_engine(schema_url, future=True)
+    try:
+        assert apply_migrations(engine, schema_url) == "vazio"
+        with engine.connect() as connection:
+            context = MigrationContext.configure(connection)
+            difference = compare_metadata(context, Base.metadata)
+        assert difference == [], (
+            "As migrations e `Base.metadata` divergem. Gere a revisão que falta com "
+            "`make db-revision MESSAGE=<descricao>` e revise o arquivo gerado."
+        )
+    finally:
+        engine.dispose()
+
+
+@requires_postgres
+def test_segunda_execucao_nao_emite_ddl(schema_url: str) -> None:
+    first = create_engine(schema_url, future=True)
+    try:
+        apply_migrations(first, schema_url)
+    finally:
+        first.dispose()
+
+    second = create_engine(schema_url, future=True)
+    with _recorded_statements() as recorded:
+        try:
+            assert apply_migrations(second, schema_url) == "versionado"
+        finally:
+            second.dispose()
+
+    ddl = [statement for statement in recorded if statement.startswith(_DDL_VERBS)]
+    assert ddl == []
+
+
+@requires_postgres
+def test_banco_anterior_ao_runner_e_carimbado(schema_url: str) -> None:
+    """Adoção: banco anterior ao runner mantém tabelas e dados."""
+    _baseline_era_schema(schema_url)
+    seed = create_engine(schema_url, future=True)
+    try:
+        with seed.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO projects (id, tenant_id, name, default_unit, status, "
+                    "created_by, created_at, expires_at) "
+                    "VALUES ('p-1', 't-1', 'Praça', 'm', 'ACTIVE', 'u-1', now(), now())"
+                )
+            )
+    finally:
+        seed.dispose()
+
+    engine = create_engine(schema_url, future=True)
+    with _recorded_statements() as recorded:
+        try:
+            assert apply_migrations(engine, schema_url) == "adotado"
+        finally:
+            engine.dispose()
+
+    engine = create_engine(schema_url, future=True)
+    try:
+        with engine.connect() as connection:
+            version = connection.execute(
+                text(f"SELECT version_num FROM {VERSION_TABLE}")
+            ).scalar_one()
+            surviving = connection.execute(text("SELECT name FROM projects")).scalar_one()
+        assert version == _head_revision()
+        assert surviving == "Praça"
+        assert set(Base.metadata.tables) <= set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+    # A adoção não recria nem altera o que já existia: nenhum `ALTER`/`DROP`, e as únicas
+    # tabelas criadas são a de versão e as nascidas DEPOIS da baseline, que o `upgrade`
+    # logo após o carimbo cria. Nenhuma tabela da baseline aparece como criada.
+    ddl = [statement for statement in recorded if statement.startswith(_DDL_VERBS)]
+    assert [statement for statement in ddl if statement.startswith(("alter ", "drop "))] == []
+    created = {
+        statement.removeprefix("create table ").split("(")[0].split()[0].strip('"')
+        for statement in ddl
+        if statement.startswith("create table ")
+    }
+    assert VERSION_TABLE in created, ddl
+    assert created & set(BASELINE_TABLES) == set(), created
+
+
+@requires_postgres
+def test_banco_defasado_e_recusado_em_vez_de_carimbado(schema_url: str) -> None:
+    database = Database(schema_url)
+    database.create_schema()
+    with database.engine.begin() as connection:
+        connection.execute(text("ALTER TABLE jobs DROP COLUMN failure_code"))
+    database.engine.dispose()
+
+    engine = create_engine(schema_url, future=True)
+    try:
+        with pytest.raises(SchemaAdoptionError) as error:
+            apply_migrations(engine, schema_url)
+        assert error.value.missing == ["jobs.failure_code"]
+        assert VERSION_TABLE not in set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+
+@requires_postgres
+def test_tabela_nova_ausente_recusa_mesmo_com_colunas_legadas_em_dia(schema_url: str) -> None:
+    """Banco parado antes de uma tabela nascer está defasado, e nenhuma coluna denuncia isso.
+
+    Tabela nova nunca teve bloco de `ALTER`: ela entrava pelo `create_all`. Um banco assim
+    tem todas as colunas legadas presentes, e carimbá-lo faria a tabela ausente nunca mais
+    ser criada — a baseline que a descreve já constaria como aplicada.
+    """
+    database = Database(schema_url)
+    database.create_schema()
+    with database.engine.begin() as connection:
+        connection.execute(text("DROP TABLE chat_turns"))
+        connection.execute(text("DROP TABLE chat_sessions"))
+    database.engine.dispose()
+
+    engine = create_engine(schema_url, future=True)
+    try:
+        with pytest.raises(SchemaAdoptionError) as error:
+            apply_migrations(engine, schema_url)
+        assert error.value.missing == ["tabela chat_sessions", "tabela chat_turns"]
+        assert VERSION_TABLE not in set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+
+@requires_postgres
+def test_tabela_nascida_depois_da_baseline_nao_impede_adocao(
+    schema_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Carimbar afirma "este banco está no estado da 0001" — o modelo de hoje não é a régua.
+
+    Cenário de F-003, agora real: a `0002` acrescentou `valuation_rounds` e
+    `valuation_round_revisions` ao modelo sem acrescentá-las à baseline. O banco de
+    homologação, anterior ao runner e em dia com a baseline, não tem essas tabelas e não
+    deveria: é o `upgrade` logo depois do carimbo que as cria. Medir a adoção contra
+    `Base.metadata` faria o portão recusar exatamente o banco que ele existe para adotar, e
+    o deploy pararia.
+
+    A tabela fictícia continua no teste para que ele siga valendo para a PRÓXIMA revisão que
+    criar tabela, e não só para a `0002`.
+    """
+    _baseline_era_schema(schema_url)
+
+    futuro = MetaData()
+    for table in Base.metadata.tables.values():
+        table.to_metadata(futuro)
+    sa.Table("valuation_rounds_futura", futuro, sa.Column("id", sa.String(36), primary_key=True))
+    monkeypatch.setattr(bootstrap, "Base", types.SimpleNamespace(metadata=futuro))
+
+    engine = create_engine(schema_url, future=True)
+    try:
+        assert apply_migrations(engine, schema_url) == "adotado"
+        with engine.connect() as connection:
+            version = connection.execute(
+                text(f"SELECT version_num FROM {VERSION_TABLE}")
+            ).scalar_one()
+        assert version == _head_revision()
+    finally:
+        engine.dispose()
+
+
+def test_toda_revisao_e_forward_only() -> None:
+    """ADR-0029 D2: não existe `downgrade`, e cada revisão nova precisa continuar assim.
+
+    A regra vale para a linha inteira, não só para a baseline: uma revisão que trouxesse um
+    `downgrade` funcional abriria em ambiente hospedado exatamente o caminho que a decisão
+    fechou, e o template de revisão nova é fácil de editar sem perceber.
+    """
+    script = ScriptDirectory.from_config(build_config("postgresql+psycopg://ignorada/ignorada"))
+    revisions = list(script.walk_revisions())
+    assert len(revisions) >= 2, "a linha de revisões encolheu; esperava baseline mais F-003"
+    for revision in revisions:
+        with pytest.raises(NotImplementedError):
+            revision.module.downgrade()
+
+
+@requires_postgres
+def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: str) -> None:
+    """As tabelas do ADR-0028 D2 não estão na baseline, e o índice da listagem existe.
+
+    O gate de drift prova que migration e modelo coincidem, mas coincidiriam também se o
+    índice composto faltasse nos DOIS lados. A listagem com cursor opaco de
+    `GET /v1/valuation-rounds` ordena por `(tenant_id, created_at, id)`, e é esse índice
+    que a sustenta.
+    """
+    command.upgrade(build_config(schema_url), BASELINE_REVISION)
+    engine = create_engine(schema_url, future=True)
+    try:
+        assert "valuation_rounds" not in set(inspect(engine).get_table_names())
+        command.upgrade(build_config(schema_url), "head")
+        inspector = inspect(engine)
+        criadas = set(inspector.get_table_names()) - {VERSION_TABLE} - set(BASELINE_TABLES)
+        assert criadas == {"valuation_rounds", "valuation_round_revisions"}
+        indices = {
+            index["name"]: tuple(index["column_names"])
+            for index in inspector.get_indexes("valuation_rounds")
+        }
+        assert indices["ix_valuation_rounds_tenant_created"] == ("tenant_id", "created_at", "id")
+    finally:
+        engine.dispose()
+
+
+@requires_postgres
+def test_baseline_tables_corresponde_a_revisao_0001(schema_url: str) -> None:
+    """`BASELINE_TABLES` é dado declarado; este teste impede que ele apodreça.
+
+    A constante descreve o schema da revisão `0001` e **não** acompanha `Base.metadata`. Uma
+    revisão futura que mexesse na baseline, ou um nome escrito errado, passaria despercebido
+    sem esta conferência — e o portão de adoção é justamente o que não pode mentir.
+    """
+    command.upgrade(build_config(schema_url), BASELINE_REVISION)
+    engine = create_engine(schema_url, future=True)
+    try:
+        criadas = set(inspect(engine).get_table_names()) - {VERSION_TABLE}
+    finally:
+        engine.dispose()
+
+    assert criadas == set(BASELINE_TABLES)
+
+
+@requires_postgres
+def test_tabela_ausente_tambem_recusa(schema_url: str) -> None:
+    """Banco com parte das tabelas é defasado, não vazio: carimbá-lo esconderia a falha."""
+    engine = create_engine(schema_url, future=True)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE projects (id VARCHAR(36) PRIMARY KEY)"))
+        with pytest.raises(SchemaAdoptionError) as error:
+            apply_migrations(engine, schema_url)
+        assert "tabela jobs" in error.value.missing
+    finally:
+        engine.dispose()
+
+
+def test_configuracao_resolve_as_migrations_pelo_pacote_instalado() -> None:
+    """Sem `alembic.ini` e sem diretório de trabalho: é assim que o runtime funciona."""
+    config = build_config("postgresql+psycopg://ignorada/ignorada")
+    location = config.get_main_option("script_location")
+    assert location is not None
+    assert os.path.isfile(os.path.join(location, "env.py"))
+    assert os.path.isfile(os.path.join(location, "versions", f"{BASELINE_REVISION}_baseline.py"))
+
+
+@requires_postgres
+def test_upgrade_pelo_cli_programatico_chega_na_cabeca(schema_url: str) -> None:
+    """`command.upgrade` direto (sem o runner) também leva o banco vazio até `head`."""
+    config = build_config(schema_url)
+    command.upgrade(config, "head")
+    engine = create_engine(schema_url, future=True)
+    try:
+        with engine.connect() as connection:
+            context = MigrationContext.configure(connection)
+            assert context.get_current_revision() is not None
+    finally:
+        engine.dispose()

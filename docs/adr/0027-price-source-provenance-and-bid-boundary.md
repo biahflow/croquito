@@ -1,6 +1,6 @@
 # ADR-0027: Fontes de preço com proveniência e a fronteira licitada × pré-licitação
 
-Status: Proposed  
+Status: Accepted
 Data: 2026-08-17  
 Responsável: Product / Engineering
 

@@ -105,9 +105,10 @@ jobs:
       # e na forma separada por espaço o parser do gcloud leria o próprio valor como se
       # fosse outra flag.
       #
-      # `bootstrap.py` é aditivo (`create_all` mais colunas novas declaradas) e não
-      # apaga nada. Ele é o inicializador do ambiente local promovido a HML de forma
-      # declarada; o runner de migrations revisadas é lacuna registrada no ADR-0025.
+      # `bootstrap.py` é o runner de migrations revisadas (ADR-0029): aplica as revisões
+      # que faltam, adota por carimbo o banco anterior ao runner — recusando carimbar um
+      # banco defasado — e é forward-only, sem caminho de `downgrade`. Reverter é apontar
+      # a revisão anterior da imagem (ADR-0025).
       # Falhar aqui **para o deploy**, antes de qualquer revisão nova entrar no ar.
       - name: Inicializa o schema
         run: |
@@ -188,30 +189,10 @@ jobs:
             --startup-probe httpGet.path=/auth/realms/master,httpGet.port=8080,initialDelaySeconds=20,periodSeconds=10,failureThreshold=24,timeoutSeconds=5 \
             --quiet
 
-      # A rodada de medição é um diretório de artefatos JSON atômicos, montado por FUSE
-      # do bucket `croquito-hml-rounds`. Uma instância no máximo e uma rodada por
-      # ambiente: o servidor grava arquivo, e duas instâncias sobre o mesmo diretório
-      # não têm árbitro (limite herdado do ADR-0020 e registrado no ADR-0026).
-      #
-      # `serve --hosted` é a sessão autenticada mínima do ADR-0026: Bearer do mesmo
-      # realm, papel orcamentista, reviewer carimbado do token, e `/healthz` como a
-      # única rota sem sessão — é ela que o startup probe consulta.
-      - name: Publica o servidor de medição
-        run: |
-          set -euo pipefail
-          gcloud run services update croquito-medicao-hml \
-            --image "$REGISTRO/croquito-python:$GITHUB_SHA" \
-            --region "$REGIAO" \
-            --service-account croquito-medicao-hml@biahflow-hml.iam.gserviceaccount.com \
-            --port 8080 \
-            --memory 1Gi --cpu 1 --no-cpu-throttling --concurrency 8 \
-            --add-volume name=rounds,type=cloud-storage,bucket=croquito-hml-rounds \
-            --add-volume-mount volume=rounds,mount-path=/mnt/rounds \
-            --command croquito-valuation \
-            --args=serve,--hosted,--root,/mnt/rounds/atual,--host,0.0.0.0,--port,8080 \
-            --set-env-vars CROQUITO_MEDICAO_OIDC_ISSUER=https://croquito-hml.biahflow.ai/auth/realms/croquito,CROQUITO_MEDICAO_OIDC_AUDIENCE=croquito-web,CROQUITO_MEDICAO_WEB_ORIGINS=https://croquito-hml.biahflow.ai,CROQUITO_IO_DIRECT_WRITE=1 \
-            --startup-probe httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=5,periodSeconds=5,failureThreshold=12,timeoutSeconds=3 \
-            --quiet
+      # A medição hospedada (ADR-0026) tinha um serviço próprio aqui, servindo um
+      # diretório de rodada montado por FUSE. Ela era ponte com remoção declarada e saiu
+      # com a migração para a API `/v1` autenticada (ADR-0028): a medição agora é rota da
+      # API de cena e jornada da mesma SPA, e não tem mais serviço, volume nem passo seu.
 
       - name: Publica o nginx
         if: hashFiles('docker/web.Dockerfile') != ''
@@ -230,35 +211,23 @@ jobs:
       # é justamente ele que prova que o proxy same-origin (`/api/`, `/auth/`) está de
       # pé.
       #
-      # Enquanto o web servir a imagem inicial (Entrega 3 pendente), não há o que
-      # afirmar: o passo avisa e sai. Fumaça que testa outra coisa é pior que nenhuma,
-      # porque ensina a confiar no verde errado.
+      # É o mesmo `scripts/smoke_hml.py` que roda na máquina do operador (`make
+      # smoke-hml`), e ele confere o **conteúdo** de cada rota, não só o status. A
+      # diferença não é cosmética: em 2026-08-14 o serviço da API passou a servir o
+      # container de exemplo do Cloud Run, que responde 200 em quase todo caminho, e uma
+      # fumaça de status teria dito "verde" pelos quatro dias em que a sessão autenticada
+      # não subia. O bypass condicional que existia aqui ("pular enquanto o web servir a
+      # imagem inicial") saiu junto: a condição está satisfeita desde `d5bbf86`, e fumaça
+      # que se pula sozinha ensina a confiar no verde errado.
+      #
+      # A URL testada é a do serviço, não a do host público: assim o passo prova o deploy
+      # e não a CDN. O issuer do OIDC continua sendo o público, porque é o que o Keycloak
+      # anuncia — daí o parâmetro separado.
       - name: Fumaça
         run: |
           set -euo pipefail
-          imagem=$(gcloud run services describe croquito-web-hml --region "$REGIAO" \
-            --format='value(spec.template.spec.containers[0].image)')
-          case "$imagem" in
-            "$REGISTRO/croquito-web:"*) ;;
-            *)
-              echo "::warning::croquito-web-hml ainda serve $imagem; fumaça pulada até a Entrega 3"
-              exit 0
-              ;;
-          esac
           url=$(gcloud run services describe croquito-web-hml --region "$REGIAO" \
             --format='value(status.url)')
-          for rota in /revisao/ /medicao/ /api/healthz /auth/realms/croquito/.well-known/openid-configuration; do
-            ok=""
-            for tentativa in 1 2 3 4 5; do
-              if curl -sf --max-time 10 "$url$rota" > /dev/null; then
-                ok="sim"; break
-              fi
-              echo "tentativa $tentativa em $rota falhou; esperando"
-              sleep 10
-            done
-            if [ -z "$ok" ]; then
-              echo "::error::$rota não respondeu depois do deploy"
-              exit 1
-            fi
-            echo "$rota responde"
-          done
+          python3 scripts/smoke_hml.py \
+            --base-url "$url" \
+            --issuer-base https://croquito-hml.biahflow.ai

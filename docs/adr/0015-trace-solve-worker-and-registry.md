@@ -1,6 +1,6 @@
 # ADR-0015: Traçado em lote executa no worker com registro próprio de solves
 
-Status: Proposed  
+Status: Accepted
 Data: 2026-08-12  
 Responsável: Engineering
 

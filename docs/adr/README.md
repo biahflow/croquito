@@ -2,7 +2,7 @@
 
 Status: Active index  
 Responsável: Architecture  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-17
 
 ADRs registram decisões transversais, difíceis de reverter ou que afetam contratos
 e NFRs. Um ADR aceito é imutável; correção material exige novo ADR com
@@ -28,21 +28,25 @@ e NFRs. Um ADR aceito é imutável; correção material exige novo ADR com
 | [0010](0010-versioned-prompts-models-and-responses.md) | Versionamento de IA | Accepted |
 | [0011](0011-oidc-portable-identity.md) | OIDC portável com Keycloak inicial | Accepted |
 | [0012](0012-contractual-ai-processing-entitlements.md) | Autorização contratual de IA por tenant | Accepted |
-| [0013](0013-export-worker-and-artifact-registry.md) | Export no worker e registro de artefatos | Proposed |
-| [0014](0014-scope-criteria-acknowledgement-at-approval.md) | Reconhecimento de critério de escopo na aprovação | Proposed |
-| [0015](0015-trace-solve-worker-and-registry.md) | Traçado em lote no worker e registro de solves | Proposed |
-| [0016](0016-valuation-bounded-context.md) | Medição de obra como contexto delimitado próprio | Proposed |
+| [0013](0013-export-worker-and-artifact-registry.md) | Export no worker e registro de artefatos | Accepted |
+| [0014](0014-scope-criteria-acknowledgement-at-approval.md) | Reconhecimento de critério de escopo na aprovação | Accepted |
+| [0015](0015-trace-solve-worker-and-registry.md) | Traçado em lote no worker e registro de solves | Accepted |
+| [0016](0016-valuation-bounded-context.md) | Medição de obra como contexto delimitado próprio | Accepted |
 | [0017](0017-per-criterion-coverage-declaration-and-trace-parity.md) | Declaração por critério (coberto × pendente) e paridade do traçado | Accepted |
-| [0018](0018-valuation-consolidation-and-balance-semantics.md) | Semântica de consolidação e saldo da medição de obra | Proposed |
+| [0018](0018-valuation-consolidation-and-balance-semantics.md) | Semântica de consolidação e saldo da medição de obra | Accepted |
 | [0019](0019-proposal-refresh-creates-a-new-review-revision.md) | Refino de propostas cria nova revisão de leitura | Accepted |
-| [0020](0020-local-homologation-server-for-valuation.md) | Servidor local de homologação para o contexto de medição | Proposed |
+| [0020](0020-local-homologation-server-for-valuation.md) | Servidor local de homologação para o contexto de medição | Accepted |
 | [0021](0021-hybrid-sco-code-retrieval.md) | Retrieval híbrido local para sugestão de código SCO | Accepted |
 | [0022](0022-declared-rectification-of-review-decisions.md) | Correção declarada de decisão de revisão | Accepted |
-| [0023](0023-review-chat-as-an-observational-agent.md) | Conversa da revisão como agente observacional com rascunhos tipados | Proposed |
+| [0023](0023-review-chat-as-an-observational-agent.md) | Conversa da revisão como agente observacional com rascunhos tipados | Accepted |
 | [0024](0024-rebranding-to-croquito.md) | Rebranding do produto para croquito | Accepted |
 | [0025](0025-homologacao-em-gcp-cloud-run.md) | Homologação hospedada em GCP (Cloud Run) | Accepted |
 | [0026](0026-medicao-hospedada-sessao-autenticada-minima.md) | Medição hospedada com sessão autenticada mínima | Accepted |
-| [0027](0027-price-source-provenance-and-bid-boundary.md) | Fontes de preço com proveniência e a fronteira licitada × pré-licitação | Proposed |
+| [0027](0027-price-source-provenance-and-bid-boundary.md) | Fontes de preço com proveniência e a fronteira licitada × pré-licitação | Accepted |
+| [0028](0028-medicao-na-api-v1-autenticada.md) | Medição de obra na API `/v1` autenticada | Accepted |
+| [0029](0029-runner-de-migrations-revisadas.md) | Runner de migrations revisadas com Alembic | Accepted |
+| [0030](0030-overlay-do-takeoff-reconstruido-na-fila.md) | Overlay do takeoff reconstruído na fila | Accepted |
+| [0031](0031-segredo-de-homologacao-gerenciado-por-terraform.md) | Segredo de homologação gerenciado por Terraform | Proposed |
 
 ## Processo
 

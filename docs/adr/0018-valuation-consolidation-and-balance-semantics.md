@@ -1,6 +1,6 @@
 # ADR-0018: Semântica de consolidação e saldo da medição de obra
 
-Status: Proposed  
+Status: Accepted
 Data: 2026-08-12  
 Responsável: Engineering
 

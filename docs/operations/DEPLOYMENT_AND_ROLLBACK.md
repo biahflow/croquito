@@ -2,7 +2,7 @@
 
 Status: Accepted baseline  
 Responsável: Platform / Engineering  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-17
 
 ## Ambientes
 
@@ -16,11 +16,14 @@ Responsável: Platform / Engineering
 - Front-end bundle imutável.
 - Terraform plan revisado.
 - Prompt/model routing versionado separadamente, mas ligado ao release.
-- Migrações numeradas e compatíveis com rolling deploy quando possível.
+- Migrações numeradas e compatíveis com rolling deploy quando possível. O runner é o
+  Alembic ([ADR-0029](../adr/0029-runner-de-migrations-revisadas.md)), com as revisões
+  dentro do pacote `croquito_api` e distribuídas na mesma imagem da API.
 
 ## Processo
 
-1. CI passa lint, types, tests e policy checks.
+1. CI passa lint, types, tests e policy checks — inclusive o gate de drift, que aplica as
+   migrations em PostgreSQL limpo e reprova modelo alterado sem a migration correspondente.
 2. Imagens são criadas, escaneadas e publicadas no ECR.
 3. Terraform plan é revisado; apply exige aprovação.
 4. Migração backward-compatible é aplicada.
@@ -46,7 +49,9 @@ Responsável: Platform / Engineering
 - Prompt/model: retornar config anterior.
 - State machine: novas execuções usam versão anterior; execuções existentes seguem
   versão iniciada ou são tratadas pelo runbook.
-- Banco: preferir expand/contract; rollback de código não depende de remover coluna.
+- Banco: migrations são forward-only e **não** têm `downgrade` (ADR-0029). Preferir
+  expand/contract; rollback de código é apontar a imagem anterior e nunca depende de
+  remover coluna. Remoção é trabalho próprio, com aprovação humana explícita.
 - Terraform: aplicar plano de reversão revisado, nunca editar console como padrão.
 
 ## Gatilhos

@@ -7,21 +7,30 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Final, Literal, cast
 from uuid import UUID
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-from sqlalchemy import func, select
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -46,9 +55,40 @@ from croquito_api.database import (
     TenantAiProcessingEntitlementRecord,
     TraceSolveRecord,
     UploadRecord,
+    ValuationRoundRecord,
+    ValuationRoundRevisionRecord,
 )
 from croquito_api.pubsub_queue import PubSubProcessingQueue, QueuePublishError
 from croquito_api.storage import ArtifactStore
+from croquito_api.valuation_rounds import (
+    CATALOG_MAX_BYTES,
+    STAGE_BULLETIN,
+    STAGE_DOSSIER,
+    STAGE_TAKEOFF,
+    CatalogCache,
+    RoundRefusal,
+    append_revision,
+    assignments_of,
+    compute_round_suggestions,
+    current_stage,
+    document_digest,
+    head_revision,
+    load_catalog,
+    load_round,
+    require_assignments,
+    require_base_version,
+    require_document,
+    require_plate,
+    require_reviewed_packet,
+    require_takeoff_overlay,
+    require_takeoff_packet,
+    require_unrefined_suggestions,
+    round_state_payload,
+    search_round_catalog,
+    signed_artifact_url,
+    suggestions_of,
+    takeoff_overlay_state,
+)
 from croquito_core.errors import DomainValidationError
 from croquito_core.ids import new_uuid7
 from croquito_core.models import (
@@ -64,6 +104,23 @@ from croquito_core.models import (
     Precision,
     SceneRevision,
     UnitCode,
+)
+from croquito_valuation.amendment_dossier import AmendmentDossier, build_amendment_dossier
+from croquito_valuation.assignment import (
+    CodeAssignmentBatch,
+    CodeAssignmentInput,
+    CodeAssignmentSet,
+    CodeSuggestionSet,
+    apply_code_assignments,
+)
+from croquito_valuation.calc import build_worksite_valuation
+from croquito_valuation.errors import ValuationValidationError, valuation_errors
+from croquito_valuation.models import WORKSITE_KEY_PATTERN, PriceCatalog, Valuation
+from croquito_valuation.takeoff import (
+    TakeoffDecisionBatch,
+    TakeoffDecisionInput,
+    TakeoffPacket,
+    apply_takeoff_decisions,
 )
 from croquito_worker.association import AssociationSet
 from croquito_worker.criteria import (
@@ -113,6 +170,30 @@ from croquito_worker.tracing import (
     TraceDetailGroup,
     keep_apart_proposal_ids,
 )
+from croquito_worker.valuation.catalog_search import (
+    CATALOG_SEARCH_DEFAULT_LIMIT,
+    CATALOG_SEARCH_MAX_LIMIT,
+)
+from croquito_worker.valuation.round_extraction import (
+    PLATE_IMAGE_REF,
+    extraction_arm_spec,
+    extraction_unavailable,
+)
+from croquito_worker.valuation.round_view import (
+    REVIEWER_ROLE as VALUATION_REVIEWER_ROLE,
+)
+from croquito_worker.valuation.round_view import (
+    anchor_counts,
+    anchored_packet,
+    count_status,
+    item_payload,
+    matching_of,
+    parse_quantity,
+    pending_code_items,
+    registered_item_ids,
+    review_status,
+    takeoff_counts,
+)
 from croquito_worker.vision import VisionProposalSet
 
 
@@ -130,9 +211,21 @@ class MetaResponse(ApiModel):
     scene_schema_version: str
 
 
+#: Tipos que o presign assina, com a extensão que cada um exige no nome do arquivo.
+#: O PDF é a prancha e o croqui; o JSON é o catálogo de preços que a rodada de medição
+#: instala na criação (ADR-0028 D6 tratou só da prancha e deixou o catálogo sem porta).
+#: Um tipo novo aqui é decisão de contrato, não conveniência de rota.
+UPLOAD_CONTENT_TYPES: Final[Mapping[str, str]] = {
+    "application/pdf": ".pdf",
+    "application/json": ".json",
+}
+
+PDF_CONTENT_TYPE: Final = "application/pdf"
+
+
 class PresignUploadRequest(ApiModel):
     filename: str = Field(min_length=1, max_length=255)
-    content_type: str = Field(pattern=r"^application/pdf$")
+    content_type: Literal["application/pdf", "application/json"]
     size_bytes: int = Field(gt=0, le=100_000_000)
     sha256: str = Field(pattern=r"^[a-fA-F0-9]{64}$")
 
@@ -547,6 +640,211 @@ class ChatSessionSummaryResponse(ApiModel):
     turn_count: int = Field(ge=0)
 
 
+CATALOG_CONTENT_TYPE: Final = "application/json"
+
+
+class CreateValuationRoundRequest(ApiModel):
+    """Rodada nova: a obra, o catálogo instalado e os rótulos que o boletim exige.
+
+    `period_number`, `address` e `contract_label` são atributos da RODADA (decisão humana de
+    2026-08-17): nenhuma rota do contrato os recebia e sem eles o boletim não fecha. O
+    carimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`, `decided_at` e
+    `decision_id` são recusados pelo `extra="forbid"` do `ApiModel`, não por lista negra.
+
+    `worksite_key` repete o padrão que o domínio exige de `WorksiteBulletin`
+    (`WORKSITE_KEY_PATTERN`) porque a chave é IMUTÁVEL na rodada: aceitá-la livre aqui faria
+    uma rodada nascer válida com `PRAÇA X` e só quebrar no `POST /calc`, dezenas de decisões
+    depois, quando já não há o que corrigir sem abrir rodada nova.
+    """
+
+    worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
+    worksite_name: str = Field(min_length=1, max_length=120)
+    catalog_upload_id: UUID
+    reference_label: str = Field(min_length=1, max_length=120)
+    period_number: int = Field(ge=1, le=999)
+    address: str | None = Field(default=None, min_length=1, max_length=200)
+    contract_label: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class ValuationRoundResponse(ApiModel):
+    round_id: UUID
+    version: int
+    status: str
+    created_at: datetime
+
+
+class ValuationRoundSummary(ApiModel):
+    round_id: UUID
+    worksite_key: str
+    worksite_name: str
+    reference_label: str
+    period_number: int
+    version: int
+    status: str
+    stage: str
+    extraction_status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ValuationRoundPage(ApiModel):
+    items: list[ValuationRoundSummary]
+    next_cursor: str | None = None
+
+
+class AssociatePlateRequest(ApiModel):
+    upload_id: UUID
+    base_version: int = Field(ge=1)
+
+
+class ValuationPlateResponse(ApiModel):
+    """Metadados da prancha; a imagem sai por URL assinada e nunca pelo request path (D5)."""
+
+    round_id: UUID
+    version: int
+    upload_id: UUID
+    source_sha256: str
+    page_count: int | None = None
+    image_url: str | None = None
+
+
+class CreatePlateExtractionRequest(ApiModel):
+    base_version: int = Field(ge=1)
+
+
+class ValuationExtractionResponse(ApiModel):
+    round_id: UUID
+    version: int
+    extraction_id: UUID
+    status: str
+
+
+class ValuationTakeoffOverlayResponse(ApiModel):
+    """Overlay das âncoras: URL assinada, digest do desenho e a idade dele (ADR-0030).
+
+    `packet_sha256` é o pacote CORRENTE da rodada e `overlay_packet_sha256` é o pacote que
+    originou o desenho; `stale` é a comparação dos dois, feita na leitura. Os três viajam
+    juntos porque a marca sozinha não diz ao cliente o que mudou nem quando ele já pode
+    parar de esperar pelo re-render.
+    """
+
+    round_id: UUID
+    version: int
+    image_url: str
+    image_sha256: str | None = None
+    packet_sha256: str
+    overlay_packet_sha256: str | None = None
+    stale: bool
+
+
+class TakeoffDecisionRequest(ApiModel):
+    """Uma decisão do orçamentista sobre um item do takeoff.
+
+    `quantity` viaja como TEXTO porque quantidade é `Decimal` exato neste contexto: um
+    `float` de JSON já teria perdido a escala escrita na legenda antes de chegar aqui.
+
+    O carimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`,
+    `decided_at` e `decision_id` são recusados pelo `extra="forbid"` do `ApiModel`, não por
+    lista negra: a identidade vem do `Principal` e o instante, do servidor.
+
+    O padrão de `item_id` repete o do domínio (`TakeoffDecisionInput`) de propósito: ele é
+    o que faz um id malformado ser `422` de contrato na fronteira, em vez de estourar o
+    validador do domínio no meio da rota.
+    """
+
+    base_version: int = Field(ge=1)
+    item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
+    action: Literal["confirm", "reject"]
+    quantity: str | None = Field(default=None, min_length=1, max_length=40)
+    unit: str | None = Field(default=None, min_length=1, max_length=20)
+    note: str | None = Field(default=None, max_length=500)
+    item_note: str | None = Field(default=None, max_length=300)
+
+
+class RecomputeSuggestionsRequest(ApiModel):
+    """Recompute explícito da shortlist de código: o corpo é só a guarda de concorrência.
+
+    O recompute é ATO humano — ele descarta a shortlist anterior e a substitui pelo
+    algoritmo corrente —, e por isso exige `base_version` e avança a versão da rodada. A
+    leitura que calcula a shortlist pela primeira vez não é ato nenhum e não pede corpo.
+    """
+
+    base_version: int = Field(ge=1)
+
+
+class CodeAssignmentDecisionRequest(ApiModel):
+    """Uma decisão do orçamentista sobre o código SCO de um item confirmado no takeoff.
+
+    O carimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`,
+    `decided_at` e `decision_id` são recusados pelo `extra="forbid"` do `ApiModel`: a
+    identidade vem do `Principal` e o instante, do servidor.
+
+    Duas regras são de CONTRATO e ficam aqui; nenhuma outra é. O `pattern` de `item_id`
+    repete o do domínio para que um id malformado seja `422` de fronteira em vez de estourar
+    no meio da rota, e a justificativa obrigatória na rejeição é exigência desta API (o
+    domínio aceita nota vazia): rejeitar um código sem dizer por quê deixaria o item fora do
+    boletim e fora do dossiê do aditivo sem nenhum motivo registrado. Código no catálogo,
+    unidade compatível, item já decidido e item não confirmado no takeoff continuam sendo
+    recusa do domínio, que esta rota não reimplementa.
+    """
+
+    base_version: int = Field(ge=1)
+    item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
+    action: Literal["confirm", "reject"]
+    code: str | None = Field(default=None, min_length=1, max_length=30)
+    note: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_rejection_note(self) -> CodeAssignmentDecisionRequest:
+        if self.action == "reject" and self.note is None:
+            # Mensagem fixa: nada do corpo recusado volta ao cliente pelo erro de contrato.
+            raise ValueError("rejeição de código exige justificativa em `note`")
+        return self
+
+
+class BuildValuationCalcRequest(ApiModel):
+    """Construção do boletim e da memória de cálculo: o corpo é só a guarda de concorrência.
+
+    A identidade da obra NÃO entra por aqui. No servidor de medição (`POST /calc/build`),
+    `worksite_key`, `worksite_name`, `period_number`, `reference_label`, `address` e
+    `contract_label` viajavam no payload; em `/v1` eles são atributos da RODADA (decisão
+    humana de 2026-08-17, colunas de `ValuationRoundRecord`) e é de lá que o cálculo os lê.
+    Aceitá-los aqui deixaria o cliente reescrever a identidade da obra no meio da cadeia —
+    quem recusa é o `extra="forbid"` do `ApiModel`, não uma lista negra.
+
+    `base_version` é MUDANÇA pretendida desta migração (F-003, achado 7): `/calc/build` não
+    tem guarda de concorrência nenhuma e sempre reconstrói do estado corrente dos dois
+    artefatos de origem. Em `/v1` a construção é ato humano da cadeia — ela avança a versão
+    da rodada e pode devolver `409 REVISION_CONFLICT`.
+    """
+
+    base_version: int = Field(ge=1)
+
+
+class BuildAmendmentDossierRequest(ApiModel):
+    """Construção do dossiê do aditivo: espelho de `BuildValuationCalcRequest`.
+
+    O dossiê nasce dos MESMOS dois artefatos-base do boletim (pacote de takeoff e conjunto
+    de códigos) e não recebe nada além da guarda de concorrência: ele não precifica por
+    construção (ADR-0027) e não tem rótulo próprio a receber.
+
+    Como no boletim, `base_version` é mudança pretendida: `/dossier/build` reconstrói sem
+    guarda, e em `/v1` a reconstrução é ato humano que avança a versão da rodada.
+    """
+
+    base_version: int = Field(ge=1)
+
+
+class ValuationDocumentResponse(RootModel[dict[str, Any]]):
+    """Resposta de medição cuja FORMA vem do domínio, guardada para o `Idempotency-Key`.
+
+    As contagens do takeoff nascem de `TakeoffItemStatus`, e recopiá-las como campos fixos
+    aqui faria a API deixar de mostrar um status novo sem que nenhum teste reclamasse. Este
+    envelope existe só para o registro de idempotência poder guardar a resposta inteira;
+    a rota continua devolvendo o dicionário do domínio.
+    """
+
+
 class ProcessingQueue:
     """Adaptador pequeno para SQS; sem fila configurada, falha fechado."""
 
@@ -609,6 +907,52 @@ class ProcessingQueue:
             ),
         )
 
+    def enqueue_valuation_plate_extraction(
+        self, *, round_id: str, extraction_id: str, tenant_id: str
+    ) -> None:
+        """Publica a extração paga da legenda; nenhum provider é chamado no request path.
+
+        O envelope não tem `job_id` de propósito: o ADR-0016 proíbe `Job` no vocabulário da
+        medição, e é por isso que o despacho do worker roteia por comando ANTES de exigir
+        aquele campo.
+        """
+        if self.queue_url is None:
+            return
+        self.client.send_message(
+            QueueUrl=self.queue_url,
+            MessageBody=json.dumps(
+                {
+                    "command": "extract_valuation_plate",
+                    "round_id": round_id,
+                    "extraction_id": extraction_id,
+                    "tenant_id": tenant_id,
+                }
+            ),
+        )
+
+    def enqueue_takeoff_overlay_rerender(
+        self, *, round_id: str, tenant_id: str, packet_sha256: str
+    ) -> None:
+        """Publica o re-render do overlay do takeoff; o desenho nunca sai do request path.
+
+        O digest do pacote viaja no envelope porque é ele que torna o comando seguro de
+        repetir: o worker descarta em silêncio um comando cujo pacote já foi superado por
+        uma decisão posterior (ADR-0030). Sem `job_id`, como todo comando de medição.
+        """
+        if self.queue_url is None:
+            return
+        self.client.send_message(
+            QueueUrl=self.queue_url,
+            MessageBody=json.dumps(
+                {
+                    "command": "rerender_takeoff_overlay",
+                    "round_id": round_id,
+                    "tenant_id": tenant_id,
+                    "packet_sha256": packet_sha256,
+                }
+            ),
+        )
+
     def enqueue_chat_turn(self, *, chat_turn_id: str, job_id: str, tenant_id: str) -> None:
         """Publishes the chat turn; no model is ever called from the request path."""
         if self.queue_url is None:
@@ -634,19 +978,49 @@ QueueAdapter = ProcessingQueue | PubSubProcessingQueue
 QUEUE_TRANSPORT_ERRORS = (BotoCoreError, ClientError, QueuePublishError)
 
 
-def _problem(code: str, http_status: int, detail: str) -> HTTPException:
-    return HTTPException(status_code=http_status, detail={"code": code, "detail": detail})
+def _problem(
+    code: str,
+    http_status: int,
+    detail: str,
+    details: Mapping[str, object] | None = None,
+) -> HTTPException:
+    """Erro com código estável; `details` carrega o vocabulário de domínio, quando há um.
+
+    O `details` existe para o `DOMAIN_VALIDATION_FAILED` da medição (ADR-0028 D4): o código
+    de invariante de `packages/valuation` viaja DENTRO do erro, porque a API não republica o
+    vocabulário do domínio na sua lista de códigos.
+    """
+    body: dict[str, Any] = {"code": code, "detail": detail}
+    if details:
+        body["details"] = dict(details)
+    return HTTPException(status_code=http_status, detail=body)
 
 
-def _safe_filename(filename: str) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip(".-")
-    if not normalized.lower().endswith(".pdf"):
+def _safe_filename(filename: str, content_type: str) -> str:
+    """Nome normalizado cuja extensão CASA com o tipo declarado no presign.
+
+    A extensão é conferida contra o tipo, e não contra uma lista fixa, porque os dois
+    viajam no mesmo corpo: `.pdf` com tipo de JSON e `.json` com tipo de PDF são a mesma
+    incoerência, e aceitar qualquer uma delas deixaria o objeto gravado com um tipo que
+    contradiz o nome — e é pelo tipo que a criação do job e a instalação do catálogo
+    decidem o que aquele upload é.
+    """
+    extension = UPLOAD_CONTENT_TYPES.get(content_type)
+    if extension is None:  # pragma: no cover - o contrato do request já restringe o tipo
         raise _problem(
             "INVALID_UPLOAD",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Arquivo precisa ter extensão PDF.",
+            "Tipo de conteúdo não aceito para upload.",
         )
-    return normalized or "documento.pdf"
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip(".-")
+    if not normalized.lower().endswith(extension):
+        raise _problem(
+            "INVALID_UPLOAD",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Arquivo precisa ter extensão {extension.removeprefix('.').upper()} "
+            f"para o tipo {content_type}.",
+        )
+    return normalized or f"documento{extension}"
 
 
 def _request_hash(payload: BaseModel) -> str:
@@ -819,6 +1193,263 @@ def _require_active_ai_entitlement(
             "O tenant não possui autorização contratual ativa para processamento externo.",
         )
     return entitlement
+
+
+def _require_valuation_reviewer(principal: Principal) -> str:
+    """Papel `orcamentista`, exigido em TODA rota de medição — inclusive de leitura (D8).
+
+    É a primeira coisa que cada rota faz, antes de qualquer lookup: quem não tem o papel não
+    descobre, pela diferença entre `403` e `404`, se uma rodada existe.
+    """
+    if not principal.has_role(VALUATION_REVIEWER_ROLE):
+        raise _problem(
+            "FORBIDDEN",
+            status.HTTP_403_FORBIDDEN,
+            f"Papel {VALUATION_REVIEWER_ROLE} é obrigatório nas rotas de medição.",
+        )
+    return VALUATION_REVIEWER_ROLE
+
+
+def _round_refusal_problem(refusal: RoundRefusal) -> HTTPException:
+    """Traduz a precondição da rodada no problem+json de sempre, sem inventar formato."""
+    return _problem(refusal.code, refusal.http_status, refusal.detail, refusal.details)
+
+
+def _valuation_domain_problem(error: ValuationValidationError) -> HTTPException:
+    """Invariante de `packages/valuation` como `422 DOMAIN_VALIDATION_FAILED` (ADR-0028 D4).
+
+    `code` é escrito por ÚLTIMO de propósito: os detalhes das invariantes de código de
+    catálogo carregam a chave `code` com o código SCO recusado (`ASSIGNMENT_CODE_INVALID`,
+    `ASSIGNMENT_CODE_NOT_IN_CATALOG`, `ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE`), e com a
+    ordem invertida era o código do catálogo que saía em `details.code` — o cliente lia
+    `"CE04100010(/)"` onde o contrato promete o nome da invariante, e o nome não saía em
+    lugar nenhum. Aqui `details.code` significa uma coisa só: a invariante que recusou.
+    """
+    return _problem(
+        "DOMAIN_VALIDATION_FAILED",
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        error.message,
+        {**error.details, "code": error.code},
+    )
+
+
+def _valuation_model_problem(error: ValidationError) -> HTTPException:
+    """Invariante de domínio embrulhada pelo Pydantic, sem devolver a mensagem do validador.
+
+    `ValuationValidationError` é um `ValueError`, então uma invariante levantada dentro de
+    um validador de modelo chega aqui encapsulada — é o caso de confirmar um item
+    `ambiguous` sem quantidade, que é caminho real do orçamentista e não erro de programa.
+    `valuation_errors` recupera a exceção original para que o código de domínio continue
+    saindo em `details`; sem ela, só o código declarado sai, porque a mensagem do Pydantic
+    pode ecoar o valor recusado — e valor recusado, aqui, é trecho de prancha de cliente.
+    """
+    domain = valuation_errors(error)
+    if domain:
+        return _valuation_domain_problem(domain[0])
+    return _problem(
+        "DOMAIN_VALIDATION_FAILED",
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "A decisão não corresponde ao contrato do modelo.",
+        {"code": "MODEL_VALIDATION_FAILED"},
+    )
+
+
+def _commit_valuation_revision(session: Session) -> None:
+    """Fecha a mutação da rodada; corrida na cadeia é conflito de versão, não erro 500.
+
+    A guarda otimista de `base_version` é conferida em MEMÓRIA, antes da gravação: duas
+    mutações que leram a mesma versão passam as duas por ela e vão disputar a mesma posição
+    da cadeia append-only, onde `uq_valuation_round_version` arbitra. Quem perde recebeu, de
+    fato, uma rodada que mudou depois da leitura dele — que é exatamente o que
+    `REVISION_CONFLICT` diz. É o mesmo desfecho que as rotas de revisão do croqui já dão à
+    corrida equivalente, e não um caso especial da medição.
+    """
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise _problem(
+            "REVISION_CONFLICT",
+            status.HTTP_409_CONFLICT,
+            "Uma decisão concorrente criou uma revisão mais recente.",
+        ) from error
+
+
+def _load_valuation_round(
+    session: Session, *, round_id: UUID, tenant_id: str
+) -> ValuationRoundRecord:
+    """A rodada do tenant, ou `404`. Rodada de outro tenant é indistinguível de inexistente."""
+    record = load_round(session, round_id=str(round_id), tenant_id=tenant_id)
+    if record is None:
+        raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Rodada de medição não encontrada.")
+    return record
+
+
+def _valuation_round_heads(
+    session: Session, *, tenant_id: str, round_ids: Sequence[str]
+) -> dict[str, ValuationRoundRevisionRecord]:
+    """Cabeça de cada rodada da página, numa consulta só.
+
+    Uma consulta por linha faria a listagem custar N+1 idas ao banco para preencher uma
+    coluna de rótulo — e é justamente a listagem que a tela abre primeiro.
+    """
+    if not round_ids:
+        return {}
+    latest = (
+        select(
+            ValuationRoundRevisionRecord.round_id.label("round_id"),
+            func.max(ValuationRoundRevisionRecord.version).label("version"),
+        )
+        .where(
+            ValuationRoundRevisionRecord.tenant_id == tenant_id,
+            ValuationRoundRevisionRecord.round_id.in_(round_ids),
+        )
+        .group_by(ValuationRoundRevisionRecord.round_id)
+        .subquery()
+    )
+    records = session.scalars(
+        select(ValuationRoundRevisionRecord)
+        .join(
+            latest,
+            and_(
+                ValuationRoundRevisionRecord.round_id == latest.c.round_id,
+                ValuationRoundRevisionRecord.version == latest.c.version,
+            ),
+        )
+        .where(ValuationRoundRevisionRecord.tenant_id == tenant_id)
+    )
+    return {record.round_id: record for record in records}
+
+
+def _encode_round_cursor(record: ValuationRoundRecord) -> str:
+    """Cursor opaco sobre `(created_at, id)` — a mesma chave do índice da listagem.
+
+    O carimbo sai do valor que o próprio banco devolveu, e não de um `datetime` montado
+    aqui: é isso que faz a comparação da página seguinte usar exatamente a representação
+    que aquele banco guarda, com ou sem fuso.
+    """
+    raw = f"{record.created_at.isoformat()}|{record.id}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+def _decode_round_cursor(cursor: str) -> tuple[datetime, str]:
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
+        stamp, separator, identifier = raw.partition("|")
+        if not separator or not identifier:
+            raise ValueError("cursor sem separador")
+        return datetime.fromisoformat(stamp), identifier
+    except (ValueError, UnicodeDecodeError) as error:
+        raise _problem(
+            "DOMAIN_VALIDATION_FAILED",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Cursor de paginação inválido.",
+            {"code": "CURSOR_INVALID"},
+        ) from error
+
+
+def _require_valuation_upload(
+    session: Session,
+    application: FastAPI,
+    *,
+    upload_id: UUID,
+    principal: Principal,
+    content_type: str,
+    storage_flavor: str,
+) -> UploadRecord:
+    """Upload do tenant, verificado contra o objeto realmente gravado.
+
+    Mesma conferência da criação de job (tipo declarado, tamanho e checksum), com o tipo
+    aceito vindo de quem chama: a rodada instala catálogo JSON e associa prancha PDF pelo
+    mesmo presign, e cada uma delas aceita um tipo só.
+    """
+    upload = session.scalar(
+        select(UploadRecord).where(
+            UploadRecord.id == str(upload_id),
+            UploadRecord.tenant_id == principal.tenant_id,
+        )
+    )
+    if upload is None:
+        raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Upload não encontrado.")
+    if upload.status != "PRESIGNED":
+        raise _problem(
+            "INVALID_UPLOAD", status.HTTP_422_UNPROCESSABLE_ENTITY, "Upload indisponível."
+        )
+    if upload.content_type != content_type:
+        raise _problem(
+            "INVALID_UPLOAD",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Upload precisa ter o tipo {content_type}.",
+        )
+    expected_checksum = base64.b64encode(bytes.fromhex(upload.sha256)).decode("ascii")
+    uploaded_object = application.state.artifact_store.head_upload(object_key=upload.object_key)
+    # O checksum remoto não existe na interoperabilidade GCS; lá a integridade é conferida
+    # sobre os bytes lidos (catálogo) ou pelo worker, que relê o documento (prancha).
+    checksum_deferred = storage_flavor == "gcs"
+    if (
+        uploaded_object is None
+        or uploaded_object.content_length != upload.size_bytes
+        or uploaded_object.content_type.lower() != upload.content_type
+        or (not checksum_deferred and uploaded_object.checksum_sha256 != expected_checksum)
+    ):
+        raise _problem(
+            "INVALID_UPLOAD",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Upload ausente, incompleto ou com integridade divergente.",
+        )
+    return upload
+
+
+def _install_catalog(
+    application: FastAPI, upload: UploadRecord
+) -> tuple[PriceCatalog, dict[str, Any]]:
+    """Lê e valida o catálogo instalado na criação da rodada; ilegível recusa a rodada.
+
+    O catálogo é o único artefato que a API lê do object store (ver `read_object`): ele é
+    pequeno, é de aplicação e precisa ser validado ANTES de a rodada existir — uma rodada
+    nasce com catálogo por construção, e um catálogo que não valida aqui viraria uma rodada
+    inutilizável em toda etapa seguinte.
+    """
+    payload = application.state.artifact_store.read_object(
+        object_key=upload.object_key, max_bytes=CATALOG_MAX_BYTES
+    )
+    if payload is None:
+        raise _problem(
+            "INVALID_UPLOAD",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Catálogo ausente no armazenamento.",
+        )
+    if len(payload) > CATALOG_MAX_BYTES:
+        raise _problem(
+            "LIMIT_EXCEEDED",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Catálogo excede o limite de leitura da API.",
+            {"max_bytes": CATALOG_MAX_BYTES},
+        )
+    if hashlib.sha256(payload).hexdigest() != upload.sha256.lower():
+        raise _problem(
+            "INVALID_UPLOAD",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Upload ausente, incompleto ou com integridade divergente.",
+        )
+    try:
+        catalog = PriceCatalog.model_validate_json(payload)
+    except ValidationError as error:
+        # Recusa de contrato do modelo: a mensagem do pydantic pode conter valores do
+        # arquivo, então só o código declarado sai.
+        raise _problem(
+            "DOMAIN_VALIDATION_FAILED",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "O catálogo enviado não pôde ser lido.",
+            {"code": "MODEL_VALIDATION_FAILED"},
+        ) from error
+    summary: dict[str, Any] = {
+        "source_label": catalog.source_label,
+        "reference_month": catalog.reference_month,
+        "source_sha256": catalog.source_sha256,
+        "entries": len(catalog.entries),
+    }
+    return catalog, summary
 
 
 def _require_platform_operator(principal: Principal) -> None:
@@ -1476,6 +2107,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
     application.state.queue = queue_adapter
     application.state.artifact_store = ArtifactStore(runtime_settings)
     application.state.settings = runtime_settings
+    # Catálogo decodificado por digest, com a vida da aplicação: a busca de código é
+    # consultada a cada tecla e decodificar 2,4 MB de JSON por requisição tornaria a etapa
+    # mais usada da tela a mais cara. Preso à aplicação, e não ao módulo, para que duas
+    # aplicações do mesmo processo (a suíte inteira) não compartilhem catálogo decodificado.
+    application.state.catalog_cache = CatalogCache()
 
     @application.middleware("http")
     async def request_correlation(request: Request, call_next: Any) -> Any:
@@ -1522,6 +2158,23 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 "errors": exception.errors,
             },
         )
+
+    @application.exception_handler(RoundRefusal)
+    async def round_refusal_handler(request: Request, exception: RoundRefusal) -> JSONResponse:
+        """Precondição da rodada de medição no MESMO envelope das demais rotas.
+
+        O núcleo de `valuation_rounds` levanta sem falar HTTP; a tradução acontece aqui, num
+        lugar só, delegando ao handler de erro que já existe — duas rotas não podem responder
+        formatos diferentes para a mesma causa.
+        """
+        return await problem_handler(request, _round_refusal_problem(exception))
+
+    @application.exception_handler(ValuationValidationError)
+    async def valuation_domain_handler(
+        request: Request, exception: ValuationValidationError
+    ) -> JSONResponse:
+        """Invariante de `packages/valuation` como `DOMAIN_VALIDATION_FAILED` (ADR-0028 D4)."""
+        return await problem_handler(request, _valuation_domain_problem(exception))
 
     @application.get("/healthz", response_model=HealthResponse, include_in_schema=False)
     async def health() -> HealthResponse:
@@ -1654,7 +2307,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         if existing is not None:
             return PresignUploadResponse.model_validate(existing)
         upload_id = new_uuid7()
-        safe_filename = _safe_filename(payload.filename)
+        safe_filename = _safe_filename(payload.filename, payload.content_type)
         object_key = f"tenants/{principal.tenant_id}/uploads/{upload_id}/{safe_filename}"
         expires_at = datetime.now(UTC) + timedelta(minutes=15)
         record = UploadRecord(
@@ -1668,11 +2321,12 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         checksum_sha256 = base64.b64encode(bytes.fromhex(payload.sha256)).decode("ascii")
         artifact_store: ArtifactStore = application.state.artifact_store
-        url = artifact_store.presign_pdf_upload(
+        url = artifact_store.presign_upload(
             object_key=object_key,
             checksum_sha256=checksum_sha256,
+            content_type=payload.content_type,
         )
-        headers = {"Content-Type": payload.content_type}
+        headers: dict[str, str] = {"Content-Type": payload.content_type}
         if runtime_settings.storage_flavor == "s3":
             # O header entra na assinatura só no S3; enviá-lo ao GCS faria o PUT falhar.
             headers["x-amz-checksum-sha256"] = checksum_sha256
@@ -1745,6 +2399,15 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         if upload.status != "PRESIGNED":
             raise _problem(
                 "INVALID_UPLOAD", status.HTTP_422_UNPROCESSABLE_ENTITY, "Upload indisponível."
+            )
+        if upload.content_type != PDF_CONTENT_TYPE:
+            # O presign passou a assinar mais de um tipo (o catálogo da medição é JSON), e
+            # a conferência de tipo abaixo só compara o objeto com o que foi declarado —
+            # ela não sabe o que ESTA rota aceita. O croqui continua sendo PDF e só.
+            raise _problem(
+                "INVALID_UPLOAD",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Upload precisa ser um PDF.",
             )
 
         expected_checksum = base64.b64encode(bytes.fromhex(upload.sha256)).decode("ascii")
@@ -4216,6 +4879,1289 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             base_review_version=base_review.version,
             turns=_chat_turns_of(session, chat_session),
         )
+
+    # -- Medição de obra (ADR-0028) -----------------------------------------------------
+
+    def _enqueue_plate_extraction(*, round_id: str, extraction_id: str, tenant_id: str) -> None:
+        """Publica o comando com o intent já durável; falha de transporte é 503 repetível."""
+        queue: QueueAdapter = application.state.queue
+        try:
+            queue.enqueue_valuation_plate_extraction(
+                round_id=round_id,
+                extraction_id=extraction_id,
+                tenant_id=tenant_id,
+            )
+        except QUEUE_TRANSPORT_ERRORS as error:
+            raise _problem(
+                "PROCESSING_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Extração registrada; repita o mesmo comando para reenfileirar com segurança.",
+            ) from error
+
+    def _enqueue_takeoff_overlay_rerender(
+        *, round_id: str, tenant_id: str, packet_sha256: str
+    ) -> None:
+        """Publica o re-render do overlay. Falha de transporte NÃO derruba a decisão.
+
+        A diferença para `_enqueue_plate_extraction` é deliberada (ADR-0030): lá o
+        enfileiramento É o ato, e sem fila não há extração nenhuma; aqui o ato é a decisão
+        do orçamentista, que já está durável quando este comando é publicado. Traduzir a
+        recusa da fila em `503` faria o cliente supor que a decisão não valeu e repeti-la —
+        e a segunda tentativa recusaria o item como já revisado.
+
+        O desfecho de uma publicação perdida é visível sem log: o overlay continua
+        declarando o pacote antigo, ou seja, continua `stale` na rota que o serve.
+        """
+        queue: QueueAdapter = application.state.queue
+        with suppress(*QUEUE_TRANSPORT_ERRORS):
+            queue.enqueue_takeoff_overlay_rerender(
+                round_id=round_id, tenant_id=tenant_id, packet_sha256=packet_sha256
+            )
+
+    def _takeoff_payload(
+        record: ValuationRoundRecord, revision: ValuationRoundRevisionRecord | None
+    ) -> dict[str, Any]:
+        """Pacote da rodada com a âncora de cada item declarada, contagens e digest.
+
+        Espelha o `/takeoff` do servidor de medição pelas MESMAS funções puras, com as
+        chaves em inglês. O digest é o do documento guardado na revisão — não o desta
+        resposta —, para que ele seja idêntico ao que o estado da rodada publica: é por
+        esse valor que a tela sabe se o que ela tem na mão ainda é o pacote corrente.
+        """
+        packet = require_takeoff_packet(revision)
+        stored = require_document(
+            revision,
+            "takeoff_packet_json",
+            stage=STAGE_TAKEOFF,
+            detail="a rodada ainda não tem pacote de takeoff publicado",
+        )
+        registered = registered_item_ids(
+            None if revision is None else revision.takeoff_registration_json
+        )
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "packet": anchored_packet(packet, registered),
+            "packet_sha256": document_digest(stored),
+            "review_status": review_status(packet),
+            **takeoff_counts(packet),
+            **anchor_counts(packet, registered),
+        }
+
+    def _round_catalog(record: ValuationRoundRecord) -> PriceCatalog:
+        """Catálogo instalado na rodada, decodificado uma vez por digest.
+
+        O catálogo é imutável na rodada e o cache é chaveado pelo digest instalado, então
+        duas rodadas com o mesmo catálogo compartilham a decodificação de propósito —
+        conteúdo idêntico byte a byte por construção. Objeto sumido, divergente do digest ou
+        ilegível recusa com `CATALOG_REQUIRED`: é falha de ambiente, não do ato.
+        """
+        return load_catalog(
+            application.state.artifact_store, record, cache=application.state.catalog_cache
+        )
+
+    def _suggestions_payload(
+        record: ValuationRoundRecord,
+        *,
+        document: Mapping[str, Any],
+        suggestions: CodeSuggestionSet,
+        computed: bool,
+        notes: list[str],
+    ) -> dict[str, Any]:
+        """Shortlist como a tela a recebe, com o digest do que está GRAVADO na revisão.
+
+        `computed` distingue a shortlist recém-calculada da que já estava lá, e `matching` é
+        derivado do `suggester_version` do próprio conjunto (`matching_of`): assim a resposta
+        continua verdadeira quando ela vem do artefato gravado por outra sessão — inclusive
+        uma que tinha índice semântico e esta não tem.
+        """
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "suggestions": suggestions.model_dump(mode="json"),
+            "suggestions_sha256": document_digest(document),
+            "computed": computed,
+            "matching": matching_of(suggestions),
+            "semantic_notes": notes,
+        }
+
+    def _assignments_payload(
+        record: ValuationRoundRecord,
+        *,
+        packet: TakeoffPacket,
+        assignments: CodeAssignmentSet | None,
+        document: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Decisões de código da rodada e o que ainda falta decidir.
+
+        Conjunto inexistente **não** é erro: a rodada com takeoff revisado e nenhuma decisão
+        de código é o estado normal de quem acabou de chegar nesta etapa, e é `pending_items`
+        que diz o que ela tem pela frente. Zero é informação: as contagens sempre saem.
+        """
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "assignments": None if assignments is None else assignments.model_dump(mode="json"),
+            "assignments_sha256": None if document is None else document_digest(document),
+            "confirmed": 0 if assignments is None else count_status(assignments, "confirmed"),
+            "rejected": 0 if assignments is None else count_status(assignments, "rejected"),
+            "pending_items": [
+                item_payload(item) for item in pending_code_items(packet, assignments)
+            ],
+        }
+
+    def _bulletin_payload(
+        record: ValuationRoundRecord, *, document: Mapping[str, Any], valuation: Valuation
+    ) -> dict[str, Any]:
+        """Boletim como a tela o recebe, com o digest do que está GRAVADO na revisão.
+
+        `total_amount` sai como TEXTO porque dinheiro é `Decimal` neste contexto
+        (ADR-0016): serializá-lo como número de JSON devolveria ao cliente um binário
+        aproximado do centavo que o `TRUNC(x,2)` do domínio acabou de fixar. O digest é o do
+        documento guardado — não o desta resposta —, para ser idêntico ao que o estado da
+        rodada publica.
+        """
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "valuation": valuation.model_dump(mode="json"),
+            "valuation_sha256": document_digest(document),
+            "total_amount": str(valuation.total_amount),
+        }
+
+    def _dossier_payload(
+        record: ValuationRoundRecord, *, document: Mapping[str, Any], dossier: AmendmentDossier
+    ) -> dict[str, Any]:
+        """Dossiê do aditivo como a tela o recebe; nenhum campo de preço existe nele.
+
+        `item_count` zero é desfecho NORMAL e não erro: rodada em que todo item confirmado
+        teve o código confirmado não tem aditivo nenhum a pedir.
+        """
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "dossier": dossier.model_dump(mode="json"),
+            "dossier_sha256": document_digest(document),
+            "item_count": len(dossier.items),
+        }
+
+    def _revalidated_bulletin(document: Mapping[str, Any]) -> Valuation:
+        """Boletim gravado, revalidado na leitura: quem recomputa os totais é o modelo.
+
+        `WorksiteBulletin.validate_bulletin` refaz a soma dos totais já truncados de cada
+        linha e recusa a divergência (`BULLETIN_TOTAL_MISMATCH`); `Valuation` refaz o 1:1
+        entre linha do boletim e memória de cálculo. Servir o total como ele foi gravado
+        faria uma medição adulterada no banco passar por boa — e a tela nunca renderiza
+        medição inválida, então artefato que não revalida é `422`, não `200` com ressalva.
+        """
+        try:
+            return Valuation.model_validate(dict(document))
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+
+    def _revalidated_dossier(document: Mapping[str, Any]) -> AmendmentDossier:
+        """Dossiê gravado, revalidado na leitura: espelho de `_revalidated_bulletin`.
+
+        Aqui não há total a recomputar — o dossiê não precifica —, mas há invariantes que
+        valem o mesmo: item duplicado e item cuja justificativa deixou de casar com a
+        decisão de rejeição que o originou.
+        """
+        try:
+            return AmendmentDossier.model_validate(dict(document))
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+
+    def _plate_response(
+        record: ValuationRoundRecord, revision: ValuationRoundRevisionRecord | None, *, tenant: str
+    ) -> ValuationPlateResponse:
+        """Metadados da prancha e, quando a página já foi promovida, a URL assinada dela.
+
+        `image_url` nulo é estado honesto e não erro: a página só existe depois que o worker
+        ingere o PDF. Chave gravada fora do prefixo do tenant, essa sim, é tratada como
+        inexistente — e o presign nunca chega a ser chamado.
+        """
+        plate = require_plate(record)
+        refs = {} if revision is None else dict(revision.artifact_refs_json or {})
+        image_key = refs.get(PLATE_IMAGE_REF)
+        image_url: str | None = None
+        if image_key is not None:
+            image_url = signed_artifact_url(
+                application.state.artifact_store, object_key=image_key, tenant_id=tenant
+            )
+            if image_url is None:
+                raise _problem(
+                    "NOT_FOUND",
+                    status.HTTP_404_NOT_FOUND,
+                    "Imagem da prancha não encontrada.",
+                )
+        return ValuationPlateResponse(
+            round_id=UUID(record.id),
+            version=record.version,
+            upload_id=UUID(plate.upload_id),
+            source_sha256=plate.source_sha256,
+            page_count=plate.page_count,
+            image_url=image_url,
+        )
+
+    @application.post(
+        "/v1/valuation-rounds",
+        response_model=ValuationRoundResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["valuation"],
+    )
+    async def create_valuation_round(
+        payload: CreateValuationRoundRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ValuationRoundResponse:
+        """Abre a rodada e instala o catálogo, que é imutável nela: trocar é abrir outra."""
+        _require_valuation_reviewer(principal)
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation="valuation-rounds.create",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ValuationRoundResponse.model_validate(existing)
+
+        upload = _require_valuation_upload(
+            session,
+            application,
+            upload_id=payload.catalog_upload_id,
+            principal=principal,
+            content_type=CATALOG_CONTENT_TYPE,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        _catalog, summary = _install_catalog(application, upload)
+
+        now = datetime.now(UTC)
+        round_id = new_uuid7()
+        record = ValuationRoundRecord(
+            id=str(round_id),
+            tenant_id=principal.tenant_id,
+            worksite_key=payload.worksite_key,
+            worksite_name=payload.worksite_name,
+            reference_label=payload.reference_label,
+            period_number=payload.period_number,
+            address=payload.address,
+            contract_label=payload.contract_label,
+            status="OPEN",
+            version=1,
+            catalog_upload_id=str(payload.catalog_upload_id),
+            catalog_object_key=upload.object_key,
+            catalog_source_sha256=upload.sha256.lower(),
+            catalog_summary_json=summary,
+            extraction_status="idle",
+            created_by=principal.subject,
+            created_at=now,
+            updated_at=now,
+        )
+        upload.status = "VERIFIED"
+        session.add(record)
+        response = ValuationRoundResponse(
+            round_id=round_id,
+            version=record.version,
+            status=record.status,
+            created_at=now,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation="valuation-rounds.create",
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_ROUND_CREATED",
+            resource_type="valuation_round",
+            resource_id=str(round_id),
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds",
+        response_model=ValuationRoundPage,
+        tags=["valuation"],
+    )
+    async def list_valuation_rounds(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        cursor: str | None = None,
+    ) -> ValuationRoundPage:
+        """Rodadas do tenant, da mais recente para a mais antiga, com cursor opaco."""
+        _require_valuation_reviewer(principal)
+        query = select(ValuationRoundRecord).where(
+            ValuationRoundRecord.tenant_id == principal.tenant_id
+        )
+        if cursor is not None:
+            created_at, identifier = _decode_round_cursor(cursor)
+            # Forma explícita em vez de comparação de tupla: row values dependem da versão
+            # do SQLite, e uma listagem não é lugar de descobrir isso em produção.
+            query = query.where(
+                or_(
+                    ValuationRoundRecord.created_at < created_at,
+                    and_(
+                        ValuationRoundRecord.created_at == created_at,
+                        ValuationRoundRecord.id < identifier,
+                    ),
+                )
+            )
+        records = list(
+            session.scalars(
+                query.order_by(
+                    ValuationRoundRecord.created_at.desc(), ValuationRoundRecord.id.desc()
+                ).limit(limit + 1)
+            )
+        )
+        page = records[:limit]
+        heads = _valuation_round_heads(
+            session,
+            tenant_id=principal.tenant_id,
+            round_ids=[record.id for record in page],
+        )
+        return ValuationRoundPage(
+            items=[
+                ValuationRoundSummary(
+                    round_id=UUID(record.id),
+                    worksite_key=record.worksite_key,
+                    worksite_name=record.worksite_name,
+                    reference_label=record.reference_label,
+                    period_number=record.period_number,
+                    version=record.version,
+                    status=record.status,
+                    stage=current_stage(record, heads.get(record.id)),
+                    extraction_status=record.extraction_status,
+                    created_at=record.created_at,
+                    updated_at=record.updated_at,
+                )
+                for record in page
+            ],
+            next_cursor=_encode_round_cursor(page[-1]) if len(records) > limit and page else None,
+        )
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def get_valuation_round(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Estado da rodada por etapa; é por aqui que a tela acompanha a extração paga."""
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        return round_state_payload(record, revision)
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/plate",
+        response_model=ValuationPlateResponse,
+        tags=["valuation"],
+    )
+    async def associate_valuation_plate(
+        round_id: UUID,
+        payload: AssociatePlateRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ValuationPlateResponse:
+        """Associa o PDF já enviado pelo presign; a API não renderiza nem lê a prancha.
+
+        A ingestão da página — render a 200 DPI, manifest, digest da imagem — é trabalho do
+        worker: aqui o PDF é só conferido contra o que o presign declarou.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.plate:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ValuationPlateResponse.model_validate(existing)
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        if record.plate_object_key is not None:
+            raise _problem(
+                "ROUND_PLATE_ALREADY_PRESENT",
+                status.HTTP_409_CONFLICT,
+                "A rodada já tem uma prancha associada.",
+            )
+        upload = _require_valuation_upload(
+            session,
+            application,
+            upload_id=payload.upload_id,
+            principal=principal,
+            content_type=PDF_CONTENT_TYPE,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        now = datetime.now(UTC)
+        record.plate_upload_id = str(payload.upload_id)
+        record.plate_object_key = upload.object_key
+        record.plate_source_sha256 = upload.sha256.lower()
+        # Associar a prancha é ato humano, e o contador da rodada é o token de concorrência
+        # de toda a cadeia (D3): quem leu a rodada antes disso precisa reler antes de decidir.
+        # Nenhuma revisão nasce aqui — a prancha é coluna da raiz, e revisão guarda artefato.
+        record.version += 1
+        record.updated_at = now
+        upload.status = "VERIFIED"
+        response = _plate_response(record, None, tenant=principal.tenant_id)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_PLATE_ASSOCIATED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/plate",
+        response_model=ValuationPlateResponse,
+        tags=["valuation"],
+    )
+    async def get_valuation_plate(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ValuationPlateResponse:
+        """Metadados e URL assinada da página promovida; a URL não vai para log nem auditoria."""
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        return _plate_response(record, revision, tenant=principal.tenant_id)
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/plate/extractions",
+        response_model=ValuationExtractionResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["valuation"],
+    )
+    async def create_valuation_plate_extraction(
+        round_id: UUID,
+        payload: CreatePlateExtractionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ValuationExtractionResponse:
+        """Enfileira a extração paga da legenda; nenhum provider é chamado no request path."""
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.extractions:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            replay = ValuationExtractionResponse.model_validate(existing)
+            # Repetir o mesmo comando é o caminho de retomada quando a fila recusou: o
+            # intent já está durável, e o claim atômico do worker garante que uma entrega
+            # extra não repague o provider.
+            _enqueue_plate_extraction(
+                round_id=str(round_id),
+                extraction_id=str(replay.extraction_id),
+                tenant_id=principal.tenant_id,
+            )
+            return replay
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        require_plate(record)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        if revision is not None and revision.takeoff_packet_json is not None:
+            raise _problem(
+                "ROUND_PLATE_ALREADY_PRESENT",
+                status.HTTP_409_CONFLICT,
+                "A rodada já tem pacote de takeoff publicado.",
+            )
+        if record.extraction_status in ("queued", "running"):
+            raise _problem(
+                "EXTRACTION_IN_PROGRESS",
+                status.HTTP_409_CONFLICT,
+                "Já existe uma extração em andamento nesta rodada.",
+            )
+        # Chamada paga de provider: entitlement contratual do tenant primeiro, e sem
+        # enfileirar nada quando ele falta (ADR-0012).
+        _require_active_ai_entitlement(
+            session,
+            principal,
+            real_providers_enabled=runtime_settings.real_providers_enabled,
+        )
+        unavailable = extraction_unavailable(extraction_arm_spec())
+        if unavailable is not None:
+            # Só o código declarado sai: nome de variável de ambiente do servidor é detalhe
+            # de infraestrutura e não pertence à resposta de um cliente.
+            raise _problem(
+                "PROVIDER_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "A extração automática não está disponível neste ambiente.",
+                {"code": unavailable.code},
+            )
+
+        now = datetime.now(UTC)
+        extraction_id = new_uuid7()
+        record.extraction_id = str(extraction_id)
+        record.extraction_status = "queued"
+        record.extraction_failure_code = None
+        record.extraction_requested_by = principal.subject
+        record.extraction_updated_at = now
+        record.version += 1
+        record.updated_at = now
+        response = ValuationExtractionResponse(
+            round_id=round_id,
+            version=record.version,
+            extraction_id=extraction_id,
+            status=record.extraction_status,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_EXTRACTION_REQUESTED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        # O intent é durável ANTES da fila, e nenhuma transação atravessa a publicação.
+        session.commit()
+        _enqueue_plate_extraction(
+            round_id=str(round_id),
+            extraction_id=str(extraction_id),
+            tenant_id=principal.tenant_id,
+        )
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/takeoff",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def get_valuation_takeoff(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Pacote de takeoff da rodada, com a âncora de evidência de cada item."""
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        return _takeoff_payload(record, revision)
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/takeoff/overlay",
+        response_model=ValuationTakeoffOverlayResponse,
+        tags=["valuation"],
+    )
+    async def get_valuation_takeoff_overlay(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ValuationTakeoffOverlayResponse:
+        """URL assinada do overlay e a idade dele; overlay vencido é `200`, nunca erro.
+
+        Esconder a divergência seria pior do que mostrá-la: o desenho anterior continua
+        sendo a única visão de onde cada número foi lido (ADR-0030). A URL assinada segue o
+        regime da imagem da prancha — prefixo do tenant conferido antes do presign, e nunca
+        registrada em log nem em auditoria (ADR-0028 D5).
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        stored = require_document(
+            revision,
+            "takeoff_packet_json",
+            stage=STAGE_TAKEOFF,
+            detail="a rodada ainda não tem pacote de takeoff publicado",
+        )
+        overlay_key = require_takeoff_overlay(revision)
+        image_url = signed_artifact_url(
+            application.state.artifact_store,
+            object_key=overlay_key,
+            tenant_id=principal.tenant_id,
+        )
+        if image_url is None:
+            raise _problem(
+                "NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Overlay do takeoff não encontrado.",
+            )
+        packet_sha256 = document_digest(stored)
+        state = takeoff_overlay_state(revision, packet_sha256=packet_sha256)
+        return ValuationTakeoffOverlayResponse(
+            round_id=UUID(record.id),
+            version=record.version,
+            image_url=image_url,
+            image_sha256=cast(str | None, state["image_sha256"]),
+            packet_sha256=packet_sha256,
+            overlay_packet_sha256=cast(str | None, state["overlay_packet_sha256"]),
+            stale=cast(bool, state["stale"]),
+        )
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/takeoff/decisions",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def decide_valuation_takeoff_item(
+        round_id: UUID,
+        payload: TakeoffDecisionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Aplica UMA decisão do orçamentista, grava a revisão nova e enfileira o overlay.
+
+        A decisão é ato humano: ela avança o contador da rodada e o da cadeia de revisões.
+        O overlay, não — ele é consequência, e é reconstruído fora do request path
+        (ADR-0030). Entre a decisão e o desenho novo, a resposta já declara o overlay
+        vencido, para que a tela não mostre o desenho anterior como se fosse deste pacote.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.takeoff-decisions:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        try:
+            # Identidade do `Principal` e instante do servidor: o corpo não carimba nenhum
+            # dos dois. A regra de decisão é do domínio e não é reimplementada aqui.
+            decision = TakeoffDecisionInput(
+                item_id=payload.item_id,
+                action=payload.action,
+                reviewer_id=principal.subject,
+                reviewer_role=VALUATION_REVIEWER_ROLE,
+                decided_at=datetime.now(UTC),
+                quantity=parse_quantity(payload.quantity),
+                unit=payload.unit,
+                note=payload.note,
+                item_note=payload.item_note,
+            )
+            reviewed = apply_takeoff_decisions(packet, TakeoffDecisionBatch(decisions=[decision]))
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+
+        document = reviewed.model_dump(mode="json")
+        packet_sha256 = document_digest(document)
+        new_revision = append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"takeoff_packet_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = {
+            **_takeoff_payload(record, new_revision),
+            "overlay": takeoff_overlay_state(new_revision, packet_sha256=packet_sha256),
+        }
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_TAKEOFF_ITEM_DECIDED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        # A decisão fica durável ANTES da fila, e nenhuma transação atravessa a publicação.
+        _commit_valuation_revision(session)
+        _enqueue_takeoff_overlay_rerender(
+            round_id=record.id,
+            tenant_id=principal.tenant_id,
+            packet_sha256=packet_sha256,
+        )
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/code-suggestions",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def get_valuation_code_suggestions(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Shortlist de código por item confirmado: observação, nunca decisão (ADR-0021).
+
+        Calculada UMA vez e persistida; leitura seguinte serve o que está gravado
+        (`computed: false`). A gravação entra na cadeia de revisões **sem avançar a versão da
+        rodada** (decisão humana de 2026-08-17): a shortlist é artefato derivado, e se um
+        `GET` movesse o token de concorrência, a próxima decisão do orçamentista levaria
+        `409` por algo que ele não fez.
+
+        Nenhuma chamada paga acontece aqui: o braço semântico depende de índice publicado na
+        rodada, que nenhuma rota publica, e o motivo viaja em `semantic_notes`.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        stored = None if revision is None else revision.code_suggestions_json
+        if stored is not None:
+            try:
+                # Artefato gravado que não valida é recusa, e não recálculo silencioso: a
+                # cura dele é o recompute explícito, que é ato humano e declarado.
+                suggestions = CodeSuggestionSet.model_validate(stored)
+            except ValidationError as error:
+                raise _valuation_model_problem(error) from error
+            return _suggestions_payload(
+                record, document=stored, suggestions=suggestions, computed=False, notes=[]
+            )
+
+        packet = require_takeoff_packet(revision)
+        require_reviewed_packet(packet)
+        computed, notes = compute_round_suggestions(packet, _round_catalog(record))
+        document = computed.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_suggestions_json": document},
+            advance_version=False,
+        )
+        # `updated_at` da rodada continua marcando o último ato humano: a leitura que calcula
+        # a shortlist não é um, e a cadeia de revisões carimba o próprio instante.
+        response = _suggestions_payload(
+            record, document=document, suggestions=computed, computed=True, notes=notes
+        )
+        try:
+            session.commit()
+        except IntegrityError:
+            # Duas leituras simultâneas — e a tela faz polling — calculam a mesma shortlist
+            # e disputam a mesma posição da cadeia. Perder essa corrida não é falha de
+            # ninguém: o cálculo é determinístico, quem chegou antes gravou o mesmo
+            # artefato, e servir o dele é a resposta certa. Um `500` aqui transformaria
+            # concorrência normal de tela em erro de servidor.
+            session.rollback()
+            revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+            stored = None if revision is None else revision.code_suggestions_json
+            if stored is None:
+                raise
+            return _suggestions_payload(
+                record,
+                document=stored,
+                suggestions=CodeSuggestionSet.model_validate(stored),
+                computed=False,
+                notes=[],
+            )
+        return response
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/code-suggestions/recompute",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def recompute_valuation_code_suggestions(
+        round_id: UUID,
+        payload: RecomputeSuggestionsRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Recalcula a shortlist do zero pelo algoritmo corrente e avança a rodada.
+
+        Ao contrário do `GET`, este é ato humano: ele descarta a shortlist anterior, então
+        exige `base_version` e move o token de concorrência da rodada.
+
+        Shortlist que já carrega refino pago recusa com `409 SUGGESTIONS_ALREADY_REFINED` —
+        recalcular descartaria o lineage da chamada paga. Artefato gravado que não valida
+        como `CodeSuggestionSet` **não** cai nessa guarda: o recompute é exatamente a cura
+        dele.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.suggestions-recompute:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        require_reviewed_packet(packet)
+        require_unrefined_suggestions(suggestions_of(revision))
+        computed, notes = compute_round_suggestions(packet, _round_catalog(record))
+        document = computed.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_suggestions_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _suggestions_payload(
+            record, document=document, suggestions=computed, computed=True, notes=notes
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_CODE_SUGGESTIONS_RECOMPUTED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/catalog/search",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def search_valuation_catalog(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        q: Annotated[str, Query(min_length=1, max_length=200)],
+        limit: Annotated[
+            int, Query(ge=1, le=CATALOG_SEARCH_MAX_LIMIT)
+        ] = CATALOG_SEARCH_DEFAULT_LIMIT,
+        arm: Annotated[Literal["lexical", "hybrid"], Query()] = "lexical",
+    ) -> dict[str, Any]:
+        """Busca no catálogo instalado, léxica por padrão (decisão humana de 2026-08-17).
+
+        `arm=hybrid` é braço PAGO e passa pelo mesmo portão da extração: sem autorização
+        contratual do tenant, `403 AI_PROCESSING_NOT_AUTHORIZED` (ADR-0012). Com ela, a
+        resposta ainda é `503 PROVIDER_UNAVAILABLE` — o braço semântico depende de índice de
+        embeddings publicado na rodada e nenhuma rota de `/v1` publica esse índice hoje.
+        Isso é estado honesto, não falha: cair no léxico fingindo ser híbrido esconderia do
+        orçamentista que a vizinhança semântica não participou do que ele está lendo. E
+        nenhuma chamada de embedding acontece dentro de um `GET`, com ou sem índice.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        if arm == "hybrid":
+            _require_active_ai_entitlement(
+                session,
+                principal,
+                real_providers_enabled=runtime_settings.real_providers_enabled,
+            )
+            raise _problem(
+                "PROVIDER_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "A busca semântica não está disponível nesta rodada.",
+                {"code": "SEMANTIC_INDEX_ABSENT"},
+            )
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            **search_round_catalog(_round_catalog(record), q, limit),
+        }
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/code-assignments",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def get_valuation_code_assignments(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Decisões de código da rodada e os itens confirmados que ainda esperam por uma."""
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        return _assignments_payload(
+            record,
+            packet=packet,
+            assignments=assignments_of(revision),
+            document=None if revision is None else revision.code_assignments_json,
+        )
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/code-assignments/decisions",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def decide_valuation_item_code(
+        round_id: UUID,
+        payload: CodeAssignmentDecisionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Confirma ou rejeita o código de UM item, acumulando sobre o conjunto anterior.
+
+        Acumular item a item é a semântica do domínio: é ele quem recusa a re-decisão
+        (`ASSIGNMENT_ITEM_ALREADY_DECIDED`) e quem carrega adiante as confirmações já
+        registradas. A rota não confere código, unidade nem estado do item — ela só monta a
+        decisão com a identidade do `Principal` e o instante do servidor.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.code-decisions:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        previous = assignments_of(revision)
+        catalog = _round_catalog(record)
+        try:
+            decision = CodeAssignmentInput(
+                item_id=payload.item_id,
+                action=payload.action,
+                code=payload.code,
+                reviewer_id=principal.subject,
+                reviewer_role=VALUATION_REVIEWER_ROLE,
+                decided_at=datetime.now(UTC),
+                note=payload.note,
+            )
+            batch = CodeAssignmentBatch(assignments=[decision])
+        except ValidationError as error:
+            # Invariante do domínio embrulhada pelo validador: o código estável sai, a
+            # mensagem do Pydantic não — ela pode ecoar o valor recusado.
+            raise _valuation_model_problem(error) from error
+        # Sem consolidado contratual: a rodada guarda catálogo, e o portão de exportação é
+        # que responde por preço e unidade contra o contrato quando ele existir.
+        assignments = apply_code_assignments(packet, batch, catalog, previous=previous)
+
+        document = assignments.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_assignments_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _assignments_payload(
+            record, packet=packet, assignments=assignments, document=document
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_ITEM_CODE_DECIDED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/calc",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def build_valuation_calc(
+        round_id: UUID,
+        payload: BuildValuationCalcRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Constrói boletim e memória de cálculo do takeoff confirmado e dos códigos decididos.
+
+        A identidade da obra vem da RODADA (`worksite_key`, `worksite_name`,
+        `period_number`, `reference_label`, `address`, `contract_label`), nunca do corpo:
+        em `/v1` esses rótulos são colunas de `ValuationRoundRecord` e o corpo carrega só a
+        guarda de concorrência.
+
+        `calc_plan=None` de propósito: o plano de cálculo é artefato de DIRETÓRIO do
+        servidor de medição e a rodada de `/v1` não o publica. Sem ele, cada item recebe o
+        bloco de quantidade direta que o próprio domínio gera — nunca uma receita suposta.
+
+        Esta rota **não aprova nada**: aprovação nominal da medição é ato próprio, com
+        portão de saldo e contrato, e não pertence à construção do boletim.
+
+        Duas recusas se parecem e não são a mesma coisa. Conjunto de códigos ainda
+        inexistente é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem, o orçamentista tem
+        o que fazer para sair dela. Conjunto existente com item confirmado sem decisão é
+        `422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`: invariante do
+        domínio, e quem a levanta é `packages/valuation`. Catálogo com origem diferente do
+        SCO fecha a medição licitada em `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (ADR-0027) —
+        item fora do contrato vira dossiê de aditivo, nunca preço de outra tabela.
+
+        A guarda de `base_version` é mudança pretendida desta migração; ver
+        `BuildValuationCalcRequest`.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.calc:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        assignments = require_assignments(revision)
+        valuation = build_worksite_valuation(
+            packet,
+            assignments,
+            _round_catalog(record),
+            worksite_key=record.worksite_key,
+            worksite_name=record.worksite_name,
+            period_number=record.period_number,
+            reference_label=record.reference_label,
+            address=record.address,
+            contract_label=record.contract_label,
+            calc_plan=None,
+        )
+
+        document = valuation.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"valuation_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _bulletin_payload(record, document=document, valuation=valuation)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_CALC_BUILT",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/bulletin",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def get_valuation_bulletin(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Boletim gravado, com os totais recomputados na leitura pelos validadores do modelo.
+
+        Boletim ainda não construído é `409 ROUND_STAGE_NOT_READY`; boletim que não passa na
+        revalidação é `422`, nunca um `200` com número que ninguém conferiu.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        document = require_document(
+            revision,
+            "valuation_json",
+            stage=STAGE_BULLETIN,
+            detail="a rodada ainda não tem boletim construído",
+        )
+        return _bulletin_payload(
+            record, document=document, valuation=_revalidated_bulletin(document)
+        )
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/amendment-dossier",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def build_valuation_amendment_dossier(
+        round_id: UUID,
+        payload: BuildAmendmentDossierRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Constrói o dossiê do aditivo: itens confirmados cujo código foi REJEITADO.
+
+        Espelho de `POST /calc`: o dossiê é o outro artefato de fechamento da rodada e
+        nasce dos mesmos dois artefatos-base — pacote de takeoff e conjunto de códigos. Ele
+        não carrega campo de preço por construção e nunca cria nem altera `Amendment`/RE-RA
+        (ADR-0027, ADR-0018): pedir o aditivo à prefeitura é ato contratual humano, fora
+        deste sistema.
+
+        Rejeição na revisão do TAKEOFF não é aditivo — item que não se mede não vira
+        pedido. O que entra aqui é só a rejeição de CÓDIGO de um item confirmado no
+        takeoff, com a justificativa que o orçamentista registrou.
+
+        Conjunto de códigos inexistente é `409 ROUND_STAGE_NOT_READY`; item confirmado sem
+        decisão de código é `422 DOMAIN_VALIDATION_FAILED` com
+        `AMENDMENT_DOSSIER_ASSIGNMENTS_INCOMPLETE`, porque o dossiê é artefato de
+        fechamento e não publica foto parcial da rodada.
+
+        A guarda de `base_version` é mudança pretendida desta migração; ver
+        `BuildAmendmentDossierRequest`.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.amendment-dossier:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        assignments = require_assignments(revision)
+        dossier = build_amendment_dossier(packet, assignments)
+
+        document = dossier.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"amendment_dossier_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _dossier_payload(record, document=document, dossier=dossier)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_AMENDMENT_DOSSIER_BUILT",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/amendment-dossier",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def get_valuation_amendment_dossier(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Dossiê gravado, revalidado na leitura: espelho de `GET /bulletin`.
+
+        Dossiê ainda não construído é `409 ROUND_STAGE_NOT_READY`; dossiê que não passa na
+        revalidação é `422` — a tela nunca renderiza dossiê inválido.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        document = require_document(
+            revision,
+            "amendment_dossier_json",
+            stage=STAGE_DOSSIER,
+            detail="a rodada ainda não tem dossiê de aditivo construído",
+        )
+        return _dossier_payload(record, document=document, dossier=_revalidated_dossier(document))
 
     return application
 

@@ -2,7 +2,7 @@
 
 Status: Accepted  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-17
 
 Este arquivo é o roteador de contexto para humanos e agentes. Leia
 [STATUS.md](STATUS.md) em seguida e carregue somente o conjunto relevante.
@@ -32,6 +32,29 @@ Este arquivo é o roteador de contexto para humanos e agentes. Leia
 4. [Security](../SECURITY.md)
 5. `services/api/AGENTS.md`
 
+### Alterar o schema do banco
+
+Modelo em `services/api/src/croquito_api/database.py` mudou? A migration correspondente é
+obrigatória — o CI compara as duas e reprova divergência.
+
+1. [ADR-0029](adr/0029-runner-de-migrations-revisadas.md) (runner, adoção de banco antigo,
+   forward-only)
+2. [Domain Model](architecture/DOMAIN_MODEL.md)
+3. [Deployment and Rollback](operations/DEPLOYMENT_AND_ROLLBACK.md)
+4. [HML (job de banco na esteira)](operations/HML.md)
+5. `services/api/AGENTS.md`
+
+### Alterar a superfície da API
+
+Rota `/v1` nova, removida ou alterada em `services/api/src/croquito_api/main.py`? O API
+Contract e o snapshot versionado precisam concordar com a aplicação — o teste de
+paridade compara as duas fontes e reprova divergência.
+
+1. [API Contract](architecture/API_CONTRACT.md) — seção "Compatibilidade"
+2. `tests/api/test_openapi_contract.py` (snapshot + paridade `/v1` × API Contract)
+3. `services/api/AGENTS.md`
+4. [Testing Strategy](engineering/TESTING_STRATEGY.md) — seção "Contrato"
+
 ### Implementar processamento e CAD
 
 1. [Data Flow](architecture/DATA_FLOW.md)
@@ -54,7 +77,9 @@ Este arquivo é o roteador de contexto para humanos e agentes. Leia
 6. [ADR-0021](adr/0021-hybrid-sco-code-retrieval.md)
 7. [ADR-0020](adr/0020-local-homologation-server-for-valuation.md) (UI local + servidor de homologação)
 8. [ADR-0027](adr/0027-price-source-provenance-and-bid-boundary.md) (fontes de preço, aditivo e pré-licitação)
-9. `apps/medicao/AGENTS.md`
+9. [ADR-0028](adr/0028-medicao-na-api-v1-autenticada.md) (a medição na `/v1` autenticada — implementada em F-003) e
+   [ADR-0030](adr/0030-overlay-do-takeoff-reconstruido-na-fila.md) (overlay do takeoff na fila)
+10. `apps/web/AGENTS.md` (a jornada de medição vive em `apps/web/src/medicao/`)
 
 ### Alterar IA
 
@@ -75,7 +100,8 @@ o desenho AWS é o alvo de produção e não descreve o que está no ar.
 4. [Processing Workflows](architecture/PROCESSING_WORKFLOWS.md)
 5. [Observability](operations/OBSERVABILITY.md)
 6. [Deployment and Rollback](operations/DEPLOYMENT_AND_ROLLBACK.md)
-7. `infra/AGENTS.md`
+7. [ADR-0029](adr/0029-runner-de-migrations-revisadas.md) (runner de migrations do job de banco)
+8. `infra/AGENTS.md`
 
 ### Revisar segurança e privacidade
 
@@ -146,6 +172,7 @@ o desenho AWS é o alvo de produção e não descreve o que está no ar.
 
 ### Engenharia
 
+- [Project Context](engineering/PROJECT_CONTEXT.md)
 - [Local Development](engineering/LOCAL_DEVELOPMENT.md)
 - [Coding Standards](engineering/CODING_STANDARDS.md)
 - [Testing Strategy](engineering/TESTING_STRATEGY.md)
@@ -181,8 +208,7 @@ o desenho AWS é o alvo de produção e não descreve o que está no ar.
 ### Instruções para agentes
 
 - [Root AGENTS](../AGENTS.md)
-- [Web AGENTS](../apps/web/AGENTS.md)
-- [Medição AGENTS](../apps/medicao/AGENTS.md)
+- [Web AGENTS](../apps/web/AGENTS.md) (croqui e medição)
 - [API AGENTS](../services/api/AGENTS.md)
 - [Worker AGENTS](../services/worker/AGENTS.md)
 - [Infrastructure AGENTS](../infra/AGENTS.md)

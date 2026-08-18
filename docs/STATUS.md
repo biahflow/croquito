@@ -1,8 +1,13 @@
-# Estado do produto
+# Estado do produto (vista derivada)
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-17 (M8 do contexto de medição)
+Última revisão: 2026-08-18 (medição migrada para a API `/v1`, F-003; homologação diagnosticada
+fora do ar, F-006)
+
+> Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
+> trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
+> lifecycle e evidências está no [Project Context](engineering/PROJECT_CONTEXT.md).
 
 ## Marco atual
 
@@ -577,6 +582,12 @@ coletivo do rebranding, então essa mudança nasce em `sco-refinement@1.0.3`).
 
 ### M6 em código: UI local de homologação da medição
 
+> **Registro do marco, não o estado de hoje.** O app `apps/medicao` e o modo hospedado
+> descritos abaixo não existem mais: as telas migraram para `apps/web` e a cadeia passou a
+> operar sobre a API `/v1` em 2026-08-18 — ver "A medição na API `/v1` autenticada". O que
+> sobreviveu desta entrega é o servidor **local** do ADR-0020, e a guarda por digest citada aqui
+> virou `base_version` na API.
+
 A homologação da cadeia ganhou tela, priorizada pelo usuário para a orçamentista do
 domínio homologar sem CLI ([ADR-0020](adr/0020-local-homologation-server-for-valuation.md)).
 
@@ -781,19 +792,122 @@ nominal e exportação auditada aberta no AutoCAD — foi percorrido de ponta a 
 no Campo do Guaxindiba em 2026-08-13. O próximo passo de validação é o teste por
 um segundo profissional e a repetição do ciclo nos demais golden cases.
 
-### Roadmap declarado da medição hospedada
+### A medição na API `/v1` autenticada
 
-A homologação em GCP ([ADR-0025](adr/0025-homologacao-em-gcp-cloud-run.md)) hospeda o
-servidor local de medição com autenticação mínima e rodadas em bucket via FUSE
-([ADR-0026](adr/0026-medicao-hospedada-sessao-autenticada-minima.md)). Isso é **ponte,
-não destino**: o servidor e o client `apps/medicao` continuam descartáveis por
-construção (ADR-0020), e a solução definitiva é a **migração da medição para a API
-`/v1` autenticada** (tabelas próprias, contratos TS gerados, concorrência otimista
-real, papel `orcamentista` no realm) — quando ela existir, as telas e módulos puros
-migram e o servidor hospedado sai do ar. Os custos aceitos da ponte (escrita direta
-sem rename no FUSE, uma instância só, uma rodada por ambiente) estão declarados no
-ADR-0026 e não devem ganhar investimento além do necessário para a homologação
-remota.
+Desde 2026-08-18 a cadeia de medição **opera sobre a API `/v1`**, com tabelas próprias,
+concorrência otimista real e papel `orcamentista` exigido em cada rota. O desenho é o
+[ADR-0028](adr/0028-medicao-na-api-v1-autenticada.md) (`Accepted` em 2026-08-17) e a execução
+foi [F-003](features/F-003-medicao-v1-migration/feature.md), com evidência em
+[evidence.md](features/F-003-medicao-v1-migration/evidence.md).
+
+As dezoito rotas da seção "Medição de obra" do [API Contract](architecture/API_CONTRACT.md)
+existem, estão no documento OpenAPI e são cobertas por um e2e que percorre a cadeia inteira por
+HTTP (`tests/e2e/test_valuation_v1_chain.py`), com o worker consumindo os dois comandos de fila
+da medição. A raiz é a **rodada** (`ValuationRound`): a tela lista, abre e cria rodada, e o
+catálogo de preços entra pelo presign na criação.
+
+Uma decisão de execução mudou o desenho do overlay do takeoff. O API Contract herdara do
+servidor de medição a promessa de devolver "o overlay atualizado" junto da decisão, mas na API
+isso exigiria ler o PNG promovido e gravar blob pela fronteira que declara não fazer nem uma
+coisa nem outra, com render de imagem no request path. O
+[ADR-0030](adr/0030-overlay-do-takeoff-reconstruido-na-fila.md) move o re-render para a fila: o
+overlay declara a própria idade pelo digest do pacote que o originou, e **vencido é `200` com a
+marca**, nunca erro nem silêncio.
+
+**A ponte hospedada foi removida**, não desativada: `create_hosted_app`, `hosted_auth.py`, a
+flag `--hosted`, a variável `CROQUITO_IO_DIRECT_WRITE`, o passo de esteira do serviço
+`croquito-medicao-hml` e o proxy `/medicao/api/` saíram do repositório. O
+[ADR-0026](adr/0026-medicao-hospedada-sessao-autenticada-minima.md) continua descrevendo a ponte
+que existiu — ADR aceito é imutável.
+
+O que **fica** é o servidor local do [ADR-0020](adr/0020-local-homologation-server-for-valuation.md)
+(`croquito-valuation serve`, sem `--hosted`), com as mesmas dezesseis rotas e os mesmos 89 testes
+de `tests/worker/test_valuation_local_server.py` passando sem uma linha alterada: ele é a
+ferramenta da máquina do operador e não foi substituído.
+
+Pendente e **humano**: a concessão do papel `orcamentista` no realm de homologação e a
+homologação real da orçamentista sobre uma medição de verdade — que esta migração não
+substitui. A remoção dos recursos hospedados foi verificada como feita em 2026-08-18: nem o
+serviço `croquito-medicao-hml` nem o bucket `croquito-hml-rounds` existem mais no projeto. O
+stack de infraestrutura, que ainda os declarava e os teria recriado no próximo apply, deixou
+de declará-los junto com a runtime SA — a única peça do grupo que ainda existe.
+
+### Runner de migrations revisadas
+
+Desde 2026-08-17 o schema do banco evolui por migrations revisadas
+([ADR-0029](adr/0029-runner-de-migrations-revisadas.md), execução em
+[F-004](features/F-004-migrations-runner/feature.md)). O runner é o Alembic, com as revisões
+dentro de `croquito_api.migrations` — distribuídas na mesma imagem da API — e aplicadas por
+`python -m croquito_api.bootstrap`, que é o comando que o job de banco da esteira já
+executava. A revisão `0001` é a baseline: descreve o schema que antes nascia de
+`create_all` mais cinco blocos de `ALTER TABLE` condicional.
+
+Com isso a lacuna declarada no [ADR-0025](adr/0025-homologacao-em-gcp-cloud-run.md) —
+"um runner de migrations revisadas continua sendo requisito de produção" — deixa de existir,
+e [F-003](features/F-003-medicao-v1-migration/feature.md) perde o portão que a impedia de
+criar tabela. O que o runner traz junto:
+
+- O banco declara em que versão está; banco defasado deixa de ser indistinguível de banco
+  em dia.
+- Banco anterior ao runner é **adotado por carimbo**, nunca recriado, e só depois de
+  conferir que ele corresponde à baseline: todas as tabelas da revisão `0001` e todas as
+  colunas mais recentes — se faltar qualquer uma, o comando recusa. A régua é a baseline, e
+  não o modelo do dia: tabela que nasce em revisão posterior não existe no banco legado e é
+  criada pelo `upgrade` logo depois do carimbo.
+- Modelo alterado sem a migration correspondente reprova o CI: um PostgreSQL de serviço
+  aplica as migrations em banco limpo e a diferença contra `Base.metadata` precisa ser vazia.
+- `Database.create_schema()` voltou a ser só `create_all`, para teste e banco novo.
+- Migrations são forward-only: não há `downgrade` em ambiente hospedado, e remover coluna
+  segue exigindo aprovação humana explícita.
+
+**Ato humano pendente**: o primeiro deploy de homologação com o runner, que é o que
+exercita o caminho de carimbo contra o banco real do ambiente. Ele está bloqueado pelo
+ambiente fora do ar, descrito a seguir.
+
+### A homologação em GCP está fora do ar desde 2026-08-14
+
+Medido em 2026-08-18 com consulta somente-leitura à borda pública e ao projeto
+`biahflow-hml`. `/revisao/` e `/medicao/` respondem 200; `/api/healthz` responde 404 e o
+discovery OIDC responde 503 — ou seja, **a sessão autenticada de homologação não sobe**. É a
+confirmação da fumaça de 2026-08-17 registrada em F-001, agora com causa.
+
+A causa raiz é uma só, e não é a que o erro sugere: **o endereço do banco nos secrets aponta
+para um endpoint do Neon que não existe mais**. Todos os consumidores relatam
+`password authentication failed for user 'neondb_owner'`, mas a senha gravada é idêntica à
+corrente — comparada por digest, sem expor nenhuma das duas. O proxy do Neon roteia pelo
+hostname e responde a endpoint desconhecido com falha de autenticação; o sintoma apontava para
+a credencial, o defeito estava no endereço.
+
+Com isso o Keycloak falha no boot (`Failed to obtain JDBC connection`) e chama `exit(1)`, e o
+job `croquito-db-init-hml` falhou em 2026-08-17T14:12 pelo mesmo motivo. Como a esteira para no
+job de banco por desenho, **nenhuma revisão nova entra no ar desde 2026-08-14** — o portão fez
+o que devia, e ninguém soube. Com a esteira barrada, o container de exemplo do Cloud Run que
+alguém pôs em `croquito-scene-hml` num teste de roteamento em 2026-08-14 nunca foi substituído
+pela imagem real, que na revisão anterior havia subido com sucesso.
+
+**O banco de homologação está vazio.** As duas branches do projeto Neon — `production` e
+`staging` — não têm nenhuma tabela, e nenhuma tem `alembic_version`. O schema criado em
+2026-08-14 vivia no endpoint que sumiu. Duas consequências que não são de código: o primeiro
+deploy com o runner vai **criar o schema desde a baseline**, não carimbar banco preexistente
+— então o ato pendente de [F-004](features/F-004-migrations-runner/feature.md) continua aberto
+—, e o realm do Keycloak nasce sem usuário nenhum, o que torna obrigatória a recriação do
+usuário da orçamentista e do papel `orcamentista`.
+
+Dois registros do repositório caíram junto com o diagnóstico. O "bug de plataforma no GFE"
+anotado em `deploy/nginx.conf` não explica o 404 de hoje — quem responde por trás do proxy é o
+container de exemplo — e a causa conhecida de 404 naquele caminho, resolução de DNS para o
+ingress interno, já estava resolvida no stack de infraestrutura por uma zona privada `run.app`
+**antes** do rename que aquele comentário justifica. E o stack ainda declarava
+`croquito-medicao-hml`, que já não existe no projeto — o próximo apply o teria recriado.
+
+O conserto é a [F-006](features/F-006-hml-conserto/feature.md), com a decisão técnica no
+[ADR-0031](adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md): o valor das
+credenciais de homologação passa a ser gerenciado por Terraform no repositório central de
+infraestrutura, porque coordenada de banco que só um humano sabe atualizar é coordenada que
+ninguém atualiza. O stack passou a declarar a **branch** do Neon por nome e derivar dela o host
+e a senha — nenhum hostname escrito à mão, que foi o que quebrou.
+A fumaça da borda (`make smoke-hml`) passou a verificar **conteúdo** e não só status — um
+`200` do container de exemplo não é a API — e roda igual na esteira e na máquina do operador.
 
 ## Condição para avançar ao processamento real
 

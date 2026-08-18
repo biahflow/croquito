@@ -1,6 +1,6 @@
 # ADR-0020: Servidor local de homologação para o contexto de medição
 
-Status: Proposed  
+Status: Accepted
 Data: 2026-08-13  
 Responsável: Product / Engineering
 

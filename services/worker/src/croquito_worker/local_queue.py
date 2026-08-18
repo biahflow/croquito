@@ -12,15 +12,17 @@ import json
 import os
 import tempfile
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
+from contextlib import closing, suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final, cast
 
 import boto3
 import fitz
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
+from pydantic import ValidationError
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, RowMapping
 from sqlalchemy.exc import IntegrityError
@@ -28,6 +30,8 @@ from sqlalchemy.exc import IntegrityError
 from croquito_core.errors import DomainValidationError
 from croquito_core.ids import new_uuid7
 from croquito_core.models import SceneRevision
+from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.takeoff import TakeoffPacket
 from croquito_worker.artifact_store import WorkerArtifactStore
 from croquito_worker.chat import build_chat_text_payload, chat_unknown_references
 from croquito_worker.criteria import ScopeCriterion
@@ -39,6 +43,7 @@ from croquito_worker.provider_review import (
 from croquito_worker.providers import (
     PromptTask,
     ProtectedRawResponseStore,
+    ProviderAdapter,
     ProviderExecution,
     ProviderExecutionError,
     ProviderFailureCode,
@@ -61,6 +66,29 @@ from croquito_worker.tracing import (
     TraceAcceptance,
     solve_trace,
 )
+from croquito_worker.valuation.round_extraction import (
+    MAX_PLATE_PDF_BYTES,
+    PLATE_IMAGE_DIGEST,
+    PLATE_IMAGE_REF,
+    PLATE_PAGE_NUMBER,
+    PLATE_PDF_FILENAME,
+    TAKEOFF_OVERLAY_DIGEST,
+    TAKEOFF_OVERLAY_PACKET_DIGEST,
+    TAKEOFF_OVERLAY_REF,
+    build_extraction_adapter,
+    document_digest,
+    execution_payload,
+    extract_legend_from_upload,
+    extraction_arm_spec,
+    extraction_failure_code,
+    extraction_unavailable,
+    ingest_plate_upload,
+    plate_image_object_key,
+    registration_payload,
+    takeoff_overlay_object_key,
+    upload_invalid,
+)
+from croquito_worker.valuation.takeoff_overlay import render_takeoff_overlay, save_takeoff_overlay
 from croquito_worker.vision import VisionProposalSet
 
 
@@ -113,6 +141,43 @@ class LocalWorkerSettings:
 #: de propósito: a recusa por autorização ou por PDF inválido é recuperável, e reenfileirar
 #: o mesmo comando depois de corrigir a causa continua sendo o caminho de retomada.
 INGESTED_JOB_STATUSES = frozenset({"REVIEW_REQUIRED", "APPROVED", "EXPORTING", "COMPLETED"})
+
+VALUATION_EXTRACTION_VERSION: Final = "valuation-extraction-v1"
+"""Autor da revisão que a extração publica e versão declarada no lineage.
+
+O par prompt+modelo já viaja no `execution` do lineage; isto identifica o CAMINHO que
+publicou o artefato — o comando de fila, e não a thread do servidor de homologação."""
+
+VALUATION_OVERLAY_VERSION: Final = "valuation-overlay-v1"
+"""Autor da revisão que o re-render do overlay publica (ADR-0030).
+
+Distinto do autor da extração de propósito: as duas revisões carregam o mesmo pacote e só
+o autor diz qual delas foi ato de sistema derivado de uma decisão humana."""
+
+_REVISION_HEAD_COLUMNS: Final = (
+    "id, version, takeoff_packet_json, takeoff_registration_json, code_suggestions_json, "
+    "code_assignments_json, valuation_json, amendment_dossier_json, extraction_lineage_json, "
+    "artifact_refs_json, artifact_digests_json"
+)
+"""Colunas da cabeça da rodada que uma revisão nova precisa carregar adiante."""
+
+
+def _head_revision_row(
+    connection: Connection, *, round_id: str, tenant_id: str
+) -> RowMapping | None:
+    """Cabeça da cadeia de revisões da rodada; `tenant_id` no MESMO `where` do `round_id`."""
+    return (
+        connection.execute(
+            text(
+                f"SELECT {_REVISION_HEAD_COLUMNS} FROM valuation_round_revisions "
+                "WHERE round_id = :round_id AND tenant_id = :tenant_id "
+                "ORDER BY version DESC LIMIT 1"
+            ),
+            {"round_id": round_id, "tenant_id": tenant_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
 
 
 def _json_column(value: Any) -> Any:
@@ -231,11 +296,18 @@ def _validate_pdf_stream(
 
 class LocalQueueWorker:
     def __init__(
-        self, settings: LocalWorkerSettings, *, provider_suite: ProviderSuite | None = None
+        self,
+        settings: LocalWorkerSettings,
+        *,
+        provider_suite: ProviderSuite | None = None,
+        valuation_extraction_adapter: ProviderAdapter | None = None,
     ) -> None:
         self.settings = settings
         # No environment switch exists for fixtures: only a caller can explicitly inject one.
         self.provider_suite = provider_suite
+        # Mesma regra para o braço pago da extração de legenda: nenhuma variável de ambiente
+        # troca o adapter real por uma fixture — só quem constrói o worker pode injetá-la.
+        self.valuation_extraction_adapter = valuation_extraction_adapter
         self._queue_client: Any | None = None
         self._object_client: Any | None = None
         self.engine = create_engine(settings.database_url)
@@ -316,12 +388,35 @@ class LocalQueueWorker:
         descartar a mensagem); exceção significa reentrega. Nenhum handler apaga
         mensagem — a semântica do transporte mora aqui e em `run_once`.
         """
-        job_id = body.get("job_id")
-        tenant_id = body.get("tenant_id")
-        if not isinstance(job_id, str) or not isinstance(tenant_id, str):
-            raise UnroutableMessageError("Mensagem de processamento inválida")
         # Messages published before the command field are always ingestion work.
         command = body.get("command", "process_upload")
+        tenant_id = body.get("tenant_id")
+        if not isinstance(tenant_id, str):
+            raise UnroutableMessageError("Mensagem de processamento inválida")
+        if command == "extract_valuation_plate":
+            # A rodada de medição não tem `job_id` e nunca terá: `Job` é vocabulário proibido
+            # neste contexto delimitado (ADR-0016). Por isso o roteamento por comando vem
+            # ANTES da guarda de `job_id`, que continua valendo para os quatro comandos do
+            # croqui — exigi-la primeiro rejeitaria este envelope antes de alguém o ler.
+            round_id = body.get("round_id")
+            extraction_id = body.get("extraction_id")
+            if not isinstance(round_id, str) or not isinstance(extraction_id, str):
+                raise UnroutableMessageError("Mensagem de extração de medição inválida")
+            return self._handle_valuation_extraction(
+                round_id=round_id, extraction_id=extraction_id, tenant_id=tenant_id
+            )
+        if command == "rerender_takeoff_overlay":
+            # Segundo comando da medição, e pelo mesmo motivo antes da guarda de `job_id`.
+            round_id = body.get("round_id")
+            packet_sha256 = body.get("packet_sha256")
+            if not isinstance(round_id, str) or not isinstance(packet_sha256, str):
+                raise UnroutableMessageError("Mensagem de overlay de medição inválida")
+            return self._handle_takeoff_overlay_rerender(
+                round_id=round_id, tenant_id=tenant_id, packet_sha256=packet_sha256
+            )
+        job_id = body.get("job_id")
+        if not isinstance(job_id, str):
+            raise UnroutableMessageError("Mensagem de processamento inválida")
         if command == "export_scene_package":
             export_id = body.get("export_id")
             if not isinstance(export_id, str):
@@ -1246,6 +1341,500 @@ class LocalQueueWorker:
             status="COMPLETED",
             answer=answer.model_dump(mode="json"),
             execution=execution,
+        )
+        return 1
+
+    # -- Medição de obra: extração paga da legenda (ADR-0028 D7) ------------------------
+
+    def _valuation_extraction_adapter(self, arm_spec: str) -> ProviderAdapter:
+        """Braço pago da extração, ou a recusa declarada de por que ele não existe.
+
+        O adapter injetado é fixture de teste ou demo — nada sai da máquina —, e por isso
+        dispensa o gate de teto de gasto e credencial, exatamente como a `ProviderSuite`
+        injetada dispensa a allowlist na ingestão. Sem injeção, a pré-checagem de ambiente
+        vale integralmente: sem teto de gasto declarado, nenhuma chamada é tentada.
+        """
+        if self.valuation_extraction_adapter is not None:
+            return self.valuation_extraction_adapter
+        unavailable = extraction_unavailable(arm_spec)
+        if unavailable is not None:
+            raise unavailable
+        _name, _model_id, adapter = build_extraction_adapter(arm_spec)
+        return adapter
+
+    def _put_round_png(self, *, object_key: str, payload: bytes) -> None:
+        self.s3_client.put_object(
+            Bucket=self.settings.artifact_bucket,
+            Key=object_key,
+            Body=payload,
+            ContentType="image/png",
+            **({"ServerSideEncryption": "AES256"} if self.settings.storage_sse_enabled else {}),
+        )
+
+    def _settle_valuation_extraction(
+        self, *, round_id: str, extraction_id: str, tenant_id: str, failure_code: str
+    ) -> None:
+        """Fecha a extração como `failed`: nenhuma revisão, versão da rodada intacta.
+
+        O `WHERE` repete o par extração+estado do claim: um desfecho tardio nunca sobrescreve
+        uma extração posterior que já tomou a rodada para si. Falha em não casar linha
+        nenhuma é justamente o caso em que não há nada a fechar.
+        """
+        with self.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE valuation_rounds SET extraction_status = 'failed', "
+                    "extraction_failure_code = :failure_code, "
+                    "extraction_updated_at = CURRENT_TIMESTAMP, "
+                    "updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = :round_id AND tenant_id = :tenant_id "
+                    "AND extraction_id = :extraction_id AND extraction_status = 'running'"
+                ),
+                {
+                    "round_id": round_id,
+                    "tenant_id": tenant_id,
+                    "extraction_id": extraction_id,
+                    "failure_code": failure_code,
+                },
+            )
+
+    def _publish_valuation_extraction(
+        self,
+        *,
+        round_id: str,
+        extraction_id: str,
+        tenant_id: str,
+        packet: dict[str, Any],
+        registration: dict[str, Any],
+        lineage: dict[str, Any],
+        refs: dict[str, str],
+        digests: dict[str, str],
+        page_count: int,
+    ) -> None:
+        """Grava a revisão e fecha a extração na MESMA transação.
+
+        Pacote publicado com a rodada ainda `running`, ou rodada `done` sem revisão, seriam
+        estados que a tela não sabe ler — e nenhum dos dois é recuperável por retentativa.
+        A revisão copia da cabeça o que a extração não produziu, porque revisão é
+        append-only e o que o ato não mudou viaja idêntico (ADR-0028 D2).
+        """
+        dialect = self.engine.dialect.name
+        with self.engine.begin() as connection:
+            head = (
+                connection.execute(
+                    text(
+                        "SELECT id, version, code_suggestions_json, code_assignments_json, "
+                        "valuation_json, amendment_dossier_json, artifact_refs_json, "
+                        "artifact_digests_json FROM valuation_round_revisions "
+                        "WHERE round_id = :round_id AND tenant_id = :tenant_id "
+                        "ORDER BY version DESC LIMIT 1"
+                    ),
+                    {"round_id": round_id, "tenant_id": tenant_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            carried_refs = dict(_json_column(head["artifact_refs_json"]) or {}) if head else {}
+            carried_digests = (
+                dict(_json_column(head["artifact_digests_json"]) or {}) if head else {}
+            )
+            carried_refs.update(refs)
+            carried_digests.update(digests)
+            parameters: dict[str, Any] = {
+                "id": str(new_uuid7()),
+                "tenant_id": tenant_id,
+                "round_id": round_id,
+                "version": 1 if head is None else int(head["version"]) + 1,
+                "parent_revision_id": None if head is None else head["id"],
+                "created_by": VALUATION_EXTRACTION_VERSION,
+            }
+            columns = {
+                "takeoff_packet_json": packet,
+                "takeoff_registration_json": registration,
+                "code_suggestions_json": _json_column(head["code_suggestions_json"])
+                if head
+                else None,
+                "code_assignments_json": _json_column(head["code_assignments_json"])
+                if head
+                else None,
+                "valuation_json": _json_column(head["valuation_json"]) if head else None,
+                "amendment_dossier_json": _json_column(head["amendment_dossier_json"])
+                if head
+                else None,
+                "extraction_lineage_json": lineage,
+                "artifact_refs_json": carried_refs,
+                "artifact_digests_json": carried_digests,
+            }
+            expressions = {
+                name: _json_parameter(parameters, dialect, name, value)
+                for name, value in columns.items()
+            }
+            connection.execute(
+                text(
+                    "INSERT INTO valuation_round_revisions "
+                    "(id, tenant_id, round_id, version, parent_revision_id, takeoff_packet_json, "
+                    "takeoff_registration_json, code_suggestions_json, code_assignments_json, "
+                    "valuation_json, amendment_dossier_json, extraction_lineage_json, "
+                    "artifact_refs_json, artifact_digests_json, created_by, created_at) "
+                    "VALUES (:id, :tenant_id, :round_id, :version, :parent_revision_id, "
+                    f"{expressions['takeoff_packet_json']}, "
+                    f"{expressions['takeoff_registration_json']}, "
+                    f"{expressions['code_suggestions_json']}, "
+                    f"{expressions['code_assignments_json']}, "
+                    f"{expressions['valuation_json']}, "
+                    f"{expressions['amendment_dossier_json']}, "
+                    f"{expressions['extraction_lineage_json']}, "
+                    f"{expressions['artifact_refs_json']}, "
+                    f"{expressions['artifact_digests_json']}, "
+                    ":created_by, CURRENT_TIMESTAMP)"
+                ),
+                parameters,
+            )
+            published = connection.execute(
+                text(
+                    "UPDATE valuation_rounds SET extraction_status = 'done', "
+                    "extraction_failure_code = NULL, plate_page_count = :page_count, "
+                    "version = version + 1, extraction_updated_at = CURRENT_TIMESTAMP, "
+                    "updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = :round_id AND tenant_id = :tenant_id "
+                    "AND extraction_id = :extraction_id AND extraction_status = 'running'"
+                ),
+                {
+                    "round_id": round_id,
+                    "tenant_id": tenant_id,
+                    "extraction_id": extraction_id,
+                    "page_count": page_count,
+                },
+            )
+            if published.rowcount != 1:
+                # Dentro da transação de propósito: levantar aqui desfaz a revisão recém
+                # inserida, em vez de deixar um pacote publicado numa rodada que outra
+                # extração já tomou.
+                raise ValueError("Rodada de medição saiu do estado de extração em curso")
+
+    def _extract_valuation_plate(
+        self, *, round_id: str, extraction_id: str, tenant_id: str
+    ) -> None:
+        """Ingere a página da prancha, extrai a legenda e publica o pacote da rodada.
+
+        Toda a escrita de disco acontece num diretório temporário desta tarefa; o que
+        sobrevive são dois PNGs sob o prefixo do tenant no object store e uma revisão nova.
+        """
+        with self.engine.connect() as connection:
+            record = (
+                connection.execute(
+                    text(
+                        "SELECT plate_object_key, plate_source_sha256 FROM valuation_rounds "
+                        "WHERE id = :round_id AND tenant_id = :tenant_id"
+                    ),
+                    {"round_id": round_id, "tenant_id": tenant_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if record is None or not record["plate_object_key"]:
+            raise ValuationValidationError(
+                "ROUND_STAGE_NOT_READY",
+                "a rodada não tem prancha associada para extrair",
+                {"round_id": round_id},
+            )
+        arm_spec = extraction_arm_spec()
+        adapter = self._valuation_extraction_adapter(arm_spec)
+
+        with tempfile.TemporaryDirectory() as workspace:
+            # O nome do diretório vira `plate_id` do pacote (`round_extraction.dataset_id`),
+            # então ele identifica a RODADA — nunca um temporário aleatório do sistema.
+            workdir = Path(workspace) / f"rodada-{round_id}"
+            workdir.mkdir()
+            body = self.s3_client.get_object(
+                Bucket=self.settings.artifact_bucket, Key=str(record["plate_object_key"])
+            )["Body"]
+            with closing(body):
+                payload = cast(bytes, body.read(MAX_PLATE_PDF_BYTES + 1))
+            if len(payload) > MAX_PLATE_PDF_BYTES:
+                raise upload_invalid(
+                    "a prancha armazenada excede o limite de ingestão",
+                    {"max_bytes": MAX_PLATE_PDF_BYTES},
+                )
+            manifest = ingest_plate_upload(workdir, filename=PLATE_PDF_FILENAME, payload=payload)
+            if manifest.source_sha256 != str(record["plate_source_sha256"]):
+                # O digest declarado no presign é o que o orçamentista consentiu; um objeto
+                # que não o reproduz não é a prancha dele.
+                raise upload_invalid(
+                    "a prancha armazenada diverge do digest declarado no upload",
+                    {"round_id": round_id},
+                )
+            result = extract_legend_from_upload(workdir, manifest, adapter)
+            image_path = workdir / manifest.pages[PLATE_PAGE_NUMBER - 1].render_file
+            # Overlay renderizado ANTES de qualquer publicação, como em `cli._publish_takeoff`:
+            # pacote sem overlay não é meio caminho aceitável — é o overlay que mostra ao
+            # orçamentista de onde cada número foi lido.
+            overlay_path = workdir / "takeoff-overlay.png"
+            save_takeoff_overlay(render_takeoff_overlay(image_path, result.packet), overlay_path)
+            image_bytes = image_path.read_bytes()
+            overlay_bytes = overlay_path.read_bytes()
+
+        plate_key = plate_image_object_key(tenant_id=tenant_id, round_id=round_id)
+        overlay_key = takeoff_overlay_object_key(tenant_id=tenant_id, round_id=round_id)
+        self._put_round_png(object_key=plate_key, payload=image_bytes)
+        self._put_round_png(object_key=overlay_key, payload=overlay_bytes)
+
+        lineage: dict[str, Any] = {
+            "worker_version": VALUATION_EXTRACTION_VERSION,
+            "arm": arm_spec,
+            "plate_id": result.packet.plate_id,
+            "page_number": result.packet.page_number,
+            "image_sha256": result.packet.image_sha256,
+            "consented_source_sha256": result.source_sha256,
+            "consent": "upload da prancha pelo orçamentista na sessão autenticada da API /v1",
+            "extracted_at": datetime.now(UTC).isoformat(),
+            "execution": execution_payload(result.execution),
+        }
+        packet_document = result.packet.model_dump(mode="json")
+        self._publish_valuation_extraction(
+            round_id=round_id,
+            extraction_id=extraction_id,
+            tenant_id=tenant_id,
+            packet=packet_document,
+            registration=dict(registration_payload(result.registration)),
+            lineage=lineage,
+            refs={PLATE_IMAGE_REF: plate_key, TAKEOFF_OVERLAY_REF: overlay_key},
+            digests={
+                PLATE_IMAGE_DIGEST: result.packet.image_sha256,
+                TAKEOFF_OVERLAY_DIGEST: hashlib.sha256(overlay_bytes).hexdigest(),
+                # O overlay nasce do pacote recém-extraído, e é este digest que a rota
+                # compara com o pacote corrente para saber se o desenho envelheceu
+                # (ADR-0030). Gravá-lo aqui é o que faz o overlay recém-publicado não
+                # nascer marcado como vencido.
+                TAKEOFF_OVERLAY_PACKET_DIGEST: document_digest(packet_document),
+            },
+            page_count=manifest.page_count,
+        )
+
+    def _handle_valuation_extraction(
+        self, *, round_id: str, extraction_id: str, tenant_id: str
+    ) -> int:
+        """Executa a extração paga da legenda no máximo UMA vez por comando enfileirado.
+
+        O claim é um `UPDATE` condicional, e não um `SELECT` seguido de escrita: duas
+        entregas simultâneas do mesmo envelope passariam pela leitura, e o provider seria
+        pago duas vezes. `rowcount != 1` significa que outra entrega já levou o trabalho —
+        ou que a extração não está mais em fila — e o retorno normal é o ack sem trabalho.
+
+        Nenhuma falha reenfileira: depois do claim a rodada está `running`, e uma reentrega
+        encontraria o claim fechado e não faria nada. Por isso todo desfecho é declarado —
+        `done` com o pacote, ou `failed` com o código —, e a retomada é um ato explícito do
+        orçamentista, que é também o único que pode decidir pagar de novo.
+        """
+        with self.engine.begin() as connection:
+            claimed = connection.execute(
+                text(
+                    "UPDATE valuation_rounds SET extraction_status = 'running', "
+                    "extraction_updated_at = CURRENT_TIMESTAMP, "
+                    "updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = :round_id AND tenant_id = :tenant_id "
+                    "AND extraction_id = :extraction_id AND extraction_status = 'queued'"
+                ),
+                {"round_id": round_id, "tenant_id": tenant_id, "extraction_id": extraction_id},
+            )
+        if claimed.rowcount != 1:
+            return 1
+
+        try:
+            self._extract_valuation_plate(
+                round_id=round_id, extraction_id=extraction_id, tenant_id=tenant_id
+            )
+        except Exception as error:
+            # A mensagem da exceção pode carregar evidência da prancha; só o código sai.
+            self._settle_valuation_extraction(
+                round_id=round_id,
+                extraction_id=extraction_id,
+                tenant_id=tenant_id,
+                failure_code=extraction_failure_code(error),
+            )
+        return 1
+
+    # -- Medição de obra: overlay do takeoff reconstruído na fila (ADR-0030) ------------
+
+    def _render_round_overlay(self, packet: TakeoffPacket, *, plate_key: str) -> bytes:
+        """Redesenha o overlay sobre o PNG já promovido da prancha.
+
+        Nada de novo sai do object store além dessa página, e o desenho continua passando
+        pela conferência que `render_takeoff_overlay` faz do digest da imagem contra o
+        pacote: overlay de outra imagem é recusa, não desenho torto.
+        """
+        body = self.s3_client.get_object(Bucket=self.settings.artifact_bucket, Key=plate_key)[
+            "Body"
+        ]
+        with closing(body):
+            # Sem teto de leitura: esta página foi escrita pelo próprio worker na ingestão,
+            # e não é byte que o cliente possa ter escolhido o tamanho.
+            payload = cast(bytes, body.read())
+        with tempfile.TemporaryDirectory() as workspace:
+            image_path = Path(workspace) / "page-001.png"
+            image_path.write_bytes(payload)
+            overlay_path = Path(workspace) / "takeoff-overlay.png"
+            save_takeoff_overlay(render_takeoff_overlay(image_path, packet), overlay_path)
+            return overlay_path.read_bytes()
+
+    def _current_takeoff_head(
+        self, *, round_id: str, tenant_id: str, packet_sha256: str
+    ) -> RowMapping | None:
+        """A cabeça da rodada, mas só enquanto ela ainda carregar o pacote deste comando."""
+        with self.engine.connect() as connection:
+            head = _head_revision_row(connection, round_id=round_id, tenant_id=tenant_id)
+        if head is None:
+            return None
+        packet_document = _json_column(head["takeoff_packet_json"])
+        if (
+            not isinstance(packet_document, dict)
+            or document_digest(packet_document) != packet_sha256
+        ):
+            return None
+        return head
+
+    def _publish_takeoff_overlay(
+        self,
+        *,
+        round_id: str,
+        tenant_id: str,
+        packet_sha256: str,
+        refs: dict[str, str],
+        digests: dict[str, str],
+    ) -> None:
+        """Grava a revisão do overlay: todo documento da cabeça viaja, só os digests mudam.
+
+        A cabeça é RELIDA dentro da transação e o digest do pacote conferido de novo: o
+        render acontece fora dela — transação não atravessa trabalho longo — e nesse
+        intervalo uma decisão nova pode ter publicado outro pacote. Quando isso acontece,
+        o comando dela já está na fila e é ele que desenha; gravar aqui poria um overlay
+        velho por cima do novo.
+
+        A versão da RODADA não avança: re-render é artefato derivado, não ato humano — a
+        mesma regra que `append_revision(advance_version=False)` aplica à shortlist.
+        """
+        dialect = self.engine.dialect.name
+        with self.engine.begin() as connection:
+            head = _head_revision_row(connection, round_id=round_id, tenant_id=tenant_id)
+            if head is None:
+                return
+            packet_document = _json_column(head["takeoff_packet_json"])
+            if (
+                not isinstance(packet_document, dict)
+                or document_digest(packet_document) != packet_sha256
+            ):
+                return
+            head_refs = dict(_json_column(head["artifact_refs_json"]) or {})
+            head_digests = dict(_json_column(head["artifact_digests_json"]) or {})
+            carried_refs = {**head_refs, **refs}
+            carried_digests = {**head_digests, **digests}
+            if carried_refs == head_refs and carried_digests == head_digests:
+                # Reentrega do mesmo comando: o desenho é determinístico e a cabeça já
+                # aponta para ele. Append-only não é motivo para acrescentar uma revisão
+                # que não muda nada.
+                return
+            parameters: dict[str, Any] = {
+                "id": str(new_uuid7()),
+                "tenant_id": tenant_id,
+                "round_id": round_id,
+                "version": int(head["version"]) + 1,
+                "parent_revision_id": head["id"],
+                "created_by": VALUATION_OVERLAY_VERSION,
+            }
+            columns = {
+                "takeoff_packet_json": packet_document,
+                "takeoff_registration_json": _json_column(head["takeoff_registration_json"]),
+                "code_suggestions_json": _json_column(head["code_suggestions_json"]),
+                "code_assignments_json": _json_column(head["code_assignments_json"]),
+                "valuation_json": _json_column(head["valuation_json"]),
+                "amendment_dossier_json": _json_column(head["amendment_dossier_json"]),
+                "extraction_lineage_json": _json_column(head["extraction_lineage_json"]),
+                "artifact_refs_json": carried_refs,
+                "artifact_digests_json": carried_digests,
+            }
+            expressions = {
+                name: _json_parameter(parameters, dialect, name, value)
+                for name, value in columns.items()
+            }
+            connection.execute(
+                text(
+                    "INSERT INTO valuation_round_revisions "
+                    "(id, tenant_id, round_id, version, parent_revision_id, takeoff_packet_json, "
+                    "takeoff_registration_json, code_suggestions_json, code_assignments_json, "
+                    "valuation_json, amendment_dossier_json, extraction_lineage_json, "
+                    "artifact_refs_json, artifact_digests_json, created_by, created_at) "
+                    "VALUES (:id, :tenant_id, :round_id, :version, :parent_revision_id, "
+                    f"{expressions['takeoff_packet_json']}, "
+                    f"{expressions['takeoff_registration_json']}, "
+                    f"{expressions['code_suggestions_json']}, "
+                    f"{expressions['code_assignments_json']}, "
+                    f"{expressions['valuation_json']}, "
+                    f"{expressions['amendment_dossier_json']}, "
+                    f"{expressions['extraction_lineage_json']}, "
+                    f"{expressions['artifact_refs_json']}, "
+                    f"{expressions['artifact_digests_json']}, "
+                    ":created_by, CURRENT_TIMESTAMP)"
+                ),
+                parameters,
+            )
+
+    def _handle_takeoff_overlay_rerender(
+        self, *, round_id: str, tenant_id: str, packet_sha256: str
+    ) -> int:
+        """Redesenha o overlay do pacote declarado no envelope, ou descarta o comando.
+
+        Descartar em SILÊNCIO (ack, sem erro) é o desfecho correto de três situações que
+        não são falha: a rodada mudou de pacote depois desta decisão — outra decisão já
+        enfileirou o comando dela —, a rodada não tem prancha promovida, e o pacote deixou
+        de casar com a imagem. Em todas elas a decisão do orçamentista continua válida e o
+        overlay continua declarando o pacote antigo, ou seja, vencido na tela.
+
+        Nada aqui é chamada paga: o desenho é determinístico, roda sobre o PNG já promovido
+        e não toca provider (ADR-0030).
+        """
+        head = self._current_takeoff_head(
+            round_id=round_id, tenant_id=tenant_id, packet_sha256=packet_sha256
+        )
+        if head is None:
+            return 1
+        packet_document = cast(dict[str, Any], _json_column(head["takeoff_packet_json"]))
+        plate_key = dict(_json_column(head["artifact_refs_json"]) or {}).get(PLATE_IMAGE_REF)
+        if not isinstance(plate_key, str) or not plate_key:
+            return 1
+        try:
+            packet = TakeoffPacket.model_validate(packet_document)
+            overlay_bytes = self._render_round_overlay(packet, plate_key=plate_key)
+        except (ValuationValidationError, ValidationError):
+            # Digest da imagem ou bbox fora da página: o desenho é recusado pelo domínio e
+            # a mensagem pode carregar evidência da prancha. Reentregar não mudaria o
+            # desfecho, então o comando é encerrado e o overlay permanece vencido.
+            return 1
+
+        # O desenho leva segundos e a chave do overlay é FIXA: uma decisão publicada nesse
+        # meio-tempo faria este PNG sobrescrever o do pacote seguinte, e o digest declarado
+        # na revisão deixaria de descrever os bytes que a URL assinada serve. A conferência
+        # aqui não fecha a janela por completo — só chave por digest fecharia —, mas a
+        # reduz da duração do render para a de uma consulta, e é a mesma pergunta que a
+        # transação de `_publish_takeoff_overlay` refaz antes de gravar.
+        if (
+            self._current_takeoff_head(
+                round_id=round_id, tenant_id=tenant_id, packet_sha256=packet_sha256
+            )
+            is None
+        ):
+            return 1
+
+        overlay_key = takeoff_overlay_object_key(tenant_id=tenant_id, round_id=round_id)
+        self._put_round_png(object_key=overlay_key, payload=overlay_bytes)
+        self._publish_takeoff_overlay(
+            round_id=round_id,
+            tenant_id=tenant_id,
+            packet_sha256=packet_sha256,
+            refs={TAKEOFF_OVERLAY_REF: overlay_key},
+            digests={
+                TAKEOFF_OVERLAY_DIGEST: hashlib.sha256(overlay_bytes).hexdigest(),
+                TAKEOFF_OVERLAY_PACKET_DIGEST: packet_sha256,
+            },
         )
         return 1
 

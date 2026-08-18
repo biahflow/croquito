@@ -1,0 +1,56 @@
+[
+  {
+    "module": "croquito_core.models",
+    "model": "SceneRevision",
+    "version_attr": "SCENE_SCHEMA_VERSION",
+    "id": "https://schemas.croquito.local/scene/{version}.json",
+    "title": "Croquito Scene Revision",
+    "schema": "scene.schema.json",
+    "typescript": "src/scene.generated.ts"
+  },
+  {
+    "module": "croquito_valuation.takeoff",
+    "model": "TakeoffPacket",
+    "version_attr": "TAKEOFF_SCHEMA_VERSION",
+    "id": "https://schemas.croquito.local/valuation/takeoff-packet/{version}.json",
+    "title": "Croquito Takeoff Packet",
+    "schema": "schemas/takeoff-packet.schema.json",
+    "typescript": "src/takeoff-packet.generated.ts"
+  },
+  {
+    "module": "croquito_valuation.assignment",
+    "model": "CodeSuggestionSet",
+    "version_attr": "SUGGESTION_SCHEMA_VERSION",
+    "id": "https://schemas.croquito.local/valuation/code-suggestions/{version}.json",
+    "title": "Croquito Code Suggestion Set",
+    "schema": "schemas/code-suggestions.schema.json",
+    "typescript": "src/code-suggestions.generated.ts"
+  },
+  {
+    "module": "croquito_valuation.assignment",
+    "model": "CodeAssignmentSet",
+    "version_attr": "ASSIGNMENT_SCHEMA_VERSION",
+    "id": "https://schemas.croquito.local/valuation/code-assignments/{version}.json",
+    "title": "Croquito Code Assignment Set",
+    "schema": "schemas/code-assignments.schema.json",
+    "typescript": "src/code-assignments.generated.ts"
+  },
+  {
+    "module": "croquito_valuation.models",
+    "model": "Valuation",
+    "version_attr": "VALUATION_SCHEMA_VERSION",
+    "id": "https://schemas.croquito.local/valuation/valuation/{version}.json",
+    "title": "Croquito Valuation",
+    "schema": "schemas/valuation.schema.json",
+    "typescript": "src/valuation.generated.ts"
+  },
+  {
+    "module": "croquito_valuation.amendment_dossier",
+    "model": "AmendmentDossier",
+    "version_attr": "AMENDMENT_DOSSIER_SCHEMA_VERSION",
+    "id": "https://schemas.croquito.local/valuation/amendment-dossier/{version}.json",
+    "title": "Croquito Amendment Dossier",
+    "schema": "schemas/amendment-dossier.schema.json",
+    "typescript": "src/amendment-dossier.generated.ts"
+  }
+]

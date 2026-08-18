@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -94,7 +95,11 @@ def test_s3_flavor_signs_the_checksum_and_reads_it_back(tmp_path: Path) -> None:
     client = RecordingS3Client()
     store.client = client
 
-    store.presign_pdf_upload(object_key="tenants/a/uploads/x.pdf", checksum_sha256="Zm9v")
+    store.presign_upload(
+        object_key="tenants/a/uploads/x.pdf",
+        checksum_sha256="Zm9v",
+        content_type="application/pdf",
+    )
     uploaded = store.head_upload(object_key="tenants/a/uploads/x.pdf")
 
     assert client.presign_params[0]["ChecksumSHA256"] == "Zm9v"
@@ -111,7 +116,11 @@ def test_gcs_flavor_omits_checksum_and_signs_path_style(tmp_path: Path) -> None:
     client = RecordingS3Client()
     store.client = client
 
-    store.presign_pdf_upload(object_key="tenants/a/uploads/x.pdf", checksum_sha256="Zm9v")
+    store.presign_upload(
+        object_key="tenants/a/uploads/x.pdf",
+        checksum_sha256="Zm9v",
+        content_type="application/pdf",
+    )
     uploaded = store.head_upload(object_key="tenants/a/uploads/x.pdf")
 
     assert "ChecksumSHA256" not in client.presign_params[0]
@@ -251,3 +260,47 @@ def test_s3_job_creation_still_refuses_a_storage_without_checksum(tmp_path: Path
 
     assert created.status_code == 422
     assert created.json()["detail"]["code"] == "INVALID_UPLOAD"
+
+
+class _StreamingBody:
+    """Corpo de resposta do S3: lê o que foi pedido e registra o fechamento."""
+
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+        self.closed = False
+        self.requested: list[int] = []
+
+    def read(self, amount: int) -> bytes:
+        self.requested.append(amount)
+        return self.payload[:amount]
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_a_leitura_de_objeto_e_limitada_e_fecha_o_corpo(tmp_path: Path) -> None:
+    """A leitura para no teto e devolve a conexão; objeto ausente vira `None`.
+
+    O byte a mais é o que permite a quem chama distinguir "cabe no teto" de "estourou" sem
+    ter carregado o excesso — e o fechamento é o que impede uma conexão pendurada por
+    corpo lido pela metade.
+    """
+    store = ArtifactStore(_settings(tmp_path))
+    body = _StreamingBody(b"catalogo")
+    calls: list[dict[str, Any]] = []
+
+    class _Client:
+        def get_object(self, **kwargs: Any) -> dict[str, Any]:
+            calls.append(kwargs)
+            if kwargs["Key"] == "ausente":
+                raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+            return {"Body": body}
+
+    store.client = _Client()
+
+    # Cinco bytes para um teto de quatro: o excedente é o sinal de "estourou o limite".
+    assert store.read_object(object_key="tenants/a/catalog.json", max_bytes=4) == b"catal"
+    assert body.requested == [5]
+    assert body.closed is True
+    assert store.read_object(object_key="ausente", max_bytes=4) is None
+    assert [call["Key"] for call in calls] == ["tenants/a/catalog.json", "ausente"]

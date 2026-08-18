@@ -1,0 +1,878 @@
+/*
+ * Folha da jornada de medição, importada por `apps/web/src/styles.css` (ADR-0028, D9).
+ *
+ * O arquivo inteiro está ANINHADO em `.jornada-medicao` — a chave abre logo abaixo e
+ * fecha na última linha. É o que a folha da casca já previa: sob este escopo,
+ * `.jornada-medicao .workspace` (0,2,0) ganha de `.workspace` (0,1,0) sem renomear
+ * classe de nenhum dos dois lados. O corpo NÃO foi reindentado de propósito: reindentar
+ * 800 linhas apagaria a detecção de rename deste movimento, e aninhamento em CSS não
+ * depende de indentação.
+ *
+ * O que ficou para trás na mudança que trouxe esta folha para cá, e por quê:
+ * - O bloco `:root` de tokens da marca, `*` e `body`: são globais e a casca já os define.
+ * - `.app-shell` e `.topbar`: a casca é uma só e já os define; o que era topbar da
+ *   medição vira cabeçalho da jornada dentro dela.
+ * - `.eyebrow` e `.topbar-link` VIERAM, ao contrário do que o comentário da casca previa,
+ *   porque as versões de lá são calibradas para outro uso e herdá-las seria regressão:
+ *   `.eyebrow` da casca é `--ink-secondary` (superfície clara) e aqui ele aparece sobre o
+ *   topbar escuro; `.topbar-link` da casca veste `<a>` e não zera o `background`, mas
+ *   aqui ele veste também o `<button>` "Sair".
+ *
+ * Regra que o CSS precisa respeitar: cor nunca é o único indicador. Todo estado tem
+ * texto ao lado, e no overlay da prancha o traço muda de forma (tracejado enquanto o
+ * item não foi decidido) além de mudar de cor.
+ */
+.jornada-medicao {
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* O anel de foco é indicador gráfico: usa o verde escuro (5,8:1 sobre branco), porque
+   `--accent` puro sumiria sobre a superfície clara. */
+:focus-visible {
+  outline: 3px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+h1 {
+  margin: 2px 0 0;
+  font-size: 1.35rem;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+h3 {
+  margin: 16px 0 6px;
+  font-size: 0.98rem;
+}
+
+h4 {
+  margin: 12px 0 4px;
+  font-size: 0.92rem;
+}
+
+p {
+  margin: 6px 0;
+  line-height: 1.45;
+}
+
+.eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  color: var(--dark-ink-soft);
+}
+
+.topbar-meta {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--dark-ink-soft);
+}
+
+.topbar-acoes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Sessão sobre o topbar escuro desta jornada. O verde da marca é preenchimento e nunca
+   cor de texto: aqui o texto é `--dark-ink-soft`, e o estado ativo (hover/foco) sobe para
+   `--dark-ink` com a borda mais firme. O `.topbar-link` da casca não serve: lá ele veste
+   `<a>`, e aqui veste também o `<button>` "Sair", que sem `background: transparent`
+   apareceria com o cinza padrão do navegador. */
+.topbar-link {
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  background: transparent;
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.topbar-link:hover,
+.topbar-link:focus-visible {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+}
+
+/* Botão com a mesma aparência do link: "Sair" é ação, não navegação. */
+.topbar-link-botao {
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.aviso-fixo {
+  max-width: 40rem;
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: #2a1a05;
+  background: #f6d99a;
+  border-left: 5px solid #b47512;
+  border-radius: 4px;
+}
+
+.aviso-inline {
+  margin-bottom: 12px;
+}
+
+.etapas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 28px;
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--line);
+}
+
+.etapa-tab {
+  padding: 8px 14px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+.etapa-tab.ativa {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.etapa-tab.done {
+  border-left: 5px solid var(--accent-text);
+}
+
+.etapa-tab.blocked {
+  border-left: 5px solid #8a8f8b;
+}
+
+.recarregar {
+  margin-left: auto;
+}
+
+.banner-erro,
+.banner-conflito,
+.banner-sucesso {
+  margin: 12px 28px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.banner-erro {
+  color: #4a1010;
+  background: #f7d9d9;
+  border-left: 5px solid #a02323;
+}
+
+.banner-conflito {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #3c2708;
+  background: #fbe6c2;
+  border-left: 5px solid #b47512;
+}
+
+.banner-sucesso {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-left: 5px solid var(--accent-text);
+}
+
+.conteudo {
+  padding: 16px 28px 48px;
+}
+
+.painel {
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.painel-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cabecalho-controles {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.2fr) minmax(280px, 1fr) minmax(300px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.workspace.duas-colunas {
+  grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.4fr);
+}
+
+@media (max-width: 1200px) {
+  .workspace,
+  .workspace.duas-colunas {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cartoes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 12px 0 20px;
+  padding: 0;
+  list-style: none;
+}
+
+.cartao {
+  padding: 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-left: 5px solid #8a8f8b;
+  border-radius: 6px;
+}
+
+.cartao.available {
+  border-left-color: #b47512;
+}
+
+.cartao.done {
+  border-left-color: var(--accent-text);
+}
+
+.cartao h3 {
+  margin-top: 0;
+}
+
+.cartao-status {
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.cartao-motivo {
+  font-size: 0.86rem;
+  color: #6b3a06;
+}
+
+.botao-primario,
+.botao-secundario {
+  padding: 9px 16px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.botao-primario {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.botao-primario:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* A borda é a afordância do secundário: fica no verde escuro, que se destaca sobre
+   branco (5,8:1) — `--accent-line` apagaria o contorno do botão. */
+.botao-secundario {
+  color: var(--accent-text);
+  background: var(--surface);
+  border-color: var(--accent-text);
+}
+
+.acoes-linha {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.artefatos ul,
+.aditivo-lista,
+.confirmados-lista,
+.memoria,
+.memoria ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.confirmados {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.confirmados-lista li {
+  margin-bottom: 10px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.digest {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.8em;
+  color: var(--ink-secondary);
+}
+
+.dica {
+  font-size: 0.84rem;
+  color: var(--ink-secondary);
+}
+
+/* Prancha ------------------------------------------------------------------ */
+
+.zoom-controles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zoom-leitura {
+  min-width: 4rem;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.prancha-canvas {
+  max-height: 72vh;
+  overflow: auto;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  touch-action: none;
+}
+
+.prancha-canvas.arrastando {
+  cursor: grabbing;
+}
+
+.prancha-stage {
+  position: relative;
+  width: 100%;
+}
+
+.prancha-stage img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+
+.bbox-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.bbox {
+  cursor: pointer;
+}
+
+.bbox rect {
+  fill: transparent;
+  stroke-width: 3;
+}
+
+/* Estado por cor E por forma: item ainda não decidido é tracejado. O número do item
+   nunca mora dentro do retângulo — ele cobriria letra da linha da legenda
+   ("PISO EM(1)CONCRETO" foi o defeito real); `pinPlacement` sempre o ancora fora do
+   bbox, com ou sem o retângulo desenhado. */
+.bbox-proposed rect {
+  stroke: #b47512;
+  stroke-dasharray: 12 8;
+}
+
+.bbox-ambiguous rect {
+  stroke: #a02323;
+  stroke-dasharray: 4 6;
+}
+
+.bbox-confirmed rect {
+  stroke: var(--accent-text);
+}
+
+.bbox-rejected rect {
+  stroke: #5a625c;
+}
+
+.bbox.selecionado rect {
+  stroke-width: 6;
+}
+
+/* Pino numerado: sempre fora do bbox (`pinPlacement`), tanto no modo enxuto (padrão,
+   sem retângulo) quanto no item com retângulo forte. Cor nunca é o único indicador: o
+   número identifica o item e o estado por extenso continua na lista ao lado. */
+.bbox-pino-circulo {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.bbox.selecionado .bbox-pino-circulo {
+  stroke-width: 4;
+}
+
+.bbox-pino-texto {
+  font-size: 18px;
+  font-weight: 700;
+  fill: var(--surface);
+  pointer-events: none;
+}
+
+.bbox-proposed .bbox-pino-circulo {
+  fill: #b47512;
+}
+
+.bbox-ambiguous .bbox-pino-circulo {
+  fill: #a02323;
+}
+
+.bbox-confirmed .bbox-pino-circulo {
+  fill: var(--accent-text);
+}
+
+.bbox-rejected .bbox-pino-circulo {
+  fill: #5a625c;
+}
+
+/* Listas ------------------------------------------------------------------- */
+
+.itens,
+.codigos {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 640px;
+  overflow: auto;
+}
+
+.item {
+  border-bottom: 1px solid var(--line);
+}
+
+.item-botao {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-left: 5px solid transparent;
+}
+
+.item.proposed .item-botao {
+  border-left-color: #b47512;
+}
+
+.item.ambiguous .item-botao {
+  border-left-color: #a02323;
+}
+
+.item.confirmed .item-botao {
+  border-left-color: var(--accent-text);
+}
+
+.item.rejected .item-botao {
+  border-left-color: #5a625c;
+}
+
+.item.selecionado .item-botao {
+  background: var(--accent-soft);
+}
+
+.item-numero {
+  flex: 0 0 1.6rem;
+  height: 1.6rem;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.item-corpo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.item-rotulo {
+  font-weight: 600;
+}
+
+.item-estado {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-secondary);
+}
+
+.item-quantidade {
+  font-size: 0.88rem;
+}
+
+.item-raw,
+.item-nota {
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+}
+
+/* Formulários -------------------------------------------------------------- */
+
+.formulario {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.acoes {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.acoes label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+.campo input,
+.campo textarea {
+  padding: 8px 10px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+.campo-dica {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.campo-aviso {
+  font-size: 0.8rem;
+  color: #6b3a06;
+}
+
+.campo-erro {
+  font-size: 0.85rem;
+  color: #7a1212;
+}
+
+.decisao-registrada {
+  padding: 12px;
+  background: var(--surface-subtle);
+  border-radius: 6px;
+}
+
+.busca {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.busca .campo {
+  flex: 1;
+}
+
+/* Códigos ------------------------------------------------------------------ */
+
+.codigo-card {
+  padding: 12px;
+  margin-bottom: 10px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.codigo-card.escolhido {
+  border-color: var(--accent-text);
+  border-left-width: 5px;
+}
+
+.codigo-topo {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.codigo-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+.codigo-descricao {
+  max-height: 8rem;
+  overflow: auto;
+  font-size: 0.86rem;
+}
+
+.codigo-selos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.selo {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--muted);
+  background: var(--surface);
+}
+
+.selo-execucao_incluida {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.selo-somente_material {
+  border-color: #b47512;
+  color: #6b3a06;
+}
+
+.selo-indefinido,
+.selo-neutro {
+  border-color: #8a8f8b;
+  color: var(--ink-secondary);
+}
+
+.selo-ok {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.selo-atencao {
+  border-color: #a02323;
+  color: #7a1212;
+}
+
+/* Inclusões ------------------------------------------------------------------ */
+/* Chip do que a descrição diz que inclui/não inclui (inclusoes.ts). Cor nunca é o único
+   indicador: o prefixo "Inclui:"/"Não inclui:" vai escrito dentro do próprio chip. */
+
+.inclusoes-lista {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+
+.chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 3px 9px;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-align: left;
+  border-radius: 999px;
+  border: 1px solid;
+}
+
+.chip-inclui {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-color: var(--accent-text);
+}
+
+.chip-nao_inclui,
+.chip-so-fornecimento {
+  color: #6b3a06;
+  background: #fbe6c2;
+  border-color: #b47512;
+}
+
+.chip-expansivel {
+  cursor: pointer;
+  border-radius: 10px;
+}
+
+.chip-expansivel summary {
+  list-style: none;
+  border-radius: 999px;
+}
+
+.chip-expansivel summary::-webkit-details-marker,
+.chip-expansivel summary::marker {
+  display: none;
+  content: "";
+}
+
+.chip-expansivel[open] summary {
+  margin-bottom: 4px;
+}
+
+.chip-texto-completo {
+  margin: 0;
+  padding: 0;
+  font-size: 0.78rem;
+  white-space: normal;
+}
+
+.aditivo {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.shortlist-vazia {
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--surface-subtle);
+  border-radius: 6px;
+}
+
+/* Upload da prancha e extração automática (etapa Prancha) ------------------- */
+
+.extracao-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* Boletim ------------------------------------------------------------------ */
+
+.obra {
+  margin: 18px 0;
+}
+
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.tabela caption {
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+  padding-bottom: 6px;
+}
+
+.tabela th,
+.tabela td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tabela .numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Descrição legível na linha do boletim: quebra de linha em vez de espremer numa
+   coluna estreita, com os chips de inclusão/exclusão logo abaixo do texto completo. */
+.celula-descricao {
+  min-width: 22rem;
+  white-space: normal;
+}
+
+.boletim-descricao-texto {
+  margin: 0 0 4px;
+}
+
+.tabela tfoot th,
+.tabela tfoot td {
+  font-weight: 700;
+  border-top: 2px solid var(--muted);
+}
+
+.total-geral {
+  margin-top: 16px;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+/* Rodadas -------------------------------------------------------------------- */
+/* Escolha da rodada: uma linha por rodada, com obra, período e etapa por extenso. */
+.rodadas-lista {
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.rodada-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+/* Overlay das âncoras --------------------------------------------------------- */
+/* O desenho publicado pelo servidor, com a idade dele. A borda tracejada é redundância
+   do texto que já vai no `summary` ("desenho do pacote anterior"): cor e forma nunca
+   substituem a palavra. */
+.overlay-bloco {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.overlay-bloco.overlay-vencido {
+  border-style: dashed;
+  border-color: #b47512;
+}
+
+.overlay-imagem {
+  display: block;
+  max-width: 100%;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+}
+
+/* Fecha o `.jornada-medicao` aberto no topo do arquivo. */
+}

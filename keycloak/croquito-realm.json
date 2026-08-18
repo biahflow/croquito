@@ -10,7 +10,8 @@
       {"name": "engineer"},
       {"name": "cad_operator"},
       {"name": "tenant_admin"},
-      {"name": "platform_operator"}
+      {"name": "platform_operator"},
+      {"name": "orcamentista"}
     ]
   },
   "clients": [
@@ -57,6 +58,16 @@
       "emailVerified": true,
       "attributes": {"tenant_id": ["tenant-local"]},
       "realmRoles": ["engineer", "tenant_admin"],
+      "credentials": [
+        {"type": "password", "value": "local-dev-only", "temporary": false}
+      ]
+    },
+    {
+      "username": "orcamentista.local",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {"tenant_id": ["tenant-local"]},
+      "realmRoles": ["orcamentista"],
       "credentials": [
         {"type": "password", "value": "local-dev-only", "temporary": false}
       ]

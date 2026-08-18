@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: setup dev dev-api dev-web dev-medicao dev-worker dev-worker-fixtures dev-services down-services db-init check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local contracts infra-check
+.PHONY: setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
 
 setup:
 	uv sync --all-groups
@@ -21,20 +21,27 @@ dev-services:
 down-services:
 	docker compose -f docker-compose.local.yml down
 
+# Runner de migrations revisadas (ADR-0029): aplica as revisões que faltam, adota banco
+# anterior ao runner por carimbo e recusa banco defasado. Mesmo comando que o job de banco
+# da esteira executa.
 db-init:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run python -m croquito_api.bootstrap
+
+# Gera revisão nova por autogenerate comparando `Base.metadata` com o banco apontado por
+# CROQUITO_DATABASE_URL. Este é o ÚNICO uso do `alembic.ini` da raiz — o runtime não o lê.
+# O arquivo gerado precisa ser revisto à mão: autogenerate erra em detalhe de índice e
+# tipo, e é a revisão humana que o gate de drift do CI cobra depois.
+db-revision:
+	@test -n "$(MESSAGE)" || { echo "uso: make db-revision MESSAGE=<descricao curta>"; exit 2; }
+	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run alembic revision --autogenerate -m "$(MESSAGE)"
+	uv run ruff check --fix services/api/src/croquito_api/migrations/versions
+	uv run ruff format services/api/src/croquito_api/migrations/versions
 
 dev-api:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run uvicorn croquito_api.main:app --reload --port 8000
 
 dev-web:
 	npm run web:dev
-
-# UI local de homologação da medição (porta 5174). Ela fala com o servidor local
-# `croquito-valuation serve` (porta 8801), não com a API do croqui, por isso fica
-# fora do `make dev`.
-dev-medicao:
-	npm run medicao:dev
 
 dev-worker:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run croquito-demo local-worker-once
@@ -47,24 +54,29 @@ dev-worker-fixtures:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run croquito-demo local-worker-once --fixtures
 
 contracts:
-	uv run python -m croquito_core.schema_export --output packages/contracts/scene.schema.json
+	uv run python -m croquito_core.schema_export --output-dir packages/contracts
 	npm run contracts:generate
+
+# Regenera o snapshot versionado do OpenAPI (tests/api/openapi.snapshot.json) a partir da
+# própria aplicação, com settings fixos e sintéticos (services/api/src/croquito_api/
+# openapi_export.py). É um ato deliberado: rode só quando a mudança na superfície `/v1` for
+# intencional, e revise o diff. `tests/api/test_openapi_contract.py` é o gate que cobra isso.
+openapi-snapshot:
+	uv run python -m croquito_api.openapi_export --output tests/api/openapi.snapshot.json
 
 check:
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy packages/core/src packages/valuation/src services/api/src services/worker/src tests
 	uv run python scripts/check_docs.py
-	uv run python -m croquito_core.schema_export --check packages/contracts/scene.schema.json
+	uv run python -m croquito_core.schema_export --check-dir packages/contracts
 	npm run contracts:check
 	npm run web:check
-	npm run medicao:check
 	$(MAKE) infra-check
 
 test:
 	uv run pytest
 	npm run web:test
-	npm run medicao:test
 
 demo:
 	uv run croquito-demo synthetic --output output/demo
@@ -123,6 +135,11 @@ extraction-eval:
 # Exige os serviços locais de pé (make dev-services, make db-init) e a API em execução.
 smoke-local:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run python scripts/smoke_local.py
+
+# Fumaça da borda pública de homologação: só HTTP, sem credencial. BASE_URL sobrescreve o
+# host padrão (útil para apontar direto ao Cloud Run e tirar a CDN da equação).
+smoke-hml:
+	uv run python scripts/smoke_hml.py $(if $(BASE_URL),--base-url $(BASE_URL),)
 
 infra-check:
 	terraform fmt -check -recursive infra

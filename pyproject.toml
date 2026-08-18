@@ -5,6 +5,11 @@ description = "Pipeline auditavel para transformar croquis em cenas tecnicas e D
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+  # Runner de migrations revisadas (ADR-0029): as revisões vivem dentro de
+  # `croquito_api.migrations` e são aplicadas por `croquito_api.bootstrap`. Dependência de
+  # runtime, não de desenvolvimento — a imagem instala com `uv sync --no-dev` e o job de
+  # banco da esteira roda dentro dela. MIT, mantida pelos autores do SQLAlchemy.
+  "alembic>=1.14,<2",
   "boto3>=1.40,<2",
   "ezdxf>=1.4,<2",
   "fastapi>=0.116,<1",

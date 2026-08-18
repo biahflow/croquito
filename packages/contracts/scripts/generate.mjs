@@ -1,10 +1,21 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { renderContract } from "./render.mjs";
+import { renderBarrel, renderContract } from "./render.mjs";
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), "..");
-const output = join(packageDir, "src", "scene.generated.ts");
-const generated = await renderContract(join(packageDir, "scene.schema.json"));
-await mkdir(dirname(output), { recursive: true });
-await writeFile(output, generated, "utf8");
+const manifest = JSON.parse(
+  await readFile(join(packageDir, "contracts.manifest.json"), "utf8"),
+);
+
+for (const entry of manifest) {
+  const schemaPath = join(packageDir, entry.schema);
+  const outputPath = join(packageDir, entry.typescript);
+  const generated = await renderContract(schemaPath);
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, generated, "utf8");
+}
+
+const barrelPath = join(packageDir, "src", "index.ts");
+await mkdir(dirname(barrelPath), { recursive: true });
+await writeFile(barrelPath, renderBarrel(manifest), "utf8");

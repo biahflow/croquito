@@ -2,7 +2,7 @@
 
 Status: Accepted  
 Responsável: Engineering  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-17
 
 ## Escopo
 
@@ -17,6 +17,8 @@ Antes de alterar qualquer arquivo:
 2. Leia [docs/STATUS.md](docs/STATUS.md).
 3. Siga o roteiro de leitura da tarefa indicado no índice.
 4. Leia ADRs relacionados e o `AGENTS.md` mais próximo do arquivo alvo.
+5. Para trabalho planejado, leia também o [Project Context](docs/engineering/PROJECT_CONTEXT.md)
+   e os artefatos da feature selecionada.
 
 Não carregue toda a documentação por padrão. Leia somente as fontes canônicas
 necessárias, mas leia cada documento selecionado por completo.
@@ -33,6 +35,23 @@ necessárias, mas leia cada documento selecionado por completo.
 Quando código, teste e documentação divergirem, não escolha uma interpretação
 ocultamente. Identifique a fonte desatualizada, corrija-a no mesmo trabalho e
 registre uma nova decisão quando a mudança exigir ADR.
+
+## Ciclo de trabalho e evidência
+
+O [Project Context](docs/engineering/PROJECT_CONTEXT.md) define onde localizar o
+roadmap canônico, o status derivado, os perfis de validação e os artefatos de feature.
+Nenhum agente escolhe prioridade de produto ou inicia item de roadmap sem seleção humana.
+
+- Planner trabalha somente a partir de um Feature Contract aceito e produz o formato
+  `FEATURE EXECUTION PLAN` da Engineering OS.
+- Builder executa somente Task Contract autorizado, registra o baseline aplicável e
+  encerra com o `BUILD REPORT` completo da Engineering OS.
+- Reviewer atua em modo somente leitura sobre o pacote de evidências
+  `BASELINE → CHANGE → FINAL` e encerra como `REVIEW_PASS`, `REVIEW_FINDINGS` ou
+  `REVIEW_EVIDENCE_INCOMPLETE`.
+
+Esses contratos acrescentam rastreabilidade; não substituem os gates de segurança,
+privacidade, arquitetura e operação deste repositório.
 
 ## Limites de autonomia
 
@@ -114,4 +133,3 @@ Uma mudança só está concluída quando:
 Enquanto o scaffold de código não existir, não invente comandos de desenvolvimento.
 Quando ele for criado, a interface padrão deverá ser exposta por `make setup`,
 `make dev`, `make check` e `make test` e documentada neste arquivo.
-

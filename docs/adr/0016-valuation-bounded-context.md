@@ -1,6 +1,6 @@
 # ADR-0016: Medição de obra é um contexto delimitado próprio
 
-Status: Proposed  
+Status: Accepted
 Data: 2026-08-12  
 Responsável: Engineering
 
