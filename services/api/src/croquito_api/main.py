@@ -62,6 +62,8 @@ from croquito_api.pubsub_queue import PubSubProcessingQueue, QueuePublishError
 from croquito_api.storage import ArtifactStore
 from croquito_api.valuation_rounds import (
     CATALOG_MAX_BYTES,
+    STAGE_BULLETIN,
+    STAGE_DOSSIER,
     STAGE_TAKEOFF,
     CatalogCache,
     RoundRefusal,
@@ -73,6 +75,7 @@ from croquito_api.valuation_rounds import (
     head_revision,
     load_catalog,
     load_round,
+    require_assignments,
     require_base_version,
     require_document,
     require_plate,
@@ -102,6 +105,7 @@ from croquito_core.models import (
     SceneRevision,
     UnitCode,
 )
+from croquito_valuation.amendment_dossier import AmendmentDossier, build_amendment_dossier
 from croquito_valuation.assignment import (
     CodeAssignmentBatch,
     CodeAssignmentInput,
@@ -109,8 +113,9 @@ from croquito_valuation.assignment import (
     CodeSuggestionSet,
     apply_code_assignments,
 )
+from croquito_valuation.calc import build_worksite_valuation
 from croquito_valuation.errors import ValuationValidationError, valuation_errors
-from croquito_valuation.models import PriceCatalog
+from croquito_valuation.models import WORKSITE_KEY_PATTERN, PriceCatalog, Valuation
 from croquito_valuation.takeoff import (
     TakeoffDecisionBatch,
     TakeoffDecisionInput,
@@ -659,9 +664,14 @@ class CreateValuationRoundRequest(ApiModel):
     2026-08-17): nenhuma rota do contrato os recebia e sem eles o boletim não fecha. O
     carimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`, `decided_at` e
     `decision_id` são recusados pelo `extra="forbid"` do `ApiModel`, não por lista negra.
+
+    `worksite_key` repete o padrão que o domínio exige de `WorksiteBulletin`
+    (`WORKSITE_KEY_PATTERN`) porque a chave é IMUTÁVEL na rodada: aceitá-la livre aqui faria
+    uma rodada nascer válida com `PRAÇA X` e só quebrar no `POST /calc`, dezenas de decisões
+    depois, quando já não há o que corrigir sem abrir rodada nova.
     """
 
-    worksite_key: str = Field(min_length=1, max_length=64)
+    worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
     worksite_name: str = Field(min_length=1, max_length=120)
     catalog_upload_id: UUID
     reference_label: str = Field(min_length=1, max_length=120)
@@ -804,6 +814,39 @@ class CodeAssignmentDecisionRequest(ApiModel):
             # Mensagem fixa: nada do corpo recusado volta ao cliente pelo erro de contrato.
             raise ValueError("rejeição de código exige justificativa em `note`")
         return self
+
+
+class BuildValuationCalcRequest(ApiModel):
+    """Construção do boletim e da memória de cálculo: o corpo é só a guarda de concorrência.
+
+    A identidade da obra NÃO entra por aqui. No servidor de medição (`POST /calc/build`),
+    `worksite_key`, `worksite_name`, `period_number`, `reference_label`, `address` e
+    `contract_label` viajavam no payload; em `/v1` eles são atributos da RODADA (decisão
+    humana de 2026-08-17, colunas de `ValuationRoundRecord`) e é de lá que o cálculo os lê.
+    Aceitá-los aqui deixaria o cliente reescrever a identidade da obra no meio da cadeia —
+    quem recusa é o `extra="forbid"` do `ApiModel`, não uma lista negra.
+
+    `base_version` é MUDANÇA pretendida desta migração (F-003, achado 7): `/calc/build` não
+    tem guarda de concorrência nenhuma e sempre reconstrói do estado corrente dos dois
+    artefatos de origem. Em `/v1` a construção é ato humano da cadeia — ela avança a versão
+    da rodada e pode devolver `409 REVISION_CONFLICT`.
+    """
+
+    base_version: int = Field(ge=1)
+
+
+class BuildAmendmentDossierRequest(ApiModel):
+    """Construção do dossiê do aditivo: espelho de `BuildValuationCalcRequest`.
+
+    O dossiê nasce dos MESMOS dois artefatos-base do boletim (pacote de takeoff e conjunto
+    de códigos) e não recebe nada além da guarda de concorrência: ele não precifica por
+    construção (ADR-0027) e não tem rótulo próprio a receber.
+
+    Como no boletim, `base_version` é mudança pretendida: `/dossier/build` reconstrói sem
+    guarda, e em `/v1` a reconstrução é ato humano que avança a versão da rodada.
+    """
+
+    base_version: int = Field(ge=1)
 
 
 class ValuationDocumentResponse(RootModel[dict[str, Any]]):
@@ -4983,6 +5026,67 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             ],
         }
 
+    def _bulletin_payload(
+        record: ValuationRoundRecord, *, document: Mapping[str, Any], valuation: Valuation
+    ) -> dict[str, Any]:
+        """Boletim como a tela o recebe, com o digest do que está GRAVADO na revisão.
+
+        `total_amount` sai como TEXTO porque dinheiro é `Decimal` neste contexto
+        (ADR-0016): serializá-lo como número de JSON devolveria ao cliente um binário
+        aproximado do centavo que o `TRUNC(x,2)` do domínio acabou de fixar. O digest é o do
+        documento guardado — não o desta resposta —, para ser idêntico ao que o estado da
+        rodada publica.
+        """
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "valuation": valuation.model_dump(mode="json"),
+            "valuation_sha256": document_digest(document),
+            "total_amount": str(valuation.total_amount),
+        }
+
+    def _dossier_payload(
+        record: ValuationRoundRecord, *, document: Mapping[str, Any], dossier: AmendmentDossier
+    ) -> dict[str, Any]:
+        """Dossiê do aditivo como a tela o recebe; nenhum campo de preço existe nele.
+
+        `item_count` zero é desfecho NORMAL e não erro: rodada em que todo item confirmado
+        teve o código confirmado não tem aditivo nenhum a pedir.
+        """
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "dossier": dossier.model_dump(mode="json"),
+            "dossier_sha256": document_digest(document),
+            "item_count": len(dossier.items),
+        }
+
+    def _revalidated_bulletin(document: Mapping[str, Any]) -> Valuation:
+        """Boletim gravado, revalidado na leitura: quem recomputa os totais é o modelo.
+
+        `WorksiteBulletin.validate_bulletin` refaz a soma dos totais já truncados de cada
+        linha e recusa a divergência (`BULLETIN_TOTAL_MISMATCH`); `Valuation` refaz o 1:1
+        entre linha do boletim e memória de cálculo. Servir o total como ele foi gravado
+        faria uma medição adulterada no banco passar por boa — e a tela nunca renderiza
+        medição inválida, então artefato que não revalida é `422`, não `200` com ressalva.
+        """
+        try:
+            return Valuation.model_validate(dict(document))
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+
+    def _revalidated_dossier(document: Mapping[str, Any]) -> AmendmentDossier:
+        """Dossiê gravado, revalidado na leitura: espelho de `_revalidated_bulletin`.
+
+        Aqui não há total a recomputar — o dossiê não precifica —, mas há invariantes que
+        valem o mesmo: item duplicado e item cuja justificativa deixou de casar com a
+        decisão de rejeição que o originou.
+        """
+        try:
+            return AmendmentDossier.model_validate(dict(document))
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+
     def _plate_response(
         record: ValuationRoundRecord, revision: ValuationRoundRevisionRecord | None, *, tenant: str
     ) -> ValuationPlateResponse:
@@ -5856,6 +5960,242 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         _commit_valuation_revision(session)
         return response
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/calc",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def build_valuation_calc(
+        round_id: UUID,
+        payload: BuildValuationCalcRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Constrói boletim e memória de cálculo do takeoff confirmado e dos códigos decididos.
+
+        A identidade da obra vem da RODADA (`worksite_key`, `worksite_name`,
+        `period_number`, `reference_label`, `address`, `contract_label`), nunca do corpo:
+        em `/v1` esses rótulos são colunas de `ValuationRoundRecord` e o corpo carrega só a
+        guarda de concorrência.
+
+        `calc_plan=None` de propósito: o plano de cálculo é artefato de DIRETÓRIO do
+        servidor de medição e a rodada de `/v1` não o publica. Sem ele, cada item recebe o
+        bloco de quantidade direta que o próprio domínio gera — nunca uma receita suposta.
+
+        Esta rota **não aprova nada**: aprovação nominal da medição é ato próprio, com
+        portão de saldo e contrato, e não pertence à construção do boletim.
+
+        Duas recusas se parecem e não são a mesma coisa. Conjunto de códigos ainda
+        inexistente é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem, o orçamentista tem
+        o que fazer para sair dela. Conjunto existente com item confirmado sem decisão é
+        `422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`: invariante do
+        domínio, e quem a levanta é `packages/valuation`. Catálogo com origem diferente do
+        SCO fecha a medição licitada em `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (ADR-0027) —
+        item fora do contrato vira dossiê de aditivo, nunca preço de outra tabela.
+
+        A guarda de `base_version` é mudança pretendida desta migração; ver
+        `BuildValuationCalcRequest`.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.calc:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        assignments = require_assignments(revision)
+        valuation = build_worksite_valuation(
+            packet,
+            assignments,
+            _round_catalog(record),
+            worksite_key=record.worksite_key,
+            worksite_name=record.worksite_name,
+            period_number=record.period_number,
+            reference_label=record.reference_label,
+            address=record.address,
+            contract_label=record.contract_label,
+            calc_plan=None,
+        )
+
+        document = valuation.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"valuation_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _bulletin_payload(record, document=document, valuation=valuation)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_CALC_BUILT",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/bulletin",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def get_valuation_bulletin(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Boletim gravado, com os totais recomputados na leitura pelos validadores do modelo.
+
+        Boletim ainda não construído é `409 ROUND_STAGE_NOT_READY`; boletim que não passa na
+        revalidação é `422`, nunca um `200` com número que ninguém conferiu.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        document = require_document(
+            revision,
+            "valuation_json",
+            stage=STAGE_BULLETIN,
+            detail="a rodada ainda não tem boletim construído",
+        )
+        return _bulletin_payload(
+            record, document=document, valuation=_revalidated_bulletin(document)
+        )
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/amendment-dossier",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def build_valuation_amendment_dossier(
+        round_id: UUID,
+        payload: BuildAmendmentDossierRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Constrói o dossiê do aditivo: itens confirmados cujo código foi REJEITADO.
+
+        Espelho de `POST /calc`: o dossiê é o outro artefato de fechamento da rodada e
+        nasce dos mesmos dois artefatos-base — pacote de takeoff e conjunto de códigos. Ele
+        não carrega campo de preço por construção e nunca cria nem altera `Amendment`/RE-RA
+        (ADR-0027, ADR-0018): pedir o aditivo à prefeitura é ato contratual humano, fora
+        deste sistema.
+
+        Rejeição na revisão do TAKEOFF não é aditivo — item que não se mede não vira
+        pedido. O que entra aqui é só a rejeição de CÓDIGO de um item confirmado no
+        takeoff, com a justificativa que o orçamentista registrou.
+
+        Conjunto de códigos inexistente é `409 ROUND_STAGE_NOT_READY`; item confirmado sem
+        decisão de código é `422 DOMAIN_VALIDATION_FAILED` com
+        `AMENDMENT_DOSSIER_ASSIGNMENTS_INCOMPLETE`, porque o dossiê é artefato de
+        fechamento e não publica foto parcial da rodada.
+
+        A guarda de `base_version` é mudança pretendida desta migração; ver
+        `BuildAmendmentDossierRequest`.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.amendment-dossier:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        assignments = require_assignments(revision)
+        dossier = build_amendment_dossier(packet, assignments)
+
+        document = dossier.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"amendment_dossier_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _dossier_payload(record, document=document, dossier=dossier)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_AMENDMENT_DOSSIER_BUILT",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/amendment-dossier",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+        include_in_schema=VALUATION_ROUTES_PUBLISHED,
+    )
+    async def get_valuation_amendment_dossier(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Dossiê gravado, revalidado na leitura: espelho de `GET /bulletin`.
+
+        Dossiê ainda não construído é `409 ROUND_STAGE_NOT_READY`; dossiê que não passa na
+        revalidação é `422` — a tela nunca renderiza dossiê inválido.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        document = require_document(
+            revision,
+            "amendment_dossier_json",
+            stage=STAGE_DOSSIER,
+            detail="a rodada ainda não tem dossiê de aditivo construído",
+        )
+        return _dossier_payload(record, document=document, dossier=_revalidated_dossier(document))
 
     return application
 

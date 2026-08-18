@@ -1,4 +1,4 @@
-"""Rotas `/v1/valuation-rounds` de F-003 (T6/T7/T9/T10): rodada, prancha, takeoff e códigos.
+"""Rotas `/v1/valuation-rounds` de F-003 (T6/T7/T9/T10/T11): da rodada ao boletim e ao dossiê.
 
 O que estes testes protegem, além do caminho feliz:
 
@@ -16,7 +16,11 @@ O que estes testes protegem, além do caminho feliz:
 - **shortlist de código**: um `GET` que calcula o artefato derivado não move o token de
   concorrência da rodada, e o refino pago nunca é descartado por recompute determinístico;
 - **braço semântico**: híbrido é braço pago — sem entitlement é `403`, e com entitlement e
-  sem índice publicado é `503` declarado, nunca léxico fingindo ser híbrido.
+  sem índice publicado é `503` declarado, nunca léxico fingindo ser híbrido;
+- **fechamento da rodada**: a identidade da obra vem da RODADA e o corpo do cálculo a
+  recusa, o boletim é recomputado na leitura em vez de servido como gravado, e a fronteira
+  licitada fecha em `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (ADR-0027) — item fora do SCO vira
+  dossiê de aditivo, nunca preço de outra tabela.
 """
 
 from __future__ import annotations
@@ -51,7 +55,7 @@ from croquito_valuation.assignment import (
     CodeSuggestionSet,
     SuggestionRefinement,
 )
-from croquito_valuation.models import PriceCatalog, PriceCatalogEntry
+from croquito_valuation.models import PriceCatalog, PriceCatalogEntry, PriceOrigin
 from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
@@ -126,12 +130,18 @@ def _observed_queue(client: TestClient) -> FakeQueue:
     return queue
 
 
-def _catalog_bytes(*, unit: str = "m") -> bytes:
-    """Catálogo sintético de uma entrada; `unit` existe para exercitar a unidade divergente."""
+def _catalog_bytes(*, unit: str = "m", origin: PriceOrigin = PriceOrigin.SCO) -> bytes:
+    """Catálogo sintético de uma entrada.
+
+    `unit` existe para exercitar a unidade divergente; `origin` para exercitar a fronteira
+    licitada do ADR-0027 — o código sintético satisfaz tanto o padrão fechado do SCO quanto
+    o superset das demais origens, então a única coisa que muda entre os dois é a origem.
+    """
     catalog = PriceCatalog(
         source_label="CATALOGO SINTETICO",
         reference_month="2026-01",
         source_sha256="c" * 64,
+        origin=origin,
         entries=[
             PriceCatalogEntry(
                 code="CE04100010(/)",
@@ -142,6 +152,7 @@ def _catalog_bytes(*, unit: str = "m") -> bytes:
                 family_name="SERVICOS SINTETICOS",
                 subgroup_code="CE0410",
                 subgroup_name="ITENS SINTETICOS",
+                origin=origin,
             )
         ],
     )
@@ -176,14 +187,19 @@ def _presign_and_put(
 
 
 def _catalog_upload(
-    client: TestClient, *, tenant: str = _TENANT, key: str = "catalogo-001", unit: str = "m"
+    client: TestClient,
+    *,
+    tenant: str = _TENANT,
+    key: str = "catalogo-001",
+    unit: str = "m",
+    origin: PriceOrigin = PriceOrigin.SCO,
 ) -> dict[str, Any]:
     return _presign_and_put(
         client,
         tenant=tenant,
         filename="catalogo.json",
         content_type="application/json",
-        payload=_catalog_bytes(unit=unit),
+        payload=_catalog_bytes(unit=unit, origin=origin),
         key=key,
     )
 
@@ -220,9 +236,12 @@ def _create_round(
     tenant: str = _TENANT,
     key: str = "rodada-001",
     catalog_unit: str = "m",
+    catalog_origin: PriceOrigin = PriceOrigin.SCO,
     **overrides: Any,
 ) -> dict[str, Any]:
-    upload = _catalog_upload(client, tenant=tenant, key=f"catalogo-{key}", unit=catalog_unit)
+    upload = _catalog_upload(
+        client, tenant=tenant, key=f"catalogo-{key}", unit=catalog_unit, origin=catalog_origin
+    )
     response = client.post(
         "/v1/valuation-rounds",
         headers=_headers(tenant, key=key),
@@ -256,6 +275,7 @@ def _allow_paid_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
 
 _ITEM_CLEAR = "ti_00000000000000a1"
 _ITEM_AMBIGUOUS = "ti_00000000000000a2"
+_ITEM_SECOND = "ti_00000000000000a3"
 _IMAGE_DIGEST = "a" * 64
 _OVERLAY_DIGEST = "e" * 64
 
@@ -439,6 +459,28 @@ def test_upload_de_catalogo_que_nao_e_json_recusa(tmp_path: Path) -> None:
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "INVALID_UPLOAD"
+
+
+def test_chave_de_obra_fora_do_padrao_recusa_na_criacao_e_nao_no_boletim(
+    tmp_path: Path,
+) -> None:
+    """A chave é imutável na rodada, então recusá-la tarde é recusá-la sem conserto.
+
+    O domínio exige `WORKSITE_KEY_PATTERN` só quando o boletim é montado; sem esta guarda a
+    rodada nasceria válida com `PRAÇA X` e quebraria no `POST /calc`, dezenas de decisões
+    depois, quando a única saída seria abrir rodada nova e refazer a revisão inteira.
+    """
+    client = _client(tmp_path)
+    upload = _catalog_upload(client)
+
+    response = client.post(
+        "/v1/valuation-rounds",
+        headers=_headers(),
+        json=_round_payload(catalog_upload_id=upload["upload_id"], worksite_key="PRAÇA X"),
+    )
+
+    assert response.status_code == 422
+    assert not _revisions(client)
 
 
 def test_o_corpo_recusa_o_carimbo_de_identidade(tmp_path: Path) -> None:
@@ -2134,6 +2176,543 @@ def test_papel_e_tenant_valem_nas_rotas_de_codigo(tmp_path: Path) -> None:
     assert _round_version(client, round_id) == prepared["version"]
 
 
+# --- boletim e dossiê do aditivo --------------------------------------------------------
+
+
+def _build_calc(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    tenant: str = _TENANT,
+    key: str = "calc-001",
+    **body: Any,
+) -> Any:
+    payload: dict[str, Any] = {"base_version": base_version}
+    payload.update(body)
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/calc",
+        headers=_headers(tenant, key=key),
+        json=payload,
+    )
+
+
+def _build_dossier(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    tenant: str = _TENANT,
+    key: str = "dossie-001",
+    **body: Any,
+) -> Any:
+    payload: dict[str, Any] = {"base_version": base_version}
+    payload.update(body)
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/amendment-dossier",
+        headers=_headers(tenant, key=key),
+        json=payload,
+    )
+
+
+_REJECTION_NOTE = "item fora do SCO contratado"
+
+
+def _round_with_decided_code(
+    client: TestClient, *, action: str = "confirm", key: str = "rodada-fechamento"
+) -> dict[str, Any]:
+    """Rodada pronta para o fechamento: item confirmado no takeoff e código já decidido.
+
+    As duas decisões passam pelas ROTAS, e não pelo banco: é a decisão de código que separa
+    o item que vira linha do boletim do item que vira pedido de aditivo, e fabricá-la à mão
+    esconderia justamente a precondição que boletim e dossiê exigem.
+    """
+    rejeicao: dict[str, Any] = {"code": None, "note": _REJECTION_NOTE}
+    prepared = _round_with_confirmed_item(client, key=key)
+    decided = _decide_code(
+        client,
+        prepared["round_id"],
+        base_version=prepared["version"],
+        key=f"{key}-codigo",
+        action=action,
+        **({} if action == "confirm" else rejeicao),
+    )
+    assert decided.status_code == 200, decided.text
+    return {"round_id": prepared["round_id"], "version": decided.json()["version"]}
+
+
+def _stored_document(client: TestClient, round_id: str, column: str) -> dict[str, Any]:
+    with _database(client).sessions() as session:
+        revision = session.scalar(
+            select(ValuationRoundRevisionRecord)
+            .where(ValuationRoundRevisionRecord.round_id == round_id)
+            .order_by(ValuationRoundRevisionRecord.version.desc())
+        )
+        assert revision is not None
+        document = getattr(revision, column)
+        assert document is not None
+        return cast(dict[str, Any], document)
+
+
+def _tamper_document(client: TestClient, round_id: str, column: str, document: Any) -> None:
+    """Reescreve o artefato da cabeça da rodada como um banco adulterado o traria."""
+    with _database(client).sessions() as session:
+        revision = session.scalar(
+            select(ValuationRoundRevisionRecord)
+            .where(ValuationRoundRevisionRecord.round_id == round_id)
+            .order_by(ValuationRoundRevisionRecord.version.desc())
+        )
+        assert revision is not None
+        setattr(revision, column, document)
+        session.commit()
+
+
+def test_o_calc_constroi_o_boletim_com_a_identidade_da_rodada(tmp_path: Path) -> None:
+    """Os rótulos da obra saem da RODADA, não do corpo, e o cálculo não aprova nada."""
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+
+    response = _build_calc(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["round_id"] == prepared["round_id"]
+    assert body["version"] == prepared["version"] + 1
+    # Dinheiro sai como texto: um número de JSON perderia o centavo que o TRUNC acabou de fixar.
+    assert body["total_amount"] == "500.00"
+    valuation = body["valuation"]
+    assert valuation["period_number"] == 1
+    assert valuation["reference_label"] == "MEDICAO 01/2026"
+    assert valuation["approval"] is None
+    bulletin = valuation["bulletins"][0]
+    assert bulletin["worksite_key"] == "praca-sintetica-norte"
+    assert bulletin["worksite_name"] == "PRACA SINTETICA NORTE"
+    assert bulletin["address"] == "RUA SINTETICA, S/N"
+    assert bulletin["contract_label"] == "CONTRATO SINTETICO 01/2026"
+    assert bulletin["lines"] == [
+        {
+            "item_number": "1",
+            "code": _CATALOG_CODE,
+            "description": "ALAMBRADO GALVANIZADO",
+            "unit": "m",
+            "unit_price": "50.00",
+            "quantity": "10.00",
+            "total": "500.00",
+        }
+    ]
+    # Sem plano de cálculo, cada item recebe o bloco de quantidade direta do próprio domínio.
+    blocks = valuation["calc_sheets"][0]["blocks"]
+    assert [block["recipe"] for block in blocks] == ["direct_quantity"]
+    stored = _stored_document(client, prepared["round_id"], "valuation_json")
+    assert stored["bulletins"][0]["total_amount"] == "500.00"
+    assert body["valuation_sha256"] == document_digest(stored)
+
+
+def test_o_corpo_do_calc_recusa_a_identidade_da_obra(tmp_path: Path) -> None:
+    """`worksite_key`, `period_number`, `address` e `contract_label` são da rodada.
+
+    Aceitá-los aqui deixaria o cliente reescrever a identidade da obra no meio da cadeia —
+    a mesma medição sairia com outro nome de praça sem que nada na rodada tivesse mudado.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+
+    recusas: dict[str, Any] = {
+        "worksite_key": "outra-praca",
+        "worksite_name": "OUTRA PRACA",
+        "period_number": 9,
+        "reference_label": "MEDICAO 09/2026",
+        "address": "OUTRA RUA, 100",
+        "contract_label": "OUTRO CONTRATO",
+    }
+    for campo, valor in recusas.items():
+        response = _build_calc(
+            client,
+            prepared["round_id"],
+            base_version=prepared["version"],
+            key=f"calc-{campo}",
+            **{campo: valor},
+        )
+        assert response.status_code == 422, campo
+        assert "extra" in response.text.lower()
+
+    assert len(_revisions(client)) == 3
+    assert _round_version(client, prepared["round_id"]) == prepared["version"]
+
+
+def test_o_calc_com_codigo_pendente_recusa_com_o_vocabulario_do_dominio(tmp_path: Path) -> None:
+    """Item confirmado no takeoff sem decisão de código é invariante, não etapa fora de ordem."""
+    client = _client(tmp_path)
+    created = _create_round(client, key="rodada-pendente")
+    packet = _takeoff_packet([_takeoff_item(), _takeoff_item(item_id=_ITEM_SECOND)])
+    published = _publish_takeoff(client, created["round_id"], packet)
+    primeiro = _decide(
+        client,
+        created["round_id"],
+        base_version=published["version"],
+        quantity="10.00",
+        key="pendente-takeoff-1",
+    )
+    segundo = _decide(
+        client,
+        created["round_id"],
+        base_version=primeiro.json()["version"],
+        item_id=_ITEM_SECOND,
+        quantity="10.00",
+        key="pendente-takeoff-2",
+    )
+    decidido = _decide_code(
+        client,
+        created["round_id"],
+        base_version=segundo.json()["version"],
+        key="pendente-codigo",
+    )
+
+    response = _build_calc(
+        client, created["round_id"], base_version=decidido.json()["version"], key="calc-pendente"
+    )
+
+    assert response.status_code == 422, response.text
+    details = response.json()["detail"]["details"]
+    assert details["code"] == "CALC_ASSIGNMENT_MISSING"
+    assert details["item_ids"] == [_ITEM_SECOND]
+    assert _round_version(client, created["round_id"]) == decidido.json()["version"]
+
+
+def test_o_calc_sem_conjunto_de_codigos_e_etapa_fora_de_ordem(tmp_path: Path) -> None:
+    """Conjunto ainda inexistente é ORDEM da cadeia (409), não invariante violada (422)."""
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client, key="rodada-sem-codigo")
+
+    response = _build_calc(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "ROUND_STAGE_NOT_READY"
+    assert detail["details"] == {"stage": "code_assignments"}
+
+
+def test_o_calc_recusa_catalogo_cuja_origem_nao_e_o_sco(tmp_path: Path) -> None:
+    """A fronteira licitada fecha no boletim (ADR-0027): preço nunca vem de outra tabela.
+
+    Item confirmado que não tem código no SCO/contrato vira dossiê de aditivo; precificá-lo
+    pela EMOP violaria a regra do erário fixada pela orçamentista.
+    """
+    client = _client(tmp_path)
+    created = _create_round(client, key="rodada-emop", catalog_origin=PriceOrigin.EMOP)
+    published = _publish_takeoff(client, created["round_id"], _takeoff_packet())
+    decidido_takeoff = _decide(
+        client,
+        created["round_id"],
+        base_version=published["version"],
+        quantity="10.00",
+        key="emop-takeoff",
+    )
+    decidido_codigo = _decide_code(
+        client,
+        created["round_id"],
+        base_version=decidido_takeoff.json()["version"],
+        key="emop-codigo",
+    )
+    assert decidido_codigo.status_code == 200, decidido_codigo.text
+
+    response = _build_calc(
+        client, created["round_id"], base_version=decidido_codigo.json()["version"], key="calc-emop"
+    )
+
+    assert response.status_code == 422, response.text
+    details = response.json()["detail"]["details"]
+    assert details["code"] == "BULLETIN_PRICE_ORIGIN_FORBIDDEN"
+    assert details["origin"] == "emop"
+    # Nada foi gravado: a recusa acontece antes de qualquer boletim existir.
+    with _database(client).sessions() as session:
+        record = session.get(ValuationRoundRecord, created["round_id"])
+        assert record is not None
+        assert record.version == decidido_codigo.json()["version"]
+    assert all(revision.valuation_json is None for revision in _revisions(client))
+
+
+def test_o_calc_recusa_base_version_divergente_e_exige_idempotency_key(tmp_path: Path) -> None:
+    """A guarda de concorrência é MUDANÇA pretendida: `/calc/build` local não tinha nenhuma."""
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+
+    conflito = _build_calc(
+        client, prepared["round_id"], base_version=prepared["version"] + 7, key="calc-conflito"
+    )
+    headerless = client.post(
+        f"/v1/valuation-rounds/{prepared['round_id']}/calc",
+        headers={"Authorization": f"Bearer test:{_TENANT}:orcamentista-sintetica:orcamentista"},
+        json={"base_version": prepared["version"]},
+    )
+
+    assert conflito.status_code == 409
+    assert conflito.json()["detail"]["code"] == "REVISION_CONFLICT"
+    assert headerless.status_code == 400
+    assert headerless.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
+    assert len(_revisions(client)) == 3
+    assert _round_version(client, prepared["round_id"]) == prepared["version"]
+
+
+def test_idempotencia_do_calc_devolve_a_mesma_resposta(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+
+    first = _build_calc(client, prepared["round_id"], base_version=prepared["version"])
+    second = _build_calc(client, prepared["round_id"], base_version=prepared["version"])
+    reused = _build_calc(client, prepared["round_id"], base_version=prepared["version"] + 1)
+
+    assert first.status_code == 200, first.text
+    assert second.json() == first.json()
+    assert reused.status_code == 409
+    assert reused.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+    assert len(_revisions(client)) == 4
+
+
+def test_o_boletim_e_recomputado_na_leitura_e_nunca_servido_como_gravado(tmp_path: Path) -> None:
+    """Total adulterado no banco não vira `200`: quem recomputa é o validador do modelo.
+
+    Servir o total como ele foi gravado faria a tela renderizar uma medição que ninguém
+    conferiu — e é justamente o número que vai virar dinheiro público.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+    construido = _build_calc(client, prepared["round_id"], base_version=prepared["version"])
+    assert construido.status_code == 200, construido.text
+
+    antes = client.get(f"/v1/valuation-rounds/{prepared['round_id']}/bulletin", headers=_headers())
+    document = _stored_document(client, prepared["round_id"], "valuation_json")
+    document["bulletins"][0]["total_amount"] = "999.00"
+    _tamper_document(client, prepared["round_id"], "valuation_json", document)
+    depois = client.get(f"/v1/valuation-rounds/{prepared['round_id']}/bulletin", headers=_headers())
+
+    assert antes.status_code == 200, antes.text
+    assert antes.json()["total_amount"] == "500.00"
+    assert depois.status_code == 422, depois.text
+    details = depois.json()["detail"]["details"]
+    assert details["code"] == "BULLETIN_TOTAL_MISMATCH"
+    # A recomputação fica visível na recusa: o esperado é a soma refeita das linhas, e o
+    # declarado é o que o banco trazia. Nenhum boletim é servido junto.
+    assert (details["expected"], details["declared"]) == ("500.00", "999.00")
+    assert "valuation" not in depois.json()
+
+
+def test_o_boletim_ainda_nao_construido_e_etapa_fora_de_ordem(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+
+    response = client.get(
+        f"/v1/valuation-rounds/{prepared['round_id']}/bulletin", headers=_headers()
+    )
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "ROUND_STAGE_NOT_READY"
+    assert detail["details"] == {"stage": "bulletin"}
+
+
+def test_o_dossie_lista_o_codigo_rejeitado_com_justificativa_e_sem_preco(tmp_path: Path) -> None:
+    """O dossiê não tem campo de preço por construção (ADR-0027) e não cria RE-RA nenhum."""
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client, action="reject")
+
+    response = _build_dossier(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == prepared["version"] + 1
+    assert body["item_count"] == 1
+    item = body["dossier"]["items"][0]
+    assert item["item_id"] == _ITEM_CLEAR
+    assert item["justification"] == "item fora do SCO contratado"
+    assert item["decision"]["action"] == "reject"
+    assert item["decision"]["reviewer_role"] == "orcamentista"
+    assert "price" not in json.dumps(body["dossier"])
+    stored = _stored_document(client, prepared["round_id"], "amendment_dossier_json")
+    assert body["dossier_sha256"] == document_digest(stored)
+
+
+def test_o_dossie_sem_rejeicao_de_codigo_sai_vazio_e_nao_e_erro(tmp_path: Path) -> None:
+    """Rodada em que todo código foi confirmado não tem aditivo a pedir — e isso é normal."""
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+
+    response = _build_dossier(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 200, response.text
+    assert response.json()["item_count"] == 0
+
+
+def test_o_dossie_com_decisao_de_codigo_pendente_recusa(tmp_path: Path) -> None:
+    """O dossiê é artefato de FECHAMENTO: ele nunca publica foto parcial da rodada."""
+    client = _client(tmp_path)
+    created = _create_round(client, key="rodada-dossie-pendente")
+    packet = _takeoff_packet([_takeoff_item(), _takeoff_item(item_id=_ITEM_SECOND)])
+    published = _publish_takeoff(client, created["round_id"], packet)
+    primeiro = _decide(
+        client,
+        created["round_id"],
+        base_version=published["version"],
+        quantity="10.00",
+        key="dossie-takeoff-1",
+    )
+    segundo = _decide(
+        client,
+        created["round_id"],
+        base_version=primeiro.json()["version"],
+        item_id=_ITEM_SECOND,
+        quantity="10.00",
+        key="dossie-takeoff-2",
+    )
+    decidido = _decide_code(
+        client,
+        created["round_id"],
+        base_version=segundo.json()["version"],
+        action="reject",
+        code=None,
+        note="item fora do SCO contratado",
+        key="dossie-codigo",
+    )
+
+    response = _build_dossier(
+        client, created["round_id"], base_version=decidido.json()["version"], key="dossie-pendente"
+    )
+
+    assert response.status_code == 422, response.text
+    details = response.json()["detail"]["details"]
+    assert details["code"] == "AMENDMENT_DOSSIER_ASSIGNMENTS_INCOMPLETE"
+    assert details["item_ids"] == [_ITEM_SECOND]
+
+
+def test_o_dossie_sem_conjunto_de_codigos_e_etapa_fora_de_ordem(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client, key="rodada-dossie-sem-codigo")
+
+    response = _build_dossier(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "ROUND_STAGE_NOT_READY"
+    assert detail["details"] == {"stage": "code_assignments"}
+
+
+def test_o_dossie_recusa_base_version_divergente_e_e_idempotente(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client, action="reject")
+
+    conflito = _build_dossier(
+        client, prepared["round_id"], base_version=prepared["version"] + 7, key="dossie-conflito"
+    )
+    first = _build_dossier(client, prepared["round_id"], base_version=prepared["version"])
+    second = _build_dossier(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert conflito.status_code == 409
+    assert conflito.json()["detail"]["code"] == "REVISION_CONFLICT"
+    assert first.status_code == 200, first.text
+    assert second.json() == first.json()
+    # Três revisões da cadeia (takeoff, decisão, código) mais a do dossiê: a segunda
+    # chamada com a mesma chave devolveu a resposta guardada e não gravou nada.
+    assert len(_revisions(client)) == 4
+
+
+def test_o_dossie_e_revalidado_na_leitura(tmp_path: Path) -> None:
+    """Espelho do boletim: artefato que não passa na revalidação é `422`, nunca `200`."""
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client, action="reject")
+    construido = _build_dossier(client, prepared["round_id"], base_version=prepared["version"])
+    assert construido.status_code == 200, construido.text
+
+    antes = client.get(
+        f"/v1/valuation-rounds/{prepared['round_id']}/amendment-dossier", headers=_headers()
+    )
+    document = _stored_document(client, prepared["round_id"], "amendment_dossier_json")
+    document["items"][0]["justification"] = "justificativa reescrita fora da decisão"
+    _tamper_document(client, prepared["round_id"], "amendment_dossier_json", document)
+    depois = client.get(
+        f"/v1/valuation-rounds/{prepared['round_id']}/amendment-dossier", headers=_headers()
+    )
+
+    assert antes.status_code == 200, antes.text
+    assert antes.json()["item_count"] == 1
+    assert depois.status_code == 422, depois.text
+    assert depois.json()["detail"]["details"]["code"] == "AMENDMENT_DOSSIER_ITEM_STATE_INVALID"
+
+
+def test_o_dossie_ainda_nao_construido_e_etapa_fora_de_ordem(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client, action="reject")
+
+    response = client.get(
+        f"/v1/valuation-rounds/{prepared['round_id']}/amendment-dossier", headers=_headers()
+    )
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "ROUND_STAGE_NOT_READY"
+    assert detail["details"] == {"stage": "amendment_dossier"}
+
+
+def test_papel_e_tenant_valem_nas_rotas_de_fechamento(tmp_path: Path) -> None:
+    """Papel antes do lookup, rodada alheia indistinguível de inexistente, e `401` sem token."""
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+    round_id = prepared["round_id"]
+    unknown = str(new_uuid7())
+    engineer = _headers(roles="engineer")
+    intruder = _headers(_OTHER_TENANT, key="intruso-fechamento")
+
+    sem_papel = [
+        client.post(
+            f"/v1/valuation-rounds/{unknown}/calc",
+            headers=_headers(roles="engineer", key="calc-sem-papel"),
+            json={"base_version": 1},
+        ),
+        client.get(f"/v1/valuation-rounds/{unknown}/bulletin", headers=engineer),
+        client.post(
+            f"/v1/valuation-rounds/{unknown}/amendment-dossier",
+            headers=_headers(roles="engineer", key="dossie-sem-papel"),
+            json={"base_version": 1},
+        ),
+        client.get(f"/v1/valuation-rounds/{unknown}/amendment-dossier", headers=engineer),
+    ]
+    outro_tenant = [
+        _build_calc(
+            client,
+            round_id,
+            base_version=prepared["version"],
+            tenant=_OTHER_TENANT,
+            key="calc-intruso",
+        ),
+        client.get(f"/v1/valuation-rounds/{round_id}/bulletin", headers=intruder),
+        _build_dossier(
+            client,
+            round_id,
+            base_version=prepared["version"],
+            tenant=_OTHER_TENANT,
+            key="dossie-intruso",
+        ),
+        client.get(f"/v1/valuation-rounds/{round_id}/amendment-dossier", headers=intruder),
+    ]
+    sem_token = [
+        client.post(
+            f"/v1/valuation-rounds/{round_id}/calc", json={"base_version": prepared["version"]}
+        ),
+        client.get(f"/v1/valuation-rounds/{round_id}/bulletin"),
+        client.post(
+            f"/v1/valuation-rounds/{round_id}/amendment-dossier",
+            json={"base_version": prepared["version"]},
+        ),
+        client.get(f"/v1/valuation-rounds/{round_id}/amendment-dossier"),
+    ]
+
+    assert [response.status_code for response in sem_papel] == [403] * 4
+    assert all(response.json()["detail"]["code"] == "FORBIDDEN" for response in sem_papel)
+    assert [response.status_code for response in outro_tenant] == [404] * 4
+    assert [response.status_code for response in sem_token] == [401] * 4
+    assert len(_revisions(client)) == 3
+    assert _round_version(client, round_id) == prepared["version"]
+
+
 # --- corrida na cadeia de revisões ------------------------------------------------------
 
 
@@ -2206,6 +2785,26 @@ def test_decisao_de_codigo_que_perde_a_corrida_e_conflito_e_nao_erro_de_servidor
     monkeypatch.setattr("croquito_api.main.append_revision", _rival_revision(client, round_id))
 
     response = _decide_code(client, round_id, base_version=prepared["version"])
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "REVISION_CONFLICT"
+
+
+def test_calc_que_perde_a_corrida_e_conflito_e_nao_erro_de_servidor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O boletim entra na cadeia pela mesma porta das decisões, e perde a corrida do mesmo jeito.
+
+    No servidor de medição `/calc/build` não tinha guarda nenhuma e sempre sobrescrevia o
+    artefato; em `/v1` a construção é ato humano da cadeia append-only, e duas construções
+    simultâneas não podem ocupar a mesma posição.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+    round_id = prepared["round_id"]
+    monkeypatch.setattr("croquito_api.main.append_revision", _rival_revision(client, round_id))
+
+    response = _build_calc(client, round_id, base_version=prepared["version"])
 
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "REVISION_CONFLICT"
