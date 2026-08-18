@@ -2,14 +2,18 @@
 
 Status: Accepted  
 Responsável: Platform / Engineering  
-Última revisão: 2026-08-17
+Última revisão: 2026-08-18
 
 Fonte única do ambiente hospedado. A decisão e as alternativas estão no
 [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md); o desenho AWS de
 [AWS Deployment](../architecture/AWS_DEPLOYMENT.md) é o alvo de **produção** e não
 descreve o que está no ar.
 
-## O que está no ar
+## O que está publicado
+
+Esta seção descreve o **desenho publicado**: o que a esteira cria e como as peças se ligam.
+Ela não afirma disponibilidade — para isso existe "Estado verificado", logo abaixo, e a
+fumaça que qualquer pessoa pode rodar.
 
 Projeto `biahflow-hml`, região `us-east1`, registro
 `us-east1-docker.pkg.dev/biahflow-hml/hml`.
@@ -23,14 +27,41 @@ Projeto `biahflow-hml`, região `us-east1`, registro
 | `/auth/` | `croquito-auth-hml` | interno | Keycloak, realm `croquito` |
 | — | `croquito-jobs-hml` | interno e privado | worker; recebe push do Pub/Sub em `POST /pubsub` |
 
-Recursos de apoio: buckets `croquito-hml-artifacts` (documentos, previews e pacotes
-exportados) e `croquito-hml-rounds` (rodada da medição, montada por FUSE em
-`/mnt/rounds`); tópico `projects/biahflow-hml/topics/croquito-hml-processing`; segredos
+Recursos de apoio: bucket `croquito-hml-artifacts` (documentos, previews e pacotes
+exportados); tópico `projects/biahflow-hml/topics/croquito-hml-processing`; segredos
 `croquito-hml-*` no Secret Manager; PostgreSQL gerenciado (Neon) para a API e para o
 Keycloak, em schemas separados.
 
+Nada disso é criado por este repositório: a casca do ambiente — serviços, bucket, Pub/Sub,
+DNS, segredos e a chave HMAC — é Terraform em `biahflow/infra`, stack `envs/hml/croquito`.
+Aqui mora a imagem e a revisão. A fronteira está no
+[ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md), D6.
+
 Cada serviço roda com a própria conta de serviço
 (`<serviço>@biahflow-hml.iam.gserviceaccount.com`), atribuída pelo deploy.
+
+## Estado verificado
+
+**Última verificação: 2026-08-18, `make smoke-hml` — as duas SPAs respondem; API e Keycloak
+não.** `/api/healthz` responde 404 e o discovery OIDC responde 503, ou seja, a sessão
+autenticada de homologação não sobe. É o mesmo resultado da fumaça de 2026-08-17T20:40Z
+registrada na [seção 11 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md).
+
+A causa foi diagnosticada em 2026-08-18 e está no
+[ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md): o endereço do banco
+nos secrets aponta para um endpoint do Neon que não existe mais — a senha estava certa, e o
+proxy do Neon é que responde a endpoint desconhecido com falha de autenticação. Isso derruba o
+Keycloak no boot e **barra a esteira no job de banco desde 2026-08-14**; com a esteira barrada,
+o container de exemplo que alguém pôs em `croquito-scene-hml` num teste de roteamento nunca foi
+substituído pela imagem real. O conserto é a
+[F-006](../features/F-006-hml-conserto/feature.md).
+
+O banco de homologação está **vazio** nas duas branches do projeto Neon: o schema que existia
+vivia no endpoint que sumiu. Quem subir o ambiente encontra um realm sem usuários e um banco
+sem tabelas — recriar o usuário da orçamentista e o papel `orcamentista` deixou de ser opcional.
+
+Esta seção é atualizada por medição, não por intenção: se a data acima está velha, o estado
+é desconhecido, não bom.
 
 ### A borda pública
 
@@ -67,8 +98,13 @@ desenvolvimento não é possível — e não é para ser.
 - **Manual**: `workflow_dispatch` (aba Actions → deploy-hml → Run workflow).
 
 A ordem é sempre: construir e publicar as imagens com tag `$GITHUB_SHA` → **job de banco**
-(`croquito-db-init-hml`, runner de migrations) → API → worker → Keycloak → medição → nginx
-→ fumaça. Falha no job de banco para o deploy antes de qualquer revisão nova entrar no ar.
+(`croquito-db-init-hml`, runner de migrations) → API → worker → Keycloak → nginx → fumaça.
+Falha no job de banco para o deploy antes de qualquer revisão nova entrar no ar — e foi
+exatamente o que aconteceu entre 2026-08-14 e 2026-08-18, com a credencial de banco vencida.
+O portão fez o que devia; o que faltou foi alguém saber.
+
+O passo de publicação do servidor de medição saiu da esteira com a
+[F-003](../features/F-003-medicao-v1-migration/feature.md), junto do modo hospedado.
 
 ### O job de banco
 
@@ -116,8 +152,13 @@ Duas camadas, nesta ordem.
      --to-revisions=croquito-scene-hml-00042-abc=100
    ```
 
-   Vale para qualquer um dos cinco serviços. Toda revisão carrega a imagem do SHA que a
+   Vale para qualquer um dos quatro serviços. Toda revisão carrega a imagem do SHA que a
    gerou, então voltar é apontar — não é reconstruir.
+
+   Ressalva de credencial: apontar para uma revisão anterior **não** volta o segredo. O
+   serviço monta o secret por `:latest` e o relê ao subir, então a revisão antiga sobe com o
+   valor corrente. Voltar um segredo é reabilitar a versão anterior no Secret Manager e
+   publicar de novo.
 
 2. **Definitivo** — `git revert` do commit e novo deploy pela esteira.
 
@@ -128,22 +169,30 @@ reverter é apontar a revisão anterior da imagem, e o código antigo precisa to
 novo — que é o que expand/contract garante. Coluna sai em trabalho posterior ao que parou
 de usá-la, nunca no mesmo, e remoção continua exigindo aprovação humana explícita.
 
-## Fumaça manual
+## Fumaça
 
 ```bash
-curl -sf https://croquito-hml.biahflow.ai/api/healthz
-curl -sf https://croquito-hml.biahflow.ai/auth/realms/croquito/.well-known/openid-configuration
-curl -sfo /dev/null https://croquito-hml.biahflow.ai/revisao/
-curl -sfo /dev/null https://croquito-hml.biahflow.ai/medicao/
+make smoke-hml                                   # borda pública
+make smoke-hml BASE_URL=https://<serviço>.run.app  # direto no Cloud Run, sem a CDN
 ```
 
-As quatro rotas passam pelo nginx, que é o único serviço público; se elas respondem, o
-proxy same-origin e as duas SPAs estão de pé. O `croquito-jobs-hml` não tem fumaça externa por construção — ele
-só aceita chamada autenticada do Pub/Sub, e a prova de vida dele é o job andar.
+É o mesmo `scripts/smoke_hml.py` que o passo final da esteira roda, e ele não precisa de
+credencial nenhuma. As quatro rotas (`/revisao/`, `/medicao/`, `/api/healthz` e o discovery
+OIDC) passam pelo nginx, que é o único serviço público; se elas respondem **com o conteúdo
+certo**, o proxy same-origin e as duas SPAs estão de pé.
+
+O conteúdo importa e não é preciosismo: o health precisa ser o JSON da API, o discovery
+precisa anunciar o issuer da borda pública e cada SPA precisa referenciar os próprios assets.
+Um `200` sozinho não prova nada — o container de exemplo do Cloud Run responde `200` em quase
+todo caminho, e foi ele que ficou no lugar da API por quatro dias
+([ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md), D5).
+
+O `croquito-jobs-hml` não tem fumaça externa por construção — ele só aceita chamada
+autenticada do Pub/Sub, e a prova de vida dele é o job andar.
 
 ## Custo
 
-Quatro dos cinco serviços escalam a zero e o banco suspende por ociosidade. O item de custo
+Três dos quatro serviços escalam a zero e o banco suspende por ociosidade. O item de custo
 fixo do ambiente é o **Keycloak**: ele sobe em dezenas de segundos mesmo com imagem
 otimizada, então manter instância quente (`min-instances=1`) é o que evita que o primeiro
 login do dia espere o servidor nascer. É uma escolha de operação, não uma exigência técnica
@@ -151,12 +200,12 @@ login do dia espere o servidor nascer. É uma escolha de operação, não uma ex
 
 ## Lacunas declaradas
 
-- **Recursos do modo hospedado ainda provisionados.** O serviço `croquito-medicao-hml`, o
-  bucket `croquito-hml-rounds` montado por FUSE e a conta de serviço correspondente continuam
-  existindo no projeto, embora a esteira não os publique mais desde a
-  [F-003](../features/F-003-medicao-v1-migration/feature.md): removê-los é ato humano, e a
-  rodada que estiver naquele bucket não é migrada por ninguém — ela permanece reproduzível
-  pelo CLI. Com a medição na `/v1`, os limites que o
+- ~~**Recursos do modo hospedado ainda provisionados.**~~ **Fechada em 2026-08-18.** O serviço
+  `croquito-medicao-hml` e o bucket `croquito-hml-rounds` já não existem no projeto
+  (verificado), e o stack de infraestrutura — que ainda os declarava e portanto os teria
+  recriado no próximo apply — deixou de declará-los, junto com a runtime SA, esta sim ainda
+  existente e destruída pelo apply. A rodada que estivesse naquele bucket **não foi migrada
+  por ninguém**, por decisão humana registrada: ela permanece reproduzível pelo CLI. Com a medição na `/v1`, os limites que o
   [ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md) declarava (uma rodada
   por ambiente, uma instância só, ausência de `base_version` real e de multi-tenant) deixaram
   de valer.
@@ -164,6 +213,15 @@ login do dia espere o servidor nascer. É uma escolha de operação, não uma ex
   ato humano, pelo procedimento de [HML_KEYCLOAK](HML_KEYCLOAK.md).
 - **Retenção de sete dias** precisa estar no ciclo de vida dos buckets, e não apenas na
   política escrita.
+- **Duas chaves HMAC ativas.** A chave do interop S3 passou a nascer no Terraform
+  ([ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md), D4); a
+  anterior, criada fora dele, continua válida até ser desativada. Desativar é ato posterior ao
+  deploy que passa a ler o secret novo — antes disso, a revisão em execução ainda assina com a
+  chave velha.
+- **Nenhum alerta quando o ambiente cai.** A esteira barrou no job de banco por quatro dias
+  sem que ninguém soubesse. A fumaça agora falha ruidosamente no deploy, mas ambiente que
+  ninguém deploya continua caindo em silêncio; observabilidade de homologação é trabalho
+  próprio, ainda não feito.
 
 A lacuna "migrations revisadas", declarada no
 [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md) e aberta desde então, foi **fechada**

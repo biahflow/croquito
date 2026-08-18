@@ -2,7 +2,8 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-18 (medição migrada para a API `/v1`, F-003)
+Última revisão: 2026-08-18 (medição migrada para a API `/v1`, F-003; homologação diagnosticada
+fora do ar, F-006)
 
 > Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
 > trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
@@ -824,9 +825,12 @@ O que **fica** é o servidor local do [ADR-0020](adr/0020-local-homologation-ser
 de `tests/worker/test_valuation_local_server.py` passando sem uma linha alterada: ele é a
 ferramenta da máquina do operador e não foi substituído.
 
-Pendente e **humano**: a remoção do serviço Cloud Run e do mapeamento de borda em produção, a
-concessão do papel `orcamentista` no realm de homologação, e a homologação real da orçamentista
-sobre uma medição de verdade — que esta migração não substitui.
+Pendente e **humano**: a concessão do papel `orcamentista` no realm de homologação e a
+homologação real da orçamentista sobre uma medição de verdade — que esta migração não
+substitui. A remoção dos recursos hospedados foi verificada como feita em 2026-08-18: nem o
+serviço `croquito-medicao-hml` nem o bucket `croquito-hml-rounds` existem mais no projeto. O
+stack de infraestrutura, que ainda os declarava e os teria recriado no próximo apply, deixou
+de declará-los junto com a runtime SA — a única peça do grupo que ainda existe.
 
 ### Runner de migrations revisadas
 
@@ -857,7 +861,53 @@ criar tabela. O que o runner traz junto:
   segue exigindo aprovação humana explícita.
 
 **Ato humano pendente**: o primeiro deploy de homologação com o runner, que é o que
-exercita o caminho de carimbo contra o banco real do ambiente.
+exercita o caminho de carimbo contra o banco real do ambiente. Ele está bloqueado pelo
+ambiente fora do ar, descrito a seguir.
+
+### A homologação em GCP está fora do ar desde 2026-08-14
+
+Medido em 2026-08-18 com consulta somente-leitura à borda pública e ao projeto
+`biahflow-hml`. `/revisao/` e `/medicao/` respondem 200; `/api/healthz` responde 404 e o
+discovery OIDC responde 503 — ou seja, **a sessão autenticada de homologação não sobe**. É a
+confirmação da fumaça de 2026-08-17 registrada em F-001, agora com causa.
+
+A causa raiz é uma só, e não é a que o erro sugere: **o endereço do banco nos secrets aponta
+para um endpoint do Neon que não existe mais**. Todos os consumidores relatam
+`password authentication failed for user 'neondb_owner'`, mas a senha gravada é idêntica à
+corrente — comparada por digest, sem expor nenhuma das duas. O proxy do Neon roteia pelo
+hostname e responde a endpoint desconhecido com falha de autenticação; o sintoma apontava para
+a credencial, o defeito estava no endereço.
+
+Com isso o Keycloak falha no boot (`Failed to obtain JDBC connection`) e chama `exit(1)`, e o
+job `croquito-db-init-hml` falhou em 2026-08-17T14:12 pelo mesmo motivo. Como a esteira para no
+job de banco por desenho, **nenhuma revisão nova entra no ar desde 2026-08-14** — o portão fez
+o que devia, e ninguém soube. Com a esteira barrada, o container de exemplo do Cloud Run que
+alguém pôs em `croquito-scene-hml` num teste de roteamento em 2026-08-14 nunca foi substituído
+pela imagem real, que na revisão anterior havia subido com sucesso.
+
+**O banco de homologação está vazio.** As duas branches do projeto Neon — `production` e
+`staging` — não têm nenhuma tabela, e nenhuma tem `alembic_version`. O schema criado em
+2026-08-14 vivia no endpoint que sumiu. Duas consequências que não são de código: o primeiro
+deploy com o runner vai **criar o schema desde a baseline**, não carimbar banco preexistente
+— então o ato pendente de [F-004](features/F-004-migrations-runner/feature.md) continua aberto
+—, e o realm do Keycloak nasce sem usuário nenhum, o que torna obrigatória a recriação do
+usuário da orçamentista e do papel `orcamentista`.
+
+Dois registros do repositório caíram junto com o diagnóstico. O "bug de plataforma no GFE"
+anotado em `deploy/nginx.conf` não explica o 404 de hoje — quem responde por trás do proxy é o
+container de exemplo — e a causa conhecida de 404 naquele caminho, resolução de DNS para o
+ingress interno, já estava resolvida no stack de infraestrutura por uma zona privada `run.app`
+**antes** do rename que aquele comentário justifica. E o stack ainda declarava
+`croquito-medicao-hml`, que já não existe no projeto — o próximo apply o teria recriado.
+
+O conserto é a [F-006](features/F-006-hml-conserto/feature.md), com a decisão técnica no
+[ADR-0031](adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md): o valor das
+credenciais de homologação passa a ser gerenciado por Terraform no repositório central de
+infraestrutura, porque coordenada de banco que só um humano sabe atualizar é coordenada que
+ninguém atualiza. O stack passou a declarar a **branch** do Neon por nome e derivar dela o host
+e a senha — nenhum hostname escrito à mão, que foi o que quebrou.
+A fumaça da borda (`make smoke-hml`) passou a verificar **conteúdo** e não só status — um
+`200` do container de exemplo não é a API — e roda igual na esteira e na máquina do operador.
 
 ## Condição para avançar ao processamento real
 

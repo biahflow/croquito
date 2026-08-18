@@ -25,6 +25,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-003 | HIGH | DONE | [Migração da medição para a API `/v1` autenticada](../features/F-003-medicao-v1-migration/feature.md) |
 | F-004 | HIGH | DONE | [Runner de migrations revisadas](../features/F-004-migrations-runner/feature.md) |
 | F-005 | HIGH | DONE | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
+| F-006 | HIGH | IN PROGRESS | [Conserto e verificação da homologação em GCP](../features/F-006-hml-conserto/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -42,6 +43,18 @@ falta. A decisão técnica é o [ADR-0029](../adr/0029-runner-de-migrations-revi
 **aceito por ato humano em 2026-08-17**, e a implementação foi entregue e revisada na mesma
 data. O que resta em F-004 não é código: o primeiro deploy de homologação com o runner, que é
 o que exercita o carimbo contra o banco real.
+
+F-006 nasce em 2026-08-18, por seleção humana, quando o levantamento das features abertas
+mostrou que as cinco anteriores estavam `DONE` e que **tudo o que restava delas eram atos de
+produção que o ambiente no chão impedia**. O diagnóstico daquele dia achou uma causa raiz
+única — o endereço do banco nos secrets aponta para um endpoint do Neon que não existe mais, o
+que derruba o Keycloak e barra a esteira no job de banco desde 2026-08-14 — e uma secundária: a
+API está servindo o container de exemplo do Cloud Run. A senha gravada estava correta o tempo
+todo; o proxy do Neon é que responde a endpoint desconhecido com falha de autenticação. A decisão técnica é o
+[ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md) (`Proposed`), que
+move o valor das credenciais de homologação para o Terraform do repositório central de
+infraestrutura. Evidência em
+[evidence.md](../features/F-006-hml-conserto/evidence.md).
 
 ## Agora — MVP privado
 
@@ -212,13 +225,14 @@ independente. Nenhuma linha afirma estado remoto.
 Cada ambiente é lido em três eixos separados, que não se substituem: o que o repositório
 **configura**, o que a documentação **afirma** e o que foi **verificado remotamente**.
 
-A verificação remota da homologação foi autorizada e executada em 2026-08-17, e seu resultado está
-no eixo correspondente. Ela observa a borda pública e nada além dela: rota que responde prova o
-proxy e a SPA daquela rota, não o estado interno de Cloud Run, buckets, Pub/Sub ou PostgreSQL.
-Produção AWS e ambiente local continuam sem verificação remota.
+A verificação remota da homologação foi autorizada e executada em 2026-08-17, repetida e
+aprofundada em 2026-08-18. Até 2026-08-17 ela observava só a borda pública; na rodada de
+2026-08-18 a autorização foi ampliada e o projeto GCP foi consultado com `gcloud`, somente
+leitura, o que trocou "a sessão autenticada não sobe" por **por que** ela não sobe. Produção
+AWS e ambiente local continuam sem verificação remota.
 
 | Contexto | Configuração versionada | Afirmação documental | Estado remoto verificado |
 | --- | --- | --- | --- |
 | Produção AWS | `infra/` (Terraform: S3 SSE-KMS, filas/DLQ, KMS, logs) descreve o desenho em `sa-east-1`. | [AWS Deployment](../architecture/AWS_DEPLOYMENT.md) declara que o desenho-alvo de produção **nunca foi aplicado**; o [Status](../STATUS.md) declara que não há serviços AWS reais. [ADR-0002](../adr/0002-aws-managed-architecture.md) segue valendo como decisão de produção, com a escolha em aberto. | Nenhum. Nada no repositório prova recursos AWS aplicados, e nenhuma consulta a conta AWS foi feita. |
-| Homologação GCP | [`.github/workflows/deploy-hml.yml`](../../.github/workflows/deploy-hml.yml) configura o deploy no projeto `biahflow-hml`, região `us-east1`, para os serviços `croquito-*-hml`; [`deploy/nginx.conf`](../../deploy/nginx.conf) fixa a borda pública. Configuração de deploy não é prova de deploy. | [HML](../operations/HML.md) tem a seção “O que está no ar”, que **afirma** rotas públicas, serviços Cloud Run, buckets, tópico Pub/Sub e PostgreSQL gerenciado em operação; o [Status](../STATUS.md) afirma, no presente, que a homologação em GCP hospeda o servidor de medição como ponte declarada. Fontes: [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md) e [ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md). Isso é afirmação documental, não verificação. | **Fumaça manual de [HML](../operations/HML.md) executada em 2026-08-17T20:40Z**, sem credencial e sem `gcloud`: `GET /revisao/` e `GET /medicao/` respondem **200**; `GET /api/healthz` responde **404** e `GET /auth/realms/croquito/.well-known/openid-configuration` responde **503**, os dois de forma persistente (reexecutados). Verificado: as duas SPAs e o nginx estão de pé, e a sessão autenticada **não sobe hoje**. Não verificado: estado interno de Cloud Run, buckets, Pub/Sub e PostgreSQL, e `croquito-jobs-hml`, que não tem fumaça externa por construção. A divergência contra a afirmação documental está registrada na [seção 11 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md) e pende de trabalho próprio. |
+| Homologação GCP | A casca do ambiente é Terraform no repositório `biahflow/infra` (stack `envs/hml/croquito`); aqui, [`.github/workflows/deploy-hml.yml`](../../.github/workflows/deploy-hml.yml) configura imagem e revisão dos serviços `croquito-*-hml` e [`deploy/nginx.conf`](../../deploy/nginx.conf) fixa a borda pública. Configuração de deploy não é prova de deploy. | [HML](../operations/HML.md) deixou de afirmar disponibilidade: a seção “O que está publicado” descreve o desenho e a seção “Estado verificado” carrega data e medição. Fontes: [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md) e [ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md). | **Fumaça de 2026-08-18 (`make smoke-hml`), confirmando a de 2026-08-17T20:40Z**: `/revisao/` e `/medicao/` respondem **200**; `/api/healthz` responde **404** e o discovery OIDC responde **503**. A consulta `gcloud` da mesma data mostrou a causa: `neondb_owner` recusado por senha derruba o Keycloak no boot e fez o job `croquito-db-init-hml` falhar em 2026-08-17T14:12, barrando a esteira desde 2026-08-14; e `croquito-scene-hml` serve `cloudrun/container/hello` desde 2026-08-14T23:56, com a revisão anterior — a imagem real — tendo subido com sucesso. Verificado também que `croquito-medicao-hml` **não existe mais** no projeto. Não verificado: conteúdo de bucket, entrega do Pub/Sub e o estado interno do PostgreSQL. Conserto em [F-006](../features/F-006-hml-conserto/feature.md). |
 | Desenvolvimento local | `docker-compose.local.yml` e o [Makefile](../../Makefile) definem PostgreSQL, LocalStack e Keycloak, com bootstrap por `make db-init`. | [Local Development](../engineering/LOCAL_DEVELOPMENT.md) e o [Status](../STATUS.md) descrevem esse ambiente como iniciado e validado localmente. | Não aplicável. Nenhuma afirmação é feita sobre a máquina de qualquer operador. |

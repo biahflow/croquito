@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local contracts openapi-snapshot infra-check
+.PHONY: setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
 
 setup:
 	uv sync --all-groups
@@ -135,6 +135,11 @@ extraction-eval:
 # Exige os serviços locais de pé (make dev-services, make db-init) e a API em execução.
 smoke-local:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run python scripts/smoke_local.py
+
+# Fumaça da borda pública de homologação: só HTTP, sem credencial. BASE_URL sobrescreve o
+# host padrão (útil para apontar direto ao Cloud Run e tirar a CDN da equação).
+smoke-hml:
+	uv run python scripts/smoke_hml.py $(if $(BASE_URL),--base-url $(BASE_URL),)
 
 infra-check:
 	terraform fmt -check -recursive infra

@@ -46,6 +46,7 @@ e NFRs. Um ADR aceito é imutável; correção material exige novo ADR com
 | [0028](0028-medicao-na-api-v1-autenticada.md) | Medição de obra na API `/v1` autenticada | Accepted |
 | [0029](0029-runner-de-migrations-revisadas.md) | Runner de migrations revisadas com Alembic | Accepted |
 | [0030](0030-overlay-do-takeoff-reconstruido-na-fila.md) | Overlay do takeoff reconstruído na fila | Accepted |
+| [0031](0031-segredo-de-homologacao-gerenciado-por-terraform.md) | Segredo de homologação gerenciado por Terraform | Proposed |
 
 ## Processo
 

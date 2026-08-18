@@ -211,35 +211,23 @@ jobs:
       # é justamente ele que prova que o proxy same-origin (`/api/`, `/auth/`) está de
       # pé.
       #
-      # Enquanto o web servir a imagem inicial (Entrega 3 pendente), não há o que
-      # afirmar: o passo avisa e sai. Fumaça que testa outra coisa é pior que nenhuma,
-      # porque ensina a confiar no verde errado.
+      # É o mesmo `scripts/smoke_hml.py` que roda na máquina do operador (`make
+      # smoke-hml`), e ele confere o **conteúdo** de cada rota, não só o status. A
+      # diferença não é cosmética: em 2026-08-14 o serviço da API passou a servir o
+      # container de exemplo do Cloud Run, que responde 200 em quase todo caminho, e uma
+      # fumaça de status teria dito "verde" pelos quatro dias em que a sessão autenticada
+      # não subia. O bypass condicional que existia aqui ("pular enquanto o web servir a
+      # imagem inicial") saiu junto: a condição está satisfeita desde `d5bbf86`, e fumaça
+      # que se pula sozinha ensina a confiar no verde errado.
+      #
+      # A URL testada é a do serviço, não a do host público: assim o passo prova o deploy
+      # e não a CDN. O issuer do OIDC continua sendo o público, porque é o que o Keycloak
+      # anuncia — daí o parâmetro separado.
       - name: Fumaça
         run: |
           set -euo pipefail
-          imagem=$(gcloud run services describe croquito-web-hml --region "$REGIAO" \
-            --format='value(spec.template.spec.containers[0].image)')
-          case "$imagem" in
-            "$REGISTRO/croquito-web:"*) ;;
-            *)
-              echo "::warning::croquito-web-hml ainda serve $imagem; fumaça pulada até a Entrega 3"
-              exit 0
-              ;;
-          esac
           url=$(gcloud run services describe croquito-web-hml --region "$REGIAO" \
             --format='value(status.url)')
-          for rota in /revisao/ /api/healthz /auth/realms/croquito/.well-known/openid-configuration; do
-            ok=""
-            for tentativa in 1 2 3 4 5; do
-              if curl -sf --max-time 10 "$url$rota" > /dev/null; then
-                ok="sim"; break
-              fi
-              echo "tentativa $tentativa em $rota falhou; esperando"
-              sleep 10
-            done
-            if [ -z "$ok" ]; then
-              echo "::error::$rota não respondeu depois do deploy"
-              exit 1
-            fi
-            echo "$rota responde"
-          done
+          python3 scripts/smoke_hml.py \
+            --base-url "$url" \
+            --issuer-base https://croquito-hml.biahflow.ai
