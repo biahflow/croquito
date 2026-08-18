@@ -2,7 +2,7 @@
 
 Status: Accepted  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-17
+Última revisão: 2026-08-18
 
 Este arquivo é o roteador de contexto para humanos e agentes. Leia
 [STATUS.md](STATUS.md) em seguida e carregue somente o conjunto relevante.
@@ -22,7 +22,8 @@ Este arquivo é o roteador de contexto para humanos e agentes. Leia
 2. [API Contract](architecture/API_CONTRACT.md)
 3. [Human in the Loop](ai/HUMAN_IN_THE_LOOP.md)
 4. [NFR](product/NFR.md)
-5. `apps/web/AGENTS.md`
+5. [Design System](engineering/DESIGN_SYSTEM.md)
+6. `apps/web/AGENTS.md`
 
 ### Implementar API
 
@@ -175,6 +176,7 @@ o desenho AWS é o alvo de produção e não descreve o que está no ar.
 - [Project Context](engineering/PROJECT_CONTEXT.md)
 - [Local Development](engineering/LOCAL_DEVELOPMENT.md)
 - [Coding Standards](engineering/CODING_STANDARDS.md)
+- [Design System](engineering/DESIGN_SYSTEM.md)
 - [Testing Strategy](engineering/TESTING_STRATEGY.md)
 - [Definition of Done](engineering/DEFINITION_OF_DONE.md)
 - [Traceability](engineering/TRACEABILITY.md)

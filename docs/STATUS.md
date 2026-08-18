@@ -2,8 +2,8 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-18 (medição migrada para a API `/v1`, F-003; homologação de volta ao ar
-e verificada, F-006)
+Última revisão: 2026-08-18 (medição migrada para a API `/v1`, F-003; F-006 concluída após os
+atos humanos de homologação; F-007 e F-008 abertas, com os ADR-0032 e ADR-0033 aceitos)
 
 > Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
 > trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
@@ -913,6 +913,11 @@ e a senha — nenhum hostname escrito à mão, que foi o que quebrou.
 A fumaça da borda (`make smoke-hml`) passou a verificar **conteúdo** e não só status — um
 `200` do container de exemplo não é a API — e roda igual na esteira e na máquina do operador.
 
+O ADR-0031 foi aceito por ato humano em 2026-08-18, e o responsável humano confirmou a
+conclusão do role mapping, da desativação segura da HMAC antiga e do merge do PR #4. F-006 está
+`DONE`. O carimbo do Alembic contra banco preexistente continua não atendível neste deploy e é
+follow-up de F-004.
+
 **O ambiente voltou em 2026-08-18**, e a fumaça da esteira das 14:06 prova as quatro rotas,
 com o discovery anunciando o issuer da borda pública e os quatro serviços servindo a mesma
 imagem por SHA. Ao verificar o estado interno do banco — que o diagnóstico anterior havia
@@ -926,6 +931,18 @@ faltando vire falha barulhenta em vez de queda silenciosa. O terceiro achado da 
 de esteira: `ci` e `deploy-hml` disparavam juntos no merge e corriam **em paralelo**, então a
 imagem subia sem o portão ter passado naquele commit — o portão virou um workflow chamável e o
 deploy passou a esperá-lo.
+
+Com o ambiente de volta, duas features novas abriram na mesma data. A
+[F-007](features/F-007-tela-de-login/feature.md) — a porta de entrada do produto — está
+`READY_FOR_PLANNING` com prioridade `HIGH`: o
+[ADR-0032](adr/0032-porta-de-entrada-e-estado-sem-sessao.md) foi aceito por ato humano e o visual
+do mock foi aprovado; o texto da tela continua pendente. A
+[F-008](features/F-008-ciclo-de-vida-de-conta/feature.md) — convite, recuperação de senha e login
+com Google — nasce `BLOCKED`, e o que a bloqueia é decisão humana e não código: o provedor de
+e-mail e o domínio remetente, sem os quais nenhum dos três fluxos existe; o
+[ADR-0033](adr/0033-conta-por-convite-e-login-federado.md) também foi aceito. Do mesmo trabalho
+nasceu o [Design System](engineering/DESIGN_SYSTEM.md), que tira a identidade do produto de dentro
+de um comentário de folha de estilo e passa a ser a fonte que um Design Approval Package cita.
 
 ## Condição para avançar ao processamento real
 

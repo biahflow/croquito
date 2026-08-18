@@ -1,6 +1,6 @@
 # ADR-0031: Segredo de homologação gerenciado por Terraform
 
-Status: Proposed  
+Status: Accepted
 Data: 2026-08-18  
 Responsável: Engineering
 

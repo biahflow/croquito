@@ -190,8 +190,6 @@ Cor nunca é o único indicador de precisão/issue; warnings críticos não são
 link relativo de Markdown do repositório** — inclusive deste arquivo. Um link quebrado
 reprova o CI.
 
-Além dos testes: mudança de comportamento atualiza FDD e critérios de aceite; mudança de
-interface atualiza [API Contract](docs/architecture/API_CONTRACT.md) e testes de contrato;
-mudança arquitetural cria ADR (ADR aceito é imutável — crie outro com `Supersedes`);
-mudança de IA exige eval comparativa e plano de rollback; se o marco mudou, atualize
-[docs/STATUS.md](docs/STATUS.md).
+Além dos testes, aplique a seção "Disciplina de mudança" do [AGENTS.md](AGENTS.md) —
+fonte única do que cada tipo de mudança atualiza (FDD, API Contract, processo de ADR,
+NFR, IA, operação). Se o marco mudou, atualize [docs/STATUS.md](docs/STATUS.md).

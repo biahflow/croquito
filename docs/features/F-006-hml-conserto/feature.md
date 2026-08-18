@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > **2026-08-18, medido**: o ambiente subiu e a fumaça prova que subiu — quatro rotas verdes na
 > esteira, com o discovery anunciando o issuer da borda pública, e os quatro serviços servindo
@@ -15,16 +15,18 @@
 > contrário do que `HML.md` afirmava. Detalhe e medições na seção 3.4 do
 > [evidence](evidence.md).
 >
-> O que separa esta feature de `DONE` é ato humano: a aceitação do
-> [ADR-0031](../../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md), hoje
-> `Proposed`, e as pendências da seção 5 do evidence.
+> O ADR-0031 foi aceito por ato humano em 2026-08-18, e as pendências operacionais da seção 5
+> foram declaradas concluídas pelo responsável humano. F-006 está `DONE`. O critério 4 continua
+> explicitamente não atendido e não atendível neste deploy, seguindo como follow-up de F-004;
+> não é apresentado como critério verde.
 
 > Selecionada por decisão humana de 2026-08-18, a partir do levantamento de features abertas:
 > as cinco features anteriores estão `DONE`, e o que restava delas eram atos de produção que o
 > ambiente no chão impedia de executar.
 >
 > A decisão técnica é o
-> [ADR-0031](../../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md), `Proposed`.
+> [ADR-0031](../../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md), `Accepted` por
+> ato humano em 2026-08-18.
 > Duas decisões humanas da mesma data moldam o escopo: o valor dos segredos passa a ser
 > gerenciado por Terraform no repositório central de infraestrutura (sem `gcloud`, sem passo
 > manual), e a [F-003](../F-003-medicao-v1-migration/feature.md) vai para `main` na mesma
@@ -127,8 +129,8 @@ troca de credencial deixa de depender de alguém lembrar de um comando.
 
 ## Dependencies
 
-- [ADR-0031](../../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md) precisa ser
-  aceito por ato humano antes do apply.
+- [ADR-0031](../../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md) foi aceito por
+  ato humano antes do apply.
 - Credencial de aplicação do GCP (`gcloud auth application-default login`) para rodar o plano
   localmente, e `NEON_API_KEY` para o provider Neon.
 - [F-003](../F-003-medicao-v1-migration/feature.md) e
@@ -163,11 +165,12 @@ troca de credencial deixa de depender de alguém lembrar de um comando.
 
 ## Human Gates
 
-- Aceitação do ADR-0031.
+- ~~Aceitação do ADR-0031~~ — aceita por ato humano em 2026-08-18.
 - `terraform apply` do stack, com plano revisado.
 - Merge da F-003 em `main`.
-- Concessão do papel `orcamentista` no realm.
-- Desativação da chave HMAC anterior, depois do deploy.
+- ~~Concessão do papel `orcamentista` no realm~~ — concluída por ato humano em 2026-08-18.
+- ~~Desativação da chave HMAC anterior, depois do deploy~~ — concluída por ato humano em
+  2026-08-18.
 
 ## References
 

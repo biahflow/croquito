@@ -1,6 +1,6 @@
 # F-006 — Evidência
 
-Status: `READY_FOR_HUMAN_REVIEW`  
+Status: `DONE`
 Última atualização: 2026-08-18
 
 ## 1. Diagnóstico executado (2026-08-18)
@@ -203,7 +203,8 @@ acontecer depois do deploy que passa a ler o secret novo.
   pública, cada SPA precisa referenciar os próprios assets. Rodado contra a HML: reproduz o
   diagnóstico e sai com código 1.
 - Passo de fumaça da esteira trocado pelo mesmo script, **sem o bypass condicional**.
-- [ADR-0031](../../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md) (`Proposed`).
+- [ADR-0031](../../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md) (`Accepted` por
+  ato humano em 2026-08-18).
 - Reconciliação: `HML.md` ganhou "Estado verificado" com data e medição, perdeu o passo
   "medição" da ordem de deploy e a lacuna do modo hospedado; `deploy/nginx.conf` teve o
   comentário do "bug de GFE" corrigido.
@@ -468,24 +469,22 @@ duas coisas.
 
 ## 5. Pendências humanas
 
-Abertas:
-
-- **Aceitar o ADR-0031**, hoje `Proposed`. É o gate que ainda separa esta feature de `DONE`.
-- **Rotacionar a chave de API do Neon e a senha da role de `staging`**: as duas foram
-  transmitidas em texto durante o trabalho de 2026-08-18 e devem ser consideradas expostas.
-  Depois da rotação, um novo apply propaga a senha nova sozinho — que é exatamente o
-  comportamento que esta feature entrega.
-- **Criar os usuários do realm** (o realm nasce sem nenhum), com `Tenant` = `tenant-biahflow`
-  nesta homologação: o seu, com `engineer` e `orcamentista`, e o da orçamentista, com
-  `orcamentista`. Procedimento em [HML_KEYCLOAK](../../operations/HML_KEYCLOAK.md).
-- **Desativar a chave HMAC anterior**, agora que o deploy já lê o secret novo.
-- **Mergear o PR #4** (portão único antes do deploy), se o efeito declarado for aceito.
-
-Fechadas em 2026-08-18:
+Ações humanas fechadas em 2026-08-18, conforme confirmação do responsável humano:
 
 - ~~Configurar `NEON_API_KEY` como secret do repositório de infraestrutura~~.
+- ~~Aceitar o ADR-0031~~ — aceito por ato humano em 2026-08-18.
+- ~~Rotacionar a chave de API do Neon e a senha da role de `staging`~~ — declarado concluído
+  pelo responsável humano em 2026-08-18.
+- ~~Criar os usuários do realm e associar as realm roles~~ — declarado concluído pelo
+  responsável humano em 2026-08-18, com `tenant_id=tenant-biahflow`.
+- ~~Desativar a chave HMAC anterior~~ — declarado concluído pelo responsável humano em
+  2026-08-18, após a nova chave entrar em uso.
+- ~~Mergear o PR #4~~ — declarado concluído pelo responsável humano em 2026-08-18.
 - ~~Revisar o plano do Terraform e aplicar~~ — duas vezes, com plano revisado nas duas.
 - ~~Publicar F-003 em `main`~~.
+
+O critério 4 da seção 3.6 permanece não atendido e não atendível neste deploy porque o banco
+estava vazio; o follow-up do primeiro carimbo real pertence a F-004 e não reabre F-006.
 
 Nota de escopo: "conceder o papel `orcamentista`" aparecia duas vezes na lista original, uma
 delas como item próprio. É um ato só, e está acima.

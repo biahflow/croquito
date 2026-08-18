@@ -2,7 +2,7 @@
 
 Status: Accepted  
 Responsável: Engineering  
-Última revisão: 2026-08-17
+Última revisão: 2026-08-18
 
 ## Escopo
 
@@ -104,11 +104,10 @@ delegação ou paralelismo.
 
 - Mudança de comportamento: atualize FDD e critérios de aceite.
 - Mudança de interface: atualize API Contract e testes de contrato.
-- Mudança arquitetural: crie ou substitua um ADR.
+- Mudança arquitetural: siga o [processo de ADR](docs/adr/README.md); a aceitação é ato humano.
 - Mudança de NFR: atualize NFR, observabilidade e teste correspondente.
 - Mudança de IA: atualize Model Routing, Prompt Contracts e Evaluation Strategy.
 - Mudança operacional: atualize runbook e rollback.
-- ADR aceito é imutável; crie outro com `Supersedes`.
 
 ## Qualidade de implementação
 
@@ -130,6 +129,7 @@ Uma mudança só está concluída quando:
 - Migração e rollback foram considerados.
 - [docs/STATUS.md](docs/STATUS.md) foi atualizado se o marco mudou.
 
-Enquanto o scaffold de código não existir, não invente comandos de desenvolvimento.
-Quando ele for criado, a interface padrão deverá ser exposta por `make setup`,
-`make dev`, `make check` e `make test` e documentada neste arquivo.
+A interface padrão de desenvolvimento é `make setup`, `make check`, `make test` e
+`make dev`. Os perfis de validação e seus limites estão no
+[Project Context](docs/engineering/PROJECT_CONTEXT.md); detalhes de execução, no
+`CLAUDE.md` da raiz e em [Local Development](docs/engineering/LOCAL_DEVELOPMENT.md).

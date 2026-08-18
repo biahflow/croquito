@@ -2,11 +2,15 @@
 
 Status: Active index  
 Responsável: Architecture  
-Última revisão: 2026-08-17
+Última revisão: 2026-08-18
 
-ADRs registram decisões transversais, difíceis de reverter ou que afetam contratos
-e NFRs. Um ADR aceito é imutável; correção material exige novo ADR com
+ADRs registram decisões com **impacto durável em arquitetura, operação, segurança ou
+custo** — o que cobre decisões transversais, difíceis de reverter ou que afetam
+contratos e NFRs. Um ADR aceito é imutável; correção material exige novo ADR com
 `Supersedes`.
+
+Este documento é a única formulação do processo de ADR do repositório; `AGENTS.md` e
+`CONTRIBUTING.md` remetem para cá e não reformulam o critério.
 
 ## Estados
 
@@ -46,12 +50,20 @@ e NFRs. Um ADR aceito é imutável; correção material exige novo ADR com
 | [0028](0028-medicao-na-api-v1-autenticada.md) | Medição de obra na API `/v1` autenticada | Accepted |
 | [0029](0029-runner-de-migrations-revisadas.md) | Runner de migrations revisadas com Alembic | Accepted |
 | [0030](0030-overlay-do-takeoff-reconstruido-na-fila.md) | Overlay do takeoff reconstruído na fila | Accepted |
-| [0031](0031-segredo-de-homologacao-gerenciado-por-terraform.md) | Segredo de homologação gerenciado por Terraform | Proposed |
+| [0031](0031-segredo-de-homologacao-gerenciado-por-terraform.md) | Segredo de homologação gerenciado por Terraform | Accepted |
+| [0032](0032-porta-de-entrada-e-estado-sem-sessao.md) | Porta de entrada própria e estado sem sessão | Accepted |
+| [0033](0033-conta-por-convite-e-login-federado.md) | Conta por convite e login federado que vincula | Accepted |
 
 ## Processo
 
-1. Use o [template](../templates/ADR_TEMPLATE.md).
-2. Descreva problema e alternativas reais.
-3. Relacione requisitos e NFRs afetados.
-4. Obtenha aprovação antes da implementação irreversível.
-5. Atualize este índice e a [matriz de rastreabilidade](../engineering/TRACEABILITY.md).
+1. Quem identifica a necessidade registra `ARCHITECTURE_DECISION_REQUIRED` e para.
+   Um agente não cria a decisão por conta própria; redige o ADR quando um humano pedir.
+2. Havendo mais de uma solução materialmente diferente, uma
+   [RFC](../templates/RFC_TEMPLATE.md) pode explorar as alternativas antes do ADR
+   (ver [CONTRIBUTING.md](../../CONTRIBUTING.md)).
+3. Redija com o [template](../templates/ADR_TEMPLATE.md), como `Proposed`: problema,
+   alternativas reais, requisitos e NFRs afetados.
+4. **Somente um humano muda o status** de `Proposed` para `Accepted` ou `Rejected` —
+   inclusive de ADR redigido por agente. Agente transcreve a decisão humana; não a exerce.
+5. Nenhuma implementação irreversível antes do aceite.
+6. Atualize este índice e a [matriz de rastreabilidade](../engineering/TRACEABILITY.md).
