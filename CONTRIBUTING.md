@@ -2,18 +2,24 @@
 
 Status: Accepted  
 Responsável: Engineering  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-18
 
 ## Fluxo
+
+O ciclo de vida do trabalho planejado é o da Engineering OS, aplicado pelo
+[Project Context](docs/engineering/PROJECT_CONTEXT.md): item de roadmap selecionado
+por humano → `feature.md` → plano → execução → evidência → gate humano.
+
+Para qualquer mudança:
 
 1. Confirme o objetivo e o critério de aceite.
 2. Leia o roteiro aplicável em [docs/INDEX.md](docs/INDEX.md).
 3. Classifique a mudança: produto, interface, arquitetura, IA, segurança ou operação.
-4. Crie RFC quando houver mais de uma solução materialmente diferente.
-5. Crie ADR quando a decisão for transversal, difícil de reverter ou afetar NFRs.
-6. Implemente em incrementos verificáveis.
-7. Atualize contratos e documentação no mesmo conjunto de mudanças.
-8. Execute testes e evals proporcionais ao risco.
+4. Decisão com impacto durável segue o [processo de ADR](docs/adr/README.md);
+   alternativas materialmente diferentes podem passar antes por RFC (abaixo).
+5. Implemente em incrementos verificáveis.
+6. Atualize contratos e documentação no mesmo conjunto de mudanças.
+7. Execute testes e evals proporcionais ao risco.
 
 ## Quando usar RFC
 
@@ -26,7 +32,8 @@ a proposta:
 - Altera retenção, privacidade ou modelo de confiança.
 - Possui alternativas com trade-offs reais.
 
-RFC aprovada pode resultar em um ou mais ADRs.
+RFC aprovada pode resultar em um ou mais ADRs, sempre pelo
+[processo de ADR](docs/adr/README.md).
 
 ## Commits
 

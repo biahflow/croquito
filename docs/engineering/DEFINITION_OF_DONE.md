@@ -2,9 +2,13 @@
 
 Status: Accepted  
 Responsável: Engineering / Product  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-18
 
 Uma mudança está pronta quando todos os itens aplicáveis foram atendidos.
+
+Este DoD soma-se ao Definition of Done global da Engineering OS
+(`BASELINE → CHANGE → FINAL`, `BUILD REPORT` por tarefa) e o especializa para este
+produto; ele não o substitui nem enfraquece.
 
 ## Produto e contrato
 
