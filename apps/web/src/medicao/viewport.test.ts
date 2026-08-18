@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { PlateBox } from "./api";
+import type { TakeoffPacket } from "@croquito/contracts";
+
 import {
   bboxRect,
   clampZoom,
@@ -12,6 +13,8 @@ import {
   ZOOM_STEP,
   type PinCircle,
 } from "./viewport";
+
+type PlateBox = TakeoffPacket.PlateBox;
 
 describe("clampZoom", () => {
   it("mantém o zoom dentro dos limites e trata valor inválido", () => {

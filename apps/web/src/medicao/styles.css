@@ -830,5 +830,49 @@ p {
   font-weight: 700;
 }
 
+/* Rodadas -------------------------------------------------------------------- */
+/* Escolha da rodada: uma linha por rodada, com obra, período e etapa por extenso. */
+.rodadas-lista {
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.rodada-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+/* Overlay das âncoras --------------------------------------------------------- */
+/* O desenho publicado pelo servidor, com a idade dele. A borda tracejada é redundância
+   do texto que já vai no `summary` ("desenho do pacote anterior"): cor e forma nunca
+   substituem a palavra. */
+.overlay-bloco {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.overlay-bloco.overlay-vencido {
+  border-style: dashed;
+  border-color: #b47512;
+}
+
+.overlay-imagem {
+  display: block;
+  max-width: 100%;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+}
+
 /* Fecha o `.jornada-medicao` aberto no topo do arquivo. */
 }

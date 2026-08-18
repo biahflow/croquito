@@ -1,23 +1,85 @@
 /**
- * Corpos de requisição do servidor local, derivados dos rascunhos da tela.
+ * Corpos de requisição da medição `/v1`, derivados dos rascunhos da tela.
  *
- * Espelham o contrato de `services/worker/src/croquito_worker/valuation/local_server.py`:
- * campo vazio é omitido em vez de ir como string vazia (`""` seria uma correção do dado,
- * não a ausência de correção), e identidade/horário nunca aparecem — o servidor recusaria
+ * Espelham o contrato das rotas de `services/api/src/croquito_api/main.py`: campo vazio é
+ * omitido em vez de ir como string vazia (`""` seria uma correção do dado, não a ausência
+ * de correção), e identidade/horário nunca aparecem — o servidor recusaria
  * (`extra="forbid"`), e mandá-los seria pedir para carimbar decisão em nome de outra
- * pessoa. Isto ainda monta o formato do servidor local, com guarda por digest; a conversão
- * para `base_version` é de uma tarefa seguinte.
+ * pessoa. Toda mutação cita `base_version`: a guarda otimista é da rodada e vale para a
+ * cadeia inteira.
+ *
+ * Módulo puro de propósito: é aqui que a regra "o que sai no corpo" fica testável sem
+ * transporte.
  */
 
-import type { CalcBuildDraft, CodeDecisionDraft, TakeoffDecisionDraft } from "./api";
+import type {
+  CodeDecisionDraft,
+  CreateRoundDraft,
+  TakeoffDecisionDraft,
+} from "./api";
+
+/** Corpo mínimo de toda mutação da rodada: só a guarda de concorrência. */
+export function versionBody(baseVersion: number): { base_version: number } {
+  return { base_version: baseVersion };
+}
+
+/**
+ * Mesmo padrão que o domínio exige de `WorksiteBulletin` (`WORKSITE_KEY_PATTERN`) e que a
+ * rota repete. A chave é IMUTÁVEL na rodada: aceitá-la livre faria a rodada nascer válida
+ * e só quebrar na construção do boletim, dezenas de decisões depois.
+ */
+export const WORKSITE_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{2,63}$/;
+
+/**
+ * Motivo, em língua de obra, de a chave da obra não servir — ou `null` quando ela serve.
+ * A recusa do servidor continua valendo; esta é só a que evita a viagem.
+ */
+export function worksiteKeyError(value: string): string | null {
+  const key = value.trim();
+  if (key.length === 0) {
+    return "Informe a chave da obra.";
+  }
+  if (!WORKSITE_KEY_PATTERN.test(key)) {
+    return (
+      "A chave da obra aceita apenas minúsculas, números e hífen, começa por letra ou " +
+      "número e tem de 3 a 64 caracteres (ex.: praca-sintetica-oeste)."
+    );
+  }
+  return null;
+}
+
+/**
+ * Corpo do `POST /v1/valuation-rounds`. `period_number` é o único inteiro do contrato; o
+ * catálogo entra pelo `upload_id` do presign, nunca embutido no JSON.
+ */
+export function createRoundBody(
+  draft: CreateRoundDraft,
+): Record<string, string | number> {
+  const body: Record<string, string | number> = {
+    worksite_key: draft.worksiteKey.trim(),
+    worksite_name: draft.worksiteName.trim(),
+    catalog_upload_id: draft.catalogUploadId,
+    reference_label: draft.referenceLabel.trim(),
+    period_number: Number(draft.periodNumber.trim()),
+  };
+  const address = draft.address?.trim();
+  if (address) {
+    body.address = address;
+  }
+  const contractLabel = draft.contractLabel?.trim();
+  if (contractLabel) {
+    body.contract_label = contractLabel;
+  }
+  return body;
+}
 
 export function takeoffDecisionBody(
   draft: TakeoffDecisionDraft,
-): Record<string, string> {
-  const body: Record<string, string> = {
+): Record<string, string | number> {
+  const body: Record<string, string | number> = {
+    ...versionBody(draft.baseVersion),
     item_id: draft.itemId,
     action: draft.action,
-    base_packet_sha256: draft.basePacketSha256,
   };
   const optional: [string, string | undefined][] = [
     ["quantity", draft.quantity],
@@ -34,30 +96,33 @@ export function takeoffDecisionBody(
   return body;
 }
 
+/**
+ * Corpo do `POST .../code-assignments/decisions`. A rota exige justificativa na rejeição
+ * (é ela que vira o texto do pedido de aditivo) e recusa `code` junto dela; a tela já
+ * manda só o que cabe em cada ato.
+ */
 export function codeDecisionBody(
   draft: CodeDecisionDraft,
-): Record<string, string> {
-  const body: Record<string, string> = {
+): Record<string, string | number> {
+  const body: Record<string, string | number> = {
+    ...versionBody(draft.baseVersion),
     item_id: draft.itemId,
     action: draft.action,
   };
   const code = draft.code?.trim();
-  if (code) {
+  if (code && draft.action === "confirm") {
     body.code = code;
   }
   const note = draft.note?.trim();
   if (note) {
     body.note = note;
   }
-  if (draft.baseAssignmentsSha256) {
-    body.base_assignments_sha256 = draft.baseAssignmentsSha256;
-  }
   return body;
 }
 
 /**
  * Termo de busca para recuperar a descrição completa de um código já confirmado, via
- * `GET /catalog/search`. O servidor tokeniza o código (`lexical_tokens`, NFKD sem
+ * `GET .../catalog/search`. O servidor tokeniza o código (`lexical_tokens`, NFKD sem
  * acento) e descarta token com menos de dois caracteres, então o sufixo de variante
  * entre parênteses (`(A)`, `(B)`, `(/)`) já sai da busca sozinho na maioria dos casos —
  * esta função só existe para o caso em que ele não sair: remove o sufixo primeiro e,
@@ -68,40 +133,4 @@ export function codeSearchTerm(code: string): string {
   const trimmed = code.trim();
   const withoutSuffix = trimmed.replace(/\([^)]*\)\s*$/, "").trim();
   return withoutSuffix.length > 0 ? withoutSuffix : trimmed.slice(0, 10);
-}
-
-/** Corpo do `POST /calc/build`; `period_number` é o único inteiro do contrato. */
-export function calcBuildBody(
-  draft: CalcBuildDraft,
-): Record<string, string | number> {
-  const body: Record<string, string | number> = {
-    worksite_key: draft.worksiteKey.trim(),
-    worksite_name: draft.worksiteName.trim(),
-    period_number: Number(draft.periodNumber.trim()),
-    reference_label: draft.referenceLabel.trim(),
-  };
-  const address = draft.address?.trim();
-  if (address) {
-    body.address = address;
-  }
-  const contractLabel = draft.contractLabel?.trim();
-  if (contractLabel) {
-    body.contract_label = contractLabel;
-  }
-  return body;
-}
-
-/**
- * Corpo do `POST /suggestions/recompute`. A chave só entra quando há digest-base a
- * citar — omitida, e não vazia, porque o servidor recusa `base_suggestions_sha256`
- * citado sem shortlist prévia (`LOCAL_BASE_DIGEST_UNEXPECTED`).
- */
-export function suggestionsRecomputeBody(
-  baseSuggestionsSha256: string | null,
-): Record<string, string> {
-  const body: Record<string, string> = {};
-  if (baseSuggestionsSha256) {
-    body.base_suggestions_sha256 = baseSuggestionsSha256;
-  }
-  return body;
 }

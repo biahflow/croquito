@@ -1,19 +1,21 @@
 /**
- * Jornada da homologação: prancha → revisão do takeoff → códigos → boletim.
+ * Jornada da medição: prancha → revisão do takeoff → códigos → boletim.
  *
- * A máquina de estados real é do servidor local, e ele é quem recusa: upload de segunda
- * prancha (`LOCAL_ROUND_ALREADY_HAS_PLATE`), extração em andamento
- * (`LOCAL_EXTRACTION_BUSY`), sugestão de código antes da revisão completa
- * (`LOCAL_TAKEOFF_REVIEW_INCOMPLETE`), boletim com item confirmado sem código
+ * A máquina de estados real é da API, e é ela quem recusa: segunda prancha na rodada
+ * (`ROUND_PLATE_ALREADY_PRESENT`), extração em voo (`EXTRACTION_IN_PROGRESS`), sugestão de
+ * código antes da revisão completa (`TAKEOFF_REVIEW_INCOMPLETE`), etapa fora de ordem
+ * (`ROUND_STAGE_NOT_READY`), boletim com item confirmado sem código
  * (`CALC_ASSIGNMENT_MISSING`), re-decisão (`*_ALREADY_*`). Esta derivação apenas
- * **espelha** o `GET /state` já carregado, para a tela mostrar uma etapa por vez com o
- * motivo escrito em língua de obra. Nenhum gate daqui substitui os do servidor: se as
- * duas leituras discordarem, quem manda é a recusa dele.
+ * **espelha** o estado da rodada já carregado (`GET /v1/valuation-rounds/{round_id}`),
+ * para a tela mostrar uma etapa por vez com o motivo escrito em língua de obra. Nenhum
+ * gate daqui substitui os do servidor: se as duas leituras discordarem, quem manda é a
+ * recusa dele.
  *
  * Módulo puro: os motivos são frases de obra e precisam ser testáveis sem DOM e sem rede.
  */
 
-import type { ExtractionState, RunState } from "./api";
+import { extractionFailureMessage } from "./labels";
+import type { RoundState, RoundStateExtraction, RoundStatePlate } from "./api";
 
 export type EtapaId = "prancha" | "revisao" | "codigos" | "boletim";
 
@@ -74,51 +76,66 @@ function semEstado(reason: string): Jornada {
   };
 }
 
-/** Resumo da etapa Prancha enquanto não há takeoff — a leitura da extração automática. */
-function pranchaSummarySemTakeoff(extracao: ExtractionState): string {
-  switch (extracao.status) {
+/**
+ * Resumo da etapa Prancha enquanto não há takeoff — a leitura da extração automática.
+ *
+ * A presença da prancha vem de `plate.present` (coluna da rodada) e o motivo da falha, do
+ * `failure_code` traduzido: a API não manda mensagem pronta, e a frase de obra é escrita
+ * aqui a partir do código estável.
+ */
+function pranchaSummarySemTakeoff(
+  extraction: RoundStateExtraction,
+  plate: RoundStatePlate,
+): string {
+  switch (extraction.status) {
+    case "queued":
+      return "Leitura da legenda enfileirada; aguardando o processamento.";
     case "running":
       return "Lendo a legenda da prancha…";
     case "failed":
-      return extracao.message ?? "A extração automática da prancha falhou.";
-    case "unavailable":
-      return extracao.message ?? "Extração automática indisponível no servidor.";
+      return extractionFailureMessage(extraction.failure_code);
     default:
-      return extracao.plate_pdf_present
-        ? "Prancha ingerida; a extração automática ainda não foi disparada."
+      return plate.present
+        ? "Prancha enviada; a leitura automática ainda não foi disparada."
         : "Nenhuma prancha enviada nesta rodada.";
   }
 }
 
 /** Motivo do bloqueio de revisão/códigos/boletim enquanto não há takeoff. */
-function motivoSemTakeoff(extracao: ExtractionState): string {
-  switch (extracao.status) {
+function motivoSemTakeoff(
+  extraction: RoundStateExtraction,
+  plate: RoundStatePlate,
+): string {
+  switch (extraction.status) {
+    case "queued":
+      return "a leitura automática da legenda está na fila";
     case "running":
-      return "a extração automática da prancha está em andamento";
+      return "a leitura automática da legenda está em andamento";
     case "failed":
-      return extracao.message ?? "a extração automática da prancha falhou";
-    case "unavailable":
-      return extracao.message ?? "a extração automática está indisponível no servidor";
+      return extractionFailureMessage(extraction.failure_code);
     default:
-      return "a rodada ainda não tem prancha enviada; use a etapa Prancha para enviar";
+      return plate.present
+        ? "a prancha ainda não virou pacote de takeoff; dispare a leitura automática na etapa Prancha"
+        : "a rodada ainda não tem prancha enviada; use a etapa Prancha para enviar";
   }
 }
 
-export function derivarEtapas(state: RunState | null): Jornada {
+export function derivarEtapas(state: RoundState | null): Jornada {
   if (state === null) {
     return semEstado("aguarda a leitura do estado da rodada");
   }
   const takeoff = state.takeoff;
-  const extracao = state.extracao;
+  const extraction = state.extraction;
+  const plate = state.plate;
 
   if (!takeoff.present) {
-    const motivo = motivoSemTakeoff(extracao);
+    const motivo = motivoSemTakeoff(extraction, plate);
     const etapas: Etapa[] = [
       {
         id: "prancha",
         title: ETAPA_TITLES.prancha,
         status: "available",
-        summary: pranchaSummarySemTakeoff(extracao),
+        summary: pranchaSummarySemTakeoff(extraction, plate),
       },
       {
         id: "revisao",

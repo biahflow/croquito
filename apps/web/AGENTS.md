@@ -46,13 +46,15 @@ enquanto a jornada existir, e o critério de aceite VAL-07 as cita.
 
 - A tela **nunca** soma, multiplica ou arredonda dinheiro/quantidade: exibe as strings
   decimais que o servidor mandou (`format.ts` só troca pontuação, e é testado nisso).
-- Mutações sempre citam o digest-base (`base_packet_sha256`/`base_assignments_sha256`)
-  e nunca carregam `reviewer_id`, `reviewer_role`, `decided_at` ou `decision_id` — o
-  servidor recusa e o client não tenta.
+- Mutações sempre citam `base_version` da rodada, mandam `Idempotency-Key` e nunca
+  carregam `reviewer_id`, `reviewer_role`, `decided_at` ou `decision_id` — o servidor
+  recusa e o client não tenta.
 - Decisão é por item; nada nasce pré-marcado; "confirmar tudo" não existe.
 - Cor nunca é o único indicador (estado por extenso + forma no SVG); erro é persistente
-  (`role="alert"`), sucesso pode expirar; `LOCAL_STATE_MOVED` preserva o formulário e
-  oferece recarregar.
+  (`role="alert"`), sucesso pode expirar; `409 REVISION_CONFLICT` preserva o formulário e
+  oferece recarregar, e o overlay vencido do takeoff
+  ([ADR-0030](../../docs/adr/0030-overlay-do-takeoff-reconstruido-na-fila.md)) é declarado
+  em palavra, nunca só na borda.
 - Chamada que grava artefato no servidor só por gesto explícito do usuário (ex.: o
   cálculo da shortlist fica atrás de botão que declara o que será gravado).
 - Nenhum dado de obra em `localStorage`; nada de telemetry com conteúdo de catálogo ou
@@ -66,10 +68,12 @@ enquanto a jornada existir, e o critério de aceite VAL-07 as cita.
 - Acessibilidade de issues/properties.
 - E2E fácil, médio e difícil.
 - Performance do canvas conforme NFR.
-- Medição: módulos puros com `*.test.ts` irmão (derivação de etapas, parsing do envelope
-  de erro incl. `LOCAL_STATE_MOVED`, formatação pt-BR com round-trip textual, heurística
-  fornecimento×execução com frases reais do catálogo, viewport) e `MedicaoApp.test.tsx`
-  com SSR estático do estado sem servidor, sem dados fabricados.
+- Medição: módulos puros com `*.test.ts` irmão (derivação de etapas, classificação do
+  envelope de erro incl. `REVISION_CONFLICT` e o código de domínio em `details.code`,
+  idade do overlay, formatação pt-BR com round-trip textual, heurística
+  fornecimento×execução com frases reais do catálogo, viewport), transporte com `fetch`
+  mockado provando caminho, `Idempotency-Key` e `base_version`, e `MedicaoApp.test.tsx`
+  com SSR estático do estado sem sessão, sem dados fabricados.
 
 ## Smoke headless (local, nunca CI)
 
@@ -114,7 +118,7 @@ Mudança de comportamento atualiza FDD/acceptance; mudança de contrato atualiza
 e tipos gerados.
 
 Na jornada de medição, mudança de comportamento atualiza a seção de medição do FDD e os
-critérios VAL-*; mudança no contrato do servidor de medição é feita primeiro em
-`services/worker/src/croquito_worker/valuation/local_server.py` (testes lá) e só depois
-refletida aqui.
+critérios VAL-*; mudança de contrato é feita primeiro nas rotas de `/v1`
+(`services/api/src/croquito_api/main.py`, testes lá) e na seção "Medição de obra" do
+[API Contract](../../docs/architecture/API_CONTRACT.md), e só depois refletida aqui.
 

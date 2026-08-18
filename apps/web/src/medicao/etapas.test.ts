@@ -1,41 +1,48 @@
 import { describe, expect, it } from "vitest";
-import type { ExtractionState, RunState } from "./api";
+import type { RoundState, RoundStateExtraction } from "./api";
 import { derivarEtapas, etapaStatusLabel, type EtapaId } from "./etapas";
 
-const EXTRACAO_DONE: ExtractionState = {
+/**
+ * O estado abaixo é a FORMA que `GET /v1/valuation-rounds/{round_id}` devolve
+ * (`round_state_payload`), a mesma que `tests/e2e/test_valuation_v1_chain.py` lê: chaves
+ * em inglês, `extraction`/`plate` no lugar do que era diretório, e nenhuma mensagem pronta
+ * — a frase da falha é escrita a partir do `failure_code` estável.
+ */
+const EXTRACTION_DONE: RoundStateExtraction = {
   status: "done",
-  error_code: null,
-  message: "extração concluída; todo item nasce para a revisão do orçamentista",
-  details: null,
-  execution: null,
-  consented_source_sha256: "c".repeat(64),
-  arm: "anthropic:claude-fixture",
-  plate_pdf_present: true,
-  pages: 1,
-  page_number: 1,
-  notes: [],
+  extraction_id: "0197f2a0-0000-7000-8000-0000000000ee",
+  failure_code: null,
+  lineage_present: true,
+  updated_at: "2026-08-17T12:00:00+00:00",
 };
 
 function estado(overrides: {
-  takeoff?: Partial<RunState["takeoff"]>;
-  codes?: Partial<RunState["codes"]>;
-  bulletin?: Partial<RunState["bulletin"]>;
-  extracao?: Partial<ExtractionState>;
-}): RunState {
+  takeoff?: Partial<RoundState["takeoff"]>;
+  codes?: Partial<RoundState["codes"]>;
+  bulletin?: Partial<RoundState["bulletin"]>;
+  extraction?: Partial<RoundStateExtraction>;
+  plate?: Partial<RoundState["plate"]>;
+}): RoundState {
   return {
-    server_version: "local-valuation-server-v1",
-    root: "/rodada",
-    reviewer_id: "orcamentista-de-teste",
+    round_id: "0197f2a0-0000-7000-8000-000000000001",
+    version: 4,
+    status: "OPEN",
     reviewer_role: "orcamentista",
-    artifacts: {},
-    busca_semantica: {
-      status: "unavailable",
-      message: "busca semântica indisponível: sem índice",
-      index_present: false,
-      model_id: null,
+    worksite_key: "praca-sintetica-oeste",
+    worksite_name: "PRACA SINTETICA OESTE",
+    reference_label: "MEDICAO SINTETICA 01/2026",
+    period_number: 1,
+    address: null,
+    contract_label: null,
+    revision_id: "0197f2a0-0000-7000-8000-0000000000f1",
+    revision_version: 1,
+    catalog: {
+      source_sha256: "c".repeat(64),
+      summary: { source_label: "CATALOGO SINTETICO", entries: 5 },
     },
-    images: { plate: { present: true, filename: "prancha.png" }, overlay: { present: true } },
-    extracao: { ...EXTRACAO_DONE, ...overrides.extracao },
+    artifacts: { takeoff_packet_json: "a".repeat(64) },
+    plate: { present: true, source_sha256: "d".repeat(64), page_count: 1, ...overrides.plate },
+    extraction: { ...EXTRACTION_DONE, ...overrides.extraction },
     takeoff: {
       present: true,
       packet_sha256: "a".repeat(64),
@@ -48,6 +55,8 @@ function estado(overrides: {
       confirmed: 0,
       rejected: 0,
       pending: 7,
+      anchors_registered: 7,
+      anchors_raw: 0,
       ...overrides.takeoff,
     },
     codes: {
@@ -62,10 +71,12 @@ function estado(overrides: {
     },
     bulletin: { present: false, valuation_sha256: null, ...overrides.bulletin },
     dossier: { present: false, dossier_sha256: null },
+    created_at: "2026-08-17T11:00:00+00:00",
+    updated_at: "2026-08-17T12:00:00+00:00",
   };
 }
 
-function porId(state: RunState | null, id: EtapaId) {
+function porId(state: RoundState | null, id: EtapaId) {
   const etapa = derivarEtapas(state).etapas.find((candidate) => candidate.id === id);
   if (!etapa) {
     throw new Error(`etapa ${id} não derivada`);
@@ -96,12 +107,8 @@ describe("derivarEtapas", () => {
   it("rodada sem prancha nenhuma: Prancha fica em aberto, o resto bloqueado com o motivo", () => {
     const state = estado({
       takeoff: { present: false },
-      extracao: {
-        status: "idle",
-        message: "nenhuma prancha enviada nesta rodada",
-        plate_pdf_present: false,
-        pages: null,
-      },
+      plate: { present: false, source_sha256: null, page_count: null },
+      extraction: { status: "idle", extraction_id: null, lineage_present: false },
     });
     const jornada = derivarEtapas(state);
 
@@ -114,60 +121,65 @@ describe("derivarEtapas", () => {
     expect(jornada.etapaAtiva).toBe("prancha");
   });
 
-  it("prancha ingerida, extração em andamento: Prancha em aberto e revisão bloqueada pelo motivo certo", () => {
+  /**
+   * Prancha associada e leitura ainda não disparada é caminho normal: em `/v1` associar a
+   * prancha e pedir a extração são dois atos, e o segundo pode ter sido recusado por
+   * entitlement ou ambiente sem provider.
+   */
+  it("prancha enviada sem leitura disparada manda de volta à etapa Prancha", () => {
     const state = estado({
       takeoff: { present: false },
-      extracao: {
-        status: "running",
-        message: "extração automática em andamento; chamada paga configurada no servidor",
-        plate_pdf_present: true,
-        pages: 1,
-      },
+      extraction: { status: "idle", extraction_id: null, lineage_present: false },
     });
 
-    expect(porId(state, "prancha").status).toBe("available");
-    expect(porId(state, "prancha").summary).toContain("Lendo a legenda");
+    expect(porId(state, "prancha").summary).toContain("ainda não foi disparada");
     expect(porId(state, "revisao").blockedReason).toContain(
-      "extração automática da prancha está em andamento",
+      "dispare a leitura automática",
     );
-    expect(porId(state, "codigos").blockedReason).toContain("em andamento");
-    expect(porId(state, "boletim").blockedReason).toContain("em andamento");
   });
 
-  it("extração falhou: o motivo do bloqueio é a mensagem declarada pelo servidor", () => {
+  it("leitura na fila e leitura em andamento têm motivos distintos", () => {
+    const naFila = estado({
+      takeoff: { present: false },
+      extraction: { status: "queued" },
+    });
+    const rodando = estado({
+      takeoff: { present: false },
+      extraction: { status: "running" },
+    });
+
+    expect(porId(naFila, "prancha").summary).toContain("enfileirada");
+    expect(porId(naFila, "revisao").blockedReason).toContain("está na fila");
+    expect(porId(rodando, "prancha").summary).toContain("Lendo a legenda");
+    expect(porId(rodando, "revisao").blockedReason).toContain("em andamento");
+    expect(porId(rodando, "boletim").blockedReason).toContain("em andamento");
+  });
+
+  it("leitura que falhou traduz o código estável da rodada em frase de obra", () => {
     const state = estado({
       takeoff: { present: false },
-      extracao: {
+      extraction: {
         status: "failed",
-        error_code: "PROVIDER_EXECUTION_FAILED",
-        message: "a chamada ao provider falhou; nenhum artefato foi publicado",
-        plate_pdf_present: true,
-        pages: 1,
+        failure_code: "PROVIDER_EXECUTION_FAILED",
+        lineage_present: false,
       },
     });
 
     expect(porId(state, "prancha").summary).toBe(
-      "a chamada ao provider falhou; nenhum artefato foi publicado",
+      "A chamada ao provider falhou; nenhum artefato foi publicado nesta rodada.",
     );
     expect(porId(state, "revisao").blockedReason).toBe(
-      "a chamada ao provider falhou; nenhum artefato foi publicado",
+      "A chamada ao provider falhou; nenhum artefato foi publicado nesta rodada.",
     );
   });
 
-  it("extração indisponível: o motivo do bloqueio é a mensagem declarada pelo servidor", () => {
+  it("falha sem código conhecido não vira frase inventada", () => {
     const state = estado({
       takeoff: { present: false },
-      extracao: {
-        status: "unavailable",
-        error_code: "LOCAL_EXTRACTION_UNAVAILABLE",
-        message: "extração automática indisponível: teto de gasto não configurado no servidor",
-        plate_pdf_present: true,
-        pages: 1,
-      },
+      extraction: { status: "failed", failure_code: "CODIGO_NOVO_DO_SERVIDOR" },
     });
 
-    expect(porId(state, "prancha").summary).toContain("teto de gasto não configurado");
-    expect(porId(state, "revisao").blockedReason).toContain("teto de gasto não configurado");
+    expect(porId(state, "prancha").summary).toContain("CODIGO_NOVO_DO_SERVIDOR");
   });
 
   it("prancha lida vira etapa concluída assim que o takeoff existe", () => {

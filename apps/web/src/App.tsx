@@ -31,13 +31,11 @@ function currentRoute(): Route {
  * - **Croqui exige sessão, sempre.** Evidência e decisão de cena são de tenant
  *   autenticado; sem OIDC configurado o app já mostrava a tela anônima antes desta casca
  *   existir, e isso não muda.
- * - **Medição exige sessão QUANDO há OIDC configurado** — o modo hospedado do
- *   ADR-0026 e, adiante, a API `/v1` do ADR-0028 (D9). Sem OIDC configurado, este é o
- *   caminho local do **ADR-0020**: `croquito-valuation serve` na máquina da orçamentista,
- *   sem autenticação, com a identidade do revisor vindo da flag do processo. O ADR-0028
- *   declara explicitamente que NÃO supersede o ADR-0020, e a F-003 lista a remoção do
- *   servidor local como fora de escopo: fechar esta jornada atrás de uma sessão que
- *   naquele caminho nunca existe seria removê-lo por tabela.
+ * - **Medição exige sessão QUANDO há OIDC configurado** — a API `/v1` do ADR-0028 (D9).
+ *   Sem OIDC configurado a jornada continua ALCANÇÁVEL, e é ela quem diz o que falta: as
+ *   rotas de medição são todas autenticadas, então a tela pede a sessão em vez de chamar
+ *   a API. Fechá-la aqui apagaria a distinção entre "não há jornada" e "entre para abrir
+ *   uma rodada", e a remoção do caminho local do ADR-0020 é tarefa própria da F-003.
  *
  * `hasSession` é booleano de propósito: a renovação silenciosa troca o objeto da sessão, e
  * o que decide o acesso é haver uma, não qual é.
@@ -110,6 +108,18 @@ export function App() {
     },
     [route.kind],
   );
+
+  /**
+   * A rodada aberta na medição é declarada na URL (`?rodada=<id>`), como o `?job` do
+   * croqui: sem isso, recarregar a página devolveria a orçamentista à lista de rodadas no
+   * meio de uma revisão. Quem escolhe a rodada é a jornada; a casca só escreve o endereço,
+   * sem remontar nada — `replaceState` não navega.
+   */
+  const handleOpenRound = useCallback((roundId: string) => {
+    const next: Route = { kind: "medicao", roundId };
+    setRoute(next);
+    window.history.replaceState(null, "", routeSearch(next));
+  }, []);
 
   const handleSessionLost = useCallback((notice: string) => {
     void clearSession();
@@ -224,13 +234,15 @@ export function App() {
         </p>
       ) : null}
 
-      {/* A medição ainda fala com o servidor de medição, não com a API `/v1`: este passo
-          moveu as telas de diretório e a troca de contrato é a rodada seguinte da F-003.
-          A base do servidor é lida em `medicao/api.ts`, e a sessão desce por prop —
-          `null` no caminho local do ADR-0020, e é assim que ela chega ao header. */}
+      {/* A medição fala com a API `/v1` autenticada (ADR-0028): a sessão desce por prop e
+          a rodada aberta vem da URL, para sobreviver a um reload. */}
       {route.kind === "medicao" ? (
         medicaoAberta ? (
-          <MedicaoApp session={session} />
+          <MedicaoApp
+            session={session}
+            roundId={route.roundId}
+            onOpenRound={handleOpenRound}
+          />
         ) : (
           telaAnonima
         )

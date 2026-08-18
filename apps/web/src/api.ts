@@ -427,7 +427,39 @@ import { readLastRenewFailure, renewAccessToken } from "./auth";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
-async function apiJson<T>(
+/**
+ * Recusa da API com o envelope aninhado (`{detail: {code, detail, details}}`) preservado.
+ *
+ * `message` continua sendo a frase que este módulo sempre montou — quem só a exibe não
+ * muda de comportamento. O que a classe acrescenta é o que a jornada de medição precisa
+ * ler sem reabrir a resposta: o `code` estável (para escolher a frase de obra), o status e
+ * o `details`, onde viaja o código de invariante de domínio dentro de
+ * `DOMAIN_VALIDATION_FAILED` (ADR-0028 D4). Resposta sem envelope legível não vira código
+ * inventado: `code` fica `null` e sobra o status.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  readonly detail: string | null;
+  readonly details: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    status: number,
+    code: string | null,
+    detail: string | null,
+    details: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
+    this.details = details;
+  }
+}
+
+export async function apiJson<T>(
   path: string,
   accessToken: string,
   init?: RequestInit,
@@ -450,16 +482,26 @@ async function apiJson<T>(
   }
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as {
-      detail?: { code?: string; detail?: string };
+      detail?: {
+        code?: string;
+        detail?: string;
+        details?: Record<string, unknown>;
+      };
     } | null;
-    const code = payload?.detail?.code;
+    const code = payload?.detail?.code ?? null;
+    const detail = payload?.detail?.detail ?? null;
+    const details = payload?.detail?.details;
     const renewFailure =
       response.status === 401 ? readLastRenewFailure() : null;
     const cause = renewFailure ? ` A renovação falhou: ${renewFailure}.` : "";
-    throw new Error(
+    throw new ApiError(
       code
-        ? `${code}: ${payload?.detail?.detail ?? "Falha na API."}${cause}`
+        ? `${code}: ${detail ?? "Falha na API."}${cause}`
         : `Falha na API (${response.status}).${cause}`,
+      response.status,
+      code,
+      detail,
+      details && typeof details === "object" ? details : {},
     );
   }
   return response.json() as Promise<T>;

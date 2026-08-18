@@ -8,44 +8,48 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { User } from "oidc-client-ts";
+import type { CodeAssignmentSet, CodeSuggestionSet } from "@croquito/contracts";
 
 import {
-  extractPlate,
-  fetchImageObjectUrl,
+  ApiError,
+  associatePlate,
+  createPlateExtraction,
+  createRound,
   getBulletin,
   getCodes,
   getDossier,
-  getState,
+  getPlate,
+  getRoundState,
   getSuggestions,
   getTakeoff,
-  MedicaoApiError,
-  PLATE_IMAGE_PATH,
+  getTakeoffOverlay,
+  listRounds,
   postCalcBuild,
   postCodeDecision,
   postDossierBuild,
   postSuggestionsRecompute,
   postTakeoffDecision,
   searchCatalog,
-  setAccessTokenProvider,
-  uploadPlate,
+  uploadCatalog,
+  uploadPlateFile,
   type BulletinResponse,
   type CatalogSearchResponse,
-  type CodeAssignment,
-  type CodeCandidate,
   type CodesResponse,
-  type CodeSuggestionSet,
   type DossierResponse,
-  type ExtractionState,
-  type RunState,
+  type OverlayResponse,
+  type RoundState,
+  type RoundStateExtraction,
+  type RoundSummary,
+  type SuggestionsResponse,
   type TakeoffItem,
   type TakeoffResponse,
 } from "./api";
-import { isOidcConfigured, signOut } from "../auth";
+import { signOut } from "../auth";
 import { BUSCA_DEBOUNCE_MS, consultaIncremental, resumoDaBusca } from "./busca";
 import { derivarEtapas, etapaStatusLabel, type Etapa, type EtapaId } from "./etapas";
-import { isAbortError, isStateMoved } from "./errors";
+import { describeError, isAbortError, recusaDeMutacao } from "./errors";
 import { classifyExecucao } from "./execucao";
-import { plateImageSource } from "./images";
+import { overlayFreshness } from "./images";
 import { extractInclusoes, type Inclusao } from "./inclusoes";
 import {
   formatDecimalText,
@@ -61,17 +65,20 @@ import {
   AVISO_DOSSIE_GERADO,
   AVISO_DOSSIE_PREVIA,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
+  AVISO_MEDICAO,
   AVISO_QUANTIDADE_AMBIGUA,
-  avisoDaFerramenta,
-  descricaoCalculoShortlist,
+  DESCRICAO_CALCULO_SHORTLIST,
   DICA_QUANTIDADE,
-  errorMessage,
+  extractionFailureMessage,
+  extractionStatusLabel,
   itemStatusLabel,
+  MENSAGEM_RODADA_MUDOU,
   recipeLabel,
+  stageLabel,
   unitLabel,
   unitMismatchHint,
 } from "./labels";
-import { codeSearchTerm } from "./requests";
+import { codeSearchTerm, worksiteKeyError } from "./requests";
 import { itemAnchor } from "./takeoff";
 import {
   bboxRect,
@@ -90,8 +97,19 @@ import {
 /** Duração do aviso de sucesso; recusa nenhuma expira sozinha. */
 const TOAST_MS = 5000;
 
-/** Intervalo do poll do `/state` enquanto a extração automática está `running`. */
+/** Intervalo do poll do estado enquanto a leitura automática está na fila ou rodando. */
 const EXTRACTION_POLL_MS = 3000;
+
+/** Intervalo do poll do overlay enquanto ele está vencido (ADR-0030). */
+const OVERLAY_POLL_MS = 3000;
+
+/**
+ * Teto de tentativas do poll do overlay. Ele existe porque overlay vencido NÃO é erro: sem
+ * worker consumindo a fila o desenho fica vencido para sempre, e uma tela que consultasse
+ * o servidor a cada três segundos indefinidamente esconderia esse fato atrás de tráfego.
+ * Atingido o teto, a marca continua na tela e a atualização passa a ser um gesto.
+ */
+const OVERLAY_POLL_MAX = 10;
 
 type DecisionAction = "" | "confirm" | "reject";
 
@@ -112,7 +130,7 @@ const EMPTY_DECISION = {
   itemNote: "",
 };
 
-const EMPTY_CALC = {
+const EMPTY_ROUND_FORM = {
   worksiteKey: "",
   worksiteName: "",
   periodNumber: "",
@@ -121,24 +139,35 @@ const EMPTY_CALC = {
   contractLabel: "",
 };
 
-function describeError(error: unknown): string {
-  if (error instanceof MedicaoApiError) {
-    return errorMessage(error.code, error.detail);
+/**
+ * Leitura OBSERVACIONAL: a falha dela não derruba o carregamento da rodada.
+ *
+ * Vale só para a imagem da prancha e para o overlay das âncoras — os dois ilustram o que
+ * já foi decidido e não decidem nada. A ausência de qualquer um deles é declarada na tela
+ * ("imagem ainda não publicada", "sem desenho publicado"), então engolir a recusa aqui não
+ * esconde estado nenhum; o que ela evita é uma rodada inteira ficar sem boletim e sem
+ * dossiê na tela porque um PNG não estava publicado. Decisão, artefato e contagem nunca
+ * passam por aqui.
+ */
+async function leituraObservacional<T>(
+  leitura: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await leitura();
+  } catch {
+    return null;
   }
-  return error instanceof Error ? error.message : String(error);
-}
-
-/** Última pasta do caminho da rodada; é assim que a orçamentista chama a rodada. */
-function nomeDaRodada(root: string): string {
-  const parts = root.split("/").filter((part) => part.length > 0);
-  return parts.length === 0 ? root : parts[parts.length - 1];
 }
 
 /** Confirmado e com código — o único caso em que faz sentido buscar a descrição dele. */
 function isConfirmedWithCode(
-  assignment: CodeAssignment,
-): assignment is CodeAssignment & { code: string } {
-  return assignment.status === "confirmed" && assignment.code !== null;
+  assignment: CodeAssignmentSet.CodeAssignment,
+): assignment is CodeAssignmentSet.CodeAssignment & { code: string } {
+  return (
+    assignment.status === "confirmed" &&
+    typeof assignment.code === "string" &&
+    assignment.code.length > 0
+  );
 }
 
 /** Unidades divergem? A resposta do servidor manda; a comparação textual é o fallback. */
@@ -293,46 +322,47 @@ function CartaoCodigo({
 }
 
 /**
- * Estado da extração automática da prancha na etapa "Prancha". `done` fica discreto
- * (uma linha com modelo e custo); `running`/`failed`/`unavailable` ganham mais destaque,
- * porque são os estados em que o orçamentista precisa agir ou esperar. O texto de
- * erro/aviso é o que o servidor já escreveu em `extracao.message` — língua de obra,
- * pronta; a tela não reescreve.
+ * Estado da leitura automática da legenda na etapa "Prancha". `done` fica discreto;
+ * `queued`/`running`/`failed` ganham mais destaque, porque são os estados em que o
+ * orçamentista precisa agir ou esperar. A frase da falha é escrita a partir do
+ * `failure_code` estável da rodada — a API não manda mensagem pronta, e inventar uma sem
+ * código seria pior do que dizer o que se sabe.
  */
 function EstadoExtracao({
-  extracao,
+  extraction,
   onRetry,
   retrying,
 }: {
-  extracao: ExtractionState;
+  extraction: RoundStateExtraction;
   onRetry: () => void;
   retrying: boolean;
 }) {
   return (
     <div className="extracao-status">
-      {extracao.status === "running" ? (
+      <p className="dica">
+        Leitura automática da legenda: {extractionStatusLabel(extraction.status)}.
+      </p>
+      {extraction.status === "queued" || extraction.status === "running" ? (
         <p className="dica" role="status">
-          Lendo a legenda da prancha… isso pode levar alguns instantes.
+          {extraction.status === "queued"
+            ? "Pedido na fila; o processamento começa em instantes."
+            : "Lendo a legenda da prancha… isso pode levar alguns instantes."}
         </p>
-      ) : extracao.status === "done" ? (
+      ) : extraction.status === "done" ? (
         <p className="dica">
-          Extração concluída
-          {extracao.execution === null ? "" : ` — modelo ${extracao.execution.model_id}`}
-          {extracao.execution?.estimated_cost_usd == null
-            ? ""
-            : `, custo estimado US$ ${formatDecimalText(
-                extracao.execution.estimated_cost_usd,
-              )}`}
-          .
+          Leitura concluída
+          {extraction.lineage_present
+            ? " — o lineage da chamada (modelo, tokens, custo) ficou registrado na rodada."
+            : "."}
         </p>
-      ) : extracao.status === "failed" ? (
+      ) : extraction.status === "failed" ? (
         <>
           <p className="banner-erro" role="alert">
-            {extracao.message ?? "A extração automática falhou."}
-            {extracao.error_code === null ? null : (
+            {extractionFailureMessage(extraction.failure_code)}
+            {extraction.failure_code === null ? null : (
               <>
                 {" "}
-                <span className="mono">({extracao.error_code})</span>
+                <span className="mono">({extraction.failure_code})</span>
               </>
             )}
           </p>
@@ -342,29 +372,17 @@ function EstadoExtracao({
             onClick={onRetry}
             disabled={retrying}
           >
-            Tentar extração novamente
-          </button>
-        </>
-      ) : extracao.status === "unavailable" ? (
-        <>
-          <p className="aviso-fixo aviso-inline">
-            {extracao.message ?? "Extração automática indisponível no servidor."}
-          </p>
-          <button
-            type="button"
-            className="botao-secundario"
-            onClick={onRetry}
-            disabled={retrying}
-          >
-            Tentar extração novamente
+            Tentar leitura novamente
           </button>
         </>
       ) : (
-        // `idle` com prancha já ingerida: caso raro (rodada montada fora do upload da
-        // tela), mas sem botão o orçamentista ficaria sem saída dentro da UI.
         <>
           <p className="dica">
-            Prancha ingerida; a extração automática ainda não foi disparada.
+            Prancha enviada; a leitura automática ainda não foi disparada.
+          </p>
+          <p className="aviso-fixo aviso-inline">
+            Disparar a leitura é uma chamada paga de IA, autorizada por contrato do seu
+            tenant.
           </p>
           <button
             type="button"
@@ -372,45 +390,126 @@ function EstadoExtracao({
             onClick={onRetry}
             disabled={retrying}
           >
-            Disparar extração automática
+            Disparar leitura automática
           </button>
         </>
       )}
-      {extracao.notes.map((note) => (
-        <p key={note} className="dica">
-          {note}
-        </p>
-      ))}
     </div>
   );
 }
 
 /**
- * A sessão é da casca, não desta jornada: quem lê o OIDC, consome o authorization code
- * (que é de uso único) e renova o token é `App.tsx`. Aqui ela chega pronta.
+ * Overlay das âncoras: o desenho que o worker publica sobre a prancha, com a IDADE dele
+ * declarada em palavra (ADR-0030).
  *
- * `null` é estado legítimo, e é o que separa esta jornada da do croqui: sem OIDC
- * configurado a ferramenta é local (ADR-0020, `croquito-valuation serve` na máquina da
- * orçamentista), não existe sessão para exibir e nenhum header a mais é enviado.
+ * Ele é reconstruído fora do request path, por comando de fila: entre a decisão do
+ * orçamentista e o desenho novo, o que está aqui é do pacote anterior. Marcá-lo é melhor
+ * do que escondê-lo — um desenho vencido engana com a autoridade de um desenho —, e a
+ * marca é texto no `summary`, não só a borda tracejada.
  */
-export function MedicaoApp({ session }: { session: User | null }) {
-  // Modo hospedado (ADR-0026). Sem OIDC configurado — o servidor local na máquina do
-  // operador — `oidcAtivo` é `false` e tudo ligado à sessão fica inerte: nenhum header a
-  // mais, exatamente o comportamento do ADR-0020.
-  const oidcAtivo = isOidcConfigured();
+export function OverlayDoTakeoff({
+  overlay,
+  onRefresh,
+}: {
+  overlay: OverlayResponse;
+  onRefresh?: () => void;
+}) {
+  const estado = overlayFreshness(overlay);
+  if (estado === null) {
+    return null;
+  }
+  return (
+    <details className={`overlay-bloco ${estado.stale ? "overlay-vencido" : ""}`}>
+      <summary>Overlay das âncoras — {estado.label}</summary>
+      <p className="dica">{estado.explanation}</p>
+      {estado.stale ? (
+        <p className="aviso-fixo aviso-inline" role="status">
+          Desenho vencido: ele é do pacote{" "}
+          <span className="digest">{shortDigest(overlay.overlay_packet_sha256)}</span> e o
+          pacote atual é{" "}
+          <span className="digest">{shortDigest(overlay.packet_sha256)}</span>.
+        </p>
+      ) : null}
+      {overlay.present ? (
+        <img
+          className="overlay-imagem"
+          src={overlay.image_url}
+          alt={`Overlay das âncoras sobre a prancha — ${estado.label}`}
+          draggable={false}
+        />
+      ) : null}
+      {onRefresh === undefined ? null : (
+        <button type="button" className="botao-secundario" onClick={onRefresh}>
+          Atualizar desenho
+        </button>
+      )}
+    </details>
+  );
+}
+
+/**
+ * Banner do `409 REVISION_CONFLICT`. Ele não é o alerta comum de erro: a rodada andou, o
+ * ato não foi gravado, e o caminho é recarregar — com o que já estava escrito no
+ * formulário intacto.
+ */
+export function BannerRodadaMudou({ onReload }: { onReload?: () => void }) {
+  return (
+    <div className="banner-conflito" role="alert">
+      <p>{MENSAGEM_RODADA_MUDOU}</p>
+      {onReload === undefined ? null : (
+        <button type="button" className="botao-primario" onClick={onReload}>
+          Recarregar estado atual
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Jornada de medição sobre a API `/v1` autenticada (ADR-0028).
+ *
+ * A sessão é da casca, não desta jornada: quem lê o OIDC, consome o authorization code
+ * (que é de uso único) e renova o token é `App.tsx`. Aqui ela chega pronta — e sem ela
+ * nada é chamado, porque toda rota da medição é autenticada e por tenant.
+ *
+ * `roundId` é a rodada aberta, declarada na URL pela casca (`?rodada=`); vazio é "jornada
+ * de medição, nenhuma rodada aberta", que é a tela de escolher ou abrir rodada.
+ */
+export function MedicaoApp({
+  session,
+  roundId = "",
+  onOpenRound,
+}: {
+  session: User | null;
+  roundId?: string;
+  onOpenRound?: (roundId: string) => void;
+}) {
   // O token é lido no instante da chamada (o `automaticSilentRenew` da casca troca o
-  // objeto da sessão sem avisar quem já capturou o valor), então o provider consulta esta
-  // ref.
-  const sessionRef = useRef<User | null>(null);
+  // objeto da sessão sem avisar quem já capturou o valor), então os handlers consultam
+  // esta ref em vez de fechar sobre a sessão do render em que nasceram.
+  const sessionRef = useRef<User | null>(session);
+  sessionRef.current = session;
+  const tokenDaSessao = useCallback(
+    (): string | null => sessionRef.current?.access_token ?? null,
+    [],
+  );
+  const autenticado = session !== null;
+
+  // Rodada aberta. A URL é a fonte declarada (`?rodada=`), mas quem navega dentro da
+  // jornada é esta tela: o estado local segue a prop e avisa a casca ao mudar.
+  const [rodada, setRodada] = useState(roundId);
+  useEffect(() => setRodada(roundId), [roundId]);
 
   // Estado servido pela rodada; nada aqui é derivado de cálculo local.
-  const [state, setState] = useState<RunState | null>(null);
+  const [state, setState] = useState<RoundState | null>(null);
+  // Versão da rodada: token de concorrência de TODA a cadeia. Ele vem da última resposta
+  // lida, e é ele que a próxima mutação cita em `base_version`.
+  const [version, setVersion] = useState<number | null>(null);
   const [takeoff, setTakeoff] = useState<TakeoffResponse | null>(null);
-  const [suggestions, setSuggestions] = useState<CodeSuggestionSet | null>(null);
-  // Digest da shortlist lida; é ele que o recompute cita como base (guarda otimista).
-  // `null` significa "esta rodada ainda não tem shortlist", não "não sei o digest": o
-  // servidor recusa digest citado sem artefato e artefato sem digest citado.
-  const [suggestionsSha256, setSuggestionsSha256] = useState<string | null>(null);
+  const [overlay, setOverlay] = useState<OverlayResponse | null>(null);
+  const [overlayTentativas, setOverlayTentativas] = useState(0);
+  const [plateSrc, setPlateSrc] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<SuggestionsResponse | null>(null);
   const [codes, setCodes] = useState<CodesResponse | null>(null);
   const [bulletin, setBulletin] = useState<BulletinResponse | null>(null);
   const [dossier, setDossier] = useState<DossierResponse | null>(null);
@@ -418,11 +517,17 @@ export function MedicaoApp({ session }: { session: User | null }) {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
-  const [stateMoved, setStateMoved] = useState(false);
+  const [revisionConflict, setRevisionConflict] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [openStep, setOpenStep] = useState<EtapaId | null>(null);
 
-  // Prancha (upload e extração automática).
+  // Escolha e abertura de rodada.
+  const [rounds, setRounds] = useState<RoundSummary[] | null>(null);
+  const [roundsCursor, setRoundsCursor] = useState<string | null>(null);
+  const [roundForm, setRoundForm] = useState(EMPTY_ROUND_FORM);
+  const [catalogFile, setCatalogFile] = useState<File | null>(null);
+
+  // Prancha (upload e leitura automática).
   const [uploadFile, setUploadFile] = useState<File | null>(null);
 
   // Revisão do takeoff.
@@ -435,12 +540,6 @@ export function MedicaoApp({ session }: { session: User | null }) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const panOrigin = useRef<PanOrigin | null>(null);
   const [panning, setPanning] = useState(false);
-  // `src` da prancha. No caminho local é a URL direta do servidor, como sempre foi; no
-  // hospedado ela nasce `null` e vira um object URL depois da busca autenticada, porque
-  // `<img src>` não leva o `Authorization` da sessão (ver o efeito mais abaixo).
-  const [pranchaSrc, setPranchaSrc] = useState<string | null>(() =>
-    plateImageSource(oidcAtivo),
-  );
   // Prancha limpa por padrão: nenhuma marcação sobre a imagem que o projetista enviou.
   // Só o item selecionado ganha o retângulo fino, sem número. "Mostrar marcações"
   // revela retângulo + número de todos, para auditoria. Estado de componente, nunca em
@@ -477,9 +576,6 @@ export function MedicaoApp({ session }: { session: User | null }) {
     Record<string, string | null>
   >({});
 
-  // Boletim.
-  const [calcForm, setCalcForm] = useState(EMPTY_CALC);
-
   useEffect(() => {
     if (toast === null) {
       return;
@@ -488,85 +584,161 @@ export function MedicaoApp({ session }: { session: User | null }) {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  useEffect(() => {
-    sessionRef.current = session;
-  }, [session]);
+  /** Aplica a versão que a resposta declarou; ela é a base da próxima mutação. */
+  const aplicarVersao = useCallback((proxima: number) => {
+    setVersion(proxima);
+    setState((current) =>
+      current === null ? current : { ...current, version: proxima },
+    );
+  }, []);
 
-  // Liga o `Authorization` das chamadas à sessão que a casca entregou e o desliga ao
-  // desmontar. Sem OIDC nenhum provider é registrado: o módulo de API continua sem mandar
-  // header, que é o caminho local do ADR-0020.
-  useEffect(() => {
-    if (!oidcAtivo) {
+  const carregarRodadas = useCallback(async () => {
+    const token = tokenDaSessao();
+    if (token === null) {
       return;
     }
-    setAccessTokenProvider(() => sessionRef.current?.access_token ?? null);
-    return () => setAccessTokenProvider(null);
-  }, [oidcAtivo]);
-
-  const carregarEstado = useCallback(async () => {
     setLoading(true);
     try {
-      const nextState = await getState();
-      setState(nextState);
-      setStateMoved(false);
+      const page = await listRounds(token);
+      setRounds(page.items);
+      setRoundsCursor(page.next_cursor);
       setAlertMessage(null);
-      if (nextState.takeoff.present) {
-        setTakeoff(await getTakeoff());
-        setCodes(await getCodes());
-      } else {
-        setTakeoff(null);
-        setCodes(null);
-      }
-      // A shortlist só é buscada quando já existe em disco: a primeira chamada de
-      // `GET /suggestions` **calcula e grava** o artefato, e isso é ato do orçamentista,
-      // não efeito colateral de abrir a tela. O digest vem da mesma resposta que a
-      // shortlist exibida — é ele, e não o do `/state`, que descreve o que esta tela leu.
-      if (nextState.codes.suggestions_present) {
-        const response = await getSuggestions();
-        setSuggestions(response.suggestions);
-        setSuggestionsSha256(response.suggestions_sha256);
-      } else {
-        setSuggestions(null);
-        setSuggestionsSha256(null);
-      }
-      setBulletin(nextState.bulletin.present ? await getBulletin() : null);
-      setDossier(nextState.dossier.present ? await getDossier() : null);
     } catch (error) {
       setAlertMessage(describeError(error));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tokenDaSessao]);
 
-  // No modo hospedado a rodada só é lida depois que existe sessão: chamar o servidor sem
-  // token devolveria 401 e escreveria um alerta de erro na tela de quem ainda nem entrou.
-  // `autenticado` é booleano de propósito — a renovação silenciosa troca o objeto da
-  // sessão, e depender dele recarregaria a rodada a cada renovação.
-  const autenticado = !oidcAtivo || session !== null;
+  const carregarMaisRodadas = async () => {
+    const token = tokenDaSessao();
+    if (token === null || roundsCursor === null) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const page = await listRounds(token, { cursor: roundsCursor });
+      setRounds((current) => [...(current ?? []), ...page.items]);
+      setRoundsCursor(page.next_cursor);
+    } catch (error) {
+      setAlertMessage(describeError(error));
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  const carregarEstado = useCallback(async () => {
+    const token = tokenDaSessao();
+    if (token === null || rodada === "") {
+      return;
+    }
+    setLoading(true);
+    try {
+      const nextState = await getRoundState(token, rodada);
+      setState(nextState);
+      setVersion(nextState.version);
+      setRevisionConflict(false);
+      setAlertMessage(null);
+      if (nextState.takeoff.present) {
+        setTakeoff(await getTakeoff(token, rodada));
+        setCodes(await getCodes(token, rodada));
+        setOverlay(
+          await leituraObservacional(() => getTakeoffOverlay(token, rodada)),
+        );
+        setOverlayTentativas(0);
+      } else {
+        setTakeoff(null);
+        setCodes(null);
+        setOverlay(null);
+      }
+      // A URL da imagem é assinada e de curta duração: ela é relida junto com o estado e
+      // vai direto no `src`, sem header nenhum e sem nunca aparecer em log.
+      setPlateSrc(
+        nextState.plate.present
+          ? ((await leituraObservacional(() => getPlate(token, rodada)))
+              ?.image_url ?? null)
+          : null,
+      );
+      // A shortlist só é buscada quando já existe na rodada: a primeira leitura
+      // **calcula e grava** o artefato, e isso é ato do orçamentista, não efeito colateral
+      // de abrir a tela.
+      setSuggestions(
+        nextState.codes.suggestions_present
+          ? await getSuggestions(token, rodada)
+          : null,
+      );
+      setBulletin(
+        nextState.bulletin.present ? await getBulletin(token, rodada) : null,
+      );
+      setDossier(nextState.dossier.present ? await getDossier(token, rodada) : null);
+    } catch (error) {
+      setAlertMessage(describeError(error));
+    } finally {
+      setLoading(false);
+    }
+  }, [rodada, tokenDaSessao]);
+
+  // Sem sessão nada é chamado: toda rota da medição é autenticada e por tenant, e uma
+  // chamada sem token devolveria 401 na tela de quem ainda nem entrou. `autenticado` é
+  // booleano de propósito — a renovação silenciosa troca o objeto da sessão, e depender
+  // dele recarregaria a rodada a cada renovação.
   useEffect(() => {
     if (!autenticado) {
       return;
     }
+    if (rodada === "") {
+      void carregarRodadas();
+      return;
+    }
     void carregarEstado();
-  }, [autenticado, carregarEstado]);
+  }, [autenticado, rodada, carregarEstado, carregarRodadas]);
+
+  const abrirRodada = (proxima: string) => {
+    setState(null);
+    setVersion(null);
+    setTakeoff(null);
+    setOverlay(null);
+    setCodes(null);
+    setSuggestions(null);
+    setBulletin(null);
+    setDossier(null);
+    setPlateSrc(null);
+    setOpenStep(null);
+    setSelectedItemId("");
+    setSelectedPendingId("");
+    setAlertMessage(null);
+    setRevisionConflict(false);
+    setRodada(proxima);
+    onOpenRound?.(proxima);
+  };
 
   /**
-   * Envia o PDF da prancha (`POST /plates`). O consentimento é o próprio clique — a
-   * decisão de que a leitura automática por IA é uma chamada paga já foi tomada pelo
-   * usuário e está declarada no aviso ao lado do botão, não numa segunda pergunta.
+   * Abre a rodada nova: o catálogo sobe pelo presign (PUT direto no armazenamento) e a
+   * rodada nasce com ele instalado. O catálogo é imutável na rodada — trocar de catálogo é
+   * abrir outra —, e por isso ele é escolhido aqui e em nenhum outro lugar da jornada.
    */
-  const enviarPrancha = async () => {
-    if (uploadFile === null) {
+  const criarRodada = async () => {
+    const token = tokenDaSessao();
+    if (token === null || catalogFile === null) {
+      return;
+    }
+    const keyErro = worksiteKeyError(roundForm.worksiteKey);
+    if (keyErro !== null) {
+      setAlertMessage(keyErro);
       return;
     }
     setSubmitting(true);
     setAlertMessage(null);
     try {
-      const nextState = await uploadPlate(uploadFile);
-      setState(nextState);
-      setUploadFile(null);
-      setToast("Prancha enviada; a leitura automática da legenda começou.");
+      const catalogUploadId = await uploadCatalog(token, catalogFile);
+      const created = await createRound(token, {
+        ...roundForm,
+        catalogUploadId,
+      });
+      setRoundForm(EMPTY_ROUND_FORM);
+      setCatalogFile(null);
+      setToast("Rodada aberta com o catálogo instalado.");
+      abrirRodada(created.round_id);
     } catch (error) {
       setAlertMessage(describeError(error));
     } finally {
@@ -574,14 +746,34 @@ export function MedicaoApp({ session }: { session: User | null }) {
     }
   };
 
-  /** Re-dispara a extração de uma prancha já ingerida (`POST /plates/extract`). */
-  const tentarExtracaoNovamente = async () => {
+  /**
+   * Envia o PDF da prancha e pede a leitura da legenda. São dois atos da rodada — associar
+   * a prancha e enfileirar a chamada paga —, cada um com a sua chave de idempotência e a
+   * sua versão-base; o gesto do orçamentista é um só, e o consentimento é o próprio
+   * clique, declarado no aviso ao lado do botão.
+   */
+  const enviarPrancha = async () => {
+    const token = tokenDaSessao();
+    if (token === null || uploadFile === null || version === null) {
+      return;
+    }
     setSubmitting(true);
     setAlertMessage(null);
     try {
-      const nextState = await extractPlate();
-      setState(nextState);
-      setToast("Nova tentativa de extração automática iniciada.");
+      const uploadId = await uploadPlateFile(token, uploadFile);
+      const plate = await associatePlate(token, rodada, uploadId, version);
+      aplicarVersao(plate.version);
+      setUploadFile(null);
+      try {
+        const extraction = await createPlateExtraction(token, rodada, plate.version);
+        aplicarVersao(extraction.version);
+        setToast("Prancha enviada; a leitura automática da legenda foi enfileirada.");
+      } catch (error) {
+        // A prancha já está na rodada: a leitura recusada não desfaz o envio, e a etapa
+        // Prancha passa a oferecer o disparo de novo em vez de pedir outro upload.
+        setAlertMessage(describeError(error));
+      }
+      await atualizarEstado();
     } catch (error) {
       setAlertMessage(describeError(error));
     } finally {
@@ -589,32 +781,106 @@ export function MedicaoApp({ session }: { session: User | null }) {
     }
   };
 
-  /** Um ciclo do poll: relê o `/state` e, se a extração acabou de publicar o takeoff,
+  /** Dispara a leitura de uma prancha já associada, sem reenviar o documento. */
+  const tentarExtracaoNovamente = async () => {
+    const token = tokenDaSessao();
+    if (token === null || version === null) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const extraction = await createPlateExtraction(token, rodada, version);
+      aplicarVersao(extraction.version);
+      setToast("Nova leitura automática enfileirada.");
+      await atualizarEstado();
+    } catch (error) {
+      // O conflito tem banner próprio, com o botão de recarregar e o formulário
+      // preservado; repetir a frase no alerta comum só empilharia ruído.
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /** Um ciclo do poll: relê o estado e, se a leitura acabou de publicar o takeoff,
    * carrega o pacote e leva a tela direto para a revisão — sem clique nenhum. */
   const pollExtracao = useCallback(async () => {
+    const token = tokenDaSessao();
+    if (token === null || rodada === "") {
+      return;
+    }
     try {
-      const nextState = await getState();
+      const nextState = await getRoundState(token, rodada);
       setState(nextState);
-      if (nextState.extracao.status !== "running" && nextState.takeoff.present) {
-        setTakeoff(await getTakeoff());
-        setCodes(await getCodes());
+      setVersion(nextState.version);
+      if (
+        nextState.extraction.status !== "queued" &&
+        nextState.extraction.status !== "running" &&
+        nextState.takeoff.present
+      ) {
+        setTakeoff(await getTakeoff(token, rodada));
+        setCodes(await getCodes(token, rodada));
+        setOverlay(
+          await leituraObservacional(() => getTakeoffOverlay(token, rodada)),
+        );
+        setOverlayTentativas(0);
+        setPlateSrc(
+          (await leituraObservacional(() => getPlate(token, rodada)))
+            ?.image_url ?? null,
+        );
         setOpenStep("revisao");
       }
     } catch (error) {
       setAlertMessage(describeError(error));
     }
-  }, []);
+  }, [rodada, tokenDaSessao]);
 
-  // Poll do `/state` a cada ~3s enquanto a extração automática está `running`; para
-  // sozinho assim que ela fecha (`done`, `failed` ou `unavailable`), porque a condição
-  // do efeito deixa de valer no próximo render.
+  // Poll do estado a cada ~3s enquanto a leitura automática está na fila ou rodando; para
+  // sozinho assim que ela fecha (`done` ou `failed`), porque a condição do efeito deixa de
+  // valer no próximo render.
+  const extracaoEmVoo =
+    state?.extraction.status === "queued" || state?.extraction.status === "running";
   useEffect(() => {
-    if (state?.extracao.status !== "running") {
+    if (!extracaoEmVoo) {
       return;
     }
     const timer = setInterval(() => void pollExtracao(), EXTRACTION_POLL_MS);
     return () => clearInterval(timer);
-  }, [state?.extracao.status, pollExtracao]);
+  }, [extracaoEmVoo, pollExtracao]);
+
+  const atualizarOverlay = useCallback(async () => {
+    const token = tokenDaSessao();
+    if (token === null || rodada === "") {
+      return;
+    }
+    try {
+      setOverlay(await getTakeoffOverlay(token, rodada));
+    } catch (error) {
+      setAlertMessage(describeError(error));
+    }
+  }, [rodada, tokenDaSessao]);
+
+  // Overlay vencido é consequência normal de uma decisão (ADR-0030): o desenho é
+  // reconstruído por comando de fila, e até lá a tela mostra o anterior MARCADO. O poll
+  // acompanha o re-render, com teto — sem worker o desenho fica vencido, e isso precisa
+  // aparecer como estado, não como tráfego infinito.
+  const overlayVencido = overlay !== null && overlay.stale;
+  useEffect(() => {
+    if (!overlayVencido || overlayTentativas >= OVERLAY_POLL_MAX) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setOverlayTentativas((current) => current + 1);
+      void atualizarOverlay();
+    }, OVERLAY_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [overlayVencido, overlayTentativas, atualizarOverlay]);
 
   // Zoom pela roda precisa de listener não passivo: sem `preventDefault` a página rola
   // junto e o desenho foge da mão.
@@ -637,12 +903,11 @@ export function MedicaoApp({ session }: { session: User | null }) {
   // decisões sobreviver ao recarregamento (ao contrário de `ultimoCodigoConfirmado`,
   // que só existe nesta sessão). Busca por código exato no catálogo desta rodada; nunca
   // repete a busca de um código que já está no cache (achado ou não achado).
-  //
-  // Braço lexical fixado: esta varredura é automática (nasce de abrir a etapa, não de um
-  // gesto) e roda uma consulta por código confirmado. O braço semântico só acrescentaria
-  // vizinhos sem o código procurado — pagando embedding e escrevendo cache de consulta
-  // por um resultado que o léxico já dá melhor, porque o casamento aqui é exato.
   useEffect(() => {
+    const token = tokenDaSessao();
+    if (token === null || rodada === "") {
+      return;
+    }
     const confirmedCodes = (codes?.assignments?.assignments ?? [])
       .filter(isConfirmedWithCode)
       .map((assignment) => assignment.code);
@@ -657,9 +922,12 @@ export function MedicaoApp({ session }: { session: User | null }) {
       for (const code of pendentes) {
         let description: string | null;
         try {
-          const response = await searchCatalog(codeSearchTerm(code), 20, {
-            arm: "lexical",
-          });
+          const response = await searchCatalog(
+            token,
+            rodada,
+            codeSearchTerm(code),
+            20,
+          );
           // Casamento pelo código EXATO: a busca pode devolver vários candidatos com o
           // mesmo prefixo, e mostrar a descrição de um código parecido seria mentir
           // sobre o que este código específico inclui.
@@ -676,17 +944,15 @@ export function MedicaoApp({ session }: { session: User | null }) {
     return () => {
       cancelado = true;
     };
-  }, [codes, assignmentDescriptions]);
+  }, [codes, assignmentDescriptions, rodada, tokenDaSessao]);
 
-  // Busca enquanto se digita, sempre pelo braço LEXICAL fixado (`arm: "lexical"`): a
-  // consulta a cada tecla não pode virar chamada paga de embedding nem escrita de cache.
-  // O braço híbrido continua atrás do gesto explícito (Enter/"Buscar"), em
-  // `buscarNoCatalogo`. Aqui só entram consultas acima do limiar (`consultaIncremental`),
-  // com debounce, e a resposta que chega depois de outra tecla é descartada — lista de
-  // catálogo trocando sozinha por ordem de rede seria pior que não ter busca incremental.
+  // Busca enquanto se digita, com debounce e limiar (`consultaIncremental`). A resposta
+  // que chega depois de outra tecla é descartada — lista de catálogo trocando sozinha por
+  // ordem de rede seria pior que não ter busca incremental.
   useEffect(() => {
+    const token = tokenDaSessao();
     const consulta = consultaIncremental(query);
-    if (consulta === null) {
+    if (consulta === null || token === null || rodada === "") {
       if (buscaTimerRef.current !== null) {
         window.clearTimeout(buscaTimerRef.current);
         buscaTimerRef.current = null;
@@ -710,8 +976,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
       setBuscando(true);
       void (async () => {
         try {
-          const response = await searchCatalog(consulta, 20, {
-            arm: "lexical",
+          const response = await searchCatalog(token, rodada, consulta, 20, {
             signal: controller.signal,
           });
           if (controller.signal.aborted) {
@@ -736,51 +1001,11 @@ export function MedicaoApp({ session }: { session: User | null }) {
     }, BUSCA_DEBOUNCE_MS);
     buscaTimerRef.current = timer;
     return () => window.clearTimeout(timer);
-  }, [query]);
+  }, [query, rodada, tokenDaSessao]);
 
   const jornada = useMemo(() => derivarEtapas(state), [state]);
   const etapaVisivel: EtapaId | "rodada" = openStep === null ? "rodada" : openStep;
-  const prancha = state?.images.plate ?? null;
-  // Nome do arquivo servido: é ele que muda quando a rodada troca de prancha, e é por isso
-  // que ele — e não o objeto de estado inteiro — decide quando rebuscar a imagem.
-  const pranchaFilename = prancha?.present === true ? prancha.filename : null;
-
-  // Modo hospedado (ADR-0026): a imagem vem por `fetch` com o mesmo `Authorization` das
-  // outras chamadas e é exibida como object URL, revogado ao trocar de prancha ou
-  // desmontar — object URL sobrevive ao componente e uma revisão abre a prancha muitas
-  // vezes. Sem OIDC nada disso roda: o `src` continua sendo a URL direta do servidor local,
-  // sem nenhuma requisição a mais.
-  useEffect(() => {
-    if (!oidcAtivo) {
-      return;
-    }
-    if (!autenticado || pranchaFilename === null) {
-      setPranchaSrc(null);
-      return;
-    }
-    let cancelado = false;
-    let criado: string | null = null;
-    void (async () => {
-      try {
-        const url = await fetchImageObjectUrl(PLATE_IMAGE_PATH);
-        if (cancelado) {
-          URL.revokeObjectURL(url);
-          return;
-        }
-        criado = url;
-        setPranchaSrc(url);
-      } catch (error) {
-        setPranchaSrc(null);
-        setAlertMessage(describeError(error));
-      }
-    })();
-    return () => {
-      cancelado = true;
-      if (criado !== null) {
-        URL.revokeObjectURL(criado);
-      }
-    };
-  }, [oidcAtivo, autenticado, pranchaFilename]);
+  const overlayEstado = overlayFreshness(overlay);
 
   const items = takeoff?.packet.items ?? [];
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
@@ -789,12 +1014,18 @@ export function MedicaoApp({ session }: { session: User | null }) {
     pendingItems.find((item) => item.item_id === selectedPendingId) ?? null;
 
   const atualizarEstado = useCallback(async () => {
+    const token = tokenDaSessao();
+    if (token === null || rodada === "") {
+      return;
+    }
     try {
-      setState(await getState());
+      const nextState = await getRoundState(token, rodada);
+      setState(nextState);
+      setVersion(nextState.version);
     } catch (error) {
       setAlertMessage(describeError(error));
     }
-  }, []);
+  }, [rodada, tokenDaSessao]);
 
   const abrirEtapa = (etapa: Etapa) => {
     if (etapa.status === "blocked") {
@@ -846,12 +1077,20 @@ export function MedicaoApp({ session }: { session: User | null }) {
   const decisaoBloqueada =
     submitting ||
     selectedItem === null ||
+    version === null ||
     decision.action === "" ||
     quantidadeInvalida ||
     (exigeQuantidade && quantidadeParaServidor === null);
 
   const enviarDecisao = async () => {
-    if (selectedItem === null || takeoff === null || decision.action === "") {
+    const token = tokenDaSessao();
+    if (
+      token === null ||
+      selectedItem === null ||
+      takeoff === null ||
+      version === null ||
+      decision.action === ""
+    ) {
       return;
     }
     setSubmitting(true);
@@ -867,48 +1106,63 @@ export function MedicaoApp({ session }: { session: User | null }) {
               itemNote: decision.itemNote,
             }
           : {};
-      const response = await postTakeoffDecision({
+      const response = await postTakeoffDecision(token, rodada, {
         itemId: selectedItem.id,
         action: decision.action,
-        basePacketSha256: takeoff.packet_sha256,
+        baseVersion: version,
         note: decision.note,
         ...correcoes,
       });
-      setTakeoff({ packet: response.packet, packet_sha256: response.packet_sha256 });
+      aplicarVersao(response.version);
+      setTakeoff(response);
+      // O overlay é consequência da decisão, não parte dela: a resposta já declara que o
+      // desenho corrente é do pacote anterior, e a tela passa a dizer isso.
+      setOverlay((current) =>
+        current === null
+          ? current
+          : { ...current, ...response.overlay, packet_sha256: response.packet_sha256 },
+      );
+      setOverlayTentativas(0);
       setDecision(EMPTY_DECISION);
-      setStateMoved(false);
+      setRevisionConflict(false);
       setToast(
         `${selectedItem.label}: item ${
           decision.action === "confirm" ? "confirmado" : "rejeitado"
         }. Faltam ${response.pending} de ${response.items}.`,
       );
-      if (response.notes.length > 0) {
-        setAlertMessage(response.notes.join(" "));
-      }
       await atualizarEstado();
-      setCodes(await getCodes());
+      setCodes(await getCodes(token, rodada));
     } catch (error) {
-      // O conflito tem banner próprio, com o botão de recarregar; repetir a mesma frase
-      // no alerta genérico só empilharia ruído sobre a tela.
-      if (isStateMoved(error)) {
-        setStateMoved(true);
+      // O conflito tem banner próprio, com o botão de recarregar e o formulário
+      // preservado; repetir a frase no alerta comum só empilharia ruído.
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
       } else {
-        setAlertMessage(describeError(error));
+        setAlertMessage(recusa.mensagem);
       }
     } finally {
       setSubmitting(false);
     }
   };
 
+  /**
+   * Primeira leitura da shortlist: ela CALCULA e grava o artefato na rodada, então fica
+   * atrás de um gesto que declara isso. Não avança a versão da rodada — a shortlist é
+   * artefato derivado, e um `GET` não é ato humano.
+   */
   const calcularShortlist = async () => {
+    const token = tokenDaSessao();
+    if (token === null) {
+      return;
+    }
     setSubmitting(true);
     setAlertMessage(null);
     try {
-      const response = await getSuggestions();
-      setSuggestions(response.suggestions);
-      setSuggestionsSha256(response.suggestions_sha256);
+      const response = await getSuggestions(token, rodada);
+      setSuggestions(response);
       // Híbrida ou lexical é o que a resposta declara (`matching`), não o que a tela
-      // supõe: a mesma rodada muda de braço conforme índice, teto de gasto e credencial.
+      // supõe: o artefato pode ter sido gravado por outra sessão.
       const braco = response.matching === "hybrid" ? "híbrida" : "lexical";
       setToast(
         response.computed
@@ -924,19 +1178,22 @@ export function MedicaoApp({ session }: { session: User | null }) {
   };
 
   /**
-   * Recompute explícito da shortlist (`POST /suggestions/recompute`). Sobrescreve o
-   * artefato da rodada, então é gesto do orçamentista e nunca efeito de abrir a tela. O
-   * digest-base lido viaja junto: rodada que andou entre a leitura e o clique vira o
-   * banner de conflito de sempre, e shortlist com refino pago é recusada pelo servidor
-   * (`LOCAL_SUGGESTIONS_REFINED`) em vez de perder o lineage da chamada paga.
+   * Recompute explícito da shortlist. Sobrescreve o artefato da rodada, então é gesto do
+   * orçamentista e nunca efeito de abrir a tela: ele cita `base_version`, avança a rodada
+   * e é recusado quando a shortlist carrega refino pago (`SUGGESTIONS_ALREADY_REFINED`),
+   * em vez de perder o lineage da chamada paga.
    */
   const recalcularShortlist = async () => {
+    const token = tokenDaSessao();
+    if (token === null || version === null) {
+      return;
+    }
     setSubmitting(true);
     setAlertMessage(null);
     try {
-      const response = await postSuggestionsRecompute(suggestionsSha256);
-      setSuggestions(response.suggestions);
-      setSuggestionsSha256(response.suggestions_sha256);
+      const response = await postSuggestionsRecompute(token, rodada, version);
+      aplicarVersao(response.version);
+      setSuggestions(response);
       setToast(
         response.matching === "hybrid"
           ? "Shortlist híbrida recalculada e regravada na rodada."
@@ -944,26 +1201,27 @@ export function MedicaoApp({ session }: { session: User | null }) {
       );
       await atualizarEstado();
     } catch (error) {
-      // O conflito tem banner próprio, com o botão de recarregar; repetir a mesma frase
-      // no alerta genérico só empilharia ruído sobre a tela.
-      if (isStateMoved(error)) {
-        setStateMoved(true);
+      // O conflito tem banner próprio, com o botão de recarregar e o formulário
+      // preservado; repetir a frase no alerta comum só empilharia ruído.
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
       } else {
-        setAlertMessage(describeError(error));
+        setAlertMessage(recusa.mensagem);
       }
     } finally {
       setSubmitting(false);
     }
   };
 
-  /**
-   * Busca completa, pedida por Enter ou pelo botão: sem `arm`, ou seja, híbrida quando a
-   * rodada tem índice, teto de gasto e credencial. O gasto pequeno da consulta nova fica
-   * atrás deste gesto explícito, nunca da digitação.
-   */
+  /** Busca pedida por Enter ou pelo botão; mesmo braço lexical da digitação. */
   const buscarNoCatalogo = async () => {
-    // Cancela o lexical em voo: chegando depois, ele sobrescreveria com menos resultados
-    // justamente a busca completa que acabou de ser pedida.
+    const token = tokenDaSessao();
+    if (token === null) {
+      return;
+    }
+    // Cancela a busca em voo: chegando depois, ela sobrescreveria a que acabou de ser
+    // pedida.
     if (buscaTimerRef.current !== null) {
       window.clearTimeout(buscaTimerRef.current);
       buscaTimerRef.current = null;
@@ -975,7 +1233,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
     setSubmitting(true);
     setAlertMessage(null);
     try {
-      setSearchResult(await searchCatalog(query));
+      setSearchResult(await searchCatalog(token, rodada, query));
     } catch (error) {
       setSearchResult(null);
       setAlertMessage(describeError(error));
@@ -991,19 +1249,21 @@ export function MedicaoApp({ session }: { session: User | null }) {
   const notaObrigatoria = divergenciaDeUnidade;
 
   const decidirCodigo = async (action: "confirm" | "reject") => {
-    if (selectedPending === null || codes === null) {
+    const token = tokenDaSessao();
+    if (token === null || selectedPending === null || version === null) {
       return;
     }
     setSubmitting(true);
     setAlertMessage(null);
     try {
-      const response = await postCodeDecision({
+      const response = await postCodeDecision(token, rodada, {
         itemId: selectedPending.item_id,
         action,
+        baseVersion: version,
         code: action === "confirm" ? codeChoice?.code : undefined,
         note: codeNote,
-        baseAssignmentsSha256: codes.assignments_sha256,
       });
+      aplicarVersao(response.version);
       // Captura o código e a descrição escolhidos ANTES de limpar `codeChoice`: é o
       // único lugar onde a descrição completa deste código está disponível na tela, já
       // que a lista de itens pendentes não vai mais mostrar este item confirmado.
@@ -1019,7 +1279,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
       setCodeChoice(null);
       setCodeNote("");
       setSelectedPendingId("");
-      setStateMoved(false);
+      setRevisionConflict(false);
       setToast(
         action === "confirm"
           ? `${selectedPending.label}: código ${codeChoice?.code ?? ""} confirmado.`
@@ -1027,12 +1287,13 @@ export function MedicaoApp({ session }: { session: User | null }) {
       );
       await atualizarEstado();
     } catch (error) {
-      // O conflito tem banner próprio, com o botão de recarregar; repetir a mesma frase
-      // no alerta genérico só empilharia ruído sobre a tela.
-      if (isStateMoved(error)) {
-        setStateMoved(true);
+      // O conflito tem banner próprio, com o botão de recarregar e o formulário
+      // preservado; repetir a frase no alerta comum só empilharia ruído.
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
       } else {
-        setAlertMessage(describeError(error));
+        setAlertMessage(recusa.mensagem);
       }
     } finally {
       setSubmitting(false);
@@ -1040,39 +1301,58 @@ export function MedicaoApp({ session }: { session: User | null }) {
   };
 
   const montarBoletim = async () => {
+    const token = tokenDaSessao();
+    if (token === null || version === null) {
+      return;
+    }
     setSubmitting(true);
     setAlertMessage(null);
     try {
-      const response = await postCalcBuild(calcForm);
+      const response = await postCalcBuild(token, rodada, version);
+      aplicarVersao(response.version);
       setBulletin(response);
       setToast("Boletim e memória gravados na rodada, sem aprovação.");
       await atualizarEstado();
     } catch (error) {
-      setAlertMessage(describeError(error));
+      // O conflito tem banner próprio, com o botão de recarregar e o formulário
+      // preservado; repetir a frase no alerta comum só empilharia ruído.
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
   /**
-   * Gera o dossiê do aditivo (`POST /dossier/build`). Mesma condição de elegibilidade do
-   * botão de montar boletim (`jornada` → etapa `boletim` não bloqueada): o dossiê é o
-   * outro artefato de FECHAMENTO da rodada e exige a mesma revisão completa com todo
-   * código decidido.
+   * Gera o dossiê do aditivo. Mesma condição de elegibilidade do botão de montar boletim
+   * (`jornada` → etapa `boletim` não bloqueada): o dossiê é o outro artefato de FECHAMENTO
+   * da rodada e exige a mesma revisão completa com todo código decidido.
    */
   const gerarDossie = async () => {
+    const token = tokenDaSessao();
+    if (token === null || version === null) {
+      return;
+    }
     setSubmitting(true);
     setAlertMessage(null);
     try {
-      const response = await postDossierBuild();
+      const response = await postDossierBuild(token, rodada, version);
+      aplicarVersao(response.version);
       setDossier(response);
       setToast("Dossiê do aditivo gravado na rodada.");
       await atualizarEstado();
     } catch (error) {
-      if (isStateMoved(error)) {
-        setStateMoved(true);
+      // O conflito tem banner próprio, com o botão de recarregar e o formulário
+      // preservado; repetir a frase no alerta comum só empilharia ruído.
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
       } else {
-        setAlertMessage(describeError(error));
+        setAlertMessage(recusa.mensagem);
       }
     } finally {
       setSubmitting(false);
@@ -1085,12 +1365,13 @@ export function MedicaoApp({ session }: { session: User | null }) {
   const shortlist =
     selectedPending === null
       ? []
-      : (suggestions?.suggestions.find(
+      : (suggestions?.suggestions.suggestions.find(
           (suggestion) => suggestion.item_id === selectedPending.item_id,
         )?.candidates ?? []);
   const semCandidato =
     selectedPending !== null &&
-    (suggestions?.unmatched_item_ids.includes(selectedPending.item_id) ?? false);
+    (suggestions?.suggestions.unmatched_item_ids.includes(selectedPending.item_id) ??
+      false);
 
   const labelDoItem = (itemId: string): string =>
     items.find((item) => item.id === itemId)?.label ?? itemId;
@@ -1101,36 +1382,279 @@ export function MedicaoApp({ session }: { session: User | null }) {
   const confirmados = (codes?.assignments?.assignments ?? []).filter(
     (assignment) => assignment.status === "confirmed",
   );
-  const semCandidatoPendentes = (suggestions?.unmatched_item_ids ?? []).filter(
-    (itemId) => pendingItems.some((item) => item.item_id === itemId),
-  );
+  const semCandidatoPendentes = (
+    suggestions?.suggestions.unmatched_item_ids ?? []
+  ).filter((itemId) => pendingItems.some((item) => item.item_id === itemId));
 
-  // A porta do modo hospedado — "entre antes de ver a rodada" — saiu daqui: quem barra a
-  // jornada sem sessão é a casca (`App.tsx`), que tem a tela anônima e o botão de entrar.
-  // `autenticado` continua guardando as chamadas ao servidor logo acima.
+  // Sem sessão a jornada não chama nada e não inventa rodada: quem tem a tela de entrar é
+  // a casca (`App.tsx`), e as rotas da medição são todas autenticadas e por tenant.
+  if (!autenticado) {
+    return (
+      <div className="jornada-medicao">
+        <section className="painel" aria-label="Medição de obra">
+          <span className="eyebrow">MEDIÇÃO DE OBRA</span>
+          <h1>Entre para abrir uma rodada</h1>
+          <p>
+            A medição é autenticada e por tenant: rodada, prancha e catálogo só são lidos
+            com a sessão de quem decide.
+          </p>
+          <p className="aviso-fixo">{AVISO_MEDICAO}</p>
+        </section>
+      </div>
+    );
+  }
+
+  // Nenhuma rodada aberta: a jornada começa escolhendo — ou abrindo — uma.
+  if (rodada === "") {
+    const keyErro = worksiteKeyError(roundForm.worksiteKey);
+    return (
+      <div className="jornada-medicao">
+        <header className="topbar">
+          <div>
+            <span className="eyebrow">MEDIÇÃO DE OBRA</span>
+            <h1>Rodadas de medição</h1>
+            <p className="topbar-meta">
+              Cada rodada é uma prancha, um catálogo e um período de medição.
+            </p>
+          </div>
+          <p className="aviso-fixo">{AVISO_MEDICAO}</p>
+        </header>
+
+        {alertMessage === null ? null : (
+          <p className="banner-erro" role="alert">
+            {alertMessage}
+          </p>
+        )}
+        {toast === null ? null : (
+          <p className="banner-sucesso" role="status">
+            {toast}
+          </p>
+        )}
+
+        <main className="conteudo">
+          <section className="painel" aria-label="Rodadas do tenant">
+            <div className="painel-cabecalho">
+              <h2>Rodadas abertas</h2>
+              <button
+                type="button"
+                className="botao-secundario"
+                onClick={() => void carregarRodadas()}
+                disabled={loading}
+              >
+                {loading ? "Carregando…" : "Recarregar lista"}
+              </button>
+            </div>
+            {rounds === null ? (
+              <p>A lista de rodadas ainda não foi lida.</p>
+            ) : rounds.length === 0 ? (
+              <p>
+                Nenhuma rodada neste tenant ainda. Abra a primeira no formulário abaixo.
+              </p>
+            ) : (
+              <ul className="rodadas-lista">
+                {rounds.map((round) => (
+                  <li key={round.round_id} className="rodada-linha">
+                    <div>
+                      <strong>{round.worksite_name}</strong>{" "}
+                      <span className="mono">({round.worksite_key})</span>
+                      <p className="topbar-meta">
+                        {round.reference_label} · medição {round.period_number} · etapa{" "}
+                        {stageLabel(round.stage)} · leitura da legenda{" "}
+                        {extractionStatusLabel(round.extraction_status)} · versão{" "}
+                        {round.version}
+                      </p>
+                      <p className="topbar-meta">
+                        Atualizada em {formatTimestamp(round.updated_at)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="botao-primario"
+                      onClick={() => abrirRodada(round.round_id)}
+                    >
+                      Abrir rodada
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {roundsCursor === null ? null : (
+              <button
+                type="button"
+                className="botao-secundario"
+                onClick={() => void carregarMaisRodadas()}
+                disabled={loading}
+              >
+                Carregar mais rodadas
+              </button>
+            )}
+          </section>
+
+          <section className="painel" aria-label="Abrir rodada nova">
+            <h2>Abrir rodada nova</h2>
+            <form
+              className="formulario"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void criarRodada();
+              }}
+            >
+              <p>
+                O catálogo de preços é instalado na criação e é imutável na rodada: trocar
+                de catálogo é abrir outra rodada.
+              </p>
+              <label className="campo">
+                Catálogo de preços (JSON)
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={(event) => setCatalogFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <label className="campo">
+                Chave da obra
+                <span className="campo-dica">
+                  minúsculas, números e hífen (ex.: praca-sintetica-oeste)
+                </span>
+                <input
+                  type="text"
+                  value={roundForm.worksiteKey}
+                  onChange={(event) =>
+                    setRoundForm((current) => ({
+                      ...current,
+                      worksiteKey: event.target.value,
+                    }))
+                  }
+                  aria-invalid={roundForm.worksiteKey.length > 0 && keyErro !== null}
+                  required
+                />
+              </label>
+              {roundForm.worksiteKey.length > 0 && keyErro !== null ? (
+                <p className="campo-erro" role="alert">
+                  {keyErro}
+                </p>
+              ) : null}
+              <label className="campo">
+                Nome da obra
+                <input
+                  type="text"
+                  value={roundForm.worksiteName}
+                  onChange={(event) =>
+                    setRoundForm((current) => ({
+                      ...current,
+                      worksiteName: event.target.value,
+                    }))
+                  }
+                  required
+                />
+              </label>
+              <label className="campo">
+                Número da medição
+                <input
+                  type="number"
+                  min={1}
+                  value={roundForm.periodNumber}
+                  onChange={(event) =>
+                    setRoundForm((current) => ({
+                      ...current,
+                      periodNumber: event.target.value,
+                    }))
+                  }
+                  required
+                />
+              </label>
+              <label className="campo">
+                Rótulo da medição
+                <span className="campo-dica">
+                  como aparece na planilha (ex.: 3ª MEDIÇÃO)
+                </span>
+                <input
+                  type="text"
+                  value={roundForm.referenceLabel}
+                  onChange={(event) =>
+                    setRoundForm((current) => ({
+                      ...current,
+                      referenceLabel: event.target.value,
+                    }))
+                  }
+                  required
+                />
+              </label>
+              <label className="campo">
+                Endereço (opcional)
+                <input
+                  type="text"
+                  value={roundForm.address}
+                  onChange={(event) =>
+                    setRoundForm((current) => ({
+                      ...current,
+                      address: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label className="campo">
+                Contrato (opcional)
+                <input
+                  type="text"
+                  value={roundForm.contractLabel}
+                  onChange={(event) =>
+                    setRoundForm((current) => ({
+                      ...current,
+                      contractLabel: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <button
+                type="submit"
+                className="botao-primario"
+                disabled={submitting || catalogFile === null}
+              >
+                {submitting ? "Abrindo…" : "Abrir rodada"}
+              </button>
+            </form>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="jornada-medicao">
       <header className="topbar">
         <div>
-          <span className="eyebrow">HOMOLOGAÇÃO LOCAL DA MEDIÇÃO</span>
-          {/* Nome da rodada é a última pasta do caminho; o caminho inteiro fica logo
-              abaixo, porque é ele que identifica de qual diretório saem os artefatos. */}
-          <h1>{state === null ? "Rodada não carregada" : nomeDaRodada(state.root)}</h1>
+          <span className="eyebrow">MEDIÇÃO DE OBRA</span>
+          <h1>
+            {state === null ? "Rodada não carregada" : state.worksite_name}
+          </h1>
           {state === null ? null : (
-            <p className="topbar-meta mono">{state.root}</p>
+            <>
+              <p className="topbar-meta mono">
+                {state.worksite_key} · rodada {shortDigest(state.round_id)}
+              </p>
+              <p className="topbar-meta">
+                {state.reference_label} · medição {state.period_number} · versão{" "}
+                {state.version} · papel {state.reviewer_role}
+              </p>
+            </>
           )}
-          <p className="topbar-meta">
-            {state === null
-              ? "Nenhum estado lido do servidor local ainda."
-              : `Revisor: ${state.reviewer_id} (${state.reviewer_role}) · servidor ${state.server_version}`}
-          </p>
+          {state === null ? (
+            <p className="topbar-meta">
+              O estado desta rodada ainda não foi lido da API.
+            </p>
+          ) : null}
         </div>
         {/* Aviso permanente: ele não fecha, não recolhe e não expira. */}
-        <p className="aviso-fixo">{avisoDaFerramenta(oidcAtivo)}</p>
+        <p className="aviso-fixo">{AVISO_MEDICAO}</p>
         <div className="topbar-acoes">
-          {/* A ida para a revisão saiu daqui: as duas jornadas viraram uma SPA só, e quem
-              alterna entre elas é o seletor da casca (`App.tsx`), sem recarregar nada. */}
+          <button
+            type="button"
+            className="topbar-link topbar-link-botao"
+            onClick={() => abrirRodada("")}
+          >
+            Trocar de rodada
+          </button>
           {session === null ? null : (
             <>
               <span className="topbar-meta">
@@ -1148,7 +1672,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
         </div>
       </header>
 
-      <nav className="etapas" aria-label="Etapas da homologação">
+      <nav className="etapas" aria-label="Etapas da medição">
         <button
           type="button"
           className={`etapa-tab ${etapaVisivel === "rodada" ? "ativa" : ""}`}
@@ -1182,21 +1706,8 @@ export function MedicaoApp({ session }: { session: User | null }) {
         </button>
       </nav>
 
-      {stateMoved ? (
-        <div className="banner-conflito" role="alert">
-          <p>
-            O estado da rodada mudou depois desta leitura — outro processo mexeu nos
-            arquivos. Nada foi gravado. Recarregue o estado atual e decida de novo; o que
-            você escreveu no formulário continua aqui.
-          </p>
-          <button
-            type="button"
-            className="botao-primario"
-            onClick={() => void carregarEstado()}
-          >
-            Recarregar estado atual
-          </button>
-        </div>
+      {revisionConflict ? (
+        <BannerRodadaMudou onReload={() => void carregarEstado()} />
       ) : null}
 
       {alertMessage === null ? null : (
@@ -1240,9 +1751,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
 
             {state === null ? (
               <p>
-                O estado da rodada ainda não foi lido. Suba o servidor local com{" "}
-                <code>croquito-valuation serve --root &lt;rodada&gt; --reviewer &lt;id&gt;</code>{" "}
-                e use “Recarregar estado atual”.
+                O estado desta rodada ainda não foi lido. Use “Recarregar estado atual”.
               </p>
             ) : (
               <div className="artefatos">
@@ -1258,11 +1767,26 @@ export function MedicaoApp({ session }: { session: User | null }) {
                   ))}
                 </ul>
                 <p>
-                  Imagem da prancha:{" "}
-                  {state.images.plate.present
-                    ? state.images.plate.filename
-                    : "ausente no diretório"}{" "}
-                  · overlay: {state.images.overlay.present ? "gravado" : "ausente"}.
+                  Catálogo instalado:{" "}
+                  {state.catalog.summary.source_label ?? "sem rótulo declarado"}
+                  {state.catalog.summary.reference_month === undefined
+                    ? ""
+                    : ` · referência ${state.catalog.summary.reference_month}`}
+                  {state.catalog.summary.entries === undefined
+                    ? ""
+                    : ` · ${state.catalog.summary.entries} códigos`}{" "}
+                  ·{" "}
+                  <span className="digest" title={state.catalog.source_sha256}>
+                    sha256 {shortDigest(state.catalog.source_sha256)}
+                  </span>
+                </p>
+                <p>
+                  Prancha: {state.plate.present ? "enviada" : "ausente"} · leitura da
+                  legenda: {extractionStatusLabel(state.extraction.status)}
+                  {overlayEstado === null
+                    ? ""
+                    : ` · overlay das âncoras: ${overlayEstado.label}`}
+                  .
                 </p>
               </div>
             )}
@@ -1273,10 +1797,10 @@ export function MedicaoApp({ session }: { session: User | null }) {
           <section className="painel" aria-label="Prancha do projetista">
             <h2>Prancha do projetista</h2>
             {state === null ? (
-              <p>O estado da rodada ainda não foi lido.</p>
-            ) : state.extracao.plate_pdf_present ? (
+              <p>O estado desta rodada ainda não foi lido.</p>
+            ) : state.plate.present ? (
               <EstadoExtracao
-                extracao={state.extracao}
+                extraction={state.extraction}
                 onRetry={() => void tentarExtracaoNovamente()}
                 retrying={submitting}
               />
@@ -1299,12 +1823,12 @@ export function MedicaoApp({ session }: { session: User | null }) {
                 </label>
                 <p className="aviso-fixo aviso-inline">
                   Ao enviar, a leitura da legenda é feita automaticamente por IA (chamada
-                  paga configurada no servidor).
+                  paga, autorizada por contrato do seu tenant).
                 </p>
                 <button
                   type="submit"
                   className="botao-primario"
-                  disabled={uploadFile === null || submitting}
+                  disabled={uploadFile === null || submitting || version === null}
                 >
                   {submitting ? "Enviando…" : "Enviar prancha"}
                 </button>
@@ -1359,11 +1883,10 @@ export function MedicaoApp({ session }: { session: User | null }) {
                 com a roda do mouse sobre a prancha para aproximar (de {MIN_ZOOM}× a{" "}
                 {MAX_ZOOM}×) e arraste para deslocar.
               </p>
-              {prancha !== null && !prancha.present ? (
+              {plateSrc === null ? (
                 <p className="banner-erro" role="alert">
-                  A imagem da prancha não está no diretório da rodada (ou não casa com o
-                  digest do pacote). A lista de itens continua utilizável; o overlay não é
-                  regravado enquanto ela faltar.
+                  A imagem da prancha ainda não está publicada nesta rodada. A lista de
+                  itens continua utilizável.
                 </p>
               ) : null}
               <div
@@ -1382,9 +1905,9 @@ export function MedicaoApp({ session }: { session: User | null }) {
                       : stageStyle(zoom, imageSize.width, imageSize.height)
                   }
                 >
-                  {(prancha === null || prancha.present) && pranchaSrc !== null ? (
+                  {plateSrc === null ? null : (
                     <img
-                      src={pranchaSrc}
+                      src={plateSrc}
                       alt="Prancha do projetista com a legenda quantificada"
                       draggable={false}
                       onLoad={(event) => {
@@ -1395,7 +1918,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
                         );
                       }}
                     />
-                  ) : null}
+                  )}
                   {imageSize === null ? null : (
                     <svg
                       className="bbox-overlay"
@@ -1479,6 +2002,13 @@ export function MedicaoApp({ session }: { session: User | null }) {
                   )}
                 </div>
               </div>
+
+              {overlay === null ? null : (
+                <OverlayDoTakeoff
+                  overlay={overlay}
+                  onRefresh={() => void atualizarOverlay()}
+                />
+              )}
             </article>
 
             <article className="painel lista-painel">
@@ -1510,12 +2040,12 @@ export function MedicaoApp({ session }: { session: User | null }) {
                         <span className="item-rotulo">{item.label}</span>
                         <span className="item-estado">{itemStatusLabel(item.status)}</span>
                         <span className="item-quantidade">
-                          {formatQuantityText(item.quantity, unitLabel(item.unit))}
+                          {formatQuantityText(item.quantity ?? null, unitLabel(item.unit))}
                         </span>
                         <span className="mono item-raw">{item.raw_text}</span>
-                        {item.note === null ? null : (
+                        {item.note ? (
                           <span className="item-nota">Anotação: {item.note}</span>
-                        )}
+                        ) : null}
                       </span>
                     </button>
                   </li>
@@ -1527,7 +2057,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
               <h2>Decisão do item</h2>
               {selectedItem === null ? (
                 <p>Escolha um item na lista ou clique no retângulo da prancha.</p>
-              ) : selectedItem.decision !== null ? (
+              ) : selectedItem.decision ? (
                 <div className="decisao-registrada">
                   <p>
                     <strong>{selectedItem.label}</strong> —{" "}
@@ -1540,9 +2070,9 @@ export function MedicaoApp({ session }: { session: User | null }) {
                     por {selectedItem.decision.reviewer_id} em{" "}
                     {formatTimestamp(selectedItem.decision.decided_at)}.
                   </p>
-                  {selectedItem.decision.note === null ? null : (
+                  {selectedItem.decision.note ? (
                     <p>Nota: {selectedItem.decision.note}</p>
-                  )}
+                  ) : null}
                   <p className="cartao-motivo">
                     Este item já foi decidido; decisão não se sobrescreve.
                   </p>
@@ -1559,7 +2089,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
                     <strong>{selectedItem.label}</strong> —{" "}
                     {itemStatusLabel(selectedItem.status)} ·{" "}
                     {formatQuantityText(
-                      selectedItem.quantity,
+                      selectedItem.quantity ?? null,
                       unitLabel(selectedItem.unit),
                     )}
                   </p>
@@ -1698,8 +2228,8 @@ export function MedicaoApp({ session }: { session: User | null }) {
                     {submitting ? "Registrando…" : "Registrar decisão"}
                   </button>
                   <p className="dica">
-                    Identidade e horário são do servidor: a decisão sai carimbada com{" "}
-                    {state?.reviewer_id ?? "o revisor do processo"}.
+                    Identidade e horário são do servidor: a decisão sai carimbada com a
+                    identidade da sua sessão.
                   </p>
                 </form>
               )}
@@ -1719,17 +2249,10 @@ export function MedicaoApp({ session }: { session: User | null }) {
               {suggestions === null ? (
                 <div className="shortlist-vazia">
                   <p>
-                    A shortlist ainda não foi calculada nesta rodada. Calcular grava{" "}
-                    <span className="mono">code-suggestions.json</span> no diretório.
+                    A shortlist ainda não foi calculada nesta rodada. Calcular grava a
+                    shortlist de código como artefato da rodada.
                   </p>
-                  {/* O custo do clique é o do braço semântico DESTA rodada; dizer
-                      "nenhum provider é chamado" era falso em rodada com índice e
-                      credencial. */}
-                  {state === null ? null : (
-                    <p className="dica">
-                      {descricaoCalculoShortlist(state.busca_semantica.status)}
-                    </p>
-                  )}
+                  <p className="dica">{DESCRICAO_CALCULO_SHORTLIST}</p>
                   <button
                     type="button"
                     className="botao-primario"
@@ -1742,20 +2265,20 @@ export function MedicaoApp({ session }: { session: User | null }) {
               ) : (
                 <div className="shortlist-vazia">
                   <p className="dica">
-                    Recalcular sobrescreve{" "}
-                    <span className="mono">code-suggestions.json</span> com o algoritmo
-                    atual do servidor; as decisões de código já registradas não mudam.
+                    Recalcular sobrescreve a shortlist gravada com o algoritmo atual do
+                    servidor; as decisões de código já registradas não mudam.
                   </p>
-                  {state === null ? null : (
-                    <p className="dica">
-                      {descricaoCalculoShortlist(state.busca_semantica.status)}
+                  <p className="dica">{DESCRICAO_CALCULO_SHORTLIST}</p>
+                  {suggestions.semantic_notes.map((note) => (
+                    <p key={note} className="dica">
+                      {note}
                     </p>
-                  )}
+                  ))}
                   <button
                     type="button"
                     className="botao-secundario"
                     onClick={() => void recalcularShortlist()}
-                    disabled={submitting}
+                    disabled={submitting || version === null}
                   >
                     Recalcular shortlist
                   </button>
@@ -1805,9 +2328,9 @@ export function MedicaoApp({ session }: { session: User | null }) {
                 ) : (
                   <ul className="confirmados-lista">
                     {confirmados.map((assignment) => {
-                      const code = assignment.code;
-                      // `code` só é `null` num assignment rejeitado; este filtro já é
-                      // só de confirmados, mas o tipo do servidor permite `null` aqui.
+                      const code = assignment.code ?? null;
+                      // `code` só é nulo num assignment rejeitado; este filtro já é
+                      // só de confirmados, mas o tipo do domínio permite nulo aqui.
                       const description = code === null ? null : assignmentDescriptions[code];
                       return (
                         <li key={assignment.item_id}>
@@ -1862,7 +2385,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
                         type="button"
                         className="botao-secundario"
                         onClick={() => void gerarDossie()}
-                        disabled={submitting}
+                        disabled={submitting || version === null}
                       >
                         {submitting ? "Gerando…" : "Gerar dossiê do aditivo"}
                       </button>
@@ -1902,7 +2425,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
                         type="button"
                         className="botao-secundario"
                         onClick={() => void gerarDossie()}
-                        disabled={submitting}
+                        disabled={submitting || version === null}
                       >
                         {submitting ? "Gerando…" : "Regerar dossiê do aditivo"}
                       </button>
@@ -1963,7 +2486,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
                     </p>
                   ) : (
                     <ul className="codigos">
-                      {shortlist.map((candidate: CodeCandidate) => (
+                      {shortlist.map((candidate: CodeSuggestionSet.CodeCandidate) => (
                         <CartaoCodigo
                           key={candidate.code}
                           code={candidate.code}
@@ -1990,9 +2513,9 @@ export function MedicaoApp({ session }: { session: User | null }) {
 
                   <h3>Busca no catálogo</h3>
                   <p className="dica">
-                    Enquanto você digita, a busca é a lexical do servidor, sem chamada
-                    paga. “Buscar” pede a busca completa da rodada — com o braço semântico
-                    junto, quando ele estiver disponível.
+                    A busca é a lexical do catálogo instalado nesta rodada, enquanto você
+                    digita e no botão: nenhuma chamada paga acontece, e o motivo de o braço
+                    semântico não participar vem declarado na resposta.
                   </p>
                   <form
                     className="busca"
@@ -2101,6 +2624,7 @@ export function MedicaoApp({ session }: { session: User | null }) {
                       onClick={() => void decidirCodigo("confirm")}
                       disabled={
                         submitting ||
+                        version === null ||
                         codeChoice === null ||
                         (notaObrigatoria && codeNote.trim().length === 0)
                       }
@@ -2111,7 +2635,9 @@ export function MedicaoApp({ session }: { session: User | null }) {
                       type="button"
                       className="botao-secundario"
                       onClick={() => void decidirCodigo("reject")}
-                      disabled={submitting || codeNote.trim().length === 0}
+                      disabled={
+                        submitting || version === null || codeNote.trim().length === 0
+                      }
                     >
                       Sem código no contrato (aditivo)
                     </button>
@@ -2128,110 +2654,31 @@ export function MedicaoApp({ session }: { session: User | null }) {
         {etapaVisivel === "boletim" ? (
           <section className="painel" aria-label="Boletim da medição">
             <h2>Boletim de medição</h2>
-            <p className="aviso-fixo aviso-inline">{avisoDaFerramenta(oidcAtivo)}</p>
+            <p className="aviso-fixo aviso-inline">{AVISO_MEDICAO}</p>
             {bulletin === null ? (
-              <form
-                className="formulario"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void montarBoletim();
-                }}
-              >
+              <div className="formulario">
                 <p>
-                  A medição ainda não foi montada nesta rodada. Informe a obra e o período;
-                  quantidades, preços e totais vêm do takeoff confirmado e do catálogo.
+                  A medição ainda não foi montada nesta rodada. A obra, o período e o
+                  rótulo vêm da própria rodada; quantidades, preços e totais vêm do takeoff
+                  confirmado e do catálogo instalado.
                 </p>
-                <label className="campo">
-                  Chave da obra
-                  <span className="campo-dica">
-                    minúsculas, números e hífen (ex.: praca-sintetica-oeste)
-                  </span>
-                  <input
-                    type="text"
-                    value={calcForm.worksiteKey}
-                    onChange={(event) =>
-                      setCalcForm((current) => ({
-                        ...current,
-                        worksiteKey: event.target.value,
-                      }))
-                    }
-                    required
-                  />
-                </label>
-                <label className="campo">
-                  Nome da obra
-                  <input
-                    type="text"
-                    value={calcForm.worksiteName}
-                    onChange={(event) =>
-                      setCalcForm((current) => ({
-                        ...current,
-                        worksiteName: event.target.value,
-                      }))
-                    }
-                    required
-                  />
-                </label>
-                <label className="campo">
-                  Número da medição
-                  <input
-                    type="number"
-                    min={1}
-                    value={calcForm.periodNumber}
-                    onChange={(event) =>
-                      setCalcForm((current) => ({
-                        ...current,
-                        periodNumber: event.target.value,
-                      }))
-                    }
-                    required
-                  />
-                </label>
-                <label className="campo">
-                  Rótulo da medição
-                  <span className="campo-dica">como aparece na planilha (ex.: 3ª MEDIÇÃO)</span>
-                  <input
-                    type="text"
-                    value={calcForm.referenceLabel}
-                    onChange={(event) =>
-                      setCalcForm((current) => ({
-                        ...current,
-                        referenceLabel: event.target.value,
-                      }))
-                    }
-                    required
-                  />
-                </label>
-                <label className="campo">
-                  Endereço (opcional)
-                  <input
-                    type="text"
-                    value={calcForm.address}
-                    onChange={(event) =>
-                      setCalcForm((current) => ({
-                        ...current,
-                        address: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label className="campo">
-                  Contrato (opcional)
-                  <input
-                    type="text"
-                    value={calcForm.contractLabel}
-                    onChange={(event) =>
-                      setCalcForm((current) => ({
-                        ...current,
-                        contractLabel: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <button type="submit" className="botao-primario" disabled={submitting}>
+                {state === null ? null : (
+                  <p className="dica">
+                    {state.worksite_name} ({state.worksite_key}) ·{" "}
+                    {state.reference_label} · medição {state.period_number}
+                    {state.address === null ? "" : ` · ${state.address}`}
+                    {state.contract_label === null ? "" : ` · ${state.contract_label}`}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="botao-primario"
+                  onClick={() => void montarBoletim()}
+                  disabled={submitting || version === null}
+                >
                   {submitting ? "Montando…" : "Montar boletim e memória"}
                 </button>
-              </form>
+              </div>
             ) : (
               <>
                 <p>
@@ -2314,9 +2761,9 @@ export function MedicaoApp({ session }: { session: User | null }) {
                                         )}${operand.unit ? ` ${unitLabel(operand.unit)}` : ""}`,
                                     )
                                     .join(" × ")}
-                                  {block.deductions.length === 0
+                                  {(block.deductions ?? []).length === 0
                                     ? ""
-                                    : ` − ${block.deductions
+                                    : ` − ${(block.deductions ?? [])
                                         .map(
                                           (deduction) =>
                                             `${deduction.name} ${formatDecimalText(

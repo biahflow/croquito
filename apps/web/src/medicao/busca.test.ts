@@ -3,15 +3,26 @@ import type { CatalogSearchResponse, CatalogSearchResult } from "./api";
 import { BUSCA_MIN_CARACTERES, consultaIncremental, resumoDaBusca } from "./busca";
 
 function resultado(code: string): CatalogSearchResult {
-  return { code, unit: "m2", unit_price: "10.00", description: `ITEM ${code}` };
+  return {
+    code,
+    unit: "m2",
+    unit_price: "10.00",
+    description: `ITEM ${code}`,
+    origin: "lexical",
+    lexical_score: 0.5,
+    semantic_score: null,
+  };
 }
 
 function resposta(over: Partial<CatalogSearchResponse>): CatalogSearchResponse {
   return {
+    round_id: "0197f2a0-0000-7000-8000-000000000001",
+    version: 4,
     query: "gramado",
     terms: ["gramado"],
     limit: 20,
     total_matches: 1,
+    semantic_matches: 0,
     results: [resultado("AD04050060(/)")],
     matching: "lexical",
     semantic_notes: [],

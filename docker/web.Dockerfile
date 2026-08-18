@@ -31,19 +31,17 @@ RUN npm ci
 COPY packages/contracts/ packages/contracts/
 COPY apps/ apps/
 
-# Base da API e do servidor de medição RELATIVAS: o navegador fala com a mesma origem e
-# quem sabe onde ficam os serviços internos é o nginx, não o bundle.
+# Base da API RELATIVA: o navegador fala com a mesma origem e quem sabe onde ficam os
+# serviços internos é o nginx, não o bundle.
 #
-# `VITE_MEDICAO_API_BASE_URL` continua aqui mesmo sem `apps/medicao`: a jornada de medição
-# mudou de diretório, não de servidor — ela segue falando com `croquito-medicao-hml` por
-# `/medicao/api/`. Ela sai daqui quando a jornada passar para a API `/v1` autenticada.
+# A base própria da medição saiu daqui: as duas jornadas falam com a MESMA API `/v1`
+# autenticada (ADR-0028), e a rodada de medição é recurso dela — não há mais um servidor
+# de medição para o bundle endereçar.
 ARG VITE_API_BASE_URL=/api
-ARG VITE_MEDICAO_API_BASE_URL=/medicao/api
 ARG VITE_OIDC_AUTHORITY=https://croquito-hml.biahflow.ai/auth/realms/croquito
 ARG VITE_OIDC_CLIENT_ID=croquito-web
 
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
-    VITE_MEDICAO_API_BASE_URL=$VITE_MEDICAO_API_BASE_URL \
     VITE_OIDC_AUTHORITY=$VITE_OIDC_AUTHORITY \
     VITE_OIDC_CLIENT_ID=$VITE_OIDC_CLIENT_ID
 

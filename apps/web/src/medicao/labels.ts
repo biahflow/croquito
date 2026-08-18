@@ -8,26 +8,28 @@
  * desconhecido nunca vira mensagem inventada — ele aparece com o texto que veio.
  */
 
-import type { TakeoffItemStatus } from "./api";
-
-/** Aviso permanente da ferramenta; repetido no cabeçalho e no boletim. */
-export const AVISO_FERRAMENTA_LOCAL =
-  "Ferramenta local de homologação — medição sem aprovação; aprovar e exportar são atos separados.";
+import type { TakeoffPacket } from "@croquito/contracts";
 
 /**
- * O mesmo aviso no modo hospedado (ADR-0026). O que muda é a primeira metade: com sessão
- * ativa a ferramenta não é local e a decisão não é carimbada com a identidade de quem subiu
- * o processo, e sim com a de quem entrou. A segunda metade não muda porque a regra não
- * mudou — medir continua não sendo aprovar nem exportar.
+ * Aviso permanente da jornada; repetido no cabeçalho e no boletim.
+ *
+ * A sessão é sempre autenticada (ADR-0028): a decisão é carimbada com a identidade de
+ * quem entrou, nunca com a de quem subiu um processo. A segunda metade não mudou porque a
+ * regra não mudou — medir continua não sendo aprovar nem exportar.
  */
-export const AVISO_FERRAMENTA_HOSPEDADA =
-  "Homologação remota autenticada; decisões carimbadas com sua identidade — medição sem " +
-  "aprovação; aprovar e exportar são atos separados.";
+export const AVISO_MEDICAO =
+  "Medição autenticada; decisões carimbadas com sua identidade — medição sem aprovação; " +
+  "aprovar e exportar são atos separados.";
 
-/** O aviso que descreve a realidade desta sessão; `false` é o caminho local do ADR-0020. */
-export function avisoDaFerramenta(oidcAtivo: boolean): string {
-  return oidcAtivo ? AVISO_FERRAMENTA_HOSPEDADA : AVISO_FERRAMENTA_LOCAL;
-}
+/**
+ * O `409 REVISION_CONFLICT` dito como o que ele é: a rodada andou entre a leitura e o
+ * ato. Não é falha do que se tentou fazer, e por isso a frase começa pela rodada e termina
+ * dizendo que o formulário continua ali.
+ */
+export const MENSAGEM_RODADA_MUDOU =
+  "A rodada mudou depois desta leitura — outra sessão, ou o processamento da própria " +
+  "rodada, avançou a versão. Nada foi gravado. Recarregue o estado atual e decida de " +
+  "novo; o que você escreveu no formulário continua aqui.";
 
 /** Por que a quantidade do item ambíguo é responsabilidade de quem revisa. */
 export const AVISO_QUANTIDADE_AMBIGUA =
@@ -65,40 +67,53 @@ export const AVISO_LOCALIZACAO_NAO_CONFIRMADA =
   "Localização na prancha não confirmada para este item — decida pela lista e pela prancha.";
 
 /**
- * O que o clique em "recalcular shortlist" vai custar, pelo status do braço semântico da
- * rodada (`RunState.busca_semantica.status`). É o texto ao lado do botão que grava
- * artefato no servidor — quem aperta precisa saber, antes do clique, se ele paga algo.
+ * O que o clique em "calcular/recalcular shortlist" vai custar. É o texto ao lado do botão
+ * que grava artefato na rodada — quem aperta precisa saber, antes do clique, se ele paga
+ * algo. Na rodada de `/v1` a resposta é uma só, e ela é declarada: nenhuma rota publica
+ * índice de embeddings, então o braço semântico não participa e nenhum provider é chamado.
  */
-export function descricaoCalculoShortlist(
-  status: "available" | "limited" | "unavailable",
-): string {
-  if (status === "available") {
-    return (
-      "Com o índice semântico desta rodada, embutir os rótulos custa uma chamada paga " +
-      "pequena, cacheada nesta rodada; consulta já embutida não é cobrada de novo."
-    );
-  }
-  if (status === "limited") {
-    // Índice presente e credencial ausente: o vetor que já está no cache da rodada
-    // continua respondendo pelo híbrido. Prometer "só lexical" aqui seria descrever
-    // errado a shortlist que vai sair.
-    return (
-      "Nenhum provider é chamado: com vetores já cacheados na rodada a shortlist ainda " +
-      "sai híbrida; sem cache, sai lexical."
-    );
-  }
-  return "Nenhum provider é chamado: a shortlist é calculada só pelo braço lexical.";
-}
+export const DESCRICAO_CALCULO_SHORTLIST =
+  "Nenhum provider é chamado: a shortlist da rodada é calculada só pelo braço lexical.";
 
-const ITEM_STATUS_LABELS: Record<TakeoffItemStatus, string> = {
+const ITEM_STATUS_LABELS: Record<TakeoffPacket.TakeoffItemStatus, string> = {
   proposed: "proposto",
   ambiguous: "ambíguo",
   confirmed: "confirmado",
   rejected: "rejeitado",
 };
 
-export function itemStatusLabel(status: TakeoffItemStatus): string {
+export function itemStatusLabel(
+  status: TakeoffPacket.TakeoffItemStatus,
+): string {
   return ITEM_STATUS_LABELS[status];
+}
+
+/** Etapa da rodada na listagem, em língua de obra. */
+const STAGE_LABELS: LookupTable = {
+  created: "rodada aberta",
+  plate: "prancha enviada",
+  extraction: "leitura da legenda",
+  takeoff: "revisão do takeoff",
+  code_assignments: "confirmação de código",
+  bulletin: "boletim montado",
+  amendment_dossier: "dossiê do aditivo",
+};
+
+export function stageLabel(stage: string): string {
+  return STAGE_LABELS[stage] ?? stage;
+}
+
+/** Estado da leitura automática da legenda, por extenso. */
+const EXTRACTION_STATUS_LABELS: LookupTable = {
+  idle: "não disparada",
+  queued: "na fila",
+  running: "em andamento",
+  done: "concluída",
+  failed: "falhou",
+};
+
+export function extractionStatusLabel(status: string): string {
+  return EXTRACTION_STATUS_LABELS[status] ?? status;
 }
 
 /** Tabela de rótulos por chave livre: a busca pode não achar, e o tipo diz isso. */
@@ -159,53 +174,49 @@ export function recipeLabel(recipe: string): string {
 }
 
 const ERROR_MESSAGES: LookupTable = {
-  // Guarda otimista e artefatos da rodada.
-  LOCAL_STATE_MOVED:
-    "O estado da rodada mudou depois desta leitura; recarregue o estado atual antes de decidir de novo.",
-  LOCAL_ARTIFACT_MISSING:
-    "Um artefato de entrada não está no diretório da rodada; gere-o pelo CLI antes de continuar.",
-  // Os dois valem para qualquer artefato com guarda de digest (confirmações de código,
-  // shortlist de sugestões): quem nomeia o artefato é o `detail` do servidor, e uma frase
-  // fixa citando só as confirmações mentiria no recompute da shortlist.
-  LOCAL_BASE_DIGEST_REQUIRED:
-    "Este artefato da rodada já foi gravado; recarregue o estado para citar o digest atual dele.",
-  LOCAL_BASE_DIGEST_UNEXPECTED:
-    "Este artefato da rodada ainda não existe; recarregue o estado antes de continuar.",
+  // Guarda otimista e sessão da API `/v1`.
+  REVISION_CONFLICT:
+    "A rodada mudou depois desta leitura; recarregue o estado atual antes de decidir de novo.",
+  NOT_FOUND:
+    "Esta rodada não existe ou não pertence ao seu tenant.",
+  FORBIDDEN:
+    "O seu usuário não tem o papel de orçamentista neste ambiente. Peça a quem administra o ambiente antes de decidir.",
+  IDEMPOTENCY_KEY_REUSED:
+    "Esta chave de idempotência já foi usada com outro conteúdo; recarregue o estado e refaça o ato.",
+  // Etapas da rodada: a cadeia tem ordem, e sair dela é caminho normal do orçamentista.
+  ROUND_STAGE_NOT_READY:
+    "Esta etapa ainda não está disponível nesta rodada; conclua a etapa anterior antes de continuar.",
+  ROUND_PLATE_ALREADY_PRESENT:
+    "Esta rodada já tem prancha; uma rodada é uma prancha. Para enviar outra, abra uma rodada nova.",
+  EXTRACTION_IN_PROGRESS:
+    "Já existe uma leitura automática em andamento nesta rodada; aguarde ela terminar.",
+  TAKEOFF_REVIEW_INCOMPLETE:
+    "A sugestão de código exige a revisão do takeoff concluída.",
+  SUGGESTIONS_ALREADY_REFINED:
+    "A shortlist desta rodada carrega refino pago; recalcular descartaria o lineage da chamada.",
+  CATALOG_REQUIRED:
+    "O catálogo de preços desta rodada não pôde ser lido; sem ele não há código nem preço a consultar.",
+  CATALOG_QUERY_EMPTY:
+    "A busca exige ao menos uma palavra com dois caracteres ou mais.",
+  // Uploads e chamada paga.
+  INVALID_UPLOAD:
+    "O arquivo enviado não é aceitável para esta rodada; confira o formato e envie de novo.",
+  // Falha do `PUT` assinado, não do arquivo: o byte não chegou ao armazenamento.
+  UPLOAD_TRANSFER_FAILED:
+    "O envio direto do arquivo ao armazenamento não foi concluído; tente enviar de novo.",
+  LIMIT_EXCEEDED: "O arquivo enviado excede o limite aceito pela API.",
+  PROCESSING_UNAVAILABLE:
+    "A fila de processamento não aceitou o comando agora; tente de novo em instantes.",
+  PROVIDER_UNAVAILABLE:
+    "A leitura automática não está disponível neste ambiente; nenhum provider foi chamado.",
+  AI_PROCESSING_NOT_AUTHORIZED:
+    "O seu tenant não tem autorização contratual para processamento por IA; fale com quem administra o contrato.",
+  DOMAIN_VALIDATION_FAILED:
+    "O servidor recusou este ato por uma regra de domínio da medição.",
+  // Invariante de `packages/valuation`: viaja em `details.code` do
+  // `DOMAIN_VALIDATION_FAILED` e é ela, não o código da API, que escolhe a frase.
   LOCAL_QUANTITY_INVALID:
     "A quantidade informada não é um número decimal exato. Use ponto como separador decimal (ex.: 18.40).",
-  LOCAL_SEARCH_QUERY_EMPTY:
-    "A busca exige ao menos uma palavra com dois caracteres ou mais.",
-  LOCAL_REQUEST_INVALID:
-    "O servidor recusou o formulário: algum campo não corresponde ao contrato da rota.",
-  LOCAL_TAKEOFF_REVIEW_INCOMPLETE:
-    "A sugestão de código exige a revisão do takeoff concluída.",
-  LOCAL_SERVER_UNREACHABLE:
-    "O servidor local não respondeu. Confira se `croquito-valuation serve` está no ar.",
-  LOCAL_RESPONSE_UNREADABLE:
-    "O servidor local respondeu fora do formato esperado.",
-  // Só aparece no modo hospedado (ADR-0026), e só quando a recusa vem sem envelope: a
-  // sessão expirou ou o usuário não tem o papel de quem decide medição.
-  LOCAL_SESSION_REJECTED:
-    "O servidor recusou esta sessão. Entre de novo; se continuar, confirme com quem administra o ambiente se o seu usuário tem o papel de orçamentista.",
-  // Recusas COM envelope do modo hospedado: o servidor disse por que, e a tela separa
-  // "entre de novo" (sessão) de "peça o papel" (autorização) — são consertos diferentes.
-  HOSTED_SESSION_REQUIRED:
-    "Esta rodada exige sessão autenticada. Entre para revisar, confirmar código ou montar o boletim.",
-  HOSTED_SESSION_INVALID:
-    "A sua sessão não é mais válida. Entre de novo; o que você escreveu no formulário continua aqui.",
-  HOSTED_ROLE_REQUIRED:
-    "O seu usuário não tem o papel de orçamentista neste ambiente. Peça a quem administra o ambiente antes de decidir.",
-  HOSTED_REVIEWER_INVALID:
-    "A identidade da sua sessão não serve de carimbo de decisão. Fale com quem administra o ambiente.",
-  // Prancha e extração automática.
-  LOCAL_ROUND_ALREADY_HAS_PLATE:
-    "Esta rodada já tem prancha; uma rodada é uma prancha. Para enviar outra, abra o servidor numa rodada nova.",
-  LOCAL_EXTRACTION_BUSY:
-    "Já existe uma extração automática em andamento nesta rodada; aguarde ela terminar.",
-  LOCAL_EXTRACTION_UNAVAILABLE:
-    "Extração automática indisponível no servidor local desta rodada.",
-  LOCAL_UPLOAD_INVALID:
-    "O arquivo enviado não é um PDF de prancha aceitável.",
   // Revisão do takeoff.
   TAKEOFF_ITEM_ALREADY_REVIEWED:
     "Este item já foi decidido; decisão não se sobrescreve.",
@@ -241,6 +252,8 @@ const ERROR_MESSAGES: LookupTable = {
   CALC_PLAN_QUANTITY_MISMATCH:
     "A decomposição do plano de cálculo não fecha com a quantidade confirmada.",
   CALC_NO_ITEMS: "Não há item medido para montar o boletim desta obra.",
+  BULLETIN_PRICE_ORIGIN_FORBIDDEN:
+    "Em obra licitada o preço vem do contrato: item de outra tabela não entra no boletim, vira pedido de aditivo.",
   MODEL_VALIDATION_FAILED:
     "O documento gravado na rodada não corresponde ao contrato do modelo.",
   // Dossiê do aditivo.
@@ -259,7 +272,7 @@ const ERROR_MESSAGES: LookupTable = {
  * como complemento, e código sem frase própria mostra os dois — nunca uma frase
  * genérica que esconda o que o domínio disse.
  */
-export function errorMessage(code: string, detail?: string): string {
+export function errorMessage(code: string, detail?: string | null): string {
   const known = ERROR_MESSAGES[code];
   const cleaned = detail?.trim();
   if (known) {
@@ -268,4 +281,31 @@ export function errorMessage(code: string, detail?: string): string {
       : known;
   }
   return cleaned ? `${code}: ${cleaned}` : code;
+}
+
+const EXTRACTION_FAILURE_MESSAGES: LookupTable = {
+  PROVIDER_EXECUTION_FAILED:
+    "A chamada ao provider falhou; nenhum artefato foi publicado nesta rodada.",
+  EXTRACTION_PAGE_NOT_BOUND:
+    "A página promovida não corresponde à prancha autorizada para leitura automática.",
+  MODEL_VALIDATION_FAILED:
+    "A leitura automática devolveu um pacote fora do contrato do modelo; nada foi publicado.",
+  VALUATION_EXTRACTION_FAILED:
+    "A leitura automática da legenda não fechou; nenhum artefato foi publicado.",
+};
+
+/**
+ * Por que a leitura automática da legenda não publicou nada. O código estável vem da
+ * rodada (`extraction.failure_code`) e é ele que escolhe a frase — o servidor não manda
+ * mensagem pronta em `/v1`, e inventar uma sem código seria pior do que dizer o que se
+ * sabe. Código desconhecido aparece como veio, nunca escondido.
+ */
+export function extractionFailureMessage(code: string | null): string {
+  if (code === null) {
+    return "A leitura automática da legenda falhou nesta rodada.";
+  }
+  return (
+    EXTRACTION_FAILURE_MESSAGES[code] ??
+    `A leitura automática da legenda falhou (${code}).`
+  );
 }

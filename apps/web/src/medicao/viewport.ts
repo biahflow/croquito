@@ -12,7 +12,9 @@
  */
 
 import type { CSSProperties } from "react";
-import type { PlateBox } from "./api";
+import type { TakeoffPacket } from "@croquito/contracts";
+
+type PlateBox = TakeoffPacket.PlateBox;
 
 /** A prancha tem ~1700 px de largura; abaixo de 1× o texto da legenda some. */
 export const MIN_ZOOM = 1;

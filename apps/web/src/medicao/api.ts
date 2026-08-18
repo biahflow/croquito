@@ -1,124 +1,116 @@
 /**
- * Cliente do servidor **local** de homologação da medição (Fase A do M6).
+ * Cliente da medição de obra na API `/v1` autenticada (ADR-0028, F-003 T20).
  *
- * Os tipos abaixo são escritos à mão como espelho do contrato de
- * `services/worker/src/croquito_worker/valuation/local_server.py` — mesma prática do
- * `apps/web/src/api.ts`, porque este contexto não tem schema gerado. Quando uma rota
- * mudar lá, ela muda aqui; nada nesta tela adivinha campo que o servidor não mandou.
+ * O transporte é o mesmo do croqui (`apiJson` em `apps/web/src/api.ts`): ele leva o
+ * `Authorization` da sessão OIDC, refaz a chamada uma vez quando o token expirou e traduz
+ * o envelope de erro aninhado (`{detail: {code, detail, details}}`) num `ApiError`. Este
+ * módulo não abre `fetch` nenhum por conta própria — nem para imagem, que agora chega por
+ * URL assinada dentro do corpo (D5) e vai direto no `src`.
  *
- * Três invariantes moram neste módulo:
+ * Quatro invariantes moram aqui:
  *
+ * - **A rodada é recurso.** Toda função cita `round_id`; nada nesta tela conversa com uma
+ *   rodada implícita.
  * - **Identidade e carimbo nunca viajam.** `reviewer_id`, `reviewer_role`, `decided_at` e
  *   `decision_id` são do servidor (`extra="forbid"` recusa o corpo que os traz). Os
- *   construtores de corpo puros que garantem isso vivem em `requests.ts`, para serem
- *   testáveis sem transporte.
- * - **Mutação sempre cita o digest-base lido.** É a guarda otimista local, o substituto
- *   declarado do `base_version` da API de cena: decisão só entra sobre o estado que esta
- *   tela realmente leu.
+ *   construtores de corpo puros que garantem isso vivem em `requests.ts`.
+ * - **Mutação cita `base_version` e manda `Idempotency-Key`.** A guarda otimista é da
+ *   rodada e vale para a cadeia inteira; versão movida devolve `409 REVISION_CONFLICT`.
  * - **`Decimal` viaja como texto.** Quantidade e dinheiro chegam em string e são exibidos
  *   como string formatada (`format.ts`); nenhum número da medição vira `number` aqui.
+ *
+ * Os tipos de DOMÍNIO são os gerados de `@croquito/contracts` — pacote de takeoff,
+ * shortlist, confirmações de código, medição e dossiê. Escrito à mão aqui fica só o
+ * ENVELOPE de cada rota (`round_id`, `version`, digests e contagens), que é da API e não
+ * do domínio.
  */
 
+import type {
+  AmendmentDossier,
+  CodeAssignmentSet,
+  CodeSuggestionSet,
+  TakeoffPacket,
+  Valuation,
+} from "@croquito/contracts";
+
+import { apiJson, ApiError } from "../api";
 import {
-  calcBuildBody,
   codeDecisionBody,
-  suggestionsRecomputeBody,
+  createRoundBody,
   takeoffDecisionBody,
+  versionBody,
 } from "./requests";
 
-/**
- * Base do servidor de medição; a UI não fala com mais nada.
- *
- * Em desenvolvimento é o servidor local em `http://localhost:8801`. No build servido pelo
- * nginx do host público a base é RELATIVA (`/medicao/api`), e o proxy same-origin leva a
- * chamada ao serviço interno — nenhum host aparece no bundle.
- */
-export const apiBaseUrl =
-  import.meta.env.VITE_MEDICAO_API_BASE_URL ?? "http://localhost:8801";
-
-/**
- * Fonte do access token da sessão (`apps/web/src/auth.ts`), injetada pela tela.
- *
- * O módulo de API não conhece OIDC: ele pergunta o token a quem tem a sessão e manda o
- * `Authorization` quando existe resposta. Sem provider — o caminho do servidor local, que
- * não autentica (ADR-0020) — nenhum header extra é enviado e nada da rotina local muda.
- */
-let accessTokenProvider: (() => string | null) | null = null;
-
-export function setAccessTokenProvider(
-  provider: (() => string | null) | null,
-): void {
-  accessTokenProvider = provider;
-}
-
-/** `{}` sem sessão; um `Authorization` quando o provider devolve token. */
-function authHeaders(): Record<string, string> {
-  const token = accessTokenProvider?.() ?? null;
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-export type TakeoffItemStatus =
-  | "proposed"
-  | "ambiguous"
-  | "confirmed"
-  | "rejected";
-
-export type PlateBox = {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-};
-
-export type ReviewerDecision = {
-  decision_id: string;
-  action: "confirm" | "reject";
-  reviewer_id: string;
-  reviewer_role: string;
-  decided_at: string;
-  note: string | null;
-};
+export { ApiError };
 
 /** `registered` = a bbox passou pelo registro fino contra a prancha; `raw` = ainda não. */
 export type AnchorStatus = "registered" | "raw";
 
-export type TakeoffItem = {
-  id: string;
-  evidence: {
-    plate_id: string;
-    page_number: number;
-    image_sha256: string;
-    coordinate_space: string;
-    bbox: PlateBox;
-  };
-  raw_text: string;
-  label: string;
-  /** `Decimal` em texto; `null` no item ambíguo, que é a linha sem quantidade legível. */
-  quantity: string | null;
-  unit: string;
-  source: string;
-  extractor: string;
-  extractor_version: string;
-  note: string | null;
-  status: TakeoffItemStatus;
-  decision: ReviewerDecision | null;
-  /** Ausente em servidor anterior a este campo (rollout local); `itemAnchor` trata a
-   * ausência como `"raw"`, nunca como confirmado. */
-  anchor?: AnchorStatus;
+/**
+ * Item do pacote com a âncora que a rota de leitura junta a ele (`anchored_packet`).
+ *
+ * A junção é de leitura: o documento gravado não ganha campo nenhum e o digest continua
+ * sendo o dos bytes guardados. Por isso `anchor` é envelope, não domínio — e a ausência
+ * dele é tratada como `"raw"` por `itemAnchor`, nunca como confirmado.
+ */
+export type TakeoffItem = TakeoffPacket.TakeoffItem & { anchor?: AnchorStatus };
+
+export type AnchoredTakeoffPacket = Omit<
+  TakeoffPacket.CroquitoTakeoffPacket,
+  "items"
+> & { items: TakeoffItem[] };
+
+/** Etapa mais avançada que a rodada alcançou; a extração tem estado próprio. */
+export type RoundStage =
+  | "created"
+  | "plate"
+  | "extraction"
+  | "takeoff"
+  | "code_assignments"
+  | "bulletin"
+  | "amendment_dossier";
+
+/**
+ * Estado da chamada paga que lê a legenda. `queued` e `running` são o comando na fila;
+ * `failed` traz `failure_code`. Não existe `unavailable`: ambiente sem provider recusa o
+ * pedido na hora (`503 PROVIDER_UNAVAILABLE`) e a rodada continua `idle`.
+ */
+export type ExtractionStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "done"
+  | "failed";
+
+/** Linha da listagem de rodadas do tenant. */
+export type RoundSummary = {
+  round_id: string;
+  worksite_key: string;
+  worksite_name: string;
+  reference_label: string;
+  period_number: number;
+  version: number;
+  status: string;
+  stage: RoundStage;
+  extraction_status: ExtractionStatus;
+  created_at: string;
+  updated_at: string;
 };
 
-export type TakeoffPacket = {
-  schema_version: string;
-  plate_id: string;
-  page_number: number;
-  image_sha256: string;
-  source_pdf_sha256: string;
-  items: TakeoffItem[];
-  safety_status: string;
-  safety_notes: string[];
+/** Página da listagem; `next_cursor` é opaco e só volta quando há mais o que ler. */
+export type RoundPage = {
+  items: RoundSummary[];
+  next_cursor: string | null;
 };
 
-/** Contagens do pacote; o servidor manda sempre as quatro, zero inclusive. */
+export type RoundCreated = {
+  round_id: string;
+  version: number;
+  status: string;
+  created_at: string;
+};
+
+/** Contagens do pacote; o servidor manda sempre todas, zero inclusive. */
 export type TakeoffCounts = {
   items: number;
   proposed: number;
@@ -128,15 +120,21 @@ export type TakeoffCounts = {
   pending: number;
 };
 
-export type RunStateTakeoff = Partial<TakeoffCounts> & {
-  present: boolean;
-  packet_sha256?: string;
-  plate_id?: string;
-  page_number?: number;
-  review_status?: "review_required" | "complete";
+export type AnchorCounts = {
+  anchors_registered: number;
+  anchors_raw: number;
 };
 
-export type RunStateCodes = {
+export type RoundStateTakeoff = Partial<TakeoffCounts> &
+  Partial<AnchorCounts> & {
+    present: boolean;
+    packet_sha256?: string | null;
+    plate_id?: string;
+    page_number?: number;
+    review_status?: "review_required" | "complete";
+  };
+
+export type RoundStateCodes = {
   suggestions_present: boolean;
   suggestions_sha256: string | null;
   assignments_present: boolean;
@@ -147,119 +145,122 @@ export type RunStateCodes = {
   pending: number | null;
 };
 
-/** `idle` = sem prancha ou prancha ingerida sem disparo ainda; `unavailable` = servidor
- * sem teto de gasto/credencial — nunca chegou a chamar o provider; `failed` = chamou e
- * não fechou. Os dois últimos são visíveis na tela, nunca escondidos atrás de `idle`. */
-export type ExtractionStatus = "idle" | "running" | "done" | "failed" | "unavailable";
-
-/** Lineage e custo da chamada paga que leu a legenda; nunca a resposta bruta do provider. */
-export type ExtractionExecution = {
-  provider: string;
-  model_id: string;
-  prompt_version: string;
-  input_digest: string;
-  latency_ms: number;
-  input_tokens: number;
-  output_tokens: number;
-  /** `Decimal` em texto, como todo dinheiro nesta tela; `null` quando o provider não informou. */
-  estimated_cost_usd: string | null;
-};
-
-/** Etapa `extracao` do `/state`: o que a chamada paga fez, está fazendo ou não pôde fazer. */
-export type ExtractionState = {
+/** Etapa `extraction` do estado da rodada: o que a chamada paga fez ou está fazendo. */
+export type RoundStateExtraction = {
   status: ExtractionStatus;
-  error_code: string | null;
-  /** Já em língua de obra, escrita pelo servidor; a tela mostra como está, sem reescrever. */
-  message: string | null;
-  details: Record<string, unknown> | null;
-  execution: ExtractionExecution | null;
-  consented_source_sha256: string | null;
-  arm: string;
-  plate_pdf_present: boolean;
-  /** Páginas do PDF enviado; só a página 1 vira prancha. `null` sem prancha nenhuma. */
-  pages: number | null;
-  page_number: number;
-  /** Avisos declarados do servidor (ex.: PDF multi-página); a tela exibe literal, sem reescrever. */
-  notes: string[];
+  extraction_id: string | null;
+  /** Código estável do desfecho que não publicou nada; `labels.ts` o traduz. */
+  failure_code: string | null;
+  lineage_present: boolean;
+  updated_at: string | null;
 };
 
-/** Etapa `busca_semantica` do `/state`: disponível, limitada ao cache ou indisponível.
- * Nada aqui bloqueia a tela — é sempre informativo, com o motivo colado na mensagem. */
-export type SemanticSearchState = {
-  status: "available" | "limited" | "unavailable";
-  message: string;
-  index_present: boolean;
-  model_id: string | null;
+export type RoundStatePlate = {
+  present: boolean;
+  source_sha256: string | null;
+  page_count: number | null;
 };
 
-export type RunState = {
-  server_version: string;
-  root: string;
-  reviewer_id: string;
+export type RoundState = {
+  round_id: string;
+  version: number;
+  status: string;
   reviewer_role: string;
-  artifacts: Record<string, string>;
-  busca_semantica: SemanticSearchState;
-  images: {
-    plate: { present: boolean; filename: string | null };
-    overlay: { present: boolean };
+  worksite_key: string;
+  worksite_name: string;
+  reference_label: string;
+  period_number: number;
+  address: string | null;
+  contract_label: string | null;
+  revision_id: string | null;
+  revision_version: number | null;
+  catalog: {
+    source_sha256: string;
+    summary: {
+      source_label?: string;
+      reference_month?: string;
+      source_sha256?: string;
+      entries?: number;
+    };
   };
-  extracao: ExtractionState;
-  takeoff: RunStateTakeoff;
-  codes: RunStateCodes;
+  artifacts: Record<string, string>;
+  plate: RoundStatePlate;
+  extraction: RoundStateExtraction;
+  takeoff: RoundStateTakeoff;
+  codes: RoundStateCodes;
   bulletin: { present: boolean; valuation_sha256: string | null };
   dossier: { present: boolean; dossier_sha256: string | null };
+  created_at: string;
+  updated_at: string;
 };
 
-export type TakeoffResponse = {
-  packet: TakeoffPacket;
+/**
+ * Metadados da prancha. `image_url` é URL assinada de curta duração da página promovida:
+ * ela vai direto no `src` da imagem, sem header nenhum, e **nunca** entra em log.
+ */
+export type PlateResponse = {
+  round_id: string;
+  version: number;
+  upload_id: string;
+  source_sha256: string;
+  page_count: number | null;
+  image_url: string | null;
+};
+
+export type ExtractionResponse = {
+  round_id: string;
+  version: number;
+  extraction_id: string;
+  status: ExtractionStatus;
+};
+
+/**
+ * Idade do overlay declarada na leitura (ADR-0030): `stale` é a comparação entre o pacote
+ * que originou o desenho e o pacote corrente. Overlay vencido é `200` com a marca, nunca
+ * erro — ele continua sendo a única visão de onde cada número foi lido.
+ */
+export type OverlayState = {
+  present: boolean;
+  image_sha256: string | null;
+  overlay_packet_sha256: string | null;
+  stale: boolean;
+};
+
+export type OverlayResponse = OverlayState & {
+  round_id: string;
+  version: number;
+  /** URL assinada de curta duração; vai no `src` e nunca em log. */
+  image_url: string;
   packet_sha256: string;
 };
 
-export type TakeoffDecisionResponse = TakeoffCounts & {
-  packet: TakeoffPacket;
-  packet_sha256: string;
-  review_status: "review_required" | "complete";
-  overlay_written: boolean;
-  notes: string[];
-};
+export type TakeoffResponse = TakeoffCounts &
+  AnchorCounts & {
+    round_id: string;
+    version: number;
+    packet: AnchoredTakeoffPacket;
+    packet_sha256: string;
+    review_status: "review_required" | "complete";
+  };
 
-export type CodeCandidate = {
-  code: string;
-  description: string;
-  unit: string;
-  unit_price: string;
-  unit_compatible: boolean;
-  in_contract: boolean;
-  lexical_score: number;
-  status: string;
-  refinement_note: string | null;
-};
-
-export type CodeSuggestionSet = {
-  schema_version: string;
-  plate_id: string;
-  page_number: number;
-  image_sha256: string;
-  catalog_sha256: string;
-  contract_sha256: string | null;
-  suggester_version: string;
-  suggestions: { item_id: string; candidates: CodeCandidate[] }[];
-  /** Itens confirmados sem nenhum candidato lexical: caminho é a busca no catálogo. */
-  unmatched_item_ids: string[];
-  safety_notes: string[];
+/**
+ * Resposta da decisão: a rodada já em versão nova, com o pacote regravado, mais a idade
+ * do overlay. Ele fica vencido até o worker redesenhá-lo, e isso não é erro.
+ */
+export type TakeoffDecisionResponse = TakeoffResponse & {
+  overlay: OverlayState;
 };
 
 export type SuggestionsResponse = {
-  suggestions: CodeSuggestionSet;
+  round_id: string;
+  version: number;
+  suggestions: CodeSuggestionSet.CroquitoCodeSuggestionSet;
   suggestions_sha256: string;
   /** `true` quando esta chamada calculou e gravou a shortlist agora. */
   computed: boolean;
-  /** `hybrid` = fusão léxico + semântica; `lexical` = só o braço determinístico. Derivado
-   * do `suggester_version` do próprio conjunto, então continua verdadeiro quando a
-   * resposta vem do arquivo já gravado por outra sessão. */
+  /** Derivado do `suggester_version` do próprio conjunto, nunca do estado do processo. */
   matching: "lexical" | "hybrid";
-  /** Avisos do braço semântico, sempre em língua de obra; vazio quando ele não teve nada
-   * a dizer (ou não foi nem tentado). */
+  /** Motivo declarado do braço semântico; vazio quando ele não teve nada a dizer. */
   semantic_notes: string[];
 };
 
@@ -269,41 +270,26 @@ export type CatalogSearchResult = {
   unit_price: string;
   /** Descrição COMPLETA do catálogo; é ela que diz se o código inclui execução. */
   description: string;
+  origin: string;
+  lexical_score: number;
+  semantic_score: number | null;
 };
 
 export type CatalogSearchResponse = {
+  round_id: string;
+  version: number;
   query: string;
   terms: string[];
   limit: number;
   total_matches: number;
+  semantic_matches: number;
   results: CatalogSearchResult[];
-  /** `hybrid` = fusão léxico + semântica; `lexical` = só o braço determinístico (inclusive
-   * quando fixado por `arm=lexical`). */
   matching: "lexical" | "hybrid";
-  /** Avisos do braço semântico em língua de obra; vazio quando ele não teve nada a dizer. */
   semantic_notes: string[];
+  expanded_terms?: Record<string, string[]>;
 };
 
-export type CodeAssignment = {
-  item_id: string;
-  status: "confirmed" | "rejected";
-  code: string | null;
-  unit_compatible: boolean;
-  decision: ReviewerDecision;
-};
-
-export type CodeAssignmentSet = {
-  schema_version: string;
-  plate_id: string;
-  page_number: number;
-  image_sha256: string;
-  catalog_sha256: string;
-  contract_sha256: string | null;
-  assignments: CodeAssignment[];
-  safety_notes: string[];
-};
-
-/** Item de takeoff como o servidor o lista nas pendências de código. */
+/** Item de takeoff como a API o lista nas pendências de código. */
 export type PendingCodeItem = {
   item_id: string;
   label: string;
@@ -311,226 +297,58 @@ export type PendingCodeItem = {
   quantity: string | null;
   unit: string;
   note: string | null;
-  status: TakeoffItemStatus;
+  status: TakeoffPacket.TakeoffItemStatus;
 };
 
 export type CodesResponse = {
-  assignments: CodeAssignmentSet | null;
+  round_id: string;
+  version: number;
+  assignments: CodeAssignmentSet.CroquitoCodeAssignmentSet | null;
   assignments_sha256: string | null;
   confirmed: number;
   rejected: number;
   pending_items: PendingCodeItem[];
 };
 
-export type CalcOperand = { name: string; value: string; unit: string | null };
-
-export type CalcBlock = {
-  label: string;
-  recipe: string;
-  operands: CalcOperand[];
-  deductions: CalcOperand[];
-  subtotal: string;
-};
-
-export type CalcSheet = {
-  worksite_key: string;
-  item_number: string;
-  blocks: CalcBlock[];
-  total_quantity: string;
-};
-
-export type BulletinLine = {
-  item_number: string;
-  code: string;
-  description: string;
-  unit: string;
-  unit_price: string;
-  quantity: string;
-  total: string;
-};
-
-export type WorksiteBulletin = {
-  worksite_key: string;
-  worksite_name: string;
-  address: string | null;
-  contract_label: string | null;
-  lines: BulletinLine[];
-  total_amount: string;
-};
-
-export type Valuation = {
-  schema_version: string;
-  id: string;
-  period_number: number;
-  reference_label: string;
-  bulletins: WorksiteBulletin[];
-  calc_sheets: CalcSheet[];
-  approval: unknown | null;
-};
-
 export type BulletinResponse = {
-  valuation: Valuation;
+  round_id: string;
+  version: number;
+  valuation: Valuation.CroquitoValuation;
   valuation_sha256: string;
-  /** Total da medição; é propriedade do domínio, calculada no servidor. */
+  /** Total da medição; é propriedade do domínio, recomputada no servidor. */
   total_amount: string;
-};
-
-/**
- * Item confirmado no takeoff cujo código foi rejeitado: candidato a aditivo já fechado
- * pelo servidor. Nenhum campo de preço existe aqui, por construção — o dossiê instrui o
- * pedido de aditivo (RE-RA), nunca precifica.
- */
-export type AmendmentDossierItem = {
-  item_id: string;
-  label: string;
-  raw_text: string;
-  /** `Decimal` em texto, como toda quantidade nesta tela. */
-  quantity: string;
-  unit: string;
-  item_note: string | null;
-  /** A nota da rejeição de código (`decision.note`); nunca inventada pela tela. */
-  justification: string;
-  decision: ReviewerDecision;
-};
-
-export type AmendmentDossier = {
-  schema_version: string;
-  plate_id: string;
-  page_number: number;
-  image_sha256: string;
-  source_pdf_sha256: string;
-  catalog_sha256: string;
-  contract_sha256: string | null;
-  /** Vazio é desfecho normal: rodada sem nenhuma rejeição de código não tem aditivo. */
-  items: AmendmentDossierItem[];
-  safety_notes: string[];
 };
 
 export type DossierResponse = {
-  dossier: AmendmentDossier;
+  round_id: string;
+  version: number;
+  dossier: AmendmentDossier.CroquitoAmendmentDossier;
   dossier_sha256: string;
   item_count: number;
 };
 
-/** Envelope de erro do servidor local: `{code, detail, details}` em problem+json. */
-export class MedicaoApiError extends Error {
-  readonly code: string;
-  readonly detail: string;
-  readonly details: Record<string, unknown>;
-  readonly status: number;
-
-  constructor(
-    status: number,
-    code: string,
-    detail: string,
-    details: Record<string, unknown>,
-  ) {
-    super(`${code}: ${detail}`);
-    this.name = "MedicaoApiError";
-    this.status = status;
-    this.code = code;
-    this.detail = detail;
-    this.details = details;
-  }
-}
-
-/** Código do 409 de guarda otimista: o "REVISION_CONFLICT" desta ferramenta local. */
-export const STATE_MOVED_CODE = "LOCAL_STATE_MOVED";
-
-/**
- * Recusa de sessão sem envelope legível (401/403). É código LOCAL, como
- * `LOCAL_RESPONSE_UNREADABLE`: ele só entra quando o servidor não disse nada de
- * aproveitável — envelope do servidor continua vencendo, sempre.
- */
-export const SESSION_REJECTED_CODE = "LOCAL_SESSION_REJECTED";
-
-/**
- * Traduz uma resposta não-ok no erro de domínio que ela carrega.
- *
- * Corpo ilegível não vira mensagem inventada: sobra o status e um código local
- * (`LOCAL_RESPONSE_UNREADABLE`, ou `LOCAL_SESSION_REJECTED` em 401/403) que a tela sabe
- * exibir. Sem isso, um 401 do modo hospedado apareceria como "respondeu fora do formato
- * esperado", que manda o revisor procurar o defeito no lugar errado.
- */
-export async function readProblem(response: Response): Promise<MedicaoApiError> {
-  const payload = (await response.json().catch(() => null)) as {
-    code?: unknown;
-    detail?: unknown;
-    details?: unknown;
-  } | null;
-  const code = typeof payload?.code === "string" ? payload.code : null;
-  const detail = typeof payload?.detail === "string" ? payload.detail : null;
-  const details =
-    payload?.details && typeof payload.details === "object"
-      ? (payload.details as Record<string, unknown>)
-      : {};
-  if (code === null) {
-    if (response.status === 401 || response.status === 403) {
-      return new MedicaoApiError(
-        response.status,
-        SESSION_REJECTED_CODE,
-        detail ?? `o servidor respondeu ${response.status} sem envelope de erro`,
-        details,
-      );
-    }
-    return new MedicaoApiError(
-      response.status,
-      "LOCAL_RESPONSE_UNREADABLE",
-      detail ?? `o servidor local respondeu ${response.status} sem envelope de erro`,
-      details,
-    );
-  }
-  return new MedicaoApiError(response.status, code, detail ?? "", details);
-}
-
-/**
- * Opções de uma chamada deste módulo. `headers` é um objeto simples (e não `HeadersInit`)
- * de propósito: é o que todas as chamadas daqui usam, e é o que permite juntar o
- * `Authorization` ao que a chamada declarou sem perder nenhum dos dois.
- */
-type RequestOptions = Omit<RequestInit, "headers"> & {
-  headers?: Record<string, string>;
+type PresignedUpload = {
+  upload_id: string;
+  object_key: string;
+  url: string;
+  headers: Record<string, string>;
+  expires_at: string;
 };
 
-async function request<T>(path: string, init?: RequestOptions): Promise<T> {
-  let response: Response;
-  try {
-    // O `Authorization` entra ANTES do que a chamada declarou, para que um header
-    // explícito continue vencendo; nenhum outro header é tocado — o `uploadPlate` manda
-    // `FormData` e um `Content-Type` escrito aqui quebraria o boundary do multipart.
-    response = await fetch(`${apiBaseUrl}${path}`, {
-      ...init,
-      headers: { ...authHeaders(), ...(init?.headers ?? {}) },
-    });
-  } catch (cause) {
-    if (cause instanceof DOMException && cause.name === "AbortError") {
-      throw cause;
-    }
-    throw new MedicaoApiError(
-      0,
-      "LOCAL_SERVER_UNREACHABLE",
-      "o servidor local não respondeu; confira se `croquito-valuation serve` está no ar",
-      { base_url: apiBaseUrl, path },
-    );
-  }
-  if (!response.ok) {
-    throw await readProblem(response);
-  }
-  return (await response.json()) as T;
-}
-
-function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  return request<T>(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
+export type CreateRoundDraft = {
+  worksiteKey: string;
+  worksiteName: string;
+  catalogUploadId: string;
+  referenceLabel: string;
+  periodNumber: string;
+  address?: string;
+  contractLabel?: string;
+};
 
 export type TakeoffDecisionDraft = {
   itemId: string;
   action: "confirm" | "reject";
-  basePacketSha256: string;
+  baseVersion: number;
   /** Quantidade escrita pelo revisor, em texto: `Decimal` não passa por `number`. */
   quantity?: string;
   unit?: string;
@@ -541,169 +359,331 @@ export type TakeoffDecisionDraft = {
 export type CodeDecisionDraft = {
   itemId: string;
   action: "confirm" | "reject";
+  baseVersion: number;
   code?: string;
   note?: string;
-  /**
-   * Digest do conjunto de confirmações lido. É `null` enquanto o arquivo não existe: o
-   * servidor recusa digest citado sem conjunto (`LOCAL_BASE_DIGEST_UNEXPECTED`) e recusa
-   * conjunto existente sem digest (`LOCAL_BASE_DIGEST_REQUIRED`).
-   */
-  baseAssignmentsSha256: string | null;
 };
 
-export type CalcBuildDraft = {
-  worksiteKey: string;
-  worksiteName: string;
-  periodNumber: string;
-  referenceLabel: string;
-  address?: string;
-  contractLabel?: string;
+const JSON_HEADERS: Record<string, string> = {
+  "Content-Type": "application/json",
 };
 
-export function getState(): Promise<RunState> {
-  return request<RunState>("/state");
+/** Cabeçalhos de uma mutação: JSON e a chave de idempotência da tentativa. */
+function mutationHeaders(): Record<string, string> {
+  return { ...JSON_HEADERS, "Idempotency-Key": crypto.randomUUID() };
 }
 
-export function getTakeoff(): Promise<TakeoffResponse> {
-  return request<TakeoffResponse>("/takeoff");
+function post<T>(
+  path: string,
+  accessToken: string,
+  body: Record<string, unknown>,
+): Promise<T> {
+  return apiJson<T>(path, accessToken, {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: JSON.stringify(body),
+  });
+}
+
+function roundPath(roundId: string, suffix = ""): string {
+  return `/v1/valuation-rounds/${encodeURIComponent(roundId)}${suffix}`;
+}
+
+function toHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer), (value) =>
+    value.toString(16).padStart(2, "0"),
+  ).join("");
 }
 
 /**
- * Envia o PDF da prancha do projetista (`POST /plates`, multipart). O envio É o
- * consentimento do documento para a leitura automática por IA — a resposta chega assim
- * que a prancha está na rodada, **sem esperar** a chamada paga terminar; quem acompanha o
- * desfecho é `state.extracao` no `/state` seguinte. Sem `Content-Type` manual: o
- * navegador escreve o boundary do multipart sozinho, e um header errado aqui quebra o
- * parsing do servidor.
+ * Sobe um arquivo pelo presign e devolve o `upload_id` a citar depois.
+ *
+ * O byte nunca passa pela API: ela assina, o navegador faz o `PUT` direto no object store
+ * e a rota seguinte recebe só o identificador. O digest é calculado aqui e conferido lá —
+ * upload incompleto é recusado em vez de virar rodada com catálogo pela metade.
  */
-export function uploadPlate(file: File): Promise<RunState> {
-  const body = new FormData();
-  body.append("file", file);
-  return request<RunState>("/plates", { method: "POST", body });
+async function uploadFile(
+  accessToken: string,
+  file: File,
+  contentType: "application/pdf" | "application/json",
+): Promise<string> {
+  const digest = toHex(
+    await crypto.subtle.digest("SHA-256", await file.arrayBuffer()),
+  );
+  const presigned = await post<PresignedUpload>(
+    "/v1/uploads/presign",
+    accessToken,
+    {
+      filename: file.name,
+      content_type: contentType,
+      size_bytes: file.size,
+      sha256: digest,
+    },
+  );
+  const upload = await fetch(presigned.url, {
+    method: "PUT",
+    headers: presigned.headers,
+    body: file,
+  });
+  if (!upload.ok) {
+    // Código próprio: a falha aqui é do `PUT` direto no armazenamento, e chamá-la de
+    // `INVALID_UPLOAD` mandaria conferir o arquivo quando o defeito é o envio.
+    throw new ApiError(
+      "O envio direto do arquivo não foi concluído. Tente novamente.",
+      upload.status,
+      "UPLOAD_TRANSFER_FAILED",
+      "o PUT assinado do arquivo não foi concluído",
+      {},
+    );
+  }
+  return presigned.upload_id;
+}
+
+/** Catálogo de preços da rodada nova (JSON do `PriceCatalog`), pelo presign. */
+export function uploadCatalog(
+  accessToken: string,
+  file: File,
+): Promise<string> {
+  return uploadFile(accessToken, file, "application/json");
+}
+
+/** PDF da prancha do projetista, pelo presign; a API não recebe PDF em JSON. */
+export function uploadPlateFile(
+  accessToken: string,
+  file: File,
+): Promise<string> {
+  return uploadFile(accessToken, file, "application/pdf");
+}
+
+export function listRounds(
+  accessToken: string,
+  options?: { limit?: number; cursor?: string | null },
+): Promise<RoundPage> {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  if (options?.cursor) {
+    params.set("cursor", options.cursor);
+  }
+  const query = params.toString();
+  return apiJson<RoundPage>(
+    `/v1/valuation-rounds${query ? `?${query}` : ""}`,
+    accessToken,
+  );
 }
 
 /**
- * Re-dispara a extração de uma prancha já ingerida (`POST /plates/extract`), para falha
- * transitória do provider ou servidor subido sem teto de gasto não obrigarem a reenviar
- * o documento.
+ * Abre a rodada com o catálogo já enviado. O catálogo é instalado na criação e é imutável
+ * nela: trocar de catálogo é abrir outra rodada.
  */
-export function extractPlate(): Promise<RunState> {
-  return request<RunState>("/plates/extract", { method: "POST" });
+export function createRound(
+  accessToken: string,
+  draft: CreateRoundDraft,
+): Promise<RoundCreated> {
+  return post<RoundCreated>(
+    "/v1/valuation-rounds",
+    accessToken,
+    createRoundBody(draft),
+  );
+}
+
+export function getRoundState(
+  accessToken: string,
+  roundId: string,
+): Promise<RoundState> {
+  return apiJson<RoundState>(roundPath(roundId), accessToken);
+}
+
+/** Associa o PDF já enviado à rodada; uma rodada tem no máximo uma prancha. */
+export function associatePlate(
+  accessToken: string,
+  roundId: string,
+  uploadId: string,
+  baseVersion: number,
+): Promise<PlateResponse> {
+  return post<PlateResponse>(roundPath(roundId, "/plate"), accessToken, {
+    upload_id: uploadId,
+    ...versionBody(baseVersion),
+  });
+}
+
+export function getPlate(
+  accessToken: string,
+  roundId: string,
+): Promise<PlateResponse> {
+  return apiJson<PlateResponse>(roundPath(roundId, "/plate"), accessToken);
+}
+
+/**
+ * Enfileira a leitura automática da legenda (`202`). É chamada PAGA de provider: ela
+ * depende da autorização contratual do tenant e do ambiente ter provider configurado, e
+ * nenhum byte de prancha volta nesta resposta.
+ */
+export function createPlateExtraction(
+  accessToken: string,
+  roundId: string,
+  baseVersion: number,
+): Promise<ExtractionResponse> {
+  return post<ExtractionResponse>(
+    roundPath(roundId, "/plate/extractions"),
+    accessToken,
+    versionBody(baseVersion),
+  );
+}
+
+export function getTakeoff(
+  accessToken: string,
+  roundId: string,
+): Promise<TakeoffResponse> {
+  return apiJson<TakeoffResponse>(roundPath(roundId, "/takeoff"), accessToken);
+}
+
+export function getTakeoffOverlay(
+  accessToken: string,
+  roundId: string,
+): Promise<OverlayResponse> {
+  return apiJson<OverlayResponse>(
+    roundPath(roundId, "/takeoff/overlay"),
+    accessToken,
+  );
 }
 
 export function postTakeoffDecision(
+  accessToken: string,
+  roundId: string,
   draft: TakeoffDecisionDraft,
 ): Promise<TakeoffDecisionResponse> {
-  return postJson<TakeoffDecisionResponse>(
-    "/takeoff/decisions",
+  return post<TakeoffDecisionResponse>(
+    roundPath(roundId, "/takeoff/decisions"),
+    accessToken,
     takeoffDecisionBody(draft),
   );
 }
 
 /**
- * Shortlist do servidor. A primeira chamada **calcula e grava** o artefato (`computed`);
- * por isso a tela só a busca na etapa de códigos, que já exige revisão completa. Esta
- * rota nunca recalcula um artefato já gravado — para isso é `postSuggestionsRecompute`.
+ * Shortlist da rodada. A primeira leitura **calcula e grava** o artefato (`computed`), sem
+ * avançar a versão da rodada — a shortlist é derivada, e um `GET` não é ato humano. Por
+ * isso a tela só a busca por gesto explícito na etapa de códigos.
  */
-export function getSuggestions(): Promise<SuggestionsResponse> {
-  return request<SuggestionsResponse>("/suggestions");
-}
-
-/**
- * Recompute explícito da shortlist (`POST /suggestions/recompute`): grava artefato no
- * servidor, então só acontece pelo gesto do usuário — nunca automático. `null` só é aceito
- * quando ainda não existe shortlist nesta rodada.
- */
-export function postSuggestionsRecompute(
-  baseSuggestionsSha256: string | null,
+export function getSuggestions(
+  accessToken: string,
+  roundId: string,
 ): Promise<SuggestionsResponse> {
-  return postJson<SuggestionsResponse>(
-    "/suggestions/recompute",
-    suggestionsRecomputeBody(baseSuggestionsSha256),
+  return apiJson<SuggestionsResponse>(
+    roundPath(roundId, "/code-suggestions"),
+    accessToken,
   );
 }
 
-export function searchCatalog(
-  query: string,
-  limit = 20,
-  options?: { arm?: "auto" | "lexical"; signal?: AbortSignal },
-): Promise<CatalogSearchResponse> {
-  const params = new URLSearchParams({ q: query, limit: String(limit) });
-  if (options?.arm === "lexical") {
-    params.set("arm", "lexical");
-  }
-  return request<CatalogSearchResponse>(`/catalog/search?${params.toString()}`, {
-    signal: options?.signal,
-  });
+/**
+ * Recompute explícito da shortlist: descarta a anterior, então é ato humano, cita
+ * `base_version` e avança a rodada. Shortlist com refino pago é recusada
+ * (`409 SUGGESTIONS_ALREADY_REFINED`) em vez de perder o lineage da chamada paga.
+ */
+export function postSuggestionsRecompute(
+  accessToken: string,
+  roundId: string,
+  baseVersion: number,
+): Promise<SuggestionsResponse> {
+  return post<SuggestionsResponse>(
+    roundPath(roundId, "/code-suggestions/recompute"),
+    accessToken,
+    versionBody(baseVersion),
+  );
 }
 
-export function getCodes(): Promise<CodesResponse> {
-  return request<CodesResponse>("/codes");
+/**
+ * Busca no catálogo instalado, sempre pelo braço LEXICAL — que é o padrão da rota e o
+ * único braço que a rodada de `/v1` tem: o híbrido depende de índice de embeddings que
+ * nenhuma rota publica, e pedi-lo devolveria `503` a cada consulta. O motivo viaja na
+ * própria resposta (`semantic_notes`) e a tela o exibe: a busca não degrada em silêncio.
+ */
+export function searchCatalog(
+  accessToken: string,
+  roundId: string,
+  query: string,
+  limit = 20,
+  options?: { signal?: AbortSignal },
+): Promise<CatalogSearchResponse> {
+  const params = new URLSearchParams({
+    q: query,
+    limit: String(limit),
+    arm: "lexical",
+  });
+  return apiJson<CatalogSearchResponse>(
+    roundPath(roundId, `/catalog/search?${params.toString()}`),
+    accessToken,
+    { signal: options?.signal },
+  );
+}
+
+export function getCodes(
+  accessToken: string,
+  roundId: string,
+): Promise<CodesResponse> {
+  return apiJson<CodesResponse>(
+    roundPath(roundId, "/code-assignments"),
+    accessToken,
+  );
 }
 
 export function postCodeDecision(
+  accessToken: string,
+  roundId: string,
   draft: CodeDecisionDraft,
 ): Promise<CodesResponse> {
-  return postJson<CodesResponse>("/codes/decisions", codeDecisionBody(draft));
-}
-
-export function postCalcBuild(draft: CalcBuildDraft): Promise<BulletinResponse> {
-  return postJson<BulletinResponse>("/calc/build", calcBuildBody(draft));
-}
-
-export function getBulletin(): Promise<BulletinResponse> {
-  return request<BulletinResponse>("/bulletin");
+  return post<CodesResponse>(
+    roundPath(roundId, "/code-assignments/decisions"),
+    accessToken,
+    codeDecisionBody(draft),
+  );
 }
 
 /**
- * Monta o dossiê do aditivo (`POST /dossier/build`). Espelho de `POST /calc/build`
- * (`postCalcBuild`): a rota real que ele espelha não tem guarda de digest-base — ela
- * sempre reconstrói do estado ATUAL do takeoff e das confirmações de código já gravados
- * na rodada, sem corpo a enviar, como `extractPlate`.
+ * Constrói boletim e memória de cálculo. O corpo é só a guarda de concorrência: a
+ * identidade da obra (`worksite_key`, `worksite_name`, `period_number`,
+ * `reference_label`, `address`, `contract_label`) é atributo da RODADA e foi declarada na
+ * criação — quem a quiser mudar abre rodada nova.
  */
-export function postDossierBuild(): Promise<DossierResponse> {
-  return request<DossierResponse>("/dossier/build", { method: "POST" });
+export function postCalcBuild(
+  accessToken: string,
+  roundId: string,
+  baseVersion: number,
+): Promise<BulletinResponse> {
+  return post<BulletinResponse>(
+    roundPath(roundId, "/calc"),
+    accessToken,
+    versionBody(baseVersion),
+  );
 }
 
-export function getDossier(): Promise<DossierResponse> {
-  return request<DossierResponse>("/dossier");
+export function getBulletin(
+  accessToken: string,
+  roundId: string,
+): Promise<BulletinResponse> {
+  return apiJson<BulletinResponse>(roundPath(roundId, "/bulletin"), accessToken);
 }
 
-/** Rotas de imagem sem parâmetro de caminho: a UI escolhe a etapa, nunca o arquivo. */
-export const PLATE_IMAGE_PATH = "/images/plate";
-export const OVERLAY_IMAGE_PATH = "/images/overlay";
+/** Dossiê do aditivo: espelho de `postCalcBuild`, dos mesmos dois artefatos-base. */
+export function postDossierBuild(
+  accessToken: string,
+  roundId: string,
+  baseVersion: number,
+): Promise<DossierResponse> {
+  return post<DossierResponse>(
+    roundPath(roundId, "/amendment-dossier"),
+    accessToken,
+    versionBody(baseVersion),
+  );
+}
 
-export const plateImageUrl = `${apiBaseUrl}${PLATE_IMAGE_PATH}`;
-export const overlayImageUrl = `${apiBaseUrl}${OVERLAY_IMAGE_PATH}`;
-
-/**
- * Baixa uma imagem do servidor COM o `Authorization` da sessão e devolve um object URL.
- *
- * `<img src={url}>` não passa por este módulo: o navegador busca a imagem sozinho, sem
- * header nenhum, e no modo hospedado (ADR-0026) isso é um 401 — a prancha sumiria da tela
- * de quem está autenticado. Buscar por `fetch` e virar `blob:` é o que faz a imagem
- * atravessar a mesma porta que o resto das chamadas.
- *
- * Quem chama fica responsável por `URL.revokeObjectURL` quando trocar ou desmontar: object
- * URL vive até o fim do documento, e uma rodada de revisão abre a prancha muitas vezes.
- */
-export async function fetchImageObjectUrl(path: string): Promise<string> {
-  let response: Response;
-  try {
-    response = await fetch(`${apiBaseUrl}${path}`, { headers: authHeaders() });
-  } catch (cause) {
-    if (cause instanceof DOMException && cause.name === "AbortError") {
-      throw cause;
-    }
-    throw new MedicaoApiError(
-      0,
-      "LOCAL_SERVER_UNREACHABLE",
-      "o servidor local não respondeu; confira se `croquito-valuation serve` está no ar",
-      { base_url: apiBaseUrl, path },
-    );
-  }
-  if (!response.ok) {
-    throw await readProblem(response);
-  }
-  return URL.createObjectURL(await response.blob());
+export function getDossier(
+  accessToken: string,
+  roundId: string,
+): Promise<DossierResponse> {
+  return apiJson<DossierResponse>(
+    roundPath(roundId, "/amendment-dossier"),
+    accessToken,
+  );
 }

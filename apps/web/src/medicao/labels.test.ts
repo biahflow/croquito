@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   assignmentStatusLabel,
-  AVISO_FERRAMENTA_HOSPEDADA,
-  AVISO_FERRAMENTA_LOCAL,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
-  avisoDaFerramenta,
-  descricaoCalculoShortlist,
+  AVISO_MEDICAO,
+  DESCRICAO_CALCULO_SHORTLIST,
   errorMessage,
+  extractionFailureMessage,
+  extractionStatusLabel,
   itemStatusLabel,
+  MENSAGEM_RODADA_MUDOU,
   recipeLabel,
+  stageLabel,
   unitLabel,
   unitMismatchHint,
 } from "./labels";
@@ -62,41 +64,54 @@ describe("errorMessage", () => {
     expect(errorMessage("TAKEOFF_ITEM_ALREADY_REVIEWED")).toBe(
       "Este item já foi decidido; decisão não se sobrescreve.",
     );
-    expect(errorMessage("LOCAL_STATE_MOVED")).toContain("recarregue o estado atual");
     expect(errorMessage("ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE")).toContain(
       "registre a conversão na nota",
     );
+    expect(errorMessage("CALC_ASSIGNMENT_MISSING")).toContain(
+      "não é montado pela metade",
+    );
   });
 
-  it("diz o que fazer quando a sessão é recusada, sem devolver o código cru", () => {
-    const message = errorMessage("LOCAL_SESSION_REJECTED");
+  it("o conflito de versão da rodada é dito como rodada que andou", () => {
+    const message = errorMessage("REVISION_CONFLICT");
 
-    expect(message).toContain("recusou esta sessão");
-    expect(message).toContain("orçamentista");
-    expect(message).not.toContain("LOCAL_SESSION_REJECTED");
+    expect(message).toContain("A rodada mudou");
+    expect(message).toContain("recarregue o estado atual");
+    expect(message).not.toContain("REVISION_CONFLICT");
+  });
+
+  it("as recusas de ETAPA da rodada têm frase própria, nunca o código cru", () => {
+    for (const code of [
+      "ROUND_STAGE_NOT_READY",
+      "CATALOG_REQUIRED",
+      "TAKEOFF_REVIEW_INCOMPLETE",
+      "SUGGESTIONS_ALREADY_REFINED",
+      "EXTRACTION_IN_PROGRESS",
+      "ROUND_PLATE_ALREADY_PRESENT",
+      "CATALOG_QUERY_EMPTY",
+    ]) {
+      const message = errorMessage(code);
+
+      expect(message).not.toContain(code);
+      expect(message.length).toBeGreaterThan(20);
+    }
+  });
+
+  it("diz o que fazer quando o papel ou a autorização faltam", () => {
+    expect(errorMessage("FORBIDDEN")).toContain("orçamentista");
+    expect(errorMessage("AI_PROCESSING_NOT_AUTHORIZED")).toContain(
+      "autorização contratual",
+    );
   });
 
   it("acrescenta o detalhe do servidor quando ele diz algo a mais", () => {
     const message = errorMessage(
-      "LOCAL_ARTIFACT_MISSING",
-      "imagem da prancha do pacote não está no diretório da rodada",
+      "ROUND_STAGE_NOT_READY",
+      "a rodada ainda não tem boletim construído",
     );
 
-    expect(message).toContain("Um artefato de entrada");
-    expect(message).toContain("imagem da prancha do pacote");
-  });
-
-  it("fala do artefato genérico nas guardas de digest, que servem a mais de um artefato", () => {
-    // O mesmo código cobre confirmações de código e shortlist de sugestões; quem nomeia
-    // o artefato é o `detail` do servidor.
-    const message = errorMessage(
-      "LOCAL_BASE_DIGEST_REQUIRED",
-      "já existe shortlist de sugestões; informe o digest-base lido",
-    );
-
-    expect(message).toContain("Este artefato da rodada já foi gravado");
-    expect(message).toContain("já existe shortlist de sugestões");
-    expect(message).not.toContain("conjunto de confirmações nesta rodada");
+    expect(message).toContain("etapa ainda não está disponível");
+    expect(message).toContain("ainda não tem boletim construído");
   });
 
   it("mostra código e detalhe crus quando o código não tem frase própria", () => {
@@ -105,18 +120,36 @@ describe("errorMessage", () => {
     );
     expect(errorMessage("ERRO_SEM_DETALHE")).toBe("ERRO_SEM_DETALHE");
   });
+});
 
-  it("traduz as recusas do upload e da extração automática da prancha", () => {
-    expect(errorMessage("LOCAL_ROUND_ALREADY_HAS_PLATE")).toContain(
-      "uma rodada é uma prancha",
+describe("stageLabel e extractionStatusLabel", () => {
+  it("escrevem etapa e estado da leitura por extenso", () => {
+    expect(stageLabel("amendment_dossier")).toBe("dossiê do aditivo");
+    expect(stageLabel("etapa_futura")).toBe("etapa_futura");
+    expect(extractionStatusLabel("queued")).toBe("na fila");
+    expect(extractionStatusLabel("failed")).toBe("falhou");
+    expect(extractionStatusLabel("estado_futuro")).toBe("estado_futuro");
+  });
+});
+
+describe("extractionFailureMessage", () => {
+  it("traduz o código estável da falha da leitura automática", () => {
+    expect(extractionFailureMessage("PROVIDER_EXECUTION_FAILED")).toContain(
+      "nenhum artefato foi publicado",
     );
-    expect(errorMessage("LOCAL_EXTRACTION_BUSY")).toContain(
-      "existe uma extração automática em andamento",
+    expect(extractionFailureMessage("EXTRACTION_PAGE_NOT_BOUND")).toContain(
+      "página promovida",
     );
-    expect(errorMessage("LOCAL_EXTRACTION_UNAVAILABLE")).toContain(
-      "indisponível no servidor",
+  });
+
+  it("código desconhecido aparece como veio, sem frase inventada", () => {
+    expect(extractionFailureMessage("CODIGO_NOVO")).toContain("CODIGO_NOVO");
+  });
+
+  it("sem código, diz o que se sabe e nada além", () => {
+    expect(extractionFailureMessage(null)).toBe(
+      "A leitura automática da legenda falhou nesta rodada.",
     );
-    expect(errorMessage("LOCAL_UPLOAD_INVALID")).toContain("não é um PDF de prancha");
   });
 });
 
@@ -127,56 +160,26 @@ describe("AVISO_LOCALIZACAO_NAO_CONFIRMADA", () => {
   });
 });
 
-describe("AVISO_FERRAMENTA_LOCAL", () => {
-  it("declara que medir não é aprovar nem exportar", () => {
-    expect(AVISO_FERRAMENTA_LOCAL).toContain("medição sem aprovação");
-    expect(AVISO_FERRAMENTA_LOCAL).toContain("atos separados");
+describe("AVISO_MEDICAO", () => {
+  it("declara a identidade da sessão e que medir não é aprovar nem exportar", () => {
+    expect(AVISO_MEDICAO).toContain("carimbadas com sua identidade");
+    expect(AVISO_MEDICAO).toContain("medição sem aprovação");
+    expect(AVISO_MEDICAO).toContain("atos separados");
+    expect(AVISO_MEDICAO).not.toContain("Ferramenta local");
   });
 });
 
-describe("avisoDaFerramenta", () => {
-  it("sem sessão OIDC, o aviso é o da ferramenta local", () => {
-    expect(avisoDaFerramenta(false)).toBe(AVISO_FERRAMENTA_LOCAL);
-  });
-
-  it("com sessão, o aviso deixa de chamar de local o que está hospedado", () => {
-    const aviso = avisoDaFerramenta(true);
-
-    expect(aviso).toBe(AVISO_FERRAMENTA_HOSPEDADA);
-    expect(aviso).not.toContain("Ferramenta local");
-    expect(aviso).toContain("carimbadas com sua identidade");
-  });
-
-  it("os dois avisos mantêm a regra que não mudou: medir não é aprovar nem exportar", () => {
-    for (const aviso of [avisoDaFerramenta(false), avisoDaFerramenta(true)]) {
-      expect(aviso).toContain("medição sem aprovação");
-      expect(aviso).toContain("atos separados");
-    }
+describe("MENSAGEM_RODADA_MUDOU", () => {
+  it("diz que nada foi gravado e que o formulário continua ali", () => {
+    expect(MENSAGEM_RODADA_MUDOU).toContain("A rodada mudou");
+    expect(MENSAGEM_RODADA_MUDOU).toContain("Nada foi gravado");
+    expect(MENSAGEM_RODADA_MUDOU).toContain("continua aqui");
   });
 });
 
-describe("descricaoCalculoShortlist", () => {
-  it("com índice disponível, diz que embutir os rótulos é uma chamada paga cacheada", () => {
-    const texto = descricaoCalculoShortlist("available");
-
-    expect(texto).toContain("chamada paga");
-    expect(texto).toContain("cacheada");
-  });
-
-  it("com índice limitado ao cache, não promete gasto nem promete shortlist lexical", () => {
-    const texto = descricaoCalculoShortlist("limited");
-
-    expect(texto).toContain("Nenhum provider é chamado");
-    // Vetor já cacheado na rodada continua respondendo pelo híbrido: dizer "só lexical"
-    // aqui descreveria errado a shortlist que vai sair.
-    expect(texto).toContain("vetores já cacheados");
-    expect(texto).toContain("sem cache, sai lexical");
-  });
-
-  it("sem índice, não promete gasto e diz que a shortlist sai só do léxico", () => {
-    const texto = descricaoCalculoShortlist("unavailable");
-
-    expect(texto).toContain("Nenhum provider é chamado");
-    expect(texto).toContain("só pelo braço lexical");
+describe("DESCRICAO_CALCULO_SHORTLIST", () => {
+  it("declara o custo do clique: nenhum provider, só o braço lexical", () => {
+    expect(DESCRICAO_CALCULO_SHORTLIST).toContain("Nenhum provider é chamado");
+    expect(DESCRICAO_CALCULO_SHORTLIST).toContain("só pelo braço lexical");
   });
 });

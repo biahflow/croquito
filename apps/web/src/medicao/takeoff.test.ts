@@ -9,14 +9,14 @@ function takeoffItem(anchor?: TakeoffItem["anchor"]): TakeoffItem {
       plate_id: "plate-sintetica-v1",
       page_number: 1,
       image_sha256: "a".repeat(64),
-      coordinate_space: "pixel",
+      coordinate_space: "source_image_pixels",
       bbox: { left: 10, top: 10, right: 100, bottom: 40 },
     },
     raw_text: "1 - PISO EM CONCRETO - 18,40 m2",
     label: "PISO EM CONCRETO",
     quantity: "18.40",
     unit: "m2",
-    source: "vision",
+    source: "legend_extraction",
     extractor: "opencv",
     extractor_version: "1.0.0",
     note: null,
@@ -32,7 +32,7 @@ describe("itemAnchor", () => {
     expect(itemAnchor(takeoffItem("raw"))).toBe("raw");
   });
 
-  it("campo ausente (servidor anterior a este contrato) trata como 'raw', nunca confirmado", () => {
+  it("campo ausente trata como 'raw', nunca como localização confirmada", () => {
     expect(itemAnchor(takeoffItem(undefined))).toBe("raw");
   });
 });
