@@ -22,7 +22,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | --- | --- | --- | --- |
 | F-001 | HIGH | DONE | [Clarificação do roadmap canônico e ambientes](../features/F-001-roadmap-clarification/feature.md) |
 | F-002 | HIGH | DONE | [Contrato `/v1` da medição](../features/F-002-medicao-v1-contract/feature.md) |
-| F-003 | HIGH | IN_PROGRESS | [Migração da medição para a API `/v1` autenticada](../features/F-003-medicao-v1-migration/feature.md) |
+| F-003 | HIGH | DONE | [Migração da medição para a API `/v1` autenticada](../features/F-003-medicao-v1-migration/feature.md) |
 | F-004 | HIGH | DONE | [Runner de migrations revisadas](../features/F-004-migrations-runner/feature.md) |
 | F-005 | HIGH | DONE | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
 
@@ -30,8 +30,10 @@ Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
 entregou o [ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md), **aceito por ato humano
 em 2026-08-17**, o que fechou F-002 e destravou o planejamento de F-003. O plano de execução
-de F-003 foi aprovado por ato humano na mesma data e a implementação começou; enquanto ela
-não publica a superfície, nenhuma rota de medição existe em `/v1`.
+de F-003 foi aprovado por ato humano na mesma data, e a execução fechou em 2026-08-18: as
+dezoito rotas existem e estão publicadas, a jornada de `apps/web` fala `/v1` e o modo hospedado
+saiu do repositório. O que resta de F-003 não é código — são os atos de produção listados na
+[evidência](../features/F-003-medicao-v1-migration/evidence.md).
 
 F-004 nasce na mesma data, também por seleção humana: o esquema da medição está decidido, mas
 executar F-003 exige antes o runner de migrations que o

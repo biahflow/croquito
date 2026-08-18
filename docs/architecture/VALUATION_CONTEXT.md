@@ -145,22 +145,20 @@ com o digest-base citado como as demais mutações, e recusa fechado
 (`LOCAL_SUGGESTIONS_REFINED`) quando ela carrega refino pago — recalcular descartaria o
 lineage da chamada, e refinar de novo continua sendo comando do CLI.
 
-`serve --hosted` ([ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md)) é
-o **modo hospedado** do mesmo servidor, e o único que pode subir fora da máquina do
-operador: toda rota da rodada exige Bearer JWT do mesmo realm da sessão de cena (validador
-compartilhado `croquito_core.oidc`, sem tocar em `croquito_api`) com o papel `orcamentista`,
-o `reviewer_id` carimbado na decisão vem do claim assinado (`preferred_username`, com `sub`
-como fallback) em vez da flag, o CORS sai das origens declaradas no ambiente
-(`CROQUITO_MEDICAO_OIDC_ISSUER`, `CROQUITO_MEDICAO_OIDC_AUDIENCE`,
-`CROQUITO_MEDICAO_WEB_ORIGINS` — ausência recusa a subida) e `GET /healthz` é a única rota
-sem sessão, para o probe do host. Nenhuma regra de domínio muda entre os modos: as mesmas
-funções fail-closed, os mesmos nomes de artefato, a mesma guarda por digest. Sem a flag, o
-comportamento local do ADR-0020 é idêntico ao que sempre foi, inclusive o aviso ao expor a
-porta em outra interface. No volume da rodada hospedada (bucket montado por FUSE), a
-publicação de artefato troca `temporário + rename` por escrita direta quando
-`CROQUITO_IO_DIRECT_WRITE` está ligada — lá o `rename` é copy+delete e não é a operação
-atômica, enquanto o fechamento do arquivo é; desligada (o default), a escrita local não
-muda.
+Houve um **modo hospedado** do mesmo servidor (`serve --hosted`,
+[ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md)), com sessão
+autenticada mínima e rodadas em bucket montado por FUSE. Era ponte declarada, com dívida
+assumida e data de validade, e **foi removida em 2026-08-18** pela
+[F-003](../features/F-003-medicao-v1-migration/feature.md): quem sobe fora da máquina do
+operador é a API `/v1` autenticada ([ADR-0028](../adr/0028-medicao-na-api-v1-autenticada.md)),
+onde a rodada é recurso com `tenant_id` do JWT e concorrência por `base_version`. Saíram junto
+o proxy de borda `/medicao/api/`, o passo de esteira do serviço hospedado e a variável
+`CROQUITO_IO_DIRECT_WRITE`, que existia só porque no FUSE o `rename` é copy+delete e não é a
+operação atômica — sem ela, a publicação de artefato é sempre `temporário + rename`.
+
+O servidor **local** do ADR-0020 não foi alcançado por essa remoção: `serve` sem flag nenhuma
+continua sendo a ferramenta da máquina do operador, com as mesmas dezesseis rotas, o mesmo
+aviso ao expor a porta em outra interface e a mesma guarda por digest.
 
 A sugestão e a busca de código usam o **matcher híbrido** do M7
 ([ADR-0021](../adr/0021-hybrid-sco-code-retrieval.md)): braço léxico (radicais +

@@ -2,8 +2,19 @@
 
 ## Status
 
-`IN_PROGRESS`
+`DONE`
 
+> Fechada em 2026-08-18, com evidência em [evidence.md](evidence.md). A medição opera sobre a
+> API `/v1` autenticada, as telas vivem em `apps/web` e o modo hospedado foi removido do
+> repositório. O que resta não é código: são os atos de produção listados na evidência, e a
+> homologação real da orçamentista, que esta migração não substitui.
+>
+> Durante a execução nasceu um ADR novo, o
+> [ADR-0030](../../adr/0030-overlay-do-takeoff-reconstruido-na-fila.md): cumprir a promessa que o
+> API Contract herdara do servidor de medição — devolver o overlay atualizado junto da decisão —
+> exigiria render de imagem no request path da API. O re-render foi para a fila, e o overlay
+> passou a declarar a própria idade.
+>
 > O plano de execução ([plan.md](plan.md)) e a execução foram aprovados por ato humano em
 > 2026-08-17, junto de quatro decisões registradas ali: escopo integral numa rodada, nenhuma
 > migração das rodadas do bucket de homologação, a shortlist persistida sem avançar a versão

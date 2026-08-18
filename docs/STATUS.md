@@ -2,7 +2,7 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-17 (M8 do contexto de medição)
+Última revisão: 2026-08-18 (medição migrada para a API `/v1`, F-003)
 
 > Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
 > trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
@@ -581,6 +581,12 @@ coletivo do rebranding, então essa mudança nasce em `sco-refinement@1.0.3`).
 
 ### M6 em código: UI local de homologação da medição
 
+> **Registro do marco, não o estado de hoje.** O app `apps/medicao` e o modo hospedado
+> descritos abaixo não existem mais: as telas migraram para `apps/web` e a cadeia passou a
+> operar sobre a API `/v1` em 2026-08-18 — ver "A medição na API `/v1` autenticada". O que
+> sobreviveu desta entrega é o servidor **local** do ADR-0020, e a guarda por digest citada aqui
+> virou `base_version` na API.
+
 A homologação da cadeia ganhou tela, priorizada pelo usuário para a orçamentista do
 domínio homologar sem CLI ([ADR-0020](adr/0020-local-homologation-server-for-valuation.md)).
 
@@ -785,28 +791,42 @@ nominal e exportação auditada aberta no AutoCAD — foi percorrido de ponta a 
 no Campo do Guaxindiba em 2026-08-13. O próximo passo de validação é o teste por
 um segundo profissional e a repetição do ciclo nos demais golden cases.
 
-### Contexto de transição da medição hospedada
+### A medição na API `/v1` autenticada
 
-A homologação em GCP ([ADR-0025](adr/0025-homologacao-em-gcp-cloud-run.md)) hospeda o
-servidor local de medição com autenticação mínima e rodadas em bucket via FUSE
-([ADR-0026](adr/0026-medicao-hospedada-sessao-autenticada-minima.md)). Isso é **ponte,
-não destino**: o servidor e o client `apps/medicao` continuam descartáveis por
-construção (ADR-0020), e a solução definitiva é a **migração da medição para a API
-`/v1` autenticada** (tabelas próprias, contratos TS gerados, concorrência otimista
-real, papel `orcamentista` no realm) — quando ela existir, as telas e módulos puros
-migram e o servidor hospedado sai do ar. Os custos aceitos da ponte (escrita direta
-sem rename no FUSE, uma instância só, uma rodada por ambiente) estão declarados no
-ADR-0026 e não devem ganhar investimento além do necessário para a homologação
-remota.
+Desde 2026-08-18 a cadeia de medição **opera sobre a API `/v1`**, com tabelas próprias,
+concorrência otimista real e papel `orcamentista` exigido em cada rota. O desenho é o
+[ADR-0028](adr/0028-medicao-na-api-v1-autenticada.md) (`Accepted` em 2026-08-17) e a execução
+foi [F-003](features/F-003-medicao-v1-migration/feature.md), com evidência em
+[evidence.md](features/F-003-medicao-v1-migration/evidence.md).
 
-Desde 2026-08-17 o desenho dessa migração está decidido:
-[ADR-0028](adr/0028-medicao-na-api-v1-autenticada.md) (`Accepted`) fixa entidade raiz,
-persistência, `base_version`, códigos de erro e destino das telas, e a seção "Medição de obra"
-do [API Contract](architecture/API_CONTRACT.md) descreve as rotas decididas. **Nada disso está
-implementado**: nenhuma rota de medição existe em `services/api`, e a ponte hospedada continua
-sendo o caminho real da homologação. A execução é
-[F-003](features/F-003-medicao-v1-migration/feature.md), que a aceitação do ADR levou a
-`READY_FOR_PLANNING`.
+As dezoito rotas da seção "Medição de obra" do [API Contract](architecture/API_CONTRACT.md)
+existem, estão no documento OpenAPI e são cobertas por um e2e que percorre a cadeia inteira por
+HTTP (`tests/e2e/test_valuation_v1_chain.py`), com o worker consumindo os dois comandos de fila
+da medição. A raiz é a **rodada** (`ValuationRound`): a tela lista, abre e cria rodada, e o
+catálogo de preços entra pelo presign na criação.
+
+Uma decisão de execução mudou o desenho do overlay do takeoff. O API Contract herdara do
+servidor de medição a promessa de devolver "o overlay atualizado" junto da decisão, mas na API
+isso exigiria ler o PNG promovido e gravar blob pela fronteira que declara não fazer nem uma
+coisa nem outra, com render de imagem no request path. O
+[ADR-0030](adr/0030-overlay-do-takeoff-reconstruido-na-fila.md) move o re-render para a fila: o
+overlay declara a própria idade pelo digest do pacote que o originou, e **vencido é `200` com a
+marca**, nunca erro nem silêncio.
+
+**A ponte hospedada foi removida**, não desativada: `create_hosted_app`, `hosted_auth.py`, a
+flag `--hosted`, a variável `CROQUITO_IO_DIRECT_WRITE`, o passo de esteira do serviço
+`croquito-medicao-hml` e o proxy `/medicao/api/` saíram do repositório. O
+[ADR-0026](adr/0026-medicao-hospedada-sessao-autenticada-minima.md) continua descrevendo a ponte
+que existiu — ADR aceito é imutável.
+
+O que **fica** é o servidor local do [ADR-0020](adr/0020-local-homologation-server-for-valuation.md)
+(`croquito-valuation serve`, sem `--hosted`), com as mesmas dezesseis rotas e os mesmos 89 testes
+de `tests/worker/test_valuation_local_server.py` passando sem uma linha alterada: ele é a
+ferramenta da máquina do operador e não foi substituído.
+
+Pendente e **humano**: a remoção do serviço Cloud Run e do mapeamento de borda em produção, a
+concessão do papel `orcamentista` no realm de homologação, e a homologação real da orçamentista
+sobre uma medição de verdade — que esta migração não substitui.
 
 ### Runner de migrations revisadas
 

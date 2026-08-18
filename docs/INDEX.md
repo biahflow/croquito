@@ -77,7 +77,8 @@ paridade compara as duas fontes e reprova divergência.
 6. [ADR-0021](adr/0021-hybrid-sco-code-retrieval.md)
 7. [ADR-0020](adr/0020-local-homologation-server-for-valuation.md) (UI local + servidor de homologação)
 8. [ADR-0027](adr/0027-price-source-provenance-and-bid-boundary.md) (fontes de preço, aditivo e pré-licitação)
-9. [ADR-0028](adr/0028-medicao-na-api-v1-autenticada.md) (desenho da migração para `/v1`, decidido e ainda não implementado)
+9. [ADR-0028](adr/0028-medicao-na-api-v1-autenticada.md) (a medição na `/v1` autenticada — implementada em F-003) e
+   [ADR-0030](adr/0030-overlay-do-takeoff-reconstruido-na-fila.md) (overlay do takeoff na fila)
 10. `apps/web/AGENTS.md` (a jornada de medição vive em `apps/web/src/medicao/`)
 
 ### Alterar IA

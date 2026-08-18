@@ -18,10 +18,9 @@ Projeto `biahflow-hml`, região `us-east1`, registro
 |---|---|---|---|
 | `https://croquito-hml.biahflow.ai/` | `croquito-web-hml` | público | nginx: serve as SPAs e faz proxy do resto |
 | `/revisao/` | `croquito-web-hml` | público | SPA da sessão de cena (`apps/web`) |
-| `/medicao/` | `croquito-web-hml` | público | SPA da medição (`apps/medicao`) |
-| `/api/` | `croquito-scene-hml` | interno | API FastAPI (`croquito_api.main:app`) |
+| `/medicao/` | `croquito-web-hml` | público | jornada de medição, na mesma SPA (`apps/web`) |
+| `/api/` | `croquito-scene-hml` | interno | API FastAPI (`croquito_api.main:app`), inclusive as rotas de medição |
 | `/auth/` | `croquito-auth-hml` | interno | Keycloak, realm `croquito` |
-| `/medicao/api/` | `croquito-medicao-hml` | interno | servidor de medição (`serve --hosted`) |
 | — | `croquito-jobs-hml` | interno e privado | worker; recebe push do Pub/Sub em `POST /pubsub` |
 
 Recursos de apoio: buckets `croquito-hml-artifacts` (documentos, previews e pacotes
@@ -44,15 +43,16 @@ consequências operacionais:
   (`croquito-<serviço>-hml-209400815796.us-east1.run.app`) e não vêm de variável de
   ambiente: trocar de URL — outro projeto, outra região, outro serviço — exige reconstruir
   e republicar a imagem do nginx, não editar o serviço.
-- **As `VITE_*` das SPAs são de build** (base da API `/api`, base da medição
-  `/medicao/api`, `authority` do realm e `client_id` público). Elas entram no bundle como
-  `ARG`/`ENV` do Dockerfile; mudar qualquer uma delas também é reconstruir a imagem.
+- **As `VITE_*` da SPA são de build** (base da API `/api`, `authority` do realm e
+  `client_id` público). Elas entram no bundle como `ARG`/`ENV` do Dockerfile; mudar qualquer
+  uma delas também é reconstruir a imagem.
 
-O prefixo é removido no proxy da API e da medição (`/api/healthz` → `/healthz`,
-`/medicao/api/state` → `/state`) e **preservado** no do Keycloak (`/auth/...`), que vive em
-subpath. O corpo aceito pela borda é de 1 MB, com uma exceção declarada: o `POST` da
-prancha em `/medicao/api/` aceita 50 MB, o mesmo teto do servidor de medição — o documento
-da sessão de cena não passa por aqui, vai presignado direto ao bucket.
+O prefixo é removido no proxy da API (`/api/healthz` → `/healthz`) e **preservado** no do
+Keycloak (`/auth/...`), que vive em subpath. O corpo aceito pela borda é de 1 MB e não há
+exceção: desde a migração da medição para a `/v1`
+([F-003](../features/F-003-medicao-v1-migration/feature.md)), tanto a prancha quanto o
+catálogo de preços sobem presignados direto ao bucket, e nenhum arquivo de usuário atravessa
+o nginx.
 
 ## Como deployar
 
@@ -151,11 +151,17 @@ login do dia espere o servidor nascer. É uma escolha de operação, não uma ex
 
 ## Lacunas declaradas
 
-- **Uma rodada e uma instância por ambiente.** O servidor de medição aponta um diretório
-  (`--root /mnt/rounds/atual`) e o volume por FUSE não dá lock: trocar de rodada é trocar o
-  argumento, e duas instâncias sobre o mesmo diretório não teriam árbitro. Limite declarado
-  no [ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md), junto da
-  ausência de `base_version` real e de multi-tenant na medição.
+- **Recursos do modo hospedado ainda provisionados.** O serviço `croquito-medicao-hml`, o
+  bucket `croquito-hml-rounds` montado por FUSE e a conta de serviço correspondente continuam
+  existindo no projeto, embora a esteira não os publique mais desde a
+  [F-003](../features/F-003-medicao-v1-migration/feature.md): removê-los é ato humano, e a
+  rodada que estiver naquele bucket não é migrada por ninguém — ela permanece reproduzível
+  pelo CLI. Com a medição na `/v1`, os limites que o
+  [ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md) declarava (uma rodada
+  por ambiente, uma instância só, ausência de `base_version` real e de multi-tenant) deixaram
+  de valer.
+- **Papel `orcamentista` no realm de homologação.** As rotas de medição o exigem; conceder é
+  ato humano, pelo procedimento de [HML_KEYCLOAK](HML_KEYCLOAK.md).
 - **Retenção de sete dias** precisa estar no ciclo de vida dos buckets, e não apenas na
   política escrita.
 
