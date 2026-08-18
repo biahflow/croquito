@@ -226,7 +226,7 @@ o desenho AWS é o alvo de produção e não descreve o que está no ar.
 
 ## Governança
 
-- ADR aceito é imutável; substitua por novo ADR.
+- O processo de ADR está definido em [ADR README](adr/README.md).
 - Documento canônico deve ser atualizado junto com a implementação.
 - Requisitos usam IDs estáveis e são mapeados em
   [TRACEABILITY.md](engineering/TRACEABILITY.md).

@@ -14,8 +14,8 @@ Este diretório é o exercício deliberado dessa superfície, por decisão human
 |---|---|
 | [task.md](task.md) | O Task Contract portável (PARITY-001), no formato do [template global](../../engineering-os/templates/task.md) |
 | [assignment.md](assignment.md) | O `HARNESS ASSIGNMENT` — ato humano designando o Codex — e o roteiro do operador |
-| `build-report-codex.md` | O `BUILD REPORT` do executor, gravado por ele ao final (não existe até a execução) |
-| `review.md` | A comparação de evidência, escrita na revisão somente leitura (não existe até a revisão) |
+| [build-report-codex.md](build-report-codex.md) | O `BUILD REPORT` do executor, gravado por ele ao final da execução (r2, 2026-08-18) |
+| [review.md](review.md) | A revisão somente leitura com a comparação de evidência — `REVIEW_PASS` (2026-08-18) |
 
 O resultado que interessa não é a mudança em si (um bullet de documentação) — é a resposta a
 três perguntas: o contrato bastou sem conversa? A evidência saiu no mesmo formato comparável?
