@@ -36,4 +36,19 @@ COPY --from=builder /opt/keycloak/ /opt/keycloak/
 # imagem e o nome exigido entra aqui.
 COPY croquito-hml-realm.json /opt/keycloak/data/import/croquito-realm.json
 
+# O tema `croquito` entra na fase de RUNTIME, depois do `COPY --from=builder`, e não na
+# fase builder. Isso não é preferência de estilo, é a única ordem que funciona: o
+# `COPY --from=builder /opt/keycloak/ /opt/keycloak/` acima substitui a árvore inteira, e
+# qualquer coisa escrita antes dele nesta fase seria apagada.
+#
+# Entrar depois do `kc.sh build` é seguro porque tema em DIRETÓRIO não é provider: o guia
+# do desenvolvedor da 26.2 (capítulo Themes) e o `themes/README.md` da própria imagem dizem
+# que só tema empacotado em JAR dentro de `providers/` exige o comando `build` — "Themes
+# within this directory do not require the `build` command to be installed". Por isso o
+# `start --optimized` do ENTRYPOINT continua valendo e o frio continua rápido.
+#
+# Vale aqui a mesma política do realm: NENHUM segredo no tema. São CSS, SVG, um `.ico` e um
+# `.ftl` de layout de e-mail — camada de imagem é legível para quem puxa a imagem.
+COPY themes/croquito /opt/keycloak/themes/croquito
+
 ENTRYPOINT ["/opt/keycloak/bin/kc.sh", "start", "--optimized", "--import-realm"]
