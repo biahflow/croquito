@@ -263,6 +263,40 @@ custo fixo do ambiente.
 
 O plano está completo: não sobra nada por planejar.
 
+## 3.2 O primeiro apply falhou, e o que ele ensinou (2026-08-18)
+
+O plano estava certo e ainda assim o apply parou em dois pontos. Nenhum dos dois é visível em
+plano: um é permissão que só aparece na chamada, o outro é uma corrida que só existe no apply.
+
+**`roles/storage.admin` não cobre chave HMAC.** `Error 403: … does not have
+storage.hmacKeys.create access`. A permissão vive em `roles/storage.hmacKeyAdmin`, que a SA
+`infra-deploy` não tinha.
+
+**O serviço subiu antes do secret.** `Error waiting for Updating Service: … container failed
+the configured startup probe checks`. Mexer no template cria revisão nova, revisão nova lê
+`:latest` **ao subir**, e `min_instances = 1` exige que ela fique saudável para o apply
+terminar. Sem ordem declarada, o Terraform atualizou o Keycloak em paralelo com a criação das
+versões de secret: a revisão `00017` nasceu contra o host morto e morreu no probe. Os três
+serviços que leem secret passaram a declarar `depends_on = [module.secrets]`.
+
+Estado depois do apply parcial, apurado com `gcloud`:
+
+| | estado |
+|---|---|
+| versões de secret | nenhuma criada — todas ainda na versão 1 de 14/08 |
+| chave HMAC | não criada (403) |
+| `croquito-auth-hml` | `min_instances` em 1; revisão `00017` criada e não saudável; tráfego na `00016` |
+| SA `croquito-medicao-hml` | destruída, como planejado |
+
+Nada ficou pior do que estava — o ambiente já não subia. O conserto é
+[biahflow/infra#12](https://github.com/biahflow/infra/pull/12), com os dois planos limpos
+(1 add em `wif`, 7 add e nenhum destroy em `croquito`).
+
+**Ordem que decorre disso, e que vale registrar:** o apply grava os secrets certos, mas **não
+levanta o Keycloak sozinho**. Com `min_instances` já em 1, o Terraform não terá motivo para
+criar revisão nova, e revisão em execução não relê segredo. Quem levanta é o deploy da
+aplicação, que publica todos os serviços com a imagem do SHA.
+
 ## 4. Não entregue (e por quê)
 
 - **O apply**, que é ato humano com plano revisado.
