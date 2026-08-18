@@ -2,8 +2,8 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-18 (medição migrada para a API `/v1`, F-003; homologação diagnosticada
-fora do ar, F-006)
+Última revisão: 2026-08-18 (medição migrada para a API `/v1`, F-003; homologação de volta ao ar
+e verificada, F-006)
 
 > Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
 > trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
@@ -912,6 +912,20 @@ ninguém atualiza. O stack passou a declarar a **branch** do Neon por nome e der
 e a senha — nenhum hostname escrito à mão, que foi o que quebrou.
 A fumaça da borda (`make smoke-hml`) passou a verificar **conteúdo** e não só status — um
 `200` do container de exemplo não é a API — e roda igual na esteira e na máquina do operador.
+
+**O ambiente voltou em 2026-08-18**, e a fumaça da esteira das 14:06 prova as quatro rotas,
+com o discovery anunciando o issuer da borda pública e os quatro serviços servindo a mesma
+imagem por SHA. Ao verificar o estado interno do banco — que o diagnóstico anterior havia
+declarado *não verificado* — apareceu o que a documentação negava: Keycloak e aplicação
+**dividiam o schema `public`**, 107 tabelas no mesmo lugar. O DSN do Keycloak pedia
+`currentSchema=keycloak` desde sempre, mas esse parâmetro só move a sessão; quem move o DDL do
+Liquibase é `KC_DB_SCHEMA`, que ninguém setara. Consertar isso depois de o realm ter usuário
+real custaria esse usuário, então foi feito antes: cada componente no seu schema, `public`
+esvaziado, e o `search_path` da aplicação deliberadamente sem `public` no fim, para que schema
+faltando vire falha barulhenta em vez de queda silenciosa. O terceiro achado da mesma rodada é
+de esteira: `ci` e `deploy-hml` disparavam juntos no merge e corriam **em paralelo**, então a
+imagem subia sem o portão ter passado naquele commit — o portão virou um workflow chamável e o
+deploy passou a esperá-lo.
 
 ## Condição para avançar ao processamento real
 

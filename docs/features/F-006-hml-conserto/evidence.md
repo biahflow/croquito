@@ -1,6 +1,6 @@
 # F-006 — Evidência
 
-Status: `IN PROGRESS`  
+Status: `READY_FOR_HUMAN_REVIEW`  
 Última atualização: 2026-08-18
 
 ## 1. Diagnóstico executado (2026-08-18)
@@ -347,13 +347,120 @@ como resolver: a fumaça apontava para um caminho que o Cloud Run não entrega. 
 externa passou a usar `/api/v1/meta`, que exige que a API se identifique como `croquito-api`;
 `/healthz` segue válido para o startup probe, que chama o container direto.
 
+## 3.4 Os dois componentes viviam no mesmo schema (2026-08-18)
+
+Achado durante a verificação pós-deploy, fora do escopo original desta feature e consertado
+na mesma rodada porque a janela para consertá-lo sem perda era exatamente esta.
+
+`HML.md` afirmava "PostgreSQL gerenciado (Neon) para a API e para o Keycloak, em schemas
+separados". Não estavam: `public` tinha **107 tabelas** — 88 do Keycloak e 19 da aplicação —
+e o schema `keycloak` não existia.
+
+**A causa não era o schema faltando.** O DSN do Keycloak trazia `currentSchema=keycloak`
+desde sempre, mas esse parâmetro só mexe no `search_path` da sessão JDBC; quem decide onde o
+Liquibase do Keycloak **cria** tabela é `KC_DB_SCHEMA`, que não estava setado e vale `public`
+por omissão. O DSN foi obedecido pela conexão e ignorado pelo DDL.
+
+Isso torna a armadilha pior do que "documentação errada": criar o schema `keycloak` sem setar
+`KC_DB_SCHEMA` faria o Keycloak passar a olhar um schema vazio e **perder realm e usuários**.
+As duas metades do conserto só funcionam juntas.
+
+### O que foi medido antes de mexer
+
+| Verificação | Resultado |
+|---|---|
+| Linhas nas 19 tabelas da aplicação | **0** em todas |
+| `alembic_version` | `0002`, 1 linha |
+| Extensões fora de `pg_catalog` | nenhuma (só `plpgsql`) |
+| Sequences e enums em `public` | 0 e 0 |
+| `user_entity` do Keycloak | 1 — o `admin` do realm `master`, que renasce do segredo de bootstrap |
+
+Nada a preservar dos dois lados. É por isso que o conserto foi feito **antes** do primeiro
+usuário real do realm, e não depois: o passo que recria o schema do Keycloak apaga usuário
+criado à mão.
+
+### O desenho, e por que sem `public` no fim do `search_path`
+
+| Schema | Dono | Quem aponta |
+|---|---|---|
+| `croquito` | API, worker, job de banco | `options=-csearch_path=croquito` no DSN, composto pelo Terraform |
+| `keycloak` | Keycloak | `KC_DB_SCHEMA=keycloak` no deploy **e** `currentSchema=keycloak` no JDBC |
+
+Medido contra o banco real antes de decidir: com `search_path=<schema>` e o schema ausente,
+`current_schema()` vira NULL e o `CREATE TABLE` é recusado com `no schema has been selected
+to create in`. Com `,public` no fim, cairia de volta para `public` **silenciosamente** — que é
+exatamente como as duas metades foram parar no mesmo lugar. A ausência de `public` na lista é
+o que transforma schema faltando em falha barulhenta no job de banco.
+
+Os dois schemas são criados fora do código, com a branch do Neon, porque o stack lê o banco e
+não manda nele (ADR-0031, D1.1).
+
+### Execução e verificação
+
+| Ato | Resultado |
+|---|---|
+| `CREATE SCHEMA croquito; CREATE SCHEMA keycloak;` | ambos `neondb_owner` |
+| `biahflow/infra` PR #13 — DSN da aplicação | plano `1 to add, 0 to change, 1 to destroy`: só a versão corrente de `croquito-hml-database-url`, em `create replacement and then destroy` |
+| `biahflow/croquito` PR #3 — `KC_DB_SCHEMA` + docs | deploy verde, fumaça da esteira nas quatro rotas às 14:06 |
+| Tabelas depois do deploy | `croquito`: 19 (`alembic_version` = `0002`), `keycloak`: 88 |
+| Comparação `public` × `keycloak` | idêntica em `realm` (2), `keycloak_role` (86), `client` (14), `user_entity` (1), `credential` (1), `protocol_mapper_config` (426), `databasechangelog` (152), `redirect_uris` (8) |
+| `DROP TABLE` das 107 órfãs de `public` | executado em transação única; `public` ficou com **0 tabelas** |
+| Reverificação pós-drop | `/revisao/` 200, `/medicao/` 302, `/api/v1/meta` 200, discovery 200 com o issuer da borda |
+
+O `croquito-hml-kc-db-url` **não entrou no plano do Terraform**: a variável nova tem
+exatamente o valor do literal que estava lá.
+
+## 3.5 O deploy não esperava o portão (2026-08-18)
+
+Achado a partir de uma observação do usuário: o merge disparava **dois runs para o mesmo
+commit**. `ci.yml` e `deploy-hml.yml` tinham o mesmo gatilho (`push` na `main`), e começavam
+no mesmo segundo.
+
+O run duplicado era o sintoma visível. O defeito é que eles corriam **em paralelo**: a imagem
+subia para homologação sem `make check`, `make test` e os evals terem passado naquele commit.
+No PR isso ficava escondido porque o PR já rodara o portão; em `workflow_dispatch` ou push
+direto na `main`, não havia portão nenhum.
+
+`needs` não atravessa workflows, então o portão saiu de dentro do `ci` e virou `quality.yml`,
+com `workflow_call` e sem gatilho próprio, chamado pelos dois. O corpo do job não mudou uma
+linha.
+
+| Evento | Runs | Portão |
+|---|---|---|
+| `pull_request` | 1 (`ci`) | roda |
+| `push` na `main` | 1 (`deploy-hml`) | roda antes de construir imagem, com `needs` |
+| `workflow_dispatch` | 1 (`deploy-hml`) | idem — antes não tinha |
+
+Efeitos declarados: o deploy passa a levar o tempo do portão antes de publicar, e merge que
+só mexe em documentação deixa de rodar qualquer coisa na `main` (o `deploy-hml` tem filtro de
+`paths`, e o PR já rodou o portão sobre aquele commit).
+
+Em `biahflow/croquito` PR #4.
+
+## 3.6 Critérios de aceite, medidos
+
+| # | Critério | Estado |
+|---|---|---|
+| 1 | O plano não destrói nem recria nenhum secret | **atendido** — 17 de 17 adotados pelos `moved` |
+| 2 | Único destroy nomeado é a runtime SA `croquito-medicao-hml` | **atendido** |
+| 3 | Fumaça verde nas quatro rotas, com o discovery anunciando o issuer da borda | **atendido** — esteira de 2026-08-18T14:06 |
+| 4 | O job de banco exercita o **carimbo** do Alembic contra o banco real | **não atendido, e não atendível por este deploy** — o banco estava vazio, então o runner aplicou desde a baseline (estado `vazio`, não `adotado`). Já previsto em `Unknowns`; o ato pendente de [F-004](../F-004-migrations-runner/feature.md) continua aberto |
+| 5 | `croquito-scene-hml` serve `croquito-python:<sha>`, não o `hello` | **atendido** — os quatro serviços em `:3acbcc1` |
+| 6 | `make check` e `make test` verdes | **atendido** — portão verde no PR e na `main` |
+
+O critério 4 é o único não atendido, e ele já nascia declarado como não atendível enquanto o
+banco estivesse vazio. Fechá-lo exige um deploy futuro sobre banco que já tenha tabelas e não
+tenha `alembic_version` — condição que este ambiente não oferece mais, porque agora tem as
+duas coisas.
+
 ## 4. Não entregue (e por quê)
 
-- **O apply**, que é ato humano com plano revisado.
-- **`NEON_API_KEY` no CI.** O plano local usou a chave fornecida pelo usuário; para o
-  `plan.yml`/`apply.yml` rodarem, ela precisa existir como secret do repositório de
-  infraestrutura. `neon_project_id`, `neon_branch`, `neon_role` e `neon_database` têm default no
-  stack e não exigem configuração.
+- ~~**O apply**, que é ato humano com plano revisado~~ — **feito em 2026-08-18**, e repetido
+  na rodada dos schemas (PR #13 do `biahflow/infra`), sempre com plano revisado antes.
+- ~~**`NEON_API_KEY` no CI**~~ — **configurado**, e provado por medição e não por afirmação: o
+  job `plan envs/hml/croquito` do PR #13 passou na esteira do repositório de infraestrutura, e
+  ele não roda sem a chave. `neon_project_id`, `neon_branch`, `neon_role` e `neon_database` têm
+  default no stack e não exigem configuração.
 - **`croquito-hml-kc-bootstrap-admin-password` continua sem valor gerenciado**, contra a
   decisão de "todos os sete", por razão técnica: `KC_BOOTSTRAP_ADMIN_PASSWORD` só age na
   criação do primeiro admin. Gerar valor novo não mudaria a senha do admin que já existe no
@@ -361,14 +468,24 @@ externa passou a usar `/api/v1/meta`, que exige que a API se identifique como `c
 
 ## 5. Pendências humanas
 
-- Aceitar o ADR-0031.
-- Configurar `NEON_API_KEY` como secret do repositório de infraestrutura.
+Abertas:
+
+- **Aceitar o ADR-0031**, hoje `Proposed`. É o gate que ainda separa esta feature de `DONE`.
 - **Rotacionar a chave de API do Neon e a senha da role de `staging`**: as duas foram
   transmitidas em texto durante o trabalho de 2026-08-18 e devem ser consideradas expostas.
   Depois da rotação, um novo apply propaga a senha nova sozinho — que é exatamente o
   comportamento que esta feature entrega.
-- Recriar o usuário da orçamentista no realm e conceder `orcamentista` (o realm nasce vazio).
-- Revisar o plano do Terraform e aplicar.
-- Publicar F-003 em `main`.
-- Conceder o papel `orcamentista` no realm.
-- Desativar a chave HMAC anterior, **depois** do deploy que passa a ler o secret novo.
+- **Criar os usuários do realm** (o realm nasce sem nenhum), com `Tenant` = `tenant-biahflow`
+  nesta homologação: o seu, com `engineer` e `orcamentista`, e o da orçamentista, com
+  `orcamentista`. Procedimento em [HML_KEYCLOAK](../../operations/HML_KEYCLOAK.md).
+- **Desativar a chave HMAC anterior**, agora que o deploy já lê o secret novo.
+- **Mergear o PR #4** (portão único antes do deploy), se o efeito declarado for aceito.
+
+Fechadas em 2026-08-18:
+
+- ~~Configurar `NEON_API_KEY` como secret do repositório de infraestrutura~~.
+- ~~Revisar o plano do Terraform e aplicar~~ — duas vezes, com plano revisado nas duas.
+- ~~Publicar F-003 em `main`~~.
+
+Nota de escopo: "conceder o papel `orcamentista`" aparecia duas vezes na lista original, uma
+delas como item próprio. É um ato só, e está acima.
