@@ -645,7 +645,11 @@ Sem extração publicada devolve `409 ROUND_STAGE_NOT_READY`.
 ### `GET /v1/valuation-rounds/{round_id}/takeoff/overlay`
 
 Retorna `image_url` assinada do overlay das âncoras sobre a prancha, no mesmo regime da
-imagem da prancha.
+imagem da prancha, mais `stale` e o digest do pacote que originou o desenho
+([ADR-0030](../adr/0030-overlay-do-takeoff-reconstruido-na-fila.md)).
+
+Overlay vencido devolve `200` com a marca, nunca erro: o desenho anterior continua sendo a
+única visão de onde cada número foi lido, e esconder a divergência é pior que declará-la.
 
 ### `POST /v1/valuation-rounds/{round_id}/takeoff/decisions`
 
@@ -658,7 +662,11 @@ Decisão do orçamentista é imutável: item já confirmado ou rejeitado devolve
 `422 DOMAIN_VALIDATION_FAILED` com `TAKEOFF_ITEM_ALREADY_REVIEWED` em `details`. Correção de
 decisão é ato declarado, não sobrescrita.
 
-A resposta traz a rodada em versão nova, com o pacote regravado e o overlay atualizado.
+A resposta traz a rodada em versão nova, com o pacote regravado. O overlay é reconstruído
+**fora do request path**, por comando de fila
+([ADR-0030](../adr/0030-overlay-do-takeoff-reconstruido-na-fila.md)), e até o worker
+publicá-lo o overlay corrente fica marcado como vencido. Fila indisponível não derruba a
+decisão já gravada: o comando é repetível e a resposta continua `200`.
 
 ### `GET /v1/valuation-rounds/{round_id}/code-suggestions`
 
