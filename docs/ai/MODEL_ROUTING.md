@@ -244,6 +244,50 @@ Rollback: reverter o commit de contrato/prompt (saída v1 valida sob o schema v2
 aditivo-opcional; artefatos v2 são auto-descritos pelo `prompt_version` no lineage);
 `CROQUITO_REAL_PROVIDERS_ENABLED=false` segue sendo o kill switch do caminho pago.
 
+## Eval comparativa executada (degrau em muro de contorno, geometry-extraction@2.0.2, 2026-08-19)
+
+Motivação: a primeira revisão real em nuvem (Guaxindiba V3) devolveu o muro com recuo
+4,80→3,30 fragmentado em duas `line` retas do `claude-opus-5` sob o prompt `2.0.1` — o
+degrau lateral desapareceu, achatado num traço só. O candidato `2.0.2`
+([Prompt Contracts](PROMPT_CONTRACTS.md)) instrui que um degrau/recuo em contorno ou muro
+vira vértices de uma única polyline, nunca duas linhas separadas nem uma reta achatada;
+schema `2.0.0` intacto.
+
+Protocolo: fixture sintética dedicada ao muro em degrau (`make extraction-eval-degrau`,
+[Evaluation Strategy](EVALUATION_STRATEGY.md#gate-do-degrau-em-contorno-extração-de-geometria)),
+uma chamada baseline sob `@2.0.1` e uma chamada candidato sob `@2.0.2`, ambas
+`claude-opus-5` via API direta, autorizado pelo usuário (teto US$ 1,00 na env). O golden de
+regressão do produto não foi rerodado nesta eval — a prova real fica no re-upload do
+Guaxindiba pós-deploy.
+
+| Métrica | baseline `@2.0.1` | candidato `@2.0.2` |
+|---|---|---|
+| Forma emitida | muro fragmentado em 3 polylines sobrepostas, mais uma cauda alucinada | 1 polyline aberta de 4 vértices com o degrau exato |
+| Elementos totais | 5 | 2 |
+| `step_preserved` | `False` (`STEP_MULTIPLE_CANDIDATES:3`) | `True` |
+| Jog observado | — | 29,4 px ≈ 30 px do desenho, rótulo "Contorno com degrau lateral" |
+| Latência | 12,6 s | 7,3 s |
+
+Com o harness corrigido (registro contra a tinta antes da corroboração, critério estrutural
+do jog no lugar de posição absoluta — commit `9ec75e2`), a validação offline sobre as
+respostas pagas já salvas mediu `corroborated_rate=1,000` **nos dois braços** — o baseline
+fragmentado corrobora tão bem quanto o candidato porque cada fragmento adere à tinta
+individualmente. É a evidência de que corroboração de tinta sozinha não detecta
+fragmentação: só o critério estrutural do jog (`assess_step_fidelity`) reprova o baseline e
+aprova o candidato.
+
+Custo real: 2 chamadas cobradas ≈ US$ 0,28 (≈ US$ 0,14/chamada, coerente com a eval da
+Toca), contra teto autorizado de US$ 1,00. Duas chamadas adicionais foram perdidas por um
+defeito local de ambiente, não do modelo nem do contrato: `CERTIFICATE_VERIFY_FAILED` do
+`urllib` foi mascarado de `TIMEOUT` pelo mapeamento `URLError→TIMEOUT` do adapter —
+registrado aqui como observação de diagnóstico, não como falha do candidato.
+
+Decisão: **`geometry-extraction@2.0.2` aprovado e promovido** — aprovação humana: o usuário
+autorizou a rodada e o fluxo em 2026-08-19. Rollback: reverter `PROMPT_VERSIONS` para
+`2.0.1` em `providers.py` (schema `2.0.0` não muda, então nenhuma leitura gravada sob o
+candidato fica inválida ao reverter);
+`CROQUITO_REAL_PROVIDERS_ENABLED=false` segue sendo o kill switch do caminho pago.
+
 ## Embeddings para retrieval de código SCO (M7, 2026-08-13)
 
 O matcher de código do contexto de medição usa retrieval híbrido

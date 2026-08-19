@@ -285,6 +285,18 @@ descritos em "Quinto marco: medição de obra (M1 a M5 em código)".
   Pendências declaradas ao projetista em vez de adivinhadas: 56,00 da base da faixa
   (trapézio abaixo da tolerância de banda), 12,00 da faixa esquerda e o trio
   1,55/4,2/1,65 do limite do lote ficaram como notas, não restrições.
+- Primeira revisão real em nuvem processada de ponta a ponta (Guaxindiba V3,
+  2026-08-19) e primeiro ciclo completo de eval-promoção de prompt motivado por
+  defeito real, não por rodada de rotina: o muro com recuo 4,80→3,30 veio fragmentado
+  em duas `line` retas sob `geometry-extraction@2.0.1`; o candidato `2.0.2` instrui o
+  degrau a virar vértices de uma única polyline, o gate de fidelidade do degrau
+  (`assess_step_fidelity`) e a fixture dedicada nasceram no mesmo ciclo, e a rodada
+  paga comparativa aprovou e promoveu o candidato — resultado e protocolo completos em
+  [Model Routing](ai/MODEL_ROUTING.md). A investigação também expôs dois achados fora
+  do escopo do prompt, registrados como candidatos a trabalho futuro em
+  [Roadmap](product/ROADMAP.md) (F-018, F-019): a revisora não tem como corrigir
+  vértice ou recuo direto na tela, e leitura confirmada não aplicada gera issue apenas
+  `warning` — a cena permanece exportável com entidade `exact` contradita.
 
 Os renders, manifests com hashes e documentos permanecem somente em `output/`,
 que é ignorado pelo Git e deve respeitar retenção local de sete dias.

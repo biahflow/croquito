@@ -130,9 +130,10 @@ diferentes, ligados por um jogo perpendicular curto — a forma que motivou a `2
 
 O modo fixture valida mecanismo e contrato, não precisão de leitura em prancha ou
 documento real: é o teto artificial da métrica, não evidência de desempenho de modelo
-algum. `geometry-extraction@2.0.2` é **candidato**: a rodada paga comparativa que decide
-promoção ou rejeição acontece fora deste contrato e só conta como aprovada quando
-registrada, com aprovação humana explícita, em [Model Routing](MODEL_ROUTING.md).
+algum. `geometry-extraction@2.0.2` foi **avaliado e promovido**: a rodada paga comparativa
+contra o baseline `2.0.1`, com aprovação humana explícita, está registrada em
+[Model Routing — Eval comparativa executada (degrau em muro de contorno,
+geometry-extraction@2.0.2, 2026-08-19)](MODEL_ROUTING.md).
 
 ### Registro antes da corroboração (2026-08-19)
 

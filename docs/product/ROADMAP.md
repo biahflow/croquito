@@ -3,7 +3,9 @@
 Status: Active  
 Responsável: Product  
 Última revisão: 2026-08-19 (F-012 documentada — operação SaaS da autorização de IA,
-ADR-0036 `Proposed`, implementação completa; inventário F-013..F-017 aberto)
+ADR-0036 `Proposed`, implementação completa; inventário F-013..F-017 aberto; F-018 e F-019
+abertas — edição de forma da proposta e preview visual da revisão, nascidas da primeira
+revisão real em nuvem)
 
 ## Uso no ciclo de engenharia
 
@@ -38,6 +40,8 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-015 | A DEFINIR | READY_FOR_SPEC | Recriar o job de upload existente (a definir em contrato) |
 | F-016 | A DEFINIR | READY_FOR_SPEC | Rotação de chaves e segredos de provider (a definir em contrato) |
 | F-017 | A DEFINIR | READY_FOR_SPEC | Custo agregado por tenant e trilha de auditoria do entitlement na tela (a definir em contrato) |
+| F-018 | A DEFINIR | READY_FOR_SPEC | Edição de forma da proposta na UI da revisão — corrigir vértice/recuo manualmente (a definir em contrato) |
+| F-019 | A DEFINIR | READY_FOR_SPEC | Preview visual da cena resolvida na revisão (a definir em contrato) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -174,6 +178,26 @@ existente, sem exigir digest nem allowlist; **F-016** rotação de chaves e segr
 **F-017** custo agregado por tenant e trilha de auditoria do entitlement, visíveis na própria
 tela de plataforma. F-008 permanece `BLOCKED`: o que a impede é a decisão do usuário sobre
 provedor de e-mail e domínio remetente, não código.
+
+F-018 — edição de forma da proposta na UI da revisão — nasce em 2026-08-19, por seleção
+humana, na primeira revisão real em nuvem do Guaxindiba V3: o muro com recuo 4,80→3,30
+chegou fragmentado da extração paga (duas `line` retas sob `geometry-extraction@2.0.1`), e
+a única correção disponível foi trocar o prompt e rerodar o provider — a revisora não tinha
+como ajustar vértice ou recuo direto na tela. É mudança de UX na jornada da revisão
+(`INTERFACE_CHANGE` na classificação da camada pinada: exigirá Design Approval Package
+antes do planejamento). A mesma rodada expôs um achado de mecanismo fora do escopo desta
+feature, registrado aqui por não ter destino melhor ainda: quando uma leitura confirmada não
+é aplicada, a issue correspondente nasce apenas `warning` e a cena permanece exportável com
+a entidade `exact` que ela contradiz — candidato a trabalho no portão de exportação
+(`SceneRevision.export_errors()`), com a decisão de virar bloqueio como ato humano pendente.
+Ainda sem Feature Contract: esta linha é o registro canônico até a especificação, e a
+prioridade é decisão humana pendente.
+
+F-019 — preview visual da cena resolvida na revisão — nasce na mesma rodada, 2026-08-19, por
+seleção humana: hoje o resultado do traçado só aparece como texto residual (resíduos,
+blockers) na tela de revisão, sem a geometria resolvida visível antes do export. Ainda sem
+Feature Contract: esta linha é o registro canônico até a especificação, e a prioridade é
+decisão humana pendente.
 
 ## Agora — MVP privado
 
