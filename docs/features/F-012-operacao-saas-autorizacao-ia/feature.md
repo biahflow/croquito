@@ -2,7 +2,7 @@
 
 ## Status
 
-`IN_PROGRESS`
+`READY_FOR_REVIEW`
 
 > Selecionada e aprovada por decisões humanas de 2026-08-19, na sequência imediata da
 > F-009: o usuário vetou os dois rituais manuais que a ativação deixou — entitlement

@@ -102,6 +102,11 @@ a fila tem até 5 antes da DLQ). `CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS` nasce 
 autorizado. `CROQUITO_REAL_PROVIDERS_ENABLED=false` continua sendo o kill switch: desligar essa
 flag basta para nenhuma chamada paga sair, sem redeploy de código.
 
+> Nota (F-012, 2026-08-19): a cláusula de allowlist por digest deste D6 foi removida do
+> caminho hospedado — ver [ADR-0036](0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md).
+> O teto por invocação e o kill switch permanecem exatamente como descritos acima; este
+> registro não é reescrito.
+
 ## Alternativas
 
 - **Vertex AI para os modelos Claude/Gemini.** Preço por token equivalente ao caminho direto;
@@ -154,7 +159,10 @@ flag basta para nenhuma chamada paga sair, sem redeploy de código.
 ## Pendências registradas
 
 - Rota de plataforma dedicada para administrar a allowlist de digest (hoje é variável do
-  workflow de deploy, editada por PR).
+  workflow de deploy, editada por PR). Resolvida por
+  [ADR-0036](0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md) (F-012): a
+  allowlist foi removida do caminho hospedado, não substituída por uma rota que a
+  administrasse.
 - Multi-página: o piloto processa só a primeira página do documento.
 - Pacote só-CV (sem chamada a LLM) permanece fora de escopo desta suite.
 - UX do `JOB_NOT_READY` no front, que motivou o diagnóstico original desta feature.

@@ -2,7 +2,8 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-19
+Última revisão: 2026-08-19 (F-012 documentada — operação SaaS da autorização de IA,
+ADR-0036 `Proposed`, implementação completa; inventário F-013..F-017 aberto)
 
 ## Uso no ciclo de engenharia
 
@@ -31,7 +32,12 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-009 | HIGH | READY_FOR_REVIEW | [Suite hospedada de providers: OpenAI + Anthropic direto, sem AWS](../features/F-009-suite-hospedada-sem-aws/feature.md) |
 | F-010 | A DEFINIR | READY_FOR_SPEC | Revisão assistida em lote (a definir em contrato) |
 | F-011 | A DEFINIR | READY_FOR_SPEC | Jornada guiada da revisão (a definir em contrato) |
-| F-012 | HIGH | IN_PROGRESS | [Operação SaaS da autorização de IA](../features/F-012-operacao-saas-autorizacao-ia/feature.md) |
+| F-012 | HIGH | READY_FOR_REVIEW | [Operação SaaS da autorização de IA](../features/F-012-operacao-saas-autorizacao-ia/feature.md) |
+| F-013 | A DEFINIR | READY_FOR_SPEC | UI de membros do tenant, depende de F-008 (a definir em contrato) |
+| F-014 | A DEFINIR | READY_FOR_SPEC | Entidade tenant e onboarding self-service (a definir em contrato) |
+| F-015 | A DEFINIR | READY_FOR_SPEC | Recriar o job de upload existente (a definir em contrato) |
+| F-016 | A DEFINIR | READY_FOR_SPEC | Rotação de chaves e segredos de provider (a definir em contrato) |
+| F-017 | A DEFINIR | READY_FOR_SPEC | Custo agregado por tenant e trilha de auditoria do entitlement na tela (a definir em contrato) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -138,6 +144,36 @@ lote) e as duas primeiras entradas colidiram no ID `F-009` — a suite hospedada
 Contract, plano e três tasks implementadas sob esse ID quando a colisão foi identificada durante
 a execução da F-009, então o item ainda sem contrato escrito é o que se move, não o que já tem
 trabalho publicado.
+
+F-012 nasce em 2026-08-19, por seleção humana, na sequência imediata da F-009: o usuário vetou
+os dois rituais manuais que a ativação da suite hospedada deixou — entitlement por curl com
+token pescado do DevTools, e allowlist de digest por env var exigindo um redeploy por documento
+— com a diretriz literal "isso já nasce com a visão de SaaS, não posso ter esses
+gargalos/travas". A prioridade é `HIGH`. A decisão técnica é o
+[ADR-0036](../adr/0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md), `Proposed`:
+o gate de envio a provider pago no caminho hospedado passa a ser integralmente entitlement
+contratual ativo do tenant + consent por job + teto de custo por invocação + kill switch, sem
+segunda barreira por documento; a allowlist por digest permanece intocada no caminho offline de
+eval (`extraction_eval.py`), que não tem tenant nem entitlement. As quatro tarefas do
+[plano](../features/F-012-operacao-saas-autorizacao-ia/plan.md) estão completas: a allowlist
+saiu do worker e do deploy do HML (T1); `GET /v1/me` e os dois GETs de plataforma
+(`/v1/platform/tenants`, `/v1/platform/tenants/{id}/ai-processing-entitlement`) existem, com
+snapshot OpenAPI atualizado (T2); a jornada "Plataforma" entrou na SPA — botão condicional ao
+papel `platform_operator`, `?plataforma=` fazendo round-trip pelo login, lista de tenants com
+ativação/desativação inline e Idempotency-Key nas mutações (T3); e esta documentação fecha a
+implementação (T4). O que resta não é código: aceite do ADR-0036 e o próprio merge, que é
+deploy. Contrato em
+[feature.md](../features/F-012-operacao-saas-autorizacao-ia/feature.md).
+
+A F-012 também abriu um inventário de gargalos SaaS ainda sem Feature Contract, registrado
+aqui como o registro canônico até a especificação de cada item, todos nascidos em 2026-08-19,
+por seleção humana, na mesma conversa: **F-013** UI de membros do tenant (depende do convite da
+F-008, `BLOCKED`); **F-014** entidade tenant própria e onboarding self-service (hoje `tenant_id`
+só existe no Keycloak e como coluna nas tabelas de domínio); **F-015** recriar o job de upload
+existente, sem exigir digest nem allowlist; **F-016** rotação de chaves e segredos de provider;
+**F-017** custo agregado por tenant e trilha de auditoria do entitlement, visíveis na própria
+tela de plataforma. F-008 permanece `BLOCKED`: o que a impede é a decisão do usuário sobre
+provedor de e-mail e domínio remetente, não código.
 
 ## Agora — MVP privado
 
