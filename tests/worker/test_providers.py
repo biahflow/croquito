@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from collections.abc import Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -29,6 +30,7 @@ from croquito_worker.providers import (
     HTTP_ERROR_DETAIL_LIMIT,
     IMAGE_TEXT_TASKS,
     OCR_FAILURE_DETAIL_LIMIT,
+    OPENAI_STRICT_PATTERN_REWRITES,
     PROMPT_SPECS,
     SYNTHETIC_CHAT_PROPOSAL_ID,
     SYNTHETIC_CHAT_READING_ID,
@@ -1372,11 +1374,33 @@ def test_openai_strict_schema_passes_the_strict_gate_for_every_task(task: Prompt
     _assert_openai_strict_dialect(_openai_strict_schema(_output_model(task).model_json_schema()))
 
 
-def test_openai_strict_schema_drops_the_lookahead_the_api_named() -> None:
+def _decimal_pattern_from_pydantic() -> str:
+    """O `pattern` que o Pydantic pinado emite HOJE para `normalized_value`."""
+    branches = _output_model(PromptTask.MEASUREMENT_EXTRACTION).model_json_schema()["$defs"][
+        "MeasurementReadingOutput"
+    ]["properties"]["normalized_value"]["anyOf"]
+    patterns = [branch["pattern"] for branch in branches if "pattern" in branch]
+    assert len(patterns) == 1, patterns
+    return cast(str, patterns[0])
+
+
+def test_openai_strict_pattern_rewrite_is_keyed_by_the_real_pydantic_pattern() -> None:
+    """A tabela é literal; este teste é o que a amarra ao Pydantic de verdade.
+
+    Se um upgrade mudar o `pattern` emitido para `Decimal`, a reescrita deixaria de casar e
+    o campo voltaria calado ao V9 (sem `pattern` no schema enviado). Aqui isso fica vermelho.
+    """
+    assert _decimal_pattern_from_pydantic() in OPENAI_STRICT_PATTERN_REWRITES
+
+
+def test_openai_strict_schema_rewrites_the_lookahead_the_api_named() -> None:
     """O segundo 400: *"regex lookaround is not supported. Found at
     $['$defs'].MeasurementReadingOutput.properties.normalized_value.anyOf[1].pattern"*.
 
     O `Decimal` do Pydantic emite o lookahead; o motor de regex do estrito não o implementa.
+    Removê-lo calou a API mas abriu o V9: cinco das 25 leituras vieram com expressão composta
+    (`"10 x 7.05"`) num campo decimal e o contrato recusou a resposta inteira. O schema
+    ENVIADO passa a levar o equivalente em RE2, então o campo continua restrito na geração.
     """
     source = _output_model(PromptTask.MEASUREMENT_EXTRACTION).model_json_schema()
     decimal_branches = source["$defs"]["MeasurementReadingOutput"]["properties"][
@@ -1387,7 +1411,37 @@ def test_openai_strict_schema_drops_the_lookahead_the_api_named() -> None:
     strict = _openai_strict_schema(source)
 
     translated = strict["$defs"]["MeasurementReadingOutput"]["properties"]["normalized_value"]
-    assert all("pattern" not in branch for branch in translated["anyOf"])
+    patterns = [branch["pattern"] for branch in translated["anyOf"] if "pattern" in branch]
+    assert patterns == [OPENAI_STRICT_PATTERN_REWRITES[_decimal_pattern_from_pydantic()]]
+    assert not any(token in patterns[0] for token in _STRICT_REFUSED_REGEX_TOKENS)
+    # O ramo string sobrevive inteiro: a reescrita troca o `pattern`, não descarta o nó.
+    assert any(branch.get("type") == "string" for branch in translated["anyOf"])
+
+
+@pytest.mark.parametrize("value", ["25.90", "0.5", ".5", "7.", "0025", "+3.2", "-1"])
+def test_openai_strict_decimal_rewrite_only_accepts_what_pydantic_accepts(value: str) -> None:
+    """A propriedade que torna a reescrita legítima: ela é SUBCONJUNTO do original.
+
+    Restringir a geração é seguro; alargá-la seria oferecer ao modelo uma string que o
+    contrato Pydantic recusaria depois.
+    """
+    original = _decimal_pattern_from_pydantic()
+    rewritten = OPENAI_STRICT_PATTERN_REWRITES[original]
+
+    assert re.fullmatch(rewritten, value), value
+    assert re.fullmatch(original, value), value
+    # E é número de verdade: `InvalidOperation` aqui significaria pattern novo frouxo demais.
+    assert isinstance(Decimal(value), Decimal)
+
+
+@pytest.mark.parametrize(
+    "value", ["10 x 7.05", "5 + 0.5", "3.60 x 3.90", "25.90 x 21.75", "", "+", ".", "-."]
+)
+def test_openai_strict_decimal_rewrite_refuses_what_broke_the_v9(value: str) -> None:
+    """As quatro expressões compostas que custaram as 25 leituras, mais as formas sem dígito."""
+    original = _decimal_pattern_from_pydantic()
+
+    assert not re.fullmatch(OPENAI_STRICT_PATTERN_REWRITES[original], value), value
 
 
 def test_openai_strict_schema_keeps_a_pattern_without_lookaround() -> None:
@@ -1395,18 +1449,30 @@ def test_openai_strict_schema_keeps_a_pattern_without_lookaround() -> None:
     strict = _openai_strict_schema(
         {
             "type": "object",
-            "properties": {
-                "reading_id": {"type": "string", "pattern": "^rd_[a-f0-9]{16}$"},
-                "amount": {"type": "string", "pattern": r"^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$"},
-            },
-            "required": ["reading_id", "amount"],
+            "properties": {"reading_id": {"type": "string", "pattern": "^rd_[a-f0-9]{16}$"}},
+            "required": ["reading_id"],
         }
     )
 
     assert strict["properties"]["reading_id"]["pattern"] == "^rd_[a-f0-9]{16}$"
-    assert "pattern" not in strict["properties"]["amount"]
+
+
+def test_openai_strict_schema_drops_a_lookaround_it_does_not_know_how_to_rewrite() -> None:
+    """Sem tradução conferida, o `pattern` sai: degradação conservadora, nunca RE2 chutado."""
+    invented = r"^(?=.*\d)[A-Z0-9]{4,}$"
+    assert invented not in OPENAI_STRICT_PATTERN_REWRITES
+
+    strict = _openai_strict_schema(
+        {
+            "type": "object",
+            "properties": {"code": {"type": "string", "pattern": invented}},
+            "required": ["code"],
+        }
+    )
+
+    assert "pattern" not in strict["properties"]["code"]
     # O resto do nó sobrevive: só o `pattern` recusado sai.
-    assert strict["properties"]["amount"]["type"] == "string"
+    assert strict["properties"]["code"]["type"] == "string"
 
 
 def test_openai_strict_schema_requires_the_property_the_api_named() -> None:

@@ -1056,9 +1056,37 @@ OPENAI_STRICT_LOOKAROUND_TOKENS: Final = ("(?=", "(?!", "(?<=", "(?<!")
 lookbehind. O `Decimal` do Pydantic emite justamente um lookahead
 (`^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$` em `MeasurementReadingOutput.normalized_value`), e a API
 recusa a chamada inteira: *"Invalid JSON schema: regex lookaround is not supported"*. A
-detecção é por substring e deliberadamente conservadora — na dúvida o `pattern` sai do
-schema ENVIADO, e quem valida de verdade continua sendo o modelo Pydantic da volta, como já
-vale para `minLength`/`maxLength`.
+detecção é por substring e deliberadamente conservadora.
+
+O que fazer com o `pattern` detectado deixou de ser uma coisa só: pattern conhecido é
+REESCRITO em RE2 equivalente (`OPENAI_STRICT_PATTERN_REWRITES`), porque removê-lo deixava o
+sampler estrito livre para escrever qualquer string no campo; lookaround desconhecido
+continua saindo do schema ENVIADO, degradação conservadora. Nos dois casos quem valida de
+verdade continua sendo o modelo Pydantic da volta, como já vale para `minLength`/`maxLength`.
+"""
+
+
+OPENAI_STRICT_PATTERN_REWRITES: Final[dict[str, str]] = {
+    # `Decimal` do Pydantic 2 (`MeasurementReadingOutput.normalized_value`).
+    r"^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$": r"^[+-]?(\d+\.?\d*|\.\d+)$",
+}
+"""Traduções de `pattern` do Pydantic para a linguagem do RE2, uma a uma.
+
+Nasceu do V9 (2026-08-19): o braço OpenAI devolveu 25 leituras bem formadas, mas cinco
+traziam expressão COMPOSTA num campo declarado `Decimal` — `"10 x 7.05"`, `"5 + 0.5"`,
+`"3.60 x 3.90"`, `"25.90 x 21.75"` — e o contrato recusou a resposta inteira
+(`INVALID_SCHEMA`, estágio `contract_rejected`). A causa era nossa: o `pattern` do decimal
+era simplesmente REMOVIDO do schema enviado por carregar lookahead, e sem ele o modo estrito
+não tinha nada que impedisse uma string arbitrária ali. Uma leitura ruim custava as 25.
+
+A reescrita só é legítima porque é SUBCONJUNTO: toda string aceita pelo pattern reescrito é
+aceita pelo pattern original do Pydantic (sinal opcional, pelo menos um dígito, ponto
+opcional, nada além disso — o que o original admitia a mais eram justamente as formas sem
+dígito nenhum, que o lookahead já recusava). Logo a reescrita restringe apenas a GERAÇÃO,
+nunca o que a validação aceita: a fronteira de validação continua sendo o modelo Pydantic
+original aplicado sobre a resposta. `tests/worker/test_providers.py` amarra a chave desta
+tabela ao schema que o Pydantic pinado emite de fato — upgrade que mude o pattern deixa o
+teste vermelho em vez de matar a reescrita em silêncio.
 """
 
 
@@ -1113,8 +1141,9 @@ def _openai_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     - `const` vira `enum` de um item, `oneOf` vira `anyOf` e tupla (`prefixItems`) vira
       lista do mesmo tipo presa por `minItems`/`maxItems` — as três formas que o estrito não
       aceita e que o Pydantic emite;
-    - as palavras de `OPENAI_STRICT_UNSUPPORTED_KEYWORDS` saem, e o `pattern` com lookaround
-      também (ver `OPENAI_STRICT_LOOKAROUND_TOKENS`).
+    - as palavras de `OPENAI_STRICT_UNSUPPORTED_KEYWORDS` saem; o `pattern` com lookaround
+      é reescrito em RE2 quando conhecido (`OPENAI_STRICT_PATTERN_REWRITES`) e só sai quando
+      não é (ver `OPENAI_STRICT_LOOKAROUND_TOKENS`).
 
     O que ela NÃO faz é afrouxar o contrato: a resposta continua validada pelo modelo
     Pydantic original, com os limites de tamanho e as regras de domínio inteiros. O avesso
@@ -1126,8 +1155,13 @@ def _openai_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
             continue
         if key == "pattern" and isinstance(value, str) and _has_regex_lookaround(value):
             # Um único lookahead num `$defs` aninhado recusa a chamada inteira; ver
-            # OPENAI_STRICT_LOOKAROUND_TOKENS. Pattern sem lookaround fica: é orientação
-            # útil de geração e o estrito o aceita.
+            # OPENAI_STRICT_LOOKAROUND_TOKENS. Pattern conhecido vira o equivalente em RE2
+            # (OPENAI_STRICT_PATTERN_REWRITES), para o campo continuar restrito na geração;
+            # lookaround desconhecido sai. Pattern sem lookaround fica: é orientação útil de
+            # geração e o estrito o aceita.
+            rewritten = OPENAI_STRICT_PATTERN_REWRITES.get(value)
+            if rewritten is not None:
+                strict["pattern"] = rewritten
             continue
         if key == "const":
             strict["enum"] = [value]
