@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import type { User } from "oidc-client-ts";
 import { describe, expect, it } from "vitest";
-import { CroquiApp } from "./CroquiApp";
+import {
+  AppAlert,
+  CroquiApp,
+  JobStatusBand,
+  jobFailureMessage,
+} from "./CroquiApp";
 
 /**
  * Sessão sintética: a jornada recebe a sessão pronta da casca, e a renderização estática
@@ -40,5 +45,81 @@ describe("CroquiApp", () => {
     expect(html).not.toContain("revisor-de-teste");
     // O token nunca chega ao HTML.
     expect(html).not.toContain("sessao-sintetica-de-teste");
+  });
+});
+
+/**
+ * A faixa de acompanhamento é derivada do job, e não uma mensagem: derivada, o texto é o
+ * mesmo entre duas voltas do poll de 2 s, o DOM não desmonta e a faixa não pisca.
+ */
+describe("JobStatusBand", () => {
+  it("mostra o estado do job em processamento com role=status, sem cara de erro", () => {
+    const html = renderToStaticMarkup(
+      <JobStatusBand
+        job={{ status: "PROCESSING", stage: "VISION" }}
+        hasReview={false}
+      />,
+    );
+
+    expect(html).toContain('role="status"');
+    expect(html).toContain('class="app-status"');
+    expect(html).toContain(
+      "Em processamento. A revisão será aberta automaticamente quando estiver disponível.",
+    );
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain("app-alert");
+    // Estado não se fecha: some sozinho quando a revisão abre.
+    expect(html).not.toContain("Fechar aviso");
+  });
+
+  it("some quando a revisão abre", () => {
+    const html = renderToStaticMarkup(
+      <JobStatusBand
+        job={{ status: "REVIEW_REQUIRED", stage: "REVIEW" }}
+        hasReview
+      />,
+    );
+
+    expect(html).toBe("");
+  });
+
+  it("não desenha nada sem job aberto", () => {
+    const html = renderToStaticMarkup(
+      <JobStatusBand job={null} hasReview={false} />,
+    );
+
+    expect(html).toBe("");
+  });
+
+  it("não absorve a falha: job que falhou não vira faixa de estado", () => {
+    const html = renderToStaticMarkup(
+      <JobStatusBand job={{ status: "FAILED", stage: "VISION" }} hasReview={false} />,
+    );
+
+    expect(html).toBe("");
+  });
+});
+
+describe("falha do job", () => {
+  it("continua sendo aviso, em .app-alert com role=alert", () => {
+    const message = jobFailureMessage({ status: "FAILED" });
+    expect(message).toBe(
+      "Este processamento falhou. Consulte a equipe responsável para repetir a etapa segura.",
+    );
+
+    const html = renderToStaticMarkup(
+      <AppAlert message={message ?? ""} onClose={() => undefined} />,
+    );
+
+    expect(html).toContain('class="app-alert"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("Este processamento falhou.");
+    expect(html).toContain("Fechar aviso");
+  });
+
+  it("estado do ciclo de vida não vira mensagem", () => {
+    expect(jobFailureMessage({ status: "PROCESSING" })).toBeNull();
+    expect(jobFailureMessage({ status: "UPLOADED" })).toBeNull();
+    expect(jobFailureMessage({ status: "REVIEW_REQUIRED" })).toBeNull();
   });
 });

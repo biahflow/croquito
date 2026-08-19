@@ -408,6 +408,65 @@ function jobStatusLabel(job: Pick<Job, "status" | "stage">): string {
 }
 
 /**
+ * Só falha vira mensagem. O resto do ciclo de vida do job é ESTADO, e estado se deriva
+ * do job aberto em vez de virar aviso: a mensagem seria reescrita a cada volta do poll.
+ */
+export function jobFailureMessage(job: Pick<Job, "status">): string | null {
+  return job.status === "FAILED"
+    ? "Este processamento falhou. Consulte a equipe responsável para repetir a etapa segura."
+    : null;
+}
+
+/**
+ * Faixa de acompanhamento do job. É DERIVADA do estado, não uma mensagem: o poll de 2 s
+ * reabre o job e zerava a mensagem antes de reescrevê-la, então a faixa desmontava e
+ * remontava a cada ciclo — piscando. Derivada, o texto é o mesmo entre dois polls (mesmo
+ * DOM, sem pisca) e ela some sozinha quando a revisão abre.
+ *
+ * Estado não é alerta: `role="status"` (aria-live polite) e sem botão de fechar. Falha
+ * continua em `AppAlert`, com `role="alert"`, porque erro é erro.
+ */
+export function JobStatusBand({
+  job,
+  hasReview,
+}: {
+  job: Pick<Job, "status" | "stage"> | null;
+  hasReview: boolean;
+}) {
+  if (!job || hasReview || job.status === "FAILED") {
+    return null;
+  }
+  return (
+    <p className="app-status" role="status">
+      {`${jobStatusLabel(job)}. A revisão será aberta automaticamente quando estiver disponível.`}
+    </p>
+  );
+}
+
+/** Erro e recusa, nunca estado: fica até o usuário fechar e interrompe o leitor de tela. */
+export function AppAlert({
+  message,
+  onClose,
+}: {
+  message: string;
+  onClose: () => void;
+}) {
+  return (
+    <p className="app-alert" role="alert">
+      <span>{message}</span>
+      <button
+        type="button"
+        className="app-alert-close"
+        onClick={onClose}
+        aria-label="Fechar aviso"
+      >
+        ×
+      </button>
+    </p>
+  );
+}
+
+/**
  * Jornada da revisão do croqui. A sessão OIDC é da casca (`App.tsx`) e chega por prop:
  * `readSession()` consome o authorization code do redirect, que é de uso único, então
  * ela tem um dono só. A casca também é quem decide não montar esta jornada sem sessão.
@@ -966,11 +1025,9 @@ export function CroquiApp({
         await loadReview(accessToken, requestedJobId);
       } else {
         setReview(null);
-        setMessage(
-          current.status === "FAILED"
-            ? "Este processamento falhou. Consulte a equipe responsável para repetir a etapa segura."
-            : `${jobStatusLabel(current)}. A revisão será aberta automaticamente quando estiver disponível.`,
-        );
+        // Estado em processamento não é mensagem: quem o mostra é `JobStatusBand`, a
+        // partir do job. Aqui só a falha vira aviso.
+        setMessage(jobFailureMessage(current));
       }
     } catch (error) {
       setReview(null);
@@ -2406,9 +2463,8 @@ export function CroquiApp({
       setProjects(await listProjects(session.access_token));
       setUploadFile(null);
       setProjectName("");
-      setMessage(
-        "Projeto criado. A revisão será aberta automaticamente quando estiver disponível.",
-      );
+      // Sem mensagem de criação: o job criado já está em `selectedJob`, e a faixa de
+      // status derivada dele aparece na hora e sobrevive ao poll.
     } catch (error) {
       showApiError(error, "Não foi possível criar o job.");
     } finally {
@@ -2431,18 +2487,9 @@ export function CroquiApp({
       </section>
 
       {message ? (
-        <p className="app-alert" role="alert">
-          <span>{message}</span>
-          <button
-            type="button"
-            className="app-alert-close"
-            onClick={() => setMessage(null)}
-            aria-label="Fechar aviso"
-          >
-            ×
-          </button>
-        </p>
+        <AppAlert message={message} onClose={() => setMessage(null)} />
       ) : null}
+      <JobStatusBand job={selectedJob} hasReview={Boolean(review)} />
       {toast ? (
         <p className="app-toast" role="status">
           {toast}
