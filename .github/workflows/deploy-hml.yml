@@ -271,7 +271,20 @@ jobs:
           # A mesma major da imagem de build do web (docker/web.Dockerfile, node:22).
           node-version: 22
 
+      # O download do Chromium (~150 MB) não precisa se repetir a cada deploy; a chave
+      # acompanha o lockfile porque é ele quem pina a versão do Playwright.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       - name: Fumaça autenticada
+        # O passo inteiro (npm ci + playwright install + smoke) fecha em ~5 min. O
+        # timeout existe porque o `apt-get` do `--with-deps` já congelou DUAS vezes em
+        # 2026-08-19 no mirror azure.archive.ubuntu.com do runner — sem ele, o job
+        # segura os 45 min do timeout do job inteiro; com ele, falha rápido e um
+        # re-run resolve (o deploy em si já terminou quando este passo roda).
+        timeout-minutes: 12
         env:
           CROQUITO_SMOKE_WEB_URL: https://croquito-hml.biahflow.ai
           CROQUITO_SMOKE_USER: smoke.hml
