@@ -81,6 +81,29 @@ em `VERIFY_PROFILE`) e a autoria dividida da evidência da T5.
   (com tema) e a borda nova — é o gate humano "deploy da imagem" exercido pelo merge; a
   fumaça da esteira valida as seis rotas em seguida.
 
+## Revisão humana — rodada 1 (2026-08-18, sobre a tela em homologação)
+
+Três achados do responsável, todos resolvidos na branch `fix/f-007-revisao-humana`:
+
+1. **Copy incompleta**: a tela mostrava só o conjunto enxuto aprovado no planejamento; o
+   responsável aprovou a copy inteira do mock (revisão 2 do texto, registrada no
+   [mock/README.md](mock/README.md)) — eyebrow, título, subtítulo, garantia de senha,
+   rodapé de convite e apoio da promessa entraram palavra por palavra.
+2. **Keycloak em pt-BR**: decisão humana fechando o risco aberto da T4 —
+   `internationalizationEnabled` + `defaultLocale: pt-BR` nos dois realms, com o locale
+   embutido da versão (nenhuma tradução custom, nenhum template tocado). Validado no
+   Keycloak local com tema: "Entrar na sua conta", campos e botão em português.
+3. **Composição do painel escuro**: wordmark pequeno e croqui perdido em viewport largo. A
+   causa-mecanismo: o `align-items: stretch` padrão esticava o `img` do wordmark (o desenho
+   recentrava dentro do viewBox) e o `footer` global impunha `space-between`. Correção:
+   coluna interna com largura máxima, ancoragem `flex-start`, wordmark em `clamp()` maior
+   (decisão do responsável) com compensação óptica da margem interna do lettering, e
+   subtítulo/rodapé do mock que faltavam. Validação no Chrome em seis larguras (390, 768,
+   1024, 1440, 1920, 2560): zero overflow horizontal e composição coesa em todas.
+
+Portões re-rodados após a rodada: `make check` e 529 testes web verdes (asserções novas
+cobrindo a copy da revisão 2).
+
 ## Resultado da revisão
 
 Seis diffs revisados linha a linha pelo modelo principal contra contrato, ADR-0032 e

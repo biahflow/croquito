@@ -140,12 +140,36 @@ button {
   position: relative;
 }
 
+/* Coluna interna da marca. Em viewport largo o painel estica, mas a composição — wordmark,
+   promessa, croqui, rodapé — fica coesa dentro desta largura máxima, em vez de se espalhar
+   pelos cantos (achado da revisão humana de 2026-08-18). */
+.login-brandcol {
+  width: 100%;
+  max-width: 760px;
+  margin-inline: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* `flex-start`, e não o stretch padrão: esticado, o `img` do wordmark ocupa a largura
+     toda e o desenho recentra dentro do próprio viewBox — o wordmark encolhe e "flutua"
+     para o centro. Ancorado, cada peça tem a largura do próprio conteúdo; o croqui
+     continua à direita por `align-self`. */
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+}
+
 .login-wordmark {
   display: block;
-  height: 27px;
-  /* O wordmark tem viewBox fixo (620 × 150): sem largura declarada ele estica e o desenho
-     recentra dentro do próprio viewBox. */
-  width: 112px;
+  /* Maior que o mock por decisão da revisão humana de 2026-08-18 ("a marca está muito
+     pequena"); a proporção vem do viewBox do arquivo (620 × 150). O lettering começa em
+     x≈136 do viewBox, então a margem negativa (136/150 da altura) alinha o desenho — e
+     não a caixa — com a coluna de texto. */
+  --wordmark-h: clamp(38px, 3.2vw, 50px);
+  height: var(--wordmark-h);
+  width: auto;
+  aspect-ratio: 620 / 150;
+  margin-left: calc(var(--wordmark-h) * -0.9);
 }
 
 /* A promessa é o `h1` da página: o maior peso tipográfico da porta, na serifada que dá ao
@@ -153,17 +177,44 @@ button {
 .login-promise {
   margin: 0;
   max-width: 13ch;
-  font-size: 37px;
+  font-size: clamp(37px, 3vw, 46px);
   line-height: 1.16;
   letter-spacing: -0.01em;
 }
 
+.login-promise-sub {
+  margin: 14px 0 0;
+  max-width: 36ch;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--dark-ink-soft);
+}
+
 .login-croqui {
-  width: 320px;
+  width: clamp(320px, 24vw, 420px);
   max-width: 100%;
   margin: 10px -6px 0 0;
   align-self: flex-end;
   opacity: 0.92;
+}
+
+.login-foot {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  /* O `footer` global usa space-between; aqui o ponto e o texto andam juntos. */
+  justify-content: flex-start;
+  font-size: 11.5px;
+  color: var(--dark-ink-soft);
+}
+
+.login-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+  flex-shrink: 0;
 }
 
 /* Verde vetor sobre a superfície escura, onde ele é traço de desenho e não texto. A ordem
@@ -214,6 +265,51 @@ button {
   width: 46px;
   height: 46px;
   border-radius: 11px;
+}
+
+/* Cabeçalho do card, na ordem do mock: eyebrow, título serifado, subtítulo. */
+.login-eyebrow {
+  display: block;
+  margin-top: 20px;
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.login-title {
+  margin: 6px 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.login-sub {
+  margin: 9px 0 0;
+  color: var(--ink-secondary);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+/* A garantia de senha: o único lugar do fluxo em que se digita credencial é o provedor de
+   identidade — dizer isso aqui é anti-phishing, não decoração. */
+.login-assur {
+  margin: 16px 0 0;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--ink-secondary);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.login-assur svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--accent-text);
 }
 
 /*
@@ -306,14 +402,19 @@ button {
   border-top: 1px solid var(--line);
 }
 
-.login-env {
-  margin: 15px 0 0;
-}
-
 /* Pílula de ambiente, só em homologação (decisão humana de 2026-08-18). Verde de texto e
    de borda sobre claro é `--accent-text` / `--accent-line`, nunca `--accent`. */
+.login-env {
+  margin: 15px 0 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 .login-env-pill {
-  display: inline-block;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
   padding: 4px 9px;
   color: var(--accent-text);
   background: var(--accent-soft);
@@ -322,6 +423,11 @@ button {
   font-size: 10.5px;
   font-weight: 800;
   letter-spacing: 0.05em;
+}
+
+.login-env-host {
+  color: var(--ink-secondary);
+  font-size: 12.5px;
 }
 
 .login-invite {
@@ -378,9 +484,13 @@ button {
     display: none;
   }
 
+  .login-brandcol {
+    max-width: none;
+    gap: 0;
+  }
+
   .login-wordmark {
-    height: 22px;
-    width: 91px;
+    --wordmark-h: 26px;
   }
 
   .login-promise {
@@ -390,7 +500,15 @@ button {
     line-height: 1.2;
   }
 
-  .login-croqui {
+  .login-promise-sub {
+    margin-top: 8px;
+    max-width: none;
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+
+  .login-croqui,
+  .login-foot {
     display: none;
   }
 
