@@ -10,7 +10,8 @@
     "check": "tsc -b && vite build",
     "test": "vitest run",
     "smoke:headless": "node e2e/smoke-headless.mjs",
-    "smoke:callback": "node e2e/callback-failure.mjs"
+    "smoke:callback": "node e2e/callback-failure.mjs",
+    "smoke:auth": "node e2e/smoke-auth.mjs"
   },
   "dependencies": {
     "@croquito/contracts": "*",

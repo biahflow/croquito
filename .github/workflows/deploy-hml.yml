@@ -248,3 +248,34 @@ jobs:
           python3 scripts/smoke_hml.py \
             --base-url "$url" \
             --issuer-base https://croquito-hml.biahflow.ai
+
+      # Fumaça AUTENTICADA: atravessa o login real com o usuário de fumaça e prova a
+      # sessão com `GET /v1/projects` 200. Nasceu do incidente de 2026-08-19 — login
+      # fechava no Keycloak, tokens chegavam, e o produto não abria: nenhuma fumaça de
+      # status pega isso, porque o defeito só existe DEPOIS da credencial. Roda contra o
+      # host público (o fluxo OIDC depende do issuer público), com navegador de verdade.
+      #
+      # O usuário `smoke.hml` vive só para isto (tenant `tenant-smoke-hml`, isolado dos
+      # dados reais) e é recriado junto do realm — runbook HML_KEYCLOAK. A senha vem do
+      # secret CROQUITO_HML_SMOKE_PASSWORD (espelho do Secret Manager); se o secret não
+      # existir, o passo FALHA — fumaça que se pula sozinha ensina a confiar no verde
+      # errado, como o comentário acima já aprendeu.
+      - uses: actions/setup-node@v4
+        with:
+          # A mesma major da imagem de build do web (docker/web.Dockerfile, node:22).
+          node-version: 22
+
+      - name: Fumaça autenticada
+        env:
+          CROQUITO_SMOKE_WEB_URL: https://croquito-hml.biahflow.ai
+          CROQUITO_SMOKE_USER: smoke.hml
+          CROQUITO_SMOKE_PASSWORD: ${{ secrets.CROQUITO_HML_SMOKE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CROQUITO_SMOKE_PASSWORD" ]; then
+            echo "CROQUITO_HML_SMOKE_PASSWORD ausente nos secrets do repositório" >&2
+            exit 1
+          fi
+          npm ci
+          npx playwright install --with-deps chromium
+          npm --workspace @croquito/web run smoke:auth

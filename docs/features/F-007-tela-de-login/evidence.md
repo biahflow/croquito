@@ -140,6 +140,42 @@ cobrindo a copy da revisão 2).
    `loginTheme`/`emailTheme`/i18n a realm existente; os passos de console estão com o
    responsável (runbook HML_KEYCLOAK, "Mudança no realm depois que ele já existe").
 
+## Revisão humana — rodada 3 (2026-08-19, segundo incidente: 401 pós-login)
+
+Relato: usuário recriado loga no Keycloak, volta a `/revisao/` e não entra. Investigação
+por logs dos três serviços, com reprodução local instrumentada:
+
+- **Causa raiz**: o usuário recriado ficou **sem o atributo `tenant_id`** — token válido,
+  troca de código 200, e `GET /v1/projects → 401` em toda tentativa (o cenário literal do
+  ADR-0033). Nenhum código estava errado NESTE ponto; o dado do realm estava.
+- **Três defeitos reais expostos e consertados no mesmo PR**:
+  1. `identity_from_claims` agora distingue **`TOKEN_WITHOUT_TENANT`** de `INVALID_TOKEN`
+     (código estável novo no API Contract; 6 testes em `tests/core/test_oidc.py`), e o
+     web mostra explicação clara em vez de código cru — **e não tenta renovar**, porque
+     token novo não conserta conta sem organização (2 testes em `api.test.ts`).
+  2. A renovação silenciosa era **quebrada por construção**: sem `silent_redirect_uri`, o
+     iframe carregava a SPA inteira, que processava o código da renovação como login.
+     Agora existe entry próprio do mesmo build (`silent-renew.html`, ADR-0028 D9
+     preservado; coberto pelos `redirectUris` existentes — nenhum realm muda).
+  3. O double-mount do React em dev gastava o código de uso único duas vezes ("Code not
+     valid" como aviso falso): a troca virou promise única compartilhada no módulo.
+- **Achados de ambiente**, corrigidos/registrados: `VITE_OIDC_AUTHORITY` do `.env.local`
+  da raiz apontava porta velha (8081→8083, arquivo local do operador); e o PR #16 estava
+  **aberto**, não mergeado (nenhum defeito de esteira — a lista de runs não mente).
+- **A rede que faltava, agora na esteira**: passo **"Fumaça autenticada"** no
+  `deploy-hml.yml` — navegador real atravessa raiz → porta (copy) → Keycloak (tema,
+  pt-BR, sem seletor) → credenciais do usuário de fumaça (`smoke.hml`, tenant isolado,
+  criado por `scripts/create_hml_smoke_user.sh`) → `Sessão:` → **`GET /v1/projects`
+  200** → URL estável (loop reprova). É exatamente o teste que teria pego este incidente
+  e o anterior antes de qualquer humano. Localmente, `npm run smoke:auth` roda o mesmo
+  fluxo contra o stack local (validado verde nesta rodada, junto do headless com `?job`
+  e do `smoke:callback`).
+- **Adiado com registro**: o espelho local completo da borda (nginx local com upstreams
+  parametrizados) — o proxy usa VIP privado do Google com SNI por serviço, e
+  parametrizá-lo com fidelidade merece PR revisado próprio, não um anexo de incidente. O
+  pulo do nginx permanece coberto pelos curls da T1 e pela fumaça de seis rotas da
+  esteira.
+
 ## Resultado da revisão
 
 Seis diffs revisados linha a linha pelo modelo principal contra contrato, ADR-0032 e

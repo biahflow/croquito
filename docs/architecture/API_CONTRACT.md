@@ -21,6 +21,13 @@ Os demais endpoints exigem JWT emitido por um provedor OIDC configurado. A API
 valida assinatura por JWKS, `issuer` e `audience`, e deriva tenant, identidade e
 papéis somente dos claims assinados.
 
+Recusas de autenticação respondem `401` com código estável no corpo: `UNAUTHORIZED`
+(sem credencial Bearer), `INVALID_TOKEN` (assinatura, issuer, audience ou forma dos
+claims inválidos) e `TOKEN_WITHOUT_TENANT` (token válido de conta **sem o claim
+`tenant_id`** — a conta autenticou, mas não está vinculada a nenhuma organização; o
+cliente deve orientar a pessoa a procurar quem administra o tenant, e não repetir o
+login, que produziria o mesmo resultado).
+
 ## Convenções
 
 - IDs são UUIDv7.

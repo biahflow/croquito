@@ -25,6 +25,13 @@ const manager = browser && authority && clientId
       // O access token do Keycloak dura 5 min por padrão; uma sessão de revisão dura
       // muito mais. Sem renovação, o próximo POST falha com 401 no meio do trabalho.
       automaticSilentRenew: true,
+      // A renovação roda num iframe oculto. SEM esta URI dedicada, o iframe cai no
+      // `redirect_uri` e carrega a SPA INTEIRA — que processa o código da renovação como
+      // login, troca-o pelo caminho errado e nunca responde ao pai (incidente de
+      // 2026-08-19 em homologação). A página é entry própria do MESMO build (D2 do
+      // ADR-0032 preservado) e está coberta pelos `redirectUris` existentes
+      // (`/revisao/*`); nenhum realm muda.
+      silent_redirect_uri: `${window.location.origin}${basePath}silent-renew.html`,
       userStore: new WebStorageStateStore({ store: window.sessionStorage }),
     })
   : null;
@@ -109,7 +116,12 @@ export async function readSession(): Promise<User | null> {
   if (params.has("code") && params.has("state")) {
     let redirected: User | null = null;
     try {
-      redirected = await manager.signinRedirectCallback();
+      // Um código de autorização, UMA troca: em desenvolvimento o React monta o efeito
+      // duas vezes, e duas chamadas concorrentes gastariam o código de uso único — a
+      // segunda falha com "Code not valid" e vira aviso falso na porta. O promise é
+      // compartilhado no módulo para todo montador aguardar a mesma troca.
+      sharedRedirectCallback ??= manager.signinRedirectCallback();
+      redirected = await sharedRedirectCallback;
       return redirected;
     } catch (error) {
       // Código de autorização é de uso único. Recarregar a página com ele ainda na
@@ -136,6 +148,9 @@ export async function readSession(): Promise<User | null> {
   }
   return alive;
 }
+
+/** Troca única do código de autorização, compartilhada entre montagens do efeito. */
+let sharedRedirectCallback: Promise<User> | null = null;
 
 /**
  * Renova o access token sob demanda. A renovação agendada corre contra o relógio;

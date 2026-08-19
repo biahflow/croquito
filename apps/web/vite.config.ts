@@ -8,6 +8,17 @@ import { defineConfig } from "vite";
 export default defineConfig(({ mode }) => ({
   base: mode === "development" ? "/" : "/revisao/",
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      // Dois HTMLs, UM build (ADR-0028 D9 preservado): o segundo entry é a página mínima
+      // do callback de renovação silenciosa — sem ele o iframe carregaria a SPA inteira,
+      // que foi o defeito do incidente de 2026-08-19.
+      input: {
+        main: "index.html",
+        "silent-renew": "silent-renew.html"
+      }
+    }
+  },
   server: {
     port: 5173,
     strictPort: true
