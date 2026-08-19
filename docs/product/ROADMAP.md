@@ -2,7 +2,7 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-18
+Última revisão: 2026-08-19
 
 ## Uso no ciclo de engenharia
 
@@ -28,7 +28,9 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-006 | HIGH | DONE | [Conserto e verificação da homologação em GCP](../features/F-006-hml-conserto/feature.md) |
 | F-007 | HIGH | READY_FOR_HUMAN_REVIEW | [Porta de entrada: tela de login com marca](../features/F-007-tela-de-login/feature.md) |
 | F-008 | HIGH | BLOCKED | [Ciclo de vida de conta: convite, recuperação de senha e Google](../features/F-008-ciclo-de-vida-de-conta/feature.md) |
-| F-009 | A DEFINIR | READY_FOR_SPEC | Jornada guiada da revisão (a definir em contrato) |
+| F-009 | HIGH | READY_FOR_REVIEW | [Suite hospedada de providers: OpenAI + Anthropic direto, sem AWS](../features/F-009-suite-hospedada-sem-aws/feature.md) |
+| F-010 | A DEFINIR | READY_FOR_SPEC | Revisão assistida em lote (a definir em contrato) |
+| F-011 | A DEFINIR | READY_FOR_SPEC | Jornada guiada da revisão (a definir em contrato) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -95,13 +97,46 @@ remetente ainda não foram escolhidos — sem isso, nenhum dos três fluxos exis
 2026-08-18**, que registra essa pendência. Contrato em
 [feature.md](../features/F-008-ciclo-de-vida-de-conta/feature.md).
 
-F-009 nasce em 2026-08-19, por seleção humana, na primeira revisão da porta nova: o
-responsável quer a experiência da revisão como **jornada guiada** — a próxima tarefa só
-habilita quando a atual é cumprida, no lugar do formulário aberto de hoje. É mudança de
-UX transversal à jornada da revisão (`INTERFACE_CHANGE` na classificação da camada
-pinada: exigirá Design Approval Package antes do planejamento). Ainda sem Feature
-Contract: esta linha é o registro canônico até a especificação, e a prioridade é
-decisão humana pendente.
+F-009 nasce em 2026-08-19, por seleção humana, na mesma conversa que diagnosticou o upload real
+parado em `JOB_NOT_READY` no HML: a suite de providers hospedada montava os braços Bedrock e
+Textract com `boto3` sem nenhuma credencial explícita — o ambiente publicado é GCP
+([ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md)), o caminho AWS nunca rodou neste
+repositório, e a chamada de OCR do Textract no pacote de revisão era código morto. O usuário
+aprovou explicitamente, na mesma data: chamada paga de provider, envio do documento a serviço
+externo, suite sem AWS (Anthropic primário, OpenAI fallback), braço de OCR determinístico via
+Cloud Vision, teto de US$ 5 por rodada e allowlist por env var. A prioridade é `HIGH`. A decisão
+técnica é o [ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md), `Proposed` —
+aceitação segue como ato humano. As tarefas T1, T2, T3 e T5 do
+[plano](../features/F-009-suite-hospedada-sem-aws/plan.md) estão completas; T4 (esta
+documentação) fecha a implementação. A infraestrutura em `biahflow/infra` está APLICADA
+(PRs #14 e #15 mesclados, apply verde, secrets com valor write-only, Vision API habilitada,
+retenção de 7 dias no bucket). O que resta não é código: aceite do ADR; papel
+`platform_operator` e entitlement do tenant; digest do PDF autorizado na allowlist; e o
+próprio merge/deploy. Contrato em
+[feature.md](../features/F-009-suite-hospedada-sem-aws/feature.md).
+
+F-010 — revisão assistida em lote — nasce em 2026-08-19, por seleção humana, na mesma conversa
+da F-009: leitura com tripla concordância (os dois LLMs concordam, o OCR determinístico
+confirma, a associação é única e o solver fecha dentro da tolerância) nasce pré-aceita em lote,
+e o revisor faz uma conferência e um ato de aprovação no lugar de decisão leitura a leitura. O
+gate humano de aprovação e o portão de exportação (`SceneRevision.export_errors()`) permanecem
+intocados — o que muda é o ponto de partida da revisão, não quem decide. Depende dos dados reais
+da F-009 (upload real corroborado por OCR) para calibrar os limiares de concordância. Ainda sem
+Feature Contract: esta linha é o registro canônico até a especificação, e a prioridade é decisão
+humana pendente.
+
+F-011 — jornada guiada da revisão — nasce em 2026-08-19, por seleção humana, na primeira revisão
+da porta nova: o responsável quer a experiência da revisão como **jornada guiada** — a próxima
+tarefa só habilita quando a atual é cumprida, no lugar do formulário aberto de hoje. É mudança de
+UX transversal à jornada da revisão (`INTERFACE_CHANGE` na classificação da camada pinada:
+exigirá Design Approval Package antes do planejamento). Ainda sem Feature Contract: esta linha é
+o registro canônico até a especificação, e a prioridade é decisão humana pendente. **Renumerada
+de F-009 para F-011 nesta revisão do roadmap**: a mesma data de nascimento produziu três itens
+candidatos a numeração (esta jornada guiada, a suite hospedada sem AWS e a revisão assistida em
+lote) e as duas primeiras entradas colidiram no ID `F-009` — a suite hospedada já tinha Feature
+Contract, plano e três tasks implementadas sob esse ID quando a colisão foi identificada durante
+a execução da F-009, então o item ainda sem contrato escrito é o que se move, não o que já tem
+trabalho publicado.
 
 ## Agora — MVP privado
 

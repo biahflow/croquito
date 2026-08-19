@@ -2,13 +2,22 @@
 
 ## Status
 
-`READY_FOR_BUILD`
+`READY_FOR_REVIEW`
 
 > Selecionada, especificada e autorizada por decisões humanas de 2026-08-19, na mesma
 > conversa que diagnosticou o upload real parado em `JOB_NOT_READY` no HML. O usuário
 > aprovou explicitamente: chamada paga de provider, envio do documento a serviço
 > externo, suite sem AWS (Anthropic primário, OpenAI fallback), braço de OCR
 > determinístico via Cloud Vision, teto de US$ 5 por rodada e allowlist por env var.
+>
+> Implementação completa: T1, T2, T3 e T5 estão `BUILD_COMPLETE`; T4 (esta
+> documentação — ADR-0035, Model Routing, runbook do HML, ROADMAP) fecha a
+> integração. A infraestrutura em `biahflow/infra` está APLICADA (PRs
+> [#14](https://github.com/biahflow/infra/pull/14) e
+> [#15](https://github.com/biahflow/infra/pull/15) mesclados, apply verde, secrets com
+> valor write-only, Vision API habilitada). O que resta não é código: aceite do
+> ADR-0035 (`Proposed`), papel `platform_operator` e entitlement do tenant, digest do
+> PDF autorizado na allowlist, e o merge/deploy em `biahflow/croquito`.
 
 ## Priority
 
