@@ -4,8 +4,10 @@ from collections.abc import Iterator, Sequence
 from copy import deepcopy
 from dataclasses import replace
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 from typing import Any, cast
+from urllib.error import HTTPError
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -19,6 +21,7 @@ from croquito_worker.provider_review import (
 from croquito_worker.providers import (
     EMBEDDINGS_MAX_BATCH,
     EMBEDDINGS_MODEL,
+    HTTP_ERROR_DETAIL_LIMIT,
     IMAGE_TEXT_TASKS,
     OCR_FAILURE_DETAIL_LIMIT,
     PROMPT_SPECS,
@@ -69,6 +72,8 @@ from croquito_worker.providers import (
     TextractProviderAdapter,
     _bedrock_failure_code,
     _failure_from_http_status,
+    _http_error_detail,
+    _http_post,
     _openai_strict_schema,
     _output_model,
     _parse_output,
@@ -900,21 +905,94 @@ def _schema_nodes(node: object) -> Iterator[dict[str, Any]]:
             yield from _schema_nodes(item)
 
 
+# O porteiro do modo estrito, escrito por fora do código que ele julga: cada item aqui
+# custou um 400 real da `/v1/responses`. Regra nova aprendida entra NESTA lista, e a
+# varredura roda sobre as nove tarefas — foi um `pattern` num `$defs` aninhado que escapou
+# da inspeção manual e cobrou uma segunda rodada em produção.
+_STRICT_REFUSED_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "allOf",
+        "const",
+        "contains",
+        "default",
+        "dependentRequired",
+        "dependentSchemas",
+        "discriminator",
+        "else",
+        "if",
+        "maxLength",
+        "maxProperties",
+        "minLength",
+        "minProperties",
+        "not",
+        "oneOf",
+        "patternProperties",
+        "prefixItems",
+        "propertyNames",
+        "then",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "uniqueItems",
+    }
+)
+_STRICT_REFUSED_REGEX_TOKENS: tuple[str, ...] = ("(?=", "(?!", "(?<=", "(?<!")
+
+
+def _assert_openai_strict_dialect(schema: dict[str, Any]) -> None:
+    """Recusa aqui o que a API recusaria — nosso porteiro de mentira, de graça e offline."""
+    for node in _schema_nodes(schema):
+        refused = _STRICT_REFUSED_KEYWORDS & set(node)
+        assert not refused, f"palavra que o estrito recusa: {sorted(refused)}"
+        pattern = node.get("pattern")
+        if isinstance(pattern, str):
+            assert not any(token in pattern for token in _STRICT_REFUSED_REGEX_TOKENS), pattern
+        if node.get("type") == "object":
+            # "'required' is required to be supplied and to be an array including every key
+            # in properties. Missing 'layer_hint'" — o primeiro 400, palavra por palavra.
+            assert set(node.get("required", [])) == set(node.get("properties", {}))
+            assert node["additionalProperties"] is False
+
+
 @pytest.mark.parametrize("task", list(PromptTask))
-def test_openai_strict_schema_requires_every_property_of_every_object(task: PromptTask) -> None:
-    """O 400 real da `/v1/responses`: o estrito exige `required` com TODAS as chaves.
+def test_openai_strict_schema_passes_the_strict_gate_for_every_task(task: PromptTask) -> None:
+    _assert_openai_strict_dialect(_openai_strict_schema(_output_model(task).model_json_schema()))
 
-    O `model_json_schema()` do Pydantic deixa campo com default fora do `required`, e a API
-    respondia *"'required' is required to be supplied and to be an array including every key
-    in properties. Missing 'layer_hint'"* — o braço OpenAI nunca completou uma chamada.
+
+def test_openai_strict_schema_drops_the_lookahead_the_api_named() -> None:
+    """O segundo 400: *"regex lookaround is not supported. Found at
+    $['$defs'].MeasurementReadingOutput.properties.normalized_value.anyOf[1].pattern"*.
+
+    O `Decimal` do Pydantic emite o lookahead; o motor de regex do estrito não o implementa.
     """
-    strict = _openai_strict_schema(_output_model(task).model_json_schema())
+    source = _output_model(PromptTask.MEASUREMENT_EXTRACTION).model_json_schema()
+    decimal_branches = source["$defs"]["MeasurementReadingOutput"]["properties"][
+        "normalized_value"
+    ]["anyOf"]
+    assert any("(?!" in branch.get("pattern", "") for branch in decimal_branches)
 
-    for node in _schema_nodes(strict):
-        if node.get("type") != "object":
-            continue
-        assert set(node.get("required", [])) == set(node.get("properties", {}))
-        assert node["additionalProperties"] is False
+    strict = _openai_strict_schema(source)
+
+    translated = strict["$defs"]["MeasurementReadingOutput"]["properties"]["normalized_value"]
+    assert all("pattern" not in branch for branch in translated["anyOf"])
+
+
+def test_openai_strict_schema_keeps_a_pattern_without_lookaround() -> None:
+    """Pattern simples é orientação útil de geração e o estrito o aceita: fica."""
+    strict = _openai_strict_schema(
+        {
+            "type": "object",
+            "properties": {
+                "reading_id": {"type": "string", "pattern": "^rd_[a-f0-9]{16}$"},
+                "amount": {"type": "string", "pattern": r"^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$"},
+            },
+            "required": ["reading_id", "amount"],
+        }
+    )
+
+    assert strict["properties"]["reading_id"]["pattern"] == "^rd_[a-f0-9]{16}$"
+    assert "pattern" not in strict["properties"]["amount"]
+    # O resto do nó sobrevive: só o `pattern` recusado sai.
+    assert strict["properties"]["amount"]["type"] == "string"
 
 
 def test_openai_strict_schema_requires_the_property_the_api_named() -> None:
@@ -946,20 +1024,10 @@ def test_openai_strict_schema_makes_the_optional_nullable_without_duplicating_nu
     }
 
 
-def test_openai_strict_schema_drops_what_the_strict_mode_refuses() -> None:
-    """`review-chat` é a tarefa que reúne tudo: union discriminada, tupla e limite de texto."""
+def test_openai_strict_schema_converts_the_tuple_the_strict_mode_refuses() -> None:
+    """`review-chat` é a tarefa que reúne tudo: união discriminada, tupla e limite de texto."""
     strict = _openai_strict_schema(_output_model(PromptTask.REVIEW_CHAT).model_json_schema())
 
-    for node in _schema_nodes(strict):
-        assert not {
-            "default",
-            "minLength",
-            "maxLength",
-            "discriminator",
-            "oneOf",
-            "prefixItems",
-            "const",
-        } & set(node)
     # A tupla de dois `vp_` vira lista do mesmo tipo, presa pelo tamanho.
     target = strict["$defs"]["ChatTraceAssociationDraft"]["properties"]["target"]
     array = next(branch for branch in target["anyOf"] if branch.get("type") == "array")
@@ -1639,12 +1707,20 @@ def test_server_errors_stay_retryable_over_http() -> None:
 def test_http_failure_is_logged_without_sensitive_content(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A falha HTTP precisa nomear status e latência — e nada além de metadados."""
+    """A falha HTTP precisa nomear status, latência e a recusa — e nada além disso.
+
+    O resumo da recusa (`detail`) passou a sair no log em 2026-08-19: sem ele o 400 do
+    schema estrito só apareceu depois de reproduzir a chamada por fora. O que continua
+    proibido é o resto — corpo bruto, prompt, imagem e credencial.
+    """
 
     def post(
         _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
     ) -> tuple[int, dict[str, object]]:
-        return 413, {"error": {"message": "image exceeds 5 MB maximum"}}
+        return 413, {
+            "error": {"message": "image exceeds 5 MB maximum"},
+            "request_echo": "conteúdo bruto que nunca pode ir para o log",
+        }
 
     adapter = AnthropicProviderAdapter(
         api_key="sk-ant-secret", model_id="claude-opus-5", http_post=post
@@ -1665,10 +1741,90 @@ def test_http_failure_is_logged_without_sensitive_content(
     assert "failure_code=REFUSED" in message
     assert "latency_ms=" in message
     assert record.http_status == 413  # type: ignore[attr-defined]
-    # Nunca corpo de resposta, prompt, imagem ou credencial.
-    assert "image exceeds" not in message
+    # A recusa do fornecedor, resumida: é o campo que faltava para diagnosticar sem repetir
+    # a chamada.
+    assert "detail=image exceeds 5 MB maximum" in message
+    assert record.detail == "image exceeds 5 MB maximum"  # type: ignore[attr-defined]
+    # Nunca o corpo bruto, prompt, imagem ou credencial.
+    assert "request_echo" not in message
+    assert "conteúdo bruto" not in message
     assert "sk-ant-secret" not in message
     assert "synthetic-provider-input" not in message
+
+
+def test_http_failure_detail_is_truncated(caplog: pytest.LogCaptureFixture) -> None:
+    """Mensagem longa do fornecedor entra recortada: log é diagnóstico, não despejo."""
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        return 400, {"error": {"message": "x" * 500}}
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError),
+    ):
+        OpenAIProviderAdapter(api_key="test-key", model_id="gpt-5.6-terra", http_post=post).execute(
+            _request(PromptTask.MEASUREMENT_EXTRACTION)
+        )
+
+    record = next(entry for entry in caplog.records if entry.name == "croquito_worker.providers")
+    assert len(cast(str, record.detail)) == HTTP_ERROR_DETAIL_LIMIT  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        # A forma dos três fornecedores REST, e o 400 real do dialeto estrito.
+        ({"error": {"message": "regex lookaround is not supported"}}, "regex lookaround"),
+        ({"error": {"type": "invalid_request_error"}}, "invalid_request_error"),
+        ({"error": {"code": 400, "status": "INVALID_ARGUMENT"}}, "400"),
+        ({"error": "quota exhausted"}, "quota exhausted"),
+        ({"message": "sem envelope de erro"}, "sem envelope"),
+        ({}, ""),
+    ],
+)
+def test_http_error_detail_reads_the_vendor_shapes(body: dict[str, object], expected: str) -> None:
+    assert expected in _http_error_detail(body)
+
+
+def test_http_post_keeps_the_error_body_of_a_failed_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Antes o corpo do HTTPError era descartado e a recusa morria ali."""
+
+    def fake_urlopen(_request: object, timeout: float) -> object:
+        raise HTTPError(
+            "https://api.openai.com/v1/responses",
+            400,
+            "Bad Request",
+            {},  # type: ignore[arg-type]
+            BytesIO(json.dumps({"error": {"message": "regex lookaround"}}).encode()),
+        )
+
+    monkeypatch.setattr("croquito_worker.providers.urlopen", fake_urlopen)
+
+    status, response = _http_post("https://api.openai.com/v1/responses", {}, b"{}", 1.0)
+
+    assert status == 400
+    assert _http_error_detail(response) == "regex lookaround"
+
+
+def test_http_post_survives_an_unreadable_error_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Corpo não-JSON não pode virar exceção nova: o status é o que precisa chegar."""
+
+    def fake_urlopen(_request: object, timeout: float) -> object:
+        raise HTTPError(
+            "https://api.openai.com/v1/responses",
+            502,
+            "Bad Gateway",
+            {},  # type: ignore[arg-type]
+            BytesIO(b"<html>gateway</html>"),
+        )
+
+    monkeypatch.setattr("croquito_worker.providers.urlopen", fake_urlopen)
+
+    assert _http_post("https://api.openai.com/v1/responses", {}, b"{}", 1.0) == (502, {})
 
 
 def test_http_status_mapping_keeps_transport_failures_retryable() -> None:

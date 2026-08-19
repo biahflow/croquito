@@ -840,31 +840,65 @@ def _failure_from_http_status(status: int) -> ProviderFailureCode:
     return ProviderFailureCode.UNAVAILABLE
 
 
+HTTP_ERROR_DETAIL_LIMIT: Final = 200
+"""Recorte da mensagem de erro do fornecedor no log: o suficiente para nomear a recusa."""
+
+
+def _http_error_detail(response: dict[str, object]) -> str:
+    """Resumo curto da recusa do fornecedor, extraído do corpo de erro já parseado.
+
+    Os três fornecedores REST embrulham a recusa em `{"error": {...}}` no topo, com
+    `message` e algum código. Sem este resumo o operador tinha status e mais nada: o 400 do
+    schema estrito (*"regex lookaround is not supported"*) só apareceu depois de reproduzir
+    a chamada por fora, com o corpo na mão.
+
+    Sai UM campo, truncado em `HTTP_ERROR_DETAIL_LIMIT`. Nunca o corpo bruto inteiro, nunca
+    corpo de resposta bem-sucedida, nunca prompt, imagem ou credencial. O texto é diagnóstico
+    do fornecedor sobre o PEDIDO — o corpo da recusa cita o schema que nós mesmos enviamos,
+    não a evidência do cliente.
+    """
+    error = response.get("error")
+    if isinstance(error, str):
+        detail = error
+    elif isinstance(error, dict):
+        message = error.get("message")
+        fallback = error.get("code") or error.get("type") or error.get("status")
+        detail = message if isinstance(message, str) else str(fallback or "")
+    else:
+        message = response.get("message")
+        detail = message if isinstance(message, str) else ""
+    return detail[:HTTP_ERROR_DETAIL_LIMIT]
+
+
 def _http_failure(
-    *, provider: ProviderName, task: str, status: int, started: float
+    *, provider: ProviderName, task: str, status: int, started: float, detail: str = ""
 ) -> ProviderFailureCode:
     """Registra a falha HTTP antes de ela virar exceção e devolve o código mapeado.
 
     Sem esta linha, um 4xx do fornecedor chegava ao operador apenas como
     `ProviderExecutionError` sem status — foi o que escondeu a recusa por payload no
-    primeiro documento real. Saem só metadados: provider, tarefa, status, código e
-    latência. NUNCA corpo de resposta, prompt ou imagem.
+    primeiro documento real. Saem metadados — provider, tarefa, status, código e latência —
+    mais o resumo da recusa (`detail`, ver `_http_error_detail`). NUNCA corpo bruto de
+    resposta, prompt ou imagem.
     """
     code = _failure_from_http_status(status)
     latency_ms = round((time.monotonic() - started) * 1000)
     logger.warning(
-        "provider_http_failure provider=%s task=%s status=%d failure_code=%s latency_ms=%d",
+        "provider_http_failure provider=%s task=%s status=%d failure_code=%s latency_ms=%d "
+        "detail=%s",
         provider.value,
         task,
         status,
         code.value,
         latency_ms,
+        detail,
         extra={
             "provider": provider.value,
             "task": task,
             "http_status": status,
             "failure_code": code.value,
             "latency_ms": latency_ms,
+            "detail": detail,
         },
     )
     return code
@@ -914,6 +948,26 @@ def _ocr_failure(
 HttpPost = Callable[[str, dict[str, str], bytes, float], tuple[int, dict[str, object]]]
 
 
+HTTP_ERROR_BODY_LIMIT: Final = 8192
+"""Leitura máxima do corpo de uma resposta de erro. Diagnóstico cabe; despejo, não."""
+
+
+def _http_error_body(error: HTTPError) -> dict[str, object]:
+    """Corpo do erro, parseado quando é JSON — a única parte que o log resume.
+
+    Descartar o corpo (o que este arquivo fazia) apagava a única frase que explica a recusa,
+    e o diagnóstico passava a exigir reproduzir a chamada por fora. Ler é best-effort: corpo
+    ausente, truncado, não-JSON ou já consumido devolve `{}` e a falha segue o caminho de
+    sempre — nenhum erro de leitura pode virar exceção nova.
+    """
+    try:
+        raw = error.read(HTTP_ERROR_BODY_LIMIT)
+        decoded = json.loads(raw)
+    except Exception:  # corpo ausente, truncado, não-JSON ou stream já fechado
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
 def _http_post(
     url: str, headers: dict[str, str], body: bytes, timeout: float
 ) -> tuple[int, dict[str, object]]:
@@ -924,7 +978,7 @@ def _http_post(
             decoded = json.loads(raw)
             return int(response.status), decoded if isinstance(decoded, dict) else {}
     except HTTPError as error:
-        return error.code, {}
+        return error.code, _http_error_body(error)
     except (URLError, TimeoutError) as error:
         raise ProviderExecutionError(ProviderFailureCode.TIMEOUT) from error
 
@@ -967,6 +1021,23 @@ extensão de OpenAPI, não JSON Schema. Retirá-las do schema ENVIADO não afrou
 nenhum: a fronteira de validação continua sendo o modelo Pydantic original, aplicado sobre
 a resposta — o schema do fornecedor guia a geração, não substitui a checagem.
 """
+
+
+OPENAI_STRICT_LOOKAROUND_TOKENS: Final = ("(?=", "(?!", "(?<=", "(?<!")
+"""Construtos de regex que o motor do modo estrito (RE2) não implementa.
+
+`pattern` é aceito pelo estrito, mas só na linguagem do RE2, que não tem lookahead nem
+lookbehind. O `Decimal` do Pydantic emite justamente um lookahead
+(`^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$` em `MeasurementReadingOutput.normalized_value`), e a API
+recusa a chamada inteira: *"Invalid JSON schema: regex lookaround is not supported"*. A
+detecção é por substring e deliberadamente conservadora — na dúvida o `pattern` sai do
+schema ENVIADO, e quem valida de verdade continua sendo o modelo Pydantic da volta, como já
+vale para `minLength`/`maxLength`.
+"""
+
+
+def _has_regex_lookaround(pattern: str) -> bool:
+    return any(token in pattern for token in OPENAI_STRICT_LOOKAROUND_TOKENS)
 
 
 def _openai_strict_accepts_null(schema: dict[str, Any]) -> bool:
@@ -1016,7 +1087,8 @@ def _openai_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     - `const` vira `enum` de um item, `oneOf` vira `anyOf` e tupla (`prefixItems`) vira
       lista do mesmo tipo presa por `minItems`/`maxItems` — as três formas que o estrito não
       aceita e que o Pydantic emite;
-    - as palavras de `OPENAI_STRICT_UNSUPPORTED_KEYWORDS` saem.
+    - as palavras de `OPENAI_STRICT_UNSUPPORTED_KEYWORDS` saem, e o `pattern` com lookaround
+      também (ver `OPENAI_STRICT_LOOKAROUND_TOKENS`).
 
     O que ela NÃO faz é afrouxar o contrato: a resposta continua validada pelo modelo
     Pydantic original, com os limites de tamanho e as regras de domínio inteiros. O avesso
@@ -1025,6 +1097,11 @@ def _openai_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     strict: dict[str, Any] = {}
     for key, value in schema.items():
         if key in OPENAI_STRICT_UNSUPPORTED_KEYWORDS or key == "prefixItems":
+            continue
+        if key == "pattern" and isinstance(value, str) and _has_regex_lookaround(value):
+            # Um único lookahead num `$defs` aninhado recusa a chamada inteira; ver
+            # OPENAI_STRICT_LOOKAROUND_TOKENS. Pattern sem lookaround fica: é orientação
+            # útil de geração e o estrito o aceita.
             continue
         if key == "const":
             strict["enum"] = [value]
@@ -1191,6 +1268,7 @@ class OpenAIProviderAdapter:
                     task=request.task.value,
                     status=status,
                     started=started,
+                    detail=_http_error_detail(response),
                 )
             )
         blocks = _openai_message_blocks(response)
@@ -1328,6 +1406,7 @@ class AnthropicProviderAdapter:
                     task=request.task.value,
                     status=status,
                     started=started,
+                    detail=_http_error_detail(response),
                 )
             )
         content = response.get("content")
@@ -1765,6 +1844,7 @@ class GcpVisionOcrAdapter:
                     task=request.task.value,
                     status=status,
                     started=started,
+                    detail=_http_error_detail(response),
                 )
             )
         responses = response.get("responses")
@@ -1951,6 +2031,7 @@ class OpenAIEmbeddingsAdapter:
                     task="embeddings",
                     status=status,
                     started=started,
+                    detail=_http_error_detail(response),
                 )
             )
         vectors, dims = _parse_embeddings(response, len(batch))
