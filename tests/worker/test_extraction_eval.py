@@ -9,6 +9,7 @@ from croquito_worker.extraction_eval import (
     ExtractionCandidate,
     ExtractionEvalReport,
     ExtractionNotAllowlistedError,
+    build_degrau_step_gabarito,
     register_extraction_arms,
     run_extraction_eval,
 )
@@ -20,7 +21,13 @@ from croquito_worker.providers import (
     PromptTask,
     ProviderName,
 )
-from croquito_worker.synthetic import render_synthetic_input
+from croquito_worker.synthetic import (
+    DEGRAU_PAGE_HEIGHT_PX,
+    DEGRAU_PAGE_WIDTH_PX,
+    DEGRAU_WALL_VERTICES_PX,
+    render_degrau_boundary_input,
+    render_synthetic_input,
+)
 from croquito_worker.vision import VisionProposal
 
 ALLOWLIST = "CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS"
@@ -123,6 +130,57 @@ def _manifest(tmp_path: Path, source: Path, *, document_digest: str) -> Path:
 def _prepare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     source = tmp_path / "entrada.png"
     render_synthetic_input(source)
+    document_digest = "d" * 64
+    monkeypatch.setenv(ALLOWLIST, document_digest)
+    return source, _manifest(tmp_path, source, document_digest=document_digest)
+
+
+def _degrau_normalized(point: tuple[int, int]) -> NormalizedPoint:
+    return NormalizedPoint(x=point[0] / DEGRAU_PAGE_WIDTH_PX, y=point[1] / DEGRAU_PAGE_HEIGHT_PX)
+
+
+def _degrau_wall_faithful() -> GeometryElementOutput:
+    """O muro em recuo do render novo, como uma única polilinha aberta com o cotovelo."""
+    return GeometryElementOutput(
+        label="muro em recuo",
+        kind="polyline",
+        layer_hint="MURO",
+        closed=False,
+        # Derivado de DEGRAU_WALL_VERTICES_PX (fonte única do render), não chutado.
+        vertices=[_degrau_normalized(point) for point in DEGRAU_WALL_VERTICES_PX],
+        evidence="dois trechos retos ligados por um jog perpendicular",
+    )
+
+
+def _degrau_wall_split() -> tuple[GeometryElementOutput, GeometryElementOutput]:
+    """Reprodução da resposta real do Opus na primeira revisão do Guaxindiba V3.
+
+    Cada trecho pousa exatamente sobre a própria tinta — a corroboração por si só aprovaria
+    os dois, cada um sozinho —, mas o degrau nasce estruturalmente partido em dois elementos
+    `line` independentes, sem o cotovelo que amarra os dois trechos como um único muro em
+    recuo. É o caso que o gate do degrau existe para pegar.
+    """
+    start, elbow_high, elbow_low, end = DEGRAU_WALL_VERTICES_PX
+    line_a = GeometryElementOutput(
+        label="muro trecho A",
+        kind="line",
+        layer_hint="MURO",
+        vertices=[_degrau_normalized(start), _degrau_normalized(elbow_high)],
+        evidence="trecho reto do muro até o cotovelo",
+    )
+    line_b = GeometryElementOutput(
+        label="muro trecho B",
+        kind="line",
+        layer_hint="MURO",
+        vertices=[_degrau_normalized(elbow_low), _degrau_normalized(end)],
+        evidence="trecho reto do muro depois do cotovelo",
+    )
+    return line_a, line_b
+
+
+def _prepare_degrau(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    source = tmp_path / "degrau.png"
+    render_degrau_boundary_input(source)
     document_digest = "d" * 64
     monkeypatch.setenv(ALLOWLIST, document_digest)
     return source, _manifest(tmp_path, source, document_digest=document_digest)
@@ -404,3 +462,52 @@ def test_eval_compares_two_arms_over_the_same_request(
     assert report.arms[0].corroborated_rate > report.arms[1].corroborated_rate
     assert (tmp_path / "out" / "opus-proposals.json").is_file()
     assert (tmp_path / "out" / "sonnet-proposals.json").is_file()
+
+
+def test_step_gate_passes_a_single_polyline_that_preserves_the_jog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Braço fiel: um único elemento polyline cobre os dois trechos com o cotovelo do degrau."""
+    source, manifest = _prepare_degrau(tmp_path, monkeypatch)
+
+    report, _path = run_extraction_eval(
+        source,
+        [ExtractionCandidate(name="opus", adapter=_adapter(_degrau_wall_faithful()))],
+        tmp_path / "out",
+        manifest_path=manifest,
+        step_gabarito=build_degrau_step_gabarito(),
+    )
+
+    arm = report.arms[0]
+    assert arm.step is not None
+    assert arm.step.element_found is True
+    assert arm.step.single_element is True
+    assert arm.step.jog_vertex_found is True
+    assert arm.step.step_preserved is True
+    assert report.passed is True
+
+
+def test_step_gate_fails_the_real_opus_regression_of_two_straight_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reprodução do defeito real do Guaxindiba V3: duas `line` retas aderem à tinta e ainda
+    assim reprovam — é exatamente o que `corroborated_rate` sozinho não pegava."""
+    source, manifest = _prepare_degrau(tmp_path, monkeypatch)
+
+    report, _path = run_extraction_eval(
+        source,
+        [ExtractionCandidate(name="opus", adapter=_adapter(*_degrau_wall_split()))],
+        tmp_path / "out",
+        manifest_path=manifest,
+        step_gabarito=build_degrau_step_gabarito(),
+    )
+
+    arm = report.arms[0]
+    # A corroboração de tinta, sozinha, aprovaria este braço: cada trecho pousa exatamente
+    # sobre a própria tinta. É o gate do degrau que precisa reprovar mesmo assim.
+    assert arm.corroborated_rate == 1.0
+    assert arm.ink_coverage_mean > 0.6
+    assert arm.step is not None
+    assert arm.step.element_found is False
+    assert arm.step.step_preserved is False
+    assert report.passed is False

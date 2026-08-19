@@ -109,6 +109,31 @@ conhecidos. O gate exige:
 O gate corrente passa em todos os checks. Ele valida contratos e geometria
 determinística, não a transcrição automática nem precisão nos casos reais.
 
+## Gate do degrau em contorno (extração de geometria)
+
+`make extraction-eval-degrau` mede a extração de geometria (`geometry-extraction`) sobre
+uma fixture sintética com um contorno em degrau: dois trechos paralelos em offsets
+diferentes, ligados por um jogo perpendicular curto — a forma que motivou a `2.0.2`
+([Prompt Contracts](PROMPT_CONTRACTS.md)).
+
+### Dois modos, um só caminho de código
+
+- **Offline (CI).** O braço fixture valida mecanismo e métrica sem chamar nenhum
+  provider — o harness da fixture determinística é entregue por uma tarefa própria do
+  plano, em paralelo a esta; `make extraction-eval-degrau` é o comando de referência.
+  Ele mede se o degrau vira uma única `polyline` com os vértices do jogo, não duas
+  `line` retas nem uma reta achatada.
+- **Pago (local).** Sobre o mesmo mecanismo, com o modelo real atrás do teto de gasto
+  autorizado — mede o que o modelo de verdade devolve, não a fixture.
+
+### Honestidade
+
+O modo fixture valida mecanismo e contrato, não precisão de leitura em prancha ou
+documento real: é o teto artificial da métrica, não evidência de desempenho de modelo
+algum. `geometry-extraction@2.0.2` é **candidato**: a rodada paga comparativa que decide
+promoção ou rejeição acontece fora deste contrato e só conta como aprovada quando
+registrada, com aprovação humana explícita, em [Model Routing](MODEL_ROUTING.md).
+
 ## Gate do matcher de código SCO (medição, M7)
 
 O casamento item→código tem golden set próprio

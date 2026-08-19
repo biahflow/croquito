@@ -776,7 +776,9 @@ def test_prompt_hashes_of_existing_tasks_are_frozen() -> None:
         # texto do template ganhou a instrução que os pede. Major porque a 1.0.0 não tinha
         # ângulo nenhum para arco: a abertura era fabricada como meia-volta na conversão.
         # 2.0.1: só o cabeçalho do rebranding; o schema `2.0.0` continua o mesmo.
-        "geometry-extraction": "geometry-extraction@2.0.1",
+        # 2.0.2: contorno/muro com recuo vira vértices (degrau do Guaxindiba V3), ato
+        # deliberado — schema `2.0.0` continua o mesmo.
+        "geometry-extraction": "geometry-extraction@2.0.2",
         "legend-extraction": "legend-extraction@1.0.1",
         # 1.0.1: limite por flag no schema do refino; o texto do template não mudou.
         # 1.0.2: cabeçalho do rebranding.
@@ -798,6 +800,10 @@ def test_geometry_prompt_forbids_measurement_and_regularisation() -> None:
     # ponta vista de uma ponta completada pelo modelo.
     assert "arc_start, arc_mid, arc_end" in template
     assert "omit all three" in template
+    # @2.0.2: o degrau/recuo (dente do Guaxindiba V3) tem que virar vértices de uma única
+    # polyline, nunca duas lines retas nem uma reta achatada.
+    assert "vertices trace the step" in template
+    assert "never flatten" in template
 
 
 def test_geometry_element_requires_vertices_for_a_polyline() -> None:

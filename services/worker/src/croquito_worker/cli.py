@@ -169,6 +169,17 @@ def main() -> int:
         metavar="NOME=PROVIDER:MODELO",
         help="eixo a comparar, ex.: opus=bedrock:anthropic.claude-opus-5",
     )
+    extraction_eval_command.add_argument(
+        "--step-gabarito",
+        type=Path,
+        default=None,
+        help="gabarito do gate de fidelidade do degrau (StepGabarito); opcional",
+    )
+    degrau_fixture_command = subcommands.add_parser(
+        "degrau-fixture",
+        help="gera a fixture do muro em recuo (degrau) e o gabarito do gate de fidelidade",
+    )
+    degrau_fixture_command.add_argument("--output", type=Path, required=True)
     register_extraction_command = subcommands.add_parser(
         "register-extraction",
         help="assenta as propostas de uma eval de extração sobre a tinta e remede",
@@ -432,6 +443,7 @@ def main() -> int:
     if args.command == "extraction-eval":
         from croquito_worker.extraction_eval import (
             ExtractionCandidate,
+            StepGabarito,
             run_extraction_eval,
         )
         from croquito_worker.providers import build_extraction_arm
@@ -448,8 +460,17 @@ def main() -> int:
                     adapter=build_extraction_arm(provider=provider, model_id=model_id),
                 )
             )
+        step_gabarito = (
+            StepGabarito.model_validate_json(args.step_gabarito.read_text())
+            if args.step_gabarito is not None
+            else None
+        )
         extraction_report, extraction_report_path = run_extraction_eval(
-            args.image, candidates, args.output, manifest_path=args.manifest
+            args.image,
+            candidates,
+            args.output,
+            manifest_path=args.manifest,
+            step_gabarito=step_gabarito,
         )
         print(
             json.dumps(
@@ -466,6 +487,7 @@ def main() -> int:
                             "labelled_rate": arm.labelled_rate,
                             "latency_ms": arm.latency_ms,
                             "estimated_cost_usd": arm.estimated_cost_usd,
+                            "step_preserved": (arm.step.step_preserved if arm.step else None),
                         }
                         for arm in extraction_report.arms
                     ],
@@ -475,6 +497,61 @@ def main() -> int:
             )
         )
         return 0 if extraction_report.passed else 1
+    if args.command == "degrau-fixture":
+        import hashlib
+
+        from croquito_worker.extraction_eval import build_degrau_step_gabarito
+        from croquito_worker.io_utils import atomic_write_text
+        from croquito_worker.synthetic import render_degrau_boundary_input
+
+        output_dir = args.output
+        output_dir.mkdir(parents=True, exist_ok=True)
+        image_path = output_dir / "degrau.png"
+        render_degrau_boundary_input(image_path)
+        image_sha256 = hashlib.sha256(image_path.read_bytes()).hexdigest()
+        manifest_path = output_dir / "manifest.json"
+        atomic_write_text(
+            manifest_path,
+            json.dumps(
+                {
+                    "schema_version": "1.0.0",
+                    "dataset_id": "degrau-fixture",
+                    "note": (
+                        "fixture sintética auto-referente do gate de fidelidade do degrau; "
+                        "sem conteúdo de cliente"
+                    ),
+                    "source_sha256": image_sha256,
+                    "pages": [{"number": 1, "image_sha256": image_sha256}],
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+        )
+        gabarito_path = output_dir / "step-gabarito.json"
+        atomic_write_text(
+            gabarito_path,
+            json.dumps(
+                build_degrau_step_gabarito().model_dump(mode="json"),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+        )
+        print(
+            json.dumps(
+                {
+                    "image": str(image_path),
+                    "manifest": str(manifest_path),
+                    "step_gabarito": str(gabarito_path),
+                    "image_sha256": image_sha256,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
     if args.command == "register-extraction":
         from croquito_worker.extraction_eval import register_extraction_arms
 

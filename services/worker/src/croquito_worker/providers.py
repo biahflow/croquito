@@ -66,7 +66,8 @@ PROMPT_VERSIONS: dict[PromptTask, str] = {
     # `arc_end`). Major porque o schema mudou: até a 1.0.0 o contrato não tinha ângulo
     # nenhum para arco e a abertura era FABRICADA na conversão como meia-volta fixa.
     # 2.0.1: só o cabeçalho do rebranding; as âncoras e o schema `2.0.0` continuam iguais.
-    PromptTask.GEOMETRY_EXTRACTION: "2.0.1",
+    # 2.0.2: contorno/muro com recuo vira vértices (degrau do Guaxindiba V3); schema 2.0.0 intacto.
+    PromptTask.GEOMETRY_EXTRACTION: "2.0.2",
     PromptTask.DISAGREEMENT_REVIEW: "1.1.1",
     PromptTask.OCR: "1.1.1",
     PromptTask.LEGEND_EXTRACTION: "1.0.1",
@@ -155,7 +156,11 @@ def _prompt_template(task: PromptTask) -> str:
             "lengths, no scale, no units. Preserve topology — vertices that meet on paper "
             "must share coordinates, and a region that closes on paper must be marked "
             "closed. Never straighten, square, mirror or regularise what the hand drew: "
-            "report the shape as traced, not as it ought to be. Never emit an element "
+            "report the shape as traced, not as it ought to be. When a boundary or wall "
+            "steps sideways - parallel stretches at different offsets joined by a short "
+            "perpendicular jog - emit one polyline whose vertices trace the step; never "
+            "flatten the offset stretches into a single straight line and never drop the "
+            "jog by splitting them into separate lines. Never emit an element "
             "whose ink you cannot see; omit it instead. Handwritten annotations and "
             "dimension text are not geometry. For an arc, also report the two points where "
             "its ink starts and ends and one point near the middle of its curve "

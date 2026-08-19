@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval ocr-eval solver-eval extraction-eval valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
+.PHONY: setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval ocr-eval solver-eval extraction-eval extraction-eval-degrau valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
 
 setup:
 	uv sync --all-groups
@@ -134,6 +134,22 @@ extraction-eval:
 	  --image $(IMAGE) --manifest $(MANIFEST) --output output/extraction-eval \
 	  --arm opus=bedrock:anthropic.claude-opus-5 \
 	  --arm sonnet=bedrock:anthropic.claude-sonnet-5
+
+# Gate do degrau (defeito real da primeira revisão do Guaxindiba V3, 2026-08-19): o Opus
+# devolveu um muro em recuo como duas `line` retas, e a corroboração de tinta sozinha não
+# pegou — cada trecho, sozinho, adere à tinta tanto quanto o muro fiel. Gera a fixture
+# sintética do muro-degrau e roda a eval com o gabarito de fidelidade
+# (`--step-gabarito`), que reprova geometria achatada mesmo com corroboração alta. Chama
+# providers pagos: exige budget e o digest do documento em
+# CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS, como o `extraction-eval` acima.
+extraction-eval-degrau:
+	uv run croquito-demo degrau-fixture --output output/extraction-eval-degrau
+	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run croquito-demo extraction-eval \
+	  --image output/extraction-eval-degrau/degrau.png \
+	  --manifest output/extraction-eval-degrau/manifest.json \
+	  --output output/extraction-eval-degrau/eval \
+	  --arm opus=anthropic:claude-opus-5 \
+	  --step-gabarito output/extraction-eval-degrau/step-gabarito.json
 
 # Exige os serviços locais de pé (make dev-services, make db-init) e a API em execução.
 smoke-local:
