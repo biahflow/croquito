@@ -134,6 +134,26 @@ algum. `geometry-extraction@2.0.2` é **candidato**: a rodada paga comparativa q
 promoção ou rejeição acontece fora deste contrato e só conta como aprovada quando
 registrada, com aprovação humana explícita, em [Model Routing](MODEL_ROUTING.md).
 
+### Registro antes da corroboração (2026-08-19)
+
+`run_extraction_eval` passou a rodar `register_to_ink` sobre as propostas ANTES de
+`corroborate_with_ink`, na mesma ordem e config que
+`provider_review.build_provider_review_snapshot` usa na cadeia real — **sempre**, não só
+neste gate do degrau. Sem isso a eval media deslocamento GLOBAL de enquadramento do
+modelo (a folha inteira ancorada alguns pixels fora do canônico), não a forma proposta; a
+produção corrige esse deslocamento antes de qualquer leitura chegar à revisão humana, e
+um gate que não registra reprova algo que o usuário final nunca vê. Achado real: a
+primeira rodada paga do gate do degrau devolveu o muro estruturalmente certo
+(`geometry-extraction@2.0.2`) com `corroborated_rate=0.5` sem registro — abaixo da
+tolerância de tinta de 9 px por causa de ~12 px de deslocamento global — e
+`step_preserved=True`/`corroborated_rate=1.0` depois de registrar.
+
+**Números de `corroborated_rate`/`ink_coverage_mean` de antes desta mudança não são
+comparáveis aos de depois.** As rodadas históricas registradas em
+[Model Routing](MODEL_ROUTING.md) foram medidas sem este registro prévio; uma promoção ou
+rejeição de modelo que dependa desse número precisa ser remedida sob o pipeline atual
+antes de ser comparada a um resultado novo.
+
 ## Gate do matcher de código SCO (medição, M7)
 
 O casamento item→código tem golden set próprio

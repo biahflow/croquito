@@ -152,6 +152,11 @@ class StepGabarito(BaseModel):
     image_height_px: int = Field(gt=0)
     segment_a: StepFidelitySegment
     segment_b: StepFidelitySegment
+    # NÃO é gate: a posição absoluta do cotovelo pune registro global, não forma (ver
+    # `assess_step_fidelity`). Usada só para o diagnóstico
+    # `STEP_JOG_TRANSITION_REGISTRATION_OFFSET_PX` — o quanto a transição estrutural
+    # encontrada está longe de onde o gabarito espera, sinal de deslocamento de registro
+    # para a revisão humana olhar, não motivo de reprovação.
     jog_vertex: StepFidelityPoint
     # 12 px é acima da tolerância de corroboração de tinta (9 px): a folga cobre ruído de
     # leitura sem deixar passar um degrau de 30 px achatado para uma reta única.
@@ -174,7 +179,7 @@ class StepFidelityReport(BaseModel):
     vertex_count: int = Field(ge=0)
     offset_a_px: float | None = None
     offset_b_px: float | None = None
-    jog_vertex_found: bool
+    jog_transition_found: bool
     step_preserved: bool
     notes: list[str] = Field(default_factory=list)
 
@@ -191,6 +196,23 @@ def _step_line_offset(
     return (point_x * axis_y - point_y * axis_x) / norm
 
 
+def _step_axis_projection(
+    point: tuple[float, float], axis_start: tuple[float, float], axis_end: tuple[float, float]
+) -> float:
+    """Componente de `point` AO LONGO do eixo `axis_start`→`axis_end` — não perpendicular a ele.
+
+    É o que mede "andou ao longo do trecho", em oposição a `_step_line_offset`, que mede
+    "andou para o lado". Um jog de verdade é perpendicular ao eixo: o par de vértices que o
+    faz quase não muda esta componente, só a de `_step_line_offset`.
+    """
+    axis_x, axis_y = axis_end[0] - axis_start[0], axis_end[1] - axis_start[1]
+    norm = math.hypot(axis_x, axis_y)
+    if norm == 0:
+        return 0.0
+    point_x, point_y = point[0] - axis_start[0], point[1] - axis_start[1]
+    return (point_x * axis_x + point_y * axis_y) / norm
+
+
 def assess_step_fidelity(
     proposals: list[VisionProposal], gabarito: StepGabarito
 ) -> StepFidelityReport:
@@ -198,10 +220,31 @@ def assess_step_fidelity(
 
     Critério: um único elemento POLYLINE aberto, com ao menos `min_vertex_count` vértices,
     cobrindo os dois trechos do gabarito com afastamentos médios (perpendiculares ao eixo do
-    trecho A) distintos além da tolerância, e um vértice na altura do cotovelo. Duas `line`
-    de dois vértices — a reprodução exata da resposta real do Opus no Guaxindiba V3 — nunca
-    viram candidatas (só `PixelPolyline` entra na contagem de vértices); uma reta única
-    entra como candidata mas reprova porque os dois trechos ficam com o mesmo afastamento.
+    trecho A) distintos além da tolerância, e uma TRANSIÇÃO ESTRUTURAL entre os dois
+    trechos: um par de vértices CONSECUTIVOS da polilinha em que um foi classificado no
+    trecho A e o outro no trecho B, com deslocamento AO LONGO do eixo do trecho A (não
+    perpendicular a ele) dentro da tolerância. Um jog de verdade é perpendicular ao trecho:
+    o par que faz a curva quase não anda ao longo do eixo, só cruza de lado.
+
+    A versão anterior exigia um vértice a `offset_tolerance_px` da POSIÇÃO ABSOLUTA do
+    cotovelo do gabarito — e isso pune registro global, não forma. A primeira rodada paga
+    real (candidato `geometry-extraction@2.0.2`) devolveu o muro CERTO — polilinha única
+    aberta, offsets médios 12,4/-17,0 px (delta 29,4 px ≈ jog de 30 px) —, mas o traçado
+    inteiro tinha ~12 px de deslocamento GLOBAL de registro (o modelo ancorou noutra borda
+    do traço) e o vértice do cotovelo caiu a mais de `offset_tolerance_px` da posição
+    absoluta esperada: o critério antigo reprovava um degrau estruturalmente correto por
+    causa de translação, não de forma. O critério estrutural não olha ONDE o degrau está na
+    folha, só COMO ele é feito — e continua reprovando os mesmos três casos:
+
+    - Duas `line` de dois vértices (a reprodução exata da resposta real do Opus no
+      Guaxindiba V3): nunca viram candidatas, porque só `PixelPolyline` entra na contagem
+      de vértices.
+    - Reta única: entra como candidata, mas todos os vértices caem no mesmo trecho (nenhuma
+      transição de trecho A→B existe) ou os afastamentos médios ficam iguais
+      (`STEP_FLATTENED`).
+    - Rampa suave (vértices extras espalhando a subida ao longo de muitos pixels em vez de
+      um cotovelo): existe transição de trecho, mas o par que a faz anda demais ao longo do
+      eixo — além da tolerância —, então `jog_transition_found` continua falso.
     """
     width, height = gabarito.image_width_px, gabarito.image_height_px
 
@@ -227,7 +270,7 @@ def assess_step_fidelity(
             element_found=False,
             single_element=False,
             vertex_count=0,
-            jog_vertex_found=False,
+            jog_transition_found=False,
             step_preserved=False,
             notes=["STEP_ELEMENT_NOT_FOUND"],
         )
@@ -241,13 +284,17 @@ def assess_step_fidelity(
     vertex_count = len(points)
 
     # Cada ponto vai para o trecho cuja reta (do gabarito) ele fica mais perto — não um corte
-    # ingênuo por x, que empataria os dois vértices do cotovelo no mesmo lado.
-    points_a: list[tuple[float, float]] = []
-    points_b: list[tuple[float, float]] = []
-    for point in points:
-        distance_a = abs(_step_line_offset(point, axis_a_start, axis_a_end))
-        distance_b = abs(_step_line_offset(point, axis_b_start, axis_b_end))
-        (points_a if distance_a <= distance_b else points_b).append(point)
+    # ingênuo por x, que empataria os dois vértices do cotovelo no mesmo lado. Os rótulos são
+    # mantidos na ordem original: é o que permite achar o PAR CONSECUTIVO que muda de trecho.
+    labels = [
+        "a"
+        if abs(_step_line_offset(point, axis_a_start, axis_a_end))
+        <= abs(_step_line_offset(point, axis_b_start, axis_b_end))
+        else "b"
+        for point in points
+    ]
+    points_a = [point for point, label in zip(points, labels, strict=True) if label == "a"]
+    points_b = [point for point, label in zip(points, labels, strict=True) if label == "b"]
 
     offset_a = (
         sum(_step_line_offset(point, axis_a_start, axis_a_end) for point in points_a)
@@ -261,7 +308,28 @@ def assess_step_fidelity(
         if points_b
         else None
     )
-    jog_vertex_found = any(math.dist(point, jog_vertex_px) <= tolerance for point in points)
+
+    # Transição estrutural: par CONSECUTIVO que muda de trecho com pouco deslocamento AO
+    # LONGO do eixo — é isso que distingue um cotovelo de uma rampa que também cruza de lado,
+    # só que espalhada por muitos pixels.
+    jog_transition_found = False
+    transition_registration_offset_px: float | None = None
+    for index in range(len(points) - 1):
+        if labels[index] == labels[index + 1]:
+            continue
+        along_axis_separation = abs(
+            _step_axis_projection(points[index + 1], axis_a_start, axis_a_end)
+            - _step_axis_projection(points[index], axis_a_start, axis_a_end)
+        )
+        if along_axis_separation <= tolerance:
+            jog_transition_found = True
+            # Diagnóstico, não gate: o quanto o cotovelo encontrado está longe da posição
+            # absoluta do gabarito — sinal de deslocamento de registro, para a revisão olhar.
+            transition_registration_offset_px = min(
+                math.dist(points[index], jog_vertex_px),
+                math.dist(points[index + 1], jog_vertex_px),
+            )
+            break
 
     notes: list[str] = []
     if not single_element:
@@ -270,15 +338,20 @@ def assess_step_fidelity(
         notes.append("STEP_SEGMENT_MISSING")
     elif abs(offset_a - offset_b) <= tolerance:
         notes.append(f"STEP_FLATTENED:offset_delta_px={round(abs(offset_a - offset_b), 2)}")
-    if not jog_vertex_found:
-        notes.append("STEP_JOG_VERTEX_NOT_FOUND")
+    if not jog_transition_found:
+        notes.append("STEP_JOG_TRANSITION_NOT_FOUND")
+    elif transition_registration_offset_px is not None:
+        notes.append(
+            "STEP_JOG_TRANSITION_REGISTRATION_OFFSET_PX:"
+            f"{round(transition_registration_offset_px, 2)}"
+        )
 
     step_preserved = (
         single_element
         and offset_a is not None
         and offset_b is not None
         and abs(offset_a - offset_b) > tolerance
-        and jog_vertex_found
+        and jog_transition_found
     )
     return StepFidelityReport(
         element_found=True,
@@ -286,7 +359,7 @@ def assess_step_fidelity(
         vertex_count=vertex_count,
         offset_a_px=round(offset_a, 2) if offset_a is not None else None,
         offset_b_px=round(offset_b, 2) if offset_b is not None else None,
-        jog_vertex_found=jog_vertex_found,
+        jog_transition_found=jog_transition_found,
         step_preserved=step_preserved,
         notes=notes,
     )
@@ -467,7 +540,21 @@ def run_extraction_eval(
     minimum_corroborated_rate: float = 0.7,
     step_gabarito: StepGabarito | None = None,
 ) -> tuple[ExtractionEvalReport, Path]:
-    """Roda o mesmo pedido em cada eixo e mede a saída contra a tinta do próprio croqui."""
+    """Roda o mesmo pedido em cada eixo e mede a saída contra a tinta do próprio croqui.
+
+    Desde 2026-08-19, cada eixo passa por `register_to_ink` ANTES de `corroborate_with_ink`
+    — SEMPRE, não só quando `step_gabarito` é informado. É a mesma ordem e a mesma config
+    que `provider_review.build_provider_review_snapshot` usa na cadeia real: sem registro,
+    a eval mede deslocamento GLOBAL de enquadramento que a produção corrige antes de
+    qualquer leitura chegar à revisão humana — não é o que o usuário final recebe. O
+    achado que motivou: o candidato `geometry-extraction@2.0.2` devolveu o muro-degrau
+    estruturalmente certo, mas com ~12 px de deslocamento global, e ficava com
+    `corroborated_rate=0.5` contra tolerância de 9 px sem este registro.
+
+    Números de `corroborated_rate`/`ink_coverage_mean` de antes desta mudança NÃO são
+    comparáveis aos de depois — rodadas históricas registradas em Model Routing foram
+    medidas sem este registro prévio.
+    """
     effective_config = config or VisionConfig()
     output_dir.mkdir(parents=True, exist_ok=True)
     source = image_path.resolve(strict=True)
@@ -495,7 +582,20 @@ def run_extraction_eval(
             width=width,
             height=height,
         )
-        corroborated, notes = corroborate_with_ink(proposals, source, config=effective_config)
+        notes: list[str] = []
+        if proposals:
+            # Espelha `provider_review.build_provider_review_snapshot`: registro ANTES da
+            # corroboração, mesma ordem e mesma config. Um eval que corrobora geometria
+            # crua mede deslocamento GLOBAL de registro que a produção corrige antes de
+            # qualquer leitura chegar à revisão — não é o que o usuário final recebe.
+            proposals, registration = register_to_ink(proposals, source, config=effective_config)
+            notes.append(
+                f"INK_REGISTRATION:{registration.coverage_before:.3f}"
+                f"->{registration.coverage_after:.3f}"
+                f"->{registration.coverage_refined:.3f}"
+            )
+        corroborated, ink_notes = corroborate_with_ink(proposals, source, config=effective_config)
+        notes.extend(ink_notes)
         step_report = (
             assess_step_fidelity(corroborated, step_gabarito) if step_gabarito is not None else None
         )
