@@ -785,6 +785,25 @@ footer {
   line-height: 1.45;
 }
 
+/*
+ * Faixa irmã da `.app-alert`, para ESTADO: "em processamento" não é erro e não usa a cor
+ * de domínio do erro (regra 4 do Design System). Tokens neutros da folha, nada de
+ * vermelho e nada de escala nova. Fica abaixo da `.app-alert` no z-index porque as duas
+ * podem coexistir — erro em cima quando as duas grudam no topo.
+ */
+.app-status {
+  position: sticky;
+  top: 0;
+  z-index: 19;
+  margin: 0;
+  padding: 10px 32px;
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .app-alert-close {
   flex: none;
   padding: 0 6px;
