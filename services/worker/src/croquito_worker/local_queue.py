@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -90,6 +91,8 @@ from croquito_worker.valuation.round_extraction import (
 )
 from croquito_worker.valuation.takeoff_overlay import render_takeoff_overlay, save_takeoff_overlay
 from croquito_worker.vision import VisionProposalSet
+
+logger = logging.getLogger("croquito_worker.local_queue")
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,10 +213,84 @@ class UnroutableMessageError(ValueError):
     """
 
 
+PREVIEW_BASE_DPI: Final = 200
+"""DPI nominal do preview da primeira página, antes de qualquer redução."""
+
+PROVIDER_IMAGE_MAX_SIDE_PX: Final = 7500
+"""Lado maior aceito na imagem enviada a provider, com margem sob o teto de 8000 px.
+
+8000x8000 px é o limite documentado da Anthropic por imagem; a OpenAI recusa na mesma
+ordem de grandeza. A margem existe porque o arredondamento do render pode passar do
+alvo por alguns pixels e um 400 aqui custa o job inteiro."""
+
+PROVIDER_IMAGE_MAX_BYTES: Final = 4_500_000
+"""Tamanho binário máximo do PNG enviado a provider.
+
+O teto do fornecedor vale sobre o payload **base64**, que cresce um terço: 4,5 MB
+binários viajam como ~6 MB. Os braços realmente montados por `build_real_provider_suite`
+falam as APIs diretas (Anthropic: 10 MB base64 por imagem; Cloud Vision: 20 MB), então
+6 MB cabe com folga. Um braço via Bedrock/Vertex, que recusa acima de 5 MB base64,
+exigiria o teto mais apertado de `extraction_eval.TRANSMISSION_MAX_BYTES` (3,6 MB
+binários) — hoje nenhum caminho da fila usa esse adapter."""
+
+PROVIDER_IMAGE_SCALE_STEP: Final = 0.85
+"""Fator de redução por passo. Cada passo re-renderiza do PDF com matrix menor em vez de
+reamostrar o PNG grande: reduzir na rasterização preserva traço fino e texto de cota, que
+é exatamente o que a extração precisa ler."""
+
+PROVIDER_IMAGE_MIN_DPI: Final = 36
+"""Piso de DPI do preview: garante término do laço e recusa a degradar a evidência além do
+que qualquer leitura de cota sobreviveria. Uma página que ainda estoure aqui segue para o
+provider e volta como 4xx permanente (`REFUSED`), não como reentrega infinita."""
+
+
 @dataclass(frozen=True, slots=True)
 class ValidatedUpload:
     page_count: int
     first_page_preview: bytes | None = None
+    #: DPI efetivo do `first_page_preview` depois da redução (None quando não há preview).
+    preview_dpi: float | None = None
+
+
+def _render_provider_preview(page: Any) -> tuple[bytes, float, int, int]:
+    """Renderiza a primeira página até caber nos limites de imagem dos providers.
+
+    Devolve `(png, dpi_efetivo, largura_px, altura_px)`. O contrato de coordenadas não
+    muda com a redução: os providers devolvem caixas **normalizadas 0-1**, e tanto a
+    conversão para pixel (`provider_review._pixel_box`) quanto `register_to_ink` e
+    `corroborate_with_ink` rodam sobre a MESMA imagem que foi enviada — o
+    `source_image_bytes` do snapshot, que é este PNG e é também o que a revisão humana
+    vê. Reduzir aqui, portanto, não desloca geometria nem quebra a corroboração; o que
+    muda é só a densidade de pixels da evidência.
+    """
+    dpi = float(PREVIEW_BASE_DPI)
+    while True:
+        scale = dpi / 72
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        payload = cast(bytes, pixmap.tobytes("png"))
+        width, height = int(pixmap.width), int(pixmap.height)
+        fits = max(width, height) <= PROVIDER_IMAGE_MAX_SIDE_PX and (
+            len(payload) <= PROVIDER_IMAGE_MAX_BYTES
+        )
+        if fits or dpi <= PROVIDER_IMAGE_MIN_DPI:
+            if not fits:
+                # Só identificadores e medidas: nunca a imagem nem o conteúdo da página.
+                logger.warning(
+                    "provider_preview_floor_reached dpi=%.1f width_px=%d height_px=%d bytes=%d",
+                    dpi,
+                    width,
+                    height,
+                    len(payload),
+                    extra={
+                        "stage": "PREVIEWING",
+                        "dpi": dpi,
+                        "width_px": width,
+                        "height_px": height,
+                        "bytes": len(payload),
+                    },
+                )
+            return payload, dpi, width, height
+        dpi = max(dpi * PROVIDER_IMAGE_SCALE_STEP, PROVIDER_IMAGE_MIN_DPI)
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,15 +352,33 @@ def _validate_pdf_stream(
                 raise InvalidUploadError("Quantidade de páginas fora do limite.")
             for page in document:
                 rect = page.rect
-                pixel_width = rect.width * 200 / 72
-                pixel_height = rect.height * 200 / 72
+                pixel_width = rect.width * PREVIEW_BASE_DPI / 72
+                pixel_height = rect.height * PREVIEW_BASE_DPI / 72
                 if pixel_width * pixel_height > 100_000_000:
                     raise InvalidUploadError("Página excede o limite de resolução.")
             preview = None
+            preview_dpi = None
             if capture_first_page_preview:
-                pixmap = document[0].get_pixmap(matrix=fitz.Matrix(200 / 72, 200 / 72), alpha=False)
-                preview = pixmap.tobytes("png")
-            return ValidatedUpload(page_count=int(document.page_count), first_page_preview=preview)
+                preview, preview_dpi, width, height = _render_provider_preview(document[0])
+                logger.info(
+                    "provider_preview_rendered dpi=%.1f width_px=%d height_px=%d bytes=%d",
+                    preview_dpi,
+                    width,
+                    height,
+                    len(preview),
+                    extra={
+                        "stage": "PREVIEWING",
+                        "dpi": preview_dpi,
+                        "width_px": width,
+                        "height_px": height,
+                        "bytes": len(preview),
+                    },
+                )
+            return ValidatedUpload(
+                page_count=int(document.page_count),
+                first_page_preview=preview,
+                preview_dpi=preview_dpi,
+            )
 
 
 class LocalQueueWorker:

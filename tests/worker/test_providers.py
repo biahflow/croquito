@@ -1043,13 +1043,107 @@ def test_credential_failures_are_not_retried_over_http(status: int) -> None:
     assert attempts == 1
 
 
+@pytest.mark.parametrize("status", [400, 413])
+def test_payload_rejections_are_not_retried_over_http(status: int) -> None:
+    """4xx de payload é defeito permanente do pedido, não indisponibilidade transitória.
+
+    A prancha real de 22 MB mostrou o custo do mapeamento antigo: os dois braços
+    respondiam 4xx, o status virava `UNAVAILABLE`, e três tentativas por braço mais o
+    fallback terminavam em exceção — que a fila lê como reentrega, prendendo o job em
+    PROCESSING e repetindo o ciclo indefinidamente.
+    """
+    attempts = 0
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        nonlocal attempts
+        attempts += 1
+        return status, {}
+
+    adapter = RetryingProviderAdapter(
+        AnthropicProviderAdapter(api_key="sk-ant-test", model_id="claude-opus-5", http_post=post),
+        sleep=lambda _seconds: None,
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.REFUSED
+    assert attempts == 1
+
+
+def test_server_errors_stay_retryable_over_http() -> None:
+    """5xx continua transitório: é o fornecedor caído, não o pedido errado."""
+    attempts = 0
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        nonlocal attempts
+        attempts += 1
+        return 500, {}
+
+    adapter = RetryingProviderAdapter(
+        AnthropicProviderAdapter(api_key="sk-ant-test", model_id="claude-opus-5", http_post=post),
+        sleep=lambda _seconds: None,
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.UNAVAILABLE
+    assert attempts == 3
+
+
+def test_http_failure_is_logged_without_sensitive_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A falha HTTP precisa nomear status e latência — e nada além de metadados."""
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        return 413, {"error": {"message": "image exceeds 5 MB maximum"}}
+
+    adapter = AnthropicProviderAdapter(
+        api_key="sk-ant-secret", model_id="claude-opus-5", http_post=post
+    )
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError),
+    ):
+        adapter.execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    record = next(entry for entry in caplog.records if entry.name == "croquito_worker.providers")
+    message = record.getMessage()
+    assert "provider_http_failure" in message
+    assert "status=413" in message
+    assert "provider=anthropic" in message
+    assert "task=measurement-extraction" in message
+    assert "failure_code=REFUSED" in message
+    assert "latency_ms=" in message
+    assert record.http_status == 413  # type: ignore[attr-defined]
+    # Nunca corpo de resposta, prompt, imagem ou credencial.
+    assert "image exceeds" not in message
+    assert "sk-ant-secret" not in message
+    assert "synthetic-provider-input" not in message
+
+
 def test_http_status_mapping_keeps_transport_failures_retryable() -> None:
     assert _failure_from_http_status(429) is ProviderFailureCode.RATE_LIMITED
     assert _failure_from_http_status(500) is ProviderFailureCode.UNAVAILABLE
+    assert _failure_from_http_status(503) is ProviderFailureCode.UNAVAILABLE
     assert _failure_from_http_status(401) is ProviderFailureCode.REFUSED
     assert _failure_from_http_status(403) is ProviderFailureCode.REFUSED
+    assert _failure_from_http_status(400) is ProviderFailureCode.REFUSED
+    assert _failure_from_http_status(404) is ProviderFailureCode.REFUSED
+    assert _failure_from_http_status(413) is ProviderFailureCode.REFUSED
+    assert _failure_from_http_status(422) is ProviderFailureCode.REFUSED
     assert ProviderFailureCode.RATE_LIMITED in RetryingProviderAdapter.RETRYABLE
     assert ProviderFailureCode.UNAVAILABLE in RetryingProviderAdapter.RETRYABLE
+    assert ProviderFailureCode.REFUSED not in RetryingProviderAdapter.RETRYABLE
 
 
 def _hosted_suite_env(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -2,10 +2,13 @@ import hashlib
 import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from typing import cast
 
+import fitz
 import pytest
+from PIL import Image
 
 from croquito_api.database import (
     AiProcessingAuthorizationRecord,
@@ -17,9 +20,14 @@ from croquito_api.database import (
     UploadRecord,
 )
 from croquito_worker.local_queue import (
+    PREVIEW_BASE_DPI,
+    PROVIDER_IMAGE_MAX_BYTES,
+    PROVIDER_IMAGE_MAX_SIDE_PX,
     LocalQueueWorker,
     LocalWorkerSettings,
     S3ProtectedRawResponseStore,
+    ValidatedUpload,
+    _validate_pdf_stream,
 )
 from croquito_worker.providers import (
     FixtureProviderAdapter,
@@ -508,6 +516,70 @@ def test_redelivery_of_an_ingested_job_neither_reprocesses_nor_calls_the_provide
     assert second.s3_client.puts == []
     # A reentrega é reconhecida e drenada; ela não volta para a fila.
     assert second.client.deleted == ["receipt-1"]
+
+
+def _line_art_pdf(*, width: float, height: float, spacing: int) -> bytes:
+    """Página sintética com traço denso o bastante para o PNG não comprimir a nada.
+
+    Prancha em branco vira PNG de alguns KB e não exercita limite nenhum; o que interessa
+    aqui é a página grande e cheia de linha fina, como a do cliente.
+    """
+    document = fitz.open()
+    page = document.new_page(width=width, height=height)
+    for index in range(0, int(width), spacing):
+        page.draw_line(fitz.Point(index, 0), fitz.Point(width - index, height), width=0.4)
+    for index in range(0, int(height), spacing):
+        page.draw_line(fitz.Point(0, index), fitz.Point(width, height - index), width=0.4)
+    content = cast(bytes, document.tobytes())
+    document.close()
+    return content
+
+
+def _validated(pdf: bytes) -> ValidatedUpload:
+    return _validate_pdf_stream(
+        BytesIO(pdf),
+        expected_sha256=hashlib.sha256(pdf).hexdigest(),
+        capture_first_page_preview=True,
+    )
+
+
+def test_provider_preview_fits_the_provider_image_limits() -> None:
+    """A prancha real do cliente rendia 4875x6718 px e PNG de 22 MB a 200 DPI.
+
+    Os dois braços recusavam o payload com 4xx e o job ficava preso em PROCESSING. O
+    preview agora nasce dentro dos tetos; o DPI efetivo é a evidência de quanto caiu.
+    """
+    # Mesma geometria da prancha real: 1755x2418 pt = 4875x6717 px a 200 DPI.
+    validated = _validated(_line_art_pdf(width=1755, height=2418, spacing=18))
+
+    assert validated.first_page_preview is not None
+    assert validated.preview_dpi is not None
+    assert len(validated.first_page_preview) <= PROVIDER_IMAGE_MAX_BYTES
+    with Image.open(BytesIO(validated.first_page_preview)) as image:
+        width, height = image.size
+    assert max(width, height) <= PROVIDER_IMAGE_MAX_SIDE_PX
+    # Reduziu de verdade, e o DPI declarado bate com o pixmap entregue.
+    assert validated.preview_dpi < PREVIEW_BASE_DPI
+    assert width == pytest.approx(1755 * validated.preview_dpi / 72, abs=2)
+    assert height == pytest.approx(2418 * validated.preview_dpi / 72, abs=2)
+
+
+def test_provider_preview_respects_the_side_limit_alone() -> None:
+    """Página larga e leve: o PNG cabe em bytes, só o lado maior estoura."""
+    # 3000x400 pt = 8333x1111 px a 200 DPI — acima dos 7500 px, longe do teto de bytes.
+    validated = _validated(_line_art_pdf(width=3000, height=400, spacing=120))
+
+    assert validated.first_page_preview is not None
+    assert len(validated.first_page_preview) <= PROVIDER_IMAGE_MAX_BYTES
+    with Image.open(BytesIO(validated.first_page_preview)) as image:
+        assert max(image.size) <= PROVIDER_IMAGE_MAX_SIDE_PX
+
+
+def test_provider_preview_keeps_full_dpi_when_the_page_already_fits() -> None:
+    """Sem estouro não há redução: documento pequeno continua saindo a 200 DPI."""
+    validated = _validated(synthetic_pdf())
+
+    assert validated.preview_dpi == PREVIEW_BASE_DPI
 
 
 def test_raw_response_store_honours_the_encryption_flag() -> None:
