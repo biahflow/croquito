@@ -27,12 +27,15 @@ mostram o resultado conferido na data.
 **Aprovado por decisão humana de 2026-08-18: o visual.** Composição, hierarquia, o peso do CTA,
 o croqui vetorial, o card do Keycloak e o comportamento responsivo.
 
-**Aprovado por decisão humana de 2026-08-18, na rodada de planejamento: o texto.** O conjunto
-— promessa "Do croqui ao orçamento." (que já vinha da descrição do produto), CTA "Entrar",
-frase do convite, mensagem de ambiente indisponível e título da aba — está fixado, palavra por
-palavra, no [Task Contract da T3](../tasks/T3-tela-de-login.md). Aprovação de texto é escopada
-como a visual: os e-mails do tema **não** têm copy aprovada (o vestuário é da T4; o conteúdo
-real é da F-008, com gate próprio). Mudar qualquer linha do conjunto reabre o gate.
+**Aprovado por decisão humana de 2026-08-18 — revisão 2 do texto, na primeira revisão humana
+da tela real: a copy INTEIRA deste mock.** A revisão 1 (rodada de planejamento) tinha aprovado
+um conjunto enxuto, fixado no [Task Contract da T3](../tasks/T3-tela-de-login.md); ao ver a
+tela no ar, o responsável decidiu que os textos do mock — eyebrow, título, subtítulo, garantia
+de senha, rodapé de convite e o apoio da promessa — entram integralmente. A transcrição
+canônica vive nas constantes de `apps/web/src/App.tsx`. Na mesma decisão: as páginas do
+Keycloak passam a `pt-BR` (i18n de realm, locale embutido da versão). Aprovação de texto segue
+escopada: os e-mails do tema **não** têm copy aprovada (o conteúdo real é da F-008, com gate
+próprio). Mudar qualquer linha do conjunto reabre o gate.
 
 ## Como ler este mock ao implementar
 

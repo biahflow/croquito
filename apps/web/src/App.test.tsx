@@ -17,8 +17,13 @@ describe("App", () => {
   it("na rota do croqui sem sessão, nenhuma jornada é exposta", () => {
     const html = renderToStaticMarkup(<App />);
 
-    // A porta, com o texto aprovado em 2026-08-18 (Task Contract da T3).
+    // A porta, com o texto aprovado em 2026-08-18 — revisão 2, a copy inteira do mock
+    // (registro em docs/features/F-007-tela-de-login/mock/README.md).
     expect(html).toContain("Do croqui ao orçamento.");
+    expect(html).toContain("ACESSO RESTRITO");
+    expect(html).toContain("Entrar no Croquito");
+    expect(html).toContain("Sua senha é digitada no provedor de identidade, nunca aqui.");
+    expect(html).toContain("Ainda não tem acesso?");
     expect(html).toContain(
       "O ambiente está indisponível agora. Tente de novo em instantes — se " +
         "persistir, avise a operação.",

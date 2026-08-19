@@ -24,15 +24,27 @@ function currentRoute(): Route {
 }
 
 /**
- * Texto da porta de entrada, aprovado por ato humano em 2026-08-18 e fixado palavra por
- * palavra no Task Contract da T3 (`docs/features/F-007-tela-de-login/tasks/`). Ele está
- * junto num lugar só porque mudar qualquer uma destas linhas REABRE o gate humano: quem
- * editar aqui está mexendo num artefato aprovado, não em copy de tela.
+ * Texto da porta de entrada, aprovado por ato humano — revisão 2, 2026-08-18, na primeira
+ * revisão humana da tela real: o conjunto aprovado passou a ser a copy INTEIRA do mock
+ * (docs/features/F-007-tela-de-login/mock/login.html), transcrita daqui palavra por
+ * palavra. Ele está junto num lugar só porque mudar qualquer uma destas linhas REABRE o
+ * gate humano: quem editar aqui está mexendo num artefato aprovado, não em copy de tela.
  */
 const PROMESSA = "Do croqui ao orçamento.";
+const PROMESSA_APOIO =
+  "Leitura assistida da prancha, revisão humana registrada e medição exportada com " +
+  "memória de cálculo auditável.";
+const RODAPE_MARCA = "Acesso nominal · toda decisão de revisão fica registrada";
+const EYEBROW_CARD = "ACESSO RESTRITO";
+const TITULO_CARD = "Entrar no Croquito";
+const SUBTITULO_CARD =
+  "O acesso é por conta nominal, criada por convite. Você será levado ao provedor de " +
+  "identidade e volta direto para o seu trabalho.";
 const CTA_ENTRAR = "Entrar";
+const GARANTIA_SENHA = "Sua senha é digitada no provedor de identidade, nunca aqui.";
 const CONVITE =
-  "O acesso nasce por convite. Peça o seu a quem administra sua organização.";
+  "Ainda não tem acesso? Peça um convite a quem administra o seu tenant — contas nascem " +
+  "vinculadas a uma organização, não por autocadastro.";
 const AMBIENTE_INDISPONIVEL =
   "O ambiente está indisponível agora. Tente de novo em instantes — se persistir, " +
   "avise a operação.";
@@ -214,16 +226,23 @@ export function App() {
             pedir qualquer coisa; nenhum dado de projeto existe aqui. */}
         <div className="login-showcase">
           <div className="login-showcase-grid" aria-hidden="true" />
-          <img className="login-wordmark" src={logoDark} alt="Croquito" />
-          <h1 className="login-promise">{PROMESSA}</h1>
-          {/* Croqui vetorial do mock aprovado (revisão 2): decoração de marca, sem
+          {/* Coluna interna com largura máxima: em viewport largo o painel estica, mas a
+              composição do mock — wordmark, promessa, croqui, rodapé — fica coesa em vez
+              de se espalhar pelos cantos (achado da revisão humana de 2026-08-18). */}
+          <div className="login-brandcol">
+            <img className="login-wordmark" src={logoDark} alt="Croquito" />
+            <div className="login-lead">
+              <h1 className="login-promise">{PROMESSA}</h1>
+              <p className="login-promise-sub">{PROMESSA_APOIO}</p>
+            </div>
+            {/* Croqui vetorial do mock aprovado (revisão 2): decoração de marca, sem
               conteúdo — quem usa leitor de tela não perde nada ao pulá-lo. */}
-          <svg
-            className="login-croqui"
-            viewBox="0 0 320 190"
-            fill="none"
-            aria-hidden="true"
-          >
+            <svg
+              className="login-croqui"
+              viewBox="0 0 320 190"
+              fill="none"
+              aria-hidden="true"
+            >
             <path
               className="login-croqui-line"
               d="M24 150 L24 62 L108 22 L192 62 L192 150 Z"
@@ -256,10 +275,15 @@ export function App() {
               d="M300 40 L300 128 M294 40 L306 40 M294 128 L306 128"
               strokeWidth="1.5"
             />
-            <circle className="login-croqui-node" cx="108" cy="22" r="3.6" />
-            <circle className="login-croqui-node" cx="192" cy="62" r="3.6" />
-            <circle className="login-croqui-node" cx="24" cy="62" r="3.6" />
-          </svg>
+              <circle className="login-croqui-node" cx="108" cy="22" r="3.6" />
+              <circle className="login-croqui-node" cx="192" cy="62" r="3.6" />
+              <circle className="login-croqui-node" cx="24" cy="62" r="3.6" />
+            </svg>
+            <footer className="login-foot">
+              <span className="login-dot" aria-hidden="true" />
+              {RODAPE_MARCA}
+            </footer>
+          </div>
         </div>
 
         <div className="login-panel">
@@ -284,6 +308,9 @@ export function App() {
                 strokeWidth="11"
               />
             </svg>
+            <span className="login-eyebrow">{EYEBROW_CARD}</span>
+            <h2 className="login-title">{TITULO_CARD}</h2>
+            <p className="login-sub">{SUBTITULO_CARD}</p>
 
             {!ambienteNoAr ? (
               <p className="login-alert" role="alert">
@@ -342,10 +369,30 @@ export function App() {
               </div>
             ) : null}
 
+            <p className="login-assur">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z" />
+                <path d="M9 12l2 2 4-4" />
+              </svg>
+              {GARANTIA_SENHA}
+            </p>
+
             <hr className="login-rule" />
             {isHomologationHost(currentHostname()) ? (
               <p className="login-env">
-                <span className="login-env-pill">HOMOLOGAÇÃO</span>
+                <span className="login-env-pill">
+                  <span className="login-dot" aria-hidden="true" />
+                  HOMOLOGAÇÃO
+                </span>
+                <span className="login-env-host">{currentHostname()}</span>
               </p>
             ) : null}
             <p className="login-invite">{CONVITE}</p>
