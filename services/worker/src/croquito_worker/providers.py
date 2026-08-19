@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import time
 from base64 import b64encode
@@ -20,6 +21,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+
+logger = logging.getLogger("croquito_worker.providers")
 
 TOOL_NAME: Final = "emit_observation"
 """Nome da tool que força saída estruturada nos adapters Anthropic."""
@@ -801,15 +804,51 @@ def _parse_output(task: PromptTask, payload: object) -> ProviderOutput:
 
 
 def _failure_from_http_status(status: int) -> ProviderFailureCode:
+    """Traduz status HTTP para falha de provider, separando permanente de transitório.
+
+    Todo 4xx que não seja 429 descreve um defeito do PEDIDO — credencial inválida (401),
+    sem permissão (403), payload malformado ou grande demais (400/413/422), rota
+    inexistente (404). Nenhum melhora com retentativa: as três tentativas falhariam
+    igual, cada uma reservando teto antes de sair, e o esgotamento vira exceção que a
+    fila lê como reentrega — o loop infinito que a prancha real de 22 MB produziu.
+    `REFUSED` está fora de `RetryingProviderAdapter.RETRYABLE`, como o equivalente do
+    Bedrock em `BEDROCK_PERMANENT_ERRORS`. 5xx segue transitório.
+    """
     if status == 429:
         return ProviderFailureCode.RATE_LIMITED
-    if status in {401, 403}:
-        # Credencial inválida ou sem permissão não melhora com retentativa: as três
-        # tentativas falhariam igual, e cada uma reserva teto antes de sair. `REFUSED`
-        # está fora de `RetryingProviderAdapter.RETRYABLE`, como o equivalente do Bedrock
-        # em `BEDROCK_PERMANENT_ERRORS`.
+    if 400 <= status < 500:
         return ProviderFailureCode.REFUSED
     return ProviderFailureCode.UNAVAILABLE
+
+
+def _http_failure(
+    *, provider: ProviderName, task: str, status: int, started: float
+) -> ProviderFailureCode:
+    """Registra a falha HTTP antes de ela virar exceção e devolve o código mapeado.
+
+    Sem esta linha, um 4xx do fornecedor chegava ao operador apenas como
+    `ProviderExecutionError` sem status — foi o que escondeu a recusa por payload no
+    primeiro documento real. Saem só metadados: provider, tarefa, status, código e
+    latência. NUNCA corpo de resposta, prompt ou imagem.
+    """
+    code = _failure_from_http_status(status)
+    latency_ms = round((time.monotonic() - started) * 1000)
+    logger.warning(
+        "provider_http_failure provider=%s task=%s status=%d failure_code=%s latency_ms=%d",
+        provider.value,
+        task,
+        status,
+        code.value,
+        latency_ms,
+        extra={
+            "provider": provider.value,
+            "task": task,
+            "http_status": status,
+            "failure_code": code.value,
+            "latency_ms": latency_ms,
+        },
+    )
+    return code
 
 
 HttpPost = Callable[[str, dict[str, str], bytes, float], tuple[int, dict[str, object]]]
@@ -911,7 +950,14 @@ class OpenAIProviderAdapter:
             self.timeout_seconds,
         )
         if not 200 <= status < 300:
-            raise ProviderExecutionError(_failure_from_http_status(status))
+            raise ProviderExecutionError(
+                _http_failure(
+                    provider=ProviderName.OPENAI,
+                    task=request.task.value,
+                    status=status,
+                    started=started,
+                )
+            )
         if response.get("status") == "incomplete" or response.get("refusal"):
             raise ProviderExecutionError(ProviderFailureCode.REFUSED)
         output_text = response.get("output_text")
@@ -1031,7 +1077,14 @@ class AnthropicProviderAdapter:
             self.timeout_seconds,
         )
         if not 200 <= status < 300:
-            raise ProviderExecutionError(_failure_from_http_status(status))
+            raise ProviderExecutionError(
+                _http_failure(
+                    provider=ProviderName.ANTHROPIC,
+                    task=request.task.value,
+                    status=status,
+                    started=started,
+                )
+            )
         content = response.get("content")
         tool_inputs = [
             part["input"]
@@ -1443,7 +1496,14 @@ class GcpVisionOcrAdapter:
             self.timeout_seconds,
         )
         if not 200 <= status < 300:
-            raise ProviderExecutionError(_failure_from_http_status(status))
+            raise ProviderExecutionError(
+                _http_failure(
+                    provider=ProviderName.GCP_VISION,
+                    task=request.task.value,
+                    status=status,
+                    started=started,
+                )
+            )
         responses = response.get("responses")
         if not isinstance(responses, list) or len(responses) != 1:
             raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
@@ -1610,7 +1670,15 @@ class OpenAIEmbeddingsAdapter:
             self.timeout_seconds,
         )
         if not 200 <= status < 300:
-            raise ProviderExecutionError(_failure_from_http_status(status))
+            # A via de embeddings não carrega `PromptTask`; o rótulo nomeia o endpoint.
+            raise ProviderExecutionError(
+                _http_failure(
+                    provider=ProviderName.OPENAI,
+                    task="embeddings",
+                    status=status,
+                    started=started,
+                )
+            )
         vectors, dims = _parse_embeddings(response, len(batch))
         usage = response.get("usage")
         usage_data = usage if isinstance(usage, dict) else {}
