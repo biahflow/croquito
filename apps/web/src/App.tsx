@@ -53,27 +53,6 @@ const TITULO_LOGIN = "Entrar — Croquito";
 const TITULO_JORNADA = "Croquito";
 
 /**
- * Host de homologação, o único ambiente em que a pílula aparece (decisão humana de
- * 2026-08-18). O mecanismo é o HOSTNAME, e não uma variável de ambiente nova: `apps/web`
- * hoje só lê `VITE_OIDC_*` e `VITE_API_BASE_URL`, nenhuma delas descreve ambiente, e
- * inventar `VITE_ENVIRONMENT` obrigaria a mexer no build, no Dockerfile e no serviço de
- * homologação para exibir um rótulo. O endereço já é o fato — está no ADR-0032 e no realm
- * (`redirectUris` de `croquito-hml`) — e derivar dele mantém a decisão em um lugar só.
- *
- * Consequência aceita: em desenvolvimento e em produção a pílula não aparece, que é
- * exatamente o que foi decidido.
- */
-const HOMOLOGATION_HOST = "croquito-hml.biahflow.ai";
-
-export function isHomologationHost(hostname: string): boolean {
-  return hostname === HOMOLOGATION_HOST;
-}
-
-function currentHostname(): string {
-  return typeof window === "undefined" ? "" : window.location.hostname;
-}
-
-/**
  * Existe identity provider federado configurado no realm? Enquanto não existir, o botão
  * "Entrar com Google" **não é renderizado** — nem desabilitado, nem oculto por CSS
  * (critério 9 da F-007). Hoje a resposta é `false` por fato verificado, não por
@@ -386,15 +365,6 @@ export function App() {
             </p>
 
             <hr className="login-rule" />
-            {isHomologationHost(currentHostname()) ? (
-              <p className="login-env">
-                <span className="login-env-pill">
-                  <span className="login-dot" aria-hidden="true" />
-                  HOMOLOGAÇÃO
-                </span>
-                <span className="login-env-host">{currentHostname()}</span>
-              </p>
-            ) : null}
             <p className="login-invite">{CONVITE}</p>
           </div>
         </div>

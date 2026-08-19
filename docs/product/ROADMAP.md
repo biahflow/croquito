@@ -28,6 +28,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-006 | HIGH | DONE | [Conserto e verificação da homologação em GCP](../features/F-006-hml-conserto/feature.md) |
 | F-007 | HIGH | READY_FOR_HUMAN_REVIEW | [Porta de entrada: tela de login com marca](../features/F-007-tela-de-login/feature.md) |
 | F-008 | HIGH | BLOCKED | [Ciclo de vida de conta: convite, recuperação de senha e Google](../features/F-008-ciclo-de-vida-de-conta/feature.md) |
+| F-009 | A DEFINIR | READY_FOR_SPEC | Jornada guiada da revisão (a definir em contrato) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -93,6 +94,14 @@ remetente ainda não foram escolhidos — sem isso, nenhum dos três fluxos exis
 [ADR-0033](../adr/0033-conta-por-convite-e-login-federado.md), **aceito por ato humano em
 2026-08-18**, que registra essa pendência. Contrato em
 [feature.md](../features/F-008-ciclo-de-vida-de-conta/feature.md).
+
+F-009 nasce em 2026-08-19, por seleção humana, na primeira revisão da porta nova: o
+responsável quer a experiência da revisão como **jornada guiada** — a próxima tarefa só
+habilita quando a atual é cumprida, no lugar do formulário aberto de hoje. É mudança de
+UX transversal à jornada da revisão (`INTERFACE_CHANGE` na classificação da camada
+pinada: exigirá Design Approval Package antes do planejamento). Ainda sem Feature
+Contract: esta linha é o registro canônico até a especificação, e a prioridade é
+decisão humana pendente.
 
 ## Agora — MVP privado
 

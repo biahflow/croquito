@@ -160,6 +160,37 @@ def test_roadmap_state_diverging_from_feature_file_is_reported(tmp_path: Path) -
     assert "IN_PROGRESS" in errors[0]
 
 
+def test_pre_spec_row_without_contract_link_is_allowed(tmp_path: Path) -> None:
+    """Item READY_FOR_SPEC vive só como linha de roadmap: sem feature.md, sem erro."""
+    _build_baseline(tmp_path)
+    roadmap = tmp_path / "docs" / "product" / "ROADMAP.md"
+    content = roadmap.read_text(encoding="utf-8").replace(
+        "Texto de fechamento da seção.",
+        "",
+    )
+    lines = content.splitlines()
+    idx = max(i for i, line in enumerate(lines) if line.startswith("|"))
+    lines.insert(idx + 1, "| F-900 | A DEFINIR | READY_FOR_SPEC | — |")
+    roadmap.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    errors = check_docs.validate_roadmap_feature_parity(tmp_path)
+
+    assert errors == []
+
+
+def test_pre_spec_state_still_requires_valid_vocabulary(tmp_path: Path) -> None:
+    _build_baseline(tmp_path)
+    roadmap = tmp_path / "docs" / "product" / "ROADMAP.md"
+    lines = roadmap.read_text(encoding="utf-8").splitlines()
+    idx = max(i for i, line in enumerate(lines) if line.startswith("|"))
+    lines.insert(idx + 1, "| F-901 | A DEFINIR | IN_PROGRESS | — |")
+    roadmap.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    errors = check_docs.validate_roadmap_feature_parity(tmp_path)
+
+    assert any("F-901" in error and "sem link" in error for error in errors)
+
+
 def test_roadmap_state_outside_lifecycle_vocabulary_is_reported(tmp_path: Path) -> None:
     _build_baseline(tmp_path)
     _write_roadmap(

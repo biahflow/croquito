@@ -188,7 +188,8 @@ Todos resolvidos na rodada de planejamento de 2026-08-18 — nenhum por suposiç
   do contrato), nunca por inferência.
 - ~~O texto da tela~~ — **aprovado por ato humano em 2026-08-18**; conjunto fixado no
   [Task Contract da T3](tasks/T3-tela-de-login.md).
-- ~~A pílula de ambiente~~ — **só em homologação**, decisão humana de 2026-08-18.
+- ~~A pílula de ambiente~~ — **só em homologação** (2026-08-18); **substituída em
+  2026-08-19**: sem pílula em ambiente nenhum — a URL diferencia o ambiente.
 - ~~`/medicao/` sem sessão~~ — **resolvido por estrutura**: a borda já redireciona
   `/medicao/` para `/revisao/?rodada=`, que cai na regra de rebote preservando a query;
   nenhum comportamento novo.

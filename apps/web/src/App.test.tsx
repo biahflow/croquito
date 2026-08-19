@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { App, isHomologationHost } from "./App";
+import { App } from "./App";
 import { entryRedirect, LOGIN_PATH } from "./route";
 
 /**
@@ -35,9 +35,9 @@ describe("App", () => {
     expect(html).not.toContain("Campo do Guaxindiba");
     expect(html).not.toContain("Simulação de decisão");
     expect(html).not.toContain("Projetos e revisões");
-    // Nada da medição: os dois cabeçalhos possíveis da jornada começam por aqui. E, de
-    // quebra, a pílula de ambiente ausente fora do host de homologação (sem `window`, o
-    // hostname corrente é vazio).
+    // Nada da medição: os dois cabeçalhos possíveis da jornada começam por aqui. E a
+    // pílula de ambiente não existe mais em lugar nenhum — decisão humana de 2026-08-19:
+    // a URL diferencia o ambiente.
     expect(html).not.toContain("HOMOLOGAÇÃO");
   });
 
@@ -73,38 +73,6 @@ describe("App", () => {
     expect(html).not.toContain("login-federated");
     // O CTA próprio continua lá — o que falta é o provedor, não a porta.
     expect(html).toContain("login-cta");
-  });
-
-  /**
-   * A pílula de ambiente aparece SÓ em homologação (decisão humana de 2026-08-18). O
-   * mecanismo escolhido é o hostname, e é ele que este teste exerce: nenhuma variável de
-   * ambiente nova foi criada para exibir um rótulo.
-   */
-  it("a pílula de ambiente é derivada do host de homologação", () => {
-    expect(isHomologationHost("croquito-hml.biahflow.ai")).toBe(true);
-    // Produção, desenvolvimento e qualquer vizinho de domínio ficam de fora.
-    expect(isHomologationHost("croquito.biahflow.ai")).toBe(false);
-    expect(isHomologationHost("localhost")).toBe(false);
-    expect(isHomologationHost("")).toBe(false);
-    expect(isHomologationHost("evil-croquito-hml.biahflow.ai")).toBe(false);
-  });
-
-  /**
-   * Substitui o teste que afirmava o link entre as duas origens: com as jornadas dentro
-   * do mesmo build (ADR-0028, D9) não existe segunda origem para linkar. A marca deixou de
-   * ser um link porque a topbar saiu do estado sem sessão (D3), então o que a porta afirma
-   * agora é mais forte: antes da sessão não há link para jornada nenhuma.
-   */
-  it("não linka uma segunda origem: a medição é jornada, não outro app", () => {
-    expect(import.meta.env.BASE_URL).toBe("/revisao/");
-
-    const html = renderToStaticMarkup(<App />);
-
-    expect(html).not.toContain('href="/medicao/"');
-    // Nenhuma âncora: o único `href` do render é o `<link rel="preload">` que o React emite
-    // para o wordmark, e ele resolve sob a base desta SPA — não sob uma segunda origem.
-    expect(html).not.toContain("<a ");
-    expect(html).toContain('href="/revisao/');
   });
 });
 
