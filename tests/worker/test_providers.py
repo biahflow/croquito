@@ -20,6 +20,7 @@ from croquito_worker.providers import (
     EMBEDDINGS_MAX_BATCH,
     EMBEDDINGS_MODEL,
     IMAGE_TEXT_TASKS,
+    OCR_FAILURE_DETAIL_LIMIT,
     PROMPT_SPECS,
     SYNTHETIC_CHAT_PROPOSAL_ID,
     SYNTHETIC_CHAT_READING_ID,
@@ -497,22 +498,29 @@ def test_ocr_corroboration_flags_reading_without_spatial_evidence(tmp_path: Path
     assert snapshot.packet.readings[0].status is ReadingStatus.PROPOSED
 
 
-def test_ocr_corroboration_missing_arm_adds_a_single_note(tmp_path: Path) -> None:
+def test_ocr_corroboration_missing_arm_adds_a_single_note(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     image_path = tmp_path / "fixture.png"
     render_synthetic_input(image_path)
     suite = replace(build_synthetic_provider_suite(), ocr=None)
 
-    snapshot = build_provider_review_snapshot(
-        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
-    )
+    with caplog.at_level("WARNING", logger="croquito_worker.provider_review"):
+        snapshot = build_provider_review_snapshot(
+            image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+        )
 
+    # Braço ausente e braço que falhou dão a mesma nota; só o log distingue os dois.
+    assert "ocr_unavailable failure_code=ARM_NOT_CONFIGURED" in caplog.text
     assert snapshot.packet.safety_notes.count("OCR_UNAVAILABLE") == 1
     assert not any(note.endswith("_OCR_CONFIRMED") for note in snapshot.packet.safety_notes)
     assert not any(note.endswith("_OCR_EVIDENCE_MISSING") for note in snapshot.packet.safety_notes)
     assert snapshot.packet.readings
 
 
-def test_ocr_corroboration_permanent_failure_adds_a_single_note(tmp_path: Path) -> None:
+def test_ocr_corroboration_permanent_failure_adds_a_single_note(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     image_path = tmp_path / "fixture.png"
     render_synthetic_input(image_path)
     base = build_synthetic_provider_suite()
@@ -521,10 +529,13 @@ def test_ocr_corroboration_permanent_failure_adds_a_single_note(tmp_path: Path) 
         base, ocr=replace(ocr_adapter, failures={PromptTask.OCR: ProviderFailureCode.UNAVAILABLE})
     )
 
-    snapshot = build_provider_review_snapshot(
-        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
-    )
+    with caplog.at_level("WARNING", logger="croquito_worker.provider_review"):
+        snapshot = build_provider_review_snapshot(
+            image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+        )
 
+    # A degradação era 100% muda: a nota chega ao revisor, o motivo não chegava a ninguém.
+    assert "ocr_unavailable failure_code=UNAVAILABLE" in caplog.text
     assert snapshot.packet.safety_notes.count("OCR_UNAVAILABLE") == 1
     assert snapshot.packet.readings
 
@@ -647,6 +658,104 @@ def test_gcp_vision_adapter_parses_full_text_annotation_into_normalized_lines() 
     assert line.bbox.right == pytest.approx(0.90)
     assert line.bbox.bottom == pytest.approx(0.40)
     assert execution.raw_response_ref is None
+
+
+class _BrokenGcpCredentials:
+    """ADC que não renova — o suspeito do braço OCR que nunca apareceu em produção."""
+
+    def __init__(self, error: Exception) -> None:
+        self.valid = False
+        self.token = "ya29.token-que-nunca-pode-vazar"
+        self._error = error
+
+    def refresh(self, _request: object) -> None:
+        raise self._error
+
+
+def test_ocr_token_failure_is_logged_without_the_credential(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A falha de token era muda: nem log, nem status, nem raw — só a nota OCR_UNAVAILABLE."""
+    adapter = GcpVisionOcrAdapter(
+        credentials=_BrokenGcpCredentials(RuntimeError("could not refresh ADC: reauth required"))
+    )
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        adapter.execute(_request(PromptTask.OCR))
+
+    assert error.value.code is ProviderFailureCode.UNAVAILABLE
+    record = next(entry for entry in caplog.records if entry.name == "croquito_worker.providers")
+    message = record.getMessage()
+    assert "ocr_token_failure" in message
+    assert "provider=gcp_vision" in message
+    assert "failure_code=UNAVAILABLE" in message
+    assert "error_type=RuntimeError" in message
+    assert "detail=could not refresh ADC: reauth required" in message
+    assert record.error_type == "RuntimeError"  # type: ignore[attr-defined]
+    # Nunca credencial, token ou evidência.
+    assert "ya29." not in message
+    assert "synthetic-provider-input" not in message
+
+
+def test_ocr_token_failure_detail_is_truncated(caplog: pytest.LogCaptureFixture) -> None:
+    """A mensagem do fornecedor entra recortada: log é diagnóstico, não despejo."""
+    adapter = GcpVisionOcrAdapter(credentials=_BrokenGcpCredentials(RuntimeError("x" * 400)))
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError),
+    ):
+        adapter.execute(_request(PromptTask.OCR))
+
+    detail = caplog.records[0].getMessage().split("detail=", 1)[1]
+    assert len(detail) == OCR_FAILURE_DETAIL_LIMIT
+
+
+def test_ocr_empty_token_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """Credencial que renova mas não entrega token: recusa permanente, agora com rastro."""
+
+    class _TokenlessCredentials:
+        def __init__(self) -> None:
+            self.valid = True
+            self.token = ""
+
+        def refresh(self, _request: object) -> None:
+            return None
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        GcpVisionOcrAdapter(credentials=_TokenlessCredentials()).execute(_request(PromptTask.OCR))
+
+    assert error.value.code is ProviderFailureCode.REFUSED
+    assert "ocr_token_empty" in caplog.text
+    assert "failure_code=REFUSED" in caplog.text
+    assert "error_type=none" in caplog.text
+
+
+def test_ocr_transport_failure_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """Sem status HTTP não havia nem `provider_http_failure`: a chamada sumia inteira."""
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        raise ProviderExecutionError(ProviderFailureCode.TIMEOUT)
+
+    adapter = GcpVisionOcrAdapter(credentials=_FakeGcpCredentials(), http_post=post)
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        adapter.execute(_request(PromptTask.OCR))
+
+    assert error.value.code is ProviderFailureCode.TIMEOUT
+    assert "ocr_transport_failure" in caplog.text
+    assert "failure_code=TIMEOUT" in caplog.text
 
 
 def test_gcp_vision_adapter_maps_http_status_like_the_other_rest_adapters() -> None:

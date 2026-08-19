@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -46,6 +47,21 @@ from croquito_worker.vision import (
     proposals_from_geometry,
     register_to_ink,
 )
+
+logger = logging.getLogger("croquito_worker.provider_review")
+
+
+def _log_ocr_unavailable(failure_code: str) -> None:
+    """Nomeia o motivo da degradação do OCR; a nota do pacote diz só que ela aconteceu.
+
+    Sai apenas o código da falha (ou `ARM_NOT_CONFIGURED` quando o braço nem existe na
+    suite). Nunca imagem, texto lido, cota ou credencial.
+    """
+    logger.warning(
+        "ocr_unavailable failure_code=%s",
+        failure_code,
+        extra={"failure_code": failure_code},
+    )
 
 
 class ProviderContractError(ValueError):
@@ -349,6 +365,10 @@ def build_provider_review_snapshot(
     ocr_ran = False
     if anchor_output.readings:
         if suite.ocr is None:
+            # A nota diz ao revisor que a conferência não rodou; o log diz ao operador POR
+            # QUE. Braço ausente e braço que falhou produzem a mesma nota e, até aqui, o
+            # mesmo silêncio — foi assim que o OCR passou de HML inteiro sem um rastro.
+            _log_ocr_unavailable("ARM_NOT_CONFIGURED")
             safety_notes.append("OCR_UNAVAILABLE")
         else:
             try:
@@ -356,6 +376,7 @@ def build_provider_review_snapshot(
             except ProviderExecutionError as error:
                 if error.code is ProviderFailureCode.BUDGET_EXCEEDED:
                     raise
+                _log_ocr_unavailable(error.code.value)
                 safety_notes.append("OCR_UNAVAILABLE")
             else:
                 if not isinstance(ocr_execution.output, OcrOutput):

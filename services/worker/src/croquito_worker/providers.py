@@ -870,6 +870,47 @@ def _http_failure(
     return code
 
 
+OCR_FAILURE_DETAIL_LIMIT: Final = 200
+"""Recorte da mensagem do erro no log do braço OCR: o suficiente para nomear a causa."""
+
+
+def _ocr_failure(
+    event: str,
+    code: ProviderFailureCode,
+    *,
+    error: BaseException | None = None,
+) -> ProviderFailureCode:
+    """Registra uma falha do braço OCR que acontece ANTES (ou fora) do HTTP e devolve o código.
+
+    `_http_failure` só cobre resposta com status. Tudo que morre antes disso — token ADC que
+    não renova, credencial sem token, transporte que nem sai — virava `ProviderExecutionError`
+    muda, e a degradação para `OCR_UNAVAILABLE` apagava o último rastro: em produção o braço
+    nunca apareceu, sem um único `provider_http_failure` de `gcp_vision` e sem raw no bucket,
+    e não havia como saber em que ponto ele caía.
+
+    Saem a classe da exceção e um recorte da mensagem do fornecedor. NUNCA token, credencial,
+    imagem, payload ou URL assinada — o objeto de credencial não é tocado aqui, e só a
+    exceção do refresh viaja, truncada em `OCR_FAILURE_DETAIL_LIMIT`.
+    """
+    error_type = type(error).__name__ if error is not None else "none"
+    detail = str(error)[:OCR_FAILURE_DETAIL_LIMIT] if error is not None else ""
+    logger.warning(
+        "%s provider=%s failure_code=%s error_type=%s detail=%s",
+        event,
+        ProviderName.GCP_VISION.value,
+        code.value,
+        error_type,
+        detail,
+        extra={
+            "provider": ProviderName.GCP_VISION.value,
+            "task": PromptTask.OCR.value,
+            "failure_code": code.value,
+            "error_type": error_type,
+        },
+    )
+    return code
+
+
 HttpPost = Callable[[str, dict[str, str], bytes, float], tuple[int, dict[str, object]]]
 
 
@@ -1670,19 +1711,30 @@ class GcpVisionOcrAdapter:
             if not self.credentials.valid:
                 self.credentials.refresh(_UrllibAuthRequest(timeout_seconds=self.timeout_seconds))
         except Exception as error:  # google-auth levanta tipos concretos próprios
-            raise ProviderExecutionError(ProviderFailureCode.UNAVAILABLE) from error
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_token_failure", ProviderFailureCode.UNAVAILABLE, error=error)
+            ) from error
         token = getattr(self.credentials, "token", None)
         if not isinstance(token, str) or not token:
-            raise ProviderExecutionError(ProviderFailureCode.REFUSED)
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_token_empty", ProviderFailureCode.REFUSED)
+            )
         return token
 
     def execute(self, request: ProviderRequest) -> ProviderExecution:
         if request.task is not PromptTask.OCR:
-            raise ProviderExecutionError(ProviderFailureCode.REFUSED)
-        image_bytes = _require_image_bytes(request)
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_task_mismatch", ProviderFailureCode.REFUSED)
+            )
+        try:
+            image_bytes = _require_image_bytes(request)
+        except ProviderExecutionError as error:
+            raise ProviderExecutionError(_ocr_failure("ocr_missing_image", error.code)) from error
         width, height = request.image_width_px, request.image_height_px
         if width is None or height is None:
-            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_missing_dimensions", ProviderFailureCode.INVALID_SCHEMA)
+            )
         token = self._access_token()
         body = {
             "requests": [
@@ -1693,12 +1745,19 @@ class GcpVisionOcrAdapter:
             ]
         }
         started = time.monotonic()
-        status, response = self.http_post(
-            self.endpoint,
-            {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json.dumps(body, separators=(",", ":")).encode(),
-            self.timeout_seconds,
-        )
+        try:
+            status, response = self.http_post(
+                self.endpoint,
+                {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json.dumps(body, separators=(",", ":")).encode(),
+                self.timeout_seconds,
+            )
+        except ProviderExecutionError as error:
+            # Transporte que nem chega a ter status (DNS, egress fechado, timeout): sem esta
+            # linha a chamada some sem status E sem log, que é exatamente o buraco de HML.
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_transport_failure", error.code, error=error)
+            ) from error
         if not 200 <= status < 300:
             raise ProviderExecutionError(
                 _http_failure(
@@ -1710,19 +1769,30 @@ class GcpVisionOcrAdapter:
             )
         responses = response.get("responses")
         if not isinstance(responses, list) or len(responses) != 1:
-            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_invalid_response", ProviderFailureCode.INVALID_SCHEMA)
+            )
         single_response = responses[0]
         if not isinstance(single_response, dict):
-            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_invalid_response", ProviderFailureCode.INVALID_SCHEMA)
+            )
         if isinstance(single_response.get("error"), dict):
             # Erro por imagem (ex.: payload ilegível) dentro de um HTTP 200; sem código
             # granular na resposta do Vision para distinguir permanente de transitório
             # aqui, então segue o mesmo tratamento do Textract: UNAVAILABLE.
-            raise ProviderExecutionError(ProviderFailureCode.UNAVAILABLE)
-        lines = _cloud_vision_lines(
-            single_response.get("fullTextAnnotation"), width=width, height=height
-        )
-        output = _parse_output(PromptTask.OCR, {"lines": lines})
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_image_error", ProviderFailureCode.UNAVAILABLE)
+            )
+        try:
+            lines = _cloud_vision_lines(
+                single_response.get("fullTextAnnotation"), width=width, height=height
+            )
+            output = _parse_output(PromptTask.OCR, {"lines": lines})
+        except ProviderExecutionError as error:
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_invalid_output", error.code, error=error)
+            ) from error
         raw_ref = None
         if self.raw_store is not None:
             raw_ref = self.raw_store.persist(
