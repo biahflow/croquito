@@ -1,0 +1,2290 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F-020 — Design Approval Package rev. 1 — jornada do orçamento-base</title>
+<!--
+  Artefato de aprovação de desenho da F-020, gerado em 2026-08-19.
+  NÃO É IMPLEMENTAÇÃO: HTML estático, sem comportamento, sem acessibilidade auditada e
+  sem estado. Nada aqui é copiado para apps/web como código.
+-->
+<style>
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:22-70 (tokens e reset) ===== */
+
+:root {
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --surface-subtle: #f4f4f1;
+  --surface-sunken: #efefeb;
+  --ink: #14181d;
+  --ink-secondary: #5b6169;
+  --muted: #9aa0a8;
+  --line: #e5e5e0;
+  --accent: #00c877;
+  --accent-hover: #00b169;
+  --accent-ink: #0e1116;
+  --accent-text: #00744a;
+  --accent-soft: #e6f6ee;
+  --accent-line: #9bdcc0;
+  --dark: #0e1116;
+  --dark-ink: #f2f4f7;
+  --dark-ink-soft: rgba(242, 244, 247, 0.72);
+  --dark-line: rgba(242, 244, 247, 0.12);
+  --dark-line-strong: rgba(242, 244, 247, 0.34);
+
+  color: var(--ink);
+  background: var(--bg);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(0, 200, 119, 0.1), transparent 28rem),
+    var(--bg);
+}
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:506-554 (topbar, marca e a regra de flex que os alinha) ===== */
+
+.topbar {
+  min-height: 76px;
+  padding: 14px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--dark-ink);
+  background: var(--dark);
+  border-bottom: 1px solid var(--dark-line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  color: inherit;
+  text-decoration: none;
+}
+
+/* O wordmark é a marca no topbar escuro; o `alt` carrega o nome para quem não vê a
+   imagem, e o subtítulo continua em texto. Altura maior por decisão da revisão humana de
+   2026-08-19 ("a marca está bem pequena aqui também"), com a mesma compensação óptica da
+   porta: o lettering começa em x≈136 do viewBox (620 × 150), e a margem negativa alinha o
+   desenho — não a caixa — com a borda do padding. */
+.brand-logo {
+  --brand-logo-h: 34px;
+  height: var(--brand-logo-h);
+  width: auto;
+  aspect-ratio: 620 / 150;
+  display: block;
+  margin-left: calc(var(--brand-logo-h) * -0.9);
+}
+
+.brand small {
+  display: block;
+  color: var(--dark-ink-soft);
+  font-size: 12px;
+}
+
+.topbar-actions,
+.context-bar,
+.difficulty,
+.pipeline,
+.panel-heading,
+.view-tabs,
+footer {
+  display: flex;
+  align-items: center;
+}
+
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:928-945 (tipografia: h1 em Georgia) ===== */
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  margin-top: 4px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: 600;
+}
+
+h2 {
+  margin-top: 3px;
+  font-size: 15px;
+}
+
+
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:687-754 (pilulas e seletor) ===== */
+
+.topbar-actions {
+  gap: 10px;
+}
+
+.schema-pill {
+  margin-right: 8px;
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+/* Navegação sobre o topbar escuro. O verde da marca é preenchimento e nunca cor de
+   texto: o texto é `--dark-ink-soft` e o estado ativo (hover/foco) sobe para
+   `--dark-ink`, com a borda mais firme. */
+.topbar-link {
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.topbar-link:hover,
+.topbar-link:focus-visible {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+}
+
+/* Alternância entre as jornadas do app (ADR-0028, D9). São botões e não links porque a
+   troca é de estado da casca, sem recarregar a SPA. A jornada aberta é anunciada por
+   `aria-current` e marcada por peso e borda: cor sozinha não indicaria nada a quem não
+   a distingue. */
+.journey-switch {
+  display: flex;
+  gap: 6px;
+  margin-right: 4px;
+}
+
+.journey-switch .topbar-link {
+  background: transparent;
+}
+
+.journey-switch .topbar-link[aria-current="page"] {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+  font-weight: 750;
+}
+
+.demo-pill {
+  padding: 7px 10px;
+  color: #f0d899;
+  border: 1px solid #665a38;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.identity-pill {
+  padding: 7px 10px;
+  color: var(--dark-ink);
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ===== COPIA VERBATIM: apps/web/src/medicao/styles.css (folha da jornada, sem o wrapper .jornada-medicao) ===== */
+
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* O anel de foco é indicador gráfico: usa o verde escuro (5,8:1 sobre branco), porque
+   `--accent` puro sumiria sobre a superfície clara. */
+:focus-visible {
+  outline: 3px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+h1 {
+  margin: 2px 0 0;
+  font-size: 1.35rem;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+h3 {
+  margin: 16px 0 6px;
+  font-size: 0.98rem;
+}
+
+h4 {
+  margin: 12px 0 4px;
+  font-size: 0.92rem;
+}
+
+p {
+  margin: 6px 0;
+  line-height: 1.45;
+}
+
+.eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  color: var(--dark-ink-soft);
+}
+
+.topbar-meta {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--dark-ink-soft);
+}
+
+.topbar-acoes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Sessão sobre o topbar escuro desta jornada. O verde da marca é preenchimento e nunca
+   cor de texto: aqui o texto é `--dark-ink-soft`, e o estado ativo (hover/foco) sobe para
+   `--dark-ink` com a borda mais firme. O `.topbar-link` da casca não serve: lá ele veste
+   `<a>`, e aqui veste também o `<button>` "Sair", que sem `background: transparent`
+   apareceria com o cinza padrão do navegador. */
+.topbar-link {
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  background: transparent;
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.topbar-link:hover,
+.topbar-link:focus-visible {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+}
+
+/* Botão com a mesma aparência do link: "Sair" é ação, não navegação. */
+.topbar-link-botao {
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.aviso-fixo {
+  max-width: 40rem;
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: #2a1a05;
+  background: #f6d99a;
+  border-left: 5px solid #b47512;
+  border-radius: 4px;
+}
+
+.aviso-inline {
+  margin-bottom: 12px;
+}
+
+.etapas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 28px;
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--line);
+}
+
+.etapa-tab {
+  padding: 8px 14px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+.etapa-tab.ativa {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.etapa-tab.done {
+  border-left: 5px solid var(--accent-text);
+}
+
+.etapa-tab.blocked {
+  border-left: 5px solid #8a8f8b;
+}
+
+.recarregar {
+  margin-left: auto;
+}
+
+.banner-erro,
+.banner-conflito,
+.banner-sucesso {
+  margin: 12px 28px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.banner-erro {
+  color: #4a1010;
+  background: #f7d9d9;
+  border-left: 5px solid #a02323;
+}
+
+.banner-conflito {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #3c2708;
+  background: #fbe6c2;
+  border-left: 5px solid #b47512;
+}
+
+.banner-sucesso {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-left: 5px solid var(--accent-text);
+}
+
+.conteudo {
+  padding: 16px 28px 48px;
+}
+
+.painel {
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.painel-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cabecalho-controles {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.2fr) minmax(280px, 1fr) minmax(300px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.workspace.duas-colunas {
+  grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.4fr);
+}
+
+@media (max-width: 1200px) {
+  .workspace,
+  .workspace.duas-colunas {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cartoes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 12px 0 20px;
+  padding: 0;
+  list-style: none;
+}
+
+.cartao {
+  padding: 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-left: 5px solid #8a8f8b;
+  border-radius: 6px;
+}
+
+.cartao.available {
+  border-left-color: #b47512;
+}
+
+.cartao.done {
+  border-left-color: var(--accent-text);
+}
+
+.cartao h3 {
+  margin-top: 0;
+}
+
+.cartao-status {
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.cartao-motivo {
+  font-size: 0.86rem;
+  color: #6b3a06;
+}
+
+.botao-primario,
+.botao-secundario {
+  padding: 9px 16px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.botao-primario {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.botao-primario:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* A borda é a afordância do secundário: fica no verde escuro, que se destaca sobre
+   branco (5,8:1) — `--accent-line` apagaria o contorno do botão. */
+.botao-secundario {
+  color: var(--accent-text);
+  background: var(--surface);
+  border-color: var(--accent-text);
+}
+
+.acoes-linha {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.artefatos ul,
+.aditivo-lista,
+.confirmados-lista,
+.memoria,
+.memoria ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.confirmados {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.confirmados-lista li {
+  margin-bottom: 10px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.digest {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.8em;
+  color: var(--ink-secondary);
+}
+
+.dica {
+  font-size: 0.84rem;
+  color: var(--ink-secondary);
+}
+
+/* Prancha ------------------------------------------------------------------ */
+
+.zoom-controles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zoom-leitura {
+  min-width: 4rem;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.prancha-canvas {
+  max-height: 72vh;
+  overflow: auto;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  touch-action: none;
+}
+
+.prancha-canvas.arrastando {
+  cursor: grabbing;
+}
+
+.prancha-stage {
+  position: relative;
+  width: 100%;
+}
+
+.prancha-stage img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+
+.bbox-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.bbox {
+  cursor: pointer;
+}
+
+.bbox rect {
+  fill: transparent;
+  stroke-width: 3;
+}
+
+/* Estado por cor E por forma: item ainda não decidido é tracejado. O número do item
+   nunca mora dentro do retângulo — ele cobriria letra da linha da legenda
+   ("PISO EM(1)CONCRETO" foi o defeito real); `pinPlacement` sempre o ancora fora do
+   bbox, com ou sem o retângulo desenhado. */
+.bbox-proposed rect {
+  stroke: #b47512;
+  stroke-dasharray: 12 8;
+}
+
+.bbox-ambiguous rect {
+  stroke: #a02323;
+  stroke-dasharray: 4 6;
+}
+
+.bbox-confirmed rect {
+  stroke: var(--accent-text);
+}
+
+.bbox-rejected rect {
+  stroke: #5a625c;
+}
+
+.bbox.selecionado rect {
+  stroke-width: 6;
+}
+
+/* Pino numerado: sempre fora do bbox (`pinPlacement`), tanto no modo enxuto (padrão,
+   sem retângulo) quanto no item com retângulo forte. Cor nunca é o único indicador: o
+   número identifica o item e o estado por extenso continua na lista ao lado. */
+.bbox-pino-circulo {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.bbox.selecionado .bbox-pino-circulo {
+  stroke-width: 4;
+}
+
+.bbox-pino-texto {
+  font-size: 18px;
+  font-weight: 700;
+  fill: var(--surface);
+  pointer-events: none;
+}
+
+.bbox-proposed .bbox-pino-circulo {
+  fill: #b47512;
+}
+
+.bbox-ambiguous .bbox-pino-circulo {
+  fill: #a02323;
+}
+
+.bbox-confirmed .bbox-pino-circulo {
+  fill: var(--accent-text);
+}
+
+.bbox-rejected .bbox-pino-circulo {
+  fill: #5a625c;
+}
+
+/* Listas ------------------------------------------------------------------- */
+
+.itens,
+.codigos {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 640px;
+  overflow: auto;
+}
+
+.item {
+  border-bottom: 1px solid var(--line);
+}
+
+.item-botao {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-left: 5px solid transparent;
+}
+
+.item.proposed .item-botao {
+  border-left-color: #b47512;
+}
+
+.item.ambiguous .item-botao {
+  border-left-color: #a02323;
+}
+
+.item.confirmed .item-botao {
+  border-left-color: var(--accent-text);
+}
+
+.item.rejected .item-botao {
+  border-left-color: #5a625c;
+}
+
+.item.selecionado .item-botao {
+  background: var(--accent-soft);
+}
+
+.item-numero {
+  flex: 0 0 1.6rem;
+  height: 1.6rem;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.item-corpo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.item-rotulo {
+  font-weight: 600;
+}
+
+.item-estado {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-secondary);
+}
+
+.item-quantidade {
+  font-size: 0.88rem;
+}
+
+.item-raw,
+.item-nota {
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+}
+
+/* Formulários -------------------------------------------------------------- */
+
+.formulario {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.acoes {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.acoes label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+.campo input,
+.campo textarea {
+  padding: 8px 10px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+.campo-dica {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.campo-aviso {
+  font-size: 0.8rem;
+  color: #6b3a06;
+}
+
+.campo-erro {
+  font-size: 0.85rem;
+  color: #7a1212;
+}
+
+.decisao-registrada {
+  padding: 12px;
+  background: var(--surface-subtle);
+  border-radius: 6px;
+}
+
+.busca {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.busca .campo {
+  flex: 1;
+}
+
+/* Códigos ------------------------------------------------------------------ */
+
+.codigo-card {
+  padding: 12px;
+  margin-bottom: 10px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.codigo-card.escolhido {
+  border-color: var(--accent-text);
+  border-left-width: 5px;
+}
+
+.codigo-topo {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.codigo-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+.codigo-descricao {
+  max-height: 8rem;
+  overflow: auto;
+  font-size: 0.86rem;
+}
+
+.codigo-selos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.selo {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--muted);
+  background: var(--surface);
+}
+
+.selo-execucao_incluida {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.selo-somente_material {
+  border-color: #b47512;
+  color: #6b3a06;
+}
+
+.selo-indefinido,
+.selo-neutro {
+  border-color: #8a8f8b;
+  color: var(--ink-secondary);
+}
+
+.selo-ok {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.selo-atencao {
+  border-color: #a02323;
+  color: #7a1212;
+}
+
+/* Inclusões ------------------------------------------------------------------ */
+/* Chip do que a descrição diz que inclui/não inclui (inclusoes.ts). Cor nunca é o único
+   indicador: o prefixo "Inclui:"/"Não inclui:" vai escrito dentro do próprio chip. */
+
+.inclusoes-lista {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+
+.chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 3px 9px;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-align: left;
+  border-radius: 999px;
+  border: 1px solid;
+}
+
+.chip-inclui {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-color: var(--accent-text);
+}
+
+.chip-nao_inclui,
+.chip-so-fornecimento {
+  color: #6b3a06;
+  background: #fbe6c2;
+  border-color: #b47512;
+}
+
+.chip-expansivel {
+  cursor: pointer;
+  border-radius: 10px;
+}
+
+.chip-expansivel summary {
+  list-style: none;
+  border-radius: 999px;
+}
+
+.chip-expansivel summary::-webkit-details-marker,
+.chip-expansivel summary::marker {
+  display: none;
+  content: "";
+}
+
+.chip-expansivel[open] summary {
+  margin-bottom: 4px;
+}
+
+.chip-texto-completo {
+  margin: 0;
+  padding: 0;
+  font-size: 0.78rem;
+  white-space: normal;
+}
+
+.aditivo {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.shortlist-vazia {
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--surface-subtle);
+  border-radius: 6px;
+}
+
+/* Upload da prancha e extração automática (etapa Prancha) ------------------- */
+
+.extracao-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* Boletim ------------------------------------------------------------------ */
+
+.obra {
+  margin: 18px 0;
+}
+
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.tabela caption {
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+  padding-bottom: 6px;
+}
+
+.tabela th,
+.tabela td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tabela .numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Descrição legível na linha do boletim: quebra de linha em vez de espremer numa
+   coluna estreita, com os chips de inclusão/exclusão logo abaixo do texto completo. */
+.celula-descricao {
+  min-width: 22rem;
+  white-space: normal;
+}
+
+.boletim-descricao-texto {
+  margin: 0 0 4px;
+}
+
+.tabela tfoot th,
+.tabela tfoot td {
+  font-weight: 700;
+  border-top: 2px solid var(--muted);
+}
+
+.total-geral {
+  margin-top: 16px;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+/* Rodadas -------------------------------------------------------------------- */
+/* Escolha da rodada: uma linha por rodada, com obra, período e etapa por extenso. */
+.rodadas-lista {
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.rodada-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+/* Overlay das âncoras --------------------------------------------------------- */
+/* O desenho publicado pelo servidor, com a idade dele. A borda tracejada é redundância
+   do texto que já vai no `summary` ("desenho do pacote anterior"): cor e forma nunca
+   substituem a palavra. */
+.overlay-bloco {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.overlay-bloco.overlay-vencido {
+  border-style: dashed;
+  border-color: #b47512;
+}
+
+.overlay-imagem {
+  display: block;
+  max-width: 100%;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+}
+
+/* Fecha o `.jornada-medicao` aberto no topo do arquivo. */
+
+/* ===== AUTORAL DESTE PACOTE — e o que ele pede para aprovar ===== */
+
+/*
+ * TUDO NESTE BLOCO É AUTORAL E ESTÁ SENDO DECIDIDO POR ESTA APROVAÇÃO.
+ *
+ * COR: nenhuma cor nova. Todo valor de cor aqui é `var(--token)` da tabela do Design
+ * System ou um hex que JÁ VIVE na folha da medição (#b47512 âmbar de "atenção/disponível",
+ * #6b3a06 tinta sobre âmbar, #a02323/#7a1212 vermelho de recusa, #8a8f8b/#5a625c cinza de
+ * bloqueado/rejeitado). Repetir o hex existente é citação; inventar um sexto matiz seria
+ * paleta nova, e paleta nova tem portão próprio.
+ *
+ * TAMANHO, ESPAÇAMENTO E RAIO: valores NOVOS, não citações — o Design System registra que
+ * o projeto não tem escala tipográfica, de espaçamento nem de raio, e inventar uma é
+ * decisão com artefato próprio. Onde deu, o valor repete um que a folha da medição já usa
+ * (6px de raio, 8px/12px/16px de espaçamento, 0.8rem/0.86rem de texto miúdo).
+ */
+
+/* Moldura do próprio caderno de aprovação (não é produto) ------------------- */
+
+.mock-deck {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 28px 28px 80px;
+}
+
+.mock-capa {
+  padding: 22px 24px;
+  margin-bottom: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--accent-text);
+  border-radius: 8px;
+}
+
+.mock-capa h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: 600;
+  margin: 4px 0 8px;
+}
+
+.mock-capa p {
+  max-width: 78ch;
+  color: var(--ink-secondary);
+}
+
+.mock-capa .eyebrow {
+  color: var(--ink-secondary);
+  text-transform: uppercase;
+}
+
+.mock-indice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.mock-indice a {
+  display: block;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  color: var(--ink);
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+.mock-tela {
+  margin: 32px 0;
+}
+
+.mock-tela-cabecalho {
+  padding: 12px 0 10px;
+  border-top: 2px solid var(--ink);
+}
+
+.mock-tela-cabecalho h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  margin: 0;
+}
+
+.mock-tela-nota {
+  max-width: 82ch;
+  margin: 6px 0 14px;
+  font-size: 0.9rem;
+  color: var(--ink-secondary);
+}
+
+.mock-tela-nota strong {
+  color: var(--ink);
+}
+
+/* O "quadro" é a janela do navegador fingida: dentro dele é produto, fora é caderno. */
+.mock-quadro {
+  margin-bottom: 16px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mock-estado {
+  display: inline-block;
+  margin: 18px 0 6px;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+  background: var(--surface-sunken);
+  border-radius: 999px;
+}
+
+.mock-grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+/* Elemento RESERVADO — desenhado para segurar espaço, não entregue nesta feature ---- */
+/* Tracejado + etiqueta escrita: quem olha não precisa distinguir cor para saber que
+   aquilo não existe ainda. */
+
+.reservado {
+  position: relative;
+  padding: 12px 14px;
+  border: 2px dashed #b47512;
+  border-radius: 6px;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 10px,
+    rgba(180, 117, 18, 0.06) 10px,
+    rgba(180, 117, 18, 0.06) 20px
+  );
+}
+
+.reservado-etiqueta {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b3a06;
+  background: #fbe6c2;
+  border-radius: 999px;
+}
+
+.reservado-condicao {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  color: #6b3a06;
+}
+
+/* Selo de fonte do preço — o dado que o orçamento imprime e a medição não tem -------- */
+
+.selo-fonte-sco {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.selo-fonte-emop {
+  border-color: #b47512;
+  color: #6b3a06;
+}
+
+.selo-fonte-composicao {
+  border-color: #5a625c;
+  color: #5a625c;
+}
+
+.selo-fonte-ausente {
+  border-color: #a02323;
+  color: #7a1212;
+}
+
+/* A planilha — rendição em HTML do .xlsx proposto ----------------------------------- */
+/* Não é a planilha: é o desenho dela. Fonte monoespaçada nos números porque coluna de
+   dinheiro que não alinha é coluna que a orçamentista confere errado. */
+
+.planilha {
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.planilha-topo {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--muted);
+  background: var(--surface-subtle);
+}
+
+.planilha-titulo {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.planilha-meta {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px 18px;
+  font-size: 0.82rem;
+}
+
+.planilha-meta b {
+  font-weight: 600;
+}
+
+.planilha table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.planilha th,
+.planilha td {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.planilha thead th {
+  background: var(--surface-sunken);
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.planilha .col-letra {
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--ink-secondary);
+  background: var(--surface-subtle);
+  text-align: center;
+}
+
+.planilha .num {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.planilha .nova-coluna {
+  background: var(--accent-soft);
+}
+
+.planilha tfoot td {
+  font-weight: 700;
+  background: var(--surface-subtle);
+}
+
+.planilha-sem-preco {
+  padding: 12px 16px;
+  border-top: 1px solid var(--muted);
+  background: var(--surface);
+}
+
+.planilha-sem-preco h4 {
+  margin: 0 0 6px;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7a1212;
+}
+
+.legenda-nova {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 0.82rem;
+  color: var(--ink-secondary);
+}
+
+.legenda-nova i {
+  width: 22px;
+  height: 12px;
+  display: inline-block;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: 2px;
+}
+
+/* Cascata de catálogos — a tela que a medição não tem ------------------------------- */
+
+.cascata {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: fonte;
+}
+
+.cascata > li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.cascata-ordem {
+  flex: 0 0 1.8rem;
+  height: 1.8rem;
+  display: grid;
+  place-items: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.cascata-corpo {
+  flex: 1;
+}
+
+.cascata-corpo h4 {
+  margin: 0 0 2px;
+}
+
+.cascata-controles {
+  display: flex;
+  gap: 6px;
+}
+
+.cascata-controles button {
+  padding: 4px 9px;
+  font-size: 0.78rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+/* Prancha fingida do mock: desenho vetorial, não imagem de cliente ------------------ */
+
+.prancha-fake {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.mock-fecho {
+  margin-top: 40px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid #b47512;
+  border-radius: 8px;
+}
+
+.mock-fecho h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  margin: 0 0 8px;
+}
+
+.mock-fecho ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.mock-fecho li {
+  margin-bottom: 6px;
+  max-width: 88ch;
+}
+
+</style>
+</head>
+<body>
+<div class="mock-deck">
+
+<header class="mock-capa">
+  <span class="eyebrow">F-020 · Design Approval Package · revisão 1</span>
+  <h1>Jornada web do orçamento-base</h1>
+  <p>
+    Este caderno é <strong>artefato de aprovação</strong>, não implementação. Ele existe para
+    que a discordância sobre o desenho aconteça agora, enquanto descartar é barato. Cada tela
+    abaixo aparece dentro de uma moldura: <strong>dentro da moldura é produto</strong>, fora
+    dela é comentário meu.
+  </p>
+  <p>
+    O que está desenhado aqui é <strong>proposta de agente</strong>, exceto onde diz
+    “espelho”: aí é a linguagem que a jornada de medição já estabeleceu e que este pacote
+    apenas reutiliza. Cor e tipografia citam o
+    <span class="mono">docs/engineering/DESIGN_SYSTEM.md</span> lido em 2026-08-19; tamanho,
+    espaçamento e raio são valores novos, porque o projeto não tem escala para nenhum dos três.
+  </p>
+  <p class="dica">
+    Dados de todas as telas são <strong>sintéticos e ilustrativos</strong> — nomes, códigos,
+    quantidades e preços não são especificação.
+  </p>
+  <ul class="mock-indice">
+    <li><a href="#t1">1 · Abertura</a></li>
+    <li><a href="#t2">2 · Cascata de catálogos</a></li>
+    <li><a href="#t3">3 · Prancha e extração</a></li>
+    <li><a href="#t4">4 · Revisão do takeoff</a></li>
+    <li><a href="#t5">5 · Códigos com fonte</a></li>
+    <li><a href="#t6">6 · BDI e montagem</a></li>
+    <li><a href="#t7">7 · A planilha</a></li>
+    <li><a href="#t8">8 · Estados transversais</a></li>
+    <li><a href="#fecho">O que este mock não decide</a></li>
+  </ul>
+</header>
+
+<!-- ==================================================================== TELA 1 -->
+<section class="mock-tela" id="t1">
+  <div class="mock-tela-cabecalho"><h2>Tela 1 — Abertura do orçamento</h2></div>
+  <p class="mock-tela-nota">
+    Decide <strong>o nome e o lugar da jornada</strong>: “Orçamento” entra como terceiro botão
+    do seletor, ao lado de Croqui e Medição, e cada jornada passa a dizer em uma linha qual
+    momento ela é. Foi a confusão medição × orçamento que originou esta feature; a separação
+    tem de estar na casca, não numa nota de rodapé.
+  </p>
+
+  <div class="mock-quadro">
+    <header class="topbar">
+      <a class="brand" href="#t1" aria-label="Croquito - início">
+        <svg class="brand-logo" role="img" aria-label="Croquito" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 150">
+<g transform="translate(136.816,112) scale(0.082)">
+<path d="M310.62939453125 12.0Q224.28173828125 12.0 163.26025390625 -18.04345703125Q102.23876953125 -48.0869140625 69.80419921875 -109.358642578125Q37.36962890625 -170.63037109375 37.36962890625 -263.54345703125Q37.36962890625 -357.45654296875 70.032470703125 -418.5Q102.6953125 -479.54345703125 163.716796875 -509.5869140625Q224.73828125 -539.63037109375 310.62939453125 -539.63037109375Q367.43359375 -539.63037109375 414.955078125 -526.63037109375Q462.4765625 -513.63037109375 497.682861328125 -486.858642578125Q532.88916015625 -460.0869140625 551.965087890625 -418.9130859375Q571.041015625 -377.7392578125 571.041015625 -321.3916015625H409.54248046875Q409.54248046875 -355.130859375 398.270751953125 -376.95703125Q386.9990234375 -398.783203125 364.770751953125 -409.65283203125Q342.54248046875 -420.5224609375 309.71630859375 -420.5224609375Q271.97705078125 -420.5224609375 248.422607421875 -404.511474609375Q224.8681640625 -388.50048828125 213.726806640625 -357.52197265625Q202.58544921875 -326.54345703125 202.58544921875 -281.49951171875V-244.58740234375Q202.58544921875 -200.0 213.99853515625 -169.06494140625Q225.41162109375 -138.1298828125 249.966064453125 -122.34716796875Q274.5205078125 -106.564453125 314.1728515625 -106.564453125Q347.62939453125 -106.564453125 370.12939453125 -117.43408203125Q392.62939453125 -128.3037109375 404.62939453125 -150.858154296875Q416.62939453125 -173.41259765625 416.62939453125 -206.7822265625H571.041015625Q571.041015625 -151.80419921875 551.965087890625 -110.358642578125Q532.88916015625 -68.9130859375 497.9111328125 -41.9130859375Q462.93310546875 -14.9130859375 415.183349609375 -1.45654296875Q367.43359375 12.0 310.62939453125 12.0Z M674.28271484375 0.0V-527.0869140625H809.43359375L821.06396484375 -445.71728515625H828.06396484375Q839.6943359375 -473.4345703125 857.455078125 -494.662841796875Q875.2158203125 -515.89111328125 900.3896484375 -527.7607421875Q925.5634765625 -539.63037109375 956.93310546875 -539.63037109375Q975.10693359375 -539.63037109375 989.965576171875 -536.0869140625Q1004.82421875 -532.54345703125 1011.82421875 -529.0V-385.740234375H960.15087890625Q928.607421875 -385.740234375 905.422607421875 -377.240234375Q882.23779296875 -368.740234375 867.3681640625 -351.555419921875Q852.49853515625 -334.37060546875 845.313720703125 -309.272705078125Q838.12890625 -284.1748046875 838.12890625 -251.435546875V0.0Z M1336.4775390625 12.0Q1248.3037109375 12.0 1185.684326171875 -18.04345703125Q1123.06494140625 -48.0869140625 1089.71728515625 -109.358642578125Q1056.36962890625 -170.63037109375 1056.36962890625 -263.54345703125Q1056.36962890625 -357.45654296875 1089.71728515625 -418.228271484375Q1123.06494140625 -479.0 1185.684326171875 -509.04345703125Q1248.3037109375 -539.0869140625 1336.4775390625 -539.0869140625Q1425.10791015625 -539.0869140625 1487.770751953125 -509.04345703125Q1550.43359375 -479.0 1583.78125 -418.228271484375Q1617.12890625 -357.45654296875 1617.12890625 -263.54345703125Q1617.12890625 -170.63037109375 1583.78125 -109.358642578125Q1550.43359375 -48.0869140625 1487.770751953125 -18.04345703125Q1425.10791015625 12.0 1336.4775390625 12.0ZM1336.4775390625 -107.02099609375Q1377.41259765625 -107.02099609375 1402.836669921875 -122.8037109375Q1428.2607421875 -138.58642578125 1439.858642578125 -169.293212890625Q1451.45654296875 -200.0 1451.45654296875 -244.58740234375V-281.9560546875Q1451.45654296875 -326.54345703125 1439.858642578125 -357.52197265625Q1428.2607421875 -388.50048828125 1402.836669921875 -404.283203125Q1377.41259765625 -420.06591796875 1336.4775390625 -420.06591796875Q1295.54248046875 -420.06591796875 1270.39013671875 -404.283203125Q1245.23779296875 -388.50048828125 1233.639892578125 -357.52197265625Q1222.0419921875 -326.54345703125 1222.0419921875 -281.9560546875V-244.58740234375Q1222.0419921875 -200.0 1233.639892578125 -169.293212890625Q1245.23779296875 -138.58642578125 1270.39013671875 -122.8037109375Q1295.54248046875 -107.02099609375 1336.4775390625 -107.02099609375Z M2060.0869140625 186.04296875V-53.93505859375H2053.54345703125Q2036.45654296875 -32.65234375 2014.0 -17.78271484375Q1991.54345703125 -2.9130859375 1963.989013671875 4.54345703125Q1936.4345703125 12.0 1904.7822265625 12.0Q1840.2607421875 12.0 1792.0869140625 -17.815185546875Q1743.9130859375 -47.63037109375 1717.641357421875 -108.63037109375Q1691.36962890625 -169.63037109375 1691.36962890625 -262.54345703125Q1691.36962890625 -356.9130859375 1717.4130859375 -418.184814453125Q1743.45654296875 -479.45654296875 1792.0869140625 -509.271728515625Q1840.71728515625 -539.0869140625 1907.97802734375 -539.0869140625Q1958.97802734375 -539.0869140625 2001.47802734375 -517.771728515625Q2043.97802734375 -496.45654296875 2068.97802734375 -454.36962890625H2075.97802734375L2089.7822265625 -527.0869140625H2223.93310546875V186.04296875ZM1959.02099609375 -115.8251953125Q1986.1298828125 -115.8251953125 2005.640869140625 -125.73828125Q2025.15185546875 -135.6513671875 2037.249755859375 -153.662353515625Q2049.34765625 -171.67333984375 2055.2607421875 -196.73876953125Q2061.173828125 -221.80419921875 2061.173828125 -252.10888671875V-275.521484375Q2061.173828125 -316.5654296875 2050.575927734375 -347.08740234375Q2039.97802734375 -377.609375 2017.510498046875 -394.435546875Q1995.04296875 -411.26171875 1959.02099609375 -411.26171875Q1921.62939453125 -411.26171875 1899.205322265625 -396.47900390625Q1876.78125 -381.6962890625 1866.91162109375 -352.532958984375Q1857.0419921875 -323.36962890625 1857.0419921875 -280.9560546875V-245.76123046875Q1857.0419921875 -203.80419921875 1866.91162109375 -174.869140625Q1876.78125 -145.93408203125 1899.205322265625 -130.879638671875Q1921.62939453125 -115.8251953125 1959.02099609375 -115.8251953125Z M2524.4345703125 12.0Q2438.65234375 12.0 2392.510986328125 -35.206298828125Q2346.36962890625 -82.41259765625 2346.36962890625 -179.15185546875V-527.0869140625H2510.2158203125V-202.23876953125Q2510.2158203125 -180.76025390625 2515.62890625 -164.705810546875Q2521.0419921875 -148.6513671875 2531.096435546875 -137.966552734375Q2541.15087890625 -127.28173828125 2556.43359375 -122.010009765625Q2571.71630859375 -116.73828125 2590.45556640625 -116.73828125Q2619.10791015625 -116.73828125 2641.26025390625 -130.292724609375Q2663.41259765625 -143.84716796875 2676.1953125 -167.184326171875Q2688.97802734375 -190.521484375 2688.97802734375 -218.9130859375V-527.0869140625H2852.82421875V0.0H2718.1298828125L2708.1298828125 -75.4345703125H2701.1298828125Q2682.58642578125 -48.71728515625 2655.369140625 -28.858642578125Q2628.15185546875 -9.0 2594.749755859375 1.5Q2561.34765625 12.0 2524.4345703125 12.0Z M2978.28271484375 0.0V-527.0869140625H3142.12890625V0.0Z M3451.4765625 12.0Q3399.75927734375 12.0 3364.422607421875 -3.69580078125Q3329.0859375 -19.3916015625 3311.336181640625 -50.163330078125Q3293.58642578125 -80.93505859375 3293.58642578125 -124.89111328125V-408.06591796875H3224.6083984375V-527.0869140625H3299.3037109375L3332.71630859375 -681.15185546875H3457.4326171875V-527.0869140625H3559.84521484375V-408.06591796875H3457.4326171875V-164.607421875Q3457.4326171875 -136.54248046875 3468.4326171875 -121.78173828125Q3479.4326171875 -107.02099609375 3507.9541015625 -107.02099609375H3559.84521484375V-5.0869140625Q3546.58447265625 -0.54345703125 3527.193359375 3.5Q3507.80224609375 7.54345703125 3487.726318359375 9.771728515625Q3467.650390625 12.0 3451.4765625 12.0Z M3906.4775390625 12.0Q3818.3037109375 12.0 3755.684326171875 -18.04345703125Q3693.06494140625 -48.0869140625 3659.71728515625 -109.358642578125Q3626.36962890625 -170.63037109375 3626.36962890625 -263.54345703125Q3626.36962890625 -357.45654296875 3659.71728515625 -418.228271484375Q3693.06494140625 -479.0 3755.684326171875 -509.04345703125Q3818.3037109375 -539.0869140625 3906.4775390625 -539.0869140625Q3995.10791015625 -539.0869140625 4057.770751953125 -509.04345703125Q4120.43359375 -479.0 4153.78125 -418.228271484375Q4187.12890625 -357.45654296875 4187.12890625 -263.54345703125Q4187.12890625 -170.63037109375 4153.78125 -109.358642578125Q4120.43359375 -48.0869140625 4057.770751953125 -18.04345703125Q3995.10791015625 12.0 3906.4775390625 12.0ZM3906.4775390625 -107.02099609375Q3947.41259765625 -107.02099609375 3972.836669921875 -122.8037109375Q3998.2607421875 -138.58642578125 4009.858642578125 -169.293212890625Q4021.45654296875 -200.0 4021.45654296875 -244.58740234375V-281.9560546875Q4021.45654296875 -326.54345703125 4009.858642578125 -357.52197265625Q3998.2607421875 -388.50048828125 3972.836669921875 -404.283203125Q3947.41259765625 -420.06591796875 3906.4775390625 -420.06591796875Q3865.54248046875 -420.06591796875 3840.39013671875 -404.283203125Q3815.23779296875 -388.50048828125 3803.639892578125 -357.52197265625Q3792.0419921875 -326.54345703125 3792.0419921875 -281.9560546875V-244.58740234375Q3792.0419921875 -200.0 3803.639892578125 -169.293212890625Q3815.23779296875 -138.58642578125 3840.39013671875 -122.8037109375Q3865.54248046875 -107.02099609375 3906.4775390625 -107.02099609375Z" fill="#F2F4F7"/>
+<rect x="2960.0" y="-876.0" width="200" height="200" fill="#0E1116" stroke="#00E389" stroke-width="58"/>
+</g>
+</svg>
+        <small>Revisão humana autenticada</small>
+      </a>
+      <div class="topbar-actions">
+        <nav class="journey-switch" aria-label="Jornadas">
+          <button class="topbar-link" type="button">Croqui</button>
+          <button class="topbar-link" type="button">Medição</button>
+          <button class="topbar-link" type="button" aria-current="page">Orçamento</button>
+        </nav>
+        <span class="schema-pill">Cena 1.4.0</span>
+        <span class="identity-pill">Sessão: orcamentista.exemplo</span>
+        <button class="topbar-link" type="button">Sair</button>
+      </div>
+    </header>
+
+    <header class="topbar">
+      <div>
+        <span class="eyebrow">ORÇAMENTO-BASE · PRÉ-LICITAÇÃO</span>
+        <h1>Nenhum orçamento aberto</h1>
+        <p class="topbar-meta">
+          Escolha um orçamento da lista ou abra um novo.
+        </p>
+      </div>
+      <p class="aviso-fixo">
+        Orçamento-base de pré-licitação; o preço vem da cascata declarada — nenhum preço
+        daqui alcança um boletim de medição.
+      </p>
+      <div class="topbar-acoes">
+        <span class="topbar-meta">Sessão: orcamentista.exemplo</span>
+        <button type="button" class="topbar-link topbar-link-botao">Sair</button>
+      </div>
+    </header>
+
+    <div class="conteudo">
+      <div class="workspace duas-colunas">
+        <section class="painel">
+          <div class="painel-cabecalho"><h2>Orçamentos do tenant</h2></div>
+          <ul class="confirmados-lista" style="list-style: none; padding: 0">
+            <li class="cartao done">
+              <h3>Praça do Exemplo — trecho norte</h3>
+              <p class="cartao-status">Planilha publicada · versão 9</p>
+              <p class="digest">pex-norte · orçamento 4f2a91c7 · BDI 25,00%</p>
+              <button type="button" class="botao-secundario">Abrir orçamento</button>
+            </li>
+            <li class="cartao available">
+              <h3>Largo Sintético</h3>
+              <p class="cartao-status">Códigos em aberto · versão 4</p>
+              <p class="digest">largo-sintetico · orçamento b70c33d1 · BDI não declarado</p>
+              <button type="button" class="botao-secundario">Abrir orçamento</button>
+            </li>
+          </ul>
+          <p class="dica">Mostrando 2 de 2.</p>
+        </section>
+
+        <section class="painel">
+          <div class="painel-cabecalho"><h2>Abrir orçamento novo</h2></div>
+          <div class="formulario">
+            <label class="campo">
+              Chave da obra
+              <input type="text" value="praca-do-exemplo" />
+              <span class="campo-dica">Minúsculas, números e hífen. É ela que amarra os artefatos.</span>
+            </label>
+            <label class="campo">
+              Nome da obra
+              <input type="text" value="Praça do Exemplo" />
+            </label>
+            <label class="campo">
+              Endereço
+              <input type="text" value="Rua Sintética, s/n — bairro de exemplo" />
+            </label>
+            <div class="acoes-linha">
+              <button type="button" class="botao-primario">Abrir orçamento</button>
+            </div>
+            <p class="dica">
+              O catálogo não é pedido aqui: a cascata é a etapa seguinte, e ela aceita mais de
+              uma fonte.
+            </p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: vazio</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <div class="painel-cabecalho"><h2>Orçamentos do tenant</h2></div>
+        <p class="dica">
+          Nenhum orçamento neste tenant ainda. Abra o primeiro no painel ao lado — ele começa
+          pela cascata de catálogos.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: carregando</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <div class="painel-cabecalho"><h2>Orçamentos do tenant</h2></div>
+        <p class="dica">Carregando orçamentos…</p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: erro de leitura</span>
+  <div class="mock-quadro">
+    <p class="banner-erro">
+      Não foi possível ler os orçamentos deste tenant. Tente de novo; se persistir, o ambiente
+      pode estar fora do ar.
+    </p>
+    <div class="conteudo">
+      <section class="painel">
+        <div class="painel-cabecalho">
+          <h2>Orçamentos do tenant</h2>
+          <div class="cabecalho-controles">
+            <button type="button" class="botao-secundario">Recarregar</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 2 -->
+<section class="mock-tela" id="t2">
+  <div class="mock-tela-cabecalho"><h2>Tela 2 — Cascata de catálogos</h2></div>
+  <p class="mock-tela-nota">
+    <strong>Não existe equivalente na medição</strong>, e é o que separa os dois momentos: lá o
+    catálogo é um só e imutável na rodada; aqui são várias fontes numa ordem que a
+    orçamentista declara. A ordem é a regra de precificação — o primeiro catálogo que tiver o
+    código é o que precifica —, então ela precisa ser visível, numerada e reordenável, nunca
+    implícita.
+  </p>
+
+  <div class="mock-quadro">
+    <nav class="etapas" aria-label="Etapas do orçamento">
+      <button type="button" class="etapa-tab">Resumo</button>
+      <button type="button" class="etapa-tab ativa">Cascata · em aberto</button>
+      <button type="button" class="etapa-tab blocked" disabled>Prancha · bloqueada</button>
+      <button type="button" class="etapa-tab blocked" disabled>Revisão do takeoff · bloqueada</button>
+      <button type="button" class="etapa-tab blocked" disabled>Códigos · bloqueada</button>
+      <button type="button" class="etapa-tab blocked" disabled>BDI e montagem · bloqueada</button>
+      <button type="button" class="etapa-tab blocked" disabled>Planilha · bloqueada</button>
+      <button type="button" class="etapa-tab recarregar">Recarregar</button>
+    </nav>
+    <div class="conteudo">
+      <section class="painel">
+        <div class="painel-cabecalho">
+          <h2>Cascata de fontes de preço</h2>
+          <div class="cabecalho-controles">
+            <button type="button" class="botao-secundario">Instalar catálogo</button>
+          </div>
+        </div>
+        <p class="dica">
+          A ordem manda: para cada item, vale o preço da primeira fonte que tiver o código.
+          Uma origem não se repete na cascata.
+        </p>
+        <ol class="cascata">
+          <li>
+            <span class="cascata-ordem">1</span>
+            <div class="cascata-corpo">
+              <h4>SCO — catálogo oficial</h4>
+              <div class="codigo-selos">
+                <span class="selo selo-fonte-sco">Origem SCO</span>
+                <span class="selo selo-neutro">Data-base 04/2026</span>
+                <span class="selo selo-neutro">3.412 itens</span>
+              </div>
+              <p class="digest">sha256 9f4c…b210 · sco-catalogo.xlsx · instalado em 19/08/2026</p>
+            </div>
+            <div class="cascata-controles">
+              <button type="button" disabled>Subir</button>
+              <button type="button">Descer</button>
+              <button type="button">Remover</button>
+            </div>
+          </li>
+          <li>
+            <span class="cascata-ordem">2</span>
+            <div class="cascata-corpo">
+              <h4>EMOP — catálogo estadual</h4>
+              <div class="codigo-selos">
+                <span class="selo selo-fonte-emop">Origem EMOP</span>
+                <span class="selo selo-neutro">Data-base 07/2026</span>
+                <span class="selo selo-neutro">1.897 itens</span>
+              </div>
+              <p class="digest">sha256 2b81…7ce4 · emop-2026-07.dbf · instalado em 19/08/2026</p>
+            </div>
+            <div class="cascata-controles">
+              <button type="button">Subir</button>
+              <button type="button">Descer</button>
+              <button type="button">Remover</button>
+            </div>
+          </li>
+          <li>
+            <span class="cascata-ordem">3</span>
+            <div class="cascata-corpo">
+              <h4>Composições próprias</h4>
+              <div class="codigo-selos">
+                <span class="selo selo-fonte-composicao">Origem composição</span>
+                <span class="selo selo-neutro">Data-base 08/2026</span>
+                <span class="selo selo-neutro">12 itens</span>
+              </div>
+              <p class="digest">sha256 c05d…19af · composicoes.json · preço recomputado na importação</p>
+            </div>
+            <div class="cascata-controles">
+              <button type="button">Subir</button>
+              <button type="button" disabled>Descer</button>
+              <button type="button">Remover</button>
+            </div>
+          </li>
+        </ol>
+        <div class="acoes-linha">
+          <button type="button" class="botao-primario">Confirmar cascata e seguir</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: cascata vazia</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <div class="painel-cabecalho">
+          <h2>Cascata de fontes de preço</h2>
+          <div class="cabecalho-controles">
+            <button type="button" class="botao-primario">Instalar catálogo</button>
+          </div>
+        </div>
+        <p class="dica">
+          Nenhuma fonte instalada. Um orçamento sem cascata não precifica nada — comece pelo
+          SCO, que é o catálogo oficial da prefeitura.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: recusa — origem repetida</span>
+  <div class="mock-quadro">
+    <p class="banner-erro">
+      Esta cascata já tem uma fonte EMOP. Cada origem entra uma vez só; para trocar a
+      data-base, remova a fonte atual e instale a nova.
+    </p>
+    <div class="conteudo">
+      <section class="painel">
+        <p class="digest">ESTIMATE_CASCADE_ORIGIN_DUPLICATE · nada foi instalado</p>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 3 -->
+<section class="mock-tela" id="t3">
+  <div class="mock-tela-cabecalho"><h2>Tela 3 — Prancha e extração</h2></div>
+  <p class="mock-tela-nota">
+    <strong>Espelho.</strong> Mesma associação de prancha e mesma máquina de extração da
+    medição, com os mesmos cinco estados. Entra no pacote para provar que a jornada é a mesma
+    — não há desenho novo sendo pedido aqui.
+  </p>
+
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <div class="mock-grade">
+        <div class="cartao">
+          <p class="cartao-status">Extração · ociosa</p>
+          <p>Prancha associada. A extração ainda não foi disparada.</p>
+          <button type="button" class="botao-primario">Extrair legenda</button>
+        </div>
+        <div class="cartao available">
+          <p class="cartao-status">Extração · na fila</p>
+          <p>Pedido publicado na fila. Esta tela se atualiza sozinha.</p>
+        </div>
+        <div class="cartao available">
+          <p class="cartao-status">Extração · em curso</p>
+          <p>Lendo a legenda da prancha. Não feche a página.</p>
+        </div>
+        <div class="cartao done">
+          <p class="cartao-status">Extração · concluída</p>
+          <p>18 itens de legenda lidos. Revisão do takeoff liberada.</p>
+        </div>
+        <div class="cartao">
+          <p class="cartao-status">Extração · falhou</p>
+          <p class="cartao-motivo">
+            O provedor não respondeu dentro do teto. Nada foi gravado; pode repetir.
+          </p>
+          <button type="button" class="botao-secundario">Tentar de novo</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 4 -->
+<section class="mock-tela" id="t4">
+  <div class="mock-tela-cabecalho"><h2>Tela 4 — Revisão do takeoff</h2></div>
+  <p class="mock-tela-nota">
+    <strong>Espelho.</strong> Prancha com âncoras à esquerda, itens à direita, decisão item a
+    item. Idêntica à medição de propósito: quem já revisa medição não reaprende nada.
+  </p>
+
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <div class="workspace duas-colunas">
+        <section class="painel">
+          <div class="painel-cabecalho"><h2>Prancha</h2></div>
+          <svg class="prancha-fake" viewBox="0 0 520 300" role="img"
+               aria-label="Desenho esquemático de uma praça, ilustrativo">
+            <rect x="18" y="18" width="484" height="264" fill="#fafaf8" stroke="#9aa0a8"/>
+            <path d="M60 250 L60 70 L300 70 L300 250 Z" fill="none" stroke="#14181d" stroke-width="2"/>
+            <path d="M300 160 L450 160" stroke="#14181d" stroke-width="2"/>
+            <path d="M60 250 L460 250" stroke="#14181d" stroke-width="2"/>
+            <circle cx="380" cy="110" r="26" fill="none" stroke="#5b6169" stroke-dasharray="5 4"/>
+            <circle cx="60" cy="70" r="11" fill="#00c877"/>
+            <text x="60" y="74" text-anchor="middle" font-size="11" font-weight="700" fill="#0e1116">1</text>
+            <circle cx="300" cy="250" r="11" fill="#00c877"/>
+            <text x="300" y="254" text-anchor="middle" font-size="11" font-weight="700" fill="#0e1116">2</text>
+            <circle cx="380" cy="110" r="11" fill="#00c877"/>
+            <text x="380" y="114" text-anchor="middle" font-size="11" font-weight="700" fill="#0e1116">3</text>
+          </svg>
+          <p class="dica">Desenho ilustrativo — não é prancha de cliente.</p>
+        </section>
+        <section class="painel">
+          <div class="painel-cabecalho"><h2>Itens da legenda</h2></div>
+          <ul class="itens">
+            <li class="item confirmed">
+              <div class="item-botao">
+                <span class="item-numero">1</span>
+                <span class="item-corpo">
+                  <span class="item-rotulo">Alambrado em tela galvanizada, h = 2,00 m</span>
+                  <span class="item-estado">confirmado</span>
+                  <span class="item-quantidade">120,00 m</span>
+                </span>
+              </div>
+            </li>
+            <li class="item proposed selecionado">
+              <div class="item-botao">
+                <span class="item-numero">2</span>
+                <span class="item-corpo">
+                  <span class="item-rotulo">Piso intertravado 16 faces, e = 6 cm</span>
+                  <span class="item-estado">proposto — aguardando decisão</span>
+                  <span class="item-quantidade">340,50 m²</span>
+                  <span class="item-raw">lido da legenda: “PISO INTERTRAV. 16F E=6CM — 340,50M2”</span>
+                </span>
+              </div>
+            </li>
+            <li class="item rejected">
+              <div class="item-botao">
+                <span class="item-numero">3</span>
+                <span class="item-corpo">
+                  <span class="item-rotulo">Bebedouro em aço inox com filtro</span>
+                  <span class="item-estado">rejeitado</span>
+                  <span class="item-nota">nota: mobiliário fora do escopo desta praça</span>
+                </span>
+              </div>
+            </li>
+          </ul>
+        </section>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 5 -->
+<section class="mock-tela" id="t5">
+  <div class="mock-tela-cabecalho"><h2>Tela 5 — Códigos, com a fonte citada</h2></div>
+  <p class="mock-tela-nota">
+    Aqui a jornada deixa de ser espelho. Na medição todo candidato vem do mesmo catálogo e a
+    fonte é redundante; no orçamento <strong>a fonte é parte da decisão</strong> — confirmar um
+    código é escolher de qual catálogo aquele preço sai, com que data-base. O selo de origem
+    entra em cada candidato, e a ordem da cascata aparece no cartão.
+  </p>
+
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <div class="workspace duas-colunas">
+                <section class="painel">
+          <div class="painel-cabecalho"><h2>Decisões</h2></div>
+          <ul class="confirmados-lista">
+            <li>
+              <strong>Item 1</strong> · <span class="mono">04-05-00010</span>
+              <div class="codigo-selos"><span class="selo selo-fonte-sco">SCO 04/2026</span></div>
+            </li>
+            <li>
+              <strong>Item 4</strong> · <span class="mono">COMP-0007</span>
+              <div class="codigo-selos"><span class="selo selo-fonte-composicao">Composição 08/2026</span></div>
+            </li>
+          </ul>
+
+          <div class="confirmados">
+            <h3>Sem preço em nenhuma fonte</h3>
+            <div class="codigo-card">
+              <div class="codigo-topo">
+                <span>Item 5 · Bebedouro em aço inox com filtro</span>
+                <span class="mono">2,00 un</span>
+              </div>
+              <div class="codigo-selos">
+                <span class="selo selo-fonte-ausente">sem preço na cascata</span>
+              </div>
+              <p class="dica">
+                Nenhuma das três fontes tem código para este item. Ele entra no orçamento
+                declarado, sem preço, no bloco “itens sem preço na cascata” da planilha — o
+                orçamento não inventa valor.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="painel">
+          <div class="painel-cabecalho"><h2>Item 2 · Piso intertravado 16 faces, e = 6 cm</h2></div>
+          <div class="busca">
+            <label class="campo">
+              Buscar no catálogo
+              <input type="text" value="piso intertravado" />
+            </label>
+            <button type="button" class="botao-secundario">Buscar</button>
+          </div>
+
+          <div class="codigo-card escolhido">
+            <div class="codigo-topo">
+              <span class="codigo-code">12.015.0030</span>
+              <span class="mono">R$ 96,80 / m²</span>
+            </div>
+            <div class="codigo-selos">
+              <span class="selo selo-fonte-emop">EMOP · data-base 07/2026</span>
+              <span class="selo selo-neutro">2ª fonte da cascata</span>
+              <span class="selo selo-execucao_incluida">execução incluída</span>
+            </div>
+            <p class="codigo-descricao">
+              Piso intertravado de concreto, 16 faces, e = 6 cm, assentado sobre colchão de
+              areia, inclusive compactação e rejuntamento.
+            </p>
+            <p class="dica">Escolhido — sem código no SCO, o preço vem da 2ª fonte.</p>
+          </div>
+
+          <div class="codigo-card">
+            <div class="codigo-topo">
+              <span class="codigo-code">04-10-00250</span>
+              <span class="mono">R$ 78,40 / m²</span>
+            </div>
+            <div class="codigo-selos">
+              <span class="selo selo-fonte-sco">SCO · data-base 04/2026</span>
+              <span class="selo selo-neutro">1ª fonte da cascata</span>
+              <span class="selo selo-somente_material">só fornecimento</span>
+            </div>
+            <p class="codigo-descricao">
+              Fornecimento de piso intertravado de concreto, 16 faces, e = 6 cm — sem
+              assentamento.
+            </p>
+            <p class="campo-aviso">
+              É código de fornecimento, não de execução: escolher este deixa o assentamento
+              sem preço.
+            </p>
+          </div>
+
+          <div class="acoes-linha">
+            <button type="button" class="botao-primario">Confirmar código</button>
+            <button type="button" class="botao-secundario">Rejeitar com nota</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 6 -->
+<section class="mock-tela" id="t6">
+  <div class="mock-tela-cabecalho"><h2>Tela 6 — BDI e montagem do orçamento</h2></div>
+  <p class="mock-tela-nota">
+    Conceito que <strong>não existe em nenhuma linha do produto hoje</strong> e nasce aqui.
+    Decisão sua desta sessão: <strong>percentual único por orçamento agora</strong>, com o BDI
+    por grupo desenhado apenas como espaço reservado — visualmente distinguido e inerte, não
+    um controle que não faz nada.
+  </p>
+
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <div class="workspace duas-colunas">
+        <section class="painel">
+          <div class="painel-cabecalho"><h2>BDI</h2></div>
+          <div class="formulario">
+            <label class="campo">
+              Percentual de BDI
+              <input type="text" value="25,00" />
+              <span class="campo-dica">
+                Duas casas decimais. Aplica-se a todas as linhas deste orçamento e é declarado
+                na planilha.
+              </span>
+            </label>
+            <p class="dica">
+              O preço unitário com BDI é truncado em centavo, linha a linha, como todo dinheiro
+              deste módulo — e o total sai do preço com BDI.
+            </p>
+
+            <div class="reservado">
+              <span class="reservado-etiqueta">Reservado — não entra nesta feature</span>
+              <h4>BDI por grupo</h4>
+              <p class="dica">
+                Percentuais distintos para serviços e para equipamentos/fornecimento, como a
+                prática admite.
+              </p>
+              <p class="reservado-condicao">
+                Vira real quando o item carregar grupo como dado e houver decisão humana
+                registrada em ADR. Até lá <strong>não é renderizado no produto</strong> —
+                aparece neste caderno para segurar o lugar, não para ser um controle desligado.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="painel">
+          <div class="painel-cabecalho"><h2>Prévia do orçamento</h2></div>
+          <ul class="confirmados-lista" style="list-style: none; padding: 0">
+            <li><strong>4</strong> itens precificados · <strong>1</strong> sem preço</li>
+            <li>Total sem BDI · <span class="mono">R$ 73.598,74</span></li>
+            <li>BDI (25,00%) · <span class="mono">R$ 18.397,70</span></li>
+            <li>Total geral · <span class="mono">R$ 91.996,44</span></li>
+          </ul>
+          <p class="dica">
+            O BDI exibido é a diferença entre os dois totais, não 25% do total sem BDI: cada
+            linha trunca no centavo antes de somar, e é a soma truncada que a planilha imprime.
+          </p>
+          <div class="acoes-linha">
+            <button type="button" class="botao-primario">Montar orçamento</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 7 -->
+<section class="mock-tela" id="t7">
+  <div class="mock-tela-cabecalho"><h2>Tela 7 — A planilha</h2></div>
+  <p class="mock-tela-nota">
+    É <strong>o entregável</strong>: o que a prefeitura valida. A base são as sete colunas do
+    boletim que já existem em código; o orçamento acrescenta duas, marcadas em verde abaixo.
+    <strong>Isto é a rendição do <span class="mono">.xlsx</span>, não uma tela</strong> —
+    a aprovação aqui é do layout impresso.
+  </p>
+
+  <div class="planilha">
+    <div class="planilha-topo">
+      <p class="planilha-titulo">Orçamento-base — Praça do Exemplo</p>
+      <div class="planilha-meta">
+        <span><b>Endereço:</b> Rua Sintética, s/n</span>
+        <span><b>BDI:</b> 25,00%</span>
+        <span><b>Emitido em:</b> 19/08/2026</span>
+        <span><b>Fonte 1:</b> SCO · data-base 04/2026 · sha256 9f4c…b210</span>
+        <span><b>Fonte 2:</b> EMOP · data-base 07/2026 · sha256 2b81…7ce4</span>
+        <span><b>Fonte 3:</b> Composição · data-base 08/2026 · sha256 c05d…19af</span>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th class="col-letra">A</th>
+          <th class="col-letra">B</th>
+          <th class="col-letra nova-coluna">C</th>
+          <th class="col-letra">D</th>
+          <th class="col-letra">E</th>
+          <th class="col-letra">F</th>
+          <th class="col-letra nova-coluna">G</th>
+          <th class="col-letra">H</th>
+          <th class="col-letra">I</th>
+        </tr>
+        <tr>
+          <th>Item</th>
+          <th>Cód.</th>
+          <th class="nova-coluna">Fonte</th>
+          <th>Descrição</th>
+          <th>Un</th>
+          <th>Valor unit.</th>
+          <th class="nova-coluna">Valor unit. c/ BDI</th>
+          <th>Quant.</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="num">01</td>
+          <td class="mono">04-05-00010</td>
+          <td class="nova-coluna">SCO 04/2026</td>
+          <td>Alambrado em tela galvanizada, h = 2,00 m, execução</td>
+          <td>m</td>
+          <td class="num">187,42</td>
+          <td class="num nova-coluna">234,27</td>
+          <td class="num">120,00</td>
+          <td class="num">28.112,40</td>
+        </tr>
+        <tr>
+          <td class="num">02</td>
+          <td class="mono">12.015.0030</td>
+          <td class="nova-coluna">EMOP 07/2026</td>
+          <td>Piso intertravado 16 faces, e = 6 cm, assentado</td>
+          <td>m²</td>
+          <td class="num">96,80</td>
+          <td class="num nova-coluna">121,00</td>
+          <td class="num">340,50</td>
+          <td class="num">41.200,50</td>
+        </tr>
+        <tr>
+          <td class="num">03</td>
+          <td class="mono">COMP-0007</td>
+          <td class="nova-coluna">Composição 08/2026</td>
+          <td>Banco de concreto pré-moldado, assentamento incluso</td>
+          <td>un</td>
+          <td class="num">412,35</td>
+          <td class="num nova-coluna">515,43</td>
+          <td class="num">14,00</td>
+          <td class="num">7.216,02</td>
+        </tr>
+        <tr>
+          <td class="num">04</td>
+          <td class="mono">05-10-00120</td>
+          <td class="nova-coluna">SCO 04/2026</td>
+          <td>Plantio de grama esmeralda em placas</td>
+          <td>m²</td>
+          <td class="num">24,17</td>
+          <td class="num nova-coluna">30,21</td>
+          <td class="num">512,00</td>
+          <td class="num">15.467,52</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="8">Total sem BDI</td>
+          <td class="num">73.598,74</td>
+        </tr>
+        <tr>
+          <td colspan="8">BDI (25,00%)</td>
+          <td class="num">18.397,70</td>
+        </tr>
+        <tr>
+          <td colspan="8">Total geral</td>
+          <td class="num">91.996,44</td>
+        </tr>
+      </tfoot>
+    </table>
+    <div class="planilha-sem-preco">
+      <h4>Itens sem preço na cascata</h4>
+      <p class="dica">
+        05 · Bebedouro em aço inox com filtro · 2,00 un — nenhuma fonte da cascata tem código
+        para este item. Ele é declarado sem valor; o orçamento não o precifica por fora.
+      </p>
+    </div>
+  </div>
+  <p class="legenda-nova"><i></i> colunas que o orçamento acrescenta ao layout do boletim.</p>
+
+  <span class="mock-estado">Estado: exportação aprovada pela auditoria</span>
+  <div class="mock-quadro">
+    <p class="banner-sucesso">
+      Planilha publicada. A auditoria reabriu o arquivo e reconferiu 312 células — nenhuma
+      divergência.
+    </p>
+    <div class="conteudo">
+      <section class="painel">
+        <div class="acoes-linha">
+          <button type="button" class="botao-primario">Baixar planilha</button>
+        </div>
+        <p class="digest">orcamento.xlsx · sha256 7ad1…9b02 · 19/08/2026 14:32</p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: auditoria reprovou — nada foi publicado</span>
+  <div class="mock-quadro">
+    <p class="banner-erro">
+      A auditoria recusou a planilha e <strong>nada foi publicado</strong>. O arquivo gerado foi
+      descartado; o orçamento continua como estava.
+    </p>
+    <div class="conteudo">
+      <section class="painel">
+        <p class="digest">
+          CELL_VALUE_MISMATCH · aba “ORÇAMENTO” · célula I3 · previsto 7.216,02 · encontrado
+          7.216,03
+        </p>
+        <p class="dica">
+          O portão é o mesmo da medição: o arquivo só é publicado depois de reaberto e
+          reconferido. Falha do auditor não publica nada.
+        </p>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 8 -->
+<section class="mock-tela" id="t8">
+  <div class="mock-tela-cabecalho"><h2>Tela 8 — Estados transversais</h2></div>
+  <p class="mock-tela-nota">
+    Os estados que se descobre tarde quando não entram no pacote. O 403 está desenhado
+    <strong>genérico de propósito</strong>: qual papel autoriza o orçamento é decisão sua ainda
+    em aberto, e o texto não pode fingir que ela foi tomada.
+  </p>
+
+  <span class="mock-estado">Sem autorização (403)</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <div class="painel-cabecalho"><h2>Sem acesso ao orçamento</h2></div>
+        <p>
+          Sua conta não tem o papel que autoriza a jornada de orçamento neste tenant. Peça a
+          quem administra o acesso da sua organização.
+        </p>
+        <p class="dica">
+          A jornada não aparece no seletor para quem não tem o papel; esta tela é o caso de
+          quem chega por link direto.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">O orçamento andou entre a leitura e o ato (409)</span>
+  <div class="mock-quadro">
+    <p class="banner-conflito">
+      <span>
+        O orçamento mudou enquanto esta tela estava aberta — sua decisão não foi gravada.
+        Recarregue e refaça o ato sobre a versão nova.
+      </span>
+      <button type="button" class="botao-secundario">Recarregar orçamento</button>
+    </p>
+  </div>
+
+  <span class="mock-estado">Recusa de domínio, traduzida por tabela</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <p class="banner-erro">
+          Este item cita um catálogo que não está na cascata deste orçamento. Instale a fonte
+          ou escolha um código de uma das fontes instaladas.
+        </p>
+        <p class="digest">ESTIMATE_LINE_SOURCE_UNKNOWN</p>
+        <p class="banner-erro">
+          O código escolhido não tem o formato da fonte de onde ele diz vir.
+        </p>
+        <p class="digest">ESTIMATE_CODE_INVALID_FOR_ORIGIN</p>
+        <p class="dica">
+          Toda mensagem sai de tabela, como na medição: o código da invariante vem do servidor
+          e a frase é escrita aqui. Nenhuma mensagem é inventada em tempo de execução, e o
+          código fica visível para o suporte.
+        </p>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== FECHO -->
+<div class="mock-fecho" id="fecho">
+  <h2>O que este mock não decide</h2>
+  <ul>
+    <li>
+      <strong>Qual papel autoriza a jornada.</strong> Reusar o papel da medição
+      (<span class="mono">orcamentista</span>) ou criar um próprio para pré-licitação é decisão
+      sua, ainda aberta. O 403 aqui é genérico por causa disso.
+    </li>
+    <li>
+      <strong>Como o escritor de planilha passa a aceitar o orçamento.</strong> Adaptador ou
+      generalização do escritor é decisão técnica do plano, não deste artefato — o que se
+      aprova aqui é o layout impresso.
+    </li>
+    <li>
+      <strong>A forma do auditor.</strong> Reusar o auditor da medição ou escrever um próprio
+      fica para o plano; o que este pacote fixa é que <em>existe</em> portão e que ele falha
+      fechado.
+    </li>
+    <li>
+      <strong>BDI por grupo.</strong> Desenhado como reservado, com a condição escrita. Aprovar
+      este caderno não aprova o BDI por grupo.
+    </li>
+    <li>
+      <strong>Copy final.</strong> Os textos aqui são proposta. Aprovar o visual não aprova o
+      texto — os dois são atos separados, como foi na F-007.
+    </li>
+    <li>
+      <strong>Layout conferido contra o exemplar real.</strong> Enquanto o arquivo da
+      prefeitura não for lido, o layout desta rendição sai do modelo do boletim que já existe
+      em código.
+    </li>
+  </ul>
+</div>
+
+</div>
+
+</body>
+</html>

@@ -5,7 +5,8 @@ Responsável: Product
 Última revisão: 2026-08-19 (F-012 documentada — operação SaaS da autorização de IA,
 ADR-0036 `Proposed`, implementação completa; inventário F-013..F-017 aberto; F-018 e F-019
 abertas — edição de forma da proposta e preview visual da revisão, nascidas da primeira
-revisão real em nuvem)
+revisão real em nuvem; F-020 aberta com contrato — jornada web do orçamento-base, destravada
+pelo exemplar real de planilha)
 
 ## Uso no ciclo de engenharia
 
@@ -42,6 +43,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-017 | A DEFINIR | READY_FOR_SPEC | Custo agregado por tenant e trilha de auditoria do entitlement na tela (a definir em contrato) |
 | F-018 | A DEFINIR | READY_FOR_SPEC | Edição de forma da proposta na UI da revisão — corrigir vértice/recuo manualmente (a definir em contrato) |
 | F-019 | A DEFINIR | READY_FOR_SPEC | Preview visual da cena resolvida na revisão (a definir em contrato) |
+| F-020 | HIGH | READY_FOR_SPEC | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -199,6 +201,25 @@ blockers) na tela de revisão, sem a geometria resolvida visível antes do expor
 Feature Contract: esta linha é o registro canônico até a especificação, e a prioridade é
 decisão humana pendente.
 
+F-020 — jornada web do orçamento-base — nasce em 2026-08-19, por seleção humana, numa sessão
+de revisão visual em que o usuário perguntou se "Medição" era o orçamento. Não era: são dois
+momentos do mesmo contexto delimitado, com regras de preço opostas, e só a medição chegou ao
+cliente. O orçamento-base existe desde o M8 no domínio, nos importadores e no CLI, e nunca
+teve rota `/v1` nem tela — verificado no código e no histórico do Git, não é interface
+perdida em migração. A condição que o
+[ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md) e o bullet 16 desta
+seção registravam — "quando houver exemplar real do modelo da prefeitura, como template" —
+**foi satisfeita na mesma data**, com o usuário fornecendo o exemplar e confirmando que o
+orçamento sai no mesmo layout do boletim. A conferência do arquivo real mostrou que as sete
+colunas já estão modeladas como dado no contexto de medição, e que faltam ao layout duas
+coisas que o boletim não precisa e o orçamento exige: a coluna de fonte do preço — cuja
+informação a proveniência por linha (VAL-09) já carrega — e o BDI, que **não existe em
+nenhum arquivo do repositório** e por decisão humana da mesma data entra no escopo, porque
+orçamento-base de pré-licitação sem BDI não é submissível. A feature é `INTERFACE_CHANGE` e
+exigirá Design Approval Package antes do planejamento; o contrato está em
+[F-020](../features/F-020-orcamento-base-web/feature.md), com prioridade `HIGH` por decisão
+humana. Segue como dependência externa o arquivo `.DBF` real do catálogo EMOP.
+
 ## Agora — MVP privado
 
 - Golden dataset e eval harness.
@@ -261,7 +282,9 @@ próximos marcos — **dois momentos com regras de preço diferentes**:
   assinatura GRE) + guardrail `BULLETIN_PRICE_ORIGIN_FORBIDDEN`; composição manual
   compilada a catálogo e orçamento-base (`build-estimate`) com cascata declarada e
   proveniência por linha (VAL-09). A UI do orçamento-base e o `.xlsx` no modelo da
-  prefeitura ficam para marco futuro, quando houver exemplar real como template.
+  prefeitura ficavam para marco futuro, condicionados a haver exemplar real como
+  template; a condição foi satisfeita em 2026-08-19 e esse marco virou
+  [F-020](../features/F-020-orcamento-base-web/feature.md).
 
 ## Próximo — medição além do v1
 
@@ -343,7 +366,7 @@ independente. Nenhuma linha afirma estado remoto.
 | 13 | Agora — medição de obra (contexto valuation, v1 em marcos) / **Pré-licitação (orçamento-base)**: aí sim vale a cadeia **SCO → EMOP → composição manual**. Importador da tabela EMOP como segundo catálogo com proveniência (`PriceCatalogEntry.origin` vira dado; catálogo digital oficial é **pago** via GRE, em .DBF, com sincronização mensal possível por rotina — nova versão com data-base própria, nunca troca silenciosa de preço), e composição com coeficientes declarados (item → várias linhas: horas, insumos). É o coração do "gerador de orçamento" da fase 1 da visão de produto. | EM OPERAÇÃO/HOMOLOGAÇÃO | [Status](../STATUS.md), [ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md) | Caminho offline existe; importação do catálogo EMOP real depende de assinatura GRE. |
 | 14 | Agora — medição de obra (contexto valuation, v1 em marcos) / **M6 — UI web de homologação da medição** (priorizado pelo usuário em 2026-08-13): revisão do takeoff, shortlist com descrição completa do catálogo, confirmação de código e boletim — o ato humano da orçamentista numa tela, não no CLI. Destrava a homologação da cadeia existente; a rodada real da Toca está estacionada no elo da confirmação até este marco. | EM OPERAÇÃO/HOMOLOGAÇÃO | [Status](../STATUS.md), [ADR-0020](../adr/0020-local-homologation-server-for-valuation.md) | Mecanismo está entregue; o Status mantém ato humano de homologação como pendência. |
 | 15 | Agora — medição de obra (contexto valuation, v1 em marcos) / **M7 — matcher híbrido de código SCO** (priorizado pelo usuário em 2026-08-13, durante a homologação: "não posso correr o risco de o código ter no SCO e não fazer o match"): léxico com radical conservador + sinônimos de domínio como dado, retrieval semântico por embeddings do catálogo (dado público SCO; índice local por digest) com fusão de ranking, e a garantia virando gate de eval — golden set com `recall@20 = 100%`. Candidatos sempre com origem e score declarados; confirmar segue ato humano; sem chave/teto, o léxico permanece como fallback funcional declarado. | EM OPERAÇÃO/HOMOLOGAÇÃO | [Status](../STATUS.md), [ADR-0021](../adr/0021-hybrid-sco-code-retrieval.md) | Eval e mecanismo estão documentados; confirmação de código continua ato humano. |
-| 16 | Agora — medição de obra (contexto valuation, v1 em marcos) / **M8 — fronteira licitada × pré-licitação** (entregue em código em 2026-08-17, [ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)): dossiê do aditivo como artefato de fechamento da rodada licitada (VAL-08); `PriceOrigin` + importador EMOP offline (.DBF com layout como dado; o arquivo real depende da assinatura GRE) + guardrail `BULLETIN_PRICE_ORIGIN_FORBIDDEN`; composição manual compilada a catálogo e orçamento-base (`build-estimate`) com cascata declarada e proveniência por linha (VAL-09). A UI do orçamento-base e o `.xlsx` no modelo da prefeitura ficam para marco futuro, quando houver exemplar real como template. | EM OPERAÇÃO/HOMOLOGAÇÃO | [Status](../STATUS.md), [ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md) | Entregue em código; validações com fontes reais permanecem pendentes. |
+| 16 | Agora — medição de obra (contexto valuation, v1 em marcos) / **M8 — fronteira licitada × pré-licitação** (entregue em código em 2026-08-17, [ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)): dossiê do aditivo como artefato de fechamento da rodada licitada (VAL-08); `PriceOrigin` + importador EMOP offline (.DBF com layout como dado; o arquivo real depende da assinatura GRE) + guardrail `BULLETIN_PRICE_ORIGIN_FORBIDDEN`; composição manual compilada a catálogo e orçamento-base (`build-estimate`) com cascata declarada e proveniência por linha (VAL-09). A UI do orçamento-base e o `.xlsx` no modelo da prefeitura ficavam para marco futuro, condicionados a haver exemplar real como template. | EM OPERAÇÃO/HOMOLOGAÇÃO | [Status](../STATUS.md), [ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md) | Entregue em código; validações com fontes reais permanecem pendentes. A condição do exemplar real foi satisfeita em 2026-08-19 e a UI + `.xlsx` viraram [F-020](../features/F-020-orcamento-base-web/feature.md), que acrescenta a coluna de fonte e o BDI. |
 | 17 | Próximo — medição além do v1 / Modo teto / orçamento invertido ("escopo dentro de R$ X" da relação de demanda); porta: `EstimateTarget` reservado no glossário do contexto. | PLANEJADO | [Roadmap](ROADMAP.md) | Declarado fora do v1 como extensão futura; a porta `EstimateTarget` é reserva de glossário, não mecanismo entregue. |
 | 18 | Próximo — medição além do v1 / Composição própria como caminho de escrita para item sem preço de referência; porta: `PriceCatalogEntry.origin`. | PLANEJADO | [Roadmap](ROADMAP.md), [ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md), [Status](../STATUS.md) | O bullet pede a composição própria **como caminho de escrita** para item sem preço de referência. O M8 entregou a composição compilada a catálogo `origin=composition` para o orçamento-base (ADR-0027, decisão 5); na medição licitada esse caminho segue fechado pelo guardrail `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (ADR-0027, decisão 2). O escopo do bullet completo permanece não entregue. |
 | 19 | Próximo — medição além do v1 / Quantitativo automático derivado do scene graph aprovado; porta: `TakeoffItem.source` discriminado + `QuantitySource` lendo o `quantitativos.csv` do export DXF. Depende de identidade estruturada de elemento nas entidades (hoje rótulo é texto livre). | PLANEJADO | [Roadmap](ROADMAP.md) | Declarado fora do v1 e dependente de identidade estruturada de elemento, que o próprio bullet registra como inexistente hoje. |
