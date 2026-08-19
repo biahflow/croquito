@@ -419,11 +419,22 @@ class LocalQueueWorker:
         if self._object_client is None:
             # Path-style e SigV4 explícitos, como no ArtifactStore da API: o interop
             # S3 do GCS exige os dois; LocalStack e AWS aceitam ambos.
+            # Checksum só quando a API o EXIGE: por padrão o botocore moderno manda
+            # `x-amz-checksum-*`/`x-amz-sdk-checksum-algorithm` em todo PUT, e o interop
+            # S3 do GCS rejeita esses headers invalidando a assinatura — foi o
+            # SignatureDoesNotMatch da primeira gravação em HML (2026-08-19). Com
+            # `when_required` a AWS e o LocalStack seguem íntegros nas operações que
+            # obrigam checksum.
             self._object_client = boto3.client(
                 "s3",
                 region_name=self.settings.aws_region,
                 endpoint_url=self.settings.aws_endpoint_url,
-                config=BotoConfig(signature_version="s3v4", s3={"addressing_style": "path"}),
+                config=BotoConfig(
+                    signature_version="s3v4",
+                    s3={"addressing_style": "path"},
+                    request_checksum_calculation="when_required",
+                    response_checksum_validation="when_required",
+                ),
             )
         return self._object_client
 

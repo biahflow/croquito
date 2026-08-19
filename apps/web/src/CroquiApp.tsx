@@ -418,6 +418,26 @@ export function jobFailureMessage(job: Pick<Job, "status">): string | null {
 }
 
 /**
+ * O poll de 2 s só troca o job da tela quando o que a tela mostra dele mudou. Sem esta
+ * comparação, cada volta entrega um objeto novo com o mesmo conteúdo, `setSelectedJob`
+ * re-renderiza a jornada inteira e a tela "respira" a cada dois segundos.
+ *
+ * `status` e `stage` são tudo o que a tela deriva do job enquanto a revisão não abre
+ * (`JobStatusBand`); `updated_at` muda sozinho a cada volta e não é apresentação. Quando o
+ * status vira revisável, quem recarrega a tela é `loadReview`.
+ */
+export function jobPresentationChanged(
+  current: Pick<Job, "status" | "stage"> | null,
+  next: Pick<Job, "status" | "stage">,
+): boolean {
+  return (
+    current === null ||
+    current.status !== next.status ||
+    current.stage !== next.stage
+  );
+}
+
+/**
  * Faixa de acompanhamento do job. É DERIVADA do estado, não uma mensagem: o poll de 2 s
  * reabre o job e zerava a mensagem antes de reescrevê-la, então a faixa desmontava e
  * remontava a cada ciclo — piscando. Derivada, o texto é o mesmo entre dois polls (mesmo
@@ -1007,22 +1027,46 @@ export function CroquiApp({
     }
   }
 
-  async function openJob(accessToken: string, requestedJobId: string) {
-    setJobId(requestedJobId);
-    window.history.replaceState(
-      null,
-      "",
-      routeSearch({ kind: "croqui", jobId: requestedJobId }),
-    );
-    setLoading(true);
-    setMessage(null);
+  /**
+   * Abre o job da jornada. Em `silent` — o modo do poll de 2 s — ela não mexe na tela:
+   * nada de `loading` (que acinzenta os botões todos), nada de zerar a mensagem, nada de
+   * reescrever a rota, e `setSelectedJob` só quando o job apresentado mudou de verdade.
+   * Carga inicial e clique do usuário continuam visíveis, porque aí a tela mudou por
+   * gesto. A transição para a revisão também é visível: `loadReview` liga o loading
+   * porque a tela inteira troca.
+   */
+  async function openJob(
+    accessToken: string,
+    requestedJobId: string,
+    { silent = false }: { silent?: boolean } = {},
+  ) {
+    if (!silent) {
+      setJobId(requestedJobId);
+      window.history.replaceState(
+        null,
+        "",
+        routeSearch({ kind: "croqui", jobId: requestedJobId }),
+      );
+      setLoading(true);
+      setMessage(null);
+    }
     try {
       const current = await getJob(accessToken, requestedJobId);
-      setSelectedJob(current);
+      if (!silent || jobPresentationChanged(selectedJob, current)) {
+        setSelectedJob(current);
+      }
       if (REVIEWABLE_JOB_STATUSES.has(current.status)) {
         // A revisão sobrevive à aprovação e ao export: a jornada reabre as etapas
         // concluídas para conferência e para uma nova rodada de traçado.
         await loadReview(accessToken, requestedJobId);
+      } else if (silent) {
+        // Falha que aparece durante o poll ainda precisa ser dita — e é dita uma vez,
+        // porque o poll para no job FAILED. O resto do ciclo de vida não vira mensagem, e
+        // zerá-la aqui apagaria o aviso que o usuário está lendo.
+        const failure = jobFailureMessage(current);
+        if (failure) {
+          setMessage(failure);
+        }
       } else {
         setReview(null);
         // Estado em processamento não é mensagem: quem o mostra é `JobStatusBand`, a
@@ -1030,6 +1074,16 @@ export function CroquiApp({
         setMessage(jobFailureMessage(current));
       }
     } catch (error) {
+      if (silent) {
+        // Erro do poll não vira aviso: escrito a cada 2 s, o alerta piscaria. O ciclo
+        // seguinte simplesmente tenta de novo, e a tela fica como está. A exceção é a
+        // sessão perdida, que não é transitória e tira a jornada da tela.
+        const text = error instanceof Error ? error.message : "";
+        if (text.startsWith("INVALID_TOKEN:")) {
+          showApiError(error, text);
+        }
+        return;
+      }
       setReview(null);
       setSelectedJob(null);
       setMessage(
@@ -1038,7 +1092,9 @@ export function CroquiApp({
           : "Não foi possível carregar o projeto.",
       );
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }
 
@@ -1086,7 +1142,8 @@ export function CroquiApp({
     const retry = window.setTimeout(() => {
       // `pollTick` reagenda a próxima tentativa. Sem ele, um job parado no mesmo
       // status deixa as dependências idênticas e o efeito nunca volta a rodar.
-      void openJob(session.access_token, jobId).finally(() =>
+      // Modo silencioso: o poll observa o job, não mexe na tela.
+      void openJob(session.access_token, jobId, { silent: true }).finally(() =>
         setPollTick((tick) => tick + 1),
       );
     }, 2_000);
