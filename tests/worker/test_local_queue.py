@@ -624,3 +624,37 @@ def test_raw_response_store_honours_the_encryption_flag() -> None:
 
     assert storage.puts[0]["ServerSideEncryption"] == "AES256"
     assert "ServerSideEncryption" not in storage.puts[1]
+
+
+def test_raw_response_store_keeps_the_accepted_key_and_marks_the_rejected_one() -> None:
+    """A chave de sucesso não se move; a recusada ganha o segmento que o `ls` mostra.
+
+    O operador que lista o prefixo do job precisa distinguir raw aceito de raw recusado sem
+    abrir arquivo nenhum — e nenhum objeto de sucesso pode mudar de lugar por causa disso.
+    """
+    storage = FakeObjectStore()
+    store = S3ProtectedRawResponseStore(
+        client=storage, bucket="bucket", tenant_id="tenant-a", job_id="job-a"
+    )
+    payload = b"{}"
+    payload_digest = hashlib.sha256(payload).hexdigest()
+    input_digest = "a" * 64
+
+    accepted = store.persist(
+        provider=ProviderName.OPENAI, input_digest=input_digest, payload=payload
+    )
+    rejected = store.persist(
+        provider=ProviderName.OPENAI,
+        input_digest=input_digest,
+        payload=payload,
+        rejected_stage="invalid_json",
+    )
+
+    assert accepted == (
+        f"tenants/tenant-a/jobs/job-a/providers/openai/{input_digest}/{payload_digest}.json"
+    )
+    assert rejected == (
+        "tenants/tenant-a/jobs/job-a/providers/openai/rejected/invalid_json/"
+        f"{input_digest}/{payload_digest}.json"
+    )
+    assert [str(put["Key"]) for put in storage.puts] == [accepted, rejected]

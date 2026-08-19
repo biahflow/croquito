@@ -304,11 +304,25 @@ class S3ProtectedRawResponseStore(ProtectedRawResponseStore):
     #: Ver `WorkerArtifactStore.sse`: SSE-S3 explícita, desligável só onde o storage recusa.
     sse: bool = True
 
-    def persist(self, *, provider: ProviderName, input_digest: str, payload: bytes) -> str:
+    def persist(
+        self,
+        *,
+        provider: ProviderName,
+        input_digest: str,
+        payload: bytes,
+        rejected_stage: str | None = None,
+    ) -> str:
+        """Grava o payload cru; `rejected_stage` separa o que o contrato recusou do aceito.
+
+        A resposta recusada mora sob `providers/<provider>/rejected/<estágio>/…` para o
+        operador distinguir os dois casos num `ls`, sem abrir arquivo nenhum. Sem estágio a
+        chave é exatamente a de sempre — nenhum objeto de sucesso muda de lugar.
+        """
         payload_digest = hashlib.sha256(payload).hexdigest()
+        rejection = "" if rejected_stage is None else f"rejected/{rejected_stage}/"
         key = (
             f"tenants/{self.tenant_id}/jobs/{self.job_id}/providers/"
-            f"{provider.value}/{input_digest}/{payload_digest}.json"
+            f"{provider.value}/{rejection}{input_digest}/{payload_digest}.json"
         )
         self.client.put_object(
             Bucket=self.bucket,

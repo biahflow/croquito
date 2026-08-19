@@ -726,6 +726,7 @@ class ProtectedRawResponseStore(Protocol):
         provider: ProviderName,
         input_digest: str,
         payload: bytes,
+        rejected_stage: str | None = None,
     ) -> str: ...
 
 
@@ -1230,6 +1231,77 @@ def _without_explicit_nulls(payload: object) -> object:
     return payload
 
 
+def _trace_openai_schema_rejection(
+    *,
+    raw_store: ProtectedRawResponseStore | None,
+    task: str,
+    stage: str,
+    input_digest: str,
+    response: dict[str, object],
+) -> None:
+    """Deixa rastro da resposta 200 que o contrato recusou, um instante antes do `raise`.
+
+    V8: o braço OpenAI reprovou `INVALID_SCHEMA` sobre um 200 e não havia como saber o quê —
+    o raw só era persistido DEPOIS do parse passar, então texto vazio, JSON quebrado e JSON
+    válido recusado pelo Pydantic saíam com o mesmo código e nenhuma evidência. O estágio
+    (`empty_output`, `invalid_json`, `contract_rejected`) separa os três, e o raw fica no
+    bucket protegido sob o prefixo de rejeição — é a resposta crua que responde a pergunta,
+    não o log.
+
+    Só metadado sai daqui: tarefa, estágio e a referência opaca do objeto. NUNCA o texto da
+    resposta, um trecho dele ou o tamanho — medida de conteúdo também é conteúdo. Falha da
+    gravação é registrada e engolida de propósito: quem manda no fluxo é a exceção original
+    do contrato, e perder o raw não pode virar outro erro. `stage` viaja como
+    `rejected_stage` no registro estruturado para não colidir com o `stage` de pipeline
+    (`PREVIEWING` e afins) que os outros eventos deste worker já usam.
+
+    `raw_sha256` é o digest do payload persistido — o radical do nome do objeto no bucket,
+    um ID opaco. A chave completa fica fora do log de propósito: OBSERVABILITY.md proíbe
+    "S3 keys completas" em log, e ela não compra nada que o digest não compre — o operador
+    chega ao objeto listando `jobs/<job>/providers/openai/rejected/` e confirma o arquivo
+    pelo digest. No caminho de rejeição este log é o ÚNICO registro de que o raw existe,
+    porque a execução falha antes de qualquer gravação no banco.
+    """
+    payload = json.dumps(response, separators=(",", ":")).encode()
+    raw_sha256: str | None = None
+    if raw_store is not None:
+        try:
+            raw_store.persist(
+                provider=ProviderName.OPENAI,
+                input_digest=input_digest,
+                payload=payload,
+                rejected_stage=stage,
+            )
+            raw_sha256 = hashlib.sha256(payload).hexdigest()
+        except Exception as error:  # o diagnóstico não pode derrubar o fluxo que ele descreve
+            error_type = type(error).__name__
+            logger.warning(
+                "openai_schema_rejection_store_failed task=%s stage=%s error_type=%s",
+                task,
+                stage,
+                error_type,
+                extra={
+                    "provider": ProviderName.OPENAI.value,
+                    "task": task,
+                    "rejected_stage": stage,
+                    "error_type": error_type,
+                },
+            )
+    logger.warning(
+        "openai_schema_rejection task=%s stage=%s raw_sha256=%s",
+        task,
+        stage,
+        raw_sha256 or "none",
+        extra={
+            "provider": ProviderName.OPENAI.value,
+            "task": task,
+            "rejected_stage": stage,
+            "failure_code": ProviderFailureCode.INVALID_SCHEMA.value,
+            "raw_sha256": raw_sha256 or "none",
+        },
+    )
+
+
 @dataclass(frozen=True)
 class OpenAIProviderAdapter:
     """Small OpenAI Responses boundary; it has no geometry or persistence authority."""
@@ -1310,12 +1382,15 @@ class OpenAIProviderAdapter:
             raise ProviderExecutionError(ProviderFailureCode.REFUSED)
         output_text = _openai_output_text(blocks)
         if not output_text:
+            self._trace_schema_rejection(request, response, stage="empty_output")
             raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
         try:
             output = _parse_output(request.task, _without_explicit_nulls(json.loads(output_text)))
         except (json.JSONDecodeError, ProviderExecutionError) as error:
             if isinstance(error, ProviderExecutionError):
+                self._trace_schema_rejection(request, response, stage="contract_rejected")
                 raise
+            self._trace_schema_rejection(request, response, stage="invalid_json")
             raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA) from error
         raw_ref = None
         if self.raw_store is not None:
@@ -1346,6 +1421,18 @@ class OpenAIProviderAdapter:
             ),
             raw_response_ref=raw_ref,
             output=output,
+        )
+
+    def _trace_schema_rejection(
+        self, request: ProviderRequest, response: dict[str, object], *, stage: str
+    ) -> None:
+        """Amarra o rastro de `_trace_openai_schema_rejection` ao pedido em execução."""
+        _trace_openai_schema_rejection(
+            raw_store=self.raw_store,
+            task=request.task.value,
+            stage=stage,
+            input_digest=request.image_sha256,
+            response=response,
         )
 
 

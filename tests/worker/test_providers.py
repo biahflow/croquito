@@ -2,7 +2,7 @@ import hashlib
 import json
 from collections.abc import Iterator, Sequence
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -59,6 +59,7 @@ from croquito_worker.providers import (
     OpenAIProviderAdapter,
     PageSurveyOutput,
     PromptTask,
+    ProtectedRawResponseStore,
     ProviderAdapter,
     ProviderExecution,
     ProviderExecutionError,
@@ -1050,13 +1051,17 @@ def test_openai_adapter_uses_strict_schema_and_preserves_effective_model() -> No
     assert isinstance(captured["text"], dict)
 
 
-def _openai_adapter(response: dict[str, object]) -> OpenAIProviderAdapter:
+def _openai_adapter(
+    response: dict[str, object], raw_store: ProtectedRawResponseStore | None = None
+) -> OpenAIProviderAdapter:
     def post(
         _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
     ) -> tuple[int, dict[str, object]]:
         return 200, response
 
-    return OpenAIProviderAdapter(api_key="test-key", model_id="gpt-5.6-terra", http_post=post)
+    return OpenAIProviderAdapter(
+        api_key="test-key", model_id="gpt-5.6-terra", http_post=post, raw_store=raw_store
+    )
 
 
 def test_openai_adapter_reads_the_text_from_the_message_blocks() -> None:
@@ -1123,6 +1128,184 @@ def test_openai_adapter_refuses_a_truncated_or_failed_response(
         _openai_adapter(response).execute(_request(PromptTask.GEOMETRY_EXTRACTION))
 
     assert error.value.code is ProviderFailureCode.REFUSED
+
+
+_REJECTION_MARKER = "cota 19,75 do muro"
+"""Conteúdo plantado na resposta crua: tem de aparecer no raw persistido e nunca no log."""
+
+
+@dataclass(frozen=True)
+class _PersistedRaw:
+    provider: ProviderName
+    input_digest: str
+    payload: bytes
+    rejected_stage: str | None
+    reference: str
+
+
+class _RecordingRawStore:
+    """Duble do `ProtectedRawResponseStore`: guarda o que iria para o bucket protegido."""
+
+    def __init__(self) -> None:
+        self.calls: list[_PersistedRaw] = []
+
+    def persist(
+        self,
+        *,
+        provider: ProviderName,
+        input_digest: str,
+        payload: bytes,
+        rejected_stage: str | None = None,
+    ) -> str:
+        reference = f"raw/{rejected_stage or 'aceito'}/{len(self.calls)}"
+        self.calls.append(_PersistedRaw(provider, input_digest, payload, rejected_stage, reference))
+        return reference
+
+
+class _FailingRawStore:
+    """O bucket recusa a gravação: o rastro se perde, a falha original não pode se perder."""
+
+    def persist(
+        self,
+        *,
+        provider: ProviderName,
+        input_digest: str,
+        payload: bytes,
+        rejected_stage: str | None = None,
+    ) -> str:
+        raise RuntimeError("put_object recusou a gravação")
+
+
+def _rejection_log(caplog: pytest.LogCaptureFixture) -> str:
+    return next(
+        entry.getMessage()
+        for entry in caplog.records
+        if entry.getMessage().startswith("openai_schema_rejection ")
+    )
+
+
+def test_openai_adapter_traces_an_empty_output_rejection(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Mensagem sem texto: 200 no transporte e nada para validar — o raw diz o que veio.
+
+    Antes do V8 este caminho não deixava rastro nenhum: o raw só era gravado depois do parse
+    passar, e `INVALID_SCHEMA` chegava ao operador sem meio de distinguir texto vazio de
+    contrato quebrado.
+    """
+    store = _RecordingRawStore()
+    response = _openai_response("", instructions=_REJECTION_MARKER)
+    request = _request(PromptTask.GEOMETRY_EXTRACTION)
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        _openai_adapter(response, store).execute(request)
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+    assert len(store.calls) == 1
+    persisted = store.calls[0]
+    assert persisted.rejected_stage == "empty_output"
+    assert persisted.provider is ProviderName.OPENAI
+    assert persisted.input_digest == request.image_sha256
+    # A resposta crua vai inteira: recorte aqui seria o mesmo ponto cego de antes.
+    assert json.loads(persisted.payload) == response
+    message = _rejection_log(caplog)
+    assert "task=geometry-extraction" in message
+    assert "stage=empty_output" in message
+    # OBSERVABILITY.md proíbe chave S3 completa em log: sai só o digest do payload.
+    assert f"raw_sha256={hashlib.sha256(persisted.payload).hexdigest()}" in message
+    assert persisted.reference not in message
+    assert _REJECTION_MARKER not in caplog.text
+
+
+def test_openai_adapter_traces_an_invalid_json_rejection(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Texto que não fecha como JSON: o estágio separa geração cortada de contrato quebrado."""
+    store = _RecordingRawStore()
+    response = _openai_response(f'{{"readings": [{{"raw_text": "{_REJECTION_MARKER}"')
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        _openai_adapter(response, store).execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+    # A cadeia da exceção é a de sempre: o erro de parse continua sendo a causa declarada.
+    assert isinstance(error.value.__cause__, json.JSONDecodeError)
+    assert [call.rejected_stage for call in store.calls] == ["invalid_json"]
+    assert json.loads(store.calls[0].payload) == response
+    message = _rejection_log(caplog)
+    assert "task=measurement-extraction" in message
+    assert "stage=invalid_json" in message
+    assert f"raw_sha256={hashlib.sha256(store.calls[0].payload).hexdigest()}" in message
+    assert store.calls[0].reference not in message
+    assert _REJECTION_MARKER not in caplog.text
+
+
+def test_openai_adapter_traces_a_contract_rejection(caplog: pytest.LogCaptureFixture) -> None:
+    """JSON válido que o modelo Pydantic recusa: o desfecho que motivou o V8."""
+    store = _RecordingRawStore()
+    response = _openai_response(json.dumps({"readings": [{"raw_text": _REJECTION_MARKER}]}))
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        _openai_adapter(response, store).execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+    # Exceção de `_parse_output` re-levantada como está: a causa continua sendo a validação.
+    assert isinstance(error.value.__cause__, ValidationError)
+    assert [call.rejected_stage for call in store.calls] == ["contract_rejected"]
+    assert json.loads(store.calls[0].payload) == response
+    message = _rejection_log(caplog)
+    assert "task=measurement-extraction" in message
+    assert "stage=contract_rejected" in message
+    assert f"raw_sha256={hashlib.sha256(store.calls[0].payload).hexdigest()}" in message
+    assert store.calls[0].reference not in message
+    assert _REJECTION_MARKER not in caplog.text
+
+
+def test_openai_adapter_keeps_the_original_failure_when_the_raw_store_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Perder o rastro não pode virar outro erro: quem sobe é a recusa de contrato."""
+    response = _openai_response(json.dumps({"readings": [{"raw_text": _REJECTION_MARKER}]}))
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        _openai_adapter(response, _FailingRawStore()).execute(
+            _request(PromptTask.MEASUREMENT_EXTRACTION)
+        )
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+    assert isinstance(error.value.__cause__, ValidationError)
+    store_failure = next(
+        entry.getMessage()
+        for entry in caplog.records
+        if entry.getMessage().startswith("openai_schema_rejection_store_failed")
+    )
+    assert "stage=contract_rejected" in store_failure
+    assert "error_type=RuntimeError" in store_failure
+    # O evento nomeado continua saindo, declarando que não há raw para consultar.
+    assert "raw_sha256=none" in _rejection_log(caplog)
+    assert _REJECTION_MARKER not in caplog.text
+
+
+def test_openai_adapter_does_not_persist_a_rejection_without_a_raw_store() -> None:
+    """Sem bucket configurado o evento é o único rastro possível — e nada quebra por isso."""
+    response = _openai_response("")
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _openai_adapter(response).execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
 
 
 def _schema_nodes(node: object) -> Iterator[dict[str, Any]]:
