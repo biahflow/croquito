@@ -296,5 +296,11 @@ jobs:
             exit 1
           fi
           npm ci
-          npx playwright install --with-deps chromium
+          # Sem `--with-deps`: o `apt-get` dele congelou CINCO vezes em 2026-08-19 no
+          # mirror do runner, e o próprio log provava que as libs já estavam instaladas
+          # ("is already the newest version" em série) — o runner ubuntu-latest traz as
+          # dependências do Chromium. O binário vem do cache (actions/cache acima); se
+          # um dia faltar lib, o launch falha com erro claro e aí se adiciona uma lista
+          # apt mínima com retries, não o `--with-deps` inteiro de volta.
+          npx playwright install chromium
           npm --workspace @croquito/web run smoke:auth
