@@ -5,7 +5,7 @@
   "loginTheme": "croquito",
   "emailTheme": "croquito",
   "internationalizationEnabled": true,
-  "supportedLocales": ["pt-BR", "en"],
+  "supportedLocales": ["pt-BR"],
   "defaultLocale": "pt-BR",
   "sslRequired": "external",
   "bruteForceProtected": true,
