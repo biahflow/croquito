@@ -74,12 +74,15 @@ def identity_from_claims(payload: dict[str, Any]) -> OidcIdentity:
     realm_access = payload.get("realm_access")
     roles = realm_access.get("roles", []) if isinstance(realm_access, dict) else []
     preferred_username = payload.get("preferred_username")
-    if (
-        not isinstance(subject, str)
-        or not isinstance(tenant_id, str)
-        or not all(isinstance(role, str) for role in roles)
-    ):
+    if not isinstance(subject, str) or not all(isinstance(role, str) for role in roles):
         raise OidcTokenError()
+    if not isinstance(tenant_id, str):
+        # Conta AUTENTICADA porém sem vínculo de tenant — o cenário do ADR-0033 (conta
+        # criada sem o atributo, ou recriada sem ele; incidente real de 2026-08-19).
+        # Código próprio para a casca distinguir "sua conta não tem organização" de
+        # "token inválido": o primeiro se resolve com um administrador, o segundo com
+        # um novo login — misturá-los produz loop de retentativa sem saída.
+        raise OidcTokenError("TOKEN_WITHOUT_TENANT")
     return OidcIdentity(
         subject=subject,
         tenant_id=tenant_id,

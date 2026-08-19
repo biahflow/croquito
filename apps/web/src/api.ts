@@ -474,10 +474,19 @@ export async function apiJson<T>(
     });
   let response = await send(accessToken);
   if (response.status === 401) {
-    // O mesmo Idempotency-Key volta na retentativa: replay, não segunda escrita.
-    const renewed = await renewAccessToken();
-    if (renewed) {
-      response = await send(renewed);
+    const primeiro = (await response
+      .clone()
+      .json()
+      .catch(() => null)) as { detail?: { code?: string } } | null;
+    // Conta sem tenant não se conserta com token novo: renovar aqui só dispara a
+    // cascata do iframe de renovação para chegar ao MESMO 401 (incidente de
+    // 2026-08-19). O erro segue direto para a tela, com a explicação certa.
+    if (primeiro?.detail?.code !== "TOKEN_WITHOUT_TENANT") {
+      // O mesmo Idempotency-Key volta na retentativa: replay, não segunda escrita.
+      const renewed = await renewAccessToken();
+      if (renewed) {
+        response = await send(renewed);
+      }
     }
   }
   if (!response.ok) {
@@ -494,10 +503,19 @@ export async function apiJson<T>(
     const renewFailure =
       response.status === 401 ? readLastRenewFailure() : null;
     const cause = renewFailure ? ` A renovação falhou: ${renewFailure}.` : "";
+    // Copy aprovada da revisão de 2026-08-19 (gate de texto): quem está autenticado e
+    // sem organização precisa de orientação, não de um código cru — e precisa saber que
+    // entrar de novo não muda o resultado.
+    const message =
+      code === "TOKEN_WITHOUT_TENANT"
+        ? "Sua conta autenticou, mas ainda não está vinculada a uma organização. " +
+          "Peça a quem administra o seu tenant para vincular sua conta — entrar de " +
+          "novo não muda o resultado."
+        : code
+          ? `${code}: ${detail ?? "Falha na API."}${cause}`
+          : `Falha na API (${response.status}).${cause}`;
     throw new ApiError(
-      code
-        ? `${code}: ${detail ?? "Falha na API."}${cause}`
-        : `Falha na API (${response.status}).${cause}`,
+      message,
       response.status,
       code,
       detail,

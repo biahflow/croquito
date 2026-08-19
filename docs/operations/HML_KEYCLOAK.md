@@ -73,7 +73,12 @@ No console, com o realm `croquito` selecionado (canto superior esquerdo):
 
 ## Conferir se ficou certo
 
-- **Users → (usuário) → Attributes**: `tenant_id` com o valor esperado.
+- **Users → (usuário) → Attributes**: `tenant_id` com o valor esperado — sem esse
+  atributo a conta autentica e toma `401 TOKEN_WITHOUT_TENANT` em toda chamada
+  (incidente de 2026-08-19; a tela explica, mas só o atributo resolve).
+- **E-mail, nome e sobrenome preenchidos na criação**: perfil incompleto dispara o
+  `VERIFY_PROFILE` do Keycloak 26 no primeiro login e trava o fluxo em "Update
+  Account Information".
 - **Users → (usuário) → Role mapping**: os papéis atribuídos aparecem como realm roles.
 - Login pelo produto: entrar em `https://croquito-hml.biahflow.ai/login` e ver a lista
   de projetos do tenant. Lista vazia com login bem-sucedido normalmente significa
@@ -110,6 +115,23 @@ fez:
 
 O arquivo do repositório continua sendo a descrição de como o realm nasce; ele não é
 aplicado continuamente.
+
+## Usuário de fumaça autenticada
+
+O passo "Fumaça autenticada" da esteira atravessa o login real com `smoke.hml`
+(tenant `tenant-smoke-hml`, papel `engineer`) e prova a sessão com
+`GET /v1/projects` — o teste que pega defeito que só existe depois da credencial.
+Criação e recriação são um comando do operador:
+
+```bash
+./scripts/create_hml_smoke_user.sh
+```
+
+O script é idempotente, grava a senha no Secret Manager
+(`croquito-hml-smoke-password`) e nunca a imprime; o secret
+`CROQUITO_HML_SMOKE_PASSWORD` do GitHub é espelho manual dele. **Toda recriação de
+realm apaga este usuário — rode o script de novo antes do próximo deploy**, senão a
+fumaça autenticada reprova (por desenho: ela não se pula sozinha).
 
 ## Se o login parar de funcionar
 

@@ -1,0 +1,14 @@
+<!doctype html>
+<!-- Callback da renovação silenciosa do OIDC (iframe oculto). Entry PRÓPRIO do mesmo
+     build: carregar a SPA inteira aqui foi o defeito do incidente de 2026-08-19 — o
+     iframe processava o código da renovação como login e nunca respondia ao pai. Esta
+     página só devolve a URL ao UserManager que a abriu e não renderiza nada. -->
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Renovação de sessão — Croquito</title>
+  </head>
+  <body>
+    <script type="module" src="/src/silent-renew.ts"></script>
+  </body>
+</html>
