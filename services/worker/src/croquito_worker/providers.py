@@ -802,8 +802,12 @@ def _parse_output(task: PromptTask, payload: object) -> ProviderOutput:
 def _failure_from_http_status(status: int) -> ProviderFailureCode:
     if status == 429:
         return ProviderFailureCode.RATE_LIMITED
-    if status in {401, 403, 404}:
-        return ProviderFailureCode.UNAVAILABLE
+    if status in {401, 403}:
+        # Credencial inválida ou sem permissão não melhora com retentativa: as três
+        # tentativas falhariam igual, e cada uma reserva teto antes de sair. `REFUSED`
+        # está fora de `RetryingProviderAdapter.RETRYABLE`, como o equivalente do Bedrock
+        # em `BEDROCK_PERMANENT_ERRORS`.
+        return ProviderFailureCode.REFUSED
     return ProviderFailureCode.UNAVAILABLE
 
 
@@ -1452,9 +1456,15 @@ class FixtureProviderAdapter:
 
 @dataclass(frozen=True)
 class ProviderSuite:
+    """Os braços da suite hospedada, nomeados pelo que realmente chamam.
+
+    Ambos falam com a API direta do fornecedor; nenhum cliente AWS entra aqui. Os
+    adapters Bedrock e Textract continuam existindo para `build_extraction_arm` e para
+    teste, mas não são braço de suite.
+    """
+
     openai: ProviderAdapter
-    bedrock_anthropic: ProviderAdapter
-    textract: ProviderAdapter
+    anthropic: ProviderAdapter
 
 
 def build_request(
@@ -1628,63 +1638,52 @@ def build_real_provider_suite(
 ) -> ProviderSuite:
     """Build the external suite only after the caller has checked job consent.
 
-    The normal LocalStack endpoint is deliberately never reused for Bedrock or
-    Textract: doing so would silently turn a real-provider configuration into a
-    different service.
+    Os dois braços falam a API direta do fornecedor, cada um com a sua própria chave
+    explícita. Nenhum cliente AWS é construído aqui: as credenciais de ambiente do
+    ambiente hospedado pertencem ao object storage, e usá-las implicitamente para
+    Bedrock/Textract chamaria um serviço que ninguém configurou.
     """
     import os
-
-    import boto3
 
     api_key = os.getenv("CROQUITO_OPENAI_API_KEY")
     if not api_key:
         raise ValueError("CROQUITO_OPENAI_API_KEY ausente para providers reais")
+    anthropic_api_key = os.getenv("CROQUITO_ANTHROPIC_API_KEY")
+    if not anthropic_api_key:
+        raise ValueError("CROQUITO_ANTHROPIC_API_KEY ausente para providers reais")
     try:
         budget = CostBudget(Decimal(os.environ["CROQUITO_AI_MAX_ESTIMATED_COST_USD"]))
         llm_cost = Decimal(os.getenv("CROQUITO_AI_ESTIMATED_COST_PER_LLM_CALL_USD", "0.75"))
-        textract_cost = Decimal(
-            os.getenv("CROQUITO_AI_ESTIMATED_COST_PER_TEXTRACT_CALL_USD", "0.02")
-        )
     except (KeyError, ArithmeticError) as error:
         raise ValueError("Budget de IA explícito e válido é obrigatório") from error
-    if budget.limit_usd <= 0 or llm_cost < 0 or textract_cost < 0:
+    if budget.limit_usd <= 0 or llm_cost < 0:
         raise ValueError("Budget e estimativas de IA devem ser positivos")
-    region = os.getenv("CROQUITO_AWS_PROVIDER_REGION", os.getenv("AWS_REGION", "sa-east-1"))
+    # Mesma variável nos dois braços; os defaults diferem porque cada adapter tem o seu,
+    # exatamente como em `build_extraction_arm`.
+    timeout_env = os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS")
     return ProviderSuite(
         openai=RetryingProviderAdapter(
             BudgetedProviderAdapter(
                 OpenAIProviderAdapter(
                     api_key=api_key,
                     model_id=os.getenv("CROQUITO_OPENAI_MODEL", "gpt-5.6-terra"),
-                    timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "30")),
+                    timeout_seconds=float(timeout_env or "30"),
                     raw_store=raw_store,
                 ),
                 budget=budget,
                 estimated_cost_usd=llm_cost,
             )
         ),
-        bedrock_anthropic=RetryingProviderAdapter(
+        anthropic=RetryingProviderAdapter(
             BudgetedProviderAdapter(
-                BedrockAnthropicProviderAdapter(
-                    model_id=os.getenv(
-                        "CROQUITO_BEDROCK_MODEL", "global.anthropic.claude-sonnet-5"
-                    ),
-                    client=boto3.client("bedrock-runtime", region_name=region),
+                AnthropicProviderAdapter(
+                    api_key=anthropic_api_key,
+                    model_id=os.getenv("CROQUITO_ANTHROPIC_MODEL", "claude-opus-5"),
+                    timeout_seconds=float(timeout_env or "60"),
                     raw_store=raw_store,
                 ),
                 budget=budget,
                 estimated_cost_usd=llm_cost,
-            )
-        ),
-        textract=RetryingProviderAdapter(
-            BudgetedProviderAdapter(
-                TextractProviderAdapter(
-                    model_id="textract-detect-document-text",
-                    client=boto3.client("textract", region_name=region),
-                    raw_store=raw_store,
-                ),
-                budget=budget,
-                estimated_cost_usd=textract_cost,
             )
         ),
     )
@@ -1864,24 +1863,9 @@ def build_synthetic_provider_suite(
             model_id="fixture-openai-v1",
             outputs={**shared_outputs, PromptTask.REVIEW_CHAT: chat_uncertain},
         ),
-        bedrock_anthropic=FixtureProviderAdapter(
-            provider=ProviderName.BEDROCK_ANTHROPIC,
+        anthropic=FixtureProviderAdapter(
+            provider=ProviderName.ANTHROPIC,
             model_id="fixture-claude-v1",
             outputs={**shared_outputs, PromptTask.REVIEW_CHAT: chat_answer},
-        ),
-        textract=FixtureProviderAdapter(
-            provider=ProviderName.TEXTRACT,
-            model_id="fixture-textract-v1",
-            outputs={
-                PromptTask.OCR: OcrOutput(
-                    lines=[
-                        OcrLineOutput(
-                            raw_text="25,90 m x 21,75 m",
-                            bbox=NormalizedBox(left=0.08, top=0.12, right=0.36, bottom=0.18),
-                            text_type="printed",
-                        )
-                    ]
-                )
-            },
         ),
     )

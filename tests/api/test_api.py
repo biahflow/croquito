@@ -190,7 +190,7 @@ def test_real_provider_job_requires_and_persists_contractual_entitlement(tmp_pat
         assert authorization.job_id == accepted.json()["job_id"]
         assert authorization.authorization_source == "contract"
         assert authorization.agreement_reference == "ctr-tenant-a-v1"
-        assert authorization.providers_json == ["openai", "bedrock_anthropic", "textract"]
+        assert authorization.providers_json == ["openai", "anthropic"]
 
     revoked = client.put(
         "/v1/platform/tenants/tenant-a/ai-processing-entitlement",

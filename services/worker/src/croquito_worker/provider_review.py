@@ -14,10 +14,13 @@ from croquito_worker.association import AssociationSet, associate_readings
 from croquito_worker.providers import (
     GeometryExtractionOutput,
     MeasurementExtractionOutput,
-    OcrOutput,
     PageSurveyOutput,
     PromptTask,
+    ProviderAdapter,
     ProviderExecution,
+    ProviderExecutionError,
+    ProviderFailureCode,
+    ProviderName,
     ProviderRequest,
     ProviderSuite,
     SurveyRegion,
@@ -110,6 +113,40 @@ def _unit(unit: str) -> UnitCode:
     raise ProviderContractError(f"unidade fora do review packet: {unit}")
 
 
+def _measurement_output(execution: ProviderExecution, label: str) -> MeasurementExtractionOutput:
+    if not isinstance(execution.output, MeasurementExtractionOutput):
+        raise ProviderContractError(f"{label} não retornou leituras de medida")
+    return execution.output
+
+
+def _execute_with_fallback(
+    primary: ProviderAdapter,
+    secondary: ProviderAdapter,
+    request: ProviderRequest,
+    notes: list[str],
+    note_code: str,
+) -> ProviderExecution:
+    """Executa no braço primário e só degrada para o reserva depois de falha permanente.
+
+    A degradação nunca é silenciosa: `note_code` entra nas notas de segurança do pacote,
+    porque uma tarefa atendida pelo reserva é evidência de outra procedência — esconder a
+    troca faria a revisão humana ler o pacote como se o braço escolhido tivesse respondido.
+
+    Falha transitória não chega aqui: quem esgota retentativa é o `RetryingProviderAdapter`,
+    e o que este helper recebe já é a exceção final. `BUDGET_EXCEEDED` também não descreve o
+    braço, e sim o teto compartilhado do job: a chamada de reserva consumiria o mesmo teto
+    sem chance nenhuma de sucesso, então re-levanta antes de qualquer tentativa.
+    """
+    try:
+        return primary.execute(request)
+    except ProviderExecutionError as error:
+        if error.code is ProviderFailureCode.BUDGET_EXCEEDED:
+            raise
+        execution = secondary.execute(request)
+        notes.append(note_code)
+        return execution
+
+
 def build_provider_review_snapshot(
     image_path: Path,
     *,
@@ -132,7 +169,17 @@ def build_provider_review_snapshot(
             region_label="main_plan",
         )
 
-    survey = suite.openai.execute(request(PromptTask.PAGE_SURVEY))
+    # Anthropic é o braço primário de toda tarefa com escolha; OpenAI é o reserva e a
+    # contraparte da comparação. As notas de fallback acompanham o pacote até o fim,
+    # inclusive quando a página nem chega à extração.
+    fallback_notes: list[str] = []
+    survey = _execute_with_fallback(
+        suite.anthropic,
+        suite.openai,
+        request(PromptTask.PAGE_SURVEY),
+        fallback_notes,
+        "PROVIDER_FALLBACK_PAGE_SURVEY_OPENAI",
+    )
     if not isinstance(survey.output, PageSurveyOutput) or not survey.output.regions:
         raise ProviderContractError("page survey não retornou região utilizável")
     region_candidates = [
@@ -150,6 +197,7 @@ def build_provider_review_snapshot(
             safety_notes=[
                 "REGION_CLASSIFICATION_REQUIRED",
                 "Nenhuma região foi escolhida automaticamente para extração externa.",
+                *fallback_notes,
             ],
         )
         return ProviderReviewSnapshot(
@@ -181,28 +229,80 @@ def build_provider_review_snapshot(
             ),
             source_image_bytes=source_image_bytes,
         )
-    ocr = suite.textract.execute(request(PromptTask.OCR))
-    openai_extraction = suite.openai.execute(request(PromptTask.MEASUREMENT_EXTRACTION))
-    anthropic_extraction = suite.bedrock_anthropic.execute(
-        request(PromptTask.MEASUREMENT_EXTRACTION)
-    )
-    if not isinstance(ocr.output, OcrOutput):
-        raise ProviderContractError("OCR não retornou contrato OCR")
-    if not isinstance(openai_extraction.output, MeasurementExtractionOutput):
-        raise ProviderContractError("OpenAI não retornou leituras de medida")
-    if not isinstance(anthropic_extraction.output, MeasurementExtractionOutput):
-        raise ProviderContractError("Claude não retornou leituras de medida")
+    # Os dois braços são chamados de propósito: a extração dupla é a comparação. Por isso
+    # a captura é individual, e não pelo helper de fallback — um braço caído degrada o
+    # modo, não substitui o outro.
+    extraction_request = request(PromptTask.MEASUREMENT_EXTRACTION)
+    anthropic_extraction: ProviderExecution | None
+    openai_extraction: ProviderExecution | None
+    try:
+        anthropic_extraction = suite.anthropic.execute(extraction_request)
+    except ProviderExecutionError as error:
+        if error.code is ProviderFailureCode.BUDGET_EXCEEDED:
+            raise
+        anthropic_extraction = None
+    try:
+        openai_extraction = suite.openai.execute(extraction_request)
+    except ProviderExecutionError as error:
+        # Sem nenhum sobrevivente não existe leitura observada: reentregar o job é mais
+        # honesto do que devolver um pacote de revisão vazio como se a página não tivesse
+        # cota nenhuma.
+        if error.code is ProviderFailureCode.BUDGET_EXCEEDED or anthropic_extraction is None:
+            raise
+        openai_extraction = None
+    anchor: ProviderExecution
+    counterpart_execution: ProviderExecution | None
+    if anthropic_extraction is not None:
+        anchor = anthropic_extraction
+        anchor_output = _measurement_output(anthropic_extraction, "Claude")
+        counterpart_execution = openai_extraction
+        counterpart_output = (
+            _measurement_output(openai_extraction, "OpenAI")
+            if openai_extraction is not None
+            else None
+        )
+    elif openai_extraction is not None:
+        anchor = openai_extraction
+        anchor_output = _measurement_output(openai_extraction, "OpenAI")
+        counterpart_execution = None
+        counterpart_output = None
+    else:
+        raise ProviderContractError("nenhum braço de extração sobreviveu")
+    dual = counterpart_execution is not None and counterpart_output is not None
     readings: list[DimensionReading] = []
     safety_notes = [
-        "Leituras de OCR e dos dois providers são observações; revisão humana é obrigatória.",
+        "Leituras dos dois providers são observações; revisão humana é obrigatória."
+        if dual
+        else "Leitura de um braço único sem comparação; revisão humana é obrigatória.",
         "Nenhuma leitura cria geometria métrica ou libera exportação.",
+        *fallback_notes,
     ]
-    anthropic_readings = anthropic_extraction.output.readings
-    if len(openai_extraction.output.readings) != len(anthropic_readings):
+    if not dual:
+        # Sem contraparte não existe leitura concordante: a nota nomeia quem sobreviveu e
+        # toda leitura nasce ambígua mais abaixo.
+        safety_notes.append(
+            "PROVIDER_FALLBACK_SINGLE_EXTRACTOR_ANTHROPIC"
+            if anchor.provider is ProviderName.ANTHROPIC
+            else "PROVIDER_FALLBACK_SINGLE_EXTRACTOR_OPENAI"
+        )
+    counterpart_readings = counterpart_output.readings if counterpart_output is not None else []
+    if dual and len(anchor_output.readings) != len(counterpart_readings):
         safety_notes.append("PROVIDER_READING_COUNT_DISAGREEMENT")
-    for position, observation in enumerate(openai_extraction.output.readings, start=1):
+    # A proveniência precisa dizer quem realmente leu. Um rótulo fixo, ou o par mesmo com
+    # um braço caído, esconderia que a leitura saiu de uma única observação.
+    if counterpart_execution is None:
+        extractor = anchor.provider.value
+        extractor_version = anchor.model_id
+        lineage = [_lineage(anchor)]
+    else:
+        extractor = f"{anchor.provider.value}+{counterpart_execution.provider.value}"
+        extractor_version = f"{anchor.model_id}+{counterpart_execution.model_id}"
+        lineage = [_lineage(anchor), _lineage(counterpart_execution)]
+    for position, observation in enumerate(anchor_output.readings, start=1):
         counterpart = (
-            anthropic_readings[position - 1] if position <= len(anthropic_readings) else None
+            counterpart_readings[position - 1]
+            if dual and position <= len(counterpart_readings)
+            else None
         )
         if observation.normalized_value is None or observation.target_hint is None:
             safety_notes.append(f"READING_{position}_INCOMPLETE")
@@ -214,7 +314,7 @@ def build_provider_review_snapshot(
         except ProviderContractError:
             safety_notes.append(f"READING_{position}_UNSUPPORTED_UNIT_OR_KIND")
             continue
-        disagreed = (
+        disagreed = dual and (
             counterpart is None
             or counterpart.normalized_value != observation.normalized_value
             or counterpart.unit != observation.unit
@@ -245,31 +345,29 @@ def build_provider_review_snapshot(
                 kind=kind,
                 written_decimals=observation.written_precision,
                 target_hint=f"{target_hint.entity_label}: {target_hint.feature}",
-                # A proveniência precisa dizer quem realmente leu. Um rótulo fixo de
-                # fixture no caminho real esconderia que houve chamada externa paga.
-                extractor=(
-                    f"{openai_extraction.provider.value}+{anthropic_extraction.provider.value}"
-                ),
-                extractor_version=(f"{openai_extraction.model_id}+{anthropic_extraction.model_id}"),
-                provider_lineage=[_lineage(openai_extraction), _lineage(anthropic_extraction)],
+                extractor=extractor,
+                extractor_version=extractor_version,
+                provider_lineage=lineage,
+                # Sem comparação dupla não existe leitura `proposed`: o que um único braço
+                # entrega é observação sem corroboração, e a revisão precisa ver isso.
                 status=(
                     ReadingStatus.AMBIGUOUS
-                    if observation.legibility != "clear" or disagreed
+                    if not dual or observation.legibility != "clear" or disagreed
                     else ReadingStatus.PROPOSED
                 ),
             )
         )
-    packet = ReviewPacket(
-        dataset_id=dataset_id,
-        page_number=1,
-        image_sha256=image_sha256,
-        region_candidates=region_candidates,
-        readings=readings,
-        safety_notes=safety_notes,
-    )
     # Geometria vem do modelo, não da bbox do texto. Fabricar linha a partir do recorte
     # de uma cota nunca foi observação do desenho: era um marcador com forma de geometria.
-    geometry_execution = suite.bedrock_anthropic.execute(request(PromptTask.GEOMETRY_EXTRACTION))
+    # O pacote só é montado depois dela para que a nota de fallback da geometria chegue às
+    # notas de segurança em vez de morrer no caminho.
+    geometry_execution = _execute_with_fallback(
+        suite.anthropic,
+        suite.openai,
+        request(PromptTask.GEOMETRY_EXTRACTION),
+        safety_notes,
+        "PROVIDER_FALLBACK_GEOMETRY_EXTRACTION_OPENAI",
+    )
     if not isinstance(geometry_execution.output, GeometryExtractionOutput):
         raise ProviderContractError("extração de geometria não retornou contrato de geometria")
     proposals_list = proposals_from_geometry(
@@ -305,6 +403,14 @@ def build_provider_review_snapshot(
         limit_reached=[],
         proposals=proposals_list,
         safety_notes=proposal_notes,
+    )
+    packet = ReviewPacket(
+        dataset_id=dataset_id,
+        page_number=1,
+        image_sha256=image_sha256,
+        region_candidates=region_candidates,
+        readings=readings,
+        safety_notes=safety_notes,
     )
     # Associação por proximidade real entre o recorte da cota e a geometria observada,
     # em vez do par sintético 1:1 que a fabricação produzia.

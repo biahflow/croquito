@@ -209,7 +209,7 @@ def test_chat_turn_records_the_answer_with_the_call_lineage(tmp_path: Path) -> N
         assert [act["act"] for act in acts] == ["reading_decision", "trace_association"]
         assert acts[0]["reading_id"] == WIDTH_READING_ID
         assert acts[0]["association_proposal_id"] == WIDTH_PROPOSAL_ID
-        assert record.provider == ProviderName.BEDROCK_ANTHROPIC.value
+        assert record.provider == ProviderName.ANTHROPIC.value
         assert record.prompt_version == "review-chat@1.0.1"
         # O digest do lineage é o do envelope imagem+texto da chamada.
         assert record.input_digest is not None and len(record.input_digest) == 64
@@ -278,7 +278,7 @@ def test_chat_turn_refuses_the_whole_answer_when_a_draft_cites_an_unknown_id(
         # Nem meia resposta é gravada: o turno inteiro é recusado.
         assert record.answer_json is None
         # O lineage da recusa fica: é ele que permite corrigir o contrato depois.
-        assert record.provider == ProviderName.BEDROCK_ANTHROPIC.value
+        assert record.provider == ProviderName.ANTHROPIC.value
     assert queue.deleted == ["receipt-1"]
 
 
