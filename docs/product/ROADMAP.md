@@ -31,6 +31,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-009 | HIGH | READY_FOR_REVIEW | [Suite hospedada de providers: OpenAI + Anthropic direto, sem AWS](../features/F-009-suite-hospedada-sem-aws/feature.md) |
 | F-010 | A DEFINIR | READY_FOR_SPEC | Revisão assistida em lote (a definir em contrato) |
 | F-011 | A DEFINIR | READY_FOR_SPEC | Jornada guiada da revisão (a definir em contrato) |
+| F-012 | HIGH | IN_PROGRESS | [Operação SaaS da autorização de IA](../features/F-012-operacao-saas-autorizacao-ia/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
