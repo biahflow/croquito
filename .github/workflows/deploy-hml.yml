@@ -164,10 +164,7 @@ jobs:
       # para nenhuma chamada paga sair, sem redeploy de código. `CROQUITO_AI_MAX_ESTIMATED_COST_USD`
       # é teto POR INVOCAÇÃO do worker, não por dia nem por job — uma reentrega do
       # Pub/Sub (até 5 tentativas, ver DLQ acima) multiplica o gasto potencial pelo
-      # número de tentativas. `CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS` fica vazio de
-      # propósito: o digest do documento autorizado entra por ato humano antes do
-      # primeiro upload real (runbook); allowlist vazia = nenhum documento sai para
-      # provider — fail closed.
+      # número de tentativas.
       - name: Publica o worker
         run: |
           set -euo pipefail
@@ -179,7 +176,7 @@ jobs:
             --command croquito-worker-push \
             --memory 2Gi --cpu 2 --timeout 900 --concurrency 4 --no-cpu-throttling \
             --set-secrets CROQUITO_DATABASE_URL=croquito-hml-database-url:latest,AWS_ACCESS_KEY_ID=croquito-hml-storage-hmac-id:latest,AWS_SECRET_ACCESS_KEY=croquito-hml-storage-hmac-secret:latest,CROQUITO_OPENAI_API_KEY=croquito-hml-openai-api-key:latest,CROQUITO_ANTHROPIC_API_KEY=croquito-hml-anthropic-api-key:latest \
-            --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_REAL_PROVIDERS_ENABLED=true,CROQUITO_AI_MAX_ESTIMATED_COST_USD=5.00,CROQUITO_OPENAI_MODEL=gpt-5.6-terra,CROQUITO_ANTHROPIC_MODEL=claude-opus-5,CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS= \
+            --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_REAL_PROVIDERS_ENABLED=true,CROQUITO_AI_MAX_ESTIMATED_COST_USD=5.00,CROQUITO_OPENAI_MODEL=gpt-5.6-terra,CROQUITO_ANTHROPIC_MODEL=claude-opus-5 \
             --startup-probe httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=3,periodSeconds=5,failureThreshold=12,timeoutSeconds=3 \
             --quiet
 

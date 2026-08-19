@@ -13,16 +13,22 @@ obra" do [FDD](../../docs/product/FDD.md),
 [ADR-0026](../../docs/adr/0026-medicao-hospedada-sessao-autenticada-minima.md) e
 [ADR-0028](../../docs/adr/0028-medicao-na-api-v1-autenticada.md).
 
+Para mexer na jornada de plataforma (`src/plataforma/`), leia também
+[ADR-0036](../../docs/adr/0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md) e
+a seção "Autenticação e projetos" do [FDD](../../docs/product/FDD.md).
+
 ## Boundary
 
 O web app apresenta projetos, status, revisão e exportação. Ele não resolve
 geometria, escolhe consenso ou autoriza tenant por conta própria.
 
-Ele carrega duas jornadas numa sessão OIDC só (ADR-0028, D9): a revisão do croqui
-(`src/CroquiApp.tsx`) e a medição de obra (`src/medicao/`), com a fronteira em
-`src/route.ts` e a casca em `src/App.tsx`. A jornada de medição apresenta a rodada, a
-revisão do takeoff, a confirmação de código e o boletim; ela não calcula dinheiro, não
-decide código e não chama provider.
+Ele carrega três jornadas numa sessão OIDC só (ADR-0028, D9; F-012): a revisão do croqui
+(`src/CroquiApp.tsx`), a medição de obra (`src/medicao/`) e a plataforma
+(`src/plataforma/`), com a fronteira em `src/route.ts` e a casca em `src/App.tsx`. A
+jornada de medição apresenta a rodada, a revisão do takeoff, a confirmação de código e o
+boletim; ela não calcula dinheiro, não decide código e não chama provider. A jornada de
+plataforma administra o entitlement de IA por tenant; ela não decide papéis (o backend é
+quem autoriza) e não substitui o `PUT` do entitlement por um contrato próprio.
 
 ## Regras
 
@@ -60,6 +66,29 @@ enquanto a jornada existir, e o critério de aceite VAL-07 as cita.
   cálculo da shortlist fica atrás de botão que declara o que será gravado).
 - Nenhum dado de obra em `localStorage`; nada de telemetry com conteúdo de catálogo ou
   medição.
+
+## Regras da jornada de plataforma (`src/plataforma/`)
+
+- A jornada é `?plataforma=` (`PLATFORM_PARAM` em `route.ts`), por presença — o valor é
+  ignorado. Precedência de rota é `job > rodada > plataforma`: um link de croqui ou de
+  medição já em circulação nunca é sequestrado por `?plataforma=` colado depois.
+- O botão "Plataforma" (`JourneySwitch` em `App.tsx`) só é renderizado com o papel
+  `platform_operator` — **ausente**, nunca desabilitado. O papel vem de `GET /v1/me`,
+  buscado **uma única vez por sessão** (guarda por `ref`, não por estado, para não repetir
+  a chamada em re-render); falha de rede é silenciosa e fail-closed, zerando os papéis. Um
+  papel concedido no Keycloak durante a sessão só aparece depois de recarregar a página; a
+  remoção aparece na hora, como `403` da própria rota.
+- A jornada é montada pela **rota**, não pelo papel: quem força `?plataforma=` sem o papel
+  vê a tela e lê o `403` traduzido do servidor, em vez de tela vazia. A autorização é
+  sempre do backend — o client nunca decide quem pode administrar entitlement.
+- Mutação (`setEntitlement` em `plataforma/api.ts`) sempre manda `Idempotency-Key` por
+  gesto e nunca bloqueia no client por `agreement_reference` vazio — a recusa
+  (`AGREEMENT_REFERENCE_REQUIRED`) é do servidor, que é a autoridade sobre a regra.
+- `formatarInstante` é cópia deliberada de `medicao/format.ts`, não import: as jornadas só
+  compartilham o transporte (`../api`), nunca se importam entre si.
+- A tela reaproveita as classes existentes (`.authenticated-workspace`, `.project-list`,
+  `.upload-form`, `.app-alert`, `.app-toast`) em vez de ganhar folha própria — mudar isso
+  toca `src/styles.css`, fora da fronteira usual desta jornada.
 
 ## Testes mínimos
 
@@ -122,4 +151,10 @@ Na jornada de medição, mudança de comportamento atualiza a seção de mediç�
 critérios VAL-*; mudança de contrato é feita primeiro nas rotas de `/v1`
 (`services/api/src/croquito_api/main.py`, testes lá) e na seção "Medição de obra" do
 [API Contract](../../docs/architecture/API_CONTRACT.md), e só depois refletida aqui.
+
+Na jornada de plataforma, mudança de comportamento atualiza a seção "Autenticação e
+projetos" do FDD; mudança de contrato é feita primeiro nas rotas `/v1/me` e
+`/v1/platform/*` (`services/api/src/croquito_api/main.py`) e na seção "Autorização
+contratual de IA" do [API Contract](../../docs/architecture/API_CONTRACT.md), e só depois
+refletida aqui.
 

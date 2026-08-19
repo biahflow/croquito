@@ -103,9 +103,6 @@ class LocalWorkerSettings:
     # recusa o header pela interoperabilidade; lá a flag desliga sem perder criptografia.
     storage_sse_enabled: bool = True
     real_providers_enabled: bool = False
-    # Digests sha256 de upload liberados para extração paga. Vazio significa nenhum:
-    # ligar a flag de providers não deve, sozinho, mandar documento de cliente para fora.
-    ai_extraction_allowed_digests: frozenset[str] = frozenset()
 
     @classmethod
     def from_environment(cls, *, require_queue: bool = True) -> LocalWorkerSettings:
@@ -129,11 +126,6 @@ class LocalWorkerSettings:
             in {"1", "true", "yes"},
             real_providers_enabled=os.getenv("CROQUITO_REAL_PROVIDERS_ENABLED", "").lower()
             in {"1", "true", "yes"},
-            ai_extraction_allowed_digests=frozenset(
-                digest.strip().lower()
-                for digest in os.getenv("CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS", "").split(",")
-                if digest.strip()
-            ),
         )
 
 
@@ -505,21 +497,6 @@ class LocalQueueWorker:
             raise
         review_snapshot = None
         suite = self.provider_suite
-        if (
-            self.settings.real_providers_enabled
-            # Suite injetada é fixture em teste ou demo: nada sai da máquina, então a
-            # allowlist, que existe para controlar envio externo, não se aplica.
-            and suite is None
-            and upload["sha256"].lower() not in self.settings.ai_extraction_allowed_digests
-        ):
-            # Entitlement diz que o tenant pode pagar; a allowlist diz qual documento
-            # foi autorizado a sair. São coisas diferentes e ambas precisam valer.
-            self._mark_failed(
-                job_id=job_id,
-                tenant_id=tenant_id,
-                failure_code="AI_EXTRACTION_NOT_ALLOWLISTED",
-            )
-            return 1
         if suite is None and self.settings.real_providers_enabled:
             suite = build_real_provider_suite(
                 raw_store=S3ProtectedRawResponseStore(

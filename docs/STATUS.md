@@ -2,9 +2,11 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-19 (F-009 documentada — suite hospedada de providers sem AWS, ADR-0035
-`Proposed`, implementação completa; medição migrada para a API `/v1`, F-003; F-006 concluída
-após os atos humanos de homologação; F-007 e F-008 abertas, com os ADR-0032 e ADR-0033 aceitos)
+Última revisão: 2026-08-19 (F-012 documentada — operação SaaS da autorização de IA, ADR-0036
+`Proposed`, implementação completa; F-009 documentada — suite hospedada de providers sem AWS,
+ADR-0035 `Proposed`, implementação completa; medição migrada para a API `/v1`, F-003; F-006
+concluída após os atos humanos de homologação; F-007 e F-008 abertas, com os ADR-0032 e
+ADR-0033 aceitos)
 
 > Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
 > trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
@@ -964,6 +966,41 @@ dois PRs: #14 (mesclado, mas cujo primeiro `apply` falhou com 403 ao tentar habi
 merge). O que resta não é código: aceite do ADR, merge/reexecução do apply em `biahflow/infra`,
 valores dos dois segredos, papel `platform_operator` e entitlement do tenant, digest do PDF
 autorizado na allowlist, e o merge/deploy em `biahflow/croquito`.
+
+**Atualização (F-012, 2026-08-19):** a allowlist por digest citada acima como pendência foi
+removida do caminho hospedado — o parágrafo seguinte registra a decisão e o que resta é só o
+entitlement por tenant, agora ativável pela jornada "Plataforma" em vez de curl.
+
+Na primeira revisão da porta de entrada com a F-009 pronta, o usuário vetou os dois rituais
+manuais que a ativação da suite hospedada deixava: entitlement por curl com token pescado do
+DevTools, e allowlist de digest por env var exigindo um redeploy por documento — diretriz
+literal "isso já nasce com a visão de SaaS, não posso ter esses gargalos/travas". Nasceu a
+[F-012](features/F-012-operacao-saas-autorizacao-ia/feature.md), prioridade `HIGH`. A decisão
+técnica é o [ADR-0036](adr/0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md),
+`Proposed`: o gate de envio de documento a provider pago no caminho hospedado passa a ser
+integralmente entitlement contratual ativo do tenant + consent por job + teto de custo por
+invocação + kill switch — sem segunda barreira por documento. A allowlist por digest
+(`LocalWorkerSettings.ai_extraction_allowed_digests`, o parse de
+`CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS` e a checagem em `_handle_upload`) saiu de
+`services/worker/src/croquito_worker/local_queue.py` e do deploy do worker
+(`.github/workflows/deploy-hml.yml`); ela permanece intocada no caminho offline de eval
+(`extraction_eval.py`), onde não existe tenant nem entitlement e o operador que roda o comando
+é quem autoriza o documento. A API ganhou `GET /v1/me` (subject, tenant_id, roles — como a SPA
+decide mostrar a jornada) e dois GETs de plataforma: `GET /v1/platform/tenants` (união de
+entitlements, projects e uploads, com o estado do entitlement de cada tenant) e
+`GET /v1/platform/tenants/{id}/ai-processing-entitlement` (200 sempre, disabled/nulos quando
+nunca ativado); nenhum dos dois muda o `PUT` existente. A SPA ganhou a jornada "Plataforma"
+(`?plataforma=`, kind próprio em `route.ts`): o botão só aparece com o papel
+`platform_operator`, a lista de tenants ativa/desativa entitlement inline com
+`agreement_reference` e `Idempotency-Key`, e um formulário cobre o tenant que só existe no
+Keycloak (sem pegada no banco). O runbook de ativação do HML perdeu os passos de digest e
+redeploy por documento; o que fica é Keycloak (papel e tenant), ativação pela tela, upload pela
+SPA e o kill switch como rollback. O que resta não é código: aceite do ADR-0036 e o merge, que
+é deploy. A F-012 também abriu um inventário de gargalos SaaS ainda sem contrato — UI de
+membros do tenant (F-013, depende do convite da F-008), entidade tenant e onboarding
+self-service (F-014), recriar o job de upload existente (F-015), rotação de chaves de provider
+(F-016) e custo agregado por tenant com trilha de auditoria na tela (F-017) — registrado no
+[Roadmap](product/ROADMAP.md).
 
 ## Condição para avançar ao processamento real
 

@@ -1,9 +1,9 @@
 /**
- * Fronteira entre as duas jornadas do app: a revisão do croqui e a medição de obra.
- * Módulo puro, sem DOM e sem lib de router — quem tem `window` (a casca) lê a query e
- * pergunta aqui qual jornada abrir; quem navega pede a query canônica de volta.
+ * Fronteira entre as jornadas do app: a revisão do croqui, a medição de obra e a
+ * plataforma. Módulo puro, sem DOM e sem lib de router — quem tem `window` (a casca) lê a
+ * query e pergunta aqui qual jornada abrir; quem navega pede a query canônica de volta.
  *
- * Duas regras carregam o desenho:
+ * Três regras carregam o desenho:
  *
  * - O croqui é a jornada sem marca. `?job=<uuid>` e a raiz da SPA continuam abrindo a
  *   revisão exatamente como antes desta casca existir — é o que preserva todo link já
@@ -11,6 +11,10 @@
  * - A medição é declarada por `?rodada`. Aí quem manda é a PRESENÇA do parâmetro, não o
  *   valor: `?rodada=` é "jornada de medição, nenhuma rodada aberta", um estado que
  *   precisa ser representável na URL para sobreviver a um reload.
+ * - A plataforma é declarada por `?plataforma`, também por PRESENÇA. Ela não tem recurso
+ *   aberto — não existe "uma plataforma" para citar na query —, então `?plataforma=` é a
+ *   forma única, e é a última a ser consultada: link de croqui e link de rodada já
+ *   circulam, e um parâmetro colado depois deles não sequestra o trabalho pedido.
  *
  * Parâmetro desconhecido não é jornada e não é preservado: `routeSearch` escreve só o que
  * `Route` carrega, então navegar limpa a query de tudo que não seja a jornada.
@@ -19,19 +23,26 @@
  * é representado FORA de `Route`, numa camada acima da jornada: `Route` continua derivando
  * só da query, e o que entra aqui é a decisão pura de rebote (`entryRedirect`), que a casca
  * executa com `history.replaceState` depois de ler a sessão. A alternativa considerada era
- * um terceiro `kind` em `Route`; ela foi recusada porque `/login` não é jornada — não tem
- * forma canônica de query, não é alternável pelo seletor e não sobrevive a `routeSearch`.
+ * um `kind` em `Route` para `/login`; ela foi recusada porque `/login` não é jornada — não
+ * tem forma canônica de query, não é alternável pelo seletor e não sobrevive a
+ * `routeSearch`. A plataforma passa nos três critérios que `/login` reprova, e por isso ela
+ * É um `kind`: tem forma canônica (`?plataforma=`), é alternada pelo seletor da topbar e
+ * volta escrita por `routeSearch`. O contraste é o teste, não a intuição de "área nova".
  */
 
 export type Route =
   | { readonly kind: "croqui"; readonly jobId: string }
-  | { readonly kind: "medicao"; readonly roundId: string };
+  | { readonly kind: "medicao"; readonly roundId: string }
+  | { readonly kind: "plataforma" };
 
 /** Nome histórico do parâmetro da revisão; mudá-lo quebraria links já entregues. */
 export const JOB_PARAM = "job";
 
 /** Marca da medição, em português como o resto do vocabulário dessa jornada. */
 export const ROUND_PARAM = "rodada";
+
+/** Marca da plataforma; sem valor, porque não há recurso aberto para citar. */
+export const PLATFORM_PARAM = "plataforma";
 
 /**
  * Caminho da porta de entrada (ADR-0032, D1/D2). A borda serve nele o MESMO `index.html`
@@ -98,9 +109,10 @@ export function entryRedirect(
 /**
  * `search` é a query com ou sem `?` (aceita `window.location.search` direto).
  *
- * Com os dois parâmetros presentes o croqui vence. Não é sorteio nem ordem de leitura:
- * o link do croqui é o que já circula, e um `?rodada` colado depois dele não pode
- * sequestrar a revisão que o profissional pediu.
+ * A precedência é `job > rodada > plataforma`. Não é sorteio nem ordem de leitura: o link
+ * do croqui é o que já circula, o da rodada é o segundo mais entregue, e um parâmetro
+ * colado depois deles não pode sequestrar o trabalho que o profissional pediu. A
+ * plataforma fica por último porque ela é a única cujo endereço se digita.
  */
 export function readRoute(search: string): Route {
   const params = new URLSearchParams(search);
@@ -113,13 +125,18 @@ export function readRoute(search: string): Route {
   if (roundId !== null) {
     return { kind: "medicao", roundId };
   }
+  // Presença manda, e o valor é ignorado: `?plataforma=qualquer-coisa` é a mesma
+  // jornada, e `routeSearch` a devolve na forma canônica.
+  if (params.has(PLATFORM_PARAM)) {
+    return { kind: "plataforma" };
+  }
   return { kind: "croqui", jobId: "" };
 }
 
 /**
  * Query canônica da rota, com `?` quando há algo a escrever e `""` quando não há. As
- * formas canônicas são `""`, `?job=<id>`, `?rodada=` e `?rodada=<id>`, e para elas
- * `routeSearch(readRoute(s)) === s`.
+ * formas canônicas são `""`, `?job=<id>`, `?rodada=`, `?rodada=<id>` e `?plataforma=`, e
+ * para elas `routeSearch(readRoute(s)) === s`.
  */
 export function routeSearch(route: Route): string {
   const params = new URLSearchParams();
@@ -128,8 +145,10 @@ export function routeSearch(route: Route): string {
       return "";
     }
     params.set(JOB_PARAM, route.jobId);
-  } else {
+  } else if (route.kind === "medicao") {
     params.set(ROUND_PARAM, route.roundId);
+  } else {
+    params.set(PLATFORM_PARAM, "");
   }
   return `?${params.toString()}`;
 }

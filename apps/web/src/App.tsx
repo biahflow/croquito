@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import sceneSchema from "@croquito/contracts/scene.schema.json";
 import type { User } from "oidc-client-ts";
 
@@ -12,10 +12,14 @@ import {
 } from "./auth";
 import { CroquiApp } from "./CroquiApp";
 import { MedicaoApp } from "./medicao/MedicaoApp";
+import { fetchMe, PLATFORM_OPERATOR_ROLE } from "./plataforma/api";
+import { PlatformApp } from "./plataforma/PlatformApp";
 import { entryRedirect, readRoute, routeSearch, type Route } from "./route";
 import logoDark from "./assets/croquito-logo-dark.svg";
 
 const CROQUI_ROOT: Route = { kind: "croqui", jobId: "" };
+const MEDICAO_ROOT: Route = { kind: "medicao", roundId: "" };
+const PLATAFORMA: Route = { kind: "plataforma" };
 
 function currentRoute(): Route {
   return typeof window === "undefined"
@@ -90,6 +94,60 @@ function applyEntryRedirect(hasSession: boolean): void {
 }
 
 /**
+ * Alternância entre as jornadas abertas para quem está na sessão.
+ *
+ * A jornada de plataforma é a única condicional, e a condição é o PAPEL: sem
+ * `platform_operator` o botão **não é renderizado** — nem desabilitado, nem oculto por
+ * CSS. Botão desabilitado anunciaria a existência de uma área que aquela conta não
+ * administra, e a decisão de mostrar sai do que a API respondeu em `/v1/me`, nunca de
+ * token decodificado no navegador. Esconder é ergonomia; quem autoriza continua sendo o
+ * backend, que recusa cada rota de plataforma com `403` sem o papel.
+ *
+ * Componente exportado porque é aqui que essa regra é testável: o render estático da
+ * casca inteira exige sessão, e a regra não depende de sessão nenhuma para ser conferida.
+ */
+export function JourneySwitch({
+  route,
+  roles,
+  onOpen,
+}: {
+  route: Route;
+  roles: readonly string[];
+  onOpen: (next: Route) => void;
+}) {
+  return (
+    <nav className="journey-switch" aria-label="Jornadas">
+      <button
+        className="topbar-link"
+        type="button"
+        aria-current={route.kind === "croqui" ? "page" : undefined}
+        onClick={() => onOpen(CROQUI_ROOT)}
+      >
+        Croqui
+      </button>
+      <button
+        className="topbar-link"
+        type="button"
+        aria-current={route.kind === "medicao" ? "page" : undefined}
+        onClick={() => onOpen(MEDICAO_ROOT)}
+      >
+        Medição
+      </button>
+      {roles.includes(PLATFORM_OPERATOR_ROLE) ? (
+        <button
+          className="topbar-link"
+          type="button"
+          aria-current={route.kind === "plataforma" ? "page" : undefined}
+          onClick={() => onOpen(PLATAFORMA)}
+        >
+          Plataforma
+        </button>
+      ) : null}
+    </nav>
+  );
+}
+
+/**
  * Casca do app: uma sessão OIDC, um build, um deploy (ADR-0028, D9). Ela autentica,
  * mostra a identidade e alterna entre as jornadas; quem resolve croqui ou medição são
  * os componentes de jornada, não ela.
@@ -103,6 +161,10 @@ export function App() {
   const [route, setRoute] = useState<Route>(currentRoute);
   // Erro de sessão é da casca e é persistente: ele sobrevive à jornada que saiu da tela.
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+  // Papéis do principal, como a API os declara. Começam vazios e assim ficam se a
+  // pergunta falhar: sem resposta, nenhuma jornada condicional é oferecida.
+  const [roles, setRoles] = useState<readonly string[]>([]);
+  const rolesRequested = useRef(false);
 
   useEffect(() => {
     if (!isOidcConfigured()) {
@@ -138,6 +200,32 @@ export function App() {
     return onSessionRenewed(setSession);
   }, []);
 
+  /**
+   * `/v1/me` UMA vez por sessão estabelecida, e não a cada render nem a cada renovação
+   * silenciosa de token: a resposta é a mesma, e repeti-la seria uma chamada por minuto
+   * sem nenhuma informação nova. A guarda é a referência, não a dependência do efeito —
+   * `onSessionRenewed` troca o objeto da sessão e reexecutaria o efeito.
+   *
+   * Falha aqui é silenciosa por decisão (fail-closed): sem resposta não há papel, sem
+   * papel não há botão, e a jornada de plataforma segue inalcançável pelo seletor. Erro
+   * de leitura de papel não é assunto de quem entrou para revisar um croqui, e a área
+   * continua protegida pelo backend de qualquer forma.
+   */
+  useEffect(() => {
+    if (session === null || rolesRequested.current) {
+      return;
+    }
+    rolesRequested.current = true;
+    void (async () => {
+      try {
+        const me = await fetchMe(session.access_token);
+        setRoles(me.roles);
+      } catch {
+        setRoles([]);
+      }
+    })();
+  }, [session]);
+
   const openJourney = useCallback(
     (next: Route) => {
       // Clicar na jornada já aberta não é navegação. Reescrever a URL aqui apagaria o
@@ -172,6 +260,9 @@ export function App() {
     void clearSession();
     setSession(null);
     setSessionNotice(notice);
+    // Papel é da sessão que caiu: quem entrar depois pergunta de novo.
+    setRoles([]);
+    rolesRequested.current = false;
   }, []);
 
   // A aba também é a porta: quem manda o endereço para alguém manda um título junto. O
@@ -390,24 +481,7 @@ export function App() {
               há nenhuma. O estado ativo é escrito em `aria-current`, não só pintado.
               Trocar de jornada fecha a que estava aberta — a URL passa a declarar a
               jornada nova, e nada fica aberto por baixo do que se vê. */}
-          <nav className="journey-switch" aria-label="Jornadas">
-            <button
-              className="topbar-link"
-              type="button"
-              aria-current={route.kind === "croqui" ? "page" : undefined}
-              onClick={() => openJourney(CROQUI_ROOT)}
-            >
-              Croqui
-            </button>
-            <button
-              className="topbar-link"
-              type="button"
-              aria-current={route.kind === "medicao" ? "page" : undefined}
-              onClick={() => openJourney({ kind: "medicao", roundId: "" })}
-            >
-              Medição
-            </button>
-          </nav>
+          <JourneySwitch route={route} roles={roles} onOpen={openJourney} />
           <span className="schema-pill">
             Cena {sceneSchema.$id?.split("/").at(-1)}
           </span>
@@ -452,6 +526,12 @@ export function App() {
           roundId={route.roundId}
           onOpenRound={handleOpenRound}
         />
+      ) : route.kind === "plataforma" ? (
+        /* A jornada é montada pela rota, não pelo papel: quem digita `?plataforma=` sem
+           `platform_operator` precisa ler o motivo da recusa, e o motivo é o `403` que a
+           API devolve. Barrar aqui trocaria uma frase legível por uma tela em branco — e
+           a autorização continuaria sendo a do backend, que é onde ela vale. */
+        <PlatformApp session={session} />
       ) : (
         <CroquiApp session={session} onSessionLost={handleSessionLost} />
       )}

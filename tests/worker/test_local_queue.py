@@ -239,46 +239,6 @@ def test_budget_exceeded_fails_the_job_instead_of_burning_the_ceiling_again(
     assert queue.deleted == ["receipt-1"]
 
 
-def test_extraction_refuses_a_document_outside_the_allowlist(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Entitlement libera o tenant a pagar; a allowlist libera o documento a sair."""
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
-    database_url = f"sqlite+pysqlite:///{tmp_path / 'allowlist-worker.db'}"
-    database = Database(database_url)
-    database.create_schema()
-    pdf = synthetic_pdf()
-    job_id = "00000000-0000-7000-8000-000000000010"
-    object_key = "tenants/tenant-allowlist/uploads/nao-autorizado.pdf"
-    _seed_authorized_job(
-        database, job_id=job_id, tenant_id="tenant-allowlist", object_key=object_key, pdf=pdf
-    )
-    worker = LocalQueueWorker(
-        LocalWorkerSettings(
-            database_url=database_url,
-            queue_url="http://localstack/queue",
-            aws_region="sa-east-1",
-            aws_endpoint_url="http://localstack",
-            real_providers_enabled=True,
-            ai_extraction_allowed_digests=frozenset({"b" * 64}),
-        )
-    )
-    queue = _queue({"job_id": job_id, "tenant_id": "tenant-allowlist"})
-    worker.client = queue
-    worker.s3_client = _storage(object_key=object_key, pdf=pdf)
-
-    assert worker.run_once() == 1
-    with database.sessions() as session:
-        job = session.get(JobRecord, job_id)
-        assert job is not None
-        assert job.status == "FAILED"
-        assert job.failure_code == "AI_EXTRACTION_NOT_ALLOWLISTED"
-    # Recusado antes de montar a suite real: nenhuma credencial é lida, nada sai.
-    assert queue.deleted == ["receipt-1"]
-    assert worker.s3_client.puts == []
-
-
 def test_hosted_suite_labels_the_revision_as_paid_extraction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -309,7 +269,6 @@ def test_hosted_suite_labels_the_revision_as_paid_extraction(
             aws_region="sa-east-1",
             aws_endpoint_url="http://localstack",
             real_providers_enabled=True,
-            ai_extraction_allowed_digests=frozenset({hashlib.sha256(pdf).hexdigest()}),
         )
     )
     worker.client = _queue({"job_id": job_id, "tenant_id": "tenant-hosted"})

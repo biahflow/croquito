@@ -40,6 +40,37 @@ describe("readRoute", () => {
     });
   });
 
+  it("abre a plataforma com ?plataforma, também por presença", () => {
+    expect(readRoute("?plataforma=")).toEqual({ kind: "plataforma" });
+    // O valor é ignorado: não há recurso aberto para citar na query.
+    expect(readRoute("?plataforma=1")).toEqual({ kind: "plataforma" });
+    expect(readRoute("plataforma=")).toEqual({ kind: "plataforma" });
+  });
+
+  it("respeita a precedência job > rodada > plataforma", () => {
+    expect(readRoute(`?job=${JOB}&plataforma=`)).toEqual({
+      kind: "croqui",
+      jobId: JOB,
+    });
+    expect(readRoute(`?rodada=${ROUND}&plataforma=`)).toEqual({
+      kind: "medicao",
+      roundId: ROUND,
+    });
+    // A ordem de escrita não decide nada; a precedência é a mesma dos dois lados.
+    expect(readRoute(`?plataforma=&rodada=${ROUND}`)).toEqual({
+      kind: "medicao",
+      roundId: ROUND,
+    });
+    expect(readRoute(`?plataforma=&job=${JOB}&rodada=${ROUND}`)).toEqual({
+      kind: "croqui",
+      jobId: JOB,
+    });
+  });
+
+  it("trata ?job vazio como job ausente e deixa a plataforma responder", () => {
+    expect(readRoute("?job=&plataforma=")).toEqual({ kind: "plataforma" });
+  });
+
   it("trata ?job vazio como job ausente e deixa a medição responder", () => {
     expect(readRoute("?job=")).toEqual({ kind: "croqui", jobId: "" });
     expect(readRoute(`?job=&rodada=${ROUND}`)).toEqual({
@@ -80,6 +111,10 @@ describe("routeSearch", () => {
     expect(routeSearch({ kind: "medicao", roundId: "" })).toBe("?rodada=");
   });
 
+  it("escreve ?plataforma= para a plataforma, sem valor nenhum", () => {
+    expect(routeSearch({ kind: "plataforma" })).toBe("?plataforma=");
+  });
+
   it("escapa o valor em vez de injetá-lo cru na query", () => {
     expect(routeSearch({ kind: "croqui", jobId: "a b&c" })).toBe(
       "?job=a+b%26c",
@@ -94,7 +129,13 @@ describe("routeSearch", () => {
 });
 
 describe("round-trip das formas canônicas", () => {
-  const canonical = ["", `?job=${JOB}`, "?rodada=", `?rodada=${ROUND}`];
+  const canonical = [
+    "",
+    `?job=${JOB}`,
+    "?rodada=",
+    `?rodada=${ROUND}`,
+    "?plataforma=",
+  ];
 
   for (const search of canonical) {
     it(`preserva ${search === "" ? "a raiz" : search}`, () => {
@@ -107,11 +148,16 @@ describe("round-trip das formas canônicas", () => {
     { kind: "croqui", jobId: JOB },
     { kind: "medicao", roundId: "" },
     { kind: "medicao", roundId: ROUND },
+    { kind: "plataforma" },
   ];
 
   for (const route of routes) {
     it(`preserva a rota ${route.kind} ${
-      route.kind === "croqui" ? route.jobId : route.roundId
+      route.kind === "croqui"
+        ? route.jobId
+        : route.kind === "medicao"
+          ? route.roundId
+          : ""
     }`, () => {
       expect(readRoute(routeSearch(route))).toEqual(route);
     });

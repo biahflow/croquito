@@ -2,7 +2,8 @@
 
 Status: Accepted for MVP  
 Responsável: Product / Design / Engineering  
-Última revisão: 2026-08-12
+Última revisão: 2026-08-19 (seção "Autenticação e projetos" — autorização de IA administrada
+pela jornada Plataforma, F-012)
 
 ## Experiência principal
 
@@ -21,8 +22,11 @@ a API confere objeto, tamanho, MIME e digest antes de criar o job. Antes do
 processamento, a UI exibe somente os campos necessários para o projeto e o envio.
 
 Quando providers reais estiverem habilitados, a API exige autorização contratual
-ativa para o tenant, administrada por um operador da plataforma fora da tela de
-revisão. Um snapshot imutável dessa autorização é ligado ao job; sua revogação
+ativa para o tenant. Um operador de plataforma (papel `platform_operator`) administra
+essa autorização pela própria jornada "Plataforma" do produto — tela dedicada,
+visível só a quem tem o papel, com lista de tenants e ativação/desativação
+inline por `agreement_reference`; não há mais curl nem edição de allowlist por
+documento. Um snapshot imutável dessa autorização é ligado ao job; sua revogação
 bloqueia novas chamadas externas. O piloto atual analisa apenas a primeira página;
 páginas restantes aparecem como limitação explícita, sem descarte silencioso.
 
