@@ -1935,6 +1935,67 @@ def test_server_errors_stay_retryable_over_http() -> None:
     assert attempts == 3
 
 
+class _AlwaysFailingAdapter:
+    """Braço que só levanta — o retry é o objeto sob teste, não o adapter."""
+
+    def __init__(self, code: ProviderFailureCode) -> None:
+        self._code = code
+
+    def execute(self, _request: ProviderRequest) -> ProviderExecution:
+        raise ProviderExecutionError(self._code)
+
+
+def test_exhausted_retries_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """O terceiro caminho mudo: no V7 o braço OpenAI sumiu de um job inteiro em silêncio.
+
+    O modelo de reasoning não cabia no timeout configurado, as três tentativas estouravam em
+    `TIMEOUT` e a exceção subia sem nada escrito — sem raw, sem status, sem evento.
+    """
+    adapter = RetryingProviderAdapter(
+        _AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT), sleep=lambda _seconds: None
+    )
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError),
+    ):
+        adapter.execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    record = next(entry for entry in caplog.records if entry.name == "croquito_worker.providers")
+    message = record.getMessage()
+    assert "provider_retries_exhausted" in message
+    assert "task=measurement-extraction" in message
+    assert "failure_code=TIMEOUT" in message
+    assert "attempts=3" in message
+    assert record.attempts == 3  # type: ignore[attr-defined]
+    # Nunca evidência: o log do retry é contagem, não conteúdo.
+    assert "synthetic-provider-input" not in message
+
+
+def test_a_permanent_failure_is_logged_as_a_single_attempt(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`attempts=1` é a assinatura de falha permanente: nunca houve retentativa."""
+    adapter = RetryingProviderAdapter(
+        _AlwaysFailingAdapter(ProviderFailureCode.REFUSED), sleep=lambda _seconds: None
+    )
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError),
+    ):
+        adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    message = next(
+        entry.getMessage()
+        for entry in caplog.records
+        if "provider_retries_exhausted" in entry.getMessage()
+    )
+    assert "task=geometry-extraction" in message
+    assert "failure_code=REFUSED" in message
+    assert "attempts=1" in message
+
+
 def test_http_failure_is_logged_without_sensitive_content(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

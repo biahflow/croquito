@@ -729,6 +729,28 @@ class ProtectedRawResponseStore(Protocol):
     ) -> str: ...
 
 
+def _log_retries_exhausted(*, task: str, code: ProviderFailureCode, attempts: int) -> None:
+    """Registra a última falha de uma cadeia de tentativas, um instante antes de propagá-la.
+
+    Sem esta linha o retry era o terceiro caminho mudo do arquivo: no V7 o braço OpenAI
+    desapareceu de um job inteiro — sem raw e sem evento nenhum — porque o modelo de
+    reasoning levava mais que o timeout configurado, as três tentativas estouravam em
+    `TIMEOUT` e a exceção subia sem nada escrito. `attempts` distingue os dois desfechos que
+    chegam aqui: `1` é falha permanente na primeira tentativa (nunca houve retentativa),
+    `max_attempts` é esgotamento de falha transitória.
+
+    Este adapter embrulha qualquer outro e não conhece o nome do provider; tarefa e código de
+    falha são o que ele pode afirmar, e bastam para o operador cruzar com o log do braço.
+    """
+    logger.warning(
+        "provider_retries_exhausted task=%s failure_code=%s attempts=%d",
+        task,
+        code.value,
+        attempts,
+        extra={"task": task, "failure_code": code.value, "attempts": attempts},
+    )
+
+
 @dataclass(frozen=True)
 class RetryingProviderAdapter:
     """Retries only transport failures; it never retries to seek a different reading."""
@@ -751,6 +773,9 @@ class RetryingProviderAdapter:
                 return self.adapter.execute(request)
             except ProviderExecutionError as error:
                 if error.code not in self.RETRYABLE or attempt == self.max_attempts:
+                    _log_retries_exhausted(
+                        task=request.task.value, code=error.code, attempts=attempt
+                    )
                     raise
                 self.sleep(0.25 * (2 ** (attempt - 1)))
         raise AssertionError("unreachable")

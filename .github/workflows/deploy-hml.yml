@@ -165,6 +165,17 @@ jobs:
       # é teto POR INVOCAÇÃO do worker, não por dia nem por job — uma reentrega do
       # Pub/Sub (até 5 tentativas, ver DLQ acima) multiplica o gasto potencial pelo
       # número de tentativas.
+      #
+      # `CROQUITO_PROVIDER_TIMEOUT_SECONDS=240` porque sem ela o braço OpenAI usava o
+      # default de 30s e o modelo de reasoning não cabia: no V7 a prancha real levou mais
+      # de 30s (8127 tokens de entrada, 2708 de saída, 869 deles de raciocínio), as três
+      # tentativas estouraram em TIMEOUT e o braço sumiu do job. A aritmética NÃO fecha por
+      # tentativa: 2 tarefas × 3 tentativas × 240s = 1440s excede o `--timeout 900` do
+      # serviço. É deliberado — quem manda no teto de uma cadeia de tentativas é o timeout
+      # do serviço, e estourá-lo derruba a invocação e vira reentrega do Pub/Sub, que é o
+      # desenho (idempotência por comando, DLQ acima). O que esta variável compra é que uma
+      # chamada legítima e lenta termine, em vez de morrer aos 30s e queimar as três
+      # tentativas sem nunca ter chance.
       - name: Publica o worker
         run: |
           set -euo pipefail
@@ -176,7 +187,7 @@ jobs:
             --command croquito-worker-push \
             --memory 2Gi --cpu 2 --timeout 900 --concurrency 4 --no-cpu-throttling \
             --set-secrets CROQUITO_DATABASE_URL=croquito-hml-database-url:latest,AWS_ACCESS_KEY_ID=croquito-hml-storage-hmac-id:latest,AWS_SECRET_ACCESS_KEY=croquito-hml-storage-hmac-secret:latest,CROQUITO_OPENAI_API_KEY=croquito-hml-openai-api-key:latest,CROQUITO_ANTHROPIC_API_KEY=croquito-hml-anthropic-api-key:latest \
-            --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_REAL_PROVIDERS_ENABLED=true,CROQUITO_AI_MAX_ESTIMATED_COST_USD=5.00,CROQUITO_OPENAI_MODEL=gpt-5.6-terra,CROQUITO_ANTHROPIC_MODEL=claude-opus-5 \
+            --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_REAL_PROVIDERS_ENABLED=true,CROQUITO_AI_MAX_ESTIMATED_COST_USD=5.00,CROQUITO_OPENAI_MODEL=gpt-5.6-terra,CROQUITO_ANTHROPIC_MODEL=claude-opus-5,CROQUITO_PROVIDER_TIMEOUT_SECONDS=240 \
             --startup-probe httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=3,periodSeconds=5,failureThreshold=12,timeoutSeconds=3 \
             --quiet
 
