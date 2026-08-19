@@ -121,12 +121,15 @@ modelo está certo”.
 
 ## Contrato de geometria
 
-### `geometry-extraction@2.0.1`
+### `geometry-extraction@2.0.2`
 
-Changelog: `2.0.0` acrescenta três pontos-âncora ao arco (`arc_start`, `arc_mid`,
-`arc_end`). Major porque o schema mudou. A `1.0.0` existiu apenas em código e no lineage
-já gravado — nunca foi documentada aqui, e o lineage antigo não é reescrito: leitura
-gravada sob ela continua declarando `geometry-extraction@1.0.0` e `schema_version` `1.0.0`.
+Changelog: `2.0.2` — instrui que degrau/recuo em contorno vira vértices de uma única
+polyline; falha observada na primeira revisão em nuvem (Guaxindiba V3, 2026-08-19): muro
+com dente 4,80→3,30 veio como duas `line` retas; schema inalterado. `2.0.0` acrescenta três
+pontos-âncora ao arco (`arc_start`, `arc_mid`, `arc_end`). Major porque o schema mudou. A
+`1.0.0` existiu apenas em código e no lineage já gravado — nunca foi documentada aqui, e o
+lineage antigo não é reescrito: leitura gravada sob ela continua declarando
+`geometry-extraction@1.0.0` e `schema_version` `1.0.0`.
 
 Motivo da mudança: até a `1.0.0` o contrato não tinha ângulo nenhum para arco. A conversão
 fabricava a abertura como meia-volta fixa (0..π) e o registro contra a tinta reconquistava
@@ -166,6 +169,10 @@ Regras:
 - Topologia é preservada como está no papel: vértice que encontra vértice compartilha
   coordenada, e região que fecha no papel vem `closed`. Nada é endireitado, esquadrejado,
   espelhado ou regularizado.
+- **Degrau/recuo vira vértices, não linhas separadas.** Contorno ou muro que anda em
+  trechos paralelos com deslocamento diferente, ligados por um jogo perpendicular curto,
+  é uma única `polyline` cujos vértices traçam o degrau — nunca achatado numa reta só e
+  nunca partido em duas `line` que escondem o jogo.
 - `line` carrega exatamente dois vértices; `polyline` ao menos três. Polilinha aberta de
   dois vértices é normalizada para `line` — mesma geometria, `kind` canônico.
 - `circle` exige `center` e `radius`; nenhum `kind` fora de `circle`/`arc` os carrega.

@@ -42,6 +42,61 @@ ARC_START_DEGREES = 180
 ARC_END_DEGREES = 360
 """Meia-lua aberta para baixo: a varredura 180°→360° do PIL sobe pelo lado de cima."""
 
+# Fixture dedicada do "muro em degrau" (gate de fidelidade do recuo). Reproduz a assinatura
+# geométrica do defeito real da primeira revisão do Guaxindiba V3 (2026-08-19): um muro que
+# muda de afastamento a meio do traçado — dois trechos retos ligados por um jog
+# perpendicular —, que o Opus devolveu como duas `line` retas. A corroboração de tinta
+# sozinha não pega isso: cada trecho, sozinho, adere à tinta tanto quanto o muro fiel.
+# Os comprimentos e afastamentos replicam os números reais do caso (19,75 / 1,50 / 14,50 /
+# 4,80 / 3,30 m) na mesma escala; `DEGRAU_*_PX` é a fonte única — `extraction_eval.py`
+# deriva o gabarito normalizado destas mesmas constantes, nenhum número nasce duas vezes.
+DEGRAU_PAGE_WIDTH_PX = 1400
+DEGRAU_PAGE_HEIGHT_PX = 1050
+DEGRAU_SCALE_PX_PER_M = Decimal("20.0")
+
+DEGRAU_FIELD_WIDTH_M = Decimal("24.00")
+DEGRAU_FIELD_HEIGHT_M = Decimal("20.50")
+DEGRAU_FIELD_LEFT_PX = 120
+DEGRAU_FIELD_TOP_PX = 140
+DEGRAU_FIELD_WIDTH_PX = int(DEGRAU_FIELD_WIDTH_M * DEGRAU_SCALE_PX_PER_M)
+DEGRAU_FIELD_HEIGHT_PX = int(DEGRAU_FIELD_HEIGHT_M * DEGRAU_SCALE_PX_PER_M)
+DEGRAU_FIELD_RIGHT_PX = DEGRAU_FIELD_LEFT_PX + DEGRAU_FIELD_WIDTH_PX
+DEGRAU_FIELD_BOTTOM_PX = DEGRAU_FIELD_TOP_PX + DEGRAU_FIELD_HEIGHT_PX
+
+# O muro nasce no canto inferior direito do campo e segue aberto para a direita — nunca
+# fecha —, com o degrau (jog) entre os dois trechos retos.
+DEGRAU_WALL_START_X_PX = DEGRAU_FIELD_RIGHT_PX
+DEGRAU_WALL_START_Y_PX = DEGRAU_FIELD_BOTTOM_PX
+DEGRAU_TRECHO_A_LENGTH_PX = 395
+DEGRAU_JOG_LENGTH_PX = 30
+DEGRAU_TRECHO_B_LENGTH_PX = 290
+DEGRAU_TRECHO_A_LENGTH_M = Decimal(DEGRAU_TRECHO_A_LENGTH_PX) / DEGRAU_SCALE_PX_PER_M
+DEGRAU_JOG_LENGTH_M = Decimal(DEGRAU_JOG_LENGTH_PX) / DEGRAU_SCALE_PX_PER_M
+DEGRAU_TRECHO_B_LENGTH_M = Decimal(DEGRAU_TRECHO_B_LENGTH_PX) / DEGRAU_SCALE_PX_PER_M
+
+DEGRAU_WALL_JOG_X_PX = DEGRAU_WALL_START_X_PX + DEGRAU_TRECHO_A_LENGTH_PX
+DEGRAU_WALL_JOG_Y_PX = DEGRAU_WALL_START_Y_PX + DEGRAU_JOG_LENGTH_PX
+DEGRAU_WALL_END_X_PX = DEGRAU_WALL_JOG_X_PX + DEGRAU_TRECHO_B_LENGTH_PX
+DEGRAU_WALL_END_Y_PX = DEGRAU_WALL_JOG_Y_PX
+
+# Vértices do muro-degrau, na ordem traçada: início, cotovelo alto (fim do trecho A),
+# cotovelo baixo (início do trecho B), fim. Quatro vértices, aberto (não fecha).
+DEGRAU_WALL_VERTICES_PX: tuple[
+    tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]
+] = (
+    (DEGRAU_WALL_START_X_PX, DEGRAU_WALL_START_Y_PX),
+    (DEGRAU_WALL_JOG_X_PX, DEGRAU_WALL_START_Y_PX),
+    (DEGRAU_WALL_JOG_X_PX, DEGRAU_WALL_JOG_Y_PX),
+    (DEGRAU_WALL_END_X_PX, DEGRAU_WALL_END_Y_PX),
+)
+
+# Afastamentos desenhados (análogos aos 4,80/3,30 do Guaxindiba): distância vertical de cada
+# trecho até a mesma linha de referência (guia). A diferença entre eles é exatamente o jog —
+# nunca um segundo número solto — e é o que os torna "distintos" de propósito.
+DEGRAU_AFASTAMENTO_A_M = Decimal("4.80")
+DEGRAU_AFASTAMENTO_B_M = DEGRAU_AFASTAMENTO_A_M - DEGRAU_JOG_LENGTH_M
+DEGRAU_GUIA_Y_PX = DEGRAU_WALL_START_Y_PX + int(DEGRAU_AFASTAMENTO_A_M * DEGRAU_SCALE_PX_PER_M)
+
 
 def _id(suffix: int) -> UUID:
     return UUID(f"01900000-0000-7000-8000-{suffix:012d}")
@@ -256,6 +311,84 @@ def render_synthetic_input(path: Path) -> None:
     draw.text((middle_x - 55, top - 80), "31,95 m", fill="#9b2c2c", font=small_font)
     draw.line((left - 45, top, left - 45, bottom), fill="#9b2c2c", width=2)
     draw.text((left - 145, middle_y), "25,90 m", fill="#9b2c2c", font=small_font)
+    draw.text(
+        (40, 35),
+        "CROQUITO - DADO SINTETICO, SEM CONTEUDO DE CLIENTE",
+        fill="#4a5568",
+        font=font,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path, format="PNG", optimize=True)
+
+
+def _degrau_text(value: Decimal) -> str:
+    return format(value, ".2f").replace(".", ",")
+
+
+def render_degrau_boundary_input(path: Path) -> None:
+    """Renderiza um campo e um muro em recuo (degrau), para o gate de fidelidade do traçado.
+
+    Reproduz a assinatura do defeito real da primeira revisão do Guaxindiba V3: um muro
+    aberto com dois trechos retos ligados por um jog perpendicular, nunca visto pela eval de
+    recall — que mede corroboração de tinta, não continuidade topológica. Todas as
+    coordenadas vêm de `DEGRAU_*_PX`; `extraction_eval.build_degrau_step_gabarito` deriva o
+    gabarito normalizado destas mesmas constantes.
+    """
+    width, height = DEGRAU_PAGE_WIDTH_PX, DEGRAU_PAGE_HEIGHT_PX
+    image = Image.new("RGB", (width, height), "#f5f1e8")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=22)
+    small_font = ImageFont.load_default(size=18)
+
+    draw.rectangle(
+        (DEGRAU_FIELD_LEFT_PX, DEGRAU_FIELD_TOP_PX, DEGRAU_FIELD_RIGHT_PX, DEGRAU_FIELD_BOTTOM_PX),
+        outline="#243447",
+        width=5,
+    )
+    draw.line(list(DEGRAU_WALL_VERTICES_PX), fill="#243447", width=5, joint="curve")
+
+    # Guia (limite/curva de referência) e os dois afastamentos distintos até ela — o
+    # análogo sintético dos 4,80/3,30 m do Guaxindiba.
+    guia_left = DEGRAU_WALL_START_X_PX - 20
+    guia_right = DEGRAU_WALL_END_X_PX + 20
+    draw.line((guia_left, DEGRAU_GUIA_Y_PX, guia_right, DEGRAU_GUIA_Y_PX), fill="#596a7a", width=2)
+
+    mid_x_a = (DEGRAU_WALL_START_X_PX + DEGRAU_WALL_JOG_X_PX) // 2
+    mid_x_b = (DEGRAU_WALL_JOG_X_PX + DEGRAU_WALL_END_X_PX) // 2
+    draw.line((mid_x_a, DEGRAU_WALL_START_Y_PX, mid_x_a, DEGRAU_GUIA_Y_PX), fill="#9b2c2c", width=2)
+    draw.text(
+        (mid_x_a + 8, (DEGRAU_WALL_START_Y_PX + DEGRAU_GUIA_Y_PX) // 2 - 10),
+        f"{_degrau_text(DEGRAU_AFASTAMENTO_A_M)} m",
+        fill="#9b2c2c",
+        font=small_font,
+    )
+    draw.line((mid_x_b, DEGRAU_WALL_JOG_Y_PX, mid_x_b, DEGRAU_GUIA_Y_PX), fill="#9b2c2c", width=2)
+    draw.text(
+        (mid_x_b + 8, (DEGRAU_WALL_JOG_Y_PX + DEGRAU_GUIA_Y_PX) // 2 - 10),
+        f"{_degrau_text(DEGRAU_AFASTAMENTO_B_M)} m",
+        fill="#9b2c2c",
+        font=small_font,
+    )
+
+    # Cotas em texto dos dois trechos e do jog, no mesmo estilo das cotas existentes.
+    draw.text(
+        (mid_x_a - 45, DEGRAU_WALL_START_Y_PX - 30),
+        f"{_degrau_text(DEGRAU_TRECHO_A_LENGTH_M)} m",
+        fill="#9b2c2c",
+        font=small_font,
+    )
+    draw.text(
+        (DEGRAU_WALL_JOG_X_PX + 8, (DEGRAU_WALL_START_Y_PX + DEGRAU_WALL_JOG_Y_PX) // 2 - 10),
+        f"{_degrau_text(DEGRAU_JOG_LENGTH_M)} m",
+        fill="#9b2c2c",
+        font=small_font,
+    )
+    draw.text(
+        (mid_x_b - 45, DEGRAU_WALL_JOG_Y_PX - 30),
+        f"{_degrau_text(DEGRAU_TRECHO_B_LENGTH_M)} m",
+        fill="#9b2c2c",
+        font=small_font,
+    )
     draw.text(
         (40, 35),
         "CROQUITO - DADO SINTETICO, SEM CONTEUDO DE CLIENTE",

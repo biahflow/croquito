@@ -1179,6 +1179,197 @@ def test_keep_apart_aceita_os_dois_formatos_e_valida_igual() -> None:
         )
 
 
+# --- O degrau do muro (Guaxindiba V3, primeira revisão em nuvem, 2026-08-19) -----------
+#
+# A composição que motivou o desenho do motor e nunca tinha sido exercitada inteira: um
+# muro em polilinha ABERTA que recua no meio do caminho. Dois trechos paralelos, cada um
+# com a sua cota de comprimento (19,75 e 14,50), e dois vãos contra o MESMO vizinho — o
+# campo — declarando o afastamento de cada trecho (4,80 e 3,30). O dente de 1,50 entre os
+# dois não tem cota própria: ele é a diferença dos dois vãos. Ou o sistema o deriva, ou o
+# muro sai reto no CAD e a obra ganha 1,50 m de muro que não existe.
+#
+# O trecho recuado corre a 6 px da lateral do campo — dentro da tolerância de encosto, que
+# aqui vale ~12,2 px (`JUNCTION_TOLERANCE_RATIO` sobre a diagonal de 1000x700). Sem a
+# declaração humana as duas faixas viram uma só; é o que o segundo teste fixa.
+
+DEGRAU_WIDTH, DEGRAU_HEIGHT = 1000, 700
+DEGRAU_CAMPO = "vp_" + "d1" * 8
+DEGRAU_MURO = "vp_" + "e2" * 8
+
+DEGRAU_LARGURA = "rd_" + "d3" * 8
+DEGRAU_ALTURA = "rd_" + "d4" * 8
+DEGRAU_TRECHO_A = "rd_" + "d5" * 8
+DEGRAU_TRECHO_B = "rd_" + "d6" * 8
+DEGRAU_RECUO_A = "rd_" + "d7" * 8
+DEGRAU_RECUO_B = "rd_" + "d8" * 8
+
+
+def _degrau_proposals() -> list[VisionProposal]:
+    """Campo retangular e o muro de quatro vértices que recua 24 px no meio do caminho.
+
+    Os dois trechos verticais do muro ficam a 24 px um do outro — faixas X distintas, bem
+    acima da tolerância de fusão. O trecho recuado (V2-V3) passa a 6 px da lateral direita
+    do campo: dentro da tolerância, portanto encosta e funde se ninguém declarar o
+    contrário. A folha está fora de escala nos dois eixos, como a real.
+    """
+    return [
+        VisionProposal(
+            id=DEGRAU_CAMPO,
+            kind="contour",
+            geometry=_rect(100.0, 100.0, 500.0, 480.0),
+            algorithm="fixture",
+            quality_score=0.9,
+            label="Contorno do campo",
+            layer_hint="CAMPO",
+        ),
+        VisionProposal(
+            id=DEGRAU_MURO,
+            kind="contour",
+            geometry=PixelPolyline(
+                points=[
+                    PixelPoint(x=530.0, y=120.0),
+                    PixelPoint(x=530.0, y=320.0),
+                    PixelPoint(x=506.0, y=320.0),
+                    PixelPoint(x=506.0, y=560.0),
+                ],
+                closed=False,
+            ),
+            algorithm="fixture",
+            quality_score=0.9,
+            label="Muro lateral com degrau",
+            layer_hint="MURO",
+        ),
+    ]
+
+
+def _degrau_packet() -> ReviewPacket:
+    """As seis cotas da folha: duas do campo, duas de comprimento do muro, dois recuos."""
+    return ReviewPacket(
+        dataset_id=DATASET_ID,
+        page_number=1,
+        image_sha256=DIGEST,
+        readings=[
+            _reading(DEGRAU_LARGURA, value="25.40", kind="width", centre=(300, 95)),
+            _reading(DEGRAU_ALTURA, value="40.00", kind="height", centre=(95, 290)),
+            _reading(DEGRAU_TRECHO_A, value="19.75", kind="height", centre=(545, 220)),
+            _reading(DEGRAU_TRECHO_B, value="14.50", kind="height", centre=(521, 440)),
+            _reading(DEGRAU_RECUO_A, value="4.80", kind="width", centre=(515, 200)),
+            _reading(DEGRAU_RECUO_B, value="3.30", kind="width", centre=(503, 420)),
+        ],
+        safety_notes=["Fixture local.", "Revisão humana obrigatória."],
+    )
+
+
+def _degrau_solve(*, keep_apart: bool) -> TraceSolveResult:
+    acceptance = TraceAcceptance(
+        acceptance_id="ta_" + "d1" * 8,
+        reviewer_id="eng-teste",
+        reviewer_role="engineer",
+        decided_at=datetime(2026, 8, 19, 9, 0, tzinfo=UTC),
+        proposal_ids=[DEGRAU_CAMPO, DEGRAU_MURO],
+        # O eixo declarado é o do problema: as faixas X das duas formas não podem se
+        # reunir; o encontro em Y, se houver, continua livre para amarrar.
+        keep_apart_pairs=[KeepApartPair(first=DEGRAU_CAMPO, second=DEGRAU_MURO, axis="x")]
+        if keep_apart
+        else [],
+    )
+    return solve_trace(
+        _degrau_packet(),
+        _degrau_proposals(),
+        acceptance,
+        confirmed_associations={
+            DEGRAU_LARGURA: DEGRAU_CAMPO,
+            DEGRAU_ALTURA: DEGRAU_CAMPO,
+            DEGRAU_TRECHO_A: DEGRAU_MURO,
+            DEGRAU_TRECHO_B: DEGRAU_MURO,
+            DEGRAU_RECUO_A: [DEGRAU_CAMPO, DEGRAU_MURO],
+            DEGRAU_RECUO_B: [DEGRAU_CAMPO, DEGRAU_MURO],
+        },
+        image_width=DEGRAU_WIDTH,
+        image_height=DEGRAU_HEIGHT,
+    )
+
+
+def _degrau_muro(scene: SceneRevision) -> PolylineGeometry:
+    geometry = _entity_of(scene, DEGRAU_MURO).geometry
+    # Um muro, uma polilinha: o degrau não pode virar duas formas soltas no CAD.
+    assert isinstance(geometry, PolylineGeometry)
+    assert len(geometry.points) == 4
+    return geometry
+
+
+def test_degrau_do_muro_sai_dos_dois_vaos_contra_o_mesmo_vizinho() -> None:
+    """O dente de 1,50 nasce da diferença entre 4,80 e 3,30, sem cota própria.
+
+    É a cadeia inteira num teste só: cada trecho do muro recebe o seu comprimento cotado,
+    cada trecho recebe o seu afastamento do campo, e o degrau entre eles cai onde as duas
+    cotas de vão mandam — na coordenada em que os dois trechos se encontram, que nenhuma
+    leitura mede diretamente.
+    """
+    result = _degrau_solve(keep_apart=True)
+
+    assert result.status == "solved_unapproved", result.blockers
+    assert result.unapplied_reading_ids == []
+    assert all(residual.passed for residual in result.residuals), [
+        (residual.code, str(residual.absolute_error_m)) for residual in result.residuals
+    ]
+    assert result.scene is not None
+
+    campo = _bbox(_entity_of(result.scene, DEGRAU_CAMPO).geometry)
+    muro = _degrau_muro(result.scene)
+    v0, v1, v2, v3 = muro.points
+
+    # Cada trecho pousa no seu recuo, medido da mesma borda do campo.
+    assert v0.x - campo[2] == pytest.approx(4.80, abs=0.01)
+    assert v1.x - campo[2] == pytest.approx(4.80, abs=0.01)
+    assert v2.x - campo[2] == pytest.approx(3.30, abs=0.01)
+    assert v3.x - campo[2] == pytest.approx(3.30, abs=0.01)
+
+    # E cada trecho mede o seu comprimento cotado, não a proporção da folha.
+    assert abs(v1.y - v0.y) == pytest.approx(19.75, abs=0.01)
+    assert abs(v3.y - v2.y) == pytest.approx(14.50, abs=0.01)
+
+    # O degrau: mesma altura nos dois vértices (o trecho que os liga é horizontal) e a
+    # profundidade dele é a diferença dos dois vãos — 4,80 - 3,30 — derivada, não cotada.
+    assert v1.y == pytest.approx(v2.y, abs=1e-6)
+    assert abs(v1.x - v2.x) == pytest.approx(1.50, abs=0.01)
+
+
+def test_sem_keep_apart_o_recuo_do_degrau_fica_como_nao_aplicado() -> None:
+    """Sem a declaração humana, o trecho recuado funde com a lateral do campo.
+
+    Contraprova do teste anterior. O sinal que o motor dá aqui NÃO é o do anel de cotas
+    (`test_sem_keep_apart_o_anel_de_cotas_acusa_o_conflito`, que fecha em `conflict` com
+    resíduo estourado): lá as duas faixas continuam distintas e a cota contradiz a cadeia;
+    aqui a faixa do trecho recuado passa a ser a MESMA faixa da lateral do campo, então a
+    leitura de 3,30 não tem duas incógnitas para amarrar e sai declarada não aplicada,
+    com issue de aviso. O desenho entregue mostra o defeito de cara: o trecho recuado cola
+    na lateral do campo e o degrau vira 4,80 em vez de 1,50.
+    """
+    result = _degrau_solve(keep_apart=False)
+
+    assert result.status == "solved_unapproved", result.blockers
+    assert result.unapplied_reading_ids == [DEGRAU_RECUO_B]
+    assert result.scene is not None
+
+    unapplied_issues = [
+        issue for issue in result.scene.issues if issue.code == "CONFIRMED_READING_NOT_APPLIED"
+    ]
+    assert len(unapplied_issues) == 1
+    assert unapplied_issues[0].severity is IssueSeverity.WARNING
+    assert unapplied_issues[0].status is IssueStatus.OPEN
+    assert DEGRAU_RECUO_B in unapplied_issues[0].message
+
+    campo = _bbox(_entity_of(result.scene, DEGRAU_CAMPO).geometry)
+    muro = _degrau_muro(result.scene)
+    _v0, v1, v2, v3 = muro.points
+    # O trecho recuado encostou: zero de afastamento onde a folha cota 3,30.
+    assert v2.x - campo[2] == pytest.approx(0.0, abs=1e-6)
+    assert v3.x - campo[2] == pytest.approx(0.0, abs=1e-6)
+    # E o degrau ficou com a profundidade do outro vão, que é o desenho errado.
+    assert abs(v1.x - v2.x) == pytest.approx(4.80, abs=0.01)
+
+
 def test_cota_derivada_mede_trecho_desenhado() -> None:
     """O 1,50 do dente: pedido do revisor, valor da geometria resolvida, precisão derived."""
     result = solve_trace(
