@@ -582,6 +582,34 @@ def test_provider_preview_keeps_full_dpi_when_the_page_already_fits() -> None:
     assert validated.preview_dpi == PREVIEW_BASE_DPI
 
 
+def test_object_client_only_sends_checksums_where_the_api_requires_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """O checksum implícito do botocore quebrou o primeiro PUT em HML (GCS interop).
+
+    O GCS recusa `x-amz-checksum-*` e a assinatura cai em SignatureDoesNotMatch; cada
+    reentrega pagava uma chamada de provider e falhava de novo na gravação.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=f"sqlite+pysqlite:///{tmp_path / 'client.db'}",
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+        )
+    )
+
+    config = worker.s3_client.meta.config
+
+    assert config.request_checksum_calculation == "when_required"
+    assert config.response_checksum_validation == "when_required"
+    # A correção do checksum não pode desfazer o que já fazia o GCS funcionar no GET.
+    assert config.signature_version == "s3v4"
+    assert config.s3["addressing_style"] == "path"
+
+
 def test_raw_response_store_honours_the_encryption_flag() -> None:
     storage = FakeObjectStore()
     encrypted = S3ProtectedRawResponseStore(

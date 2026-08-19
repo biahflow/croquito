@@ -6,6 +6,7 @@ import {
   CroquiApp,
   JobStatusBand,
   jobFailureMessage,
+  jobPresentationChanged,
 } from "./CroquiApp";
 
 /**
@@ -97,6 +98,49 @@ describe("JobStatusBand", () => {
     );
 
     expect(html).toBe("");
+  });
+});
+
+/**
+ * O poll de 2 s traz um objeto novo a cada volta. Trocar o job da tela por um igual
+ * re-renderiza a jornada inteira — foi o "respiro" que o usuário reportou.
+ */
+describe("jobPresentationChanged", () => {
+  it("mesmo status e mesmo stage não é mudança, mesmo em objeto novo", () => {
+    const antes = { status: "PROCESSING", stage: "VISION" };
+    const depois = { status: "PROCESSING", stage: "VISION" };
+
+    expect(jobPresentationChanged(antes, depois)).toBe(false);
+  });
+
+  it("avanço de stage é mudança: a faixa de estado precisa acompanhar", () => {
+    expect(
+      jobPresentationChanged(
+        { status: "PROCESSING", stage: "VISION" },
+        { status: "PROCESSING", stage: "REVIEW" },
+      ),
+    ).toBe(true);
+  });
+
+  it("mudança de status é mudança, incluindo a virada para revisável e para falha", () => {
+    expect(
+      jobPresentationChanged(
+        { status: "PROCESSING", stage: "REVIEW" },
+        { status: "REVIEW_REQUIRED", stage: "REVIEW" },
+      ),
+    ).toBe(true);
+    expect(
+      jobPresentationChanged(
+        { status: "PROCESSING", stage: "VISION" },
+        { status: "FAILED", stage: "VISION" },
+      ),
+    ).toBe(true);
+  });
+
+  it("sem job aberto, o primeiro job é sempre mudança", () => {
+    expect(
+      jobPresentationChanged(null, { status: "UPLOADED", stage: "VALIDATING" }),
+    ).toBe(true);
   });
 });
 
