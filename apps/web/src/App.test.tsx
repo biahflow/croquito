@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { App } from "./App";
-import { entryRedirect, LOGIN_PATH } from "./route";
+import { App, JourneySwitch } from "./App";
+import { PLATFORM_OPERATOR_ROLE } from "./plataforma/api";
+import { entryRedirect, LOGIN_PATH, type Route } from "./route";
 
 /**
  * As duas jornadas têm o mesmo regime: sessão OIDC ou nada. A medição já teve um caminho
@@ -73,6 +74,69 @@ describe("App", () => {
     expect(html).not.toContain("login-federated");
     // O CTA próprio continua lá — o que falta é o provedor, não a porta.
     expect(html).toContain("login-cta");
+  });
+});
+
+/**
+ * A jornada de plataforma é oferecida por PAPEL, e o papel vem da API (`GET /v1/me`) —
+ * a SPA não decodifica token. A regra é conferida no seletor, que é onde ela vive: a
+ * casca inteira só renderiza com sessão, e a condição não depende de sessão nenhuma.
+ */
+describe("seletor de jornadas", () => {
+  const CROQUI: Route = { kind: "croqui", jobId: "" };
+
+  it("com o papel de operador, a Plataforma aparece no seletor", () => {
+    const html = renderToStaticMarkup(
+      <JourneySwitch
+        route={CROQUI}
+        roles={["revisor", PLATFORM_OPERATOR_ROLE]}
+        onOpen={() => {}}
+      />,
+    );
+
+    expect(html).toContain(">Plataforma<");
+    expect(html).toContain(">Croqui<");
+    expect(html).toContain(">Medição<");
+  });
+
+  /**
+   * Ausente, não desabilitado: um botão apagado anunciaria a existência de uma área que
+   * aquela conta não administra. Sem papel, o elemento não existe no DOM.
+   */
+  it("sem o papel, o botão não existe — nem desabilitado", () => {
+    const html = renderToStaticMarkup(
+      <JourneySwitch route={CROQUI} roles={["revisor"]} onOpen={() => {}} />,
+    );
+
+    expect(html).not.toContain("Plataforma");
+    expect(html).not.toContain("disabled");
+    // As duas jornadas de sempre continuam lá.
+    expect(html).toContain(">Croqui<");
+    expect(html).toContain(">Medição<");
+  });
+
+  /**
+   * Falha em `/v1/me` deixa os papéis vazios (fail-closed): a jornada some do seletor e
+   * nenhum erro é jogado na cara de quem entrou para revisar um croqui.
+   */
+  it("sem resposta de papéis, o seletor é o de antes desta feature", () => {
+    const html = renderToStaticMarkup(
+      <JourneySwitch route={CROQUI} roles={[]} onOpen={() => {}} />,
+    );
+
+    expect(html).not.toContain("Plataforma");
+  });
+
+  it("a jornada aberta é declarada em aria-current, não só pintada", () => {
+    const html = renderToStaticMarkup(
+      <JourneySwitch
+        route={{ kind: "plataforma" }}
+        roles={[PLATFORM_OPERATOR_ROLE]}
+        onOpen={() => {}}
+      />,
+    );
+
+    expect(html).toContain('aria-current="page">Plataforma<');
   });
 });
 
