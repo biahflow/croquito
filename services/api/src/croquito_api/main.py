@@ -2098,6 +2098,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         issuer=runtime_settings.oidc_issuer,
         audience=runtime_settings.oidc_audience,
         allow_test_tokens=runtime_settings.allow_test_tokens,
+        jwks_url=runtime_settings.oidc_jwks_url,
     )
     queue_adapter: QueueAdapter = (
         PubSubProcessingQueue(runtime_settings)

@@ -231,6 +231,13 @@ curl -fsS "$BASE_URL/login" | grep -F '/revisao/assets/'
 O primeiro comando confirma `302` relativo para `/login`; o segundo confirma que `/login`
 entrega o HTML da SPA e mantém os assets sob `/revisao/`.
 
+**O domínio público passa pelo Cloudflare** (proxy de DNS), e a proteção de bot dele
+devolve `403` a clientes que não parecem navegador (ex.: `Python-urllib`). Serviço
+falando com serviço NÃO usa o host público: a API busca o JWKS pela URL direta do
+`croquito-web-hml` no Cloud Run (`CROQUITO_OIDC_JWKS_URL`) — foi o incidente de
+2026-08-19: todo token virava `INVALID_TOKEN` porque a API não conseguia baixar as
+chaves pela borda pública.
+
 **Não use `/api/healthz` para verificar a API daqui de fora.** O Cloud Run reserva `/healthz`
 na raiz de todo serviço, e como o proxy remove o prefixo, esse caminho nunca chega ao
 container: o 404 vem do Google, não do FastAPI. O `/healthz` continua servindo ao startup

@@ -176,6 +176,27 @@ por logs dos três serviços, com reprodução local instrumentada:
   pulo do nginx permanece coberto pelos curls da T1 e pela fumaça de seis rotas da
   esteira.
 
+## Revisão humana — rodada 4 (2026-08-19, a Fumaça Autenticada morde no primeiro dia)
+
+O passo novo da esteira reprovou o primeiro deploy que atravessou: login fecha, sessão
+abre, e `GET /v1/projects → 401 INVALID_TOKEN` (não `TOKEN_WITHOUT_TENANT` — o usuário de
+fumaça estava perfeito, provado por decodificação dos claims: issuer público, `aud` com
+`croquito-web`, tenant e papel presentes).
+
+- **Causa raiz, provada por reprodução da validação fora da API**: o domínio público passa
+  pelo **Cloudflare**, e a proteção de bot devolve **403 ao `Python-urllib`** — o
+  User-Agent do PyJWT. A API não conseguia BAIXAR o JWKS pela borda pública; sem chaves,
+  todo token é `INVALID_TOKEN`. Defeito de arquitetura latente: validação de token dando a
+  volta pela borda pública.
+- **Conserto em duas camadas**: `CROQUITO_OIDC_JWKS_URL` — a busca das chaves vai pela URL
+  direta do serviço no Cloud Run, fora do Cloudflare (o `iss` validado continua sendo o
+  público); e User-Agent próprio (`croquito-oidc/1.0`) no cliente JWKS. `oidc.py` ganhou o
+  parâmetro (cacheado por par issuer×URL, com teste), a API o encadeia por config, e o
+  deploy o define. O Cloudflare na frente do domínio agora está documentado no HML.md —
+  não estava em lugar nenhum.
+- Nota de método: foi a fumaça autenticada que pegou — exatamente como desenhada. Sem ela,
+  o próximo humano a logar herdaria o mistério.
+
 ## Resultado da revisão
 
 Seis diffs revisados linha a linha pelo modelo principal contra contrato, ADR-0032 e
