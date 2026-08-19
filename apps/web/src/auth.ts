@@ -105,25 +105,36 @@ export async function readSession(): Promise<User | null> {
     return null;
   }
   const params = new URLSearchParams(window.location.search);
+  let callbackFailure: unknown = null;
   if (params.has("code") && params.has("state")) {
     let redirected: User | null = null;
     try {
       redirected = await manager.signinRedirectCallback();
       return redirected;
-    } catch {
+    } catch (error) {
       // Código de autorização é de uso único. Recarregar a página com ele ainda na
       // URL reenvia um código já gasto ("Code not valid"); cair para a sessão
-      // armazenada é melhor do que derrubar a tela inteira.
+      // armazenada é melhor do que derrubar a tela inteira. Mas a falha fica
+      // GUARDADA: se não houver sessão armazenada para cair, engolir o erro aqui
+      // vira um loop silencioso — o rebote da porta (ADR-0032, D4) manda de volta
+      // para /login sem nenhuma mensagem, o SSO devolve um código novo, a troca
+      // falha de novo, e ninguém vê o porquê. Incidente real de 2026-08-19.
+      callbackFailure = error;
     } finally {
       restoreUrlAfterRedirect(searchFromState(redirected?.state));
     }
   }
   const user = await manager.getUser();
+  const alive = user !== null && !user.expired ? user : null;
   if (user?.expired) {
     await manager.removeUser();
-    return null;
   }
-  return user;
+  if (alive === null && callbackFailure !== null) {
+    // Falha real de callback, sem sessão viva para amortecê-la: sobe para a casca, que
+    // a transforma em aviso visível na porta em vez de rebote mudo.
+    throw callbackFailure instanceof Error ? callbackFailure : new Error(String(callbackFailure));
+  }
+  return alive;
 }
 
 /**

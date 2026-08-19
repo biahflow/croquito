@@ -551,10 +551,17 @@ button {
 }
 
 /* O wordmark é a marca no topbar escuro; o `alt` carrega o nome para quem não vê a
-   imagem, e o subtítulo continua em texto. */
+   imagem, e o subtítulo continua em texto. Altura maior por decisão da revisão humana de
+   2026-08-19 ("a marca está bem pequena aqui também"), com a mesma compensação óptica da
+   porta: o lettering começa em x≈136 do viewBox (620 × 150), e a margem negativa alinha o
+   desenho — não a caixa — com a borda do padding. */
 .brand-logo {
-  height: 26px;
+  --brand-logo-h: 34px;
+  height: var(--brand-logo-h);
+  width: auto;
+  aspect-ratio: 620 / 150;
   display: block;
+  margin-left: calc(var(--brand-logo-h) * -0.9);
 }
 
 .brand small {

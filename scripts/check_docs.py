@@ -26,6 +26,9 @@ LIFECYCLE_STATES = {
     "CANCELLED",
 }
 ADR_STATES = {"Proposed", "Accepted", "Deprecated", "Superseded", "Rejected"}
+# Estados anteriores ao Feature Contract: a linha do roadmap é o registro canônico e ainda
+# não existe feature.md para linkar (workflows/feature.md da camada pinada).
+PRE_SPEC_STATES = {"BACKLOG", "READY_FOR_SPEC", "SPEC_IN_PROGRESS"}
 
 FEATURE_STATE_LINE = re.compile(r"^\s*`([A-Z_]+)`\s*$")
 FEATURE_DIR_PREFIX = re.compile(r"^(F-\d+)")
@@ -139,6 +142,9 @@ def validate_roadmap_feature_parity(root: Path = ROOT) -> list[str]:
 
         link_match = TABLE_LINK_PATTERN.search(contract_cell)
         if not link_match:
+            if state in PRE_SPEC_STATES:
+                # Antes do contrato, a linha É o registro canônico; não há arquivo a parear.
+                continue
             errors.append(
                 f"{roadmap_path.relative_to(root)}: célula Contrato de {feature_id} sem link"
             )
