@@ -540,7 +540,10 @@ class LocalQueueWorker:
                 try:
                     review_snapshot = build_provider_review_snapshot(
                         Path(preview_file.name),
-                        dataset_id="synthetic-provider-contract-v1",
+                        # O dataset identifica o documento deste job, não a origem das
+                        # respostas: com providers reais, o rótulo "synthetic" mentia
+                        # sobre evidência de cliente.
+                        dataset_id=f"job-{job_id}",
                         suite=suite,
                     )
                 except ProviderExecutionError as error:
@@ -594,7 +597,14 @@ class LocalQueueWorker:
                         solver_blockers=[],
                         required_blocker_codes=[],
                         required_criteria_texts={},
-                        created_by="offline-provider-contract-fixture",
+                        # Suite injetada é fixture offline (teste/demo); suite construída
+                        # aqui chamou provider real e pago. A proveniência da revisão
+                        # precisa distinguir os dois.
+                        created_by=(
+                            "offline-provider-contract-fixture"
+                            if self.provider_suite is not None
+                            else "hosted-provider-extraction-v1"
+                        ),
                     )
             result = connection.execute(
                 text(
@@ -1289,7 +1299,7 @@ class LocalQueueWorker:
             image_bytes = self.s3_client.get_object(
                 Bucket=self.settings.artifact_bucket, Key=source_image_key
             )["Body"].read()
-            execution = suite.bedrock_anthropic.execute(
+            execution = suite.anthropic.execute(
                 build_image_text_request(
                     PromptTask.REVIEW_CHAT,
                     image_bytes=image_bytes,

@@ -34,6 +34,7 @@ class ProviderName(StrEnum):
     ANTHROPIC = "anthropic"
     BEDROCK_ANTHROPIC = "bedrock_anthropic"
     TEXTRACT = "textract"
+    GCP_VISION = "gcp_vision"
 
 
 class PromptTask(StrEnum):
@@ -802,8 +803,12 @@ def _parse_output(task: PromptTask, payload: object) -> ProviderOutput:
 def _failure_from_http_status(status: int) -> ProviderFailureCode:
     if status == 429:
         return ProviderFailureCode.RATE_LIMITED
-    if status in {401, 403, 404}:
-        return ProviderFailureCode.UNAVAILABLE
+    if status in {401, 403}:
+        # Credencial inválida ou sem permissão não melhora com retentativa: as três
+        # tentativas falhariam igual, e cada uma reserva teto antes de sair. `REFUSED`
+        # está fora de `RetryingProviderAdapter.RETRYABLE`, como o equivalente do Bedrock
+        # em `BEDROCK_PERMANENT_ERRORS`.
+        return ProviderFailureCode.REFUSED
     return ProviderFailureCode.UNAVAILABLE
 
 
@@ -1234,6 +1239,244 @@ class TextractProviderAdapter:
         )
 
 
+GCP_VISION_ENDPOINT: Final = "https://vision.googleapis.com/v1/images:annotate"
+"""Sem região no endpoint: `images:annotate` é um serviço global do Cloud Vision."""
+
+GCP_VISION_SCOPES: Final = ("https://www.googleapis.com/auth/cloud-platform",)
+
+GCP_VISION_MODEL_ID: Final = "cloud-vision/document-text-detection"
+
+OCR_CALL_COST_ENV: Final = "CROQUITO_AI_ESTIMATED_COST_PER_OCR_CALL_USD"
+DEFAULT_OCR_CALL_COST_USD: Final = "0.0015"
+
+
+class _AuthTransportResponse:
+    """Implementa `google.auth.transport.Response` sobre a resposta do `urlopen`."""
+
+    def __init__(self, *, status: int, headers: dict[str, str], data: bytes) -> None:
+        self._status = status
+        self._headers = headers
+        self._data = data
+
+    @property
+    def status(self) -> int:
+        return self._status
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return self._headers
+
+    @property
+    def data(self) -> bytes:
+        return self._data
+
+
+@dataclass(frozen=True)
+class _UrllibAuthRequest:
+    """Implementa `google.auth.transport.Request` com `urllib`, sem dependência nova.
+
+    `google-auth` já é dependência transitiva de `google-cloud-pubsub`; falta só um
+    transporte para o refresh de token que não puxe `requests`/`urllib3`. O resto deste
+    arquivo já resolve REST com `urllib.request` (`_http_post`); este objeto repete a
+    mesma escolha só para o passo de autenticação.
+    """
+
+    timeout_seconds: float
+
+    def __call__(
+        self,
+        url: str,
+        method: str = "GET",
+        body: bytes | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+        **kwargs: object,
+    ) -> _AuthTransportResponse:
+        http_request = Request(url, data=body, headers=dict(headers or {}), method=method)
+        with urlopen(  # nosec B310: URL vem sempre do metadata server/token endpoint do ADC
+            http_request, timeout=timeout or self.timeout_seconds
+        ) as response:
+            return _AuthTransportResponse(
+                status=int(response.status),
+                headers=dict(response.headers),
+                data=response.read(),
+            )
+
+
+def _cloud_vision_word_text(word: object) -> str:
+    if not isinstance(word, dict):
+        return ""
+    symbols = word.get("symbols")
+    if not isinstance(symbols, list):
+        return ""
+    return "".join(str(symbol.get("text", "")) for symbol in symbols if isinstance(symbol, dict))
+
+
+def _cloud_vision_bbox(node: object, *, width: int, height: int) -> dict[str, float] | None:
+    """Bbox normalizada 0-1 do `boundingBox` de um bloco/parágrafo do Cloud Vision.
+
+    `fullTextAnnotation` só carrega vértices em pixel (`boundingBox.vertices`), nunca
+    `normalizedVertices`; a normalização depende das dimensões da própria imagem enviada,
+    as mesmas que abriram o request. Caixa degenerada (fora da borda, ou colapsada por
+    clamp) é descartada em vez de forçar uma área mínima inventada.
+    """
+    if not isinstance(node, dict):
+        return None
+    bounding_box = node.get("boundingBox")
+    vertices = bounding_box.get("vertices") if isinstance(bounding_box, dict) else None
+    if not isinstance(vertices, list) or not vertices:
+        return None
+    xs: list[float] = []
+    ys: list[float] = []
+    for vertex in vertices:
+        if not isinstance(vertex, dict):
+            continue
+        x, y = vertex.get("x"), vertex.get("y")
+        if isinstance(x, int | float) and not isinstance(x, bool):
+            xs.append(float(x))
+        if isinstance(y, int | float) and not isinstance(y, bool):
+            ys.append(float(y))
+    if not xs or not ys:
+        return None
+    left = max(0.0, min(xs) / width)
+    top = max(0.0, min(ys) / height)
+    right = min(1.0, max(xs) / width)
+    bottom = min(1.0, max(ys) / height)
+    if right <= left or bottom <= top:
+        return None
+    return {"left": left, "top": top, "right": right, "bottom": bottom}
+
+
+def _cloud_vision_lines(
+    full_text_annotation: object, *, width: int, height: int
+) -> list[dict[str, object]]:
+    """Uma `OcrLineOutput` por parágrafo do `fullTextAnnotation`.
+
+    Document text detection não expõe "linha" como unidade de primeira classe: a
+    reconstrução exata por quebra de símbolo (`detectedBreak`) exige caminhar símbolo a
+    símbolo dentro de cada palavra. Para as cotas curtas que este produto lê (uma ou
+    poucas palavras por anotação), o parágrafo já É a linha na esmagadora maioria dos
+    casos; usar essa granularidade evita inventar uma heurística de quebra sem fixture
+    real para validar contra. `text_type` fica sempre `unknown`: a API não distingue
+    impresso de manuscrito na resposta, diferente do Textract.
+    """
+    if not isinstance(full_text_annotation, dict):
+        return []
+    pages = full_text_annotation.get("pages")
+    if not isinstance(pages, list):
+        return []
+    lines: list[dict[str, object]] = []
+    for page in pages:
+        blocks = page.get("blocks") if isinstance(page, dict) else None
+        if not isinstance(blocks, list):
+            continue
+        for block in blocks:
+            paragraphs = block.get("paragraphs") if isinstance(block, dict) else None
+            if not isinstance(paragraphs, list):
+                continue
+            for paragraph in paragraphs:
+                if not isinstance(paragraph, dict):
+                    continue
+                words = paragraph.get("words")
+                word_texts = (
+                    [_cloud_vision_word_text(word) for word in words]
+                    if isinstance(words, list)
+                    else []
+                )
+                raw_text = " ".join(text for text in word_texts if text).strip()
+                bbox = _cloud_vision_bbox(paragraph, width=width, height=height)
+                if not raw_text or bbox is None:
+                    continue
+                lines.append({"raw_text": raw_text, "bbox": bbox, "text_type": "unknown"})
+    return lines
+
+
+@dataclass(frozen=True)
+class GcpVisionOcrAdapter:
+    """Cloud Vision document text detection, autenticado por ADC — sem chave nova.
+
+    `credentials` é qualquer `google.auth.credentials.Credentials` refreshável, tipicamente
+    o par de `google.auth.default()`. Sem endpoint regional fixo (o produto é global) e sem
+    o SDK do Vision: só `google-auth` para o token, que já era dependência transitiva do
+    Pub/Sub (ver pyproject.toml).
+    """
+
+    credentials: Any
+    timeout_seconds: float = 30.0
+    raw_store: ProtectedRawResponseStore | None = None
+    http_post: HttpPost = _http_post
+    endpoint: str = GCP_VISION_ENDPOINT
+    model_id: str = GCP_VISION_MODEL_ID
+
+    def _access_token(self) -> str:
+        try:
+            if not self.credentials.valid:
+                self.credentials.refresh(_UrllibAuthRequest(timeout_seconds=self.timeout_seconds))
+        except Exception as error:  # google-auth levanta tipos concretos próprios
+            raise ProviderExecutionError(ProviderFailureCode.UNAVAILABLE) from error
+        token = getattr(self.credentials, "token", None)
+        if not isinstance(token, str) or not token:
+            raise ProviderExecutionError(ProviderFailureCode.REFUSED)
+        return token
+
+    def execute(self, request: ProviderRequest) -> ProviderExecution:
+        if request.task is not PromptTask.OCR:
+            raise ProviderExecutionError(ProviderFailureCode.REFUSED)
+        image_bytes = _require_image_bytes(request)
+        width, height = request.image_width_px, request.image_height_px
+        if width is None or height is None:
+            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+        token = self._access_token()
+        body = {
+            "requests": [
+                {
+                    "image": {"content": b64encode(image_bytes).decode("ascii")},
+                    "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
+                }
+            ]
+        }
+        started = time.monotonic()
+        status, response = self.http_post(
+            self.endpoint,
+            {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json.dumps(body, separators=(",", ":")).encode(),
+            self.timeout_seconds,
+        )
+        if not 200 <= status < 300:
+            raise ProviderExecutionError(_failure_from_http_status(status))
+        responses = response.get("responses")
+        if not isinstance(responses, list) or len(responses) != 1:
+            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+        single_response = responses[0]
+        if not isinstance(single_response, dict):
+            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+        if isinstance(single_response.get("error"), dict):
+            # Erro por imagem (ex.: payload ilegível) dentro de um HTTP 200; sem código
+            # granular na resposta do Vision para distinguir permanente de transitório
+            # aqui, então segue o mesmo tratamento do Textract: UNAVAILABLE.
+            raise ProviderExecutionError(ProviderFailureCode.UNAVAILABLE)
+        lines = _cloud_vision_lines(
+            single_response.get("fullTextAnnotation"), width=width, height=height
+        )
+        output = _parse_output(PromptTask.OCR, {"lines": lines})
+        raw_ref = None
+        if self.raw_store is not None:
+            raw_ref = self.raw_store.persist(
+                provider=ProviderName.GCP_VISION,
+                input_digest=request.image_sha256,
+                payload=json.dumps(response, separators=(",", ":")).encode(),
+            )
+        return ProviderExecution(
+            provider=ProviderName.GCP_VISION,
+            model_id=self.model_id,
+            prompt=request.prompt,
+            input_digest=request.image_sha256,
+            latency_ms=round((time.monotonic() - started) * 1000),
+            raw_response_ref=raw_ref,
+            output=output,
+        )
+
+
 EMBEDDINGS_MODEL: Final = "text-embedding-3-small"
 """Modelo padrão do braço semântico (M7 Fase 2). Trocável por `CROQUITO_EMBEDDINGS_MODEL`.
 
@@ -1452,9 +1695,17 @@ class FixtureProviderAdapter:
 
 @dataclass(frozen=True)
 class ProviderSuite:
+    """Os braços da suite hospedada, nomeados pelo que realmente chamam.
+
+    `openai`/`anthropic` falam com a API direta do fornecedor; nenhum cliente AWS entra
+    aqui. Os adapters Bedrock e Textract continuam existindo para `build_extraction_arm` e
+    para teste, mas não são braço de suite. `ocr` é opcional: `None` significa OCR
+    indisponível (nota `OCR_UNAVAILABLE`, sem derrubar o job), nunca um erro de construção.
+    """
+
     openai: ProviderAdapter
-    bedrock_anthropic: ProviderAdapter
-    textract: ProviderAdapter
+    anthropic: ProviderAdapter
+    ocr: ProviderAdapter | None = None
 
 
 def build_request(
@@ -1628,63 +1879,69 @@ def build_real_provider_suite(
 ) -> ProviderSuite:
     """Build the external suite only after the caller has checked job consent.
 
-    The normal LocalStack endpoint is deliberately never reused for Bedrock or
-    Textract: doing so would silently turn a real-provider configuration into a
-    different service.
+    Os dois braços de extração falam a API direta do fornecedor, cada um com a sua
+    própria chave explícita. Nenhum cliente AWS é construído aqui: as credenciais de
+    ambiente do ambiente hospedado pertencem ao object storage, e usá-las implicitamente
+    para Bedrock/Textract chamaria um serviço que ninguém configurou. O braço `ocr` é
+    sempre montado (Cloud Vision via ADC, sem chave nova) e reserva no MESMO `CostBudget`
+    da rodada — não há uma allowlist separada para ele.
     """
     import os
 
-    import boto3
+    import google.auth
 
     api_key = os.getenv("CROQUITO_OPENAI_API_KEY")
     if not api_key:
         raise ValueError("CROQUITO_OPENAI_API_KEY ausente para providers reais")
+    anthropic_api_key = os.getenv("CROQUITO_ANTHROPIC_API_KEY")
+    if not anthropic_api_key:
+        raise ValueError("CROQUITO_ANTHROPIC_API_KEY ausente para providers reais")
     try:
         budget = CostBudget(Decimal(os.environ["CROQUITO_AI_MAX_ESTIMATED_COST_USD"]))
         llm_cost = Decimal(os.getenv("CROQUITO_AI_ESTIMATED_COST_PER_LLM_CALL_USD", "0.75"))
-        textract_cost = Decimal(
-            os.getenv("CROQUITO_AI_ESTIMATED_COST_PER_TEXTRACT_CALL_USD", "0.02")
-        )
+        ocr_cost = Decimal(os.getenv(OCR_CALL_COST_ENV, DEFAULT_OCR_CALL_COST_USD))
     except (KeyError, ArithmeticError) as error:
         raise ValueError("Budget de IA explícito e válido é obrigatório") from error
-    if budget.limit_usd <= 0 or llm_cost < 0 or textract_cost < 0:
+    if budget.limit_usd <= 0 or llm_cost < 0 or ocr_cost < 0:
         raise ValueError("Budget e estimativas de IA devem ser positivos")
-    region = os.getenv("CROQUITO_AWS_PROVIDER_REGION", os.getenv("AWS_REGION", "sa-east-1"))
+    # Mesma variável nos braços de extração; os defaults diferem porque cada adapter tem
+    # o seu, exatamente como em `build_extraction_arm`.
+    timeout_env = os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS")
+    ocr_credentials, _ = google.auth.default(scopes=GCP_VISION_SCOPES)
     return ProviderSuite(
         openai=RetryingProviderAdapter(
             BudgetedProviderAdapter(
                 OpenAIProviderAdapter(
                     api_key=api_key,
                     model_id=os.getenv("CROQUITO_OPENAI_MODEL", "gpt-5.6-terra"),
-                    timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "30")),
+                    timeout_seconds=float(timeout_env or "30"),
                     raw_store=raw_store,
                 ),
                 budget=budget,
                 estimated_cost_usd=llm_cost,
             )
         ),
-        bedrock_anthropic=RetryingProviderAdapter(
+        anthropic=RetryingProviderAdapter(
             BudgetedProviderAdapter(
-                BedrockAnthropicProviderAdapter(
-                    model_id=os.getenv(
-                        "CROQUITO_BEDROCK_MODEL", "global.anthropic.claude-sonnet-5"
-                    ),
-                    client=boto3.client("bedrock-runtime", region_name=region),
+                AnthropicProviderAdapter(
+                    api_key=anthropic_api_key,
+                    model_id=os.getenv("CROQUITO_ANTHROPIC_MODEL", "claude-opus-5"),
+                    timeout_seconds=float(timeout_env or "60"),
                     raw_store=raw_store,
                 ),
                 budget=budget,
                 estimated_cost_usd=llm_cost,
             )
         ),
-        textract=RetryingProviderAdapter(
+        ocr=RetryingProviderAdapter(
             BudgetedProviderAdapter(
-                TextractProviderAdapter(
-                    model_id="textract-detect-document-text",
-                    client=boto3.client("textract", region_name=region),
+                GcpVisionOcrAdapter(
+                    credentials=ocr_credentials,
+                    timeout_seconds=float(timeout_env or "30"),
                     raw_store=raw_store,
                 ),
                 budget=budget,
-                estimated_cost_usd=textract_cost,
+                estimated_cost_usd=ocr_cost,
             )
         ),
     )
@@ -1858,30 +2115,44 @@ def build_synthetic_provider_suite(
         evidence_notes=["Dois traços coincidentes na região da evidência."],
         open_question=("Essa cota mede a borda do patamar ou a mureta desenhada por cima dela?"),
     )
+    # Bbox de cada linha replica a bbox da leitura correspondente em `measurements` acima
+    # — é o que a corroboração de `provider_review.py` precisa para intersectar. A cota do
+    # círculo central confirma em vírgula (como a leitura) apesar de o OCR devolver ponto:
+    # cobre a normalização decimal `,`↔`.` dentro da própria fixture do contrato, sem
+    # precisar de um segundo cenário só para isso.
+    ocr_output = OcrOutput(
+        lines=[
+            OcrLineOutput(
+                raw_text="25,90 m",
+                bbox=NormalizedBox(left=0.08, top=0.12, right=0.20, bottom=0.18),
+                text_type="printed",
+            ),
+            OcrLineOutput(
+                raw_text="21,75 m",
+                bbox=NormalizedBox(left=0.24, top=0.12, right=0.36, bottom=0.18),
+                text_type="printed",
+            ),
+            OcrLineOutput(
+                raw_text="Ø 6.00 m",
+                bbox=NormalizedBox(left=0.40, top=0.12, right=0.54, bottom=0.18),
+                text_type="printed",
+            ),
+        ]
+    )
     return ProviderSuite(
         openai=FixtureProviderAdapter(
             provider=ProviderName.OPENAI,
             model_id="fixture-openai-v1",
             outputs={**shared_outputs, PromptTask.REVIEW_CHAT: chat_uncertain},
         ),
-        bedrock_anthropic=FixtureProviderAdapter(
-            provider=ProviderName.BEDROCK_ANTHROPIC,
+        anthropic=FixtureProviderAdapter(
+            provider=ProviderName.ANTHROPIC,
             model_id="fixture-claude-v1",
             outputs={**shared_outputs, PromptTask.REVIEW_CHAT: chat_answer},
         ),
-        textract=FixtureProviderAdapter(
-            provider=ProviderName.TEXTRACT,
-            model_id="fixture-textract-v1",
-            outputs={
-                PromptTask.OCR: OcrOutput(
-                    lines=[
-                        OcrLineOutput(
-                            raw_text="25,90 m x 21,75 m",
-                            bbox=NormalizedBox(left=0.08, top=0.12, right=0.36, bottom=0.18),
-                            text_type="printed",
-                        )
-                    ]
-                )
-            },
+        ocr=FixtureProviderAdapter(
+            provider=ProviderName.GCP_VISION,
+            model_id="fixture-gcp-vision-v1",
+            outputs={PromptTask.OCR: ocr_output},
         ),
     )

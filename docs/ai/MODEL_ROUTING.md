@@ -2,51 +2,81 @@
 
 Status: Accepted for MVP  
 Responsável: AI Engineering / Platform  
-Última revisão: 2026-08-13 (eval paga das tarefas de medição)
+Última revisão: 2026-08-19 (suite hospedada sem AWS, F-009/ADR-0035)
 
 ## Rotas padrão
 
+A suite hospedada usada pelo worker (`build_real_provider_suite`) tem três braços diretos, sem
+Bedrock nem Textract — o caminho AWS nunca rodou no ambiente publicado (GCP,
+[ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md)), decisão registrada em
+[ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md).
+
 | Papel | Provedor/modelo | Execução |
 |---|---|---|
-| Leitura multimodal A | OpenAI `gpt-5.6-terra` | toda página/região principal |
-| Leitura multimodal B | Bedrock `global.anthropic.claude-sonnet-5` | toda página/região principal |
-| OCR auxiliar | Amazon Textract `DetectDocumentText` | toda página renderizada |
-| Escalonamento A | OpenAI `gpt-5.6-sol` | somente conflito material |
-| Escalonamento B | Bedrock Claude Opus 5 disponível no ambiente | somente conflito material |
+| Extração — braço primário | Anthropic API direta `claude-opus-5` (`CROQUITO_ANTHROPIC_MODEL`) | page survey, extração de geometria, e um dos dois lados da extração de medida |
+| Extração — braço reserva/contraparte | OpenAI `gpt-5.6-terra` (`CROQUITO_OPENAI_MODEL`) | contraparte da comparação dupla de medida; assume por fallback quando o braço primário falha de forma permanente em survey/geometria |
+| OCR auxiliar | Google Cloud Vision, `document text detection` (`GcpVisionOcrAdapter`, `ProviderName.GCP_VISION`) | corrobora cada leitura de medida extraída; uma chamada por documento, não por leitura |
 
-Model IDs efetivos são resolvidos por configuração validada no startup e gravados
-em cada `ProviderReading`. Falha de disponibilidade bloqueia ativação do modelo;
-não ocorre substituição silenciosa.
+Model IDs efetivos são resolvidos por configuração validada no startup
+(`CROQUITO_ANTHROPIC_MODEL`, `CROQUITO_OPENAI_MODEL`) e gravados em cada `ProviderReading`/nota
+de lineage. Falha de disponibilidade bloqueia a chamada — 401/403 mapeiam para `REFUSED`,
+não-retryável, em todos os adapters REST deste arquivo — e não ocorre substituição silenciosa
+de modelo.
 
-### Caminho alternativo: API direta da Anthropic
+### Fallback e comparação dupla
 
-Quando o Bedrock não está acessível na conta (caso real em 2026-08-11), os modelos
-Claude podem ser chamados pela API direta da Anthropic via `AnthropicProviderAdapter`
-(`CROQUITO_ANTHROPIC_API_KEY`). O lineage distingue os dois caminhos: API direta
-grava `provider: anthropic`; Bedrock grava `provider: bedrock_anthropic`. Relatórios
-de eval anteriores a essa distinção (Guaxindiba, 2026-08-11) foram executados pela
-API direta apesar de rotulados `bedrock_anthropic`.
+O braço Anthropic é o primário de toda tarefa com escolha simples (`page-survey`,
+`geometry-extraction`); o braço OpenAI é o reserva. A degradação nunca é silenciosa:
+`PROVIDER_FALLBACK_PAGE_SURVEY_OPENAI` e `PROVIDER_FALLBACK_GEOMETRY_EXTRACTION_OPENAI` entram
+nas notas de segurança do pacote sempre que o reserva assume. `BUDGET_EXCEEDED` nunca aciona
+fallback — o teto é da rodada, não do braço, e a exceção propaga direto, sem tentar o reserva.
 
-O caminho direto é usado hoje apenas pela eval CLI (`croquito-demo
-extraction-eval`), que seleciona provedor e modelo pela flag
-`--arm nome=provider:model_id` (ex.: `opus=anthropic:claude-opus-5`). A autorização
-de providers por job na API (`openai`, `bedrock_anthropic`, `textract`) ainda não
-inclui `anthropic`; incluir o caminho direto na sessão autenticada exige atualizar a
-lista, o contrato e os testes de contrato — pendência registrada, não implícita.
+A extração de medida (`measurement-extraction`) **não** é fallback: os dois braços são chamados
+sempre que possível, porque a comparação dupla é o próprio mecanismo de corroboração. Quando só
+um braço sobrevive, a nota `PROVIDER_FALLBACK_SINGLE_EXTRACTOR_ANTHROPIC`/`_OPENAI` nomeia quem
+respondeu e toda leitura nasce `AMBIGUOUS` (nunca `PROPOSED`) — sem contraparte não existe
+leitura concordante. Quando os dois braços de extração de medida falham, a exceção do segundo
+(`openai`) propaga e o job falha para reentrega — um pacote vazio seria menos honesto do que
+reentregar.
+
+### Caminho de comparação: eval por linha de comando
+
+`croquito-demo extraction-eval --arm nome=provider:model_id` continua permitindo comparar
+eixos — Anthropic direto, Bedrock ou OpenAI, cada um com o modelo escolhido na flag — via
+`build_extraction_arm`. Esse caminho é **independente** da suite hospedada descrita acima: é o
+que produziu as evals pagas comparativas registradas mais abaixo neste documento (Toca, medição,
+contrato de arco), e é a única via deste repositório que ainda fala com Bedrock — nunca chamada
+pelo worker normal, e sem braço Textract (nunca existiu ali). O lineage continua distinguindo os
+dois caminhos: API direta grava `provider: anthropic`; Bedrock grava
+`provider: bedrock_anthropic`. `croquito-demo extraction-eval`, por não ter sido tocado nesta
+entrega, mantém o default histórico do eixo `bedrock:...` — ajustar esse default para
+`anthropic:` é pendência registrada em
+[ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md).
+
+A autorização de providers por job na API (`providers_json`) passa a listar `["openai",
+"anthropic"]` — a lacuna registrada nesta seção antes desta revisão ("ainda não inclui
+`anthropic`") está fechada. O braço `ocr` (Cloud Vision) **não** entra nessa lista: é suporte
+determinístico sempre ligado quando a suite real é construída, não um provider de LLM que o
+tenant consente por si — decisão registrada em
+[ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md).
 
 ## Estado de implementação local
 
-O worker possui portas tipadas e mocks determinísticos para OpenAI, Bedrock/Claude
-e Textract. Elas são ativadas somente por injeção em teste ou pelo demo sintético;
-o worker normal não lê flag de ambiente para fabricar observações e não chama
-serviços externos. Adapters reais são configuráveis somente no ambiente local por
-`CROQUITO_REAL_PROVIDERS_ENABLED=true`; exigem entitlement contratual ativo por
-tenant e snapshot imutável por job, credenciais fora do Git, budget, eval
-comparativa e plano de rollback. O piloto
-processa a primeira página e sinaliza as demais como não analisadas. LocalStack
-continua restrito a storage/fila: Bedrock e Textract usam clientes AWS separados.
-Antes de cada chamada, o worker reserva o custo estimado configurado para o job;
-ultrapassar `CROQUITO_AI_MAX_ESTIMATED_COST_USD` bloqueia a chamada.
+O worker possui portas tipadas e mocks determinísticos para os três braços da suite hospedada
+(OpenAI, Anthropic e Cloud Vision) e, à parte, para Bedrock/Claude e Textract, usados só pela
+eval de linha de comando. Eles são ativados somente por injeção em teste ou pelo demo sintético;
+o worker normal não lê flag de ambiente para fabricar observações e não chama serviços externos
+por conta própria. Adapters reais são configuráveis por `CROQUITO_REAL_PROVIDERS_ENABLED=true`;
+exigem entitlement contratual ativo por tenant e snapshot imutável por job, credenciais fora do
+Git, budget, eval comparativa e plano de rollback. O piloto processa a primeira página e sinaliza
+as demais como não analisadas. `build_real_provider_suite` não importa `boto3`: os dois braços de
+extração falam a API direta do respectivo fornecedor com a própria chave
+(`CROQUITO_OPENAI_API_KEY`, `CROQUITO_ANTHROPIC_API_KEY`), e o braço `ocr` autentica por
+Application Default Credentials da service account de runtime do worker — nenhuma chave nova.
+Antes de cada chamada (inclusive OCR), o worker reserva o custo estimado configurado
+(`CROQUITO_AI_ESTIMATED_COST_PER_LLM_CALL_USD`, `CROQUITO_AI_ESTIMATED_COST_PER_OCR_CALL_USD`,
+default `0.0015`) no mesmo `CostBudget` da rodada; ultrapassar
+`CROQUITO_AI_MAX_ESTIMATED_COST_USD` bloqueia a chamada, para qualquer braço.
 
 ## Etapas
 
@@ -74,12 +104,29 @@ desambiguação. Não recebe a preferência do sistema.
 
 ## Falhas
 
-- Textract falha: continuar com `OCR_EVIDENCE_MISSING`.
-- Um LLM falha: continuar sem auto-confirmação e criar issue critical.
-- Ambos falham: job falha após retries.
+- Braço primário (Anthropic) falha de forma permanente em `page-survey` ou
+  `geometry-extraction`: assume o reserva (OpenAI), com nota `PROVIDER_FALLBACK_*` no pacote —
+  nunca silencioso. `BUDGET_EXCEEDED` nunca aciona fallback.
+- Os dois braços de extração de medida falham: job falha para reentrega — nenhum pacote vazio é
+  publicado como se a página não tivesse cota.
+- Um único braço de extração de medida sobrevive (o outro falhou de forma permanente): toda
+  leitura nasce `AMBIGUOUS`, nunca `PROPOSED`; a nota
+  `PROVIDER_FALLBACK_SINGLE_EXTRACTOR_ANTHROPIC`/`_OPENAI` nomeia quem respondeu.
+- OCR (Cloud Vision) indisponível, ausente da suite, ou falha permanente: uma nota única
+  `OCR_UNAVAILABLE`, sem nota por leitura; pacote segue normal.
+  `OCR_EVIDENCE_MISSING`, documentado numa revisão anterior deste documento, nunca chegou a
+  existir como fallback de fato — a chamada de OCR do Textract no snapshot era código morto
+  (schema validado e resultado descartado) até a F-009. O comportamento real, implementado por
+  ela, é `READING_{n}_OCR_CONFIRMED` / `READING_{n}_OCR_EVIDENCE_MISSING` por leitura quando o
+  OCR roda, e `OCR_UNAVAILABLE` (nota única) quando não roda; nenhuma das duas rebaixa o
+  `status` já calculado da leitura.
+- `BUDGET_EXCEEDED` em qualquer braço, inclusive OCR: propaga sempre, nunca é absorvido em modo
+  degradado — o teto é do job, não do braço.
 - Modelo retorna schema inválido: uma tentativa de repair estritamente estrutural;
   depois tratar como falha.
-- Rate limit: retry com backoff e respeito a `Retry-After`.
+- Rate limit (429): retry com backoff e respeito a `Retry-After`. Falha de credencial (401/403):
+  `ProviderFailureCode.REFUSED`, sem retentativa — mapeamento comum a todos os adapters REST
+  deste arquivo (OpenAI, Anthropic, Cloud Vision).
 
 ## Controle de custo
 

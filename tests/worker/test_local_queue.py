@@ -179,7 +179,7 @@ def _seed_authorized_job(
                 job_id=job_id,
                 accepted_by="platform-operator",
                 notice_version="contractual-entitlement-v1",
-                providers_json=["openai", "bedrock_anthropic", "textract"],
+                providers_json=["openai", "anthropic"],
                 global_processing=True,
                 retention_days=7,
                 authorization_source="contract",
@@ -205,10 +205,12 @@ def test_budget_exceeded_fails_the_job_instead_of_burning_the_ceiling_again(
         database, job_id=job_id, tenant_id="tenant-budget", object_key=object_key, pdf=pdf
     )
     suite = build_synthetic_provider_suite()
+    # O teto estoura no braço primário do survey (Anthropic). Ali o fallback não entra:
+    # a segunda chamada consumiria o mesmo teto, então o job precisa falhar inteiro.
     exhausted = replace(
         suite,
-        openai=replace(
-            cast(FixtureProviderAdapter, suite.openai),
+        anthropic=replace(
+            cast(FixtureProviderAdapter, suite.anthropic),
             failures={PromptTask.PAGE_SURVEY: ProviderFailureCode.BUDGET_EXCEEDED},
         ),
     )
@@ -277,6 +279,49 @@ def test_extraction_refuses_a_document_outside_the_allowlist(
     assert worker.s3_client.puts == []
 
 
+def test_hosted_suite_labels_the_revision_as_paid_extraction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Suite construída pelo worker chamou provider real; a proveniência tem de dizer isso.
+
+    A fixture entra por `build_real_provider_suite` monkeypatchado — nada sai da máquina —,
+    exatamente pelo caminho em que `provider_suite` é `None`.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'hosted-worker.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    pdf = synthetic_pdf()
+    job_id = "00000000-0000-7000-8000-000000000011"
+    object_key = "tenants/tenant-hosted/uploads/autorizado.pdf"
+    _seed_authorized_job(
+        database, job_id=job_id, tenant_id="tenant-hosted", object_key=object_key, pdf=pdf
+    )
+    monkeypatch.setattr(
+        "croquito_worker.local_queue.build_real_provider_suite",
+        lambda **_kwargs: build_synthetic_provider_suite(),
+    )
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+            real_providers_enabled=True,
+            ai_extraction_allowed_digests=frozenset({hashlib.sha256(pdf).hexdigest()}),
+        )
+    )
+    worker.client = _queue({"job_id": job_id, "tenant_id": "tenant-hosted"})
+    worker.s3_client = _storage(object_key=object_key, pdf=pdf)
+
+    assert worker.run_once() == 1
+    with database.sessions() as session:
+        review = session.query(ReviewRevisionRecord).filter_by(job_id=job_id).one()
+        assert review.created_by == "hosted-provider-extraction-v1"
+        assert review.packet_json["dataset_id"] == f"job-{job_id}"
+
+
 def test_explicit_provider_fixture_persists_non_exportable_review_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -340,7 +385,7 @@ def test_explicit_provider_fixture_persists_non_exportable_review_snapshot(
                 job_id=job_id,
                 accepted_by="platform-operator",
                 notice_version="contractual-entitlement-v1",
-                providers_json=["openai", "bedrock_anthropic", "textract"],
+                providers_json=["openai", "anthropic"],
                 global_processing=True,
                 retention_days=7,
                 authorization_source="contract",
@@ -368,7 +413,15 @@ def test_explicit_provider_fixture_persists_non_exportable_review_snapshot(
     with database.sessions() as session:
         review = session.query(ReviewRevisionRecord).filter_by(job_id=job_id).one()
         assert review.packet_json["safety_status"] == "human_review_required"
-        assert review.packet_json["readings"][0]["provider_lineage"][0]["provider"] == "openai"
+        # Anthropic é a âncora da extração dupla; OpenAI entra como contraparte.
+        assert review.packet_json["readings"][0]["provider_lineage"][0]["provider"] == "anthropic"
+        # Rótulos honestos: o dataset identifica o documento do job, e a proveniência
+        # diz que esta revisão nasceu de fixture offline, não de chamada paga.
+        assert review.packet_json["dataset_id"] == f"job-{job_id}"
+        assert review.associations_json["dataset_id"] == f"job-{job_id}"
+        assert review.proposals_json is not None
+        assert review.proposals_json["dataset_id"] == f"job-{job_id}"
+        assert review.created_by == "offline-provider-contract-fixture"
         assert review.associations_json["candidates"]
         assert review.evidence_refs_json == {
             "source_image_key": f"tenants/tenant-fixture/jobs/{job_id}/review/source.png"
@@ -481,9 +534,7 @@ def test_redelivery_of_an_ingested_job_neither_reprocesses_nor_calls_the_provide
     refusing = _RefusingAdapter()
     second = LocalQueueWorker(
         settings,
-        provider_suite=ProviderSuite(
-            openai=refusing, bedrock_anthropic=refusing, textract=refusing
-        ),
+        provider_suite=ProviderSuite(openai=refusing, anthropic=refusing),
     )
     second.client = _queue(body)
     # Storage vazio: qualquer releitura do documento levantaria em vez de passar batido.

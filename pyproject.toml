@@ -13,6 +13,10 @@ dependencies = [
   "boto3>=1.40,<2",
   "ezdxf>=1.4,<2",
   "fastapi>=0.116,<1",
+  # Token ADC do braço de OCR (`croquito_worker.providers.GcpVisionOcrAdapter`): já era
+  # dependência transitiva de `google-cloud-pubsub`; passa a ser declarada porque agora há
+  # import direto (`google.auth.default()`). Apache-2.0, mantida pelo Google.
+  "google-auth>=2.56,<3",
   # Transporte da fila quando o deploy é GCP (`croquito_api.pubsub_queue`): publica os
   # mesmos comandos que o adaptador SQS. Apache-2.0, mantida pelo Google; fica atrás de
   # `CROQUITO_PUBSUB_TOPIC` e o SDK só é importado quando esse backend é escolhido.

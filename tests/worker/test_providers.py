@@ -1,6 +1,7 @@
 import hashlib
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -8,7 +9,12 @@ from typing import Any, cast
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from croquito_worker.provider_review import build_provider_review_snapshot
+from croquito_worker.ocr_eval import run_ocr_corroboration_eval
+from croquito_worker.provider_review import (
+    _normalize_ocr_text,
+    _reading_confirmed_by_ocr,
+    build_provider_review_snapshot,
+)
 from croquito_worker.providers import (
     EMBEDDINGS_MAX_BATCH,
     EMBEDDINGS_MODEL,
@@ -26,43 +32,65 @@ from croquito_worker.providers import (
     CostBudget,
     EmbeddingsExecution,
     FixtureProviderAdapter,
+    GcpVisionOcrAdapter,
     GeometryElementOutput,
     GeometryExtractionOutput,
     HttpPost,
     LegendExtractionOutput,
     LegendRowOutput,
     MeasurementExtractionOutput,
+    MeasurementReadingOutput,
     NormalizedBox,
     NormalizedPoint,
+    OcrLineOutput,
+    OcrOutput,
     OpenAIEmbeddingsAdapter,
     OpenAIProviderAdapter,
     PageSurveyOutput,
     PromptTask,
+    ProviderAdapter,
+    ProviderExecution,
     ProviderExecutionError,
     ProviderFailureCode,
     ProviderName,
     ProviderOutput,
     ProviderRequest,
+    ProviderSuite,
     RetryingEmbeddingsAdapter,
     RetryingProviderAdapter,
     ReviewChatOutput,
     ScoItemRefinementOutput,
     ScoRefinementOutput,
     SurveyRegion,
+    TargetHint,
     TextractProviderAdapter,
     _bedrock_failure_code,
+    _failure_from_http_status,
     _output_model,
     _parse_output,
     _prompt_template,
     build_embeddings_adapter,
     build_image_text_request,
+    build_real_provider_suite,
     build_request,
     build_synthetic_provider_suite,
     build_text_request,
     embeddings_input_digest,
     image_text_input_digest,
 )
+from croquito_worker.review import ReadingStatus
 from croquito_worker.synthetic import render_synthetic_input
+
+
+class _FakeGcpCredentials:
+    """ADC falso para teste: `google.auth.default()` não roda em CI/local sem rede."""
+
+    def __init__(self) -> None:
+        self.valid = True
+        self.token = "fake-access-token"
+
+    def refresh(self, _request: object) -> None:
+        self.token = "refreshed-access-token"
 
 
 def _request(task: PromptTask) -> ProviderRequest:
@@ -90,10 +118,16 @@ def test_synthetic_provider_suite_covers_every_mvp_contract() -> None:
         is PromptTask.SEMANTIC_ELEMENTS
     )
     assert (
-        suite.bedrock_anthropic.execute(_request(PromptTask.DISAGREEMENT_REVIEW)).output.task
+        suite.anthropic.execute(_request(PromptTask.DISAGREEMENT_REVIEW)).output.task
         is PromptTask.DISAGREEMENT_REVIEW
     )
-    assert suite.textract.execute(_request(PromptTask.OCR)).output.task is PromptTask.OCR
+    assert suite.openai.execute(_request(PromptTask.PAGE_SURVEY)).provider is ProviderName.OPENAI
+    assert (
+        suite.anthropic.execute(_request(PromptTask.PAGE_SURVEY)).provider is ProviderName.ANTHROPIC
+    )
+    # A suite hospedada tem os dois braços de LLM e o braço `ocr` (Cloud Vision fixture).
+    assert suite.ocr is not None
+    assert suite.ocr.execute(_request(PromptTask.OCR)).provider is ProviderName.GCP_VISION
 
 
 def test_provider_contract_rejects_unknown_output_fields() -> None:
@@ -173,10 +207,13 @@ def test_provider_snapshot_preserves_dual_lineage_and_requires_review(tmp_path: 
         reading.status.value in {"proposed", "ambiguous"} for reading in snapshot.packet.readings
     )
     assert all(len(reading.provider_lineage) == 2 for reading in snapshot.packet.readings)
-    assert {lineage.provider for lineage in snapshot.packet.readings[0].provider_lineage} == {
+    # A âncora da comparação é o braço Anthropic; OpenAI é a contraparte. A ordem do
+    # lineage é a ordem da leitura, então ela é asserção e não detalhe.
+    assert [lineage.provider for lineage in snapshot.packet.readings[0].provider_lineage] == [
+        "anthropic",
         "openai",
-        "bedrock_anthropic",
-    }
+    ]
+    assert all(reading.extractor == "anthropic+openai" for reading in snapshot.packet.readings)
     assert snapshot.associations.unassociated_reading_ids == []
 
 
@@ -184,7 +221,8 @@ def test_provider_snapshot_blocks_extraction_when_page_roles_are_ambiguous(tmp_p
     image_path = tmp_path / "fixture.png"
     render_synthetic_input(image_path)
     suite = build_synthetic_provider_suite()
-    fixture = cast(FixtureProviderAdapter, suite.openai)
+    # O survey roda no braço primário (Anthropic); é o output dele que decide a página.
+    fixture = cast(FixtureProviderAdapter, suite.anthropic)
     fixture.outputs[PromptTask.PAGE_SURVEY] = PageSurveyOutput(
         orientation="up",
         regions=[
@@ -211,6 +249,415 @@ def test_provider_snapshot_blocks_extraction_when_page_roles_are_ambiguous(tmp_p
     assert snapshot.packet.readings == []
     assert len(snapshot.packet.region_candidates) == 2
     assert "REGION_CLASSIFICATION_REQUIRED" in snapshot.packet.safety_notes
+
+
+class _CountingAdapter:
+    """Conta chamadas para provar que um braço NÃO foi acionado."""
+
+    def __init__(self, inner: ProviderAdapter) -> None:
+        self.inner = inner
+        self.calls: list[PromptTask] = []
+
+    def execute(self, request: ProviderRequest) -> ProviderExecution:
+        self.calls.append(request.task)
+        return self.inner.execute(request)
+
+
+def _fallback_suite(
+    *,
+    openai_failures: dict[PromptTask, ProviderFailureCode] | None = None,
+    anthropic_failures: dict[PromptTask, ProviderFailureCode] | None = None,
+) -> ProviderSuite:
+    base = build_synthetic_provider_suite()
+    return ProviderSuite(
+        openai=replace(
+            cast(FixtureProviderAdapter, base.openai), failures=dict(openai_failures or {})
+        ),
+        anthropic=replace(
+            cast(FixtureProviderAdapter, base.anthropic), failures=dict(anthropic_failures or {})
+        ),
+    )
+
+
+def _distinct_reading(raw_text: str) -> MeasurementExtractionOutput:
+    """Leitura legível e distinguível: identifica de qual braço a extração saiu."""
+    return MeasurementExtractionOutput(
+        readings=[
+            MeasurementReadingOutput(
+                raw_text=raw_text,
+                kind="width",
+                normalized_value=Decimal("25.90"),
+                unit="m",
+                written_precision=2,
+                bbox=NormalizedBox(left=0.08, top=0.12, right=0.20, bottom=0.18),
+                target_hint=TargetHint(entity_label="campo principal", feature="largura"),
+                legibility="clear",
+            )
+        ]
+    )
+
+
+def test_page_survey_falls_back_to_openai_and_keeps_dual_extraction(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        anthropic_failures={PromptTask.PAGE_SURVEY: ProviderFailureCode.REFUSED}
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert "PROVIDER_FALLBACK_PAGE_SURVEY_OPENAI" in snapshot.packet.safety_notes
+    assert not any(
+        note.startswith("PROVIDER_FALLBACK_SINGLE_EXTRACTOR")
+        for note in snapshot.packet.safety_notes
+    )
+    # A degradação do survey não contamina a extração: ela segue dupla e comparada.
+    assert all(len(reading.provider_lineage) == 2 for reading in snapshot.packet.readings)
+    assert all(reading.extractor == "anthropic+openai" for reading in snapshot.packet.readings)
+    assert snapshot.packet.readings[0].status is ReadingStatus.PROPOSED
+
+
+def test_single_extractor_anthropic_survives_openai_extraction_failure(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        openai_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED}
+    )
+    cast(FixtureProviderAdapter, suite.anthropic).outputs[PromptTask.MEASUREMENT_EXTRACTION] = (
+        _distinct_reading("30,00 m")
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    # A extração é a do sobrevivente, não a do braço caído nem a fixture compartilhada.
+    assert [reading.raw_text for reading in snapshot.packet.readings] == ["30,00 m"]
+    assert all(reading.status is ReadingStatus.AMBIGUOUS for reading in snapshot.packet.readings)
+    assert all(len(reading.provider_lineage) == 1 for reading in snapshot.packet.readings)
+    assert snapshot.packet.readings[0].provider_lineage[0].provider == "anthropic"
+    assert snapshot.packet.readings[0].extractor == "anthropic"
+    assert "PROVIDER_FALLBACK_SINGLE_EXTRACTOR_ANTHROPIC" in snapshot.packet.safety_notes
+    assert not any(note.endswith("_PROVIDER_DISAGREEMENT") for note in snapshot.packet.safety_notes)
+
+
+def test_single_extractor_openai_survives_anthropic_extraction_failure(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        anthropic_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.UNAVAILABLE}
+    )
+    cast(FixtureProviderAdapter, suite.openai).outputs[PromptTask.MEASUREMENT_EXTRACTION] = (
+        _distinct_reading("12,50 m")
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    # A âncora do laço trocou de braço: sem isso a extração do sobrevivente sumiria.
+    assert [reading.raw_text for reading in snapshot.packet.readings] == ["12,50 m"]
+    assert all(reading.status is ReadingStatus.AMBIGUOUS for reading in snapshot.packet.readings)
+    assert snapshot.packet.readings[0].provider_lineage[0].provider == "openai"
+    assert snapshot.packet.readings[0].extractor == "openai"
+    assert "PROVIDER_FALLBACK_SINGLE_EXTRACTOR_OPENAI" in snapshot.packet.safety_notes
+
+
+def test_geometry_extraction_falls_back_to_openai_without_promoting_proposals(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        anthropic_failures={PromptTask.GEOMETRY_EXTRACTION: ProviderFailureCode.REFUSED}
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert "PROVIDER_FALLBACK_GEOMETRY_EXTRACTION_OPENAI" in snapshot.packet.safety_notes
+    assert snapshot.proposals.proposals
+    assert all(proposal.precision == "unresolved" for proposal in snapshot.proposals.proposals)
+    assert all(proposal.export is False for proposal in snapshot.proposals.proposals)
+
+
+def test_budget_exceeded_never_calls_the_reserve_arm(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    base = _fallback_suite(
+        anthropic_failures={PromptTask.PAGE_SURVEY: ProviderFailureCode.BUDGET_EXCEEDED}
+    )
+    reserve = _CountingAdapter(base.openai)
+    suite = ProviderSuite(openai=reserve, anthropic=base.anthropic)
+
+    with pytest.raises(ProviderExecutionError) as error:
+        build_provider_review_snapshot(
+            image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+        )
+
+    # O teto é do job, não do braço: repetir a chamada só consumiria o mesmo teto.
+    assert error.value.code is ProviderFailureCode.BUDGET_EXCEEDED
+    assert reserve.calls == []
+
+
+def test_extraction_failing_on_both_arms_propagates(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        anthropic_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.UNAVAILABLE},
+        openai_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED},
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        build_provider_review_snapshot(
+            image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+        )
+
+    assert error.value.code is ProviderFailureCode.REFUSED
+
+
+@pytest.mark.parametrize(
+    "failed_arm",
+    [ProviderName.OPENAI, ProviderName.ANTHROPIC],
+)
+def test_single_arm_extraction_never_proposes_nor_exports(
+    tmp_path: Path, failed_arm: ProviderName
+) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    failures = {PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED}
+    suite = _fallback_suite(
+        openai_failures=failures if failed_arm is ProviderName.OPENAI else None,
+        anthropic_failures=failures if failed_arm is ProviderName.ANTHROPIC else None,
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.packet.readings
+    assert all(reading.status is ReadingStatus.AMBIGUOUS for reading in snapshot.packet.readings)
+    assert all(len(reading.provider_lineage) == 1 for reading in snapshot.packet.readings)
+    assert snapshot.packet.safety_status == "human_review_required"
+    assert all(proposal.export is False for proposal in snapshot.proposals.proposals)
+
+
+def test_ocr_corroboration_confirms_matching_readings(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+
+    snapshot = build_provider_review_snapshot(
+        image_path,
+        dataset_id="synthetic-provider-contract-v1",
+        suite=build_synthetic_provider_suite(),
+    )
+
+    assert "READING_1_OCR_CONFIRMED" in snapshot.packet.safety_notes
+    assert "READING_2_OCR_CONFIRMED" in snapshot.packet.safety_notes
+    # Leitura confirma com vírgula na cota e ponto na linha de OCR — normalização decimal.
+    assert "READING_3_OCR_CONFIRMED" in snapshot.packet.safety_notes
+    assert not any(note.endswith("_OCR_EVIDENCE_MISSING") for note in snapshot.packet.safety_notes)
+    assert "OCR_UNAVAILABLE" not in snapshot.packet.safety_notes
+    # Confirmação nunca muda status: a leitura 3 segue ambígua por legibilidade, não por OCR.
+    assert snapshot.packet.readings[2].status is ReadingStatus.AMBIGUOUS
+
+
+def test_ocr_corroboration_flags_reading_without_spatial_evidence(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    base = build_synthetic_provider_suite()
+    ocr_adapter = cast(FixtureProviderAdapter, base.ocr)
+    original = cast(OcrOutput, ocr_adapter.outputs[PromptTask.OCR])
+    # A cota certa da leitura 1 some da fixture; sobra uma decoy com o MESMO texto em outro
+    # canto da prancha — texto repetido não pode confirmar sozinho (risco conhecido da T3).
+    decoy = OcrLineOutput(
+        raw_text="25,90 m",
+        bbox=NormalizedBox(left=0.60, top=0.80, right=0.74, bottom=0.86),
+        text_type="printed",
+    )
+    kept_lines = [line for line in original.lines if line.raw_text != "25,90 m"]
+    suite = replace(
+        base,
+        ocr=replace(ocr_adapter, outputs={PromptTask.OCR: OcrOutput(lines=[decoy, *kept_lines])}),
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert "READING_1_OCR_EVIDENCE_MISSING" in snapshot.packet.safety_notes
+    assert "READING_1_OCR_CONFIRMED" not in snapshot.packet.safety_notes
+    # A leitura concordante entre os dois LLMs continua `proposed`: OCR nunca rebaixa status.
+    assert snapshot.packet.readings[0].status is ReadingStatus.PROPOSED
+
+
+def test_ocr_corroboration_missing_arm_adds_a_single_note(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = replace(build_synthetic_provider_suite(), ocr=None)
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.packet.safety_notes.count("OCR_UNAVAILABLE") == 1
+    assert not any(note.endswith("_OCR_CONFIRMED") for note in snapshot.packet.safety_notes)
+    assert not any(note.endswith("_OCR_EVIDENCE_MISSING") for note in snapshot.packet.safety_notes)
+    assert snapshot.packet.readings
+
+
+def test_ocr_corroboration_permanent_failure_adds_a_single_note(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    base = build_synthetic_provider_suite()
+    ocr_adapter = cast(FixtureProviderAdapter, base.ocr)
+    suite = replace(
+        base, ocr=replace(ocr_adapter, failures={PromptTask.OCR: ProviderFailureCode.UNAVAILABLE})
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.packet.safety_notes.count("OCR_UNAVAILABLE") == 1
+    assert snapshot.packet.readings
+
+
+def test_ocr_corroboration_budget_exceeded_propagates_without_a_note(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    base = build_synthetic_provider_suite()
+    ocr_adapter = cast(FixtureProviderAdapter, base.ocr)
+    suite = replace(
+        base,
+        ocr=replace(ocr_adapter, failures={PromptTask.OCR: ProviderFailureCode.BUDGET_EXCEEDED}),
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        build_provider_review_snapshot(
+            image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+        )
+
+    assert error.value.code is ProviderFailureCode.BUDGET_EXCEEDED
+
+
+def test_ocr_text_normalization_matches_decimal_comma_and_dot() -> None:
+    assert _normalize_ocr_text("  3,50   m ") == "3.50 m"
+    assert _normalize_ocr_text("3.50 m") == "3.50 m"
+
+    reading = MeasurementReadingOutput(
+        raw_text="3,50 m",
+        kind="length",
+        normalized_value=Decimal("3.50"),
+        unit="m",
+        written_precision=2,
+        bbox=NormalizedBox(left=0.1, top=0.1, right=0.2, bottom=0.15),
+        target_hint=TargetHint(entity_label="parede", feature="comprimento"),
+        legibility="clear",
+    )
+    matching_line = OcrLineOutput(
+        raw_text="3.50 m",
+        bbox=NormalizedBox(left=0.1, top=0.1, right=0.2, bottom=0.15),
+        text_type="printed",
+    )
+    elsewhere_line = OcrLineOutput(
+        raw_text="3.50 m",
+        bbox=NormalizedBox(left=0.6, top=0.6, right=0.7, bottom=0.65),
+        text_type="printed",
+    )
+
+    assert _reading_confirmed_by_ocr(reading, [matching_line]) is True
+    assert _reading_confirmed_by_ocr(reading, []) is False
+    assert _reading_confirmed_by_ocr(reading, [elsewhere_line]) is False
+
+
+def test_ocr_corroboration_eval_passes(tmp_path: Path) -> None:
+    report, report_path = run_ocr_corroboration_eval(tmp_path)
+
+    assert report.passed
+    assert report.confirmation_recall == 1.0
+    assert report.false_confirmed_count == 0
+    assert report_path.exists()
+
+
+def test_gcp_vision_adapter_parses_full_text_annotation_into_normalized_lines() -> None:
+    response_body: dict[str, object] = {
+        "responses": [
+            {
+                "fullTextAnnotation": {
+                    "pages": [
+                        {
+                            "blocks": [
+                                {
+                                    "paragraphs": [
+                                        {
+                                            "boundingBox": {
+                                                "vertices": [
+                                                    {"x": 10, "y": 20},
+                                                    {"x": 90, "y": 20},
+                                                    {"x": 90, "y": 40},
+                                                    {"x": 10, "y": 40},
+                                                ]
+                                            },
+                                            "words": [
+                                                {
+                                                    "symbols": [
+                                                        {"text": "3"},
+                                                        {"text": ","},
+                                                        {"text": "5"},
+                                                        {"text": "0"},
+                                                    ]
+                                                },
+                                                {"symbols": [{"text": "m"}]},
+                                            ],
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    def post(
+        _url: str, headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        assert headers["Authorization"] == "Bearer fake-access-token"
+        return 200, response_body
+
+    adapter = GcpVisionOcrAdapter(credentials=_FakeGcpCredentials(), http_post=post)
+
+    execution = adapter.execute(_request(PromptTask.OCR))
+
+    assert execution.provider is ProviderName.GCP_VISION
+    assert execution.output.task is PromptTask.OCR
+    assert isinstance(execution.output, OcrOutput)
+    line = execution.output.lines[0]
+    assert line.raw_text == "3,50 m"
+    assert line.bbox.left == pytest.approx(0.10)
+    assert line.bbox.top == pytest.approx(0.20)
+    assert line.bbox.right == pytest.approx(0.90)
+    assert line.bbox.bottom == pytest.approx(0.40)
+    assert execution.raw_response_ref is None
+
+
+def test_gcp_vision_adapter_maps_http_status_like_the_other_rest_adapters() -> None:
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        return 429, {}
+
+    adapter = GcpVisionOcrAdapter(credentials=_FakeGcpCredentials(), http_post=post)
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.OCR))
+
+    assert error.value.code is ProviderFailureCode.RATE_LIMITED
 
 
 def test_openai_adapter_uses_strict_schema_and_preserves_effective_model() -> None:
@@ -570,6 +1017,134 @@ def test_permanent_bedrock_errors_are_not_retried() -> None:
     assert _bedrock_failure_code(unknown) is ProviderFailureCode.UNAVAILABLE
     # REFUSED não está na lista de retentativa; UNAVAILABLE e RATE_LIMITED estão.
     assert ProviderFailureCode.REFUSED not in RetryingProviderAdapter.RETRYABLE
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_credential_failures_are_not_retried_over_http(status: int) -> None:
+    """Chave inválida não melhora na terceira tentativa — e cada tentativa reserva teto."""
+    attempts = 0
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        nonlocal attempts
+        attempts += 1
+        return status, {}
+
+    adapter = RetryingProviderAdapter(
+        OpenAIProviderAdapter(api_key="chave-invalida", model_id="gpt-5.6-terra", http_post=post),
+        sleep=lambda _seconds: None,
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.REFUSED
+    assert attempts == 1
+
+
+def test_http_status_mapping_keeps_transport_failures_retryable() -> None:
+    assert _failure_from_http_status(429) is ProviderFailureCode.RATE_LIMITED
+    assert _failure_from_http_status(500) is ProviderFailureCode.UNAVAILABLE
+    assert _failure_from_http_status(401) is ProviderFailureCode.REFUSED
+    assert _failure_from_http_status(403) is ProviderFailureCode.REFUSED
+    assert ProviderFailureCode.RATE_LIMITED in RetryingProviderAdapter.RETRYABLE
+    assert ProviderFailureCode.UNAVAILABLE in RetryingProviderAdapter.RETRYABLE
+
+
+def _hosted_suite_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CROQUITO_OPENAI_API_KEY", "openai-key")
+    monkeypatch.setenv("CROQUITO_ANTHROPIC_API_KEY", "anthropic-key")
+    monkeypatch.setenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD", "5")
+    # `build_real_provider_suite` também monta o braço `ocr` sempre, via ADC
+    # (`google.auth.default`) — sem rede/credencial real em teste, mocka a única chamada
+    # de autenticação envolvida na construção da suite.
+    monkeypatch.setattr(
+        "google.auth.default",
+        lambda **_kwargs: (_FakeGcpCredentials(), "fake-project"),
+    )
+
+
+def _budgeted(arm: ProviderAdapter) -> BudgetedProviderAdapter:
+    """Desembrulha `RetryingProviderAdapter(BudgetedProviderAdapter(...))` de um braço."""
+    retrying = cast(RetryingProviderAdapter, arm)
+    return cast(BudgetedProviderAdapter, retrying.adapter)
+
+
+@pytest.mark.parametrize("missing", ["CROQUITO_OPENAI_API_KEY", "CROQUITO_ANTHROPIC_API_KEY"])
+def test_real_provider_suite_requires_both_api_keys(
+    missing: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Braço sem chave explícita é chamada externa sem credencial declarada; recusa cedo."""
+    _hosted_suite_env(monkeypatch)
+    monkeypatch.delenv(missing, raising=False)
+
+    with pytest.raises(ValueError, match=missing):
+        build_real_provider_suite()
+
+
+def test_real_provider_suite_builds_two_direct_arms_without_aws(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _hosted_suite_env(monkeypatch)
+    # Credencial AWS presente no ambiente não pode virar braço de suite: no HML ela é a
+    # chave HMAC do object storage, não uma conta Bedrock/Textract.
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "storage-hmac")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "storage-hmac-secret")
+    monkeypatch.setattr(
+        "boto3.client",
+        lambda *_args, **_kwargs: pytest.fail("suite hospedada não constrói cliente AWS"),
+    )
+
+    suite = build_real_provider_suite()
+
+    openai_adapter = cast(OpenAIProviderAdapter, _budgeted(suite.openai).adapter)
+    anthropic_adapter = cast(AnthropicProviderAdapter, _budgeted(suite.anthropic).adapter)
+    assert openai_adapter.api_key == "openai-key"
+    assert anthropic_adapter.api_key == "anthropic-key"
+    assert anthropic_adapter.model_id == "claude-opus-5"
+    # O braço `ocr` é sempre montado, autenticado por ADC (sem chave nova) e reserva no
+    # MESMO `CostBudget` da rodada — o teto é da rodada, não de cada braço.
+    assert suite.ocr is not None
+    ocr_arm = suite.ocr
+    ocr_adapter = cast(GcpVisionOcrAdapter, _budgeted(ocr_arm).adapter)
+    assert isinstance(ocr_adapter.credentials, _FakeGcpCredentials)
+    assert _budgeted(suite.openai).budget is _budgeted(suite.anthropic).budget
+    assert _budgeted(ocr_arm).budget is _budgeted(suite.openai).budget
+
+
+def test_real_provider_suite_arms_declare_their_own_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Lineage gravado precisa dizer `anthropic`, não o rótulo de um caminho AWS morto."""
+    _hosted_suite_env(monkeypatch)
+    suite = build_real_provider_suite()
+    responses: dict[ProviderName, dict[str, object]] = {
+        ProviderName.OPENAI: {"model": "gpt-5.6-terra", "output_text": '{"readings": []}'},
+        ProviderName.ANTHROPIC: _anthropic_response([{"readings": []}]),
+    }
+
+    def post_for(provider: ProviderName) -> HttpPost:
+        def post(
+            _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+        ) -> tuple[int, dict[str, object]]:
+            return 200, responses[provider]
+
+        return post
+
+    openai_adapter = cast(OpenAIProviderAdapter, _budgeted(suite.openai).adapter)
+    anthropic_adapter = cast(AnthropicProviderAdapter, _budgeted(suite.anthropic).adapter)
+    request = _request(PromptTask.MEASUREMENT_EXTRACTION)
+
+    openai_execution = replace(openai_adapter, http_post=post_for(ProviderName.OPENAI)).execute(
+        request
+    )
+    anthropic_execution = replace(
+        anthropic_adapter, http_post=post_for(ProviderName.ANTHROPIC)
+    ).execute(request)
+
+    assert openai_execution.provider is ProviderName.OPENAI
+    assert anthropic_execution.provider is ProviderName.ANTHROPIC
 
 
 def test_every_prompt_task_has_an_output_model() -> None:
@@ -1490,7 +2065,7 @@ def test_synthetic_suite_serves_both_chat_variants() -> None:
     suite = build_synthetic_provider_suite()
     request = _chat_request()
 
-    answer = suite.bedrock_anthropic.execute(request).output
+    answer = suite.anthropic.execute(request).output
     uncertain = suite.openai.execute(request).output
 
     assert isinstance(answer, ReviewChatOutput)
@@ -1514,7 +2089,7 @@ def test_synthetic_chat_drafts_can_be_bound_to_another_revision() -> None:
         chat_reading_id="rd_4444444444444444", chat_proposal_id="vp_4444444444444444"
     )
 
-    answer = suite.bedrock_anthropic.execute(_chat_request()).output
+    answer = suite.anthropic.execute(_chat_request()).output
     assert isinstance(answer, ReviewChatOutput)
     decision = answer.proposed_acts[0]
     assert isinstance(decision, ChatReadingDecisionDraft)

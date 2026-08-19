@@ -29,6 +29,11 @@ def main() -> int:
         help="executa a eval sintética determinística de visão",
     )
     vision_eval_command.add_argument("--output", type=Path, required=True)
+    ocr_eval_command = subcommands.add_parser(
+        "ocr-eval",
+        help="executa a eval sintética determinística de corroboração de OCR",
+    )
+    ocr_eval_command.add_argument("--output", type=Path, required=True)
     review_artifacts_command = subcommands.add_parser(
         "review-artifacts",
         help="valida um review packet e gera overlay ligado à imagem",
@@ -587,6 +592,24 @@ def main() -> int:
             )
         )
         return 0 if vision_report.passed else 1
+    if args.command == "ocr-eval":
+        from croquito_worker.ocr_eval import run_ocr_corroboration_eval
+
+        ocr_report, ocr_report_path = run_ocr_corroboration_eval(args.output)
+        print(
+            json.dumps(
+                {
+                    "passed": ocr_report.passed,
+                    "reading_count": ocr_report.reading_count,
+                    "confirmed_count": ocr_report.confirmed_count,
+                    "confirmation_recall": ocr_report.confirmation_recall,
+                    "false_confirmed_count": ocr_report.false_confirmed_count,
+                    "report": str(ocr_report_path),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0 if ocr_report.passed else 1
     if args.command == "review-artifacts":
         from croquito_worker.review import load_review_packet, write_review_artifacts
 

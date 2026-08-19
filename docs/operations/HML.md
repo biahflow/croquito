@@ -2,7 +2,7 @@
 
 Status: Accepted  
 Responsável: Platform / Engineering  
-Última revisão: 2026-08-18
+Última revisão: 2026-08-19 (seção "Providers de IA" — runbook de ativação da suite hospedada, F-009)
 
 Fonte única do ambiente hospedado. A decisão e as alternativas estão no
 [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md); o desenho AWS de
@@ -254,6 +254,115 @@ todo caminho, e foi ele que ficou no lugar da API por quatro dias
 
 O `croquito-jobs-hml` não tem fumaça externa por construção — ele só aceita chamada
 autenticada do Pub/Sub, e a prova de vida dele é o job andar.
+
+## Providers de IA
+
+Status real: descrito em [ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md)
+(`Proposed`) e implementado pela [F-009](../features/F-009-suite-hospedada-sem-aws/feature.md).
+A suite hospedada é Anthropic (braço primário) + OpenAI (reserva/contraparte) + Cloud Vision
+(braço `ocr`, sempre ligado quando a suite real é construída) — sem Bedrock nem Textract; o
+caminho AWS nunca rodou neste ambiente. Roteamento, fallback e semântica de falha em
+[Model Routing](../ai/MODEL_ROUTING.md).
+
+### Envs e segredos
+
+O deploy do worker (`deploy-hml.yml`) já declara, comprometido na esteira:
+
+| Variável | Onde | O que é |
+|---|---|---|
+| `CROQUITO_REAL_PROVIDERS_ENABLED` | env var, API e worker | kill switch — `false` desliga toda chamada paga sem redeploy de código |
+| `CROQUITO_AI_MAX_ESTIMATED_COST_USD` | env var, worker | teto **por invocação** do worker (`5.00`), não por dia nem por job |
+| `CROQUITO_OPENAI_MODEL` / `CROQUITO_ANTHROPIC_MODEL` | env var, worker | `gpt-5.6-terra` / `claude-opus-5` |
+| `CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS` | env var, worker | allowlist por `sha256` do PDF; nasce **vazia** — fail closed |
+| `CROQUITO_OPENAI_API_KEY` / `CROQUITO_ANTHROPIC_API_KEY` | secret, worker (`croquito-hml-openai-api-key` / `croquito-hml-anthropic-api-key`) | as duas chaves de provider; casca e IAM em `biahflow/infra`, valor pela esteira (ver abaixo) |
+
+O braço `ocr` (Cloud Vision) não usa chave própria: autentica pela conta de serviço de runtime
+do worker, que precisa da API `vision.googleapis.com` habilitada no projeto — é o que o PR de
+infra do passo 2 faz.
+
+### Runbook de ativação
+
+Ordem obrigatória; pular um passo falha fechado no seguinte, nunca silenciosamente.
+
+1. **Criar os dois GitHub Actions secrets no repositório `biahflow/infra`.** Os VALORES das
+   chaves entram por aqui, não por `gcloud secrets versions add` manual:
+
+   ```bash
+   gh secret set CROQUITO_OPENAI_API_KEY --repo biahflow/infra
+   gh secret set CROQUITO_ANTHROPIC_API_KEY --repo biahflow/infra
+   ```
+
+   A esteira de `biahflow/infra` transforma cada secret em `TF_VAR_openai_api_key` /
+   `TF_VAR_anthropic_api_key` (`plan.yml`/`apply.yml`), e o Terraform grava casca **e** valor no
+   Secret Manager pelo caminho write-only do módulo `secret-manager`
+   ([ADR-0031](../adr/0031-segredo-de-homologacao-gerenciado-por-terraform.md)). Sem os dois
+   secrets, o `plan` do stack `envs/hml/croquito` falha fail-closed (variável Terraform sem
+   default).
+
+2. **Commitar e abrir PR da branch `feat/croquito-hml-providers` em `biahflow/infra`.** O
+   `plan` do stack `envs/hml/croquito` roda **no PR** (resumo do job) — é ali que se revisa:
+   secrets novos, IAM, `google_project_service.vision`, e a `lifecycle_rule` de 7 dias no
+   bucket de artefatos. O merge na `main` **aplica** pela esteira (`apply.yml`); não existe
+   `apply` manual.
+
+   **Estado real em 2026-08-19: passos 1 e 2 CONCLUÍDOS.** O PR
+   [biahflow/infra#14](https://github.com/biahflow/infra/pull/14) (chaves de provider, Vision
+   API, retenção de 7 dias) foi mesclado; o primeiro `apply` falhou com `403 Permission denied
+   to enable service` — a conta de deploy `infra-deploy` não tinha
+   `serviceusage.services.enable` — e o PR
+   [biahflow/infra#15](https://github.com/biahflow/infra/pull/15) concedeu
+   `roles/serviceusage.serviceUsageAdmin` a ela. Após o merge do #15 e a reexecução do apply
+   do stack `hml_croquito`, tudo verde e verificado no projeto: os dois secrets com versão 1
+   `enabled`, `vision.googleapis.com` habilitada e a regra de retenção aplicada. O episódio
+   fica registrado porque ensina a ordem: mudança que habilita API nova exige o papel na
+   conta de deploy ANTES, e o filtro de paths de um PR de `wif` não re-arrasta `croquito` —
+   o apply interrompido precisa de reexecução explícita.
+
+3. **Keycloak: papel `platform_operator` e `tenant_id`.** Pelo procedimento de
+   [HML_KEYCLOAK](HML_KEYCLOAK.md), atribua o papel `platform_operator` a quem vai autorizar o
+   tenant, e confirme o `tenant_id` do tenant que vai processar.
+
+4. **Ativar a autorização contratual do tenant:**
+
+   ```bash
+   curl -X PUT "https://croquito-hml.biahflow.ai/api/v1/platform/tenants/<tenant_id>/ai-processing-entitlement" \
+     -H "Authorization: Bearer <token de platform_operator>" \
+     -H "Content-Type: application/json" \
+     -H "Idempotency-Key: $(uuidgen)" \
+     -d '{"enabled": true, "agreement_reference": "<referência lógica do contrato>"}'
+   ```
+
+   Exige o papel `platform_operator` e `agreement_reference` quando `enabled: true` (ver
+   [API Contract](../architecture/API_CONTRACT.md#autorização-contratual-de-ia)).
+
+5. **Digest do PDF autorizado na allowlist:**
+
+   ```bash
+   shasum -a 256 <pdf>
+   ```
+
+   Editar `CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS` em `.github/workflows/deploy-hml.yml`
+   (bloco do worker) com o digest resultante e commitar. Allowlist vazia = nenhum documento sai
+   para provider — este passo é o que a tira do vazio pela primeira vez.
+
+6. **Merge em `biahflow/croquito` = deploy.** Push na `main` que toque `deploy-hml.yml` publica
+   a revisão nova do worker (e da API, se tocada) com as envs desta seção.
+
+7. **Re-upload do PDF.** Um job criado antes da ativação nasceu sem consent válido — ele não
+   "acorda" sozinho quando o entitlement é ligado depois. Faça um novo upload do mesmo
+   documento depois do deploy.
+
+8. **Rollback: a flag.** `CROQUITO_REAL_PROVIDERS_ENABLED=false` no worker (e na API, se
+   necessário) desliga toda chamada paga no próximo deploy, sem tocar segredo nem
+   infraestrutura.
+
+### Aviso de custo
+
+`CROQUITO_AI_MAX_ESTIMATED_COST_USD` é teto **por invocação do worker**, não por dia nem por
+job. O Pub/Sub reentrega até a DLQ (5 tentativas); no pior caso, um único job que falha e é
+reentregue pode consumir até **5× o teto configurado** antes de cair na DLQ. Não é defeito — é
+o comportamento fail-closed pretendido — mas é o número a ter em mente antes de autorizar o
+teto e a allowlist.
 
 ## Custo
 

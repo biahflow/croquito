@@ -2481,7 +2481,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     job_id=str(job_id),
                     accepted_by=entitlement.authorized_by,
                     notice_version="contractual-entitlement-v1",
-                    providers_json=["openai", "bedrock_anthropic", "textract"],
+                    providers_json=["openai", "anthropic"],
                     global_processing=True,
                     retention_days=7,
                     authorization_source="contract",

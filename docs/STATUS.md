@@ -2,8 +2,9 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-18 (medição migrada para a API `/v1`, F-003; F-006 concluída após os
-atos humanos de homologação; F-007 e F-008 abertas, com os ADR-0032 e ADR-0033 aceitos)
+Última revisão: 2026-08-19 (F-009 documentada — suite hospedada de providers sem AWS, ADR-0035
+`Proposed`, implementação completa; medição migrada para a API `/v1`, F-003; F-006 concluída
+após os atos humanos de homologação; F-007 e F-008 abertas, com os ADR-0032 e ADR-0033 aceitos)
 
 > Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
 > trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
@@ -943,6 +944,26 @@ e-mail e o domínio remetente, sem os quais nenhum dos três fluxos existe; o
 [ADR-0033](adr/0033-conta-por-convite-e-login-federado.md) também foi aceito. Do mesmo trabalho
 nasceu o [Design System](engineering/DESIGN_SYSTEM.md), que tira a identidade do produto de dentro
 de um comentário de folha de estilo e passa a ser a fonte que um Design Approval Package cita.
+
+Em 2026-08-19, na primeira revisão da porta nova, abriu a
+[F-009](features/F-009-suite-hospedada-sem-aws/feature.md): o upload real no HML terminava em
+`REVIEW_REQUIRED` sem pacote de revisão porque a suite hospedada de providers dependia de
+credencial AWS (Bedrock/Textract) que nunca existiu no ambiente GCP publicado — o caminho AWS
+nunca rodou neste repositório, e a chamada de OCR do Textract no snapshot era código morto. A
+suite passa a ter três braços diretos: `openai` e `anthropic` (Anthropic primário, OpenAI
+reserva e contraparte da comparação dupla, com notas `PROVIDER_FALLBACK_*` sempre que degrada,
+nunca silenciosamente) e `ocr` (Cloud Vision `document text detection`, corroborando cada
+leitura com `READING_n_OCR_CONFIRMED`/`_OCR_EVIDENCE_MISSING`; `make ocr-eval` mede recall
+100% e zero falso-confirmado na fixture sintética). A decisão técnica é o
+[ADR-0035](adr/0035-suite-hospedada-openai-anthropic-direto.md), `Proposed` — aceitação segue
+como ato humano. As tarefas de implementação (T1, T2, T3, T5) estão completas e o deploy do HML
+(flag, segredos das duas chaves, teto de US$ 5 por rodada e allowlist por digest) está
+preparado, sem nenhum `apply` executado por agente. A infraestrutura em `biahflow/infra` tem
+dois PRs: #14 (mesclado, mas cujo primeiro `apply` falhou com 403 ao tentar habilitar
+`vision.googleapis.com`) e #15 (concede a permissão que faltava à conta de deploy, aguardando
+merge). O que resta não é código: aceite do ADR, merge/reexecução do apply em `biahflow/infra`,
+valores dos dois segredos, papel `platform_operator` e entitlement do tenant, digest do PDF
+autorizado na allowlist, e o merge/deploy em `biahflow/croquito`.
 
 ## Condição para avançar ao processamento real
 
