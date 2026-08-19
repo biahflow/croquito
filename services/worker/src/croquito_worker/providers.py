@@ -840,37 +840,132 @@ def _failure_from_http_status(status: int) -> ProviderFailureCode:
     return ProviderFailureCode.UNAVAILABLE
 
 
+HTTP_ERROR_DETAIL_LIMIT: Final = 200
+"""Recorte da mensagem de erro do fornecedor no log: o suficiente para nomear a recusa."""
+
+
+def _http_error_detail(response: dict[str, object]) -> str:
+    """Resumo curto da recusa do fornecedor, extraído do corpo de erro já parseado.
+
+    Os três fornecedores REST embrulham a recusa em `{"error": {...}}` no topo, com
+    `message` e algum código. Sem este resumo o operador tinha status e mais nada: o 400 do
+    schema estrito (*"regex lookaround is not supported"*) só apareceu depois de reproduzir
+    a chamada por fora, com o corpo na mão.
+
+    Sai UM campo, truncado em `HTTP_ERROR_DETAIL_LIMIT`. Nunca o corpo bruto inteiro, nunca
+    corpo de resposta bem-sucedida, nunca prompt, imagem ou credencial. O texto é diagnóstico
+    do fornecedor sobre o PEDIDO — o corpo da recusa cita o schema que nós mesmos enviamos,
+    não a evidência do cliente.
+    """
+    error = response.get("error")
+    if isinstance(error, str):
+        detail = error
+    elif isinstance(error, dict):
+        message = error.get("message")
+        fallback = error.get("code") or error.get("type") or error.get("status")
+        detail = message if isinstance(message, str) else str(fallback or "")
+    else:
+        message = response.get("message")
+        detail = message if isinstance(message, str) else ""
+    return detail[:HTTP_ERROR_DETAIL_LIMIT]
+
+
 def _http_failure(
-    *, provider: ProviderName, task: str, status: int, started: float
+    *, provider: ProviderName, task: str, status: int, started: float, detail: str = ""
 ) -> ProviderFailureCode:
     """Registra a falha HTTP antes de ela virar exceção e devolve o código mapeado.
 
     Sem esta linha, um 4xx do fornecedor chegava ao operador apenas como
     `ProviderExecutionError` sem status — foi o que escondeu a recusa por payload no
-    primeiro documento real. Saem só metadados: provider, tarefa, status, código e
-    latência. NUNCA corpo de resposta, prompt ou imagem.
+    primeiro documento real. Saem metadados — provider, tarefa, status, código e latência —
+    mais o resumo da recusa (`detail`, ver `_http_error_detail`). NUNCA corpo bruto de
+    resposta, prompt ou imagem.
     """
     code = _failure_from_http_status(status)
     latency_ms = round((time.monotonic() - started) * 1000)
     logger.warning(
-        "provider_http_failure provider=%s task=%s status=%d failure_code=%s latency_ms=%d",
+        "provider_http_failure provider=%s task=%s status=%d failure_code=%s latency_ms=%d "
+        "detail=%s",
         provider.value,
         task,
         status,
         code.value,
         latency_ms,
+        detail,
         extra={
             "provider": provider.value,
             "task": task,
             "http_status": status,
             "failure_code": code.value,
             "latency_ms": latency_ms,
+            "detail": detail,
+        },
+    )
+    return code
+
+
+OCR_FAILURE_DETAIL_LIMIT: Final = 200
+"""Recorte da mensagem do erro no log do braço OCR: o suficiente para nomear a causa."""
+
+
+def _ocr_failure(
+    event: str,
+    code: ProviderFailureCode,
+    *,
+    error: BaseException | None = None,
+) -> ProviderFailureCode:
+    """Registra uma falha do braço OCR que acontece ANTES (ou fora) do HTTP e devolve o código.
+
+    `_http_failure` só cobre resposta com status. Tudo que morre antes disso — token ADC que
+    não renova, credencial sem token, transporte que nem sai — virava `ProviderExecutionError`
+    muda, e a degradação para `OCR_UNAVAILABLE` apagava o último rastro: em produção o braço
+    nunca apareceu, sem um único `provider_http_failure` de `gcp_vision` e sem raw no bucket,
+    e não havia como saber em que ponto ele caía.
+
+    Saem a classe da exceção e um recorte da mensagem do fornecedor. NUNCA token, credencial,
+    imagem, payload ou URL assinada — o objeto de credencial não é tocado aqui, e só a
+    exceção do refresh viaja, truncada em `OCR_FAILURE_DETAIL_LIMIT`.
+    """
+    error_type = type(error).__name__ if error is not None else "none"
+    detail = str(error)[:OCR_FAILURE_DETAIL_LIMIT] if error is not None else ""
+    logger.warning(
+        "%s provider=%s failure_code=%s error_type=%s detail=%s",
+        event,
+        ProviderName.GCP_VISION.value,
+        code.value,
+        error_type,
+        detail,
+        extra={
+            "provider": ProviderName.GCP_VISION.value,
+            "task": PromptTask.OCR.value,
+            "failure_code": code.value,
+            "error_type": error_type,
         },
     )
     return code
 
 
 HttpPost = Callable[[str, dict[str, str], bytes, float], tuple[int, dict[str, object]]]
+
+
+HTTP_ERROR_BODY_LIMIT: Final = 8192
+"""Leitura máxima do corpo de uma resposta de erro. Diagnóstico cabe; despejo, não."""
+
+
+def _http_error_body(error: HTTPError) -> dict[str, object]:
+    """Corpo do erro, parseado quando é JSON — a única parte que o log resume.
+
+    Descartar o corpo (o que este arquivo fazia) apagava a única frase que explica a recusa,
+    e o diagnóstico passava a exigir reproduzir a chamada por fora. Ler é best-effort: corpo
+    ausente, truncado, não-JSON ou já consumido devolve `{}` e a falha segue o caminho de
+    sempre — nenhum erro de leitura pode virar exceção nova.
+    """
+    try:
+        raw = error.read(HTTP_ERROR_BODY_LIMIT)
+        decoded = json.loads(raw)
+    except Exception:  # corpo ausente, truncado, não-JSON ou stream já fechado
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
 
 
 def _http_post(
@@ -883,7 +978,7 @@ def _http_post(
             decoded = json.loads(raw)
             return int(response.status), decoded if isinstance(decoded, dict) else {}
     except HTTPError as error:
-        return error.code, {}
+        return error.code, _http_error_body(error)
     except (URLError, TimeoutError) as error:
         raise ProviderExecutionError(ProviderFailureCode.TIMEOUT) from error
 
@@ -926,6 +1021,23 @@ extensão de OpenAPI, não JSON Schema. Retirá-las do schema ENVIADO não afrou
 nenhum: a fronteira de validação continua sendo o modelo Pydantic original, aplicado sobre
 a resposta — o schema do fornecedor guia a geração, não substitui a checagem.
 """
+
+
+OPENAI_STRICT_LOOKAROUND_TOKENS: Final = ("(?=", "(?!", "(?<=", "(?<!")
+"""Construtos de regex que o motor do modo estrito (RE2) não implementa.
+
+`pattern` é aceito pelo estrito, mas só na linguagem do RE2, que não tem lookahead nem
+lookbehind. O `Decimal` do Pydantic emite justamente um lookahead
+(`^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$` em `MeasurementReadingOutput.normalized_value`), e a API
+recusa a chamada inteira: *"Invalid JSON schema: regex lookaround is not supported"*. A
+detecção é por substring e deliberadamente conservadora — na dúvida o `pattern` sai do
+schema ENVIADO, e quem valida de verdade continua sendo o modelo Pydantic da volta, como já
+vale para `minLength`/`maxLength`.
+"""
+
+
+def _has_regex_lookaround(pattern: str) -> bool:
+    return any(token in pattern for token in OPENAI_STRICT_LOOKAROUND_TOKENS)
 
 
 def _openai_strict_accepts_null(schema: dict[str, Any]) -> bool:
@@ -975,7 +1087,8 @@ def _openai_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     - `const` vira `enum` de um item, `oneOf` vira `anyOf` e tupla (`prefixItems`) vira
       lista do mesmo tipo presa por `minItems`/`maxItems` — as três formas que o estrito não
       aceita e que o Pydantic emite;
-    - as palavras de `OPENAI_STRICT_UNSUPPORTED_KEYWORDS` saem.
+    - as palavras de `OPENAI_STRICT_UNSUPPORTED_KEYWORDS` saem, e o `pattern` com lookaround
+      também (ver `OPENAI_STRICT_LOOKAROUND_TOKENS`).
 
     O que ela NÃO faz é afrouxar o contrato: a resposta continua validada pelo modelo
     Pydantic original, com os limites de tamanho e as regras de domínio inteiros. O avesso
@@ -984,6 +1097,11 @@ def _openai_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     strict: dict[str, Any] = {}
     for key, value in schema.items():
         if key in OPENAI_STRICT_UNSUPPORTED_KEYWORDS or key == "prefixItems":
+            continue
+        if key == "pattern" and isinstance(value, str) and _has_regex_lookaround(value):
+            # Um único lookahead num `$defs` aninhado recusa a chamada inteira; ver
+            # OPENAI_STRICT_LOOKAROUND_TOKENS. Pattern sem lookaround fica: é orientação
+            # útil de geração e o estrito o aceita.
             continue
         if key == "const":
             strict["enum"] = [value]
@@ -1150,6 +1268,7 @@ class OpenAIProviderAdapter:
                     task=request.task.value,
                     status=status,
                     started=started,
+                    detail=_http_error_detail(response),
                 )
             )
         blocks = _openai_message_blocks(response)
@@ -1287,6 +1406,7 @@ class AnthropicProviderAdapter:
                     task=request.task.value,
                     status=status,
                     started=started,
+                    detail=_http_error_detail(response),
                 )
             )
         content = response.get("content")
@@ -1670,19 +1790,30 @@ class GcpVisionOcrAdapter:
             if not self.credentials.valid:
                 self.credentials.refresh(_UrllibAuthRequest(timeout_seconds=self.timeout_seconds))
         except Exception as error:  # google-auth levanta tipos concretos próprios
-            raise ProviderExecutionError(ProviderFailureCode.UNAVAILABLE) from error
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_token_failure", ProviderFailureCode.UNAVAILABLE, error=error)
+            ) from error
         token = getattr(self.credentials, "token", None)
         if not isinstance(token, str) or not token:
-            raise ProviderExecutionError(ProviderFailureCode.REFUSED)
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_token_empty", ProviderFailureCode.REFUSED)
+            )
         return token
 
     def execute(self, request: ProviderRequest) -> ProviderExecution:
         if request.task is not PromptTask.OCR:
-            raise ProviderExecutionError(ProviderFailureCode.REFUSED)
-        image_bytes = _require_image_bytes(request)
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_task_mismatch", ProviderFailureCode.REFUSED)
+            )
+        try:
+            image_bytes = _require_image_bytes(request)
+        except ProviderExecutionError as error:
+            raise ProviderExecutionError(_ocr_failure("ocr_missing_image", error.code)) from error
         width, height = request.image_width_px, request.image_height_px
         if width is None or height is None:
-            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_missing_dimensions", ProviderFailureCode.INVALID_SCHEMA)
+            )
         token = self._access_token()
         body = {
             "requests": [
@@ -1693,12 +1824,19 @@ class GcpVisionOcrAdapter:
             ]
         }
         started = time.monotonic()
-        status, response = self.http_post(
-            self.endpoint,
-            {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json.dumps(body, separators=(",", ":")).encode(),
-            self.timeout_seconds,
-        )
+        try:
+            status, response = self.http_post(
+                self.endpoint,
+                {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json.dumps(body, separators=(",", ":")).encode(),
+                self.timeout_seconds,
+            )
+        except ProviderExecutionError as error:
+            # Transporte que nem chega a ter status (DNS, egress fechado, timeout): sem esta
+            # linha a chamada some sem status E sem log, que é exatamente o buraco de HML.
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_transport_failure", error.code, error=error)
+            ) from error
         if not 200 <= status < 300:
             raise ProviderExecutionError(
                 _http_failure(
@@ -1706,23 +1844,35 @@ class GcpVisionOcrAdapter:
                     task=request.task.value,
                     status=status,
                     started=started,
+                    detail=_http_error_detail(response),
                 )
             )
         responses = response.get("responses")
         if not isinstance(responses, list) or len(responses) != 1:
-            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_invalid_response", ProviderFailureCode.INVALID_SCHEMA)
+            )
         single_response = responses[0]
         if not isinstance(single_response, dict):
-            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_invalid_response", ProviderFailureCode.INVALID_SCHEMA)
+            )
         if isinstance(single_response.get("error"), dict):
             # Erro por imagem (ex.: payload ilegível) dentro de um HTTP 200; sem código
             # granular na resposta do Vision para distinguir permanente de transitório
             # aqui, então segue o mesmo tratamento do Textract: UNAVAILABLE.
-            raise ProviderExecutionError(ProviderFailureCode.UNAVAILABLE)
-        lines = _cloud_vision_lines(
-            single_response.get("fullTextAnnotation"), width=width, height=height
-        )
-        output = _parse_output(PromptTask.OCR, {"lines": lines})
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_image_error", ProviderFailureCode.UNAVAILABLE)
+            )
+        try:
+            lines = _cloud_vision_lines(
+                single_response.get("fullTextAnnotation"), width=width, height=height
+            )
+            output = _parse_output(PromptTask.OCR, {"lines": lines})
+        except ProviderExecutionError as error:
+            raise ProviderExecutionError(
+                _ocr_failure("ocr_invalid_output", error.code, error=error)
+            ) from error
         raw_ref = None
         if self.raw_store is not None:
             raw_ref = self.raw_store.persist(
@@ -1881,6 +2031,7 @@ class OpenAIEmbeddingsAdapter:
                     task="embeddings",
                     status=status,
                     started=started,
+                    detail=_http_error_detail(response),
                 )
             )
         vectors, dims = _parse_embeddings(response, len(batch))
