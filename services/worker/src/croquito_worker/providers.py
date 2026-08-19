@@ -383,18 +383,32 @@ class GeometryElementOutput(ProviderContractModel):
 
     @model_validator(mode="before")
     @classmethod
-    def normalise_degenerate_polyline(cls, data: object) -> object:
-        # Polyline aberta de exatamente 2 vértices é a mesma geometria de uma line:
-        # normalizar o kind é canônico e sem perda. Fechada ou com menos vértices
-        # continua sendo erro — nenhum vértice é inventado.
-        if (
-            isinstance(data, dict)
-            and data.get("kind") == "polyline"
-            and not data.get("closed")
-            and isinstance(data.get("vertices"), list)
-            and len(data["vertices"]) == 2
-        ):
+    def normalise_kind_by_vertex_count(cls, data: object) -> object:
+        """Normaliza o `kind` nos dois sentidos em que a contagem de vértices decide sozinha.
+
+        Polyline aberta de exatamente 2 vértices é a mesma geometria de uma line, e line com
+        3 ou mais vértices é a mesma geometria de uma polyline. Nos dois casos o desenho veio
+        inteiro e só o rótulo saiu trocado: normalizar é canônico e sem perda — nenhum
+        vértice é inventado nem descartado.
+
+        O sentido `line` → `polyline` entrou depois da primeira revisão paga em nuvem
+        (upload V4, 2026-08-19): sob `geometry-extraction@2.0.2` o modelo emitiu a mureta com
+        recuo como `line` de mais de dois vértices — o degrau que a 2.0.2 pediu, com o `kind`
+        errado — e o `ValidationError` derrubava a resposta inteira, levando junto todos os
+        outros elementos da folha.
+
+        Polyline fechada, polyline de menos de 3 vértices e line de menos de 2 continuam
+        sendo erro: ali a contagem não decide nada e completar seria fabricar.
+        """
+        if not isinstance(data, dict):
+            return data
+        vertices = data.get("vertices")
+        if not isinstance(vertices, list):
+            return data
+        if data.get("kind") == "polyline" and not data.get("closed") and len(vertices) == 2:
             return {**data, "kind": "line"}
+        if data.get("kind") == "line" and len(vertices) >= 3:
+            return {**data, "kind": "polyline"}
         return data
 
     @model_validator(mode="after")
@@ -900,6 +914,179 @@ def _carries_image(request: ProviderRequest) -> bool:
     return request.task not in TEXT_TASKS
 
 
+OPENAI_STRICT_UNSUPPORTED_KEYWORDS: Final = frozenset(
+    {"default", "minLength", "maxLength", "discriminator"}
+)
+"""Palavras do JSON Schema que o `strict: true` da OpenAI recusa no schema enviado.
+
+`minLength`/`maxLength` estão fora da lista de propriedades aceitas pelo modo estrito
+(`pattern`, `format`, `minimum`/`maximum`, `minItems`/`maxItems` estão dentro); `default`
+não tem sentido num dialeto em que TODA propriedade é obrigatória; `discriminator` é
+extensão de OpenAPI, não JSON Schema. Retirá-las do schema ENVIADO não afrouxa contrato
+nenhum: a fronteira de validação continua sendo o modelo Pydantic original, aplicado sobre
+a resposta — o schema do fornecedor guia a geração, não substitui a checagem.
+"""
+
+
+def _openai_strict_accepts_null(schema: dict[str, Any]) -> bool:
+    """Diz se o nó já admite `null`, para não empilhar um segundo ramo nulo em cima."""
+    declared = schema.get("type")
+    if declared == "null" or (isinstance(declared, list) and "null" in declared):
+        return True
+    branches = schema.get("anyOf")
+    return isinstance(branches, list) and any(
+        isinstance(branch, dict) and _openai_strict_accepts_null(branch) for branch in branches
+    )
+
+
+def _openai_strict_is_constant(schema: dict[str, Any]) -> bool:
+    """Nó de valor único — o `const` do Pydantic, já convertido em `enum` de um item."""
+    values = schema.get("enum")
+    return isinstance(values, list) and len(values) == 1
+
+
+def _openai_strict_optional(schema: dict[str, Any]) -> dict[str, Any]:
+    """Torna anulável a propriedade que o contrato original deixava omitir.
+
+    Valor único (`task`, o `act` de cada rascunho de conversa) é a exceção: é discriminador,
+    o modelo sempre consegue emiti-lo, e admitir `null` ali só ofereceria apagar a etiqueta
+    que identifica o payload.
+    """
+    if _openai_strict_accepts_null(schema) or _openai_strict_is_constant(schema):
+        return schema
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+def _openai_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Traduz o JSON Schema do Pydantic para o dialeto estrito da OpenAI.
+
+    Sem esta tradução o braço OpenAI nunca funcionou: toda tarefa com campo de default
+    (isto é, todas) levava 400 na `/v1/responses` — *"'required' is required to be supplied
+    and to be an array including every key in properties"* —, e o job morria antes de ver a
+    folha. O modo estrito não tem campo opcional: exige `required` com TODAS as chaves de
+    `properties` e `additionalProperties: false` em todo objeto, e a opcionalidade se
+    escreve como união com `null`.
+
+    A tradução é puramente sintática e não muta a entrada:
+
+    - todo objeto ganha `required` completo e `additionalProperties: false`;
+    - propriedade que estava fora do `required` original vira anulável (ver
+      `_openai_strict_optional`);
+    - `const` vira `enum` de um item, `oneOf` vira `anyOf` e tupla (`prefixItems`) vira
+      lista do mesmo tipo presa por `minItems`/`maxItems` — as três formas que o estrito não
+      aceita e que o Pydantic emite;
+    - as palavras de `OPENAI_STRICT_UNSUPPORTED_KEYWORDS` saem.
+
+    O que ela NÃO faz é afrouxar o contrato: a resposta continua validada pelo modelo
+    Pydantic original, com os limites de tamanho e as regras de domínio inteiros. O avesso
+    desta tradução, na volta, é `_without_explicit_nulls`.
+    """
+    strict: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key in OPENAI_STRICT_UNSUPPORTED_KEYWORDS or key == "prefixItems":
+            continue
+        if key == "const":
+            strict["enum"] = [value]
+        elif key == "oneOf":
+            # Os ramos do Pydantic são mutuamente exclusivos por construção (união
+            # discriminada), então `anyOf` aceita exatamente o mesmo conjunto.
+            strict["anyOf"] = _openai_strict_value(value)
+        elif key in {"properties", "$defs"} and isinstance(value, dict):
+            # Aqui as CHAVES são nomes de campo e de definição, não palavras de schema.
+            strict[key] = {
+                name: _openai_strict_schema(sub) if isinstance(sub, dict) else sub
+                for name, sub in value.items()
+            }
+        else:
+            strict[key] = _openai_strict_value(value)
+
+    prefix_items = schema.get("prefixItems")
+    if isinstance(prefix_items, list) and prefix_items:
+        branches = [_openai_strict_value(item) for item in prefix_items]
+        unique = [branch for index, branch in enumerate(branches) if branch not in branches[:index]]
+        strict["items"] = unique[0] if len(unique) == 1 else {"anyOf": unique}
+        strict.setdefault("minItems", len(prefix_items))
+        strict.setdefault("maxItems", len(prefix_items))
+
+    properties = strict.get("properties")
+    if strict.get("type") == "object" and isinstance(properties, dict):
+        declared = schema.get("required")
+        required = set(declared) if isinstance(declared, list) else set()
+        strict["properties"] = {
+            name: sub if name in required else _openai_strict_optional(sub)
+            for name, sub in properties.items()
+        }
+        strict["required"] = list(properties)
+        strict["additionalProperties"] = False
+    return strict
+
+
+def _openai_strict_value(value: object) -> object:
+    """Reconstrói qualquer valor do schema (nó, lista de nós ou escalar) sem mutar a entrada."""
+    if isinstance(value, dict):
+        return _openai_strict_schema(value)
+    if isinstance(value, list):
+        return [_openai_strict_value(item) for item in value]
+    return value
+
+
+def _openai_message_blocks(response: dict[str, object]) -> list[dict[str, object]]:
+    """Blocos de conteúdo da mensagem, lidos da resposta CRUA da Responses API.
+
+    O JSON da REST não tem `output_text`: esse campo é atalho do SDK Python, que concatena o
+    texto por conveniência. No cru, `output` é uma lista que mistura o raciocínio
+    (`{"type": "reasoning"}`) e a mensagem (`{"type": "message"}`), e o texto vive nos blocos
+    `output_text` de `message.content` — que também é onde entra a recusa, como bloco
+    `refusal`. Procurar o atalho do SDK era procurar campo que nunca chega: com o schema
+    estrito já aceito, a resposta 200 correta ainda morria como `INVALID_SCHEMA`
+    (confirmado contra a API em 2026-08-19).
+    """
+    items = response.get("output")
+    blocks: list[dict[str, object]] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        content = item.get("content")
+        blocks.extend(
+            block
+            for block in (content if isinstance(content, list) else [])
+            if isinstance(block, dict)
+        )
+    return blocks
+
+
+def _openai_output_text(blocks: Sequence[dict[str, object]]) -> str:
+    """Concatena, na ordem, o texto de todos os blocos `output_text` da mensagem."""
+    pieces: list[str] = []
+    for block in blocks:
+        text = block.get("text")
+        if block.get("type") == "output_text" and isinstance(text, str):
+            pieces.append(text)
+    return "".join(pieces)
+
+
+def _without_explicit_nulls(payload: object) -> object:
+    """Retira `null` explícito da resposta antes do parse — o avesso do dialeto estrito.
+
+    O estrito não tem campo opcional: para poder omitir um valor, o schema enviado marca a
+    propriedade como anulável, e o modelo devolve `null` onde o contrato original diria
+    "ausente". Só que `null` e ausente não são a mesma coisa para o Pydantic — campo com
+    default que não é `None` (`closed`, `vertices`, `layer_hint`, lista vazia) recusa `null`
+    e derrubaria a resposta inteira por causa da tradução, não do desenho. Retirar a chave
+    devolve exatamente a ausência que o dialeto estrito teve de apagar; onde o default já é
+    `None`, omitir e mandar `null` dão no mesmo. Nenhum valor é inventado aqui.
+    """
+    if isinstance(payload, dict):
+        return {
+            key: _without_explicit_nulls(value)
+            for key, value in payload.items()
+            if value is not None
+        }
+    if isinstance(payload, list):
+        return [_without_explicit_nulls(item) for item in payload]
+    return payload
+
+
 @dataclass(frozen=True)
 class OpenAIProviderAdapter:
     """Small OpenAI Responses boundary; it has no geometry or persistence authority."""
@@ -912,7 +1099,9 @@ class OpenAIProviderAdapter:
     endpoint: str = "https://api.openai.com/v1/responses"
 
     def execute(self, request: ProviderRequest) -> ProviderExecution:
-        schema = _output_model(request.task).model_json_schema()
+        # O schema do Pydantic não é aceito como está pelo `strict: true`; ver
+        # `_openai_strict_schema`. O modelo Pydantic ORIGINAL continua validando a resposta.
+        schema = _openai_strict_schema(_output_model(request.task).model_json_schema())
         # Ordem fixa [instrução, texto, imagem]. Tarefa de uma evidência só tem um bloco,
         # exatamente como antes; tarefa de imagem+texto tem os dois, nessa ordem.
         evidence: list[dict[str, object]] = []
@@ -963,13 +1152,23 @@ class OpenAIProviderAdapter:
                     started=started,
                 )
             )
-        if response.get("status") == "incomplete" or response.get("refusal"):
+        blocks = _openai_message_blocks(response)
+        # As três formas de "não veio resposta" no corpo cru, todas com 200 no transporte:
+        # geração truncada ou falha declarada no topo (`status`, `incomplete_details`,
+        # `error`) e recusa do modelo, que chega como bloco da própria mensagem. Nenhuma
+        # melhora com retentativa, e `REFUSED` está fora de `RetryingProviderAdapter`.
+        if (
+            response.get("status") in {"incomplete", "failed"}
+            or response.get("incomplete_details")
+            or response.get("error")
+            or any(block.get("type") == "refusal" for block in blocks)
+        ):
             raise ProviderExecutionError(ProviderFailureCode.REFUSED)
-        output_text = response.get("output_text")
-        if not isinstance(output_text, str):
+        output_text = _openai_output_text(blocks)
+        if not output_text:
             raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
         try:
-            output = _parse_output(request.task, json.loads(output_text))
+            output = _parse_output(request.task, _without_explicit_nulls(json.loads(output_text)))
         except (json.JSONDecodeError, ProviderExecutionError) as error:
             if isinstance(error, ProviderExecutionError):
                 raise

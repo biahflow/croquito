@@ -1,6 +1,7 @@
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from copy import deepcopy
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -22,6 +23,7 @@ from croquito_worker.providers import (
     PROMPT_SPECS,
     SYNTHETIC_CHAT_PROPOSAL_ID,
     SYNTHETIC_CHAT_READING_ID,
+    TEXT_TASKS,
     AnthropicProviderAdapter,
     BedrockAnthropicProviderAdapter,
     BudgetedEmbeddingsAdapter,
@@ -66,6 +68,7 @@ from croquito_worker.providers import (
     TextractProviderAdapter,
     _bedrock_failure_code,
     _failure_from_http_status,
+    _openai_strict_schema,
     _output_model,
     _parse_output,
     _prompt_template,
@@ -660,6 +663,29 @@ def test_gcp_vision_adapter_maps_http_status_like_the_other_rest_adapters() -> N
     assert error.value.code is ProviderFailureCode.RATE_LIMITED
 
 
+def _openai_response(output_text: str, **overrides: object) -> dict[str, object]:
+    """Forma REAL da resposta crua da `/v1/responses`, confirmada contra a API (2026-08-19).
+
+    `output_text` no topo é atalho do SDK Python e NÃO existe no JSON da REST: o texto vem em
+    `output[] → message → content[] → output_text`, depois dos itens de raciocínio. Os fakes
+    modelavam o atalho, e por isso o defeito atravessou a suíte inteira sem um vermelho.
+    """
+    return {
+        "model": "gpt-5.6-terra",
+        "status": "completed",
+        "output": [
+            {"type": "reasoning", "id": "rs_fixture", "summary": []},
+            {
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": output_text}],
+            },
+        ],
+        "usage": {"input_tokens": 10, "output_tokens": 2},
+    } | overrides
+
+
 def test_openai_adapter_uses_strict_schema_and_preserves_effective_model() -> None:
     captured: dict[str, object] = {}
 
@@ -667,14 +693,7 @@ def test_openai_adapter_uses_strict_schema_and_preserves_effective_model() -> No
         _url: str, _headers: dict[str, str], body: bytes, _timeout: float
     ) -> tuple[int, dict[str, object]]:
         captured.update(json.loads(body))
-        return (
-            200,
-            {
-                "model": "gpt-5.6-terra-snapshot",
-                "output_text": '{"readings": []}',
-                "usage": {"input_tokens": 10, "output_tokens": 2},
-            },
-        )
+        return 200, _openai_response('{"readings": []}', model="gpt-5.6-terra-snapshot")
 
     execution = OpenAIProviderAdapter(
         api_key="test-key", model_id="gpt-5.6-terra", http_post=post
@@ -684,6 +703,356 @@ def test_openai_adapter_uses_strict_schema_and_preserves_effective_model() -> No
     assert execution.output.task is PromptTask.MEASUREMENT_EXTRACTION
     assert captured["store"] is False
     assert isinstance(captured["text"], dict)
+
+
+def _openai_adapter(response: dict[str, object]) -> OpenAIProviderAdapter:
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        return 200, response
+
+    return OpenAIProviderAdapter(api_key="test-key", model_id="gpt-5.6-terra", http_post=post)
+
+
+def test_openai_adapter_reads_the_text_from_the_message_blocks() -> None:
+    """O texto do JSON cru chega partido em blocos; concatenar na ordem é reconstruí-lo.
+
+    A alternativa — ler o primeiro bloco — perderia a metade final de uma resposta longa e
+    devolveria JSON truncado como se fosse contrato quebrado do modelo.
+    """
+    payload = json.dumps(_geometry_payload())
+    response = _openai_response("")
+    message = cast(list[dict[str, Any]], response["output"])[1]
+    message["content"] = [
+        {"type": "output_text", "text": payload[:20]},
+        {"type": "output_text", "text": payload[20:]},
+    ]
+
+    execution = _openai_adapter(response).execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert execution.output.task is PromptTask.GEOMETRY_EXTRACTION
+
+
+def test_openai_adapter_refuses_a_response_without_a_message() -> None:
+    """Só raciocínio e nenhuma mensagem: 200 no transporte, nada para validar."""
+    response = _openai_response("")
+    response["output"] = [{"type": "reasoning", "id": "rs_fixture", "summary": []}]
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _openai_adapter(response).execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+
+
+def test_openai_adapter_maps_a_refusal_block_to_refused() -> None:
+    """No cru a recusa não é campo do topo: é bloco `refusal` dentro da própria mensagem."""
+    response = _openai_response("")
+    message = cast(list[dict[str, Any]], response["output"])[1]
+    message["content"] = [{"type": "refusal", "refusal": "não posso ajudar com isso"}]
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _openai_adapter(response).execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.REFUSED
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}},
+        {"status": "failed", "error": {"code": "server_error", "message": "falhou"}},
+        {"incomplete_details": {"reason": "content_filter"}},
+    ],
+)
+def test_openai_adapter_refuses_a_truncated_or_failed_response(
+    overrides: dict[str, object],
+) -> None:
+    """Resposta truncada ou falha declarada no topo não melhora com retentativa.
+
+    O texto pode até vir junto, pela metade; aceitá-lo seria tratar geração cortada como
+    observação completa.
+    """
+    response = _openai_response(json.dumps(_geometry_payload()), **overrides)
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _openai_adapter(response).execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.REFUSED
+
+
+def _schema_nodes(node: object) -> Iterator[dict[str, Any]]:
+    """Todo dicionário do schema, em qualquer profundidade ($defs, items, anyOf, properties)."""
+    if isinstance(node, dict):
+        yield cast(dict[str, Any], node)
+        for value in cast(dict[str, Any], node).values():
+            yield from _schema_nodes(value)
+    elif isinstance(node, list):
+        for item in cast(list[object], node):
+            yield from _schema_nodes(item)
+
+
+@pytest.mark.parametrize("task", list(PromptTask))
+def test_openai_strict_schema_requires_every_property_of_every_object(task: PromptTask) -> None:
+    """O 400 real da `/v1/responses`: o estrito exige `required` com TODAS as chaves.
+
+    O `model_json_schema()` do Pydantic deixa campo com default fora do `required`, e a API
+    respondia *"'required' is required to be supplied and to be an array including every key
+    in properties. Missing 'layer_hint'"* — o braço OpenAI nunca completou uma chamada.
+    """
+    strict = _openai_strict_schema(_output_model(task).model_json_schema())
+
+    for node in _schema_nodes(strict):
+        if node.get("type") != "object":
+            continue
+        assert set(node.get("required", [])) == set(node.get("properties", {}))
+        assert node["additionalProperties"] is False
+
+
+def test_openai_strict_schema_requires_the_property_the_api_named() -> None:
+    strict = _openai_strict_schema(
+        _output_model(PromptTask.GEOMETRY_EXTRACTION).model_json_schema()
+    )
+
+    assert "layer_hint" in strict["$defs"]["GeometryElementOutput"]["required"]
+    assert "task" in strict["required"]
+
+
+def test_openai_strict_schema_makes_the_optional_nullable_without_duplicating_null() -> None:
+    strict = _openai_strict_schema(
+        _output_model(PromptTask.GEOMETRY_EXTRACTION).model_json_schema()
+    )
+    element = strict["$defs"]["GeometryElementOutput"]["properties"]
+
+    # Campo com default sai anulável: é assim que a opcionalidade se escreve no estrito.
+    assert {"type": "null"} in element["layer_hint"]["anyOf"]
+    assert {"type": "null"} in element["closed"]["anyOf"]
+    assert {"type": "null"} in element["vertices"]["anyOf"]
+    # Campo que já era anulável não ganha um segundo ramo nulo.
+    assert element["center"]["anyOf"].count({"type": "null"}) == 1
+    # Discriminador continua com um valor só: `null` ali apagaria a etiqueta do payload.
+    assert strict["properties"]["task"] == {
+        "enum": ["geometry-extraction"],
+        "title": "Task",
+        "type": "string",
+    }
+
+
+def test_openai_strict_schema_drops_what_the_strict_mode_refuses() -> None:
+    """`review-chat` é a tarefa que reúne tudo: union discriminada, tupla e limite de texto."""
+    strict = _openai_strict_schema(_output_model(PromptTask.REVIEW_CHAT).model_json_schema())
+
+    for node in _schema_nodes(strict):
+        assert not {
+            "default",
+            "minLength",
+            "maxLength",
+            "discriminator",
+            "oneOf",
+            "prefixItems",
+            "const",
+        } & set(node)
+    # A tupla de dois `vp_` vira lista do mesmo tipo, presa pelo tamanho.
+    target = strict["$defs"]["ChatTraceAssociationDraft"]["properties"]["target"]
+    array = next(branch for branch in target["anyOf"] if branch.get("type") == "array")
+    assert array["minItems"] == 2
+    assert array["maxItems"] == 2
+    assert array["items"]["pattern"] == "^vp_[a-f0-9]{16}$"
+
+
+@pytest.mark.parametrize("task", list(PromptTask))
+def test_openai_strict_schema_never_mutates_the_pydantic_schema(task: PromptTask) -> None:
+    source = _output_model(task).model_json_schema()
+    snapshot = deepcopy(source)
+
+    _openai_strict_schema(source)
+
+    assert source == snapshot
+
+
+def test_openai_adapter_sends_the_translated_schema() -> None:
+    captured: dict[str, object] = {}
+
+    def post(
+        _url: str, _headers: dict[str, str], body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        captured.update(json.loads(body))
+        return 200, _openai_response(json.dumps(_geometry_payload()))
+
+    OpenAIProviderAdapter(api_key="test-key", model_id="gpt-5.6-terra", http_post=post).execute(
+        _request(PromptTask.GEOMETRY_EXTRACTION)
+    )
+
+    text_format = cast(dict[str, Any], captured["text"])["format"]
+    assert text_format["strict"] is True
+    # O corpo carrega o schema traduzido, não o do Pydantic: é a chave que a API cobrou.
+    assert "layer_hint" in text_format["schema"]["$defs"]["GeometryElementOutput"]["required"]
+    assert text_format["schema"] == _openai_strict_schema(
+        _output_model(PromptTask.GEOMETRY_EXTRACTION).model_json_schema()
+    )
+
+
+def _bbox() -> dict[str, object]:
+    return {"left": 0.10, "top": 0.10, "right": 0.20, "bottom": 0.20}
+
+
+def _point() -> dict[str, object]:
+    return {"x": 0.10, "y": 0.10}
+
+
+# Uma resposta por tarefa com `null` EXPLÍCITO em todo campo que o contrato original deixava
+# omitir — a forma que o dialeto estrito obriga o modelo a devolver, já que lá não existe
+# campo opcional.
+_NULLED_PAYLOADS: dict[PromptTask, dict[str, object]] = {
+    PromptTask.PAGE_SURVEY: {
+        "orientation": "up",
+        "regions": [
+            {
+                "kind": "main_plan",
+                "polygon": [_point()],
+                "label": "planta sintética",
+                "evidence": "moldura da prancha",
+            }
+        ],
+        "page_notes": [],
+    },
+    PromptTask.MEASUREMENT_EXTRACTION: {
+        "readings": [
+            {
+                "raw_text": "3,50 m",
+                "kind": "length",
+                "normalized_value": None,
+                "unit": "m",
+                "written_precision": 2,
+                "bbox": _bbox(),
+                "target_hint": None,
+                "alternatives": None,
+                "legibility": "clear",
+            }
+        ]
+    },
+    PromptTask.SEMANTIC_ELEMENTS: {
+        "elements": [
+            {
+                "label": "campo principal",
+                "kind": "region",
+                "bbox": _bbox(),
+                "relation": "região principal observada",
+            }
+        ]
+    },
+    PromptTask.GEOMETRY_EXTRACTION: {
+        "elements": [
+            {
+                "label": "muro norte",
+                "kind": "line",
+                "layer_hint": None,
+                "closed": None,
+                "vertices": [_point(), {"x": 0.90, "y": 0.10}],
+                "center": None,
+                "radius": None,
+                "arc_start": None,
+                "arc_mid": None,
+                "arc_end": None,
+                "evidence": "traço contínuo no limite superior",
+            }
+        ]
+    },
+    PromptTask.DISAGREEMENT_REVIEW: {
+        "raw_text": None,
+        "alternatives": None,
+        "legibility": "illegible",
+    },
+    PromptTask.OCR: {
+        "lines": [{"raw_text": "3,50 m", "bbox": _bbox(), "text_type": None}],
+    },
+    PromptTask.LEGEND_EXTRACTION: {
+        "rows": [
+            {
+                "raw_text": "01 BANCO DE CONCRETO",
+                "label": None,
+                "quantity_text": None,
+                "unit_text": None,
+                "bbox": _bbox(),
+                "legibility": "clear",
+            }
+        ],
+        "page_notes": None,
+    },
+    PromptTask.SCO_REFINEMENT: {
+        "items": [
+            {
+                "item_id": "item-1",
+                "ranked_codes": ["04.05.010"],
+                "rationale": "descrição compatível com o item",
+                "flags": None,
+            }
+        ]
+    },
+    PromptTask.REVIEW_CHAT: {
+        "answer_kind": "answer",
+        "answer_text": "a cota está no canto inferior da folha",
+        "evidence_notes": None,
+        "open_question": None,
+        "proposed_acts": None,
+    },
+}
+
+
+def _request_for(task: PromptTask) -> ProviderRequest:
+    if task in IMAGE_TEXT_TASKS:
+        return build_image_text_request(
+            task,
+            image_bytes=b"synthetic-provider-input",
+            text_payload="onde está a cota do muro?",
+            image_width_px=100,
+            image_height_px=100,
+        )
+    if task in TEXT_TASKS:
+        return build_text_request(task, text_payload="payload sintético de refino")
+    return _request(task)
+
+
+@pytest.mark.parametrize("task", list(PromptTask))
+def test_openai_adapter_parses_the_explicit_nulls_the_strict_dialect_forces(
+    task: PromptTask,
+) -> None:
+    """Traduzir o schema sem tratar a volta trocaria um 400 por um INVALID_SCHEMA.
+
+    No estrito toda propriedade é obrigatória, então o modelo devolve `null` onde o contrato
+    original diria "ausente" — e `null` não é ausente para um campo cujo default não é
+    `None`.
+    """
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        return 200, _openai_response(json.dumps(_NULLED_PAYLOADS[task]))
+
+    execution = OpenAIProviderAdapter(
+        api_key="test-key", model_id="gpt-5.6-terra", http_post=post
+    ).execute(_request_for(task))
+
+    assert execution.output.task is task
+
+
+def test_openai_adapter_restores_the_default_where_the_strict_dialect_sent_null() -> None:
+    """Omitir a chave devolve exatamente a ausência que a tradução teve de apagar."""
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        return 200, _openai_response(json.dumps(_NULLED_PAYLOADS[PromptTask.GEOMETRY_EXTRACTION]))
+
+    execution = OpenAIProviderAdapter(
+        api_key="test-key", model_id="gpt-5.6-terra", http_post=post
+    ).execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    output = execution.output
+    assert isinstance(output, GeometryExtractionOutput)
+    element = output.elements[0]
+    assert element.layer_hint == "unknown"
+    assert element.closed is False
+    assert element.center is None
 
 
 def test_textract_adapter_maps_handwriting_without_raw_reference() -> None:
@@ -825,6 +1194,62 @@ def test_geometry_element_normalises_an_open_two_vertex_polyline_to_a_line() -> 
         evidence="traço contínuo no limite superior",
     )
     assert element.kind == "line"
+
+
+def test_geometry_element_normalises_a_multi_vertex_line_to_a_polyline() -> None:
+    """O sentido inverso da normalização, e o defeito real do upload V4 (2026-08-19).
+
+    Sob `geometry-extraction@2.0.2` o modelo emitiu a mureta com recuo como `line` de quatro
+    vértices — o degrau que a 2.0.2 pediu, só com o `kind` errado. Antes disso o
+    `ValidationError` derrubava a resposta inteira da folha por causa de um elemento.
+    """
+    vertices = [
+        NormalizedPoint(x=0.10, y=0.10),
+        NormalizedPoint(x=0.40, y=0.10),
+        NormalizedPoint(x=0.40, y=0.16),
+        NormalizedPoint(x=0.80, y=0.16),
+    ]
+    element = GeometryElementOutput(
+        label="mureta com recuo",
+        kind="line",
+        vertices=vertices,
+        evidence="traço com dente junto ao passeio",
+    )
+
+    assert element.kind == "polyline"
+    # Nenhum vértice é inventado nem descartado: o degrau chega inteiro ao motor.
+    assert element.vertices == vertices
+
+
+def test_geometry_element_keeps_a_two_vertex_line_as_a_line() -> None:
+    element = GeometryElementOutput(
+        label="lateral",
+        kind="line",
+        vertices=[NormalizedPoint(x=0.1, y=0.1), NormalizedPoint(x=0.9, y=0.1)],
+        evidence="traço reto",
+    )
+
+    assert element.kind == "line"
+
+
+@pytest.mark.parametrize(
+    "vertices",
+    [
+        [],
+        [NormalizedPoint(x=0.1, y=0.1)],
+    ],
+)
+def test_geometry_element_refuses_a_line_below_two_vertices(
+    vertices: list[NormalizedPoint],
+) -> None:
+    """Abaixo de dois a contagem não decide nada, e completar seria fabricar."""
+    with pytest.raises(ValidationError, match="ao menos 2"):
+        GeometryElementOutput(
+            label="lateral",
+            kind="line",
+            vertices=vertices,
+            evidence="traço reto",
+        )
 
 
 def test_geometry_element_refuses_a_closed_two_vertex_polyline() -> None:
@@ -1220,7 +1645,7 @@ def test_real_provider_suite_arms_declare_their_own_lineage(
     _hosted_suite_env(monkeypatch)
     suite = build_real_provider_suite()
     responses: dict[ProviderName, dict[str, object]] = {
-        ProviderName.OPENAI: {"model": "gpt-5.6-terra", "output_text": '{"readings": []}'},
+        ProviderName.OPENAI: _openai_response('{"readings": []}'),
         ProviderName.ANTHROPIC: _anthropic_response([{"readings": []}]),
     }
 
@@ -1538,7 +1963,7 @@ def test_openai_adapter_sends_text_instead_of_an_image_block() -> None:
         _url: str, _headers: dict[str, str], body: bytes, _timeout: float
     ) -> tuple[int, dict[str, object]]:
         captured.update(json.loads(body))
-        return 200, {"model": "gpt-5.6-terra", "output_text": json.dumps(_sco_payload())}
+        return 200, _openai_response(json.dumps(_sco_payload()))
 
     request = _text_request()
     execution = OpenAIProviderAdapter(
@@ -2114,7 +2539,7 @@ def test_openai_adapter_sends_instruction_text_and_image_in_order() -> None:
         _url: str, _headers: dict[str, str], body: bytes, _timeout: float
     ) -> tuple[int, dict[str, object]]:
         captured.update(json.loads(body))
-        return 200, {"model": "gpt-5.6-terra", "output_text": json.dumps(_chat_payload())}
+        return 200, _openai_response(json.dumps(_chat_payload()))
 
     request = _chat_request()
     execution = OpenAIProviderAdapter(
