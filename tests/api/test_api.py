@@ -33,6 +33,7 @@ from croquito_api.database import (
     UploadRecord,
 )
 from croquito_api.main import UPLOAD_CONTENT_TYPES, PresignUploadRequest, create_app
+from croquito_core.ids import new_uuid7
 from croquito_core.models import (
     Entity,
     EntityKind,
@@ -225,6 +226,146 @@ def test_scene_schema_is_exposed() -> None:
     assert response.status_code == 200
     assert response.json()["title"] == "SceneRevision"
     assert "entities" in response.json()["properties"]
+
+
+def test_me_returns_subject_tenant_and_sorted_roles_without_requiring_a_role(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+
+    plain = client.get("/v1/me", headers=_headers("tenant-a"))
+    operator = client.get("/v1/me", headers=_headers("platform", "platform_operator,tenant_admin"))
+
+    assert plain.status_code == 200
+    assert plain.json() == {"subject": "reviewer", "tenant_id": "tenant-a", "roles": ["engineer"]}
+    assert operator.status_code == 200
+    assert operator.json() == {
+        "subject": "reviewer",
+        "tenant_id": "platform",
+        "roles": ["platform_operator", "tenant_admin"],
+    }
+    # Nunca claims brutos nem token: só o que o Principal expõe.
+    assert "token" not in plain.json()
+    assert "claims" not in plain.json()
+
+
+def test_me_requires_authentication() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/v1/me")
+
+    assert response.status_code == 401
+
+
+def test_platform_tenant_reads_require_platform_operator_role(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    listing = client.get("/v1/platform/tenants", headers=_headers("tenant-a"))
+    single = client.get(
+        "/v1/platform/tenants/tenant-a/ai-processing-entitlement",
+        headers=_headers("tenant-a"),
+    )
+
+    assert listing.status_code == 403
+    assert single.status_code == 403
+
+
+def test_platform_tenant_entitlement_get_is_never_404_and_reflects_the_put_lifecycle(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    operator_headers = _headers("platform", "platform_operator")
+    endpoint = "/v1/platform/tenants/tenant-a/ai-processing-entitlement"
+
+    never_activated = client.get(endpoint, headers=operator_headers)
+    assert never_activated.status_code == 200
+    assert never_activated.json() == {
+        "tenant_id": "tenant-a",
+        "enabled": False,
+        "agreement_reference": None,
+        "authorized_at": None,
+        "revoked_at": None,
+    }
+
+    activated = client.put(
+        endpoint,
+        headers={**operator_headers, "Idempotency-Key": "activate-tenant-a"},
+        json={"enabled": True, "agreement_reference": "ctr-tenant-a-v1"},
+    )
+    assert activated.status_code == 200
+
+    after_activation = client.get(endpoint, headers=operator_headers)
+    assert after_activation.status_code == 200
+    body = after_activation.json()
+    assert body["enabled"] is True
+    assert body["agreement_reference"] == "ctr-tenant-a-v1"
+    assert body["authorized_at"] is not None
+    assert body["revoked_at"] is None
+
+    revoked = client.put(
+        endpoint,
+        headers={**operator_headers, "Idempotency-Key": "revoke-tenant-a"},
+        json={"enabled": False},
+    )
+    assert revoked.status_code == 200
+
+    after_revocation = client.get(endpoint, headers=operator_headers)
+    assert after_revocation.status_code == 200
+    revoked_body = after_revocation.json()
+    assert revoked_body["enabled"] is False
+    assert revoked_body["agreement_reference"] == "ctr-tenant-a-v1"
+    assert revoked_body["revoked_at"] is not None
+
+
+def test_platform_tenant_listing_unions_uploads_projects_and_entitlements(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    operator_headers = _headers("platform", "platform_operator")
+
+    # Tenant que só tem upload.
+    _presign_and_put(client, tenant="tenant-upload-only", filename="upload-only.pdf")
+
+    # Tenant que só tem project — inserido direto porque a API não cria project sem
+    # upload junto (POST /v1/jobs sempre exige upload_id); a listagem precisa incluir
+    # esse tenant mesmo assim, pela tabela projects isolada.
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions() as session:
+        session.add(
+            ProjectRecord(
+                id=str(new_uuid7()),
+                tenant_id="tenant-project-only",
+                name="Projeto isolado",
+                default_unit="m",
+                status="ACTIVE",
+                created_by="reviewer",
+                expires_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    # Tenant que só tem entitlement (nunca fez upload nem project).
+    entitlement_response = client.put(
+        "/v1/platform/tenants/tenant-entitlement-only/ai-processing-entitlement",
+        headers={**operator_headers, "Idempotency-Key": "entitlement-only"},
+        json={"enabled": True, "agreement_reference": "ctr-entitlement-only"},
+    )
+    assert entitlement_response.status_code == 200
+
+    listing = client.get("/v1/platform/tenants", headers=operator_headers)
+
+    assert listing.status_code == 200
+    tenants = {entry["tenant_id"]: entry for entry in listing.json()["tenants"]}
+    assert "tenant-upload-only" in tenants
+    assert tenants["tenant-upload-only"]["enabled"] is False
+    assert "tenant-project-only" in tenants
+    assert tenants["tenant-project-only"]["enabled"] is False
+    assert "tenant-entitlement-only" in tenants
+    assert tenants["tenant-entitlement-only"]["enabled"] is True
+    assert tenants["tenant-entitlement-only"]["agreement_reference"] == "ctr-entitlement-only"
+    # Ordenação determinística por tenant_id, para SQLite (testes) e PostgreSQL concordarem.
+    tenant_ids = [entry["tenant_id"] for entry in listing.json()["tenants"]]
+    assert tenant_ids == sorted(tenant_ids)
 
 
 def test_upload_and_job_are_tenant_scoped(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

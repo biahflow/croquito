@@ -17,6 +17,12 @@ checks e geração de clientes:
 - `GET /v1/meta`: versão da API e do scene schema.
 - `GET /v1/schemas/scene`: JSON Schema da cena canônica.
 
+### `GET /v1/me`
+
+Exige só autenticação — nenhum papel específico. Devolve o principal que o JWT
+carrega: `subject`, `tenant_id` e `roles` (lista ordenada). Nunca devolve claims
+brutos nem o token; é a rota que a SPA usa para descobrir quem está logado.
+
 Os demais endpoints exigem JWT emitido por um provedor OIDC configurado. A API
 valida assinatura por JWKS, `issuer` e `audience`, e deriva tenant, identidade e
 papéis somente dos claims assinados.
@@ -95,6 +101,22 @@ aceita `Idempotency-Key`. Entrada: `enabled` e, ao ativar,
 `agreement_reference` (identificador lógico do contrato). A ativação ou revogação
 é auditada no tenant alvo. Um `tenant_admin` não pode liberar processamento externo
 por conta própria.
+
+### `GET /v1/platform/tenants`
+
+Requer `platform_operator`. Leitura sem `Idempotency-Key` e sem auditoria (a
+auditoria segue só no PUT). Lista todo `tenant_id` com pegada conhecida — união de
+`tenant_ai_processing_entitlements`, `projects` e `uploads` (uploads é a pegada
+mais precoce do ciclo de vida) — ordenado deterministicamente por `tenant_id`.
+Cada item traz o estado do entitlement (`enabled`, `agreement_reference`,
+`authorized_at`, `revoked_at`), com nulos para o tenant que nunca foi ativado.
+
+### `GET /v1/platform/tenants/{tenant_id}/ai-processing-entitlement`
+
+Requer `platform_operator`. Responde sempre `200`, mesmo para um `tenant_id` que
+nunca teve entitlement criado (`enabled: false` e os demais campos nulos) — não há
+tabela de tenants, então `404` seria arbitrário. Mesmo formato de item usado na
+listagem, distinto da resposta do PUT (que só existe depois da primeira ativação).
 
 ### `GET /v1/jobs/{job_id}`
 

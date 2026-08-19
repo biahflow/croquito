@@ -258,6 +258,32 @@ class AiProcessingEntitlementResponse(ApiModel):
     revoked_at: datetime | None = None
 
 
+class MeResponse(ApiModel):
+    subject: str
+    tenant_id: str
+    roles: list[str]
+
+
+class PlatformTenantResponse(ApiModel):
+    """Estado legível do entitlement de um tenant, mesmo quando nunca foi ativado.
+
+    Diferente de `AiProcessingEntitlementResponse` (o PUT, que só existe depois de
+    ativar ao menos uma vez): aqui `agreement_reference`, `authorized_at` e
+    `revoked_at` são opcionais porque um tenant que nunca teve entitlement criado
+    ainda é um resultado válido — 200 com `enabled=false` e nulos, não 404.
+    """
+
+    tenant_id: str
+    enabled: bool
+    agreement_reference: str | None = None
+    authorized_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+class PlatformTenantListResponse(ApiModel):
+    tenants: list[PlatformTenantResponse]
+
+
 class JobResponse(ApiModel):
     job_id: UUID
     project_id: UUID
@@ -1461,6 +1487,45 @@ def _require_platform_operator(principal: Principal) -> None:
         )
 
 
+def _all_known_tenant_ids(session: Session) -> list[str]:
+    """UNION real (distinct entre selects) sobre as três tabelas com pegada de tenant.
+
+    `uploads` é a pegada mais precoce do ciclo de vida (existe antes de qualquer job ou
+    project), então entra na união mesmo sem entitlement ou project associado. Ordenação
+    por `tenant_id` em Python garante que SQLite (testes) e PostgreSQL (HML) concordem —
+    não depender de ordenação implícita de UNION entre dialetos.
+    """
+    query = (
+        select(TenantAiProcessingEntitlementRecord.tenant_id)
+        .distinct()
+        .union(
+            select(ProjectRecord.tenant_id).distinct(),
+            select(UploadRecord.tenant_id).distinct(),
+        )
+    )
+    return sorted({row[0] for row in session.execute(query)})
+
+
+def _platform_tenant_response(
+    tenant_id: str, entitlement: TenantAiProcessingEntitlementRecord | None
+) -> PlatformTenantResponse:
+    if entitlement is None:
+        return PlatformTenantResponse(
+            tenant_id=tenant_id,
+            enabled=False,
+            agreement_reference=None,
+            authorized_at=None,
+            revoked_at=None,
+        )
+    return PlatformTenantResponse(
+        tenant_id=tenant_id,
+        enabled=entitlement.status == "ACTIVE",
+        agreement_reference=entitlement.agreement_reference or None,
+        authorized_at=entitlement.authorized_at,
+        revoked_at=entitlement.revoked_at,
+    )
+
+
 def _latest_review(
     session: Session, *, job_id: UUID, tenant_id: str
 ) -> ReviewRevisionRecord | None:
@@ -2192,6 +2257,65 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
     @application.get("/v1/schemas/scene", response_model=dict[str, Any], tags=["meta"])
     async def scene_schema() -> dict[str, Any]:
         return SceneRevision.model_json_schema()
+
+    @application.get("/v1/me", response_model=MeResponse, tags=["meta"])
+    async def me(principal: AuthenticatedPrincipal) -> MeResponse:
+        """A SPA descobre quem é o principal autenticado. Exige só autenticação — nenhum
+        papel — e nunca devolve claims brutos ou o token: só o que o `Principal` já
+        expõe (subject, tenant, roles), a mesma superfície usada nas decisões de
+        autorização.
+        """
+        return MeResponse(
+            subject=principal.subject,
+            tenant_id=principal.tenant_id,
+            roles=sorted(principal.roles),
+        )
+
+    @application.get(
+        "/v1/platform/tenants",
+        response_model=PlatformTenantListResponse,
+        tags=["platform"],
+    )
+    async def list_platform_tenants(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> PlatformTenantListResponse:
+        _require_platform_operator(principal)
+        tenant_ids = _all_known_tenant_ids(session)
+        entitlements: dict[str, TenantAiProcessingEntitlementRecord] = {}
+        if tenant_ids:
+            entitlements = {
+                record.tenant_id: record
+                for record in session.scalars(
+                    select(TenantAiProcessingEntitlementRecord).where(
+                        TenantAiProcessingEntitlementRecord.tenant_id.in_(tenant_ids)
+                    )
+                )
+            }
+        return PlatformTenantListResponse(
+            tenants=[
+                _platform_tenant_response(tenant_id, entitlements.get(tenant_id))
+                for tenant_id in tenant_ids
+            ]
+        )
+
+    @application.get(
+        "/v1/platform/tenants/{tenant_id}/ai-processing-entitlement",
+        response_model=PlatformTenantResponse,
+        tags=["platform"],
+    )
+    async def get_ai_processing_entitlement(
+        tenant_id: str,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> PlatformTenantResponse:
+        _require_platform_operator(principal)
+        entitlement = session.scalar(
+            select(TenantAiProcessingEntitlementRecord).where(
+                TenantAiProcessingEntitlementRecord.tenant_id == tenant_id
+            )
+        )
+        return _platform_tenant_response(tenant_id, entitlement)
 
     @application.put(
         "/v1/platform/tenants/{tenant_id}/ai-processing-entitlement",

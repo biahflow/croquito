@@ -2322,6 +2322,33 @@
         "title": "LineGeometry",
         "type": "object"
       },
+      "MeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Roles",
+            "type": "array"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "tenant_id",
+          "roles"
+        ],
+        "title": "MeResponse",
+        "type": "object"
+      },
       "Measurement-Input": {
         "additionalProperties": false,
         "properties": {
@@ -2640,6 +2667,78 @@
           "points"
         ],
         "title": "PixelPolyline",
+        "type": "object"
+      },
+      "PlatformTenantListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "tenants": {
+            "items": {
+              "$ref": "#/components/schemas/PlatformTenantResponse"
+            },
+            "title": "Tenants",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tenants"
+        ],
+        "title": "PlatformTenantListResponse",
+        "type": "object"
+      },
+      "PlatformTenantResponse": {
+        "additionalProperties": false,
+        "description": "Estado legível do entitlement de um tenant, mesmo quando nunca foi ativado.\n\nDiferente de `AiProcessingEntitlementResponse` (o PUT, que só existe depois de\nativar ao menos uma vez): aqui `agreement_reference`, `authorized_at` e\n`revoked_at` são opcionais porque um tenant que nunca teve entitlement criado\nainda é um resultado válido — 200 com `enabled=false` e nulos, não 404.",
+        "properties": {
+          "agreement_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agreement Reference"
+          },
+          "authorized_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorized At"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "enabled"
+        ],
+        "title": "PlatformTenantResponse",
         "type": "object"
       },
       "Point2D": {
@@ -6347,6 +6446,33 @@
         ]
       }
     },
+    "/v1/me": {
+      "get": {
+        "description": "A SPA descobre quem é o principal autenticado. Exige só autenticação — nenhum\npapel — e nunca devolve claims brutos ou o token: só o que o `Principal` já\nexpõe (subject, tenant, roles), a mesma superfície usada nas decisões de\nautorização.",
+        "operationId": "me_v1_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Me",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
     "/v1/meta": {
       "get": {
         "operationId": "metadata_v1_meta_get",
@@ -6368,7 +6494,78 @@
         ]
       }
     },
+    "/v1/platform/tenants": {
+      "get": {
+        "operationId": "list_platform_tenants_v1_platform_tenants_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformTenantListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Platform Tenants",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/v1/platform/tenants/{tenant_id}/ai-processing-entitlement": {
+      "get": {
+        "operationId": "get_ai_processing_entitlement_v1_platform_tenants__tenant_id__ai_processing_entitlement_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformTenantResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Ai Processing Entitlement",
+        "tags": [
+          "platform"
+        ]
+      },
       "put": {
         "operationId": "set_ai_processing_entitlement_v1_platform_tenants__tenant_id__ai_processing_entitlement_put",
         "parameters": [
