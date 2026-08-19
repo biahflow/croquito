@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -14,6 +15,10 @@ from croquito_worker.association import AssociationSet, associate_readings
 from croquito_worker.providers import (
     GeometryExtractionOutput,
     MeasurementExtractionOutput,
+    MeasurementReadingOutput,
+    NormalizedBox,
+    OcrLineOutput,
+    OcrOutput,
     PageSurveyOutput,
     PromptTask,
     ProviderAdapter,
@@ -145,6 +150,43 @@ def _execute_with_fallback(
         execution = secondary.execute(request)
         notes.append(note_code)
         return execution
+
+
+def _normalize_ocr_text(text: str) -> str:
+    """Normalização mínima e nomeada para comparar leitura x linha de OCR.
+
+    `strip` + colapso de espaços múltiplos + vírgula decimal -> ponto. Não mexe em caixa
+    nem em pontuação fora do separador decimal: o alvo é a variação de digitação/OCR de
+    número ("3,50" vs "3.50"), não correspondência aproximada de texto livre — isso
+    esconderia falso-confirmado atrás de uma normalização agressiva demais.
+    """
+    return " ".join(text.strip().split()).replace(",", ".")
+
+
+def _normalized_boxes_intersect(a: NormalizedBox, b: NormalizedBox) -> bool:
+    """Interseção qualquer, nunca containment: texto rotacionado pelo OCR ainda deve bater
+    contra a bbox de evidência da leitura (risco conhecido da T3)."""
+    return a.left < b.right and b.left < a.right and a.top < b.bottom and b.top < a.bottom
+
+
+def _reading_confirmed_by_ocr(
+    observation: MeasurementReadingOutput, ocr_lines: Sequence[OcrLineOutput]
+) -> bool:
+    """Confirma uma leitura contra o que o OCR encontrou na mesma região da folha.
+
+    Match textual normalizado **e** interseção espacial de bbox: texto repetido em dois
+    pontos da prancha (a mesma cota redesenhada, por exemplo) não pode confirmar só pelo
+    texto — é exatamente o falso-confirmado que o risco conhecido da T3 descreve. `bbox`
+    é campo obrigatório de `MeasurementReadingOutput` neste contrato (nunca ausente), então
+    o caminho "sem bbox, só texto conta" previsto na task não tem estado alcançável aqui e
+    não foi implementado; um `if` morto sem forma de testar seria pior do que documentá-lo.
+    """
+    normalized_reading = _normalize_ocr_text(observation.raw_text)
+    return any(
+        _normalize_ocr_text(line.raw_text) == normalized_reading
+        and _normalized_boxes_intersect(observation.bbox, line.bbox)
+        for line in ocr_lines
+    )
 
 
 def build_provider_review_snapshot(
@@ -298,6 +340,28 @@ def build_provider_review_snapshot(
         extractor = f"{anchor.provider.value}+{counterpart_execution.provider.value}"
         extractor_version = f"{anchor.model_id}+{counterpart_execution.model_id}"
         lineage = [_lineage(anchor), _lineage(counterpart_execution)]
+    # Corroboração por OCR determinístico: roda uma vez por documento (não por leitura) e
+    # só quando existe alguma leitura do LLM para conferir — sem isso não há chamada paga
+    # à toa. `suite.ocr is None` e falha permanente do OCR têm o MESMO tratamento (nota
+    # única `OCR_UNAVAILABLE`, pacote segue normal); `BUDGET_EXCEEDED` propaga como as
+    # demais chamadas do job, porque descreve o teto da rodada, não o braço.
+    ocr_lines: list[OcrLineOutput] = []
+    ocr_ran = False
+    if anchor_output.readings:
+        if suite.ocr is None:
+            safety_notes.append("OCR_UNAVAILABLE")
+        else:
+            try:
+                ocr_execution = suite.ocr.execute(request(PromptTask.OCR))
+            except ProviderExecutionError as error:
+                if error.code is ProviderFailureCode.BUDGET_EXCEEDED:
+                    raise
+                safety_notes.append("OCR_UNAVAILABLE")
+            else:
+                if not isinstance(ocr_execution.output, OcrOutput):
+                    raise ProviderContractError("OCR não retornou contrato de OCR")
+                ocr_lines = list(ocr_execution.output.lines)
+                ocr_ran = True
     for position, observation in enumerate(anchor_output.readings, start=1):
         counterpart = (
             counterpart_readings[position - 1]
@@ -323,6 +387,15 @@ def build_provider_review_snapshot(
         )
         if disagreed:
             safety_notes.append(f"READING_{position}_PROVIDER_DISAGREEMENT")
+        if ocr_ran:
+            # Confirmada ou não, a nota é o dado — o status NUNCA é rebaixado por falha de
+            # OCR (rotação, normalização): calibrar o status a partir disso é da F-010, não
+            # desta entrega. Ver `_reading_confirmed_by_ocr` para o critério de match.
+            safety_notes.append(
+                f"READING_{position}_OCR_CONFIRMED"
+                if _reading_confirmed_by_ocr(observation, ocr_lines)
+                else f"READING_{position}_OCR_EVIDENCE_MISSING"
+            )
         readings.append(
             DimensionReading(
                 id=_reading_id(image_sha256, position),
