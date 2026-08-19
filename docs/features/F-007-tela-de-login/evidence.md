@@ -127,7 +127,15 @@ cobrindo a copy da revisão 2).
    é `INTERFACE_CHANGE` e seguirá o gate de Design Approval antes do planejamento. O
    portão de paridade aprendeu que item pré-contrato vive sem link de feature.md (2 testes
    novos).
-5. **Ato de console pendente (HML)**: o diagnóstico confirmou o tema antigo e inglês
+5. **Pílula de ambiente removida** (decisão humana de 2026-08-19): sem pílula em
+   ambiente nenhum — a URL diferencia; mecanismo de hostname, CSS e teste do mecanismo
+   removidos; registro da divergência aprovada no mock/README.md.
+6. **Realm de HML — recriação autorizada**: decisão humana de 2026-08-19 autoriza o
+   caminho destrutivo do runbook (apagar o realm e deixar o import recriá-lo com tema e
+   pt-BR); só o usuário do responsável existia e será recriado por ele — com e-mail e
+   nome preenchidos, pela lição do VERIFY_PROFILE. Execução pelos comandos no terminal
+   do responsável (o classificador do harness barrou a via automática, corretamente).
+7. **Ato de console pendente (HML)** — substituído pelo item 6: o diagnóstico confirmou o tema antigo e inglês
    ainda ativos no realm de homologação — o `IGNORE_EXISTING` do import não aplica
    `loginTheme`/`emailTheme`/i18n a realm existente; os passos de console estão com o
    responsável (runbook HML_KEYCLOAK, "Mudança no realm depois que ele já existe").
