@@ -6,17 +6,22 @@ from dataclasses import replace
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 from urllib.error import HTTPError
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from croquito_core.models import MeasurementKind
 from croquito_worker.ocr_eval import run_ocr_corroboration_eval
 from croquito_worker.provider_review import (
+    READING_MATCH_MAX_CENTER_DISTANCE,
+    ProviderReviewSnapshot,
     _normalize_ocr_text,
     _reading_confirmed_by_ocr,
+    _readings_agree,
     build_provider_review_snapshot,
+    pair_readings_by_evidence,
 )
 from croquito_worker.providers import (
     EMBEDDINGS_MAX_BATCH,
@@ -70,6 +75,7 @@ from croquito_worker.providers import (
     SurveyRegion,
     TargetHint,
     TextractProviderAdapter,
+    _AuthTransportResponse,
     _bedrock_failure_code,
     _failure_from_http_status,
     _http_error_detail,
@@ -78,6 +84,7 @@ from croquito_worker.providers import (
     _output_model,
     _parse_output,
     _prompt_template,
+    _UrllibAuthRequest,
     build_embeddings_adapter,
     build_image_text_request,
     build_real_provider_suite,
@@ -304,6 +311,171 @@ def _distinct_reading(raw_text: str) -> MeasurementExtractionOutput:
             )
         ]
     )
+
+
+def _counterpart_reading(
+    *,
+    value: object = "25.90",
+    kind: str = "width",
+    unit: str = "m",
+    left: float = 0.08,
+    top: float = 0.12,
+    raw_text: str = "25,90 m",
+    legibility: str = "clear",
+) -> MeasurementReadingOutput:
+    """Uma leitura da contraparte, montada como ela chega do fio (valor string ou número)."""
+    return MeasurementReadingOutput.model_validate(
+        {
+            "raw_text": raw_text,
+            "kind": kind,
+            "normalized_value": value,
+            "unit": unit,
+            "written_precision": 2,
+            "bbox": {"left": left, "top": top, "right": left + 0.12, "bottom": top + 0.06},
+            "target_hint": {"entity_label": "campo", "feature": "medida"},
+            "legibility": legibility,
+        }
+    )
+
+
+def _dual_suite(counterpart: MeasurementExtractionOutput) -> ProviderSuite:
+    """Âncora = fixture sintética (Claude); contraparte (OpenAI) lê a folha do jeito dela."""
+    base = build_synthetic_provider_suite()
+    openai_adapter = cast(FixtureProviderAdapter, base.openai)
+    return replace(
+        base,
+        openai=replace(
+            openai_adapter,
+            outputs={
+                **openai_adapter.outputs,
+                PromptTask.MEASUREMENT_EXTRACTION: counterpart,
+            },
+        ),
+    )
+
+
+def _snapshot_of(
+    tmp_path: Path, counterpart: MeasurementExtractionOutput
+) -> ProviderReviewSnapshot:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    return build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=_dual_suite(counterpart)
+    )
+
+
+# As três cotas da fixture sintética, na ordem da âncora: 25,90 em (0.14, 0.15), 21,75 em
+# (0.30, 0.15) e 6,00 em (0.47, 0.15) — centros normalizados.
+def _shuffled_counterpart(**overrides: object) -> MeasurementExtractionOutput:
+    """A MESMA folha lida na ordem inversa, com o recorte deslocado 1% — como um braço real."""
+    first: dict[str, object] = {
+        "value": "25.90",
+        "kind": "width",
+        "left": 0.09,
+        "top": 0.13,
+        "raw_text": "25,90 m",
+    }
+    return MeasurementExtractionOutput(
+        readings=[
+            _counterpart_reading(value="6.00", kind="diameter", left=0.41, top=0.13),
+            _counterpart_reading(value="21.75", kind="height", left=0.25, top=0.13),
+            _counterpart_reading(**cast(Any, first | overrides)),
+        ]
+    )
+
+
+def test_dual_extraction_pairs_shuffled_readings_by_place(tmp_path: Path) -> None:
+    """V6, prancha real: 36 leituras na âncora, 24 na contraparte, 0/36 pelo índice.
+
+    Cada braço varre a folha na sua ordem; a ordem nunca foi identidade de cota. Pareando
+    pelo lugar, a mesma cota lida pelos dois volta a poder ser `proposed`.
+    """
+    snapshot = _snapshot_of(tmp_path, _shuffled_counterpart())
+
+    assert snapshot.packet.readings[0].status is ReadingStatus.PROPOSED
+    assert snapshot.packet.readings[1].status is ReadingStatus.PROPOSED
+    assert not any(note.endswith("_PROVIDER_DISAGREEMENT") for note in snapshot.packet.safety_notes)
+    # A terceira segue ambígua por legibilidade, não por comparação.
+    assert snapshot.packet.readings[2].status is ReadingStatus.AMBIGUOUS
+
+
+def test_dual_extraction_survives_a_kind_divergence(tmp_path: Path) -> None:
+    """O mesmo 25,90 saiu `width` num braço e `length` no outro no V6: é a MESMA cota."""
+    snapshot = _snapshot_of(tmp_path, _shuffled_counterpart(kind="length"))
+
+    assert snapshot.packet.readings[0].status is ReadingStatus.PROPOSED
+    assert "READING_1_KIND_DIVERGENCE" in snapshot.packet.safety_notes
+    assert "READING_1_PROVIDER_DISAGREEMENT" not in snapshot.packet.safety_notes
+    # O kind da âncora prevalece; a divergência é nota, não voto.
+    assert snapshot.packet.readings[0].kind is MeasurementKind.WIDTH
+
+
+def test_dual_extraction_keeps_a_value_divergence_ambiguous(tmp_path: Path) -> None:
+    snapshot = _snapshot_of(tmp_path, _shuffled_counterpart(value="25.80"))
+
+    assert snapshot.packet.readings[0].status is ReadingStatus.AMBIGUOUS
+    assert "READING_1_PROVIDER_DISAGREEMENT" in snapshot.packet.safety_notes
+    assert "READING_1_KIND_DIVERGENCE" not in snapshot.packet.safety_notes
+
+
+def test_dual_extraction_never_pairs_the_same_value_far_away(tmp_path: Path) -> None:
+    """Cota repetida na prancha (dois portões de 3,60) não pode virar acordo por coincidência."""
+    counterpart = MeasurementExtractionOutput(
+        readings=[_counterpart_reading(value="25.90", left=0.80, top=0.80)]
+    )
+
+    snapshot = _snapshot_of(tmp_path, counterpart)
+
+    assert snapshot.packet.readings[0].status is ReadingStatus.AMBIGUOUS
+    assert "READING_1_PROVIDER_DISAGREEMENT" in snapshot.packet.safety_notes
+    # O revisor não vê essa leitura no pacote (a âncora manda), mas fica sabendo que existe.
+    assert "PROVIDER_UNMATCHED_COUNTERPART_READINGS:1" in snapshot.packet.safety_notes
+    assert "PROVIDER_READING_COUNT_DISAGREEMENT" in snapshot.packet.safety_notes
+
+
+def test_dual_extraction_agrees_between_a_string_and_a_number(tmp_path: Path) -> None:
+    """Um braço emite "25.90", o outro 25.9: mesmo número, e o contrato já os traz em Decimal."""
+    snapshot = _snapshot_of(tmp_path, _shuffled_counterpart(value=25.9))
+
+    assert snapshot.packet.readings[0].status is ReadingStatus.PROPOSED
+
+
+def test_readings_agree_compares_value_and_unit_only() -> None:
+    anchor = _counterpart_reading(value="25.90")
+
+    assert _readings_agree(anchor, _counterpart_reading(value=25.9))
+    assert _readings_agree(anchor, _counterpart_reading(value="25.900", kind="length"))
+    assert not _readings_agree(anchor, _counterpart_reading(value="25.90", unit="cm"))
+    assert not _readings_agree(anchor, _counterpart_reading(value=None))
+    assert not _readings_agree(_counterpart_reading(value=None), anchor)
+    assert not _readings_agree(anchor, None)
+
+
+def test_pair_readings_by_evidence_is_greedy_and_one_to_one() -> None:
+    """O par mais próximo fecha primeiro, e cada contraparte é usada no máximo uma vez."""
+    anchor = [
+        _counterpart_reading(left=0.10, top=0.10),
+        _counterpart_reading(left=0.12, top=0.10),
+    ]
+    # A mesma contraparte está dentro da tolerância das DUAS âncoras; leva a mais próxima.
+    counterpart = [_counterpart_reading(left=0.121, top=0.10)]
+
+    pairs = pair_readings_by_evidence(anchor, counterpart)
+
+    assert [reading for reading, _ in pairs] == anchor
+    assert pairs[0][1] is None
+    assert pairs[1][1] is counterpart[0]
+
+
+def test_pair_readings_by_evidence_respects_the_distance_limit() -> None:
+    anchor = [_counterpart_reading(left=0.10, top=0.10)]
+    near = _counterpart_reading(left=0.10 + READING_MATCH_MAX_CENTER_DISTANCE / 2, top=0.10)
+    far = _counterpart_reading(left=0.10 + READING_MATCH_MAX_CENTER_DISTANCE * 2, top=0.10)
+
+    assert pair_readings_by_evidence(anchor, [near])[0][1] is near
+    assert pair_readings_by_evidence(anchor, [far])[0][1] is None
+    # Sem contraparte nenhuma, toda âncora sai sem par — e nenhuma âncora se perde.
+    assert pair_readings_by_evidence(anchor, []) == [(anchor[0], None)]
 
 
 def test_page_survey_falls_back_to_openai_and_keeps_dual_extraction(tmp_path: Path) -> None:
@@ -663,6 +835,65 @@ def test_gcp_vision_adapter_parses_full_text_annotation_into_normalized_lines() 
     assert line.bbox.right == pytest.approx(0.90)
     assert line.bbox.bottom == pytest.approx(0.40)
     assert execution.raw_response_ref is None
+
+
+class _FakeMetadataResponse:
+    """Resposta do metadata server como ela chega no fio: nome de header capitalizado."""
+
+    status = 200
+    headers: ClassVar[dict[str, str]] = {
+        "Content-Type": "application/json; charset=UTF-8",
+        "Metadata-Flavor": "Google",
+    }
+
+    def read(self) -> bytes:
+        return b'{"access_token": "ya29.fake-token", "expires_in": 3600}'
+
+    def __enter__(self) -> "_FakeMetadataResponse":
+        return self
+
+    def __exit__(self, *_exception: object) -> None:
+        return None
+
+
+def test_adc_transport_answers_the_lowercase_header_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O KeyError real de produção, capturado pela instrumentação: `detail='content-type'`.
+
+    O `google-auth` consulta o header em minúsculas; `dict(response.headers)` achatava a
+    `HTTPMessage` e perdia a case-insensitivity do HTTP. O refresh do ADC morria aí — três
+    retentativas e `OCR_UNAVAILABLE` —, sem a credencial ter nada de errado.
+    """
+
+    def fake_urlopen(_request: object, timeout: float | None = None) -> _FakeMetadataResponse:
+        return _FakeMetadataResponse()
+
+    monkeypatch.setattr("croquito_worker.providers.urlopen", fake_urlopen)
+
+    response = _UrllibAuthRequest(timeout_seconds=5.0)("http://metadata.google.internal/token")
+
+    assert response.status == 200
+    assert response.headers["content-type"] == "application/json; charset=UTF-8"
+    assert response.headers["metadata-flavor"] == "Google"
+    assert b"ya29.fake-token" in response.data
+
+
+def test_adc_transport_lowers_only_the_header_names() -> None:
+    """Só a chave muda: o valor é dado do fornecedor e é devolvido como veio."""
+    response = _AuthTransportResponse(
+        status=200,
+        headers={
+            "Content-Type": "application/JSON; charset=UTF-8",
+            "WWW-Authenticate": 'Bearer realm="Google"',
+        },
+        data=b"{}",
+    )
+
+    assert response.headers == {
+        "content-type": "application/JSON; charset=UTF-8",
+        "www-authenticate": 'Bearer realm="Google"',
+    }
 
 
 class _BrokenGcpCredentials:

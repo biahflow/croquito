@@ -1628,11 +1628,22 @@ DEFAULT_OCR_CALL_COST_USD: Final = "0.0015"
 
 
 class _AuthTransportResponse:
-    """Implementa `google.auth.transport.Response` sobre a resposta do `urlopen`."""
+    """Implementa `google.auth.transport.Response` sobre a resposta do `urlopen`.
+
+    As chaves dos headers são normalizadas para minúsculas na construção. Cabeçalho HTTP é
+    case-insensitive e a `HTTPMessage` do `urllib` respeita isso; um `dict` comum, não — e o
+    `google-auth` consulta em minúsculas (`response.headers["content-type"]`, em
+    `google.auth.compute_engine._metadata`). Foi exatamente esse degrau que manteve o braço
+    OCR fora do ar: a instrumentação de 2026-08-19 capturou
+    `ocr_token_failure error_type=KeyError detail='content-type'`, três retentativas e a
+    degradação muda para `OCR_UNAVAILABLE` — o refresh do ADC morria no header, nunca na
+    credencial. Normalizar aqui, e não no ponto de chamada, fecha o buraco para qualquer
+    caminho que construa esta resposta.
+    """
 
     def __init__(self, *, status: int, headers: dict[str, str], data: bytes) -> None:
         self._status = status
-        self._headers = headers
+        self._headers = {name.lower(): value for name, value in headers.items()}
         self._data = data
 
     @property
@@ -1674,6 +1685,8 @@ class _UrllibAuthRequest:
             http_request, timeout=timeout or self.timeout_seconds
         ) as response:
             return _AuthTransportResponse(
+                # `dict(response.headers)` achata a `HTTPMessage` num dict comum e perde a
+                # case-insensitivity do HTTP; quem repõe isso é `_AuthTransportResponse`.
                 status=int(response.status),
                 headers=dict(response.headers),
                 data=response.read(),

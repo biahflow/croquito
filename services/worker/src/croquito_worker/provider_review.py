@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+from typing import Final
 
 from PIL import Image
 
@@ -205,6 +207,97 @@ def _reading_confirmed_by_ocr(
     )
 
 
+READING_MATCH_MAX_CENTER_DISTANCE: Final = 0.05
+"""Distância máxima, em coordenadas normalizadas, entre os centros de duas leituras pareadas.
+
+Medida na primeira prancha real com os dois braços vivos (V6, 2026-08-19): a âncora leu 36
+cotas, a contraparte 24, e o pareamento POR POSIÇÃO acertou 0 de 36 — cada braço varre a
+folha na sua ordem, então o índice não descreve nada. O que descreve é o lugar: dois braços
+lendo a MESMA cota recortam quase o mesmo pedaço da página, e a diferença entre os recortes
+é de poucos por cento; duas cotas DIFERENTES da mesma prancha quase nunca ficam a menos de
+5% de distância uma da outra — e quando ficam, o guloso escolhe a mais próxima.
+
+5% é do espaço normalizado, que é anisotrópico: numa página larga o mesmo número vale mais
+milímetros na horizontal do que na vertical. É tolerância de pareamento, não de medida —
+nenhum valor é arredondado por causa dela, e par casado com valor diferente vira divergência
+explícita, nunca acordo.
+"""
+
+
+def _bbox_center(box: NormalizedBox) -> tuple[float, float]:
+    return ((box.left + box.right) / 2, (box.top + box.bottom) / 2)
+
+
+def _center_distance(a: NormalizedBox, b: NormalizedBox) -> float:
+    (ax, ay), (bx, by) = _bbox_center(a), _bbox_center(b)
+    return math.hypot(ax - bx, ay - by)
+
+
+def pair_readings_by_evidence(
+    anchor: Sequence[MeasurementReadingOutput],
+    counterpart: Sequence[MeasurementReadingOutput],
+) -> list[tuple[MeasurementReadingOutput, MeasurementReadingOutput | None]]:
+    """Casa leitura de âncora com leitura de contraparte pelo LUGAR na folha, não pela ordem.
+
+    Guloso do par mais próximo primeiro, um-para-um: o melhor par global é fechado, os dois
+    lados saem do jogo, e repete-se com o que sobrou. Assim a decisão não depende da ordem em
+    que os braços listaram as cotas — que é justamente a variável que o pareamento posicional
+    confundia com identidade.
+
+    Devolve UMA entrada por leitura da âncora, na ordem da âncora, com `None` quando nada
+    ficou dentro de `READING_MATCH_MAX_CENTER_DISTANCE`. Leitura da contraparte sem par não
+    aparece aqui: a âncora manda no pacote, e o que só o outro braço viu é contado como
+    sobra pelo chamador. Função pura: não lê provider, não decide status e não altera nada.
+    """
+    candidates = sorted(
+        (
+            (_center_distance(first.bbox, second.bbox), i, j)
+            for i, first in enumerate(anchor)
+            for j, second in enumerate(counterpart)
+            if _center_distance(first.bbox, second.bbox) <= READING_MATCH_MAX_CENTER_DISTANCE
+        ),
+        # Empate resolvido pela ordem das listas: pareamento precisa ser determinístico.
+        key=lambda candidate: (candidate[0], candidate[1], candidate[2]),
+    )
+    matched: dict[int, int] = {}
+    taken: set[int] = set()
+    for _distance, i, j in candidates:
+        if i in matched or j in taken:
+            continue
+        matched[i] = j
+        taken.add(j)
+    return [
+        (reading, counterpart[matched[i]] if i in matched else None)
+        for i, reading in enumerate(anchor)
+    ]
+
+
+def _readings_agree(
+    observation: MeasurementReadingOutput, counterpart: MeasurementReadingOutput | None
+) -> bool:
+    """Concordância entre um par casado: mesmo valor e mesma unidade, e nada além disso.
+
+    `kind` fica de fora de propósito. No V6 o mesmo 25,90 saiu `length` num braço e `width`
+    no outro: mesmo lugar, mesmo número, mesma unidade — a mesma cota, com rótulo diferente.
+    Deixar a classificação derrubar a concordância transformava divergência de vocabulário em
+    divergência de medida (a divergência vira nota `READING_{n}_KIND_DIVERGENCE`, e o `kind`
+    da âncora prevalece). `target_hint` sai pelo mesmo motivo, e mais forte ainda: é texto
+    livre, dois braços quase nunca o escrevem igual.
+
+    O valor é comparado como `Decimal`, que o contrato já produz tanto de string quanto de
+    número, e cuja igualdade é numérica: "25,90" e 25.9 são o mesmo valor. Nenhuma tolerância
+    é aplicada ao número — medida não é arredondada aqui. `None` nunca concorda: ausência de
+    valor não é acordo sobre valor.
+    """
+    if counterpart is None:
+        return False
+    if observation.normalized_value is None or counterpart.normalized_value is None:
+        return False
+    if observation.unit != counterpart.unit:
+        return False
+    return Decimal(observation.normalized_value) == Decimal(counterpart.normalized_value)
+
+
 def build_provider_review_snapshot(
     image_path: Path,
     *,
@@ -346,6 +439,20 @@ def build_provider_review_snapshot(
     counterpart_readings = counterpart_output.readings if counterpart_output is not None else []
     if dual and len(anchor_output.readings) != len(counterpart_readings):
         safety_notes.append("PROVIDER_READING_COUNT_DISAGREEMENT")
+    # Pareamento por evidência espacial. O índice da lista nunca foi identidade de cota: cada
+    # braço varre a folha na sua ordem, e no V6 o pareamento posicional acertou 0 de 36.
+    pairs: list[tuple[MeasurementReadingOutput, MeasurementReadingOutput | None]] = (
+        pair_readings_by_evidence(anchor_output.readings, counterpart_readings)
+        if dual
+        else [(reading, None) for reading in anchor_output.readings]
+    )
+    unmatched_counterparts = len(counterpart_readings) - sum(
+        1 for _, matched in pairs if matched is not None
+    )
+    if dual and unmatched_counterparts:
+        # O pacote é da âncora: cota que só a contraparte viu não entra. Mas o revisor
+        # precisa saber quantas ficaram de fora — silêncio aqui vira folha meio lida.
+        safety_notes.append(f"PROVIDER_UNMATCHED_COUNTERPART_READINGS:{unmatched_counterparts}")
     # A proveniência precisa dizer quem realmente leu. Um rótulo fixo, ou o par mesmo com
     # um braço caído, esconderia que a leitura saiu de uma única observação.
     if counterpart_execution is None:
@@ -383,12 +490,7 @@ def build_provider_review_snapshot(
                     raise ProviderContractError("OCR não retornou contrato de OCR")
                 ocr_lines = list(ocr_execution.output.lines)
                 ocr_ran = True
-    for position, observation in enumerate(anchor_output.readings, start=1):
-        counterpart = (
-            counterpart_readings[position - 1]
-            if dual and position <= len(counterpart_readings)
-            else None
-        )
+    for position, (observation, counterpart) in enumerate(pairs, start=1):
         if observation.normalized_value is None or observation.target_hint is None:
             safety_notes.append(f"READING_{position}_INCOMPLETE")
             continue
@@ -399,15 +501,15 @@ def build_provider_review_snapshot(
         except ProviderContractError:
             safety_notes.append(f"READING_{position}_UNSUPPORTED_UNIT_OR_KIND")
             continue
-        disagreed = dual and (
-            counterpart is None
-            or counterpart.normalized_value != observation.normalized_value
-            or counterpart.unit != observation.unit
-            or counterpart.kind != observation.kind
-            or counterpart.target_hint != observation.target_hint
-        )
+        # Sem par não há corroboração: a leitura da âncora segue sozinha e ambígua, como
+        # já valia quando a contraparte não existia naquela posição.
+        disagreed = dual and not _readings_agree(observation, counterpart)
         if disagreed:
             safety_notes.append(f"READING_{position}_PROVIDER_DISAGREEMENT")
+        elif dual and counterpart is not None and counterpart.kind != observation.kind:
+            # Mesmo lugar, mesmo valor, mesma unidade e rótulo diferente: a cota é a mesma e
+            # o `kind` da âncora prevalece, mas a divergência de classificação fica visível.
+            safety_notes.append(f"READING_{position}_KIND_DIVERGENCE")
         if ocr_ran:
             # Confirmada ou não, a nota é o dado — o status NUNCA é rebaixado por falha de
             # OCR (rotação, normalização): calibrar o status a partir disso é da F-010, não
