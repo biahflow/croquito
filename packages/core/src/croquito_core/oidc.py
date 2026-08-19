@@ -35,13 +35,24 @@ class OidcTokenError(Exception):
 
 
 @lru_cache(maxsize=8)
-def jwks_client_for(issuer: str) -> jwt.PyJWKClient:
-    """Um cliente JWKS por issuer.
+def jwks_client_for(issuer: str, jwks_url: str | None = None) -> jwt.PyJWKClient:
+    """Um cliente JWKS por (issuer, URL de busca).
 
     Criar o cliente a cada request refazia o download do JWKS a cada chamada
     autenticada; o cache de chaves do próprio PyJWT resolve isso dentro do cliente.
+
+    `jwks_url` separa DE ONDE as chaves são buscadas de QUEM as emitiu: o `iss` do
+    token continua sendo o issuer público, mas a busca pode (e em ambiente hospedado
+    DEVE) ir pela rota interna serviço-a-serviço. Incidente de 2026-08-19: o host
+    público fica atrás do Cloudflare, cuja proteção de bot devolve 403 ao
+    `Python-urllib` — a API não baixava as chaves e todo token virava INVALID_TOKEN.
+    O User-Agent próprio é a segunda camada da mesma lição.
     """
-    return jwt.PyJWKClient(f"{issuer.rstrip('/')}{JWKS_PATH}", cache_keys=True)
+    return jwt.PyJWKClient(
+        jwks_url or f"{issuer.rstrip('/')}{JWKS_PATH}",
+        cache_keys=True,
+        headers={"User-Agent": "croquito-oidc/1.0"},
+    )
 
 
 def validate_bearer_token(
@@ -50,9 +61,10 @@ def validate_bearer_token(
     issuer: str,
     audience: str,
     jwks_client: jwt.PyJWKClient | None = None,
+    jwks_url: str | None = None,
 ) -> OidcIdentity:
     """Valida assinatura, issuer e audience, e devolve só o que veio assinado."""
-    client = jwks_client if jwks_client is not None else jwks_client_for(issuer)
+    client = jwks_client if jwks_client is not None else jwks_client_for(issuer, jwks_url)
     try:
         signing_key = client.get_signing_key_from_jwt(token)
         payload = jwt.decode(

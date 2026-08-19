@@ -39,6 +39,10 @@ class ApiSettings:
     oidc_audience: str | None
     web_origin: str
     allow_test_tokens: bool
+    # De onde buscar o JWKS quando a rota pública não serve (Cloudflare na frente do
+    # domínio bloqueia clientes não-navegador; incidente de 2026-08-19). Opcional com
+    # default para não obrigar cada construção de teste a conhecê-lo.
+    oidc_jwks_url: str | None = None
     real_providers_enabled: bool = False
     ai_max_estimated_cost_usd: str | None = None
     storage_flavor: StorageFlavor = "s3"
@@ -73,6 +77,7 @@ class ApiSettings:
             queue_url=os.getenv("CROQUITO_PROCESSING_QUEUE_URL") or None,
             oidc_issuer=os.getenv("CROQUITO_OIDC_ISSUER") or None,
             oidc_audience=os.getenv("CROQUITO_OIDC_AUDIENCE") or None,
+            oidc_jwks_url=os.getenv("CROQUITO_OIDC_JWKS_URL") or None,
             web_origin=os.getenv("CROQUITO_WEB_ORIGIN", "http://localhost:5173"),
             allow_test_tokens=_enabled("CROQUITO_ALLOW_TEST_TOKENS"),
             real_providers_enabled=_enabled("CROQUITO_REAL_PROVIDERS_ENABLED"),

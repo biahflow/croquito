@@ -26,11 +26,17 @@ class Principal:
 
 class OidcAuthenticator:
     def __init__(
-        self, *, issuer: str | None, audience: str | None, allow_test_tokens: bool
+        self,
+        *,
+        issuer: str | None,
+        audience: str | None,
+        allow_test_tokens: bool,
+        jwks_url: str | None = None,
     ) -> None:
         self.issuer = issuer
         self.audience = audience
         self.allow_test_tokens = allow_test_tokens
+        self.jwks_url = jwks_url
 
     def authenticate(self, token: str) -> Principal:
         if self.allow_test_tokens and token.startswith("test:"):
@@ -41,7 +47,9 @@ class OidcAuthenticator:
                 detail={"code": "AUTH_NOT_CONFIGURED"},
             )
         try:
-            identity = validate_bearer_token(token, issuer=self.issuer, audience=self.audience)
+            identity = validate_bearer_token(
+                token, issuer=self.issuer, audience=self.audience, jwks_url=self.jwks_url
+            )
         except OidcTokenError as error:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail={"code": error.code}

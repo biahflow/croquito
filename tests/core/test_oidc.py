@@ -71,3 +71,19 @@ def test_realm_access_ausente_vira_identidade_sem_papeis() -> None:
     identity = identity_from_claims(claims)
 
     assert identity.roles == frozenset()
+
+
+def test_jwks_client_busca_pela_url_dedicada_quando_ha_uma() -> None:
+    """A URL de busca separa DE ONDE as chaves vêm de QUEM emitiu (Cloudflare na frente
+    do host público bloqueia cliente não-navegador — incidente de 2026-08-19)."""
+    from croquito_core.oidc import jwks_client_for
+
+    publico = jwks_client_for("https://exemplo.invalid/realms/x")
+    interno = jwks_client_for(
+        "https://exemplo.invalid/realms/x",
+        "https://interno.invalid/realms/x/protocol/openid-connect/certs",
+    )
+
+    assert publico.uri == "https://exemplo.invalid/realms/x/protocol/openid-connect/certs"
+    assert interno.uri == "https://interno.invalid/realms/x/protocol/openid-connect/certs"
+    assert publico is not interno
