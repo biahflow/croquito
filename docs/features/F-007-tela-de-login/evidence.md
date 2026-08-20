@@ -135,6 +135,10 @@ cobrindo a copy da revisão 2).
    pt-BR); só o usuário do responsável existia e será recriado por ele — com e-mail e
    nome preenchidos, pela lição do VERIFY_PROFILE. Execução pelos comandos no terminal
    do responsável (o classificador do harness barrou a via automática, corretamente).
+   **Executada em 2026-08-19**: `DELETE realm: 204` + revisão nova do Cloud Run;
+   verificação externa pós-recriação — issuer exato, recursos do tema todos 200, página
+   de login com a marca, tema croquito e pt-BR, registrada em captura. Resta o usuário
+   do responsável ser recriado (com e-mail e nome, pela lição do VERIFY_PROFILE).
 7. **Ato de console pendente (HML)** — substituído pelo item 6: o diagnóstico confirmou o tema antigo e inglês
    ainda ativos no realm de homologação — o `IGNORE_EXISTING` do import não aplica
    `loginTheme`/`emailTheme`/i18n a realm existente; os passos de console estão com o
