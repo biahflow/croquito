@@ -1,0 +1,2134 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F-025 — Design Approval Package rev. 1 — aprovação nominal e boletim da medição</title>
+<!--
+  Artefato de aprovação de desenho da F-025, gerado em 2026-08-20.
+  NÃO É IMPLEMENTAÇÃO: HTML estático, sem comportamento, sem acessibilidade auditada e
+  sem estado. Nada aqui é copiado para apps/web como código.
+-->
+<style>
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:24-72 (tokens da marca e reset) ===== */
+
+:root {
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --surface-subtle: #f4f4f1;
+  --surface-sunken: #efefeb;
+  --ink: #14181d;
+  --ink-secondary: #5b6169;
+  --muted: #9aa0a8;
+  --line: #e5e5e0;
+  --accent: #00c877;
+  --accent-hover: #00b169;
+  --accent-ink: #0e1116;
+  --accent-text: #00744a;
+  --accent-soft: #e6f6ee;
+  --accent-line: #9bdcc0;
+  --dark: #0e1116;
+  --dark-ink: #f2f4f7;
+  --dark-ink-soft: rgba(242, 244, 247, 0.72);
+  --dark-line: rgba(242, 244, 247, 0.12);
+  --dark-line-strong: rgba(242, 244, 247, 0.34);
+
+  color: var(--ink);
+  background: var(--bg);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(0, 200, 119, 0.1), transparent 28rem),
+    var(--bg);
+}
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:508-556 (topbar, marca e o flex que os alinha) ===== */
+
+.topbar {
+  min-height: 76px;
+  padding: 14px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--dark-ink);
+  background: var(--dark);
+  border-bottom: 1px solid var(--dark-line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  color: inherit;
+  text-decoration: none;
+}
+
+/* O wordmark é a marca no topbar escuro; o `alt` carrega o nome para quem não vê a
+   imagem, e o subtítulo continua em texto. Altura maior por decisão da revisão humana de
+   2026-08-19 ("a marca está bem pequena aqui também"), com a mesma compensação óptica da
+   porta: o lettering começa em x≈136 do viewBox (620 × 150), e a margem negativa alinha o
+   desenho — não a caixa — com a borda do padding. */
+.brand-logo {
+  --brand-logo-h: 34px;
+  height: var(--brand-logo-h);
+  width: auto;
+  aspect-ratio: 620 / 150;
+  display: block;
+  margin-left: calc(var(--brand-logo-h) * -0.9);
+}
+
+.brand small {
+  display: block;
+  color: var(--dark-ink-soft);
+  font-size: 12px;
+}
+
+.topbar-actions,
+.context-bar,
+.difficulty,
+.pipeline,
+.panel-heading,
+.view-tabs,
+footer {
+  display: flex;
+  align-items: center;
+}
+
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:930-946 (tipografia: h1 em Georgia) ===== */
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  margin-top: 4px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: 600;
+}
+
+h2 {
+  margin-top: 3px;
+  font-size: 15px;
+}
+
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:689-756 (pílulas e seletor de jornadas) ===== */
+
+.topbar-actions {
+  gap: 10px;
+}
+
+.schema-pill {
+  margin-right: 8px;
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+/* Navegação sobre o topbar escuro. O verde da marca é preenchimento e nunca cor de
+   texto: o texto é `--dark-ink-soft` e o estado ativo (hover/foco) sobe para
+   `--dark-ink`, com a borda mais firme. */
+.topbar-link {
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.topbar-link:hover,
+.topbar-link:focus-visible {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+}
+
+/* Alternância entre as jornadas do app (ADR-0028, D9). São botões e não links porque a
+   troca é de estado da casca, sem recarregar a SPA. A jornada aberta é anunciada por
+   `aria-current` e marcada por peso e borda: cor sozinha não indicaria nada a quem não
+   a distingue. */
+.journey-switch {
+  display: flex;
+  gap: 6px;
+  margin-right: 4px;
+}
+
+.journey-switch .topbar-link {
+  background: transparent;
+}
+
+.journey-switch .topbar-link[aria-current="page"] {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+  font-weight: 750;
+}
+
+.demo-pill {
+  padding: 7px 10px;
+  color: #f0d899;
+  border: 1px solid #665a38;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.identity-pill {
+  padding: 7px 10px;
+  color: var(--dark-ink);
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ===== COPIA VERBATIM: apps/web/src/medicao/styles.css:26-877 (a folha da jornada inteira, sem o wrapper .jornada-medicao — uma página só não precisa dele) ===== */
+
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* O anel de foco é indicador gráfico: usa o verde escuro (5,8:1 sobre branco), porque
+   `--accent` puro sumiria sobre a superfície clara. */
+:focus-visible {
+  outline: 3px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+h1 {
+  margin: 2px 0 0;
+  font-size: 1.35rem;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+h3 {
+  margin: 16px 0 6px;
+  font-size: 0.98rem;
+}
+
+h4 {
+  margin: 12px 0 4px;
+  font-size: 0.92rem;
+}
+
+p {
+  margin: 6px 0;
+  line-height: 1.45;
+}
+
+.eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  color: var(--dark-ink-soft);
+}
+
+.topbar-meta {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--dark-ink-soft);
+}
+
+.topbar-acoes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Sessão sobre o topbar escuro desta jornada. O verde da marca é preenchimento e nunca
+   cor de texto: aqui o texto é `--dark-ink-soft`, e o estado ativo (hover/foco) sobe para
+   `--dark-ink` com a borda mais firme. O `.topbar-link` da casca não serve: lá ele veste
+   `<a>`, e aqui veste também o `<button>` "Sair", que sem `background: transparent`
+   apareceria com o cinza padrão do navegador. */
+.topbar-link {
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  background: transparent;
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.topbar-link:hover,
+.topbar-link:focus-visible {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+}
+
+/* Botão com a mesma aparência do link: "Sair" é ação, não navegação. */
+.topbar-link-botao {
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.aviso-fixo {
+  max-width: 40rem;
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: #2a1a05;
+  background: #f6d99a;
+  border-left: 5px solid #b47512;
+  border-radius: 4px;
+}
+
+.aviso-inline {
+  margin-bottom: 12px;
+}
+
+.etapas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 28px;
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--line);
+}
+
+.etapa-tab {
+  padding: 8px 14px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+.etapa-tab.ativa {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.etapa-tab.done {
+  border-left: 5px solid var(--accent-text);
+}
+
+.etapa-tab.blocked {
+  border-left: 5px solid #8a8f8b;
+}
+
+.recarregar {
+  margin-left: auto;
+}
+
+.banner-erro,
+.banner-conflito,
+.banner-sucesso {
+  margin: 12px 28px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.banner-erro {
+  color: #4a1010;
+  background: #f7d9d9;
+  border-left: 5px solid #a02323;
+}
+
+.banner-conflito {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #3c2708;
+  background: #fbe6c2;
+  border-left: 5px solid #b47512;
+}
+
+.banner-sucesso {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-left: 5px solid var(--accent-text);
+}
+
+.conteudo {
+  padding: 16px 28px 48px;
+}
+
+.painel {
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.painel-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cabecalho-controles {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.2fr) minmax(280px, 1fr) minmax(300px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.workspace.duas-colunas {
+  grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.4fr);
+}
+
+@media (max-width: 1200px) {
+  .workspace,
+  .workspace.duas-colunas {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cartoes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 12px 0 20px;
+  padding: 0;
+  list-style: none;
+}
+
+.cartao {
+  padding: 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-left: 5px solid #8a8f8b;
+  border-radius: 6px;
+}
+
+.cartao.available {
+  border-left-color: #b47512;
+}
+
+.cartao.done {
+  border-left-color: var(--accent-text);
+}
+
+.cartao h3 {
+  margin-top: 0;
+}
+
+.cartao-status {
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.cartao-motivo {
+  font-size: 0.86rem;
+  color: #6b3a06;
+}
+
+.botao-primario,
+.botao-secundario {
+  padding: 9px 16px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.botao-primario {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.botao-primario:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* A borda é a afordância do secundário: fica no verde escuro, que se destaca sobre
+   branco (5,8:1) — `--accent-line` apagaria o contorno do botão. */
+.botao-secundario {
+  color: var(--accent-text);
+  background: var(--surface);
+  border-color: var(--accent-text);
+}
+
+.acoes-linha {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.artefatos ul,
+.aditivo-lista,
+.confirmados-lista,
+.memoria,
+.memoria ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.confirmados {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.confirmados-lista li {
+  margin-bottom: 10px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.digest {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.8em;
+  color: var(--ink-secondary);
+}
+
+.dica {
+  font-size: 0.84rem;
+  color: var(--ink-secondary);
+}
+
+/* Prancha ------------------------------------------------------------------ */
+
+.zoom-controles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zoom-leitura {
+  min-width: 4rem;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.prancha-canvas {
+  max-height: 72vh;
+  overflow: auto;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  touch-action: none;
+}
+
+.prancha-canvas.arrastando {
+  cursor: grabbing;
+}
+
+.prancha-stage {
+  position: relative;
+  width: 100%;
+}
+
+.prancha-stage img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+}
+
+.bbox-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.bbox {
+  cursor: pointer;
+}
+
+.bbox rect {
+  fill: transparent;
+  stroke-width: 3;
+}
+
+/* Estado por cor E por forma: item ainda não decidido é tracejado. O número do item
+   nunca mora dentro do retângulo — ele cobriria letra da linha da legenda
+   ("PISO EM(1)CONCRETO" foi o defeito real); `pinPlacement` sempre o ancora fora do
+   bbox, com ou sem o retângulo desenhado. */
+.bbox-proposed rect {
+  stroke: #b47512;
+  stroke-dasharray: 12 8;
+}
+
+.bbox-ambiguous rect {
+  stroke: #a02323;
+  stroke-dasharray: 4 6;
+}
+
+.bbox-confirmed rect {
+  stroke: var(--accent-text);
+}
+
+.bbox-rejected rect {
+  stroke: #5a625c;
+}
+
+.bbox.selecionado rect {
+  stroke-width: 6;
+}
+
+/* Pino numerado: sempre fora do bbox (`pinPlacement`), tanto no modo enxuto (padrão,
+   sem retângulo) quanto no item com retângulo forte. Cor nunca é o único indicador: o
+   número identifica o item e o estado por extenso continua na lista ao lado. */
+.bbox-pino-circulo {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.bbox.selecionado .bbox-pino-circulo {
+  stroke-width: 4;
+}
+
+.bbox-pino-texto {
+  font-size: 18px;
+  font-weight: 700;
+  fill: var(--surface);
+  pointer-events: none;
+}
+
+.bbox-proposed .bbox-pino-circulo {
+  fill: #b47512;
+}
+
+.bbox-ambiguous .bbox-pino-circulo {
+  fill: #a02323;
+}
+
+.bbox-confirmed .bbox-pino-circulo {
+  fill: var(--accent-text);
+}
+
+.bbox-rejected .bbox-pino-circulo {
+  fill: #5a625c;
+}
+
+/* Listas ------------------------------------------------------------------- */
+
+.itens,
+.codigos {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 640px;
+  overflow: auto;
+}
+
+.item {
+  border-bottom: 1px solid var(--line);
+}
+
+.item-botao {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-left: 5px solid transparent;
+}
+
+.item.proposed .item-botao {
+  border-left-color: #b47512;
+}
+
+.item.ambiguous .item-botao {
+  border-left-color: #a02323;
+}
+
+.item.confirmed .item-botao {
+  border-left-color: var(--accent-text);
+}
+
+.item.rejected .item-botao {
+  border-left-color: #5a625c;
+}
+
+.item.selecionado .item-botao {
+  background: var(--accent-soft);
+}
+
+.item-numero {
+  flex: 0 0 1.6rem;
+  height: 1.6rem;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.item-corpo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.item-rotulo {
+  font-weight: 600;
+}
+
+.item-estado {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-secondary);
+}
+
+.item-quantidade {
+  font-size: 0.88rem;
+}
+
+.item-raw,
+.item-nota {
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+}
+
+/* Formulários -------------------------------------------------------------- */
+
+.formulario {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.acoes {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.acoes label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+.campo input,
+.campo textarea {
+  padding: 8px 10px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+.campo-dica {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.campo-aviso {
+  font-size: 0.8rem;
+  color: #6b3a06;
+}
+
+.campo-erro {
+  font-size: 0.85rem;
+  color: #7a1212;
+}
+
+.decisao-registrada {
+  padding: 12px;
+  background: var(--surface-subtle);
+  border-radius: 6px;
+}
+
+.busca {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.busca .campo {
+  flex: 1;
+}
+
+/* Códigos ------------------------------------------------------------------ */
+
+.codigo-card {
+  padding: 12px;
+  margin-bottom: 10px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.codigo-card.escolhido {
+  border-color: var(--accent-text);
+  border-left-width: 5px;
+}
+
+.codigo-topo {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.codigo-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+.codigo-descricao {
+  max-height: 8rem;
+  overflow: auto;
+  font-size: 0.86rem;
+}
+
+.codigo-selos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.selo {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--muted);
+  background: var(--surface);
+}
+
+.selo-execucao_incluida {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.selo-somente_material {
+  border-color: #b47512;
+  color: #6b3a06;
+}
+
+.selo-indefinido,
+.selo-neutro {
+  border-color: #8a8f8b;
+  color: var(--ink-secondary);
+}
+
+.selo-ok {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.selo-atencao {
+  border-color: #a02323;
+  color: #7a1212;
+}
+
+/* Inclusões ------------------------------------------------------------------ */
+/* Chip do que a descrição diz que inclui/não inclui (inclusoes.ts). Cor nunca é o único
+   indicador: o prefixo "Inclui:"/"Não inclui:" vai escrito dentro do próprio chip. */
+
+.inclusoes-lista {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+
+.chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 3px 9px;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-align: left;
+  border-radius: 999px;
+  border: 1px solid;
+}
+
+.chip-inclui {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-color: var(--accent-text);
+}
+
+.chip-nao_inclui,
+.chip-so-fornecimento {
+  color: #6b3a06;
+  background: #fbe6c2;
+  border-color: #b47512;
+}
+
+.chip-expansivel {
+  cursor: pointer;
+  border-radius: 10px;
+}
+
+.chip-expansivel summary {
+  list-style: none;
+  border-radius: 999px;
+}
+
+.chip-expansivel summary::-webkit-details-marker,
+.chip-expansivel summary::marker {
+  display: none;
+  content: "";
+}
+
+.chip-expansivel[open] summary {
+  margin-bottom: 4px;
+}
+
+.chip-texto-completo {
+  margin: 0;
+  padding: 0;
+  font-size: 0.78rem;
+  white-space: normal;
+}
+
+.aditivo {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.shortlist-vazia {
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--surface-subtle);
+  border-radius: 6px;
+}
+
+/* Upload da prancha e extração automática (etapa Prancha) ------------------- */
+
+.extracao-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* Boletim ------------------------------------------------------------------ */
+
+.obra {
+  margin: 18px 0;
+}
+
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.tabela caption {
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+  padding-bottom: 6px;
+}
+
+.tabela th,
+.tabela td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tabela .numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Descrição legível na linha do boletim: quebra de linha em vez de espremer numa
+   coluna estreita, com os chips de inclusão/exclusão logo abaixo do texto completo. */
+.celula-descricao {
+  min-width: 22rem;
+  white-space: normal;
+}
+
+.boletim-descricao-texto {
+  margin: 0 0 4px;
+}
+
+.tabela tfoot th,
+.tabela tfoot td {
+  font-weight: 700;
+  border-top: 2px solid var(--muted);
+}
+
+.total-geral {
+  margin-top: 16px;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+/* Rodadas -------------------------------------------------------------------- */
+/* Escolha da rodada: uma linha por rodada, com obra, período e etapa por extenso. */
+.rodadas-lista {
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.rodada-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+/* Overlay das âncoras --------------------------------------------------------- */
+/* O desenho publicado pelo servidor, com a idade dele. A borda tracejada é redundância
+   do texto que já vai no `summary` ("desenho do pacote anterior"): cor e forma nunca
+   substituem a palavra. */
+.overlay-bloco {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.overlay-bloco.overlay-vencido {
+  border-style: dashed;
+  border-color: #b47512;
+}
+
+.overlay-imagem {
+  display: block;
+  max-width: 100%;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+}
+
+/* Fecha o `.jornada-medicao` aberto no topo do arquivo. */
+
+
+/* ===== AUTORAL DESTE PACOTE — e o que ele pede para aprovar ===== */
+
+/*
+ * TUDO NESTE BLOCO É AUTORAL E ESTÁ SENDO DECIDIDO POR ESTA APROVAÇÃO.
+ *
+ * COR: nenhuma cor nova. Todo valor aqui é `var(--token)` da tabela do Design System ou um
+ * hex que JÁ VIVE na folha da medição (#b47512 âmbar de atenção, #6b3a06 e #3c2708 tinta
+ * sobre âmbar, #fbe6c2 âmbar claro, #a02323/#7a1212 vermelho de recusa). Repetir o hex
+ * existente é citação; inventar um matiz novo seria paleta nova, e paleta nova tem portão
+ * próprio.
+ *
+ * TAMANHO, ESPAÇAMENTO E RAIO: valores NOVOS, não citações — o Design System registra que o
+ * projeto não tem escala tipográfica, de espaçamento nem de raio. Onde deu, o valor repete
+ * um que a folha da medição já usa (6px de raio, 8px/12px/16px de espaçamento,
+ * 0.8rem/0.86rem de texto miúdo).
+ */
+
+/* Moldura do próprio caderno de aprovação (não é produto) ------------------- */
+
+.mock-deck {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 28px 28px 80px;
+}
+
+.mock-capa {
+  padding: 22px 24px;
+  margin-bottom: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--accent-text);
+  border-radius: 8px;
+}
+
+.mock-capa h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: 600;
+  margin: 4px 0 8px;
+}
+
+.mock-capa p {
+  max-width: 78ch;
+  color: var(--ink-secondary);
+}
+
+.mock-capa .eyebrow {
+  color: var(--ink-secondary);
+  text-transform: uppercase;
+}
+
+.mock-indice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.mock-indice a {
+  display: block;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  color: var(--ink);
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+.mock-tela {
+  margin: 32px 0;
+}
+
+.mock-tela-cabecalho {
+  padding: 12px 0 10px;
+  border-top: 2px solid var(--ink);
+}
+
+.mock-tela-cabecalho h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  margin: 0;
+}
+
+.mock-tela-nota {
+  max-width: 82ch;
+  margin: 6px 0 14px;
+  font-size: 0.9rem;
+  color: var(--ink-secondary);
+}
+
+.mock-tela-nota strong {
+  color: var(--ink);
+}
+
+/* O "quadro" é a janela do navegador fingida: dentro dele é produto, fora é caderno. */
+.mock-quadro {
+  margin-bottom: 16px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mock-estado {
+  display: inline-block;
+  margin: 18px 0 6px;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+  background: var(--surface-sunken);
+  border-radius: 999px;
+}
+
+/* O ATO — o bloco que este pacote existe para decidir ----------------------- */
+/* Aprovação nominal não pode ter o peso visual de um botão de rodapé: ela tem bloco
+   próprio, borda de duas linhas no verde escuro, etiqueta escrita e a consequência dita
+   por extenso ANTES do botão. Cor não é o indicador — a palavra "ATO NOMINAL" é. */
+
+.ato {
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 2px solid var(--accent-text);
+  border-radius: 8px;
+}
+
+.ato-etiqueta {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.ato h3 {
+  margin: 10px 0 4px;
+  font-size: 1.15rem;
+}
+
+.ato-consequencia {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.ato-consequencia li {
+  max-width: 84ch;
+  margin-bottom: 6px;
+  line-height: 1.45;
+}
+
+/* Identidade de quem aprova: mostrada, nunca digitável. */
+.ato-identidade {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--accent-text);
+  border-radius: 6px;
+}
+
+.ato-identidade b {
+  display: block;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.ato-identidade .mono {
+  font-size: 1rem;
+}
+
+/* Segundo ato explícito: o clique que confirma fica em cima do âmbar de atenção, com a
+   consequência repetida — não é um "tem certeza?" vazio. */
+.ato-confirmacao {
+  margin-top: 14px;
+  padding: 12px 14px;
+  color: #3c2708;
+  background: #fbe6c2;
+  border-left: 5px solid #b47512;
+  border-radius: 6px;
+}
+
+/* Registro da aprovação — quem, quando, sobre qual conteúdo ----------------- */
+
+.registro {
+  padding: 14px 16px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-left: 5px solid var(--accent-text);
+  border-radius: 6px;
+}
+
+.registro dl {
+  display: grid;
+  grid-template-columns: 13rem 1fr;
+  gap: 6px 16px;
+  margin: 10px 0 0;
+}
+
+.registro dt {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.registro dd {
+  margin: 0;
+}
+
+/* Aprovação que caducou: tracejado âmbar E a etiqueta escrita, como o overlay vencido da
+   prancha já faz — quem não distingue a cor lê a palavra. */
+.registro-caduca {
+  background: var(--surface);
+  border: 2px dashed #b47512;
+  border-radius: 6px;
+}
+
+.registro-etiqueta {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  background: var(--surface);
+  border: 1px solid var(--accent-text);
+  border-radius: 999px;
+}
+
+/* Na aprovação caduca a etiqueta vira âmbar junto com a borda tracejada — os dois estados
+   nunca compartilham a mesma marca, e a palavra muda antes da cor. */
+.registro-caduca .registro-etiqueta {
+  color: #6b3a06;
+  background: #fbe6c2;
+  border-color: #b47512;
+}
+
+.digest-par {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.digest-par > div {
+  padding: 10px 12px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.digest-par b {
+  display: block;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+/* Exportação em curso: passo a passo escrito, sem animação --------------------- */
+/* O portão tem quatro passos e três deles acontecem antes de existir arquivo publicado.
+   Barra de progresso esconderia isso; a lista diz em que passo está e o que falta. */
+
+.progresso {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.progresso li {
+  margin-bottom: 6px;
+  max-width: 84ch;
+}
+
+.passo-estado {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.mock-fecho {
+  margin-top: 40px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid #b47512;
+  border-radius: 8px;
+}
+
+.mock-fecho h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  margin: 0 0 8px;
+}
+
+.mock-fecho ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.mock-fecho li {
+  margin-bottom: 6px;
+  max-width: 88ch;
+}
+</style>
+</head>
+<body>
+<div class="mock-deck">
+
+<header class="mock-capa">
+  <span class="eyebrow">F-025 · Design Approval Package · revisão 1</span>
+  <h1>Aprovação nominal e boletim da medição pela web</h1>
+  <p>
+    Este caderno é <strong>artefato de aprovação</strong>, não implementação. Ele existe para
+    que a discordância sobre o desenho aconteça agora, enquanto descartar é barato. Cada tela
+    aparece dentro de uma moldura: <strong>dentro da moldura é produto</strong>, fora dela é
+    comentário meu.
+  </p>
+  <p>
+    A jornada de medição já existe e este pacote quase não a redesenha: quase tudo aqui é
+    <strong>espelho</strong> da linguagem que ela estabeleceu. O que é
+    <strong>proposta de agente</strong> — e portanto o que esta aprovação decide — é o
+    <strong>ato de aprovação nominal como bloco próprio</strong>, o registro da aprovação, o
+    estado de <strong>aprovação caduca</strong> e os estados da exportação.
+  </p>
+  <p>
+    <strong>O documento <span class="mono">.xlsx</span> não está desenhado aqui</strong>, de
+    propósito: o layout impresso do boletim já existe em código
+    (<span class="mono">template.py</span> escrito por <span class="mono">workbook_writer.py</span>,
+    no modelo da prefeitura), já é exportado pelo
+    CLI com auditoria e <strong>não muda nesta feature</strong>. O que se aprova é a tela.
+  </p>
+  <p class="dica">
+    Todo texto aqui é <strong>proposta</strong>: aprovar o visual não aprova a copy. Nomes,
+    obras, códigos, quantidades, valores, digests e datas são
+    <strong>sintéticos e ilustrativos</strong> — não são especificação.
+  </p>
+  <ul class="mock-indice">
+    <li><a href="#t1">1 · Onde a etapa entra</a></li>
+    <li><a href="#t2">2 · O ato de aprovação</a></li>
+    <li><a href="#t3">3 · Aprovação registrada e caduca</a></li>
+    <li><a href="#t4">4 · Exportação do boletim</a></li>
+    <li><a href="#t5">5 · Estados transversais</a></li>
+    <li><a href="#fecho">O que este caderno não decide</a></li>
+  </ul>
+</header>
+
+<!-- ==================================================================== TELA 1 -->
+<section class="mock-tela" id="t1">
+  <div class="mock-tela-cabecalho"><h2>Tela 1 — Onde a etapa entra na jornada</h2></div>
+  <p class="mock-tela-nota">
+    Esta tela responde ao <strong>Unknown 2 do contrato</strong>, e a resposta é uma
+    <strong>proposta</strong>: a aprovação e a exportação entram como
+    <strong>etapa nova</strong> — “Aprovação e exportação” —, depois de “Boletim”, e não como
+    rodapé da etapa que monta a medição. A alternativa (um botão no fim da tela do boletim)
+    foi recusada por um motivo escrito no próprio contrato: o risco de a aprovação
+    “virar checkbox sem peso”. Botão no fim de uma tela longa é exatamente isso. Etapa própria
+    também herda de graça o que a jornada já sabe fazer: bloquear com motivo por extenso,
+    marcar “concluída” e sobreviver a recarregar.
+  </p>
+
+  <div class="mock-quadro">
+    <header class="topbar">
+      <a class="brand" href="#t1" aria-label="Croquito - início">
+        <svg class="brand-logo" role="img" aria-label="Croquito" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 150">
+<g transform="translate(136.816,112) scale(0.082)">
+<path d="M310.62939453125 12.0Q224.28173828125 12.0 163.26025390625 -18.04345703125Q102.23876953125 -48.0869140625 69.80419921875 -109.358642578125Q37.36962890625 -170.63037109375 37.36962890625 -263.54345703125Q37.36962890625 -357.45654296875 70.032470703125 -418.5Q102.6953125 -479.54345703125 163.716796875 -509.5869140625Q224.73828125 -539.63037109375 310.62939453125 -539.63037109375Q367.43359375 -539.63037109375 414.955078125 -526.63037109375Q462.4765625 -513.63037109375 497.682861328125 -486.858642578125Q532.88916015625 -460.0869140625 551.965087890625 -418.9130859375Q571.041015625 -377.7392578125 571.041015625 -321.3916015625H409.54248046875Q409.54248046875 -355.130859375 398.270751953125 -376.95703125Q386.9990234375 -398.783203125 364.770751953125 -409.65283203125Q342.54248046875 -420.5224609375 309.71630859375 -420.5224609375Q271.97705078125 -420.5224609375 248.422607421875 -404.511474609375Q224.8681640625 -388.50048828125 213.726806640625 -357.52197265625Q202.58544921875 -326.54345703125 202.58544921875 -281.49951171875V-244.58740234375Q202.58544921875 -200.0 213.99853515625 -169.06494140625Q225.41162109375 -138.1298828125 249.966064453125 -122.34716796875Q274.5205078125 -106.564453125 314.1728515625 -106.564453125Q347.62939453125 -106.564453125 370.12939453125 -117.43408203125Q392.62939453125 -128.3037109375 404.62939453125 -150.858154296875Q416.62939453125 -173.41259765625 416.62939453125 -206.7822265625H571.041015625Q571.041015625 -151.80419921875 551.965087890625 -110.358642578125Q532.88916015625 -68.9130859375 497.9111328125 -41.9130859375Q462.93310546875 -14.9130859375 415.183349609375 -1.45654296875Q367.43359375 12.0 310.62939453125 12.0Z M674.28271484375 0.0V-527.0869140625H809.43359375L821.06396484375 -445.71728515625H828.06396484375Q839.6943359375 -473.4345703125 857.455078125 -494.662841796875Q875.2158203125 -515.89111328125 900.3896484375 -527.7607421875Q925.5634765625 -539.63037109375 956.93310546875 -539.63037109375Q975.10693359375 -539.63037109375 989.965576171875 -536.0869140625Q1004.82421875 -532.54345703125 1011.82421875 -529.0V-385.740234375H960.15087890625Q928.607421875 -385.740234375 905.422607421875 -377.240234375Q882.23779296875 -368.740234375 867.3681640625 -351.555419921875Q852.49853515625 -334.37060546875 845.313720703125 -309.272705078125Q838.12890625 -284.1748046875 838.12890625 -251.435546875V0.0Z M1336.4775390625 12.0Q1248.3037109375 12.0 1185.684326171875 -18.04345703125Q1123.06494140625 -48.0869140625 1089.71728515625 -109.358642578125Q1056.36962890625 -170.63037109375 1056.36962890625 -263.54345703125Q1056.36962890625 -357.45654296875 1089.71728515625 -418.228271484375Q1123.06494140625 -479.0 1185.684326171875 -509.04345703125Q1248.3037109375 -539.0869140625 1336.4775390625 -539.0869140625Q1425.10791015625 -539.0869140625 1487.770751953125 -509.04345703125Q1550.43359375 -479.0 1583.78125 -418.228271484375Q1617.12890625 -357.45654296875 1617.12890625 -263.54345703125Q1617.12890625 -170.63037109375 1583.78125 -109.358642578125Q1550.43359375 -48.0869140625 1487.770751953125 -18.04345703125Q1425.10791015625 12.0 1336.4775390625 12.0ZM1336.4775390625 -107.02099609375Q1377.41259765625 -107.02099609375 1402.836669921875 -122.8037109375Q1428.2607421875 -138.58642578125 1439.858642578125 -169.293212890625Q1451.45654296875 -200.0 1451.45654296875 -244.58740234375V-281.9560546875Q1451.45654296875 -326.54345703125 1439.858642578125 -357.52197265625Q1428.2607421875 -388.50048828125 1402.836669921875 -404.283203125Q1377.41259765625 -420.06591796875 1336.4775390625 -420.06591796875Q1295.54248046875 -420.06591796875 1270.39013671875 -404.283203125Q1245.23779296875 -388.50048828125 1233.639892578125 -357.52197265625Q1222.0419921875 -326.54345703125 1222.0419921875 -281.9560546875V-244.58740234375Q1222.0419921875 -200.0 1233.639892578125 -169.293212890625Q1245.23779296875 -138.58642578125 1270.39013671875 -122.8037109375Q1295.54248046875 -107.02099609375 1336.4775390625 -107.02099609375Z M2060.0869140625 186.04296875V-53.93505859375H2053.54345703125Q2036.45654296875 -32.65234375 2014.0 -17.78271484375Q1991.54345703125 -2.9130859375 1963.989013671875 4.54345703125Q1936.4345703125 12.0 1904.7822265625 12.0Q1840.2607421875 12.0 1792.0869140625 -17.815185546875Q1743.9130859375 -47.63037109375 1717.641357421875 -108.63037109375Q1691.36962890625 -169.63037109375 1691.36962890625 -262.54345703125Q1691.36962890625 -356.9130859375 1717.4130859375 -418.184814453125Q1743.45654296875 -479.45654296875 1792.0869140625 -509.271728515625Q1840.71728515625 -539.0869140625 1907.97802734375 -539.0869140625Q1958.97802734375 -539.0869140625 2001.47802734375 -517.771728515625Q2043.97802734375 -496.45654296875 2068.97802734375 -454.36962890625H2075.97802734375L2089.7822265625 -527.0869140625H2223.93310546875V186.04296875ZM1959.02099609375 -115.8251953125Q1986.1298828125 -115.8251953125 2005.640869140625 -125.73828125Q2025.15185546875 -135.6513671875 2037.249755859375 -153.662353515625Q2049.34765625 -171.67333984375 2055.2607421875 -196.73876953125Q2061.173828125 -221.80419921875 2061.173828125 -252.10888671875V-275.521484375Q2061.173828125 -316.5654296875 2050.575927734375 -347.08740234375Q2039.97802734375 -377.609375 2017.510498046875 -394.435546875Q1995.04296875 -411.26171875 1959.02099609375 -411.26171875Q1921.62939453125 -411.26171875 1899.205322265625 -396.47900390625Q1876.78125 -381.6962890625 1866.91162109375 -352.532958984375Q1857.0419921875 -323.36962890625 1857.0419921875 -280.9560546875V-245.76123046875Q1857.0419921875 -203.80419921875 1866.91162109375 -174.869140625Q1876.78125 -145.93408203125 1899.205322265625 -130.879638671875Q1921.62939453125 -115.8251953125 1959.02099609375 -115.8251953125Z M2524.4345703125 12.0Q2438.65234375 12.0 2392.510986328125 -35.206298828125Q2346.36962890625 -82.41259765625 2346.36962890625 -179.15185546875V-527.0869140625H2510.2158203125V-202.23876953125Q2510.2158203125 -180.76025390625 2515.62890625 -164.705810546875Q2521.0419921875 -148.6513671875 2531.096435546875 -137.966552734375Q2541.15087890625 -127.28173828125 2556.43359375 -122.010009765625Q2571.71630859375 -116.73828125 2590.45556640625 -116.73828125Q2619.10791015625 -116.73828125 2641.26025390625 -130.292724609375Q2663.41259765625 -143.84716796875 2676.1953125 -167.184326171875Q2688.97802734375 -190.521484375 2688.97802734375 -218.9130859375V-527.0869140625H2852.82421875V0.0H2718.1298828125L2708.1298828125 -75.4345703125H2701.1298828125Q2682.58642578125 -48.71728515625 2655.369140625 -28.858642578125Q2628.15185546875 -9.0 2594.749755859375 1.5Q2561.34765625 12.0 2524.4345703125 12.0Z M2978.28271484375 0.0V-527.0869140625H3142.12890625V0.0Z M3451.4765625 12.0Q3399.75927734375 12.0 3364.422607421875 -3.69580078125Q3329.0859375 -19.3916015625 3311.336181640625 -50.163330078125Q3293.58642578125 -80.93505859375 3293.58642578125 -124.89111328125V-408.06591796875H3224.6083984375V-527.0869140625H3299.3037109375L3332.71630859375 -681.15185546875H3457.4326171875V-527.0869140625H3559.84521484375V-408.06591796875H3457.4326171875V-164.607421875Q3457.4326171875 -136.54248046875 3468.4326171875 -121.78173828125Q3479.4326171875 -107.02099609375 3507.9541015625 -107.02099609375H3559.84521484375V-5.0869140625Q3546.58447265625 -0.54345703125 3527.193359375 3.5Q3507.80224609375 7.54345703125 3487.726318359375 9.771728515625Q3467.650390625 12.0 3451.4765625 12.0Z M3906.4775390625 12.0Q3818.3037109375 12.0 3755.684326171875 -18.04345703125Q3693.06494140625 -48.0869140625 3659.71728515625 -109.358642578125Q3626.36962890625 -170.63037109375 3626.36962890625 -263.54345703125Q3626.36962890625 -357.45654296875 3659.71728515625 -418.228271484375Q3693.06494140625 -479.0 3755.684326171875 -509.04345703125Q3818.3037109375 -539.0869140625 3906.4775390625 -539.0869140625Q3995.10791015625 -539.0869140625 4057.770751953125 -509.04345703125Q4120.43359375 -479.0 4153.78125 -418.228271484375Q4187.12890625 -357.45654296875 4187.12890625 -263.54345703125Q4187.12890625 -170.63037109375 4153.78125 -109.358642578125Q4120.43359375 -48.0869140625 4057.770751953125 -18.04345703125Q3995.10791015625 12.0 3906.4775390625 12.0ZM3906.4775390625 -107.02099609375Q3947.41259765625 -107.02099609375 3972.836669921875 -122.8037109375Q3998.2607421875 -138.58642578125 4009.858642578125 -169.293212890625Q4021.45654296875 -200.0 4021.45654296875 -244.58740234375V-281.9560546875Q4021.45654296875 -326.54345703125 4009.858642578125 -357.52197265625Q3998.2607421875 -388.50048828125 3972.836669921875 -404.283203125Q3947.41259765625 -420.06591796875 3906.4775390625 -420.06591796875Q3865.54248046875 -420.06591796875 3840.39013671875 -404.283203125Q3815.23779296875 -388.50048828125 3803.639892578125 -357.52197265625Q3792.0419921875 -326.54345703125 3792.0419921875 -281.9560546875V-244.58740234375Q3792.0419921875 -200.0 3803.639892578125 -169.293212890625Q3815.23779296875 -138.58642578125 3840.39013671875 -122.8037109375Q3865.54248046875 -107.02099609375 3906.4775390625 -107.02099609375Z" fill="#F2F4F7"/>
+<rect x="2960.0" y="-876.0" width="200" height="200" fill="#0E1116" stroke="#00E389" stroke-width="58"/>
+</g>
+</svg>
+        <small>Revisão humana autenticada</small>
+      </a>
+      <div class="topbar-actions">
+        <nav class="journey-switch" aria-label="Jornadas">
+          <button class="topbar-link" type="button">Croqui</button>
+          <button class="topbar-link" type="button" aria-current="page">Medição</button>
+          <button class="topbar-link" type="button">Orçamento</button>
+        </nav>
+        <span class="identity-pill">Sessão: orcamentista.exemplo</span>
+        <button class="topbar-link" type="button">Sair</button>
+      </div>
+    </header>
+
+    <header class="topbar">
+      <div>
+        <span class="eyebrow">MEDIÇÃO DE OBRA</span>
+        <h1>Praça do Exemplo</h1>
+        <p class="topbar-meta mono">praca-do-exemplo · rodada 9c41…7d20</p>
+        <p class="topbar-meta">
+          Contrato 05/2024 · medição 3 · versão 12 · papel orcamentista
+        </p>
+      </div>
+      <p class="aviso-fixo">
+        Medição autenticada; decisões carimbadas com sua identidade — medição sem aprovação;
+        aprovar e exportar são atos separados.
+      </p>
+      <div class="topbar-acoes">
+        <button type="button" class="topbar-link topbar-link-botao">Trocar de rodada</button>
+        <span class="topbar-meta">Sessão: orcamentista.exemplo</span>
+        <button type="button" class="topbar-link topbar-link-botao">Sair</button>
+      </div>
+    </header>
+
+    <nav class="etapas" aria-label="Etapas da medição">
+      <button type="button" class="etapa-tab">Rodada</button>
+      <button type="button" class="etapa-tab done">Prancha · concluída</button>
+      <button type="button" class="etapa-tab done">Revisão do takeoff · concluída</button>
+      <button type="button" class="etapa-tab done">Códigos · concluída</button>
+      <button type="button" class="etapa-tab done">Boletim · concluída</button>
+      <button type="button" class="etapa-tab ativa" aria-current="true">
+        Aprovação e exportação · em aberto
+      </button>
+      <button type="button" class="botao-secundario recarregar">Recarregar estado atual</button>
+    </nav>
+
+    <div class="conteudo">
+      <section class="painel" aria-label="Aprovação e exportação">
+        <h2>Aprovação e exportação</h2>
+        <p class="aviso-fixo aviso-inline">
+          Medição autenticada; decisões carimbadas com sua identidade — medição sem aprovação;
+          aprovar e exportar são atos separados.
+        </p>
+        <p>
+          Medição 3 · Contrato 05/2024 · sha256
+          <span class="digest">4f2a…91c7</span> · total
+          <strong>R$ 91.996,44</strong>
+        </p>
+        <p class="dica">
+          Esta é a medição montada na etapa “Boletim”, sem nenhuma alteração — a etapa de
+          aprovação não edita medição, ela decide sobre a que existe. Para conferir linha a
+          linha, volte à etapa “Boletim”.
+        </p>
+
+        <div class="obra">
+          <h3>Praça do Exemplo <span class="mono">(praca-do-exemplo)</span></h3>
+          <table class="tabela">
+            <caption>Resumo do boletim — três de nove linhas, para conferência rápida</caption>
+            <thead>
+              <tr>
+                <th scope="col">Item</th>
+                <th scope="col">Código</th>
+                <th scope="col">Descrição</th>
+                <th scope="col">Un</th>
+                <th scope="col">Valor unit.</th>
+                <th scope="col">Quant.</th>
+                <th scope="col">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>01</td>
+                <td class="mono">02.005.0010-A</td>
+                <td class="celula-descricao">
+                  <p class="boletim-descricao-texto">
+                    Piso em concreto simples, espessura 7 cm, inclusive preparo do subleito
+                  </p>
+                </td>
+                <td>m²</td>
+                <td class="numero">78,41</td>
+                <td class="numero">312,50</td>
+                <td class="numero">24.503,12</td>
+              </tr>
+              <tr>
+                <td>02</td>
+                <td class="mono">11.020.0035-B</td>
+                <td class="celula-descricao">
+                  <p class="boletim-descricao-texto">
+                    Meio-fio de concreto pré-moldado, assentado com argamassa
+                  </p>
+                </td>
+                <td>m</td>
+                <td class="numero">64,20</td>
+                <td class="numero">186,00</td>
+                <td class="numero">11.941,20</td>
+              </tr>
+              <tr>
+                <td>03</td>
+                <td class="mono">15.007.0008-A</td>
+                <td class="celula-descricao">
+                  <p class="boletim-descricao-texto">
+                    Plantio de grama esmeralda em placas, inclusive preparo do terreno
+                  </p>
+                </td>
+                <td>m²</td>
+                <td class="numero">41,88</td>
+                <td class="numero">248,00</td>
+                <td class="numero">10.386,24</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr>
+                <th scope="row" colspan="6">Total da obra</th>
+                <td class="numero">91.996,44</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div class="ato">
+          <span class="ato-etiqueta">Ato nominal · VAL-05</span>
+          <h3>Aprovar a medição 3 da Praça do Exemplo</h3>
+          <p>Antes de aprovar, o que aprovar faz:</p>
+          <ul class="ato-consequencia">
+            <li>
+              <strong>Publica o seu nome.</strong> A aprovação fica registrada como sua, com
+              data e hora, e acompanha o boletim exportado.
+            </li>
+            <li>
+              <strong>Libera a exportação.</strong> Sem aprovação nominal válida, a rota de
+              exportação recusa — não é convenção, é recusa do servidor.
+            </li>
+            <li>
+              <strong>Vale só para esta medição, exatamente como ela está agora</strong>
+              (<span class="mono">sha256 4f2a…91c7</span>). Qualquer mudança depois disso
+              derruba a aprovação e exige aprovar de novo.
+            </li>
+          </ul>
+          <div class="ato-identidade">
+            <b>Você aprova como</b>
+            <span class="mono">orcamentista.exemplo</span>
+            <p class="campo-dica">
+              Papel orcamentista · identidade da sessão. Não existe campo de nome nesta tela:
+              quem aprova é quem entrou, e o servidor lê a identidade do token e ignora
+              qualquer nome que venha do cliente.
+            </p>
+          </div>
+          <label class="campo">
+            Observação (opcional)
+            <textarea rows="2">Medição conferida com o diário de obra de 18/08.</textarea>
+            <span class="campo-dica">
+              Vai junto do registro da aprovação, até 500 caracteres. Não altera a medição.
+            </span>
+          </label>
+          <div class="acoes-linha">
+            <button type="button" class="botao-primario">Aprovar esta medição</button>
+            <button type="button" class="botao-secundario">Voltar ao boletim</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: etapa bloqueada — medição ainda não montada</span>
+  <div class="mock-quadro">
+    <nav class="etapas" aria-label="Etapas da medição">
+      <button type="button" class="etapa-tab">Rodada</button>
+      <button type="button" class="etapa-tab done">Prancha · concluída</button>
+      <button type="button" class="etapa-tab done">Revisão do takeoff · concluída</button>
+      <button type="button" class="etapa-tab done">Códigos · concluída</button>
+      <button type="button" class="etapa-tab ativa" aria-current="true">Boletim · em aberto</button>
+      <button type="button" class="etapa-tab blocked" disabled>
+        Aprovação e exportação · bloqueada
+      </button>
+      <button type="button" class="botao-secundario recarregar">Recarregar estado atual</button>
+    </nav>
+    <div class="conteudo">
+      <section class="painel" aria-label="Situação da rodada">
+        <h2>Situação da rodada</h2>
+        <ul class="cartoes">
+          <li class="cartao available">
+            <h3>Boletim</h3>
+            <p class="cartao-status">Etapa em aberto</p>
+            <p>Boletim ainda não montado.</p>
+          </li>
+          <li class="cartao">
+            <h3>Aprovação e exportação</h3>
+            <p class="cartao-status">Etapa bloqueada</p>
+            <p>Nada a aprovar: a medição ainda não foi montada.</p>
+            <p class="cartao-motivo">
+              aguarda a medição ser montada na etapa Boletim
+            </p>
+          </li>
+        </ul>
+        <p class="dica">
+          Bloqueio com motivo escrito é a linguagem que a jornada já usa; a etapa nova entra
+          nela sem inventar forma.
+        </p>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 2 -->
+<section class="mock-tela" id="t2">
+  <div class="mock-tela-cabecalho"><h2>Tela 2 — O ato de aprovação</h2></div>
+  <p class="mock-tela-nota">
+    O bloco do ato, sozinho e de perto. <strong>Três decisões estão aqui</strong>: a
+    consequência vem <em>antes</em> do botão e por extenso; a identidade é
+    <strong>mostrada, nunca digitável</strong>; e aprovar exige
+    <strong>dois atos explícitos</strong> — o segundo repete a consequência em vez de
+    perguntar “tem certeza?”. O segundo passo é proposta e é o ponto mais fácil de recusar
+    neste caderno: se parecer cerimônia, ele cai e o primeiro clique aprova.
+  </p>
+
+  <span class="mock-estado">Estado: não aprovada (repouso)</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <div class="ato">
+          <span class="ato-etiqueta">Ato nominal · VAL-05</span>
+          <h3>Aprovar a medição 3 da Praça do Exemplo</h3>
+          <p>Antes de aprovar, o que aprovar faz:</p>
+          <ul class="ato-consequencia">
+            <li>
+              <strong>Publica o seu nome.</strong> A aprovação fica registrada como sua, com
+              data e hora, e acompanha o boletim exportado.
+            </li>
+            <li>
+              <strong>Libera a exportação.</strong> Sem aprovação nominal válida, a rota de
+              exportação recusa.
+            </li>
+            <li>
+              <strong>Vale só para esta medição, exatamente como ela está agora</strong>
+              (<span class="mono">sha256 4f2a…91c7</span>).
+            </li>
+          </ul>
+          <div class="ato-identidade">
+            <b>Você aprova como</b>
+            <span class="mono">orcamentista.exemplo</span>
+            <p class="campo-dica">Papel orcamentista · identidade da sessão.</p>
+          </div>
+          <div class="acoes-linha">
+            <button type="button" class="botao-primario">Aprovar esta medição</button>
+            <button type="button" class="botao-secundario">Voltar ao boletim</button>
+          </div>
+        </div>
+        <p class="dica">
+          Nesta rodada nada está exportado: exportar é o passo depois de aprovar, e ele nem
+          aparece como botão disponível enquanto não houver aprovação válida.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: confirmação pedida (segundo ato explícito)</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <div class="ato">
+          <span class="ato-etiqueta">Ato nominal · VAL-05</span>
+          <h3>Aprovar a medição 3 da Praça do Exemplo</h3>
+          <div class="ato-identidade">
+            <b>Você aprova como</b>
+            <span class="mono">orcamentista.exemplo</span>
+            <p class="campo-dica">Papel orcamentista · identidade da sessão.</p>
+          </div>
+          <div class="ato-confirmacao">
+            <p>
+              <strong>Confirmar a aprovação nominal?</strong> O nome
+              <span class="mono">orcamentista.exemplo</span> fica registrado como quem aprovou
+              a medição 3 da Praça do Exemplo, no conteúdo
+              <span class="mono">sha256 4f2a…91c7</span>, e a exportação do boletim fica
+              liberada.
+            </p>
+            <div class="acoes-linha">
+              <button type="button" class="botao-primario">Confirmar aprovação nominal</button>
+              <button type="button" class="botao-secundario">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: gravando a aprovação</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <div class="ato">
+          <span class="ato-etiqueta">Ato nominal · VAL-05</span>
+          <h3>Aprovar a medição 3 da Praça do Exemplo</h3>
+          <div class="acoes-linha">
+            <button type="button" class="botao-primario" disabled>Aprovando…</button>
+            <button type="button" class="botao-secundario" disabled>Cancelar</button>
+          </div>
+          <p class="dica">
+            Enquanto grava, os dois botões ficam indisponíveis: repetir o clique não cria
+            aprovação nova (a mutação vai com chave de idempotência), mas a tela também não
+            pode sugerir que criaria.
+          </p>
+        </div>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 3 -->
+<section class="mock-tela" id="t3">
+  <div class="mock-tela-cabecalho"><h2>Tela 3 — Aprovação registrada, e aprovação caduca</h2></div>
+  <p class="mock-tela-nota">
+    O registro mostra <strong>quem, quando e sobre qual conteúdo</strong> — o digest não é
+    enfeite de auditoria, é o vínculo que faz a aprovação caducar sozinha. O segundo estado é
+    o que o domínio chama de <span class="mono">APPROVAL_CONTENT_MISMATCH</span>: a medição
+    mudou depois de aprovada. <strong>A tela não conserta isso</strong> e não oferece
+    “exportar assim mesmo”: mostra os dois digests lado a lado e pede o ato de novo.
+  </p>
+
+  <span class="mock-estado">Estado: aprovada</span>
+  <div class="mock-quadro">
+    <nav class="etapas" aria-label="Etapas da medição">
+      <button type="button" class="etapa-tab">Rodada</button>
+      <button type="button" class="etapa-tab done">Prancha · concluída</button>
+      <button type="button" class="etapa-tab done">Revisão do takeoff · concluída</button>
+      <button type="button" class="etapa-tab done">Códigos · concluída</button>
+      <button type="button" class="etapa-tab done">Boletim · concluída</button>
+      <button type="button" class="etapa-tab ativa" aria-current="true">
+        Aprovação e exportação · em aberto
+      </button>
+      <button type="button" class="botao-secundario recarregar">Recarregar estado atual</button>
+    </nav>
+    <p class="banner-sucesso" role="status">
+      Medição aprovada. A exportação do boletim está liberada nesta rodada.
+    </p>
+    <div class="conteudo">
+      <section class="painel">
+        <h2>Aprovação nominal</h2>
+        <div class="registro">
+          <span class="registro-etiqueta">Aprovada</span>
+          <dl>
+            <dt>Quem aprovou</dt>
+            <dd><span class="mono">orcamentista.exemplo</span> · papel orcamentista</dd>
+            <dt>Quando</dt>
+            <dd>20/08/2026 14:32 (UTC−03)</dd>
+            <dt>Conteúdo aprovado</dt>
+            <dd><span class="mono">sha256 4f2a…91c7</span> — igual ao da medição atual</dd>
+            <dt>Decisão</dt>
+            <dd><span class="mono">vd_7c1a4e90b2d5f386</span> · confirmar</dd>
+            <dt>Observação</dt>
+            <dd>Medição conferida com o diário de obra de 18/08.</dd>
+          </dl>
+        </div>
+        <p class="dica">
+          A etapa fica “em aberto” e não “concluída” enquanto o boletim não for exportado:
+          aprovar é metade do fechamento, e a jornada não declara pronto o que ainda não
+          entregou arquivo.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: a medição mudou depois da aprovação — aprovação caduca</span>
+  <div class="mock-quadro">
+    <p class="banner-erro" role="alert">
+      A medição mudou depois de aprovada, e <strong>a aprovação não vale mais</strong>. Nada
+      foi exportado e nada será exportado até a medição atual ser aprovada de novo.
+    </p>
+    <div class="conteudo">
+      <section class="painel">
+        <h2>Aprovação nominal</h2>
+        <div class="registro registro-caduca">
+          <span class="registro-etiqueta">Aprovação caduca</span>
+          <dl>
+            <dt>Quem aprovou</dt>
+            <dd><span class="mono">orcamentista.exemplo</span> · papel orcamentista</dd>
+            <dt>Quando</dt>
+            <dd>20/08/2026 14:32 (UTC−03)</dd>
+            <dt>Decisão</dt>
+            <dd><span class="mono">vd_7c1a4e90b2d5f386</span> · confirmar</dd>
+          </dl>
+          <div class="digest-par">
+            <div>
+              <b>Conteúdo aprovado</b>
+              <span class="mono">sha256 4f2a…91c7</span>
+              <p class="campo-dica">o que você aprovou às 14:32</p>
+            </div>
+            <div>
+              <b>Conteúdo atual</b>
+              <span class="mono">sha256 a9c1…07b3</span>
+              <p class="campo-aviso">
+                diferente do aprovado — a quantidade do item 02 foi corrigida às 15:04
+              </p>
+            </div>
+          </div>
+          <p class="digest">APPROVAL_CONTENT_MISMATCH</p>
+        </div>
+        <div class="acoes-linha">
+          <button type="button" class="botao-primario">Aprovar a medição atual</button>
+          <button type="button" class="botao-secundario">Ver o boletim atual</button>
+        </div>
+        <p class="dica">
+          O registro velho não é apagado: ele fica visível, marcado como caduco, porque foi um
+          ato humano que aconteceu. Aprovar de novo cria um registro novo.
+        </p>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 4 -->
+<section class="mock-tela" id="t4">
+  <div class="mock-tela-cabecalho"><h2>Tela 4 — Exportação do boletim</h2></div>
+  <p class="mock-tela-nota">
+    O mesmo portão da F-020, dito na língua da medição: <strong>gerar, reabrir, reconferir,
+    publicar</strong> — e publicar é o último passo, não o primeiro. Por isso o progresso é
+    uma <strong>lista escrita de quatro passos</strong> e não uma barra: barra sugere que o
+    arquivo já existe e está “quase pronto”, quando na verdade ele pode ser descartado no
+    passo três. <strong>O <span class="mono">.xlsx</span> em si não está desenhado</strong>:
+    o layout impresso já existe em código e não muda nesta feature.
+  </p>
+
+  <span class="mock-estado">Estado: ocioso (aprovada, nada exportado)</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <h2>Boletim exportado</h2>
+        <p>Nenhum arquivo publicado nesta rodada.</p>
+        <div class="acoes-linha">
+          <button type="button" class="botao-primario">Gerar e publicar o boletim (.xlsx)</button>
+        </div>
+        <p class="dica">
+          O arquivo é gerado, reaberto e reconferido centavo a centavo antes de ser publicado.
+          Se a conferência achar qualquer divergência, nada é publicado.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: exportando</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <h2>Boletim exportado</h2>
+        <ol class="progresso">
+          <li>
+            Montar a planilha no modelo da prefeitura — <span class="passo-estado">feito</span>
+          </li>
+          <li>Gravar o arquivo — <span class="passo-estado">feito</span></li>
+          <li>
+            Reabrir e reconferir célula a célula —
+            <span class="passo-estado">em andamento</span>
+          </li>
+          <li>Publicar — <span class="passo-estado">não iniciado</span></li>
+        </ol>
+        <div class="acoes-linha">
+          <button type="button" class="botao-primario" disabled>Exportando…</button>
+        </div>
+        <p class="dica">
+          Nada foi publicado ainda. Se a conferência do passo 3 falhar, o arquivo do passo 2 é
+          descartado.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: publicado (auditoria aprovada)</span>
+  <div class="mock-quadro">
+    <nav class="etapas" aria-label="Etapas da medição">
+      <button type="button" class="etapa-tab">Rodada</button>
+      <button type="button" class="etapa-tab done">Prancha · concluída</button>
+      <button type="button" class="etapa-tab done">Revisão do takeoff · concluída</button>
+      <button type="button" class="etapa-tab done">Códigos · concluída</button>
+      <button type="button" class="etapa-tab done">Boletim · concluída</button>
+      <button type="button" class="etapa-tab ativa done" aria-current="true">
+        Aprovação e exportação · concluída
+      </button>
+      <button type="button" class="botao-secundario recarregar">Recarregar estado atual</button>
+    </nav>
+    <p class="banner-sucesso" role="status">
+      Boletim publicado. A auditoria reabriu o arquivo e reconferiu 284 células — nenhuma
+      divergência.
+    </p>
+    <div class="conteudo">
+      <section class="painel">
+        <h2>Boletim exportado</h2>
+        <div class="acoes-linha">
+          <button type="button" class="botao-primario">Baixar boletim (.xlsx)</button>
+          <button type="button" class="botao-secundario">Gerar de novo</button>
+        </div>
+        <p class="digest">
+          boletim-praca-do-exemplo-medicao-03.xlsx · sha256 7ad1…9b02 · 20/08/2026 14:36
+        </p>
+        <p class="dica">
+          Aprovado por <span class="mono">orcamentista.exemplo</span> em 20/08/2026 14:32,
+          sobre o conteúdo <span class="mono">sha256 4f2a…91c7</span> — o mesmo que está neste
+          arquivo. Gerado pela rota, sem CLI. O link de download expira e não aparece em
+          registro nenhum.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: auditoria reprovou — nada foi publicado</span>
+  <div class="mock-quadro">
+    <p class="banner-erro" role="alert">
+      A auditoria recusou o arquivo e <strong>nada foi publicado</strong>. O arquivo gerado foi
+      descartado; a rodada continua como estava e a aprovação segue válida.
+    </p>
+    <div class="conteudo">
+      <section class="painel">
+        <h2>Boletim exportado</h2>
+        <table class="tabela">
+          <caption>Divergência encontrada na reconferência</caption>
+          <thead>
+            <tr>
+              <th scope="col">Aba</th>
+              <th scope="col">Célula</th>
+              <th scope="col">O que a medição diz</th>
+              <th scope="col">O que o arquivo trouxe</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>MEDIÇÃO 03</td>
+              <td class="mono">G14</td>
+              <td class="numero">11.941,20</td>
+              <td class="numero">11.941,21</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="digest">CELL_VALUE_MISMATCH · item 02 · meio-fio de concreto pré-moldado</p>
+        <div class="acoes-linha">
+          <button type="button" class="botao-primario">Tentar de novo</button>
+        </div>
+        <p class="dica">
+          Um centavo de diferença basta para não publicar. O portão é o mesmo do CLI e o mesmo
+          do orçamento-base: falha do auditor não publica nada.
+        </p>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 5 -->
+<section class="mock-tela" id="t5">
+  <div class="mock-tela-cabecalho"><h2>Tela 5 — Estados transversais</h2></div>
+  <p class="mock-tela-nota">
+    Os estados que se descobre tarde quando não entram no pacote. O 403 está
+    <strong>genérico de propósito</strong>: nomear o papel na mensagem é decisão de copy e de
+    autorização, e o texto não pode fingir que ela foi tomada aqui. As recusas de domínio
+    saem de <strong>tabela de tradução</strong>, como já é a regra da jornada — o código
+    estável vem do servidor e fica visível para o suporte; código desconhecido nunca vira
+    frase inventada.
+  </p>
+
+  <span class="mock-estado">Sem autorização (403)</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <div class="painel-cabecalho"><h2>Sem acesso a esta rodada</h2></div>
+        <p>
+          Sua conta não tem autorização para a medição deste tenant. Peça a quem administra o
+          acesso da sua organização.
+        </p>
+        <p class="dica">
+          Vale para ler e para aprovar: quem não pode ler a rodada também não vê o ato de
+          aprovação. Esta tela é o caso de quem chega por link direto.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">A rodada andou entre a leitura e o ato (409)</span>
+  <div class="mock-quadro">
+    <div class="banner-conflito" role="alert">
+      <span>
+        A rodada mudou depois desta leitura — outra sessão, ou o processamento da própria
+        rodada, avançou a versão. Nada foi gravado. Recarregue o estado atual e decida de
+        novo; o que você escreveu no formulário continua aqui.
+      </span>
+      <button type="button" class="botao-secundario">Recarregar estado atual</button>
+    </div>
+    <div class="conteudo">
+      <section class="painel">
+        <p class="dica">
+          Frase existente da jornada, reusada sem alteração: a aprovação é mais uma mutação com
+          versão, e não precisa de um dialeto próprio para dizer a mesma coisa.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Recusa de domínio, traduzida por tabela</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel">
+        <p class="banner-erro" role="alert">
+          Esta medição não tem aprovação nominal válida. Exportar é o passo depois de aprovar:
+          aprove a medição e a exportação fica liberada.
+        </p>
+        <p class="digest">VALUATION_NOT_APPROVED</p>
+
+        <p class="banner-erro" role="alert">
+          A medição mudou depois da aprovação. A aprovação registrada vale para o conteúdo
+          aprovado, não para o atual — aprove a medição atual.
+        </p>
+        <p class="digest">APPROVAL_CONTENT_MISMATCH</p>
+
+        <p class="banner-erro" role="alert">
+          O item 04 do boletim cita um código que não está no contrato desta obra. Em obra
+          licitada isso não vira preço por fora: revise o código na etapa “Códigos” ou trate o
+          item como pedido de aditivo.
+        </p>
+        <p class="digest">CODE_NOT_IN_CONTRACT · praca-do-exemplo · item 04 · 09.001.0100-A</p>
+
+        <p class="banner-erro" role="alert">
+          Esta rodada não é o próximo período do contrato: o contrato espera a medição 3 e esta
+          rodada está montada como medição 4.
+        </p>
+        <p class="digest">PERIOD_NOT_SEQUENTIAL · esperado 3 · recebido 4</p>
+
+        <p class="dica">
+          Os quatro códigos acima já existem no domínio da medição
+          (<span class="mono">export_errors()</span>): o portão de exportação é o mesmo, e esta
+          tela só passou a mostrar por escrito o que ele já recusava no terminal.
+        </p>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== FECHO -->
+<div class="mock-fecho" id="fecho">
+  <h2>O que este caderno não decide</h2>
+  <ul>
+    <li>
+      <strong>Onde a etapa entra é proposta, não decisão tomada.</strong> Este pacote propõe
+      etapa nova depois de “Boletim”; o contrato deixa aberto (Unknown 2) e a decisão é sua,
+      no gate.
+    </li>
+    <li>
+      <strong>A forma do registro de aprovação na rodada web</strong> (Unknown 1) — objeto
+      próprio espelhando o <span class="mono">SceneApproval</span>, coluna na rodada, outra
+      coisa. É decisão do planejamento, com o mapa do explorador; o que se aprova aqui é o que
+      a tela mostra: quem, quando e sobre qual conteúdo.
+    </li>
+    <li>
+      <strong>Reprovar a medição não está desenhado.</strong> O domínio aceita decisão de
+      recusa (<span class="mono">action: reject</span>), mas a web desenhada aqui só aprova.
+      Desenhar um botão de reprovar sem saber o que ele destrava seria inventar fluxo; se ele
+      precisa existir, é revisão nova deste pacote.
+    </li>
+    <li>
+      <strong>Múltiplas alçadas e delegação de aprovação</strong> estão fora de escopo por
+      contrato, e por isso <strong>nada é desenhado como reservado</strong>: um segundo
+      aprovador em cinza sugeriria que ele existe e está desligado.
+    </li>
+    <li>
+      <strong>O <span class="mono">.xlsx</span> impresso.</strong> O layout do boletim já
+      existe em código, é o que a prefeitura valida e não muda nesta feature. Aprovar este
+      caderno não aprova (nem reabre) o layout da planilha.
+    </li>
+    <li>
+      <strong>Qual papel nomear no 403.</strong> A mensagem está genérica de propósito; o papel
+      exigido pelo servidor continua sendo o da medição.
+    </li>
+    <li>
+      <strong>O segundo clique.</strong> A confirmação em duas etapas é a proposta mais
+      descartável deste caderno. Recusá-la não muda mais nada do desenho.
+    </li>
+    <li>
+      <strong>Copy final.</strong> Todo texto aqui é proposta. Aprovar o visual não aprova o
+      texto — são atos separados, como foi na F-007 e na F-020.
+    </li>
+  </ul>
+</div>
+
+</div>
+
+</body>
+</html>

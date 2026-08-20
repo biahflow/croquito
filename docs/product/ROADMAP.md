@@ -48,6 +48,9 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-025 | A DEFINIR | READY_FOR_SPEC | Consultor do traçado — cada "não aplicada" com causa e conserto de um clique (forma freeform, associação no vizinho errado, cotas em conflito no mesmo vão); diagnóstico determinístico dos dados do solver, sem IA (a definir em contrato) |
 | F-024 | HIGH | READY_FOR_HUMAN_REVIEW | [Leitura com valor não morre por falta de target_hint](../features/F-024-leitura-sem-target-hint/feature.md) |
 | F-023 | A DEFINIR | READY_FOR_SPEC | Survey Quality Score — nota do levantamento com recomendações de campo, agregando sinais existentes (blockers, leituras não aplicadas, corroboração, resíduos); calibrar com V14/V15/V16 (a definir em contrato) |
+| F-025 | HIGH | READY_FOR_PLANNING | [Aprovação nominal e boletim da medição pela web](../features/F-025-boletim-medicao-web/feature.md) |
+| F-026 | HIGH | READY_FOR_PLANNING | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
+| F-027 | HIGH | READY_FOR_SPEC | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -264,6 +267,24 @@ levantamento não sustenta o desenho (blockers, leituras não aplicadas, resídu
 corroboração), mas não devolve isso como nota com recomendações de campo ("meça a
 diagonal A–C"). Sequenciada de propósito DEPOIS da V16: o Document AI muda o que é
 "falta de dado", e V14/V15/V16 são as primeiras amostras de calibração.
+
+F-025, F-026 e F-027 nascem em 2026-08-20, por seleção humana, na rodada imediatamente
+posterior ao merge da [F-020](../features/F-020-orcamento-base-web/feature.md): com a
+jornada do orçamento-base no ar, o usuário selecionou as três frentes que a completam.
+[F-025](../features/F-025-boletim-medicao-web/feature.md) fecha a dívida que a própria
+F-020 declarou — aprovação nominal (VAL-05) e exportação `.xlsx` do boletim pela web,
+com o mesmo gate auditado que o orçamento já tem; é `INTERFACE_CHANGE`, e a revisão 1
+do seu Design Approval Package foi aprovada na mesma data (dois atos explícitos
+mantidos), levando-a a `READY_FOR_PLANNING`.
+[F-026](../features/F-026-importadores-sinapi-sicro/feature.md) realiza o bullet da
+cascata configurável desta seção: SINAPI e SICRO como origens novas de `PriceOrigin`,
+um importador por fonte no molde do EMOP
+([ADR-0039](../adr/0039-sinapi-sicro-como-origens-de-preco.md), Proposed); sem tela
+nova, `READY_FOR_PLANNING`.
+[F-027](../features/F-027-modo-teto-orcamento-invertido/feature.md) realiza o bullet do
+modo teto (`EstimateTarget` reservado): verba da demanda declarada na rodada e consumo
+contra o teto na montagem; especificada em detalhe por último na rodada, com dois gates
+antes do planejamento (ADR-0040 da semântica do teto e Design Approval Package).
 
 ## Agora — MVP privado
 
