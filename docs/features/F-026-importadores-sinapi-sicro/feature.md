@@ -2,7 +2,11 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_HUMAN_REVIEW`
+
+> Implementação integrada em 2026-08-20 na branch `f-026-importadores` (T1–T3,
+> [plan.md](plan.md)), revisada e com evidência em [evidence.md](evidence.md).
+> Pende o merge, represado por decisão humana da mesma data.
 
 > Selecionada por decisão humana de 2026-08-20, na rodada pós-F-020, junto com F-025 e
 > F-027. Fecha o bullet reservado do roadmap ("cascata configurável de fontes de preço

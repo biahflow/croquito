@@ -219,6 +219,25 @@ def test_the_writer_refuses_a_catalog_whose_origin_is_not_sco(tmp_path: Path) ->
     assert raised.value.code == "BULLETIN_PRICE_ORIGIN_FORBIDDEN"
 
 
+@pytest.mark.parametrize("origin", ["sinapi", "sicro"])
+def test_the_writer_refuses_a_catalog_whose_origin_is_sinapi_or_sicro(
+    tmp_path: Path, origin: str
+) -> None:
+    """As origens novas do ADR-0039 (F-026) caem na mesma recusa: o escritor da
+    medição licitada nunca aceita catálogo fora do SCO, nem os recém-chegados."""
+    fixture = build_fixture(tmp_path)
+    payload = fixture.catalog.model_dump()
+    payload["origin"] = origin
+    for entry in payload["entries"]:
+        entry["origin"] = origin
+    non_sco_catalog = PriceCatalog.model_validate(payload)
+
+    with pytest.raises(ValuationValidationError) as raised:
+        plan_workbook(fixture.valuation, non_sco_catalog, fixture.template)
+
+    assert raised.value.code == "BULLETIN_PRICE_ORIGIN_FORBIDDEN"
+
+
 @dataclass(frozen=True, slots=True)
 class _MultiWorksiteFixture:
     """Consolidado importado, catálogo do contrato e a medição de três obras."""

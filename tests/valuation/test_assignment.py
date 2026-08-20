@@ -1220,7 +1220,7 @@ def test_the_refined_set_survives_a_json_round_trip() -> None:
     restored = CodeSuggestionSet.model_validate_json(refined.model_dump_json())
 
     assert restored == refined
-    assert restored.schema_version == "1.1.0"
+    assert restored.schema_version == "1.2.0"
 
 
 # --------------------------------------------------------------------------------------

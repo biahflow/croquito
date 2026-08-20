@@ -96,15 +96,22 @@ class PriceOrigin(StrEnum):
     """Fonte de preço de um catálogo: onde a cotação nasceu.
 
     Regra da orçamentista (M8): em obra LICITADA (`Valuation`/`WorksiteBulletin`), o
-    contrato manda e preço nunca vem da EMOP (`BULLETIN_PRICE_ORIGIN_FORBIDDEN` em
-    `calc.py`/`workbook_writer.py`). A cadeia SCO → EMOP → composição só vale
-    PRÉ-licitação (orçamento-base, fase futura); um catálogo carrega só UMA origem
+    contrato manda e preço nunca vem de outra fonte (`BULLETIN_PRICE_ORIGIN_FORBIDDEN` em
+    `calc.py`/`workbook_writer.py`). A cadeia SCO → EMOP → SINAPI → SICRO → composição só
+    vale PRÉ-licitação (orçamento-base, fase futura); um catálogo carrega só UMA origem
     (`CATALOG_ORIGIN_MIXED`) — mistura de fontes acontece na cascata, nunca dentro dele.
+
+    `SINAPI` e `SICRO` (ADR-0039) são as duas tabelas de referência nacionais, cada uma
+    com importador próprio (F-026); caem no mesmo superset estrutural não-SCO que a EMOP
+    e a composição (`NON_SCO_CODE_PATTERN`) — o padrão real do código de cada fonte é
+    dado do layout do importador dela, não deste enum.
     """
 
     SCO = "sco"
     EMOP = "emop"
     COMPOSITION = "composition"
+    SINAPI = "sinapi"
+    SICRO = "sicro"
 
 
 class PriceCatalogEntry(ValuationContractModel):

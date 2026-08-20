@@ -146,6 +146,8 @@ const PRICE_ORIGIN_LABELS: LookupTable = {
   sco: "SCO",
   emop: "EMOP",
   composition: "composição",
+  sinapi: "SINAPI",
+  sicro: "SICRO",
 };
 
 export function priceOriginLabel(origin: string): string {

@@ -248,17 +248,19 @@
       "type": "object"
     },
     "PriceOrigin": {
-      "description": "Fonte de preço de um catálogo: onde a cotação nasceu.\n\nRegra da orçamentista (M8): em obra LICITADA (`Valuation`/`WorksiteBulletin`), o\ncontrato manda e preço nunca vem da EMOP (`BULLETIN_PRICE_ORIGIN_FORBIDDEN` em\n`calc.py`/`workbook_writer.py`). A cadeia SCO → EMOP → composição só vale\nPRÉ-licitação (orçamento-base, fase futura); um catálogo carrega só UMA origem\n(`CATALOG_ORIGIN_MIXED`) — mistura de fontes acontece na cascata, nunca dentro dele.",
+      "description": "Fonte de preço de um catálogo: onde a cotação nasceu.\n\nRegra da orçamentista (M8): em obra LICITADA (`Valuation`/`WorksiteBulletin`), o\ncontrato manda e preço nunca vem de outra fonte (`BULLETIN_PRICE_ORIGIN_FORBIDDEN` em\n`calc.py`/`workbook_writer.py`). A cadeia SCO → EMOP → SINAPI → SICRO → composição só\nvale PRÉ-licitação (orçamento-base, fase futura); um catálogo carrega só UMA origem\n(`CATALOG_ORIGIN_MIXED`) — mistura de fontes acontece na cascata, nunca dentro dele.\n\n`SINAPI` e `SICRO` (ADR-0039) são as duas tabelas de referência nacionais, cada uma\ncom importador próprio (F-026); caem no mesmo superset estrutural não-SCO que a EMOP\ne a composição (`NON_SCO_CODE_PATTERN`) — o padrão real do código de cada fonte é\ndado do layout do importador dela, não deste enum.",
       "enum": [
         "sco",
         "emop",
-        "composition"
+        "composition",
+        "sinapi",
+        "sicro"
       ],
       "title": "PriceOrigin",
       "type": "string"
     }
   },
-  "$id": "https://schemas.croquito.local/valuation/estimate/2.0.0.json",
+  "$id": "https://schemas.croquito.local/valuation/estimate/2.1.0.json",
   "additionalProperties": false,
   "description": "Orçamento-base de uma obra, amarrado à prancha e à cascata que o precificou.\n\nSem período, sem contrato, sem saldo e sem aprovação: nenhum desses conceitos existe\nantes da licitação. A memória de cálculo é a MESMA do boletim (`CalcSheet`, montada por\n`build_calc_blocks`), e a relação 1:1 entre linha e memória é validada como na medição —\nquantidade que diverge da memória recusa.\n\n`bdi_percent` é o BDI do orçamento inteiro (ADR-0038): percentual único, nunca por\nlinha nem por grupo. `total_amount` já embute o BDI (é a soma dos `total` das linhas,\nque recomputam sobre `unit_price_with_bdi`); `total_amount_without_bdi` é a mesma soma\nsem o percentual, para quem for imprimir a diferença entre os dois totais truncados —\nnunca o percentual aplicado ao total geral (decisão 4).",
   "properties": {
@@ -330,8 +332,8 @@
       "type": "array"
     },
     "schema_version": {
-      "const": "2.0.0",
-      "default": "2.0.0",
+      "const": "2.1.0",
+      "default": "2.1.0",
       "title": "Schema Version",
       "type": "string"
     },

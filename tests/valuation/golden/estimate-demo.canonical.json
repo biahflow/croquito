@@ -208,7 +208,7 @@
     "Cada linha declara a origem, o catálogo e a data-base do preço; conferir a data-base antes de usar o valor.",
     "Item confirmado sem preço em nenhuma fonte fica declarado em unpriced_item_ids; ele exige composição nova, nunca preço de item parecido."
   ],
-  "schema_version": "2.0.0",
+  "schema_version": "2.1.0",
   "source_pdf_sha256": "<sha256:prancha-pdf>",
   "total_amount": "71516.83",
   "total_amount_without_bdi": "57221.26",

@@ -464,6 +464,46 @@ def test_bulletin_refuses_a_catalog_whose_origin_is_not_sco() -> None:
     assert raised.value.code == "BULLETIN_PRICE_ORIGIN_FORBIDDEN"
 
 
+@pytest.mark.parametrize("origin", [PriceOrigin.SINAPI, PriceOrigin.SICRO])
+def test_bulletin_refuses_a_catalog_whose_origin_is_sinapi_or_sicro(
+    origin: PriceOrigin,
+) -> None:
+    """As origens novas do ADR-0039 caem na mesma recusa que a EMOP: SEMPRE SCO na
+    medição licitada — SINAPI/SICRO/EMOP/composição só valem pré-licitação (F-026)."""
+    item = _confirmed_item()
+    packet = _packet([item])
+    entry = PriceCatalogEntry(
+        code="REF.001",
+        description=f"ITEM SINTETICO {origin.name}",
+        unit="m2",
+        unit_price=Decimal("50.00"),
+        family_code="CE",
+        family_name=f"SERVICOS SINTETICOS {origin.name}",
+        subgroup_code="CE0410",
+        subgroup_name=f"ITENS SINTETICOS {origin.name}",
+        origin=origin,
+    )
+    catalog = PriceCatalog(
+        source_label=f"CATALOGO {origin.name} SINTETICO",
+        reference_month="2026-01",
+        source_sha256=_CATALOG_DIGEST,
+        entries=[entry],
+        origin=origin,
+    )
+    assignments = _assignment_set(packet, catalog, [_assignment(item.id, code=entry.code)])
+
+    with pytest.raises(ValuationValidationError) as raised:
+        build_worksite_bulletin(
+            packet,
+            assignments,
+            catalog,
+            worksite_key=_WORKSITE_KEY,
+            worksite_name=_WORKSITE_NAME,
+        )
+
+    assert raised.value.code == "BULLETIN_PRICE_ORIGIN_FORBIDDEN"
+
+
 def test_plan_for_a_rejected_item_is_refused() -> None:
     rejected = _confirmed_item(item_id=_ITEM_1)
     included = _confirmed_item(

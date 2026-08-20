@@ -59,7 +59,7 @@ from croquito_valuation.models import (
 from croquito_valuation.sco import SCO_CODE_PATTERN
 from croquito_valuation.takeoff import TakeoffItem, TakeoffItemStatus, TakeoffPacket
 
-SUGGESTION_SCHEMA_VERSION: Final = "1.1.0"
+SUGGESTION_SCHEMA_VERSION: Final = "1.2.0"
 """Não bumpou na Fase 1 do M7 (léxico melhorado + sinônimos), de propósito: nenhum campo
 mudou de forma, só de comportamento (`unmatched_item_ids` fica mais raro porque o corte de
 `min_lexical_score` caiu, e `CodeCandidate.lexical_score` pode refletir score calculado com
@@ -244,7 +244,7 @@ class CodeSuggestionSet(ValuationContractModel):
     porque ele amarra o conjunto à rodada; ele não afirma que todo candidato veio dali.
     """
 
-    schema_version: Literal["1.1.0"] = SUGGESTION_SCHEMA_VERSION
+    schema_version: Literal["1.2.0"] = SUGGESTION_SCHEMA_VERSION
     plate_id: str = Field(min_length=1, max_length=64)
     page_number: int = Field(ge=1)
     image_sha256: str = Field(pattern=SHA256_PATTERN)
