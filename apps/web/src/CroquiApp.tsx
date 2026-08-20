@@ -2310,6 +2310,28 @@ export function CroquiApp({
     dispatchCapture({ type: "cancel" });
   }, [visibleStep, dispatchCapture]);
 
+  /**
+   * O painel do traçado abre sozinho ao entrar na etapa — UMA vez.
+   *
+   * O trabalho obrigatório da etapa 2 mora inteiro dentro dele: sem cena métrica a
+   * Aprovação fica bloqueada (`journey.ts`), e o revisor não tem como adivinhar que
+   * precisa expandir um painel para destravar o passo seguinte. A guarda por ref existe
+   * para o `×` continuar valendo: fechar é decisão do revisor e não é desfeita no render
+   * seguinte, nem quando outro campo desta mesma etapa muda.
+   */
+  const openedTraceStepRef = useRef(false);
+  useEffect(() => {
+    if (visibleStep !== "trace") {
+      openedTraceStepRef.current = false;
+      return;
+    }
+    if (openedTraceStepRef.current) {
+      return;
+    }
+    openedTraceStepRef.current = true;
+    setShowProposals(true);
+  }, [visibleStep]);
+
   async function submitCalibration() {
     if (
       !session?.access_token ||
@@ -3081,9 +3103,13 @@ export function CroquiApp({
                     className="proposal-toggle"
                     onClick={() => setShowProposals(true)}
                   >
-                    Geometria aproximada · {proposals.length} propostas
+                    Traçado do desenho · {proposals.length}{" "}
+                    {proposals.length === 1
+                      ? "forma detectada"
+                      : "formas detectadas"}
                     <small>
-                      Opcional. Só é necessária para aceitar geometria sem cota escrita.
+                      Aceite as formas, declare vãos e anotações e resolva a cena
+                      métrica. A Aprovação só destrava depois disto.
                     </small>
                   </button>
                 ) : null}
@@ -3167,6 +3193,13 @@ export function CroquiApp({
                           Confirme a calibração abaixo antes de aceitar.
                         </p>
                       )}
+                      {/* O opcional é ESTE aceite, não a etapa: a forma sem cota
+                          escrita só entra na cena como aproximada. O traçado em si
+                          é obrigatório — sem ele a Aprovação não destrava. */}
+                      <p className="batch-hint">
+                        Aceitar como aproximada é opcional. Só é necessário para a
+                        forma que não tem cota escrita.
+                      </p>
                       <div className="batch-buttons">
                         <button
                           type="button"
