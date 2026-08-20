@@ -63,6 +63,8 @@ from croquito_worker.review_store import (
 )
 from croquito_worker.tracing import (
     TRACER_VERSION,
+    AppliedSpanReport,
+    ContestedSpan,
     DerivedDimensionRequest,
     TraceAcceptance,
     solve_trace,
@@ -363,6 +365,24 @@ def _residual_summary(residuals: Sequence[SolverResidual]) -> dict[str, Any]:
         "worst_absolute_error_m": float(worst.absolute_error_m) if worst is not None else None,
         "worst_tolerance_m": float(worst.tolerance_m) if worst is not None else None,
     }
+
+
+def _contested_span_row(span: ContestedSpan) -> dict[str, Any]:
+    """Um vão em disputa como a linha o guarda: `Decimal` vira float na fronteira.
+
+    Mesma regra de `_residual_summary` acima e mesma razão: o registro de polling declara
+    números, não texto (`values_m` é float no contrato da API), e `mode="json"` serializaria
+    `Decimal` como string — o valor com a precisão escrita continua na cena, que é onde a
+    cota vale como medida."""
+    return {
+        **span.model_dump(mode="json"),
+        "values_m": [float(value) for value in span.values_m],
+    }
+
+
+def _applied_span_row(span: AppliedSpanReport) -> dict[str, Any]:
+    """Uma âncora aplicada como a linha a guarda; ver `_contested_span_row`."""
+    return {**span.model_dump(mode="json"), "value_m": float(span.value_m)}
 
 
 class InvalidUploadError(ValueError):
@@ -1050,6 +1070,9 @@ class LocalQueueWorker:
         solve_status: str | None = None,
         blockers: Sequence[str] = (),
         unapplied_reading_ids: Sequence[str] = (),
+        unapplied_readings: Sequence[dict[str, Any]] = (),
+        contested_spans: Sequence[dict[str, Any]] = (),
+        applied_spans: Sequence[dict[str, Any]] = (),
         residual_summary: dict[str, Any] | None = None,
         exact_entity_count: int | None = None,
         approximate_entity_count: int | None = None,
@@ -1080,6 +1103,16 @@ class LocalQueueWorker:
         unapplied_expression = _json_parameter(
             parameters, dialect, "unapplied", list(unapplied_reading_ids)
         )
+        # Diagnóstico do traçado (F-025): a lista de ids acima continua intacta ao lado.
+        unapplied_readings_expression = _json_parameter(
+            parameters, dialect, "unapplied_readings", list(unapplied_readings)
+        )
+        contested_expression = _json_parameter(
+            parameters, dialect, "contested", list(contested_spans)
+        )
+        applied_spans_expression = _json_parameter(
+            parameters, dialect, "applied_spans", list(applied_spans)
+        )
         residual_expression = _json_parameter(parameters, dialect, "residuals", residual_summary)
         scales_expression = _json_parameter(
             parameters, dialect, "scales", dict(detail_group_scales or {})
@@ -1088,6 +1121,9 @@ class LocalQueueWorker:
             "UPDATE trace_solves SET status = :status, solve_status = :solve_status, "
             f"blockers_json = {blockers_expression}, "
             f"unapplied_reading_ids_json = {unapplied_expression}, "
+            f"unapplied_readings_json = {unapplied_readings_expression}, "
+            f"contested_spans_json = {contested_expression}, "
+            f"applied_spans_json = {applied_spans_expression}, "
             f"residual_summary_json = {residual_expression}, "
             f"detail_group_scales_json = {scales_expression}, "
             "exact_entity_count = :exact_entity_count, "
@@ -1341,6 +1377,11 @@ class LocalQueueWorker:
             "solve_status": result.status,
             "blockers": result.blockers,
             "unapplied_reading_ids": result.unapplied_reading_ids,
+            "unapplied_readings": [
+                report.model_dump(mode="json") for report in result.unapplied_readings
+            ],
+            "contested_spans": [_contested_span_row(span) for span in result.contested_spans],
+            "applied_spans": [_applied_span_row(span) for span in result.applied_spans],
             "residual_summary": _residual_summary(result.residuals),
             "exact_entity_count": result.exact_entity_count,
             "approximate_entity_count": result.approximate_entity_count,

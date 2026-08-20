@@ -211,11 +211,24 @@ def test_banco_anterior_ao_runner_e_carimbado(schema_url: str) -> None:
     finally:
         engine.dispose()
 
-    # A adoção não recria nem altera o que já existia: nenhum `ALTER`/`DROP`, e as únicas
-    # tabelas criadas são a de versão e as nascidas DEPOIS da baseline, que o `upgrade`
-    # logo após o carimbo cria. Nenhuma tabela da baseline aparece como criada.
+    # A adoção não reescreve nem destrói o que já existia, e as únicas tabelas criadas são
+    # a de versão e as nascidas DEPOIS da baseline, que o `upgrade` logo após o carimbo
+    # cria. Nenhuma tabela da baseline aparece como criada.
+    #
+    # `ADD COLUMN` é a exceção declarada, e não um afrouxamento: até a `0003` toda revisão
+    # posterior à baseline só criava tabela, e o teste podia proibir `alter` inteiro. A
+    # `0004` (F-025) acrescenta colunas de diagnóstico a `trace_solves`, que é tabela da
+    # baseline — evolução aditiva aplicada pelo `upgrade` DEPOIS do carimbo, da mesma
+    # natureza dos `CREATE TABLE` que o teste já tolera. O que a adoção continua não
+    # podendo emitir é `DROP` ou `ALTER` que remova, retipe ou renomeie o que já existe.
     ddl = [statement for statement in recorded if statement.startswith(_DDL_VERBS)]
-    assert [statement for statement in ddl if statement.startswith(("alter ", "drop "))] == []
+    destrutivo = [
+        statement
+        for statement in ddl
+        if statement.startswith("drop ")
+        or (statement.startswith("alter ") and " add column " not in statement)
+    ]
+    assert destrutivo == []
     created = {
         statement.removeprefix("create table ").split("(")[0].split()[0].strip('"')
         for statement in ddl

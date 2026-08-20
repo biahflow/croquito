@@ -595,6 +595,45 @@ class TraceResidualSummary(ApiModel):
     worst_tolerance_m: float | None = None
 
 
+class UnappliedReadingOut(ApiModel):
+    """Uma leitura confirmada que não virou vão, com o motivo declarado pelo traçado.
+
+    `cause` é código estável do domínio (mesmo formato de `Issue.code`), nunca frase de
+    solver: a frase que o profissional lê vive na `Issue` da cena.
+    """
+
+    reading_id: str
+    cause: str
+    target_proposal_ids: list[str] = Field(default_factory=list)
+
+
+class ContestedSpanOut(ApiModel):
+    """Duas ou mais leituras confirmadas prometendo distâncias diferentes para o mesmo vão.
+
+    Diagnóstico: não é blocker e não muda `solve_status` — quem decide o desfecho continua
+    sendo o resíduo.
+    """
+
+    axis: Literal["x", "y"]
+    reading_ids: list[str] = Field(default_factory=list)
+    # Float como no resumo de resíduos: a precisão escrita da cota vive na cena.
+    values_m: list[float] = Field(default_factory=list)
+    proposal_ids: list[str] = Field(default_factory=list)
+
+
+class AppliedSpanOut(ApiModel):
+    """Onde, em metros da prancha, cada cota aplicada ancorou (`start_m <= end_m`)."""
+
+    reading_id: str
+    axis: Literal["x", "y"]
+    value_m: float
+    start_m: float
+    end_m: float
+    proposal_id: str
+    second_proposal_id: str | None = None
+    gap: bool = False
+
+
 class TraceSolveResponse(ApiModel):
     trace_solve_id: UUID
     job_id: UUID
@@ -605,6 +644,11 @@ class TraceSolveResponse(ApiModel):
     solve_status: Literal["solved_unapproved", "review_required", "conflict"] | None = None
     blockers: list[str] = Field(default_factory=list)
     unapplied_reading_ids: list[str] = Field(default_factory=list)
+    # Aditivos (F-025): a lista de ids acima continua sendo o contrato antigo, na mesma
+    # ordem; estes dizem por que, quem disputa com quem e onde a cota aplicada ancorou.
+    unapplied_readings: list[UnappliedReadingOut] = Field(default_factory=list)
+    contested_spans: list[ContestedSpanOut] = Field(default_factory=list)
+    applied_spans: list[AppliedSpanOut] = Field(default_factory=list)
     residual_summary: TraceResidualSummary | None = None
     exact_entity_count: int | None = None
     approximate_entity_count: int | None = None
@@ -1961,6 +2005,9 @@ def _trace_solve_response(session: Session, record: TraceSolveRecord) -> TraceSo
             "solve_status": record.solve_status,
             "blockers": list(record.blockers_json or []),
             "unapplied_reading_ids": list(record.unapplied_reading_ids_json or []),
+            "unapplied_readings": list(record.unapplied_readings_json or []),
+            "contested_spans": list(record.contested_spans_json or []),
+            "applied_spans": list(record.applied_spans_json or []),
             "residual_summary": summary,
             "exact_entity_count": record.exact_entity_count,
             "approximate_entity_count": record.approximate_entity_count,

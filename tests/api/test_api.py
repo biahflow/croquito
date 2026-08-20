@@ -2827,6 +2827,33 @@ def test_trace_solve_polling_exposes_the_result_and_isolates_the_tenant(tmp_path
         record.solve_status = "review_required"
         record.blockers_json = ["TRACE_HUMAN_CONFIRMATION_REQUIRED:rd_1111111111111111"]
         record.unapplied_reading_ids_json = ["rd_3333333333333333"]
+        record.unapplied_readings_json = [
+            {
+                "reading_id": "rd_3333333333333333",
+                "cause": "TRACE_SPAN_AXIS_UNDECLARED",
+                "target_proposal_ids": ["vp_1111111111111111"],
+            }
+        ]
+        record.contested_spans_json = [
+            {
+                "axis": "x",
+                "reading_ids": ["rd_1111111111111111", "rd_2222222222222222"],
+                "values_m": [5.0, 8.0],
+                "proposal_ids": ["vp_1111111111111111"],
+            }
+        ]
+        record.applied_spans_json = [
+            {
+                "reading_id": "rd_1111111111111111",
+                "axis": "x",
+                "value_m": 5.0,
+                "start_m": 0.0,
+                "end_m": 5.0,
+                "proposal_id": "vp_1111111111111111",
+                "second_proposal_id": None,
+                "gap": False,
+            }
+        ]
         record.residual_summary_json = {
             "count": 2,
             "failed_count": 1,
@@ -2844,6 +2871,21 @@ def test_trace_solve_polling_exposes_the_result_and_isolates_the_tenant(tmp_path
     # Blockers do domínio chegam ao cliente como códigos estáveis.
     assert body["blockers"] == ["TRACE_HUMAN_CONFIRMATION_REQUIRED:rd_1111111111111111"]
     assert body["unapplied_reading_ids"] == ["rd_3333333333333333"]
+    # O diagnóstico é aditivo: a lista de ids acima continua igual, e ao lado dela vem a
+    # causa por leitura, o vão em disputa e a âncora da cota aplicada.
+    assert body["unapplied_readings"] == [
+        {
+            "reading_id": "rd_3333333333333333",
+            "cause": "TRACE_SPAN_AXIS_UNDECLARED",
+            "target_proposal_ids": ["vp_1111111111111111"],
+        }
+    ]
+    assert body["contested_spans"][0]["reading_ids"] == [
+        "rd_1111111111111111",
+        "rd_2222222222222222",
+    ]
+    assert body["contested_spans"][0]["values_m"] == [5.0, 8.0]
+    assert body["applied_spans"][0]["end_m"] == 5.0
     assert body["residual_summary"]["failed_count"] == 1
 
     assert (

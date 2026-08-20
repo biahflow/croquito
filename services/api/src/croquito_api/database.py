@@ -312,6 +312,15 @@ class TraceSolveRecord(Base):
     solve_status: Mapped[str | None] = mapped_column(String(24), nullable=True)
     blockers_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     unapplied_reading_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    unapplied_readings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    """Cada leitura não aplicada com a CAUSA declarada no ponto do descarte (F-025).
+
+    Fica ao lado de ``unapplied_reading_ids_json``, que continua sendo a lista de ids na
+    mesma ordem: o campo antigo é contrato publicado e não muda de forma."""
+    contested_spans_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    """Vãos disputados por duas ou mais leituras confirmadas; diagnóstico, nunca portão."""
+    applied_spans_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    """Âncoras em metros de cada cota aplicada, no frame CAD da prancha."""
     residual_summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     """Counts plus the worst residual; the full list stays in the solved scene."""
     exact_entity_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

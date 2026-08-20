@@ -33,21 +33,23 @@ verde (91 testes) e vitest 697/697 verdes em 2026-08-20.
 ```python
 class UnappliedReadingReport(TraceModel):
     reading_id: str
-    cause: str            # código estável, regex ^[A-Z0-9_]{3,64}$ como Issue.code
+    cause: str  # código estável, regex ^[A-Z0-9_]{3,64}$ como Issue.code
     target_proposal_ids: list[str] = Field(default_factory=list)
+
 
 class ContestedSpan(TraceModel):
     axis: Literal["x", "y"]
-    reading_ids: list[str] = Field(min_length=2)   # ordenados
+    reading_ids: list[str] = Field(min_length=2)  # ordenados
     values_m: list[Decimal] = Field(min_length=2)  # mesma ordem de reading_ids
     proposal_ids: list[str] = Field(default_factory=list)
+
 
 class AppliedSpanReport(TraceModel):
     reading_id: str
     axis: Literal["x", "y"]
     value_m: Decimal
-    start_m: float        # coordenada CAD (metros) da junção near ao longo do eixo
-    end_m: float          # idem, far — frame CAD (origem canto inferior esquerdo)
+    start_m: float  # coordenada CAD (metros) da junção near ao longo do eixo
+    end_m: float  # idem, far — frame CAD (origem canto inferior esquerdo)
     proposal_id: str
     second_proposal_id: str | None = None
     gap: bool = False
