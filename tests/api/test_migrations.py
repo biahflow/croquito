@@ -211,11 +211,29 @@ def test_banco_anterior_ao_runner_e_carimbado(schema_url: str) -> None:
     finally:
         engine.dispose()
 
-    # A adoção não recria nem altera o que já existia: nenhum `ALTER`/`DROP`, e as únicas
-    # tabelas criadas são a de versão e as nascidas DEPOIS da baseline, que o `upgrade`
-    # logo após o carimbo cria. Nenhuma tabela da baseline aparece como criada.
+    # A adoção não recria nem altera o que já existia: nenhuma tabela da BASELINE sofre
+    # `ALTER`/`DROP`, e as únicas tabelas criadas são a de versão e as nascidas DEPOIS da
+    # baseline, que o `upgrade` logo após o carimbo cria. Nenhuma tabela da baseline aparece
+    # como criada.
+    #
+    # Tabela nascida DEPOIS da baseline pode legitimamente sofrer `ALTER` dentro do MESMO
+    # `upgrade`: ela acabou de nascer segundos antes, não é o "banco anterior ao runner" que
+    # esta adoção existe para preservar intocado. A `0004` fez disso um caso real pela
+    # primeira vez (`estimate_rounds`, criada pela `0003`, ganha coluna pela `0004`), e por
+    # isso a asserção verifica a tabela ALVO do `ALTER`/`DROP`, não a mera presença do verbo.
+    def _ddl_target(statement: str, prefix: str) -> str | None:
+        if not statement.startswith(prefix):
+            return None
+        return statement.removeprefix(prefix).split()[0].strip('"')
+
     ddl = [statement for statement in recorded if statement.startswith(_DDL_VERBS)]
-    assert [statement for statement in ddl if statement.startswith(("alter ", "drop "))] == []
+    baseline_altered_or_dropped = [
+        statement
+        for statement in ddl
+        if _ddl_target(statement, "alter table ") in BASELINE_TABLES
+        or _ddl_target(statement, "drop table ") in BASELINE_TABLES
+    ]
+    assert baseline_altered_or_dropped == [], baseline_altered_or_dropped
     created = {
         statement.removeprefix("create table ").split("(")[0].split()[0].strip('"')
         for statement in ddl
@@ -321,12 +339,20 @@ def test_toda_revisao_e_forward_only() -> None:
 
 @requires_postgres
 def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: str) -> None:
-    """As tabelas do ADR-0028 D2 não estão na baseline, e o índice da listagem existe.
+    """As tabelas pós-baseline não estão na `0001`, e o índice de cada listagem existe.
 
     O gate de drift prova que migration e modelo coincidem, mas coincidiriam também se o
-    índice composto faltasse nos DOIS lados. A listagem com cursor opaco de
-    `GET /v1/valuation-rounds` ordena por `(tenant_id, created_at, id)`, e é esse índice
-    que a sustenta.
+    índice composto faltasse nos DOIS lados. As listagens com cursor opaco de
+    `GET /v1/valuation-rounds` (ADR-0028 D2) e `GET /v1/estimate-rounds` (ADR-0027)
+    ordenam por `(tenant_id, created_at, id)`, e é esse índice que sustenta as duas.
+
+    O conjunto de tabelas pós-baseline CRESCE a cada migração que cria tabela nova — a
+    `0002` acrescentou as da medição, a `0003` as do orçamento-base. Não há constante
+    central para esse conjunto (`BASELINE_TABLES`, em `bootstrap.py`, descreve só a
+    `0001`, de propósito: ver o comentário ao lado dela); a lista abaixo é literal e
+    precisa crescer junto com cada migração pós-baseline futura que criar tabela nova —
+    `test_baseline_nao_diverge_dos_modelos` (gate de drift) reprova se o modelo e a
+    migration divergirem entre si, mas nenhum dos dois avisa este teste.
     """
     command.upgrade(build_config(schema_url), BASELINE_REVISION)
     engine = create_engine(schema_url, future=True)
@@ -335,12 +361,21 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
         command.upgrade(build_config(schema_url), "head")
         inspector = inspect(engine)
         criadas = set(inspector.get_table_names()) - {VERSION_TABLE} - set(BASELINE_TABLES)
-        assert criadas == {"valuation_rounds", "valuation_round_revisions"}
-        indices = {
-            index["name"]: tuple(index["column_names"])
-            for index in inspector.get_indexes("valuation_rounds")
+        assert criadas == {
+            "valuation_rounds",
+            "valuation_round_revisions",
+            "estimate_rounds",
+            "estimate_round_revisions",
         }
-        assert indices["ix_valuation_rounds_tenant_created"] == ("tenant_id", "created_at", "id")
+        for table, index_name in (
+            ("valuation_rounds", "ix_valuation_rounds_tenant_created"),
+            ("estimate_rounds", "ix_estimate_rounds_tenant_created"),
+        ):
+            indices = {
+                index["name"]: tuple(index["column_names"])
+                for index in inspector.get_indexes(table)
+            }
+            assert indices[index_name] == ("tenant_id", "created_at", "id"), table
     finally:
         engine.dispose()
 

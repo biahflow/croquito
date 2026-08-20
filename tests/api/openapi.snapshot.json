@@ -1056,7 +1056,7 @@
       },
       "CreateEstimateRoundRequest": {
         "additionalProperties": false,
-        "description": "Rodada de orçamento-base nova: a obra e o rótulo, nada mais.\n\nTrês diferenças de `CreateValuationRoundRequest` dão nome à fronteira do ADR-0027.\nNão há `catalog_upload_id`: a rodada abre SEM fonte e as fontes entram depois, uma a\numa, em ordem declarada (`POST .../catalogs`) — instalar uma só na criação faria a\nprimeira fonte parecer privilegiada. Não há `period_number` nem `contract_label`:\nperíodo é da medição e contrato é da obra licitada, e antes da licitação não existe\nnenhum dos dois.\n\n`worksite_key` repete `WORKSITE_KEY_PATTERN`, que o domínio exige do `Estimate`, pelo\nmesmo motivo da medição: a chave é imutável na rodada, e aceitá-la livre aqui faria uma\nrodada nascer válida e só quebrar na montagem, dezenas de decisões depois.",
+        "description": "Rodada de orçamento-base nova: a obra e o rótulo, nada mais.\n\nTrês diferenças de `CreateValuationRoundRequest` dão nome à fronteira do ADR-0027.\nNão há `catalog_upload_id`: a rodada abre SEM fonte e as fontes entram depois, uma a\numa, em ordem declarada (`POST .../catalogs`) — instalar uma só na criação faria a\nprimeira fonte parecer privilegiada. Não há `period_number` nem `contract_label`:\nperíodo é da medição e contrato é da obra licitada, e antes da licitação não existe\nnenhum dos dois.\n\n`worksite_key` repete `WORKSITE_KEY_PATTERN`, que o domínio exige do `Estimate`, pelo\nmesmo motivo da medição: a chave é imutável na rodada, e aceitá-la livre aqui faria uma\nrodada nascer válida e só quebrar na montagem, dezenas de decisões depois.\n\n`target_amount`/`target_label` são o teto de verba (ADR-0040), OPCIONAIS: a tela de\nabertura da rodada é onde ele nasce, mas uma rodada sem verba prevista continua se\nabrindo exatamente como antes desta feature. `target_amount` viaja como TEXTO pelo\nmesmo motivo do BDI — é `Decimal` exato, e um número de JSON já teria passado por\nbinário antes de chegar aqui.",
         "properties": {
           "address": {
             "anyOf": [
@@ -1076,6 +1076,32 @@
             "minLength": 1,
             "title": "Reference Label",
             "type": "string"
+          },
+          "target_amount": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Amount"
+          },
+          "target_label": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Label"
           },
           "worksite_key": {
             "pattern": "^[a-z0-9][a-z0-9-]{2,63}$",
@@ -2106,7 +2132,7 @@
       },
       "EstimateRoundSummary": {
         "additionalProperties": false,
-        "description": "Linha da listagem. `cascade_origins` sai na ORDEM da cascata, que é a precedência.",
+        "description": "Linha da listagem. `cascade_origins` sai na ORDEM da cascata, que é a precedência.\n\n`target_amount`/`target_label` são os dois textos CRUS da raiz da rodada (ADR-0040),\nsem `consumed`/`remaining`/`over`: a listagem não busca a cabeça de cada rodada, e\naquele bloco só pode ser derivado contra o `total_amount` de um `estimate_json` que\nvive na revisão, não na raiz. Rodada sem teto devolve os dois `None`.",
         "properties": {
           "cascade_origins": {
             "items": {
@@ -2140,6 +2166,28 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "target_amount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Amount"
+          },
+          "target_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Label"
           },
           "updated_at": {
             "format": "date-time",
@@ -4354,6 +4402,42 @@
         "title": "SetAiProcessingEntitlementRequest",
         "type": "object"
       },
+      "SetEstimateTargetRequest": {
+        "additionalProperties": false,
+        "description": "Declara ou edita o teto de verba da rodada (ADR-0040): valor exato + rótulo opcional.\n\n`target_amount` viaja como TEXTO pelo mesmo motivo do BDI — `Decimal` exato, e um\nnúmero de JSON já teria passado por binário. Zero e negativo recusam com\n`422 ESTIMATE_TARGET_INVALID`; \"sem teto\" é ausência do campo na criação da rodada, e\nesta rota não tem contraparte de remoção — o Design Approval Package não desenha\napagar um teto já declarado (questão em aberto do pacote), e por isso esta rota só\ndeclara ou edita.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "target_amount": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Target Amount",
+            "type": "string"
+          },
+          "target_label": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Label"
+          }
+        },
+        "required": [
+          "base_version",
+          "target_amount"
+        ],
+        "title": "SetEstimateTargetRequest",
+        "type": "object"
+      },
       "SplineGeometry": {
         "additionalProperties": false,
         "properties": {
@@ -6547,6 +6631,83 @@
           }
         ],
         "summary": "Get Estimate Takeoff Overlay",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/target": {
+      "post": {
+        "description": "Declara ou edita o teto de verba da rodada (ADR-0040); sem rota de remoção.\n\nO teto é dado da RODADA, não do artefato (decisão 1): grava só as duas colunas\nnovas de `estimate_rounds` e avança a versão da rodada, como qualquer outro ato\nhumano. Nenhuma revisão append-only nasce daqui — o teto não é artefato da cadeia,\né parâmetro da rodada, como o BDI.",
+        "operationId": "set_estimate_target_v1_estimate_rounds__round_id__target_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetEstimateTargetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set Estimate Target V1 Estimate Rounds  Round Id  Target Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Estimate Target",
         "tags": [
           "estimate"
         ]

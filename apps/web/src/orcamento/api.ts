@@ -42,6 +42,7 @@ import {
   createEstimateBody,
   installCatalogBody,
   takeoffDecisionBody,
+  targetBody,
   versionBody,
 } from "./requests";
 
@@ -90,7 +91,41 @@ export type ExtractionStatus =
 /** Origem de preço como o domínio a nomeia (`PriceOrigin`). */
 export type PriceOrigin = Estimate.PriceOrigin;
 
-/** Linha da listagem de orçamentos do tenant. */
+/**
+ * Teto de verba declarado na rodada (ADR-0040): valor exato e o rótulo da demanda de onde
+ * a verba veio. Os dois viajam como texto — o valor porque é `Decimal` exato, e um número
+ * de JSON já teria passado por binário antes de chegar aqui.
+ */
+export type EstimateTarget = {
+  amount: string;
+  label: string | null;
+};
+
+/**
+ * Bloco `{target, consumed, remaining, over}` que o servidor DERIVA a cada leitura
+ * (ADR-0040, decisão 2); nada disto é persistido e nada disto é recomputado aqui.
+ *
+ * As quatro chaves são opcionais porque a ausência é significado, não omissão: rodada sem
+ * teto não traz nenhuma delas (decisão 6 — ausência de teto não é um estado a comunicar),
+ * e rodada com teto cujo orçamento ainda não foi montado traz só `target`, porque o
+ * consumo depende do `total_amount` que só existe depois da montagem. `remaining` é
+ * negativo no estouro, e `over` é estrito: consumir o teto inteiro está DENTRO dele.
+ */
+export type EstimateTargetState = {
+  target?: EstimateTarget;
+  consumed?: string;
+  remaining?: string;
+  over?: boolean;
+};
+
+/**
+ * Linha da listagem de orçamentos do tenant.
+ *
+ * O teto aparece aqui em DOIS campos crus, sem `consumed`/`remaining`/`over`: a listagem
+ * não lê a cabeça de cada rodada, e aquele bloco só pode ser derivado contra o
+ * `total_amount` que vive na revisão. Rodada sem teto devolve os dois nulos, e a linha do
+ * teto some da lista em vez de virar "teto: —".
+ */
 export type EstimateSummary = {
   round_id: string;
   worksite_key: string;
@@ -102,6 +137,8 @@ export type EstimateSummary = {
   extraction_status: ExtractionStatus;
   /** Origens na ORDEM da cascata, que é a precedência de precificação. */
   cascade_origins: PriceOrigin[];
+  target_amount: string | null;
+  target_label: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -208,7 +245,7 @@ export type EstimateStateEstimate = {
   workbook_sha256: string | null;
 };
 
-export type EstimateState = {
+export type EstimateState = EstimateTargetState & {
   round_id: string;
   version: number;
   status: string;
@@ -360,7 +397,7 @@ export type CodesResponse = {
  * `workbook_url` só existe na leitura (`GET`), montada na hora: a forma que o registro de
  * idempotência guarda no banco não carrega URL assinada.
  */
-export type EstimateResponse = {
+export type EstimateResponse = EstimateTargetState & {
   round_id: string;
   version: number;
   estimate: Estimate.CroquitoEstimate;
@@ -388,6 +425,9 @@ export type CreateEstimateDraft = {
   worksiteName: string;
   referenceLabel: string;
   address?: string;
+  /** Teto de verba, opcional: campo vazio é "sem teto", e sem teto nada muda (ADR-0040). */
+  targetAmount?: string;
+  targetLabel?: string;
 };
 
 export type CascadeOrderDraft = {
@@ -549,6 +589,50 @@ export function getEstimateState(
   roundId: string,
 ): Promise<EstimateState> {
   return apiJson<EstimateState>(roundPath(roundId), accessToken);
+}
+
+/**
+ * Resposta do `POST .../target`: a rodada com a versão nova e o bloco do teto já derivado
+ * contra a cabeça atual — sem `consumed` quando ainda não há orçamento montado.
+ */
+export type EstimateTargetResponse = EstimateTargetState & {
+  round_id: string;
+  version: number;
+};
+
+/**
+ * Declara ou edita o teto de verba da rodada (ADR-0040, decisão 1). Não existe contraparte
+ * de remoção: o pacote de design deixou "apagar um teto já declarado" como questão aberta,
+ * e inventar o ato aqui seria decidi-la.
+ *
+ * `targetAmount` sai como TEXTO decimal, como o BDI: ele é `Decimal` exato no domínio, e
+ * texto que não é decimal — ou que vale zero — não sai daqui. "Sem teto" é campo vazio na
+ * abertura da rodada, nunca `0,00`, e a recusa da tela chega antes desta.
+ */
+export function postTarget(
+  accessToken: string,
+  roundId: string,
+  baseVersion: number,
+  targetAmount: string,
+  targetLabel?: string,
+): Promise<EstimateTargetResponse> {
+  const body = targetBody(baseVersion, targetAmount, targetLabel);
+  if (body === null) {
+    return Promise.reject(
+      new ApiError(
+        "O teto informado não é um valor em reais maior que zero.",
+        422,
+        "ESTIMATE_TARGET_INVALID",
+        "o teto de verba é um valor decimal finito e maior que zero",
+        {},
+      ),
+    );
+  }
+  return post<EstimateTargetResponse>(
+    roundPath(roundId, "/target"),
+    accessToken,
+    body,
+  );
 }
 
 /** Instala uma fonte no FIM da cascata; a posição é a precedência de precificação. */

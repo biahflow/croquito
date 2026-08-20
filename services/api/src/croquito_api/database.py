@@ -567,6 +567,16 @@ class EstimateRoundRecord(Base):
     reference_label: Mapped[str] = mapped_column(String(120))
     """Rótulo livre da rodada, o que a listagem mostra. Não é período nem contrato."""
     address: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    target_amount: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """Teto de verba da rodada, `Decimal` exato como TEXTO — a mesma disciplina do BDI e da
+    quantidade do takeoff (ADR-0038, ADR-0040 decisão 1). Ausência é "sem teto"; zero e
+    negativo são recusados na validação de aplicação (`parse_target_amount`) e nunca
+    chegam a esta coluna. O `Estimate` montado não ganha campo novo por causa dele: o
+    orçamento continua puro e recomputável, e o teto é o contexto de trabalho da rodada
+    (ADR-0040 decisão 1)."""
+    target_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    """Rótulo livre da origem da verba (ex.: a demanda da Relação de Praças). Opcional
+    mesmo quando há teto declarado."""
     status: Mapped[str] = mapped_column(String(32), default="OPEN")
     version: Mapped[int] = mapped_column(Integer, default=1)
     """Contador ÚNICO de toda a cadeia da rodada, como o da medição (ADR-0028 D3): só ato

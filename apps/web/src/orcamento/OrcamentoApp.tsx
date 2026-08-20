@@ -19,6 +19,7 @@ import {
   postCodeDecision,
   postSuggestionsRecompute,
   postTakeoffDecision,
+  postTarget,
   reorderCascade,
   searchCascade,
   uploadCatalog,
@@ -60,15 +61,23 @@ import {
   AVISO_BDI,
   AVISO_CASCATA,
   AVISO_CASCATA_TRAVADA,
+  AVISO_CONSUMO_COM_BDI,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
   AVISO_ORCAMENTO,
   AVISO_QUANTIDADE_AMBIGUA,
   AVISO_SEM_PRECO,
+  AVISO_TETO_ABERTURA,
+  AVISO_TETO_EDICAO,
+  AVISO_TETO_ESTOURADO,
+  AVISO_TETO_LIMITE,
   cascadePositionLabel,
+  CONSEQUENCIAS_DO_ESTOURO,
   DESCRICAO_CALCULO_SHORTLIST,
   DESCRICAO_MONTAGEM,
   DICA_BDI,
   DICA_QUANTIDADE,
+  DICA_TETO,
+  DICA_TETO_DEMANDA,
   extractionFailureMessage,
   extractionStatusLabel,
   itemStatusLabel,
@@ -76,11 +85,14 @@ import {
   priceOriginSeloClass,
   priceSourceLabel,
   stageLabel,
+  tetoClasse,
+  tetoEtiqueta,
   unitLabel,
   unitMismatchHint,
 } from "./labels";
 import { overlayFreshness } from "./overlay";
-import { bdiPercentError, worksiteKeyError } from "./requests";
+import { bdiPercentError, tetoAmountError, worksiteKeyError } from "./requests";
+import { derivarTeto, type TetoDerivado } from "./teto";
 
 /** Duração do aviso de sucesso; recusa nenhuma expira sozinha. */
 const TOAST_MS = 5000;
@@ -122,6 +134,9 @@ const EMPTY_ESTIMATE_FORM = {
   worksiteName: "",
   referenceLabel: "",
   address: "",
+  // Teto vazio é o padrão e é "sem teto": ele não pede justificativa e não muda o botão.
+  tetoAmount: "",
+  tetoLabel: "",
 };
 
 /**
@@ -407,6 +422,232 @@ export function TelaAuditoriaReprovada({
   );
 }
 
+/**
+ * Consumo do teto na "Prévia do orçamento", colado ao Total geral (ADR-0040, F-027).
+ *
+ * Ele mora aqui porque é uma LEITURA daquele número: separar os dois na tela abriria
+ * espaço para se contradizerem. Três estados, dois deles o mesmo estado de domínio —
+ * "dentro do teto" e "no limite exato" compartilham a veste, e o que os distingue é a
+ * palavra, que no limite exato diz por extenso que aquilo não é estouro.
+ *
+ * `null` é o caso da rodada sem teto (ADR-0040, decisão 6): nenhum bloco, nenhuma etiqueta
+ * "sem teto", nenhum espaço reservado. Ausência de teto não é um estado a comunicar.
+ *
+ * Nenhum número daqui é calculado pela tela, com uma exceção declarada: o percentual, que
+ * é razão e não dinheiro, e que o payload não traz. Teto, consumo, restante e excedente
+ * são o texto do servidor.
+ */
+export function BlocoConsumoDoTeto({ teto }: { teto: TetoDerivado | null }) {
+  if (teto === null) {
+    return null;
+  }
+  const resultado = teto.estado === "estourado" ? teto.excedente : teto.restante;
+  return (
+    <div className={`teto-consumo ${tetoClasse(teto.estado)}`}>
+      <span className="teto-etiqueta">{tetoEtiqueta(teto.estado)}</span>
+      <ul className="teto-linhas">
+        <li>
+          <span className="teto-rotulo">
+            Teto da verba
+            {teto.rotulo === null ? null : (
+              <span className="teto-origem">{teto.rotulo}</span>
+            )}
+          </span>
+          <span className="teto-valor">{formatMoneyText(teto.teto)}</span>
+        </li>
+        <li>
+          <span className="teto-rotulo">
+            Consumo — total com BDI
+            {teto.percentualConsumido === null ? null : (
+              <span className="teto-origem">
+                {formatPercentText(teto.percentualConsumido)} do teto
+              </span>
+            )}
+          </span>
+          <span className="teto-valor">{formatMoneyText(teto.consumo)}</span>
+        </li>
+        {resultado === null ? null : (
+          <li className="teto-resultado">
+            <span className="teto-rotulo">
+              {teto.estado === "estourado" ? "Acima do teto" : "Restante"}
+            </span>
+            <span className="teto-valor">{formatMoneyText(resultado)}</span>
+          </li>
+        )}
+      </ul>
+      {teto.estado === "estourado" ? (
+        <ul className="teto-consequencia">
+          {CONSEQUENCIAS_DO_ESTOURO.map((consequencia) => (
+            <li key={consequencia.destaque}>
+              <strong>{consequencia.destaque}</strong> {consequencia.texto}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="dica">
+          {teto.estado === "limite" ? AVISO_TETO_LIMITE : AVISO_CONSUMO_COM_BDI}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Aviso permanente do estouro, de largura inteira e **sem nenhum botão** — a decisão mais
+ * declarada do pacote aprovado.
+ *
+ * Toda saída do estouro é decisão humana FORA desta tela: cortar escopo, remanejar
+ * quantitativo, pedir verba suplementar. Um "ajustar para caber" seria o corte automático
+ * que o contrato proíbe; um "rever o teto" colado ao aviso ensinaria a saída errada —
+ * subir o número até o aviso sumir. Editar o teto continua sendo ato do painel de teto, na
+ * etapa de montagem, sem estar oferecido como remédio.
+ *
+ * Ele é CONDIÇÃO da rodada, não episódio: por isso é renderizado uma vez só, fora da etapa
+ * visível, e acompanha todas as etapas enquanto o consumo passar o teto — inclusive a
+ * Planilha, ao lado da exportação que continua funcionando (ADR-0040, decisão 4).
+ */
+export function FaixaTetoEstourado({ teto }: { teto: TetoDerivado | null }) {
+  if (teto === null || teto.estado !== "estourado" || teto.excedente === null) {
+    return null;
+  }
+  return (
+    <div className="teto-faixa" role="status">
+      <span className="teto-faixa-etiqueta">{tetoEtiqueta(teto.estado)}</span>
+      <div>
+        <p>
+          O orçamento montado passa a verba declarada em{" "}
+          <span className="teto-faixa-numero">
+            {formatMoneyText(teto.excedente)}
+          </span>
+          {teto.percentualAcima === null
+            ? ", acima do teto de "
+            : ` — ${formatPercentText(teto.percentualAcima)} acima do teto de `}
+          {formatMoneyText(teto.teto)}
+          {teto.rotulo === null ? null : ` (${teto.rotulo})`}.
+        </p>
+        <p>
+          <strong>{AVISO_TETO_ESTOURADO.destaque}</strong>{" "}
+          {AVISO_TETO_ESTOURADO.texto}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Painel "Teto da verba" na etapa de montagem, ao lado do BDI: os dois são o mesmo tipo de
+ * coisa — parâmetro da rodada sob o qual o orçamento é montado —, e por isso ficam no
+ * mesmo lugar. Uma etapa própria "Teto" foi recusada no pacote aprovado: não há nada a
+ * *fazer* com o teto que justifique um passo da cadeia.
+ *
+ * Ele aparece em toda rodada aberta, **inclusive sem teto declarado**, e essa é a única
+ * exceção ao "rodada sem teto é exatamente como hoje": sem o painel, uma rodada aberta sem
+ * teto nunca poderia ganhar um. Ele não avisa, não bloqueia e não marca nada.
+ *
+ * Não há botão de remover: apagar um teto já declarado é questão que o ADR-0040 não
+ * decidiu, e inventá-la aqui seria decidi-la. Gravar é botão SECUNDÁRIO — o ato primário
+ * desta etapa é montar o orçamento.
+ */
+export function PainelTetoDaVerba({
+  valor,
+  rotulo,
+  versao,
+  gravando,
+  onValor,
+  onRotulo,
+  onGravar,
+}: {
+  valor: string;
+  rotulo: string;
+  versao: number | null;
+  gravando: boolean;
+  onValor: (value: string) => void;
+  onRotulo: (value: string) => void;
+  onGravar: () => void;
+}) {
+  const erro = tetoAmountError(valor);
+  return (
+    <section className="painel" aria-label="Teto da verba">
+      <div className="painel-cabecalho">
+        <h2>Teto da verba</h2>
+      </div>
+      <form
+        className="formulario"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onGravar();
+        }}
+      >
+        <label className="campo">
+          Teto da verba (opcional)
+          <span className="campo-dica">{DICA_TETO}</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={valor}
+            onChange={(event) => onValor(event.target.value)}
+            aria-invalid={erro !== null}
+            disabled={gravando}
+          />
+        </label>
+        {erro === null ? null : (
+          <p className="campo-erro" role="alert">
+            {erro}
+          </p>
+        )}
+        <label className="campo">
+          Demanda de origem (opcional)
+          <span className="campo-dica">{DICA_TETO_DEMANDA}</span>
+          <input
+            type="text"
+            value={rotulo}
+            onChange={(event) => onRotulo(event.target.value)}
+            disabled={gravando}
+          />
+        </label>
+        <p className="dica">{AVISO_TETO_EDICAO}</p>
+        <div className="acoes-linha">
+          <button
+            type="submit"
+            className="botao-secundario"
+            disabled={gravando || erro !== null || valor.trim().length === 0}
+          >
+            {gravando ? "Gravando…" : "Gravar teto"}
+          </button>
+        </div>
+        {versao === null ? null : (
+          <p className="digest">rodada versão {versao} · gravado sobre esta versão</p>
+        )}
+      </form>
+    </section>
+  );
+}
+
+/**
+ * A linha do teto na lista de orçamentos do tenant — presente SÓ na rodada que tem teto.
+ * A rodada sem teto não ganha "sem teto", "teto: —" nem espaço reservado: ausência de teto
+ * não é um estado a comunicar (ADR-0040, decisão 6).
+ */
+export function LinhaTetoDaRodada({
+  amount,
+  label,
+}: {
+  amount: string | null;
+  label: string | null;
+}) {
+  // Ausência de teto chega como `null` da API, e texto vazio nunca é teto: nos dois casos
+  // a linha simplesmente não existe.
+  if (!amount) {
+    return null;
+  }
+  return (
+    <p className="dica">
+      Teto {formatMoneyText(amount)}
+      {label ? ` · ${label}` : null}
+    </p>
+  );
+}
+
 /** Um item confirmado sem decisão de código ainda não tem preço: rótulo para a lista. */
 function rotuloDoItem(label: string, quantity: string | null, unit: string): string {
   return `${label} · ${formatQuantityText(quantity, unitLabel(unit))}`;
@@ -507,6 +748,10 @@ export function OrcamentoApp({
   // BDI e montagem.
   const [bdiInput, setBdiInput] = useState("");
 
+  // Teto da verba da rodada (ADR-0040): parâmetro da rodada, editado na mesma etapa.
+  const [tetoInput, setTetoInput] = useState("");
+  const [tetoLabelInput, setTetoLabelInput] = useState("");
+
   useEffect(() => {
     if (toast === null) {
       return;
@@ -581,6 +826,20 @@ export function OrcamentoApp({
       setRevisionConflict(false);
       setAlertMessage(null);
       setSemAcesso(null);
+      // O teto gravado preenche os campos para conferência e edição, e SÓ enquanto
+      // ninguém escreveu neles — mesma forma funcional do BDI mais abaixo, que é o que
+      // mantém `carregarEstado` fora da dependência do texto digitado. É também o que
+      // preserva o valor escrito quando o `409` chega: a leitura seguinte não o
+      // sobrescreve.
+      const tetoDaRodada = next.target;
+      if (tetoDaRodada !== undefined) {
+        setTetoInput((atual) =>
+          atual.trim().length === 0 ? tetoDaRodada.amount : atual,
+        );
+        setTetoLabelInput((atual) =>
+          atual.trim().length === 0 ? (tetoDaRodada.label ?? "") : atual,
+        );
+      }
       if (next.takeoff.present) {
         setTakeoff(await getTakeoff(token, orcamento));
         setCodes(await getCodes(token, orcamento));
@@ -683,6 +942,8 @@ export function OrcamentoApp({
       setSearchResult(null);
       setQuery("");
       setBdiInput("");
+      setTetoInput("");
+      setTetoLabelInput("");
       setAuditoriaReprovada(null);
       setRevisionConflict(false);
       setAlertMessage(null);
@@ -718,6 +979,8 @@ export function OrcamentoApp({
         worksiteName: form.worksiteName,
         referenceLabel: form.referenceLabel,
         address: form.address,
+        targetAmount: form.tetoAmount,
+        targetLabel: form.tetoLabel,
       });
       setForm(EMPTY_ESTIMATE_FORM);
       setToast("Orçamento aberto. A próxima etapa é instalar a cascata de fontes.");
@@ -1000,6 +1263,47 @@ export function OrcamentoApp({
     }
   };
 
+  /**
+   * Declara ou edita o teto da rodada. Mutação como qualquer outra desta jornada: cita
+   * `base_version`, manda `Idempotency-Key` e não toca no orçamento montado — o documento
+   * continua o mesmo, e é o consumo que passa a ser lido contra o teto novo.
+   */
+  const gravarTeto = async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null) {
+      return;
+    }
+    const erroTeto = tetoAmountError(tetoInput);
+    if (erroTeto !== null || tetoInput.trim().length === 0) {
+      setAlertMessage(
+        erroTeto ??
+          "Informe o teto de verba desta rodada; apagar um teto já declarado não é ato desta tela.",
+      );
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const response = await postTarget(
+        token,
+        orcamento,
+        version,
+        tetoInput,
+        tetoLabelInput,
+      );
+      aplicarVersao(response.version);
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast(
+        "Teto gravado na rodada. O orçamento montado não mudou — mudou a régua do consumo.",
+      );
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const jornada = useMemo(() => derivarEtapas(state), [state]);
   const etapaVisivel: EtapaId | "resumo" = openStep ?? "resumo";
 
@@ -1025,6 +1329,11 @@ export function OrcamentoApp({
     (itemId) => pendingItems.some((item) => item.item_id === itemId),
   );
   const bdiErro = bdiInput.trim().length === 0 ? null : bdiPercentError(bdiInput);
+  // O bloco do teto é derivado do ESTADO da rodada, que é a leitura autoritativa: o
+  // servidor manda `{target, consumed, remaining, over}` pronto, e `null` aqui é a rodada
+  // sem teto — nada a acrescentar à prévia nem à barra de etapas.
+  const tetoDerivado = useMemo(() => derivarTeto(state), [state]);
+  const tetoErroAbertura = tetoAmountError(form.tetoAmount);
 
   // Sem sessão a jornada não chama nada e não inventa orçamento: quem tem a tela de
   // entrar é a casca (`App.tsx`), e as rotas do orçamento são autenticadas e por tenant.
@@ -1122,13 +1431,18 @@ export function OrcamentoApp({
                       <div>
                         <strong>{item.worksite_name}</strong>{" "}
                         <span className="mono">({item.worksite_key})</span>
-                        <p className="topbar-meta">
+                        {/* `.dica`, e não `.topbar-meta`: a cor do `.topbar-meta` é a
+                            tinta do topbar ESCURO (`--dark-ink-soft`) e some sobre a
+                            superfície clara do painel. Defeito de legibilidade herdado da
+                            F-020, consertado aqui porque o mock aprovado da F-027 o expôs
+                            nesta mesma lista. */}
+                        <p className="dica">
                           {item.reference_label} · etapa {stageLabel(item.stage)} ·
                           leitura da legenda{" "}
                           {extractionStatusLabel(item.extraction_status)} · versão{" "}
                           {item.version}
                         </p>
-                        <p className="topbar-meta">
+                        <p className="dica">
                           Cascata:{" "}
                           {item.cascade_origins.length === 0
                             ? "nenhuma fonte instalada"
@@ -1139,7 +1453,11 @@ export function OrcamentoApp({
                                 )
                                 .join(" · ")}
                         </p>
-                        <p className="topbar-meta">
+                        <LinhaTetoDaRodada
+                          amount={item.target_amount}
+                          label={item.target_label}
+                        />
+                        <p className="dica">
                           Atualizado em {formatTimestamp(item.updated_at)}
                         </p>
                       </div>
@@ -1249,7 +1567,49 @@ export function OrcamentoApp({
                     }
                   />
                 </label>
-                <button type="submit" className="botao-primario" disabled={submitting}>
+                {/* Teto de verba (ADR-0040): opcional de verdade — campo vazio é o padrão,
+                    não pede justificativa e não muda o botão. */}
+                <label className="campo">
+                  Teto da verba (opcional)
+                  <span className="campo-dica">{DICA_TETO}</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={form.tetoAmount}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        tetoAmount: event.target.value,
+                      }))
+                    }
+                    aria-invalid={tetoErroAbertura !== null}
+                  />
+                </label>
+                {tetoErroAbertura === null ? null : (
+                  <p className="campo-erro" role="alert">
+                    {tetoErroAbertura}
+                  </p>
+                )}
+                <label className="campo">
+                  Demanda de origem (opcional)
+                  <span className="campo-dica">{DICA_TETO_DEMANDA}</span>
+                  <input
+                    type="text"
+                    value={form.tetoLabel}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        tetoLabel: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <p className="dica">{AVISO_TETO_ABERTURA}</p>
+                <button
+                  type="submit"
+                  className="botao-primario"
+                  disabled={submitting || tetoErroAbertura !== null}
+                >
                   {submitting ? "Abrindo…" : "Abrir orçamento"}
                 </button>
               </form>
@@ -1349,6 +1709,10 @@ export function OrcamentoApp({
           {loading ? "Recarregando…" : "Recarregar estado atual"}
         </button>
       </nav>
+
+      {/* Uma vez só, FORA da etapa visível: o estouro é condição da rodada, não da etapa
+          em que o número foi calculado, e acompanha todas elas enquanto durar. */}
+      <FaixaTetoEstourado teto={tetoDerivado} />
 
       {revisionConflict ? (
         <BannerOrcamentoMudou onReload={() => void carregarEstado()} />
@@ -2002,47 +2366,59 @@ export function OrcamentoApp({
           </div>
         ) : etapaVisivel === "montagem" ? (
           <div className="workspace duas-colunas">
-            <section className="painel" aria-label="BDI do orçamento">
-              <div className="painel-cabecalho">
-                <h2>BDI</h2>
-              </div>
-              <form
-                className="formulario"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void montarOrcamento();
-                }}
-              >
-                <label className="campo">
-                  Percentual de BDI
-                  <span className="campo-dica">{DICA_BDI}</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={bdiInput}
-                    onChange={(event) => setBdiInput(event.target.value)}
-                    aria-invalid={bdiErro !== null}
-                    required
-                  />
-                </label>
-                {bdiErro === null ? null : (
-                  <p className="campo-erro" role="alert">
-                    {bdiErro}
-                  </p>
-                )}
-                <p className="dica">{AVISO_BDI}</p>
-                <p className="dica">{DESCRICAO_MONTAGEM}</p>
-                <div className="acoes-linha">
-                  <button
-                    type="submit"
-                    className="botao-primario"
-                    disabled={submitting || bdiPercentError(bdiInput) !== null}
-                  >
-                    {submitting ? "Montando…" : "Montar orçamento"}
-                  </button>
+            <div className="coluna-empilhada">
+              <section className="painel" aria-label="BDI do orçamento">
+                <div className="painel-cabecalho">
+                  <h2>BDI</h2>
                 </div>
-              </form>
-            </section>
+                <form
+                  className="formulario"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void montarOrcamento();
+                  }}
+                >
+                  <label className="campo">
+                    Percentual de BDI
+                    <span className="campo-dica">{DICA_BDI}</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={bdiInput}
+                      onChange={(event) => setBdiInput(event.target.value)}
+                      aria-invalid={bdiErro !== null}
+                      required
+                    />
+                  </label>
+                  {bdiErro === null ? null : (
+                    <p className="campo-erro" role="alert">
+                      {bdiErro}
+                    </p>
+                  )}
+                  <p className="dica">{AVISO_BDI}</p>
+                  <p className="dica">{DESCRICAO_MONTAGEM}</p>
+                  <div className="acoes-linha">
+                    <button
+                      type="submit"
+                      className="botao-primario"
+                      disabled={submitting || bdiPercentError(bdiInput) !== null}
+                    >
+                      {submitting ? "Montando…" : "Montar orçamento"}
+                    </button>
+                  </div>
+                </form>
+              </section>
+
+              <PainelTetoDaVerba
+                valor={tetoInput}
+                rotulo={tetoLabelInput}
+                versao={version}
+                gravando={submitting}
+                onValor={setTetoInput}
+                onRotulo={setTetoLabelInput}
+                onGravar={() => void gravarTeto()}
+              />
+            </div>
 
             <section className="painel" aria-label="Prévia do orçamento">
               <div className="painel-cabecalho">
@@ -2079,6 +2455,8 @@ export function OrcamentoApp({
                   </li>
                 </ul>
               )}
+              {/* Colado ao Total geral, porque o consumo é uma leitura dele. */}
+              <BlocoConsumoDoTeto teto={tetoDerivado} />
             </section>
           </div>
         ) : (

@@ -477,6 +477,10 @@ def test_sem_o_papel_toda_rota_recusa_antes_do_lookup(tmp_path: Path) -> None:
             },
         ),
         (f"/v1/estimate-rounds/{round_id}/estimate", {"base_version": 1, "bdi_percent": "25.00"}),
+        (
+            f"/v1/estimate-rounds/{round_id}/target",
+            {"base_version": 1, "target_amount": "10000.00"},
+        ),
     ]
     for path, payload in writes:
         response = client.post(path, headers=headers, json=payload)
@@ -509,8 +513,13 @@ def test_post_sem_idempotency_key_recusa(tmp_path: Path) -> None:
         headers=headers,
         json={"base_version": 1, "bdi_percent": "25.00"},
     )
+    teto = client.post(
+        f"/v1/estimate-rounds/{created['round_id']}/target",
+        headers=headers,
+        json={"base_version": 1, "target_amount": "10000.00"},
+    )
 
-    for response in (criacao, orcamento):
+    for response in (criacao, orcamento, teto):
         assert response.status_code == 400
         assert response.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
 
@@ -551,6 +560,280 @@ def test_base_version_velho_recusa_sem_gravar_nada(tmp_path: Path) -> None:
         record = session.get(EstimateRoundRecord, round_id)
         assert record is not None
         assert [entry["origin"] for entry in record.catalog_cascade_json] == ["sco"]
+
+
+# --- teto de verba (ADR-0040) ------------------------------------------------------------
+
+
+def _set_target(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    target_amount: str,
+    target_label: str | None = None,
+    key: str,
+    tenant: str = _TENANT,
+) -> Any:
+    body: dict[str, Any] = {"base_version": base_version, "target_amount": target_amount}
+    if target_label is not None:
+        body["target_label"] = target_label
+    return client.post(
+        f"/v1/estimate-rounds/{round_id}/target",
+        headers=_headers(tenant, key=key),
+        json=body,
+    )
+
+
+def test_criar_rodada_com_teto_o_estado_devolve_o_bloco(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    created = _create_round(
+        client,
+        target_amount="50000.00",
+        target_label="Relação de Praças 2026 · demanda 14",
+    )
+
+    state = client.get(
+        f"/v1/estimate-rounds/{created['round_id']}", headers=_headers(key="estado-com-teto")
+    )
+    assert state.status_code == 200, state.text
+    body = state.json()
+    assert body["target"] == {
+        "amount": "50000.00",
+        "label": "Relação de Praças 2026 · demanda 14",
+    }
+    # Sem orçamento montado ainda: só `target` aparece, nada de consumo é derivado.
+    assert "consumed" not in body
+    assert "remaining" not in body
+    assert "over" not in body
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, created["round_id"])
+        assert record is not None
+        assert record.target_amount == "50000.00"
+        assert record.target_label == "Relação de Praças 2026 · demanda 14"
+
+
+def test_listagem_mostra_teto_cru_sem_consumo(tmp_path: Path) -> None:
+    """A listagem devolve `target_amount`/`target_label` crus; nunca `consumed`/`over`.
+
+    A listagem não busca a cabeça de cada rodada — buscá-la só para derivar o consumo
+    faria uma página inteira pagar N consultas extras por um bloco que a Tela 1 do mock
+    não pede ali.
+    """
+    client = _client(tmp_path)
+    com_teto = _create_round(
+        client,
+        key="rodada-com-teto",
+        worksite_key="praca-sintetica-com-teto",
+        target_amount="85000.00",
+        target_label="Relação de Praças 2026 · demanda 14",
+    )
+    sem_teto = _create_round(client, key="rodada-sem-teto", worksite_key="praca-sintetica-sem-teto")
+
+    listagem = client.get("/v1/estimate-rounds", headers=_headers(key="listagem-teto"))
+
+    assert listagem.status_code == 200, listagem.text
+    items = {item["round_id"]: item for item in listagem.json()["items"]}
+    com_teto_item = items[com_teto["round_id"]]
+    assert com_teto_item["target_amount"] == "85000.00"
+    assert com_teto_item["target_label"] == "Relação de Praças 2026 · demanda 14"
+    assert "consumed" not in com_teto_item
+    assert "over" not in com_teto_item
+    sem_teto_item = items[sem_teto["round_id"]]
+    assert sem_teto_item["target_amount"] is None
+    assert sem_teto_item["target_label"] is None
+
+
+def test_criar_rodada_sem_teto_o_bloco_fica_ausente_mesmo_com_orcamento_montado(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    montagem = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="montagem-sem-teto"),
+        json={"base_version": state["version"], "bdi_percent": "25.00"},
+    )
+    assert montagem.status_code == 200, montagem.text
+    body = montagem.json()
+    for key in ("target", "consumed", "remaining", "over"):
+        assert key not in body
+
+    leitura = client.get(
+        f"/v1/estimate-rounds/{state['round_id']}", headers=_headers(key="estado-sem-teto")
+    )
+    assert leitura.status_code == 200, leitura.text
+    for key in ("target", "consumed", "remaining", "over"):
+        assert key not in leitura.json()
+
+
+def test_declarar_teto_depois_da_criacao(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+
+    response = _set_target(
+        client, round_id, base_version=1, target_amount="12345.67", key="declarar-teto"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["round_id"] == round_id
+    assert body["version"] == 2
+    assert body["target"] == {"amount": "12345.67", "label": None}
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert record.target_amount == "12345.67"
+        assert record.target_label is None
+        assert record.version == 2
+
+
+def test_editar_teto_ja_declarado(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client, target_amount="10000.00", target_label="Verba original")
+    round_id = created["round_id"]
+
+    edited = _set_target(
+        client,
+        round_id,
+        base_version=1,
+        target_amount="20000.00",
+        target_label="Verba revista",
+        key="editar-teto",
+    )
+
+    assert edited.status_code == 200, edited.text
+    body = edited.json()
+    assert body["target"] == {"amount": "20000.00", "label": "Verba revista"}
+    assert body["version"] == 2
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert record.target_amount == "20000.00"
+        assert record.target_label == "Verba revista"
+
+
+def test_teto_com_base_version_velho_recusa_sem_gravar_nada(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client, target_amount="10000.00")
+    round_id = created["round_id"]
+    ok = _set_target(client, round_id, base_version=1, target_amount="20000.00", key="teto-ok")
+    assert ok.status_code == 200, ok.text
+
+    stale = _set_target(
+        client, round_id, base_version=1, target_amount="99999.99", key="teto-velho"
+    )
+
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "REVISION_CONFLICT"
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        # A gravação válida venceu; a tentativa com `base_version` velho não tocou nada.
+        assert record.target_amount == "20000.00"
+
+
+def test_teto_invalido_recusa_com_o_codigo_unico(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+
+    for index, invalid_amount in enumerate(("0.00", "-10.00", "não-é-um-decimal"), start=1):
+        response = _set_target(
+            client,
+            round_id,
+            base_version=1,
+            target_amount=invalid_amount,
+            key=f"teto-invalido-{index}",
+        )
+        assert response.status_code == 422, invalid_amount
+        assert response.json()["detail"]["code"] == "ESTIMATE_TARGET_INVALID", invalid_amount
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert record.target_amount is None
+        assert record.version == 1
+
+
+def test_criar_rodada_com_teto_invalido_recusa_na_criacao(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/v1/estimate-rounds",
+        headers=_headers(key="criacao-teto-invalido"),
+        json=_round_payload(target_amount="0.00"),
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "ESTIMATE_TARGET_INVALID"
+    with _database(client).sessions() as session:
+        assert session.scalars(select(EstimateRoundRecord)).all() == []
+
+
+def test_bloco_derivado_nos_tres_estados_do_teto(tmp_path: Path) -> None:
+    """O mesmo orçamento montado (`total_amount == "1125.00"`), três tetos diferentes.
+
+    O limite exato é o caso que a comparação em dinheiro mais pode errar: teto igual ao
+    total conhecido do cenário tem que devolver `over: false` e `remaining == "0.00"`,
+    nunca um resíduo de ponto flutuante.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    round_id = state["round_id"]
+    montagem = client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate",
+        headers=_headers(key="montagem-teto"),
+        json={"base_version": state["version"], "bdi_percent": "25.00"},
+    )
+    assert montagem.status_code == 200, montagem.text
+    assert montagem.json()["total_amount"] == "1125.00"
+    version = montagem.json()["version"]
+
+    dentro = _set_target(
+        client, round_id, base_version=version, target_amount="2000.00", key="teto-dentro"
+    )
+    assert dentro.status_code == 200, dentro.text
+    dentro_body = dentro.json()
+    assert dentro_body["consumed"] == "1125.00"
+    assert dentro_body["remaining"] == "875.00"
+    assert dentro_body["over"] is False
+
+    limite = _set_target(
+        client,
+        round_id,
+        base_version=dentro_body["version"],
+        target_amount="1125.00",
+        key="teto-limite",
+    )
+    assert limite.status_code == 200, limite.text
+    limite_body = limite.json()
+    assert limite_body["consumed"] == "1125.00"
+    assert limite_body["remaining"] == "0.00"
+    assert limite_body["over"] is False
+
+    estourado = _set_target(
+        client,
+        round_id,
+        base_version=limite_body["version"],
+        target_amount="1124.99",
+        key="teto-estourado",
+    )
+    assert estourado.status_code == 200, estourado.text
+    estourado_body = estourado.json()
+    assert estourado_body["consumed"] == "1125.00"
+    assert estourado_body["remaining"] == "-0.01"
+    assert estourado_body["over"] is True
+
+    # O `GET /estimate` deriva o MESMO bloco, lendo o `total_amount` gravado — nunca
+    # recomputando dinheiro.
+    leitura = client.get(
+        f"/v1/estimate-rounds/{round_id}/estimate", headers=_headers(key="leitura-teto")
+    )
+    assert leitura.status_code == 200, leitura.text
+    assert leitura.json()["remaining"] == "-0.01"
+    assert leitura.json()["over"] is True
 
 
 # --- cascata ----------------------------------------------------------------------------

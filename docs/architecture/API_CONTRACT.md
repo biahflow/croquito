@@ -833,11 +833,15 @@ medição.
 
 ### `POST /v1/estimate-rounds`
 
-Entrada: `worksite_key`, `worksite_name`, `reference_label`, `address` (opcional).  
+Entrada: `worksite_key`, `worksite_name`, `reference_label`, `address` (opcional),
+`target_amount`/`target_label` (opcionais, o teto de verba da demanda — ADR-0040).  
 Saída: `round_id`, `version=1`, `status`, `created_at`.
 
 `worksite_key` segue `WORKSITE_KEY_PATTERN`, como na medição: a chave é imutável na rodada.
 A rodada nasce **sem** fonte de preço — as fontes entram uma a uma, em ordem declarada.
+`target_amount` viaja como **texto**, `Decimal` exato; zero, negativo ou ilegível devolvem
+`422 ESTIMATE_TARGET_INVALID`. Sem `target_amount`, a rodada nasce sem teto — o
+comportamento de antes desta decisão, sem qualquer bloco derivado.
 
 ### `GET /v1/estimate-rounds`
 
@@ -845,11 +849,34 @@ Lista as rodadas do tenant, com cursor opaco. Devolve `round_id`, `worksite_key`
 `reference_label`, `version`, `status`, etapa corrente e `cascade_origins` na ordem da
 cascata.
 
+Com teto declarado (ADR-0040), cada item ganha `target_amount`/`target_label` — os dois
+textos crus da raiz da rodada, sem `consumed`/`remaining`/`over`: a listagem não busca a
+cabeça de cada rodada para derivar aquele bloco. Rodada sem teto devolve os dois `null`.
+
 ### `GET /v1/estimate-rounds/{round_id}`
 
 Estado da rodada: `version`, cascata instalada (origem, digest, data-base e rótulo de cada
 fonte, na ordem), etapas por presença e digest de artefato, estado da extração paga e o
 estado do orçamento (`estimate_sha256`, `workbook_sha256`).
+
+Com teto declarado (ADR-0040), a resposta ganha `target: {amount, label}`; com teto **e**
+orçamento montado, ganha também `consumed` (o `total_amount` do documento, como está),
+`remaining` (teto menos consumido, pode ser negativo) e `over` (`consumido > teto`,
+**estrito** — o limite exato não é estouro). Nada aqui recomputa dinheiro: os dois lados da
+comparação são lidos, nunca refeitos. Rodada sem teto não ganha nenhuma dessas chaves.
+
+### `POST /v1/estimate-rounds/{round_id}/target`
+
+Entrada: `base_version`, `target_amount` (texto, `Decimal` exato, **> 0**),
+`target_label` (opcional). Declara o teto de verba da rodada quando ainda não existe, ou
+edita o valor/rótulo de um já declarado — a mesma rota serve os dois atos. `target_amount`
+zero, negativo ou ilegível devolve `422 ESTIMATE_TARGET_INVALID`; a mesma recusa vale na
+criação da rodada.
+
+O teto é dado da RODADA, não do `Estimate` (ADR-0040, decisão 1): esta rota só grava as
+duas colunas de `estimate_rounds` e avança a versão da rodada, como o BDI — nenhuma
+revisão append-only nasce deste ato. **Não existe rota de remoção**: o Design Approval
+Package não desenha apagar um teto já declarado.
 
 ### `POST /v1/estimate-rounds/{round_id}/catalogs`
 
@@ -971,12 +998,20 @@ sem decisão de código, com `ESTIMATE_ASSIGNMENT_MISSING`. `bdi_percent` ilegí
 A resposta não carrega URL: ela é guardada no registro de idempotência, e URL assinada é
 credencial de leitura.
 
+Com teto declarado na rodada (ADR-0040), a resposta ganha `target`, `consumed`,
+`remaining` e `over` — o mesmo bloco derivado do estado da rodada, comparando o
+`total_amount` que acabou de ser montado contra o teto. Sem teto, nenhuma dessas chaves
+aparece.
+
 ### `GET /v1/estimate-rounds/{round_id}/estimate`
 
 Retorna o orçamento com BDI, totais e linhas **recomputados** na leitura, mais
 `workbook_url`: URL assinada de curta duração da planilha publicada, montada na hora depois
 de conferido o prefixo do tenant. Orçamento ainda não montado devolve
 `409 ROUND_STAGE_NOT_READY`; orçamento que não revalida devolve `422`.
+
+Com teto declarado, ganha também `target`/`consumed`/`remaining`/`over` (ADR-0040), a
+mesma forma do estado da rodada.
 
 ## Exports
 

@@ -2,7 +2,11 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_HUMAN_REVIEW`
+
+> Implementação integrada em 2026-08-20 na branch `f-027-especificacao` (T1–T3,
+> [plan.md](plan.md)), revisada e com evidência em [evidence.md](evidence.md).
+> Pende o merge, represado por decisão humana da mesma data.
 
 > Selecionada por decisão humana de 2026-08-20, na rodada pós-F-020. Os DOIS gates
 > foram exercidos na mesma data: o [ADR-0040](../../adr/0040-teto-de-verba-do-orcamento-base.md)

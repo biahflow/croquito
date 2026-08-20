@@ -412,6 +412,10 @@ def test_estimate_round_full_chain_through_v1_api(
     version = built_body["version"]
     assert built_body["bdi_percent"] == BDI_PERCENT
     assert built_body["workbook_present"] is True
+    # Retrocompatibilidade (F-027 T3): rodada sem teto declarado não ganha o bloco
+    # derivado do teto de verba (ADR-0040) — nem `target`, nem `consumed`/`remaining`/`over`.
+    for absent_key in ("target", "consumed", "remaining", "over"):
+        assert absent_key not in built_body
 
     # `estimate_json` da revisão valida com `Estimate.model_validate` (schema v2), e os dois
     # totais batem com o que a rota publicou como texto.
@@ -430,6 +434,8 @@ def test_estimate_round_full_chain_through_v1_api(
     assert read["estimate_sha256"] == built_body["estimate_sha256"]
     assert read["workbook_present"] is True
     assert read["workbook_url"] is not None
+    for absent_key in ("target", "consumed", "remaining", "over"):
+        assert absent_key not in read
 
     object_key = estimate_workbook_key(
         tenant_id=TENANT, round_id=str(round_id), estimate_sha256=read["estimate_sha256"]
@@ -478,3 +484,257 @@ def test_estimate_round_full_chain_through_v1_api(
         for offset in range(len(estimate.unpriced_item_ids))
     ]
     assert printed_unpriced_ids == estimate.unpriced_item_ids
+
+
+def test_estimate_round_target_over_and_exact_limit_through_v1_api(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stack: tuple[TestClient, FakeObjectStore, FakeQueue, str],
+) -> None:
+    """Teto declarado na criação, consumido pela cadeia real `/v1` (F-027 T3, ADR-0040).
+
+    Réplica enxuta de `test_estimate_round_full_chain_through_v1_api` até o orçamento
+    montado — sem repetir as asserções de cascata/planilha que aquele teste já cobre —
+    desta vez com `target_amount` declarado na CRIAÇÃO da rodada (critério 2 da feature),
+    para provar o bloco derivado com valores exatos pela cadeia inteira: estouro na
+    montagem (critério 3), limite exato editado depois NÃO é estouro (critério 4),
+    conflito de versão e teto inválido na rota `.../target`.
+
+    O total conhecido deste cenário (`legend_fixture_adapter` + as três fontes da
+    cascata + `build_demo_estimate_assignments`) é `71516.83` com BDI 25% — medido
+    empiricamente a partir da MESMA cadeia (não é o `1125.00` do cenário menor usado
+    pelos testes de rota de T1 em `tests/api/test_estimate_round_routes.py`, que usa uma
+    fixture sintética diferente e mais simples).
+    """
+    client, storage, queue, database_url = stack
+
+    plate = render_synthetic_plate(tmp_path / "plate-source")
+    monkeypatch.setenv(AI_BUDGET_ENV, "1.50")
+    monkeypatch.setenv(_ANTHROPIC_KEY_ENV, "chave-de-teste-nunca-usada")
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url=QUEUE_URL,
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            artifact_bucket="croquito-estimate-v1-e2e",
+        ),
+        valuation_extraction_adapter=legend_fixture_adapter(plate),
+    )
+    worker.client = queue
+    worker.s3_client = storage
+
+    template = default_template()
+    previous_mapao_path = build_synthetic_previous_mapao(tmp_path / "previous-mapao-teto.xlsx")
+    sco_catalog = read_price_catalog(
+        previous_mapao_path,
+        template,
+        source_label=SYNTHETIC_CONTRACT_SOURCE_LABEL,
+        reference_month=SYNTHETIC_REFERENCE_MONTH,
+    )
+    dbf_path = write_emop_dbf(tmp_path / "emop-sintetico-teto.dbf")
+    emop_catalog, _emop_notes = read_emop_catalog_with_report(dbf_path, emop_fixture_layout())
+    composition_set = build_synthetic_composition_set()
+    composition_source_sha256 = hashlib.sha256(
+        composition_set.model_dump_json().encode("utf-8")
+    ).hexdigest()
+    composition_catalog = compile_compositions(
+        composition_set, source_sha256=composition_source_sha256
+    )
+    cascade = (sco_catalog, emop_catalog, composition_catalog)
+
+    # 1. `POST /v1/estimate-rounds` JÁ com teto declarado (critério 2 da feature) — menor
+    # que o total conhecido do cenário, para estourar assim que a montagem publicar.
+    created = client.post(
+        "/v1/estimate-rounds",
+        headers=_headers("rodada-teto-e2e"),
+        json={
+            "worksite_key": "praca-sintetica-teto-e2e",
+            "worksite_name": SYNTHETIC_ESTIMATE_WORKSITE_NAME,
+            "reference_label": "ORCAMENTO V1 TETO E2E 01/2026",
+            "address": ADDRESS,
+            "target_amount": "70000.00",
+            "target_label": "Relação de Praças 2026 · demanda de teste",
+        },
+    )
+    assert created.status_code == 201, created.text
+    round_id = created.json()["round_id"]
+    version = created.json()["version"]
+
+    for index, catalog in enumerate(cascade):
+        upload = _presign_and_put(
+            client,
+            storage,
+            filename=f"catalogo-teto-{catalog.origin.value}.json",
+            content_type="application/json",
+            payload=_catalog_upload_bytes(catalog),
+            key=f"presign-catalogo-teto-{index}",
+        )
+        installed = client.post(
+            f"/v1/estimate-rounds/{round_id}/catalogs",
+            headers=_headers(f"instala-catalogo-teto-{index}"),
+            json={"upload_id": upload["upload_id"], "base_version": version},
+        )
+        assert installed.status_code == 201, installed.text
+        version = installed.json()["version"]
+
+    plate_payload = plate.pdf_path.read_bytes()
+    plate_upload = _presign_and_put(
+        client,
+        storage,
+        filename="prancha-teto.pdf",
+        content_type="application/pdf",
+        payload=plate_payload,
+        key="presign-prancha-teto",
+    )
+    associated = client.post(
+        f"/v1/estimate-rounds/{round_id}/plate",
+        headers=_headers("prancha-associada-teto"),
+        json={"upload_id": plate_upload["upload_id"], "base_version": version},
+    )
+    assert associated.status_code == 200, associated.text
+    version = associated.json()["version"]
+
+    extraction = client.post(
+        f"/v1/estimate-rounds/{round_id}/plate/extractions",
+        headers=_headers("extracao-teto-e2e"),
+        json={"base_version": version},
+    )
+    assert extraction.status_code == 202, extraction.text
+    version = extraction.json()["version"]
+
+    assert _drain(worker) == 1
+
+    round_after_extraction = client.get(
+        f"/v1/estimate-rounds/{round_id}", headers=_headers()
+    ).json()
+    assert round_after_extraction["extraction"]["status"] == "done"
+    version = round_after_extraction["version"]
+    # O teto sobrevive intacto ao resto da cadeia: sem orçamento montado, o bloco
+    # derivado só tem `target` — o consumo depende do `total_amount` que ainda não existe.
+    assert round_after_extraction["target"] == {
+        "amount": "70000.00",
+        "label": "Relação de Praças 2026 · demanda de teste",
+    }
+    assert "consumed" not in round_after_extraction
+
+    takeoff = client.get(f"/v1/estimate-rounds/{round_id}/takeoff", headers=_headers()).json()
+    assert takeoff["version"] == version
+    packet = _packet_from_takeoff_response(takeoff)
+
+    takeoff_decisions = build_demo_takeoff_decisions(packet).decisions
+    last_decision_response: dict[str, Any] | None = None
+    for index, decision in enumerate(takeoff_decisions):
+        response = client.post(
+            f"/v1/estimate-rounds/{round_id}/takeoff/decisions",
+            headers=_headers(f"decisao-takeoff-teto-{index}"),
+            json={
+                "base_version": version,
+                "item_id": decision.item_id,
+                "action": decision.action,
+                "quantity": None if decision.quantity is None else str(decision.quantity),
+                "unit": decision.unit,
+                "note": decision.note,
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        version = body["version"]
+        last_decision_response = body
+    assert last_decision_response is not None
+    assert last_decision_response["review_status"] == "complete"
+
+    assert _drain(worker) == len(takeoff_decisions)
+
+    final_takeoff = client.get(f"/v1/estimate-rounds/{round_id}/takeoff", headers=_headers()).json()
+    final_packet = _packet_from_takeoff_response(final_takeoff)
+
+    code_decisions = build_demo_estimate_assignments(final_packet, list(cascade)).assignments
+    for index, assignment in enumerate(code_decisions):
+        response = client.post(
+            f"/v1/estimate-rounds/{round_id}/code-assignments/decisions",
+            headers=_headers(f"decisao-codigo-teto-{index}"),
+            json={
+                "base_version": version,
+                "item_id": assignment.item_id,
+                "action": assignment.action,
+                "code": assignment.code,
+                "catalog_sha256": assignment.catalog_sha256,
+                "note": assignment.note,
+            },
+        )
+        assert response.status_code == 200, response.text
+        version = response.json()["version"]
+
+    # 2. `POST .../estimate`: monta, audita e publica — teto (70000.00) menor que o total
+    # conhecido do cenário (71516.83 com BDI 25%) estoura já na PRÓPRIA montagem
+    # (critério 3 da feature).
+    built = client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate",
+        headers=_headers("orcamento-teto-e2e"),
+        json={"base_version": version, "bdi_percent": BDI_PERCENT},
+    )
+    assert built.status_code == 200, built.text
+    built_body = built.json()
+    version = built_body["version"]
+    total_amount = built_body["total_amount"]
+    assert total_amount == "71516.83"
+    assert built_body["target"] == {
+        "amount": "70000.00",
+        "label": "Relação de Praças 2026 · demanda de teste",
+    }
+    assert built_body["consumed"] == total_amount
+    assert built_body["remaining"] == "-1516.83"
+    assert built_body["over"] is True
+
+    read_after_build = client.get(
+        f"/v1/estimate-rounds/{round_id}/estimate", headers=_headers()
+    ).json()
+    assert read_after_build["consumed"] == total_amount
+    assert read_after_build["remaining"] == "-1516.83"
+    assert read_after_build["over"] is True
+
+    # 3. `POST .../target` editando o teto para EXATAMENTE o total conhecido: o limite
+    # exato NÃO é estouro (critério 4 da feature) — `over: false`, `remaining == "0.00"`.
+    exact = client.post(
+        f"/v1/estimate-rounds/{round_id}/target",
+        headers=_headers("teto-limite-exato-e2e"),
+        json={"base_version": version, "target_amount": total_amount},
+    )
+    assert exact.status_code == 200, exact.text
+    exact_body = exact.json()
+    version = exact_body["version"]
+    # Editar sem repetir `target_label` limpa o rótulo — a rota não faz merge parcial.
+    assert exact_body["target"] == {"amount": total_amount, "label": None}
+    assert exact_body["consumed"] == total_amount
+    assert exact_body["remaining"] == "0.00"
+    assert exact_body["over"] is False
+
+    # 4. `base_version` velho recusa com `409 REVISION_CONFLICT`, sem gravar nada.
+    stale = client.post(
+        f"/v1/estimate-rounds/{round_id}/target",
+        headers=_headers("teto-velho-e2e"),
+        json={"base_version": version - 1, "target_amount": "1.00"},
+    )
+    assert stale.status_code == 409, stale.text
+    assert stale.json()["detail"]["code"] == "REVISION_CONFLICT"
+
+    unchanged = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers()).json()
+    assert unchanged["version"] == version
+    assert unchanged["target"] == {"amount": total_amount, "label": None}
+
+    # 5. `0,00` recusa com `422 ESTIMATE_TARGET_INVALID`, sem avançar a versão nem tocar
+    # o teto gravado.
+    invalid = client.post(
+        f"/v1/estimate-rounds/{round_id}/target",
+        headers=_headers("teto-invalido-e2e"),
+        json={"base_version": version, "target_amount": "0.00"},
+    )
+    assert invalid.status_code == 422, invalid.text
+    assert invalid.json()["detail"]["code"] == "ESTIMATE_TARGET_INVALID"
+
+    unchanged_after_invalid = client.get(
+        f"/v1/estimate-rounds/{round_id}", headers=_headers()
+    ).json()
+    assert unchanged_after_invalid["version"] == version
+    assert unchanged_after_invalid["target"]["amount"] == total_amount

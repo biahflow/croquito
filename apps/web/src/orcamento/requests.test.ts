@@ -8,6 +8,8 @@ import {
   createEstimateBody,
   installCatalogBody,
   takeoffDecisionBody,
+  targetBody,
+  tetoAmountError,
   versionBody,
   worksiteKeyError,
 } from "./requests";
@@ -159,6 +161,103 @@ describe("BDI como string decimal", () => {
     expect(bdiPercentError("25%")).toContain("25,00 ou 25.00");
     expect(bdiPercentError("25,00")).toBeNull();
     expect(bdiPercentError("0")).toBeNull();
+  });
+});
+
+/**
+ * Teto de verba (ADR-0040): campo vazio é "sem teto" e não pede justificativa; `0,00` é
+ * recusado pela tela, porque **zero não é "sem teto"** e escolher por quem digitou seria
+ * gravar uma ambiguidade.
+ */
+describe("teto de verba", () => {
+  it("campo vazio serve: teto é opcional e sem teto nada muda", () => {
+    expect(tetoAmountError("")).toBeNull();
+    expect(tetoAmountError("   ")).toBeNull();
+  });
+
+  it("zero é recusado, e a recusa ensina qual é o caminho de não ter teto", () => {
+    for (const zero of ["0", "0,00", "0.00", "0,000"]) {
+      const erro = tetoAmountError(zero);
+      expect(erro).toContain("maior que zero");
+      expect(erro).toContain("deixe o campo vazio");
+    }
+  });
+
+  it("texto que não é valor em reais é recusado com a notação aceita", () => {
+    for (const invalido of [
+      "oitenta e cinco mil",
+      "R$ 85.000,00",
+      "-1,00",
+      "85,",
+      "1,2,3",
+    ]) {
+      expect(tetoAmountError(invalido)).toContain("85.000,00 ou 85000.00");
+    }
+  });
+
+  it("valor escrito nas três notações da jornada serve", () => {
+    expect(tetoAmountError("85000.00")).toBeNull();
+    expect(tetoAmountError("85000,00")).toBeNull();
+    expect(tetoAmountError("85.000,00")).toBeNull();
+  });
+
+  it("o corpo do teto cita base_version e manda o valor em texto do servidor", () => {
+    expect(targetBody(12, "85.000,00", " Relação de Praças 2026 · demanda 14 ")).toEqual({
+      base_version: 12,
+      target_amount: "85000.00",
+      target_label: "Relação de Praças 2026 · demanda 14",
+    });
+  });
+
+  it("rótulo vazio é OMITIDO, nunca gravado como rótulo em branco", () => {
+    const body = targetBody(12, "85000.00", "   ");
+
+    expect(body).toEqual({ base_version: 12, target_amount: "85000.00" });
+    expect(body).not.toHaveProperty("target_label");
+  });
+
+  it("valor que a tela recusaria não vira viagem — zero incluído", () => {
+    for (const invalido of ["", "0,00", "zero", "-1"]) {
+      expect(targetBody(12, invalido)).toBeNull();
+    }
+  });
+
+  it("abrir rodada sem teto manda o corpo de sempre, sem campo nenhum a mais", () => {
+    const body = createEstimateBody({
+      worksiteKey: "praca-do-exemplo",
+      worksiteName: "Praça do Exemplo",
+      referenceLabel: "ORÇAMENTO-BASE 2026",
+      targetAmount: "  ",
+      targetLabel: "Relação de Praças 2026 · demanda 14",
+    });
+
+    expect(body).not.toHaveProperty("target_amount");
+    // Sem teto, o rótulo da demanda não tem o que rotular.
+    expect(body).not.toHaveProperty("target_label");
+  });
+
+  it("abrir rodada com teto leva valor e rótulo em texto", () => {
+    const body = createEstimateBody({
+      worksiteKey: "praca-do-exemplo",
+      worksiteName: "Praça do Exemplo",
+      referenceLabel: "ORÇAMENTO-BASE 2026",
+      targetAmount: "85.000,00",
+      targetLabel: " Relação de Praças 2026 · demanda 14 ",
+    });
+
+    expect(body.target_amount).toBe("85000.00");
+    expect(body.target_label).toBe("Relação de Praças 2026 · demanda 14");
+  });
+
+  it("teto inválido na abertura não escapa para o corpo", () => {
+    const body = createEstimateBody({
+      worksiteKey: "praca-do-exemplo",
+      worksiteName: "Praça do Exemplo",
+      referenceLabel: "ORÇAMENTO-BASE 2026",
+      targetAmount: "0,00",
+    });
+
+    expect(body).not.toHaveProperty("target_amount");
   });
 });
 

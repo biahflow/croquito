@@ -4,13 +4,18 @@ import type { User } from "oidc-client-ts";
 
 import {
   BannerOrcamentoMudou,
+  BlocoConsumoDoTeto,
+  FaixaTetoEstourado,
+  LinhaTetoDaRodada,
   OrcamentoApp,
   PainelSemAcesso,
+  PainelTetoDaVerba,
   SeloFonte,
   SemPrecoNaCascata,
   TelaAuditoriaReprovada,
 } from "./OrcamentoApp";
 import { AVISO_ORCAMENTO } from "./labels";
+import { derivarTeto } from "./teto";
 
 /**
  * Render estático do primeiro estado: sem sessão, a jornada não chama a API e não inventa
@@ -80,6 +85,23 @@ describe("OrcamentoApp com sessão e sem orçamento aberto", () => {
     // Nada de conceito de obra já licitada: período e contrato não existem aqui.
     expect(html).not.toContain("Número da medição");
     expect(html).not.toContain("Contrato");
+  });
+
+  /**
+   * O teto nasce na abertura, opcional de verdade: campo vazio é "sem teto", não pede
+   * justificativa, não avisa que falta preencher e não muda o botão.
+   */
+  it("oferece o teto e a demanda como opcionais, e o vazio é o caminho normal", () => {
+    const html = renderToStaticMarkup(
+      <OrcamentoApp session={sessao} roundId={null} />,
+    );
+
+    expect(html).toContain("Teto da verba (opcional)");
+    expect(html).toContain("Demanda de origem (opcional)");
+    expect(html).toContain("não é impresso na planilha e não impede nada");
+    // Nenhuma recusa e nenhum botão desabilitado com os campos vazios.
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain("disabled");
   });
 
   it("não fabrica orçamento, obra nem total antes de ler a API", () => {
@@ -199,6 +221,264 @@ describe("TelaAuditoriaReprovada", () => {
 
     expect(html).toContain("nada foi publicado");
     expect(html).not.toContain("<li");
+  });
+});
+
+/* Teto de verba (F-027, ADR-0040) ------------------------------------------- */
+
+const TETO_DENTRO = {
+  target: { amount: "95000.00", label: "Relação de Praças 2026 · demanda 14" },
+  consumed: "91996.44",
+  remaining: "3003.56",
+  over: false,
+};
+
+const TETO_LIMITE = {
+  target: { amount: "91996.44", label: "Relação de Praças 2026 · demanda 14" },
+  consumed: "91996.44",
+  remaining: "0.00",
+  over: false,
+};
+
+const TETO_ESTOURADO = {
+  target: { amount: "85000.00", label: "Relação de Praças 2026 · demanda 14" },
+  consumed: "91996.44",
+  remaining: "-6996.44",
+  over: true,
+};
+
+/**
+ * Os três estados do bloco de consumo. Os dois primeiros são o MESMO estado de domínio e
+ * compartilham a veste; o que os distingue é a palavra, e ela é sempre o primeiro
+ * indicador — cor nunca é o único.
+ */
+describe("BlocoConsumoDoTeto", () => {
+  it("dentro do teto: estado escrito, percentual e restante", () => {
+    const html = renderToStaticMarkup(
+      <BlocoConsumoDoTeto teto={derivarTeto(TETO_DENTRO)} />,
+    );
+
+    expect(html).toContain("Dentro do teto");
+    expect(html).toContain("teto-dentro");
+    expect(html).toContain("R$ 95.000,00");
+    expect(html).toContain("R$ 91.996,44");
+    expect(html).toContain("Restante");
+    expect(html).toContain("R$ 3.003,56");
+    expect(html).toContain("96,83% do teto");
+    // O consumo diz qual dos dois totais ele comparou.
+    expect(html).toContain("Consumo — total com BDI");
+    expect(html).not.toContain("Acima do teto");
+  });
+
+  /** Limite exato NÃO é estouro, e a tela diz isso por extenso — sem cor própria. */
+  it("no limite exato: a palavra declara que aquilo não é estouro, na mesma veste", () => {
+    const html = renderToStaticMarkup(
+      <BlocoConsumoDoTeto teto={derivarTeto(TETO_LIMITE)} />,
+    );
+
+    expect(html).toContain("No limite exato — não é estouro");
+    expect(html).toContain("teto-limite");
+    expect(html).toContain("100,00% do teto");
+    expect(html).toContain("R$ 0,00");
+    expect(html).toContain("Consumir o teto inteiro é estar dentro dele");
+    // Nenhuma classe do estouro, e nenhuma cor de estado própria do limite exato.
+    expect(html).not.toContain("teto-estourado");
+    expect(html).not.toContain("Teto estourado");
+  });
+
+  it("estourado: quanto passou em valor e em percentual, e as três consequências", () => {
+    const html = renderToStaticMarkup(
+      <BlocoConsumoDoTeto teto={derivarTeto(TETO_ESTOURADO)} />,
+    );
+
+    expect(html).toContain("Teto estourado");
+    expect(html).toContain("teto-estourado");
+    expect(html).toContain("Acima do teto");
+    expect(html).toContain("R$ 6.996,44");
+    expect(html).toContain("108,23% do teto");
+    expect(html).toContain("O orçamento não foi recusado.");
+    expect(html).toContain("Nenhuma linha foi removida nem sugerida para remoção.");
+    expect(html).toContain("Pedir verba adicional para a demanda é um caminho legítimo");
+    // Nenhum botão: toda saída do estouro é decisão humana fora desta tela.
+    expect(html).not.toContain("<button");
+  });
+
+  /** Ausência de teto não é um estado a comunicar (ADR-0040, decisão 6). */
+  it("rodada sem teto não acrescenta nada à prévia", () => {
+    expect(renderToStaticMarkup(<BlocoConsumoDoTeto teto={derivarTeto({})} />)).toBe("");
+    expect(renderToStaticMarkup(<BlocoConsumoDoTeto teto={null} />)).toBe("");
+  });
+});
+
+/**
+ * A faixa é CONDIÇÃO da rodada, não episódio de uma etapa: ela não recebe etapa nenhuma
+ * como propriedade, e o app a renderiza uma vez só, fora da etapa visível — por isso
+ * acompanha todas elas, inclusive a Planilha.
+ */
+describe("FaixaTetoEstourado", () => {
+  it("declara quanto passou, em valor e em percentual, e cita a demanda", () => {
+    const html = renderToStaticMarkup(
+      <FaixaTetoEstourado teto={derivarTeto(TETO_ESTOURADO)} />,
+    );
+
+    expect(html).toContain("Teto estourado");
+    expect(html).toContain("R$ 6.996,44");
+    expect(html).toContain("8,23% acima do teto de R$ 85.000,00");
+    expect(html).toContain("Relação de Praças 2026 · demanda 14");
+    expect(html).toContain("Nada foi recusado e nada foi cortado.");
+    expect(html).toContain("nenhuma linha foi removida");
+    expect(html).toContain("todas as etapas");
+    expect(html).toContain('role="status"');
+  });
+
+  /**
+   * A decisão mais declarada do pacote aprovado: nenhum botão dentro do aviso. Nem
+   * "ajustar para caber" (que seria o corte automático que o contrato proíbe), nem "rever
+   * o teto" (que ensinaria a subir o número até o aviso sumir).
+   */
+  it("não tem botão nenhum, nem link de remédio", () => {
+    const html = renderToStaticMarkup(
+      <FaixaTetoEstourado teto={derivarTeto(TETO_ESTOURADO)} />,
+    );
+
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<a ");
+    expect(html).not.toContain("ajustar");
+    expect(html).not.toContain("Rever o teto");
+  });
+
+  it("fora do estouro não existe faixa — limite exato incluído", () => {
+    for (const bloco of [TETO_DENTRO, TETO_LIMITE, {}]) {
+      expect(
+        renderToStaticMarkup(<FaixaTetoEstourado teto={derivarTeto(bloco)} />),
+      ).toBe("");
+    }
+  });
+});
+
+/**
+ * O painel existe em toda rodada aberta, e essa é a única exceção declarada ao "rodada sem
+ * teto é exatamente como hoje": sem ele, uma rodada aberta sem teto nunca poderia ganhar
+ * um. Não há botão de remover — apagar um teto já declarado é questão que o ADR-0040 não
+ * decidiu.
+ */
+describe("PainelTetoDaVerba", () => {
+  const props = {
+    versao: 12,
+    gravando: false,
+    onValor: () => {},
+    onRotulo: () => {},
+    onGravar: () => {},
+  };
+
+  it("em rodada sem teto aparece vazio, silencioso e sem gravar nada", () => {
+    const html = renderToStaticMarkup(
+      <PainelTetoDaVerba {...props} valor="" rotulo="" />,
+    );
+
+    expect(html).toContain("Teto da verba");
+    expect(html).toContain("Demanda de origem (opcional)");
+    // Botão indisponível: não há o que gravar, e apagar teto não é ato desta tela.
+    expect(html).toContain("disabled");
+    expect(html).not.toContain("Remover");
+    expect(html).not.toContain('role="alert"');
+  });
+
+  it("com teto declarado, diz o que a edição NÃO faz e cita a versão da rodada", () => {
+    const html = renderToStaticMarkup(
+      <PainelTetoDaVerba
+        {...props}
+        valor="85.000,00"
+        rotulo="Relação de Praças 2026 · demanda 14"
+      />,
+    );
+
+    expect(html).toContain("Gravar teto");
+    expect(html).toContain("não remonta o orçamento");
+    expect(html).toContain("rodada versão 12");
+    expect(html).not.toContain("disabled");
+  });
+
+  /** Zero é recusado NA TELA, com a frase que ensina qual é o caminho de não ter teto. */
+  it("recusa 0,00 no campo e deixa o botão indisponível", () => {
+    const html = renderToStaticMarkup(
+      <PainelTetoDaVerba {...props} valor="0,00" rotulo="" />,
+    );
+
+    expect(html).toContain("precisa ser maior que zero");
+    expect(html).toContain("deixe o campo vazio");
+    expect(html).toContain('role="alert"');
+    expect(html).toContain('aria-invalid="true"');
+    expect(html).toContain("disabled");
+  });
+
+  it("enquanto grava, campo e botão ficam indisponíveis", () => {
+    const html = renderToStaticMarkup(
+      <PainelTetoDaVerba {...props} valor="120.000,00" rotulo="" gravando />,
+    );
+
+    expect(html).toContain("Gravando…");
+    expect(html).toContain("disabled");
+  });
+});
+
+/**
+ * A rodada sem teto é a de hoje: a faixa é renderizada UMA vez, fora da etapa visível
+ * (`FaixaTetoEstourado` não recebe etapa nenhuma), e sem teto ela não existe em nenhuma
+ * delas. Sem efeitos o estado da rodada ainda não foi lido, que é o caso mais forte de
+ * "não fabricar": nenhum vestígio de teto aparece antes de o servidor responder.
+ */
+describe("rodada aberta sem teto lido", () => {
+  const sessao = {
+    access_token: "token-de-teste",
+    profile: { sub: "orcamentista-de-teste" },
+  } as unknown as User;
+
+  it("não mostra faixa, bloco de consumo nem número de teto em etapa nenhuma", () => {
+    const html = renderToStaticMarkup(
+      <OrcamentoApp
+        session={sessao}
+        roundId="0197f2a0-0000-7000-8000-000000000009"
+      />,
+    );
+
+    expect(html).toContain("Etapas do orçamento");
+    expect(html).not.toContain("teto-faixa");
+    expect(html).not.toContain("teto-consumo");
+    expect(html).not.toContain("Teto estourado");
+    expect(html).not.toContain("Dentro do teto");
+    expect(html).not.toContain("sem teto");
+    expect(html).not.toContain("R$");
+  });
+});
+
+/** A linha do teto na lista existe SÓ na rodada que tem teto. */
+describe("LinhaTetoDaRodada", () => {
+  it("mostra o teto e a demanda quando a rodada tem teto", () => {
+    const html = renderToStaticMarkup(
+      <LinhaTetoDaRodada
+        amount="85000.00"
+        label="Relação de Praças 2026 · demanda 14"
+      />,
+    );
+
+    expect(html).toContain("R$ 85.000,00");
+    expect(html).toContain("Relação de Praças 2026 · demanda 14");
+  });
+
+  it("rodada sem teto não ganha linha, nem “sem teto”, nem “teto: —”", () => {
+    expect(
+      renderToStaticMarkup(<LinhaTetoDaRodada amount={null} label={null} />),
+    ).toBe("");
+  });
+
+  it("com teto e sem demanda, não inventa rótulo", () => {
+    const html = renderToStaticMarkup(
+      <LinhaTetoDaRodada amount="85000.00" label={null} />,
+    );
+
+    expect(html).toContain("R$ 85.000,00");
+    expect(html).not.toContain("·");
   });
 });
 

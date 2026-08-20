@@ -95,6 +95,7 @@ ESTIMATE_CASCADE_ORDER_INVALID: Final = "ESTIMATE_CASCADE_ORDER_INVALID"
 ESTIMATE_CASCADE_LOCKED: Final = "ESTIMATE_CASCADE_LOCKED"
 ESTIMATE_WORKBOOK_AUDIT_FAILED: Final = "ESTIMATE_WORKBOOK_AUDIT_FAILED"
 ESTIMATE_BDI_INVALID: Final = "ESTIMATE_BDI_INVALID"
+ESTIMATE_TARGET_INVALID: Final = "ESTIMATE_TARGET_INVALID"
 
 STAGE_CATALOGS: Final = "catalogs"
 STAGE_ESTIMATE: Final = "estimate"
@@ -209,6 +210,32 @@ def parse_bdi_percent(raw: str) -> Decimal:
             {},
         )
     return percent
+
+
+def parse_target_amount(raw: str) -> Decimal:
+    """`Decimal` do teto de verba informado; texto ilegível, infinito ou não positivo recusam.
+
+    "Sem teto" é AUSÊNCIA do campo, nunca zero (ADR-0040, decisão 1): a tela recusa `0,00`
+    na declaração, e o servidor recusa aqui com o mesmo código único — zero ou negativo não
+    chegam a virar coluna no banco.
+    """
+    try:
+        amount = Decimal(raw)
+    except InvalidOperation as error:
+        raise RoundRefusal(
+            422,
+            ESTIMATE_TARGET_INVALID,
+            "o teto de verba informado não é um número decimal exato",
+            {},
+        ) from error
+    if not amount.is_finite() or amount <= 0:
+        raise RoundRefusal(
+            422,
+            ESTIMATE_TARGET_INVALID,
+            "o teto de verba é um valor decimal finito e maior que zero",
+            {},
+        )
+    return amount
 
 
 # --- leitura da rodada --------------------------------------------------------------------
@@ -859,6 +886,36 @@ def _artifact_digests(revision: EstimateRoundRevisionRecord | None) -> dict[str,
     return digests
 
 
+def target_state(
+    round_record: EstimateRoundRecord,
+    revision: EstimateRoundRevisionRecord | None,
+) -> dict[str, Any]:
+    """Bloco `{target, consumed, remaining, over}` derivado na leitura (ADR-0040, decisão 2).
+
+    Sem teto, o dicionário volta VAZIO — nenhuma das quatro chaves aparece (decisão 6). Com
+    teto e sem `estimate_json` na cabeça, só `target` aparece: o consumo depende do
+    `total_amount` que só existe depois da montagem. `consumed` é o texto do documento como
+    está, e `remaining`/`over` comparam esse texto contra o teto — nada aqui recomputa
+    dinheiro; o `total_amount` é lido, nunca refeito.
+    """
+    if round_record.target_amount is None:
+        return {}
+    state: dict[str, Any] = {
+        "target": {"amount": round_record.target_amount, "label": round_record.target_label}
+    }
+    document = None if revision is None else revision.estimate_json
+    if document is None:
+        return state
+    consumed_raw = document["total_amount"]
+    target_decimal = Decimal(round_record.target_amount)
+    consumed_decimal = Decimal(str(consumed_raw))
+    state["consumed"] = str(consumed_raw)
+    state["remaining"] = str(target_decimal - consumed_decimal)
+    # Estrito: o limite exato NÃO é estouro (ADR-0040, decisão 3).
+    state["over"] = consumed_decimal > target_decimal
+    return state
+
+
 def round_state_payload(
     round_record: EstimateRoundRecord,
     revision: EstimateRoundRevisionRecord | None,
@@ -936,6 +993,7 @@ def round_state_payload(
             "workbook_present": estimate_workbook_ref(revision) is not None,
             "workbook_sha256": digests.get(ESTIMATE_WORKBOOK_DIGEST),
         },
+        **target_state(round_record, revision),
         "created_at": round_record.created_at.isoformat(),
         "updated_at": round_record.updated_at.isoformat(),
     }
