@@ -1,8 +1,11 @@
 """tracado: diagnóstico estruturado do trace-solve.
 
-Revision ID: 0004
-Revises: 0003
+Revision ID: 0005
+Revises: 0004
 Create Date: 2026-08-20
+
+Renumerada de 0004 para 0005 na integração de 2026-08-20 (a rodada do orçamento
+publicou a 0004_estimate_round_target em paralelo; histórico linear 0003→0004→0005).
 
 Acrescenta a `trace_solves` as três colunas JSON do consultor do traçado (F-025),
 todas ADITIVAS e nenhuma substituindo coluna existente:
@@ -38,8 +41,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0004"
-down_revision: str | None = "0003"
+revision: str = "0005"
+down_revision: str | None = "0004"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
