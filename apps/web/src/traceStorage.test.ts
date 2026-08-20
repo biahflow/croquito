@@ -28,6 +28,7 @@ describe("ida e volta do rascunho", () => {
       hatch: new Set(["vp_a"]),
       unlabelled: new Set(["vp_b"]),
       freeform: new Set(["vp_a"]),
+      manualFreeformIds: new Set(["vp_a"]),
       keepApartPairs: [{ first: "vp_a", second: "vp_b", axis: null }],
       detailGroups: [
         {
@@ -92,6 +93,33 @@ describe("ida e volta do rascunho", () => {
     expect(restored?.declarations.derivedDimensions).toEqual([
       { proposalId: "vp_a", nearXPx: 1, nearYPx: 2 },
     ]);
+  });
+});
+
+describe("rascunho gravado antes do campo novo", () => {
+  it("restaura sem erro, com nenhum toque humano declarado", () => {
+    const stored = JSON.stringify({
+      batchIds: ["vp_a"],
+      proposalIds: ["vp_a"],
+      freeform: ["vp_a"],
+    });
+
+    const restored = parseTraceDraft(stored, allPending);
+
+    expect(restored?.declarations.manualFreeformIds).toEqual(new Set());
+    expect([...(restored?.declarations.freeform ?? [])]).toEqual(["vp_a"]);
+  });
+
+  it("campo malformado não derruba o rascunho inteiro", () => {
+    const stored = JSON.stringify({
+      proposalIds: ["vp_a"],
+      manualFreeformIds: "vp_a",
+    });
+
+    const restored = parseTraceDraft(stored, allPending);
+
+    expect(restored?.declarations.manualFreeformIds).toEqual(new Set());
+    expect(restored?.declarations.proposalIds).toEqual(["vp_a"]);
   });
 });
 

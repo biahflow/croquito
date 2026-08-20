@@ -11,6 +11,7 @@ import {
   buildTraceSolveRequest,
   defaultFlagsForProposal,
   emptyTraceDraft,
+  reseedProposalFlags,
   spanAxisIssue,
   traceDraftIssues,
   traceResidualSummaryLabel,
@@ -1360,6 +1361,61 @@ describe("withDefaultProposalFlags", () => {
     const twice = withDefaultProposalFlags(once, ["vp_a"], emptyContext);
 
     expect([...twice.freeform]).toEqual(["vp_a"]);
+  });
+});
+
+describe("reseedProposalFlags", () => {
+  const measured: ProposalFlagContext = {
+    readings: [reading({ id: "rd_1" })],
+    selectedAssociations: { rd_1: "vp_a" },
+    associations: {},
+  };
+  const unmeasured: ProposalFlagContext = {
+    readings: [],
+    selectedAssociations: {},
+    associations: {},
+  };
+
+  it("drops the as-drawn seed once a confirmed reading measures the shape", () => {
+    const next = reseedProposalFlags(
+      draft({ proposalIds: ["vp_a"], freeform: new Set(["vp_a"]) }),
+      measured,
+    );
+
+    expect([...next.freeform]).toEqual([]);
+  });
+
+  it("seeds as drawn again when the reading that measured the shape is gone", () => {
+    const next = reseedProposalFlags(draft({ proposalIds: ["vp_a"] }), unmeasured);
+
+    expect([...next.freeform]).toEqual(["vp_a"]);
+  });
+
+  it("never touches a flag the reviewer changed by hand, in either direction", () => {
+    const touchedOn = draft({
+      proposalIds: ["vp_a"],
+      freeform: new Set(["vp_a"]),
+      manualFreeformIds: new Set(["vp_a"]),
+    });
+    const touchedOff = draft({
+      proposalIds: ["vp_a"],
+      manualFreeformIds: new Set(["vp_a"]),
+    });
+
+    expect(reseedProposalFlags(touchedOn, measured)).toBe(touchedOn);
+    expect(reseedProposalFlags(touchedOff, unmeasured)).toBe(touchedOff);
+  });
+
+  it("leaves a shape outside the acceptance alone", () => {
+    const outside = draft({ proposalIds: [], freeform: new Set(["vp_a"]) });
+
+    expect(reseedProposalFlags(outside, measured)).toBe(outside);
+  });
+
+  it("returns the very same object when nothing changed", () => {
+    const stable = draft({ proposalIds: ["vp_a"], freeform: new Set(["vp_a"]) });
+
+    expect(reseedProposalFlags(stable, unmeasured)).toBe(stable);
   });
 });
 

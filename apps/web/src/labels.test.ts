@@ -21,7 +21,10 @@ import {
   reviewBlockerLabel,
   suggestedAnnotationHint,
   suggestedAxisHint,
+  traceAppliedAnchorsLabel,
   traceBlockerLabel,
+  traceContestedSpanLabel,
+  traceUnappliedCauseLabel,
 } from "./labels";
 
 type SceneEntity = NonNullable<Review["scene"]>["entities"][number];
@@ -643,5 +646,185 @@ describe("ocrWitnessHint", () => {
 
   it("says nothing for a packet persisted before the field existed", () => {
     expect(ocrWitnessHint(reading())).toBeNull();
+  });
+});
+
+describe("traceUnappliedCauseLabel", () => {
+  const readings: Review["packet"]["readings"] = [
+    {
+      id: "rd_0000000000000001",
+      raw_text: "19,75",
+      kind: "width",
+      status: "confirmed",
+    },
+  ];
+  const proposals = [
+    lineProposal({ id: "vp_0000000000000001", label: "Muro lateral" }),
+    lineProposal({ id: "vp_0000000000000002", label: "Campo" }),
+  ];
+  const label = (cause: string, targets: string[] = ["vp_0000000000000001"]) =>
+    traceUnappliedCauseLabel(
+      {
+        reading_id: "rd_0000000000000001",
+        cause,
+        target_proposal_ids: targets,
+      },
+      readings,
+      proposals,
+    );
+
+  it("explains a shape accepted as drawn and what unblocks it", () => {
+    expect(label("TRACE_TARGET_AS_DRAWN")).toBe(
+      'A forma "① Muro lateral" está aceita como desenhada; cota de elemento único não ' +
+        'amarra em forma livre — trate a forma como retangular ou amarre a cota ' +
+        '"19,75 · largura" a um vão.',
+    );
+  });
+
+  it("says the reading does not declare a direction", () => {
+    expect(label("TRACE_SPAN_AXIS_UNDECLARED")).toBe(
+      'A cota "19,75 · largura" não declara em que direção mede: corrija o tipo para ' +
+        "largura (horizontal) ou altura (vertical).",
+    );
+  });
+
+  it("names both anchors when the two of them fell in the same band", () => {
+    expect(
+      label("TRACE_SPAN_SAME_BAND", [
+        "vp_0000000000000001",
+        "vp_0000000000000002",
+      ]),
+    ).toBe(
+      'As duas âncoras de a cota "19,75 · largura" caíram na mesma faixa do desenho ' +
+        '(a forma "① Muro lateral" e a forma "② Campo"): declare o par como mantido ' +
+        "separado no eixo do problema.",
+    );
+  });
+
+  it("covers the remaining mechanical causes and the note causes", () => {
+    expect(label("TRACE_SPAN_EDGE_NOT_FOUND")).toContain(
+      "Nenhuma aresta perpendicular",
+    );
+    expect(label("TRACE_SPAN_NOT_ORTHOGONAL")).toContain(
+      "não tem trecho ortogonal compatível",
+    );
+    expect(label("TRACE_SPAN_VALUE_OR_DECISION_MISSING")).toContain(
+      "reveja a leitura na revisão de cotas",
+    );
+    expect(label("TRACE_NOTE_ZERO_LENGTH")).toContain("comprimento zero");
+    expect(label("TRACE_NOTE_UNSUPPORTED_GEOMETRY")).toContain(
+      "não tem aresta que sustente a nota",
+    );
+  });
+
+  it("keeps the sentence readable when the reading or the shape is gone", () => {
+    expect(
+      traceUnappliedCauseLabel(
+        {
+          reading_id: "rd_9999999999999999",
+          cause: "TRACE_SPAN_EDGE_NOT_FOUND",
+          target_proposal_ids: ["vp_9999999999999999"],
+        },
+        readings,
+        proposals,
+      ),
+    ).toBe(
+      "Nenhuma aresta perpendicular ao eixo de uma cota do lote foi encontrada em uma " +
+        "forma que não está mais no desenho: reaponte a âncora do vão.",
+    );
+  });
+
+  it("returns the raw code when the cause is unknown: hiding a discard is worse", () => {
+    expect(label("TRACE_SOMETHING_NEW")).toBe("TRACE_SOMETHING_NEW");
+  });
+});
+
+describe("traceAppliedAnchorsLabel", () => {
+  it("says where the applied measurement anchored, in written decimals", () => {
+    expect(
+      traceAppliedAnchorsLabel({
+        reading_id: "rd_0000000000000001",
+        axis: "x",
+        value_m: 19.75,
+        start_m: 42.85,
+        end_m: 62.6,
+        proposal_id: "vp_0000000000000001",
+      }),
+    ).toBe("19,75 amarra 42,85 m → 62,60 m na horizontal.");
+  });
+
+  it("declares a gap between two shapes and the vertical axis", () => {
+    expect(
+      traceAppliedAnchorsLabel({
+        reading_id: "rd_0000000000000002",
+        axis: "y",
+        value_m: 6.6,
+        start_m: 1,
+        end_m: 7.6,
+        proposal_id: "vp_0000000000000001",
+        second_proposal_id: "vp_0000000000000002",
+        gap: true,
+      }),
+    ).toBe("6,60 amarra 1,00 m → 7,60 m na vertical, como vão entre duas formas.");
+  });
+});
+
+describe("traceContestedSpanLabel", () => {
+  const readings: Review["packet"]["readings"] = [
+    {
+      id: "rd_0000000000000001",
+      raw_text: "1,50",
+      kind: "width",
+      status: "confirmed",
+    },
+    {
+      id: "rd_0000000000000002",
+      raw_text: "8,60",
+      kind: "width",
+      status: "confirmed",
+    },
+  ];
+
+  it("names the pair by the raw text written on the sheet", () => {
+    expect(
+      traceContestedSpanLabel(
+        {
+          axis: "x",
+          reading_ids: ["rd_0000000000000001", "rd_0000000000000002"],
+          values_m: [1.5, 8.6],
+          proposal_ids: ["vp_0000000000000001", "vp_0000000000000002"],
+        },
+        readings,
+      ),
+    ).toBe(
+      '"1,50" e "8,60" disputam o mesmo vão no eixo X (horizontal); os valores escritos ' +
+        "não fecham entre si.",
+    );
+  });
+
+  it("falls back to the metric value for a reading outside the packet", () => {
+    expect(
+      traceContestedSpanLabel(
+        {
+          axis: "y",
+          reading_ids: ["rd_9999999999999999", "rd_0000000000000002"],
+          values_m: [1.5, 8.6],
+          proposal_ids: [],
+        },
+        readings,
+      ),
+    ).toBe(
+      '1,50 m e "8,60" disputam o mesmo vão no eixo Y (vertical); os valores escritos ' +
+        "não fecham entre si.",
+    );
+  });
+
+  it("stays readable when the diagnosis carries no reading at all", () => {
+    expect(
+      traceContestedSpanLabel(
+        { axis: "x", reading_ids: [], values_m: [], proposal_ids: [] },
+        readings,
+      ),
+    ).toBe("Duas cotas confirmadas disputam o mesmo vão no eixo X (horizontal).");
   });
 });

@@ -67,6 +67,7 @@ import {
   reviewBlockerLabel,
   suggestedAnnotationHint,
   suggestedAxisHint,
+  traceAppliedAnchorsLabel,
   traceBlockerLabel,
 } from "./labels";
 import {
@@ -94,6 +95,7 @@ import {
   buildTraceSolveRequest,
   DETAIL_ID_PATTERN,
   emptyTraceDraft,
+  reseedProposalFlags,
   spanAxisIssue,
   traceDraftIssues,
   traceResidualSummaryLabel,
@@ -106,6 +108,12 @@ import {
   type TraceDetailMode,
   type TraceDraft,
 } from "./trace";
+import {
+  adviseTrace,
+  advisorFixKey,
+  advisorFixLabel,
+  type AdvisorFix,
+} from "./traceAdvisor";
 import {
   applyCaptureCommit,
   captureExpectsPoint,
@@ -544,6 +552,8 @@ export function CroquiApp({
   const [rectifyingReadingId, setRectifyingReadingId] = useState<string | null>(
     null,
   );
+  // Correção que um conserto do consultor pediu, aplicada depois da troca de leitura.
+  const [advisorRectifyId, setAdvisorRectifyId] = useState<string | null>(null);
   // Nunca pré-preenchido: o texto gravado como justificativa é sempre do revisor.
   const [decisionJustification, setDecisionJustification] = useState("");
   const [loading, setLoading] = useState(false);
@@ -810,6 +820,13 @@ export function CroquiApp({
   );
   const traceResidualLabel = traceResidualSummaryLabel(
     traceSolve?.residual_summary ?? null,
+  );
+  // Consultor do traçado: causa em língua de obra e conserto de um clique por achado.
+  // Resultado anterior à F-025 não traz diagnóstico e devolve lista vazia — a seção
+  // continua mostrando exatamente o que mostrava antes.
+  const advisorFindings = useMemo(
+    () => (review && traceSolve ? adviseTrace(traceSolve, review, traceDraft) : []),
+    [review, traceSolve, traceDraft],
   );
   const groupedProposalIds = new Set(
     traceDraft.detailGroups.flatMap((group) => group.proposalIds),
@@ -1264,6 +1281,27 @@ export function CroquiApp({
     setDecisionJustification(chatPrefill.justification);
     setChatPrefill(null);
   }, [chatPrefill, selectedReadingId]);
+
+  /**
+   * Correção pedida por um conserto do consultor do traçado.
+   *
+   * Mesmo motivo do rascunho da conversa para este efeito vir DEPOIS: o efeito de troca
+   * de leitura dispara no mesmo commit e fecha a correção em curso (`rectifyingReadingId`
+   * volta a `null`). Abrir a correção aqui é o que faz o pedido sobreviver à troca — e
+   * ela continua sendo pré-preenchimento, com justificativa vazia e envio pelo revisor.
+   */
+  useEffect(() => {
+    if (!advisorRectifyId || advisorRectifyId !== selectedReadingId) {
+      return;
+    }
+    const reading = review?.packet.readings.find(
+      (item) => item.id === advisorRectifyId,
+    );
+    setAdvisorRectifyId(null);
+    if (reading) {
+      startRectification(reading);
+    }
+  }, [advisorRectifyId, selectedReadingId, review]);
 
   // Preferência de leitura por job, restaurada ao reabrir o mesmo croqui.
   useEffect(() => {
@@ -1894,7 +1932,17 @@ export function CroquiApp({
       if (!next.delete(proposalId)) {
         next.add(proposalId);
       }
-      return { ...current, [field]: next };
+      const updated = { ...current, [field]: next };
+      // Tocar "como desenhado" à mão é declaração: a re-semeadura do default para de
+      // valer para esta forma até o rascunho acabar. Nunca sai deste conjunto — desfazer
+      // o toque é outro toque, e ele também é do revisor.
+      if (field !== "freeform" || current.manualFreeformIds.has(proposalId)) {
+        return updated;
+      }
+      return {
+        ...updated,
+        manualFreeformIds: new Set([...current.manualFreeformIds, proposalId]),
+      };
     });
   }
 
@@ -2300,6 +2348,91 @@ export function CroquiApp({
     setToast("Sugestão aplicada ao aceite — revise antes de enviar.");
   }
 
+  /**
+   * Conserto do consultor: mexe SÓ no rascunho do aceite ou abre o formulário onde a
+   * declaração se faz. Nada é enviado — o envio continua sendo o clique em "Aceitar
+   * traçado", e nenhum conserto marca forma na seleção (mesmo limite do rascunho da
+   * conversa).
+   */
+  function applyAdvisorFix(fix: AdvisorFix) {
+    switch (fix.kind) {
+      case "treat_rectangular":
+        setTraceDeclarations((current) => {
+          const freeform = new Set(current.freeform);
+          freeform.delete(fix.proposalId);
+          return {
+            ...current,
+            freeform,
+            // Clicar no conserto é ato humano tanto quanto clicar no chip: a
+            // re-semeadura não devolve esta forma para "como desenhado".
+            manualFreeformIds: new Set([
+              ...current.manualFreeformIds,
+              fix.proposalId,
+            ]),
+          };
+        });
+        setToast(
+          "Forma tirada de \"como desenhado\" no aceite — revise antes de enviar.",
+        );
+        return;
+      case "reassociate":
+        setTraceDeclarations((current) => ({
+          ...current,
+          associations: {
+            ...current.associations,
+            [fix.readingId]: { kind: "single", proposalId: fix.proposalId },
+          },
+        }));
+        setToast("Cota reamarrada no aceite — revise antes de enviar.");
+        return;
+      case "keep_apart":
+        setTraceDeclarations((current) => {
+          const duplicate = current.keepApartPairs.some(
+            (pair) =>
+              (pair.first === fix.first && pair.second === fix.second) ||
+              (pair.first === fix.second && pair.second === fix.first),
+          );
+          if (duplicate) {
+            return current;
+          }
+          return {
+            ...current,
+            // `axis: null` é o formato histórico do par: separa nos dois sentidos, como
+            // o rascunho da conversa faz quando o eixo não é declarado.
+            keepApartPairs: [
+              ...current.keepApartPairs,
+              { first: fix.first, second: fix.second, axis: null },
+            ],
+          };
+        });
+        setToast("Par declarado distinto no aceite — revise antes de enviar.");
+        return;
+      case "declare_axis":
+      case "rectify": {
+        const reading = review?.packet.readings.find(
+          (item) => item.id === fix.readingId,
+        );
+        if (!reading) {
+          return;
+        }
+        // O controle do eixo é o "tipo corrigido" do formulário de decisão; numa leitura
+        // já confirmada ele só aparece pela correção declarada. Abrir aqui é levar o
+        // revisor ao controle que já existe — nada é preenchido por conta própria além
+        // dos valores vigentes, e a justificativa nasce vazia. A correção em si é aberta
+        // pelo efeito, porque a troca de leitura fecharia a que fosse aberta agora.
+        setOpenStep("decisions");
+        setSelectedReadingId(fix.readingId);
+        setAdvisorRectifyId(fix.readingId);
+        setToast(
+          fix.kind === "declare_axis"
+            ? "Leitura aberta para correção — declare largura (horizontal) ou altura (vertical)."
+            : "Leitura aberta para correção — confira a evidência e assine.",
+        );
+        return;
+      }
+    }
+  }
+
   // A conversa do job é buscada quando o painel abre, e não antes: sem abrir o painel
   // nenhuma chamada de conversa sai da tela.
   useEffect(() => {
@@ -2362,6 +2495,7 @@ export function CroquiApp({
   useEffect(() => {
     setTraceSolve(null);
     setTraceDeclarations(emptyTraceDraft());
+    setAdvisorRectifyId(null);
     handledTraceSolveRef.current = null;
     captureRef.current = IDLE_CAPTURE;
     setCapture(IDLE_CAPTURE);
@@ -2474,6 +2608,48 @@ export function CroquiApp({
     seededAnnotationBatchRef.current = key;
     setReadingBatchIds(new Set(annotationCandidateIds));
   }, [jobId, review, annotationCandidateIds]);
+
+  /**
+   * O "como desenhado" das formas já aceitas é re-semeado — UMA vez por revisão.
+   *
+   * O default lê as cotas confirmadas amarradas à forma (`defaultFlagsForProposal`). Ele
+   * é calculado quando a forma entra na seleção, e até aqui envelhecia calado: confirmar
+   * a cota do muro DEPOIS de marcá-lo deixava o muro entrando "como desenhado", isto é,
+   * sem a medida escrita mandar nele — e o revisor só descobria no traçado resolvido.
+   * Revisão nova recalcula o ponto de partida; forma cujo flag o revisor mexeu à mão
+   * (`manualFreeformIds`) nunca é tocada, porque semente não escreve sobre ato humano.
+   */
+  const reseededTraceFlagsRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!jobId || !review) {
+      reseededTraceFlagsRef.current = null;
+      return;
+    }
+    // Seleção vazia não consome a chave: no commit em que a revisão chega, a restauração
+    // do rascunho (efeito acima) ainda não publicou `batchIds`, e gastar a chave aqui
+    // deixaria o rascunho restaurado com a semente velha — o cenário fundador da V17
+    // (rascunho do navegador anterior às decisões) entraria de novo pelo reload.
+    if (batchIds.size === 0) {
+      return;
+    }
+    const key = `${jobId}:${review.version}`;
+    if (reseededTraceFlagsRef.current === key) {
+      return;
+    }
+    reseededTraceFlagsRef.current = key;
+    setTraceDeclarations((current) => {
+      // A seleção aceita mora em `batchIds` (ver o memo `traceDraft`), não em
+      // `traceDeclarations.proposalIds`: a re-semeadura roda sobre a montagem efetiva e
+      // devolve só o campo que ela tem permissão de mexer.
+      const effective: TraceDraft = { ...current, proposalIds: [...batchIds] };
+      const next = reseedProposalFlags(effective, {
+        readings: review.packet.readings,
+        selectedAssociations: review.selected_associations,
+        associations: current.associations,
+      });
+      return next === effective ? current : { ...current, freeform: next.freeform };
+    });
+  }, [jobId, review, batchIds]);
 
   async function submitCalibration() {
     if (
@@ -4166,7 +4342,35 @@ export function CroquiApp({
                               ))}
                             </ul>
                           ) : null}
-                          {traceSolve?.unapplied_reading_ids.length ? (
+                          {advisorFindings.length ? (
+                            <ul
+                              className="blocker-list"
+                              aria-label="Cotas não aplicadas ao traçado"
+                            >
+                              {advisorFindings.map((finding, index) => (
+                                <li
+                                  key={`${finding.rawCode}:${finding.readingId ?? index}`}
+                                  title={finding.readingId}
+                                >
+                                  {finding.message}
+                                  <code>{finding.rawCode}</code>
+                                  {finding.fixes.length ? (
+                                    <div className="advisor-fixes">
+                                      {finding.fixes.map((fix) => (
+                                        <button
+                                          key={advisorFixKey(fix)}
+                                          type="button"
+                                          onClick={() => applyAdvisorFix(fix)}
+                                        >
+                                          {advisorFixLabel(fix)}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : traceSolve?.unapplied_reading_ids.length ? (
                             <ul
                               className="trace-declarations"
                               aria-label="Cotas não aplicadas ao traçado"
@@ -4186,6 +4390,23 @@ export function CroquiApp({
                                   </li>
                                 );
                               })}
+                            </ul>
+                          ) : null}
+                          {/* Onde cada cota aplicada ancorou: o contrário do descarte,
+                              conferível contra a folha sem abrir o DXF. */}
+                          {traceSolve?.applied_spans?.length ? (
+                            <ul
+                              className="trace-declarations"
+                              aria-label="Âncoras das cotas aplicadas"
+                            >
+                              {traceSolve.applied_spans.map((span, index) => (
+                                <li
+                                  key={`${span.reading_id}:${index}`}
+                                  title={span.reading_id}
+                                >
+                                  <span>{traceAppliedAnchorsLabel(span)}</span>
+                                </li>
+                              ))}
                             </ul>
                           ) : null}
                         </div>

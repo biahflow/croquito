@@ -1,4 +1,10 @@
-import type { Review, VisionProposal } from "./api";
+import type {
+  Review,
+  TraceAppliedSpan,
+  TraceContestedSpan,
+  TraceUnappliedReading,
+  VisionProposal,
+} from "./api";
 
 /**
  * Quem revisa é engenheiro ou projetista de obra, não desenvolvedor: identificador
@@ -490,4 +496,108 @@ export function traceBlockerLabel(
     default:
       return blocker;
   }
+}
+
+/** Nome de obra da forma pelo balão da lista; forma que saiu do desenho é dita assim. */
+function shapePhrase(
+  proposalId: string,
+  proposals: VisionProposal[],
+  scaleMPerPx?: number | null,
+): string {
+  const index = proposals.findIndex((item) => item.id === proposalId);
+  return index >= 0
+    ? `a forma "${proposalDisplayName(proposals[index], index + 1, scaleMPerPx)}"`
+    : "uma forma que não está mais no desenho";
+}
+
+/**
+ * Por que uma cota confirmada não virou vão, em língua de obra (F-025). O molde é o
+ * `traceBlockerLabel`: a causa é código estável do domínio, a frase diz o que aconteceu e
+ * o que costuma consertar, e a forma é citada pelo balão que o revisor reconhece na lista.
+ * Código desconhecido devolve o próprio código — esconder um descarte é pior do que
+ * mostrá-lo cru.
+ *
+ * A entrada é a `TraceUnappliedReading` inteira, e não só `cause`: nomear a forma pelo
+ * balão exige o alvo que a associação apontava, que viaja na própria entrada.
+ */
+export function traceUnappliedCauseLabel(
+  unapplied: TraceUnappliedReading,
+  readings: Reading[],
+  proposals: VisionProposal[],
+  scaleMPerPx?: number | null,
+): string {
+  const reading = readings.find((item) => item.id === unapplied.reading_id);
+  const measurement = reading
+    ? `a cota "${readingLabel(reading)}"`
+    : "uma cota do lote";
+  const targets = unapplied.target_proposal_ids;
+  const shapes = targets.length
+    ? targets.map((id) => shapePhrase(id, proposals, scaleMPerPx)).join(" e ")
+    : "a forma que ela aponta";
+
+  switch (unapplied.cause) {
+    case "TRACE_SPAN_VALUE_OR_DECISION_MISSING":
+      return `${capitalise(measurement)} chegou ao traçado sem valor em metros ou sem decisão humana completa: reveja a leitura na revisão de cotas.`;
+    case "TRACE_SPAN_AXIS_UNDECLARED":
+      return `${capitalise(measurement)} não declara em que direção mede: corrija o tipo para largura (horizontal) ou altura (vertical).`;
+    case "TRACE_SPAN_EDGE_NOT_FOUND":
+      return `Nenhuma aresta perpendicular ao eixo de ${measurement} foi encontrada em ${shapes}: reaponte a âncora do vão.`;
+    case "TRACE_SPAN_SAME_BAND":
+      return `As duas âncoras de ${measurement} caíram na mesma faixa do desenho (${shapes}): declare o par como mantido separado no eixo do problema.`;
+    case "TRACE_TARGET_AS_DRAWN":
+      return `${capitalise(shapes)} está aceita como desenhada; cota de elemento único não amarra em forma livre — trate a forma como retangular ou amarre ${measurement} a um vão.`;
+    case "TRACE_SPAN_NOT_ORTHOGONAL":
+      return `${capitalise(shapes)} não tem trecho ortogonal compatível com o eixo de ${measurement}: amarre a cota ao trecho ortogonal certo.`;
+    case "TRACE_NOTE_ZERO_LENGTH":
+      return `A nota de ${measurement} está ancorada num trecho de comprimento zero: reaponte a nota na folha.`;
+    case "TRACE_NOTE_UNSUPPORTED_GEOMETRY":
+      return `${capitalise(shapes)} não tem aresta que sustente a nota de ${measurement}: reaponte a nota para um elemento com aresta.`;
+    default:
+      return unapplied.cause;
+  }
+}
+
+/**
+ * Onde a cota aplicada ancorou, em metros da prancha. É o contrário do descarte: a frase
+ * diz que a medida escrita pegou, e onde — o revisor confere o traçado contra a folha sem
+ * abrir o DXF.
+ */
+export function traceAppliedAnchorsLabel(span: TraceAppliedSpan): string {
+  const axis = span.axis === "x" ? "na horizontal" : "na vertical";
+  const kind = span.gap ? ", como vão entre duas formas" : "";
+  return `${formatDecimal(span.value_m, 2)} amarra ${formatDecimal(
+    span.start_m,
+    2,
+  )} m → ${formatDecimal(span.end_m, 2)} m ${axis}${kind}.`;
+}
+
+/**
+ * Duas ou mais cotas confirmadas prometendo distâncias diferentes para o mesmo vão. O
+ * texto cru de cada leitura é o que o revisor procura na folha; leitura que saiu do
+ * pacote entra pelo valor em metros que o traçado leu dela, nunca por um id opaco.
+ */
+export function traceContestedSpanLabel(
+  contested: TraceContestedSpan,
+  readings: Reading[],
+): string {
+  const axis =
+    contested.axis === "x" ? "eixo X (horizontal)" : "eixo Y (vertical)";
+  const parts = contested.reading_ids.map((readingId, index) => {
+    const reading = readings.find((item) => item.id === readingId);
+    if (reading) {
+      return `"${reading.raw_text}"`;
+    }
+    const value = contested.values_m[index];
+    return value === undefined
+      ? "uma cota fora do pacote"
+      : `${formatDecimal(value, 2)} m`;
+  });
+  if (parts.length === 0) {
+    return `Duas cotas confirmadas disputam o mesmo vão no ${axis}.`;
+  }
+  const list =
+    parts.length === 1
+      ? parts[0]
+      : `${parts.slice(0, -1).join(", ")} e ${parts[parts.length - 1]}`;
+  return `${list} disputam o mesmo vão no ${axis}; os valores escritos não fecham entre si.`;
 }

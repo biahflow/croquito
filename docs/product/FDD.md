@@ -2,8 +2,8 @@
 
 Status: Accepted for MVP  
 Responsável: Product / Design / Engineering  
-Última revisão: 2026-08-19 (seção "Autenticação e projetos" — autorização de IA administrada
-pela jornada Plataforma, F-012)
+Última revisão: 2026-08-20 (seção "Aceite de traçado em lote" — consultor do traçado:
+causa, conserto de um clique, âncoras e re-semeadura do "como desenhado", F-025)
 
 ## Experiência principal
 
@@ -254,6 +254,24 @@ Quando o traçado fecha, a mesma região de status resume em linguagem de obra a
 conferência das cotas confirmadas contra a geometria traçada — quantas fecharam, a
 pior diferença encontrada e onde ela ocorreu — sem duplicar o alarme de um bloqueio já
 listado na mesma tela.
+
+A mesma região diz **por que** cada cota confirmada não virou vão, em língua de obra e
+com o código cru ao lado — alvo aceito como desenhado, eixo não declarado, âncora sem
+aresta perpendicular, as duas âncoras na mesma faixa, nota sem geometria que a sustente.
+Onde o conserto é mecânico ele cabe num clique: tratar a forma como retangular, amarrar
+a cota a uma das alternativas que a revisão já ranqueou, declarar o par como mantido
+separado, abrir a correção da leitura com os valores vigentes. Nenhum desses cliques
+envia coisa alguma — eles mexem no rascunho do aceite ou abrem o formulário onde a
+declaração se faz, e o envio continua sendo o clique em "Aceitar traçado". Duas cotas
+confirmadas que prometem distâncias diferentes para o mesmo vão são nomeadas par a par
+pelos textos que a folha escreve, e cada cota aplicada mostra onde ancorou na prancha,
+em metros: o revisor confere o traçado contra a folha sem abrir o CAD.
+
+O ponto de partida de "como desenhado" é recalculado a cada revisão nova, e só para as
+formas que o revisor nunca tocou à mão — confirmar a cota do muro depois de tê-lo marcado
+passa a valer sobre ele, em vez de envelhecer calado até o traçado resolvido. Forma cujo
+estado o revisor mexeu, pelo chip da lista ou por um conserto do consultor, nunca é
+re-semeada: semente não escreve sobre ato humano.
 
 O princípio é o mesmo do resto da revisão: a interface declara o que o profissional
 aceitou, o solver decide a geometria no worker, e revisor, papel e horário do aceite
