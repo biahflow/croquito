@@ -141,4 +141,21 @@ human_gates: aprovação deste plano (dada na aprovação do plano da rodada);
 planning_findings: nenhum ARCHITECTURE_DECISION_REQUIRED (mecanismo de domínio
                    existe; sem migração); PARALLELISM_RISK ausente entre T2 e T3
                    (arquivos disjuntos)
+
+plan_deviations:
+  - task: T1
+    planned: o contrato listava "mudar o /calc" como out of scope e nomeava o
+             teste "recalc depois de aprovar → APPROVAL_CONTENT_MISMATCH +
+             stale: true"
+    actual: o Builder provou que o /calc regrava valuation_json SEM approval —
+            recalcular apagava a assinatura e o estado "aprovação caduca" do
+            mock aprovado era inatingível (sobrava só VALUATION_NOT_APPROVED)
+    impact: um estado de tela do Design Approval Package rev. 1 não existiria
+            na jornada; T2 renderizaria um desenho aprovado sem caminho real
+    resolution: decisão do orquestrador em 2026-08-20 — a ROTA /calc passa a
+                carregar adiante a aprovação da cabeça (o domínio não muda; o
+                digest amarrado torna a aprovação preservada incapaz de
+                autorizar o conteúdo novo, e o portão recusa com
+                APPROVAL_CONTENT_MISMATCH). O teste nomeado volta ao contrato
+                e o Builder mantém os dois testes extras que escreveu
 ```

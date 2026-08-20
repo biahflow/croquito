@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../api";
 import {
   describeError,
+  exportBlockedViolations,
   isAbortError,
+  isForbidden,
   isRevisionConflict,
+  isWorkbookAuditFailure,
   medicaoErrorCode,
   recusaDeMutacao,
+  workbookAuditFindings,
 } from "./errors";
 
 function recusa(
@@ -72,6 +76,89 @@ describe("recusaDeMutacao", () => {
     expect(desfecho.conflito).toBe(false);
     expect(desfecho.mensagem).toContain("não é montado pela metade");
     expect(desfecho.mensagem).not.toContain("A rodada mudou");
+  });
+});
+
+describe("isForbidden", () => {
+  it("reconhece a falta de autorização pelo código e pelo status", () => {
+    expect(isForbidden(recusa(403, "FORBIDDEN"))).toBe(true);
+    expect(isForbidden(recusa(403, "OUTRO_CODIGO"))).toBe(true);
+    expect(isForbidden(recusa(404, "NOT_FOUND"))).toBe(false);
+    expect(isForbidden(new Error("falha qualquer"))).toBe(false);
+  });
+});
+
+describe("auditoria da planilha reprovada", () => {
+  const auditoria = recusa(
+    500,
+    "VALUATION_WORKBOOK_AUDIT_FAILED",
+    "a planilha do boletim não confere com a medição aprovada; nada foi publicado",
+    { finding_codes: ["CELL_VALUE_MISMATCH"], finding_count: 1 },
+  );
+
+  it("é desfecho próprio, não mais um erro comum", () => {
+    expect(isWorkbookAuditFailure(auditoria)).toBe(true);
+    expect(isWorkbookAuditFailure(recusa(500, "OUTRA_FALHA"))).toBe(false);
+    expect(recusaDeMutacao(auditoria).auditoria).toBe(true);
+    expect(recusaDeMutacao(auditoria).conflito).toBe(false);
+    expect(recusaDeMutacao(recusa(409, "REVISION_CONFLICT")).auditoria).toBe(false);
+  });
+
+  /**
+   * Só os CÓDIGOS viajam: `expected`/`found` de um achado são preço, quantidade e total da
+   * obra do cliente, e a rota não os devolve numa mensagem de erro.
+   */
+  it("devolve os códigos dos achados, e nunca um achado fabricado", () => {
+    expect(workbookAuditFindings(auditoria)).toEqual(["CELL_VALUE_MISMATCH"]);
+    expect(workbookAuditFindings(recusa(500, "VALUATION_WORKBOOK_AUDIT_FAILED"))).toEqual(
+      [],
+    );
+    expect(workbookAuditFindings(new Error("falha qualquer"))).toEqual([]);
+  });
+});
+
+describe("exportBlockedViolations", () => {
+  function portao(errors: unknown): ReturnType<typeof recusa> {
+    return recusa(422, "DOMAIN_VALIDATION_FAILED", "medição possui violações abertas", {
+      code: "VALUATION_EXPORT_BLOCKED",
+      errors,
+    });
+  }
+
+  /**
+   * O portão recusa por TODAS as violações de uma vez. Mostrar só a primeira faria a
+   * orçamentista aprovar de novo para tropeçar na seguinte.
+   */
+  it("separa código e partes de cada violação, na ordem em que o domínio as escreveu", () => {
+    const violacoes = exportBlockedViolations(
+      portao([
+        "VALUATION_NOT_APPROVED",
+        "PERIOD_NOT_SEQUENTIAL:3:4",
+        "CODE_NOT_IN_CONTRACT:praca-sintetica-oeste:04:09.001.0100-A",
+      ]),
+    );
+
+    expect(violacoes).toEqual([
+      { code: "VALUATION_NOT_APPROVED", parts: [] },
+      { code: "PERIOD_NOT_SEQUENTIAL", parts: ["3", "4"] },
+      {
+        code: "CODE_NOT_IN_CONTRACT",
+        parts: ["praca-sintetica-oeste", "04", "09.001.0100-A"],
+      },
+    ]);
+  });
+
+  it("recusa que não é do portão, ou sem a lista, não vira violação inventada", () => {
+    expect(exportBlockedViolations(portao(undefined))).toEqual([]);
+    expect(
+      exportBlockedViolations(
+        recusa(422, "DOMAIN_VALIDATION_FAILED", "outra regra", {
+          code: "CALC_ASSIGNMENT_MISSING",
+          errors: ["ALGO"],
+        }),
+      ),
+    ).toEqual([]);
+    expect(exportBlockedViolations(new Error("falha qualquer"))).toEqual([]);
   });
 });
 

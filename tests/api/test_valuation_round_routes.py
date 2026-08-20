@@ -39,6 +39,7 @@ from botocore.exceptions import BotoCoreError
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from croquito_api import valuation_rounds
 from croquito_api.config import ApiSettings
 from croquito_api.database import (
     AuditRecord,
@@ -48,14 +49,25 @@ from croquito_api.database import (
     ValuationRoundRevisionRecord,
 )
 from croquito_api.main import create_app
-from croquito_api.valuation_rounds import append_revision, document_digest
+from croquito_api.valuation_rounds import (
+    append_revision,
+    approve_valuation,
+    bulletin_export_contract,
+    document_digest,
+)
 from croquito_core.ids import new_uuid7
 from croquito_valuation.assignment import (
     LLM_RERANK_SUFFIX,
     CodeSuggestionSet,
     SuggestionRefinement,
 )
-from croquito_valuation.models import PriceCatalog, PriceCatalogEntry, PriceOrigin
+from croquito_valuation.canonical import AuditedWorksite, AuditFinding, AuditReport
+from croquito_valuation.models import (
+    PriceCatalog,
+    PriceCatalogEntry,
+    PriceOrigin,
+    Valuation,
+)
 from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
@@ -2808,3 +2820,433 @@ def test_calc_que_perde_a_corrida_e_conflito_e_nao_erro_de_servidor(
 
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "REVISION_CONFLICT"
+
+
+# --- F-025: aprovação nominal e exportação auditada do boletim ----------------------------
+
+
+def _approve(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    tenant: str = _TENANT,
+    roles: str = "orcamentista",
+    key: str = "aprovar-001",
+) -> Any:
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/approve",
+        headers=_headers(tenant, roles, key=key),
+        json={"base_version": base_version},
+    )
+
+
+def _export_bulletin(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    tenant: str = _TENANT,
+    roles: str = "orcamentista",
+    key: str = "exportar-001",
+) -> Any:
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/bulletin/export",
+        headers=_headers(tenant, roles, key=key),
+        json={"base_version": base_version},
+    )
+
+
+def _get_bulletin(client: TestClient, round_id: str, *, tenant: str = _TENANT) -> Any:
+    return client.get(
+        f"/v1/valuation-rounds/{round_id}/bulletin", headers=_headers(tenant, key="leitura")
+    )
+
+
+def _round_with_bulletin(client: TestClient, *, key: str = "rodada-boletim") -> dict[str, Any]:
+    """Rodada até o boletim construído — a precondição de aprovar e de exportar."""
+    prepared = _round_with_decided_code(client, key=key)
+    built = _build_calc(
+        client, prepared["round_id"], base_version=prepared["version"], key=f"{key}-calc"
+    )
+    assert built.status_code == 200, built.text
+    return {"round_id": prepared["round_id"], "version": built.json()["version"]}
+
+
+def _divergent_audit(*_args: Any, **_kwargs: Any) -> AuditReport:
+    """Laudo reprovado com valor de cliente dentro — o teste confere que ele NÃO vaza."""
+    return AuditReport(
+        status="divergent",
+        workbook_sha256="d" * 64,
+        worksites=[
+            AuditedWorksite(
+                worksite_key="praca-do-toca",
+                bulletin_sheet="BM",
+                memory_sheet="MEMORIA",
+                total_amount=Decimal("1125.00"),
+            )
+        ],
+        checked_cells=1,
+        formula_cells=0,
+        total_amount=Decimal("1125.00"),
+        findings=[
+            AuditFinding(
+                code="CELL_VALUE_MISMATCH",
+                sheet="BM",
+                ref="H8",
+                expected="1125.00",
+                found="9999.99",
+                detail="line_total",
+            )
+        ],
+    )
+
+
+def test_a_aprovacao_carimba_a_identidade_do_token_e_amarra_o_digest(tmp_path: Path) -> None:
+    """Quem aprovou é o subject do JWT, e o ato fica preso ao conteúdo que ele aprovou.
+
+    O digest gravado tem de conferir com o `content_digest()` da medição DEPOIS do ato:
+    `approval` está fora do cálculo, então aprovar não muda o que foi aprovado.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+    round_id = prepared["round_id"]
+
+    response = _approve(client, round_id, base_version=prepared["version"])
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == prepared["version"] + 1
+    stored = Valuation.model_validate(_stored_document(client, round_id, "valuation_json"))
+    assert stored.approval is not None
+    assert stored.approval.decision.reviewer_id == "orcamentista-sintetica"
+    assert stored.approval.decision.action == "confirm"
+    assert stored.approval.valuation_digest == stored.content_digest()
+    approval = body["approval"]
+    assert approval["approved"] is True
+    assert approval["approved_by"] == "orcamentista-sintetica"
+    assert approval["stale"] is False
+    assert approval["approved_digest"] == approval["current_digest"]
+
+
+def test_o_corpo_da_aprovacao_recusa_qualquer_carimbo_de_identidade(tmp_path: Path) -> None:
+    """Nome de aprovador não viaja no corpo: quem recusa é o `extra="forbid"` do modelo."""
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+
+    response = client.post(
+        f"/v1/valuation-rounds/{prepared['round_id']}/approve",
+        headers=_headers(key="aprovar-carimbo"),
+        json={"base_version": prepared["version"], "reviewer_id": "fulano-da-silva"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert not _stored_document(client, prepared["round_id"], "valuation_json").get("approval")
+
+
+def test_a_aprovacao_sem_boletim_construido_e_etapa_fora_de_ordem(tmp_path: Path) -> None:
+    """Sem boletim não há o que aprovar, e isso é ORDEM da cadeia, não invariante violada."""
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+
+    response = _approve(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "ROUND_STAGE_NOT_READY"
+
+
+def test_a_exportacao_sem_aprovacao_e_recusada_pelo_portao_do_dominio(tmp_path: Path) -> None:
+    """`VALUATION_NOT_APPROVED` vem de `ensure_exportable`, e nada é publicado."""
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+    objects_before = set(_store(client).objects)
+
+    response = _export_bulletin(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detail["details"]["code"] == "VALUATION_EXPORT_BLOCKED"
+    assert "VALUATION_NOT_APPROVED" in detail["details"]["errors"]
+    assert set(_store(client).objects) == objects_before
+
+
+def test_o_consolidado_derivado_nao_dispara_codigo_de_contrato_nem_afrouxa_a_aprovacao(
+    tmp_path: Path,
+) -> None:
+    """O par que caracteriza a decisão do consolidado derivado do portão (F-025).
+
+    A rodada de `/v1` não importa consolidado contratual, então `bulletin_export_contract`
+    declara só o que a medição sabe. As duas metades precisam valer ao mesmo tempo:
+
+    - no caminho feliz, NENHUM código de contrato ou saldo dispara — o consolidado derivado
+      confere com a medição por construção, e um portão que reprovasse aqui estaria
+      inventando um saldo que a rodada não tem;
+    - a APROVAÇÃO continua integralmente obrigatória — é exatamente o que sobra do portão, e
+      é o que a F-025 transforma em recusa de rota.
+
+    Se algum dia a primeira metade passar a reprovar, é porque a rodada ganhou consolidado de
+    verdade — e aí este teste é o lugar certo para a conversa.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+    round_id = prepared["round_id"]
+    valuation = Valuation.model_validate(_stored_document(client, round_id, "valuation_json"))
+    contract = bulletin_export_contract(valuation)
+
+    sem_aprovacao = valuation.export_errors(contract)
+    com_aprovacao = approve_valuation(
+        valuation, reviewer_id="orcamentista-sintetica", decided_at=datetime.now(UTC)
+    ).export_errors(contract)
+
+    # A aprovação é a ÚNICA violação aberta antes do ato: nenhum código de contrato/saldo.
+    assert sem_aprovacao == ["VALUATION_NOT_APPROVED"]
+    # E, com ela, o portão fica inteiramente limpo — sem afrouxar nada.
+    assert com_aprovacao == []
+
+
+def test_a_aprovacao_caduca_quando_o_conteudo_muda_sob_ela(tmp_path: Path) -> None:
+    """Aprovação amarrada por digest não sobrevive à mudança do que foi aprovado.
+
+    O conteúdo é alterado como um banco adulterado o traria — mantendo a `approval` e
+    mexendo num campo que o `content_digest()` cobre. Cobertura EXTRA, por baixo da jornada:
+    o caminho real de caducidade é o recálculo, coberto por
+    `test_o_recalculo_faz_a_aprovacao_caducar_e_a_exportacao_recusa`. Este aqui prova que o
+    portão não depende de como a divergência apareceu — inclusive quando ela não veio de
+    nenhuma rota.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+    round_id = prepared["round_id"]
+    approved = _approve(client, round_id, base_version=prepared["version"])
+    assert approved.status_code == 200, approved.text
+    document = _stored_document(client, round_id, "valuation_json")
+    _tamper_document(
+        client, round_id, "valuation_json", {**document, "reference_label": "AGOSTO/2026"}
+    )
+
+    leitura = _get_bulletin(client, round_id)
+    exportacao = _export_bulletin(
+        client, round_id, base_version=approved.json()["version"], key="exportar-caduca"
+    )
+
+    assert leitura.status_code == 200, leitura.text
+    aprovacao = leitura.json()["approval"]
+    assert aprovacao["stale"] is True
+    assert aprovacao["approved_digest"] != aprovacao["current_digest"]
+    assert exportacao.status_code == 422, exportacao.text
+    assert "APPROVAL_CONTENT_MISMATCH" in exportacao.json()["detail"]["details"]["errors"]
+
+
+def test_o_recalculo_faz_a_aprovacao_caducar_e_a_exportacao_recusa(tmp_path: Path) -> None:
+    """Recalcular depois de aprovar produz a APROVAÇÃO CADUCA do desenho aprovado (F-025).
+
+    A aprovação anterior é levada adiante pela rota do `/calc`, ainda amarrada ao digest do
+    conteúdo que ela cobria. O resultado é o estado que o mock desenha por extenso: houve uma
+    aprovação, ela tem dono e data, e ela NÃO cobre o que está na tela — os dois digests
+    aparecem lado a lado. Preservar não é aprovar: o portão recusa a exportação com
+    `APPROVAL_CONTENT_MISMATCH`.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+    round_id = prepared["round_id"]
+    approved = _approve(client, round_id, base_version=prepared["version"])
+    assert approved.status_code == 200, approved.text
+    digest_aprovado = approved.json()["approval"]["approved_digest"]
+
+    recalculado = _build_calc(
+        client, round_id, base_version=approved.json()["version"], key="calc-recalculo"
+    )
+    assert recalculado.status_code == 200, recalculado.text
+    leitura = _get_bulletin(client, round_id)
+    exportacao = _export_bulletin(
+        client, round_id, base_version=recalculado.json()["version"], key="exportar-recalculo"
+    )
+
+    aprovacao = leitura.json()["approval"]
+    assert aprovacao["stale"] is True
+    # Quem aprovou e quando continuam visíveis: é isso que distingue caduca de nunca aprovada.
+    assert aprovacao["approved_by"] == "orcamentista-sintetica"
+    assert aprovacao["approved_at"] is not None
+    # O digest aprovado é o ANTIGO, e o atual mudou — os dois lados que a tela mostra.
+    assert aprovacao["approved_digest"] == digest_aprovado
+    assert aprovacao["current_digest"] != digest_aprovado
+    assert exportacao.status_code == 422, exportacao.text
+    assert "APPROVAL_CONTENT_MISMATCH" in exportacao.json()["detail"]["details"]["errors"]
+
+
+def test_depois_de_recalcular_exportar_exige_um_ato_novo_de_aprovacao(tmp_path: Path) -> None:
+    """A invariante que vale em qualquer desenho: recalculou, só exporta quem aprovar de novo.
+
+    Independe de o recálculo preservar ou descartar a aprovação anterior — o que este teste
+    protege é que nenhuma assinatura velha autoriza conteúdo novo, e que a saída existe:
+    aprovar de novo destrava a exportação.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+    round_id = prepared["round_id"]
+    approved = _approve(client, round_id, base_version=prepared["version"])
+    recalculado = _build_calc(
+        client, round_id, base_version=approved.json()["version"], key="calc-reaprovacao"
+    )
+    assert recalculado.status_code == 200, recalculado.text
+
+    recusada = _export_bulletin(
+        client, round_id, base_version=recalculado.json()["version"], key="exportar-recusada"
+    )
+    reaprovada = _approve(
+        client, round_id, base_version=recalculado.json()["version"], key="aprovar-de-novo"
+    )
+    assert reaprovada.status_code == 200, reaprovada.text
+    liberada = _export_bulletin(
+        client, round_id, base_version=reaprovada.json()["version"], key="exportar-liberada"
+    )
+
+    assert recusada.status_code == 422, recusada.text
+    assert recusada.json()["detail"]["details"]["code"] == "VALUATION_EXPORT_BLOCKED"
+    # O ato novo cobre o conteúdo novo, e a exportação passa.
+    assert reaprovada.json()["approval"]["stale"] is False
+    assert liberada.status_code == 200, liberada.text
+    assert liberada.json()["workbook_present"] is True
+
+
+def test_a_exportacao_publica_por_digest_e_a_url_sai_so_na_leitura(tmp_path: Path) -> None:
+    """Planilha endereçada pelo digest da medição; a URL assinada nunca é persistida."""
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+    round_id = prepared["round_id"]
+    approved = _approve(client, round_id, base_version=prepared["version"])
+    assert approved.status_code == 200, approved.text
+    valuation_sha256 = approved.json()["valuation_sha256"]
+
+    response = _export_bulletin(client, round_id, base_version=approved.json()["version"])
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["workbook_present"] is True
+    # A resposta do POST — que é o que a idempotência guarda — não carrega URL assinada.
+    assert "workbook_url" not in body
+    esperado = f"tenants/{_TENANT}/valuation-rounds/{round_id}/bulletin/{valuation_sha256}.xlsx"
+    assert esperado in _store(client).objects
+    with _database(client).sessions() as session:
+        revision = session.scalar(
+            select(ValuationRoundRevisionRecord)
+            .where(ValuationRoundRevisionRecord.round_id == round_id)
+            .order_by(ValuationRoundRevisionRecord.version.desc())
+        )
+        assert revision is not None
+        assert revision.artifact_refs_json["bulletin_workbook"] == esperado
+        assert revision.artifact_digests_json["bulletin_workbook_sha256"] == body["workbook_sha256"]
+        # A exportação não altera a medição: o artefato da cabeça continua o mesmo.
+        assert revision.valuation_json is not None
+
+    leitura = _get_bulletin(client, round_id)
+    assert leitura.status_code == 200, leitura.text
+    assert leitura.json()["workbook_url"] is not None
+    assert esperado in leitura.json()["workbook_url"]
+
+
+def test_auditoria_divergente_do_boletim_nao_publica_nada(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Portão fail-closed: o `.xlsx` não sobe, a revisão não nasce e o valor não vaza."""
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+    round_id = prepared["round_id"]
+    approved = _approve(client, round_id, base_version=prepared["version"])
+    assert approved.status_code == 200, approved.text
+    objects_before = set(_store(client).objects)
+    version_before = _round_version(client, round_id)
+    monkeypatch.setattr(valuation_rounds, "audit_workbook", _divergent_audit)
+
+    response = _export_bulletin(
+        client, round_id, base_version=approved.json()["version"], key="exportar-auditoria"
+    )
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["code"] == "VALUATION_WORKBOOK_AUDIT_FAILED"
+    assert detail["details"]["finding_codes"] == ["CELL_VALUE_MISMATCH"]
+    assert "9999.99" not in response.text and "1125.00" not in response.text
+    assert set(_store(client).objects) == objects_before
+    assert _round_version(client, round_id) == version_before
+
+
+def test_a_exportacao_registra_auditoria_sem_url_assinada_nem_conteudo(tmp_path: Path) -> None:
+    """O registro de auditoria guarda o ato e IDs opacos — nunca a URL nem o valor medido."""
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+    round_id = prepared["round_id"]
+    approved = _approve(client, round_id, base_version=prepared["version"])
+    assert approved.status_code == 200, approved.text
+    exportada = _export_bulletin(client, round_id, base_version=approved.json()["version"])
+    assert exportada.status_code == 200, exportada.text
+
+    with _database(client).sessions() as session:
+        acoes = [
+            record.action
+            for record in session.scalars(select(AuditRecord)).all()
+            if record.resource_id == round_id
+        ]
+        registros = json.dumps(
+            [
+                {"action": record.action, "resource_id": record.resource_id}
+                for record in session.scalars(select(AuditRecord)).all()
+            ]
+        )
+
+    assert "VALUATION_APPROVED" in acoes
+    assert "BULLETIN_EXPORTED" in acoes
+    assert "https://" not in registros
+    assert exportada.json()["total_amount"] not in registros
+
+
+def test_papel_idempotencia_e_concorrencia_valem_nas_duas_rotas_novas(tmp_path: Path) -> None:
+    """As duas rotas novas herdam as guardas de sempre: papel, chave e `base_version`."""
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+    round_id = prepared["round_id"]
+
+    for rota in (f"{round_id}/approve", f"{round_id}/bulletin/export"):
+        sem_papel = client.post(
+            f"/v1/valuation-rounds/{rota}",
+            headers=_headers(roles="engenheiro", key=f"papel-{rota}"),
+            json={"base_version": prepared["version"]},
+        )
+        sem_chave = client.post(
+            f"/v1/valuation-rounds/{rota}",
+            headers={"Authorization": f"Bearer test:{_TENANT}:orcamentista-sintetica:orcamentista"},
+            json={"base_version": prepared["version"]},
+        )
+        versao_velha = client.post(
+            f"/v1/valuation-rounds/{rota}",
+            headers=_headers(key=f"versao-{rota}"),
+            json={"base_version": prepared["version"] - 1},
+        )
+
+        assert sem_papel.status_code == 403, sem_papel.text
+        assert sem_chave.status_code == 400, sem_chave.text
+        assert versao_velha.status_code == 409, versao_velha.text
+        assert versao_velha.json()["detail"]["code"] == "REVISION_CONFLICT"
+
+
+def test_idempotencia_das_rotas_novas_devolve_a_mesma_resposta(tmp_path: Path) -> None:
+    """Repetir a chamada com a mesma chave devolve a resposta gravada, sem nova revisão."""
+    client = _client(tmp_path)
+    prepared = _round_with_bulletin(client)
+    round_id = prepared["round_id"]
+
+    primeira = _approve(client, round_id, base_version=prepared["version"], key="aprovar-idem")
+    repetida = _approve(client, round_id, base_version=prepared["version"], key="aprovar-idem")
+    exportada = _export_bulletin(
+        client, round_id, base_version=primeira.json()["version"], key="exportar-idem"
+    )
+    reexportada = _export_bulletin(
+        client, round_id, base_version=primeira.json()["version"], key="exportar-idem"
+    )
+
+    assert primeira.status_code == 200, primeira.text
+    assert repetida.json() == primeira.json()
+    assert exportada.status_code == 200, exportada.text
+    assert reexportada.json() == exportada.json()
+    assert _round_version(client, round_id) == exportada.json()["version"]

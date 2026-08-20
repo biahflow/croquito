@@ -1,5 +1,6 @@
 /**
- * Jornada da medição: prancha → revisão do takeoff → códigos → boletim.
+ * Jornada da medição: prancha → revisão do takeoff → códigos → boletim → aprovação e
+ * exportação.
  *
  * A máquina de estados real é da API, e é ela quem recusa: segunda prancha na rodada
  * (`ROUND_PLATE_ALREADY_PRESENT`), extração em voo (`EXTRACTION_IN_PROGRESS`), sugestão de
@@ -15,9 +16,19 @@
  */
 
 import { extractionFailureMessage } from "./labels";
-import type { RoundState, RoundStateExtraction, RoundStatePlate } from "./api";
+import type {
+  ApprovalState,
+  RoundState,
+  RoundStateExtraction,
+  RoundStatePlate,
+} from "./api";
 
-export type EtapaId = "prancha" | "revisao" | "codigos" | "boletim";
+export type EtapaId =
+  | "prancha"
+  | "revisao"
+  | "codigos"
+  | "boletim"
+  | "aprovacao";
 
 export type EtapaStatus = "blocked" | "available" | "done";
 
@@ -37,13 +48,20 @@ export type Jornada = {
   etapaAtiva: EtapaId;
 };
 
-const ETAPA_ORDER: EtapaId[] = ["prancha", "revisao", "codigos", "boletim"];
+const ETAPA_ORDER: EtapaId[] = [
+  "prancha",
+  "revisao",
+  "codigos",
+  "boletim",
+  "aprovacao",
+];
 
 const ETAPA_TITLES: Record<EtapaId, string> = {
   prancha: "Prancha",
   revisao: "Revisão do takeoff",
   codigos: "Códigos",
   boletim: "Boletim",
+  aprovacao: "Aprovação e exportação",
 };
 
 const STATUS_LABELS: Record<EtapaStatus, string> = {
@@ -120,6 +138,29 @@ function motivoSemTakeoff(
   }
 }
 
+/** Resumo curto da etapa nova quando ainda não há o que aprovar. */
+const SEM_MEDICAO_A_APROVAR = "Nada a aprovar: a medição ainda não foi montada.";
+
+/**
+ * Resumo da etapa "Aprovação e exportação" a partir do bloco de aprovação do servidor.
+ *
+ * `approved` e `stale` são lidos JUNTOS: na aprovação caduca os dois valem ao mesmo tempo,
+ * e um resumo que lesse só `approved` diria "aprovada" sobre uma medição que a exportação
+ * já vai recusar. A ordem das perguntas é a do desenho aprovado — caduca primeiro, porque
+ * ela é o estado que exige ato humano.
+ */
+function resumoDaAprovacao(approval: ApprovalState, workbookPresent: boolean): string {
+  if (approval.stale) {
+    return "Aprovação caduca: a medição mudou depois de aprovada; aprove a medição atual.";
+  }
+  if (!approval.approved) {
+    return "Medição montada, aguardando aprovação nominal.";
+  }
+  return workbookPresent
+    ? "Medição aprovada e boletim publicado nesta rodada."
+    : "Medição aprovada; o boletim ainda não foi exportado.";
+}
+
 export function derivarEtapas(state: RoundState | null): Jornada {
   if (state === null) {
     return semEstado("aguarda a leitura do estado da rodada");
@@ -156,6 +197,13 @@ export function derivarEtapas(state: RoundState | null): Jornada {
         title: ETAPA_TITLES.boletim,
         status: "blocked",
         summary: "Boletim ainda não montado.",
+        blockedReason: motivo,
+      },
+      {
+        id: "aprovacao",
+        title: ETAPA_TITLES.aprovacao,
+        status: "blocked",
+        summary: SEM_MEDICAO_A_APROVAR,
         blockedReason: motivo,
       },
     ];
@@ -216,12 +264,15 @@ export function derivarEtapas(state: RoundState | null): Jornada {
     codigos.status = "done";
   }
 
+  // A etapa Boletim não antecipa mais o estado da aprovação: quem o declara é a etapa que
+  // tem o bloco de aprovação do servidor em mãos. Dizer aqui "sem aprovação" mentiria
+  // exatamente no caso em que a medição JÁ foi aprovada.
   const boletim: Etapa = {
     id: "boletim",
     title: ETAPA_TITLES.boletim,
     status: "available",
     summary: state.bulletin.present
-      ? "Medição gravada nesta rodada, sem aprovação."
+      ? "Medição gravada nesta rodada."
       : "Boletim ainda não montado.",
   };
   if (codigos.status !== "done") {
@@ -239,7 +290,28 @@ export function derivarEtapas(state: RoundState | null): Jornada {
     boletim.status = "done";
   }
 
-  const etapas = [prancha, revisao, codigos, boletim];
+  // Aprovação e exportação: a etapa só existe sobre medição montada, e só fica "concluída"
+  // quando há arquivo publicado — aprovar é metade do fechamento, e a jornada não declara
+  // pronto o que ainda não entregou o boletim.
+  const aprovacao: Etapa = {
+    id: "aprovacao",
+    title: ETAPA_TITLES.aprovacao,
+    status: "available",
+    summary: SEM_MEDICAO_A_APROVAR,
+  };
+  if (boletim.status === "blocked" || !state.bulletin.present) {
+    aprovacao.status = "blocked";
+    aprovacao.blockedReason =
+      boletim.blockedReason ?? "aguarda a medição ser montada na etapa Boletim";
+  } else {
+    const approval = state.bulletin.approval;
+    aprovacao.summary = resumoDaAprovacao(approval, state.bulletin.workbook_present);
+    if (approval.approved && !approval.stale && state.bulletin.workbook_present) {
+      aprovacao.status = "done";
+    }
+  }
+
+  const etapas = [prancha, revisao, codigos, boletim, aprovacao];
   // A ativa é a primeira em aberto. Com tudo concluído (ou o que resta bloqueado), fica
   // na última alcançável em vez de abrir uma etapa bloqueada.
   const aberta = etapas.find((etapa) => etapa.status === "available");

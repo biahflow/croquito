@@ -242,6 +242,22 @@
         "title": "ApproveRequest",
         "type": "object"
       },
+      "ApproveValuationRequest": {
+        "additionalProperties": false,
+        "description": "Aprovação nominal da medição: o corpo é SÓ a guarda de concorrência (F-025).\n\nNenhum campo de identidade existe aqui, e a ausência é o desenho. `reviewer_id`,\n`reviewer_role`, `decided_at` e `decision_id` são carimbo do servidor — o nome que a\nmedição publica é o do subject do JWT, e um campo de \"nome do aprovador\" no corpo faria\ndo ato nominal um campo de texto. Quem recusa qualquer um deles é o `extra=\"forbid\"` do\n`ApiModel`, não uma lista negra.\n\nA observação (`note` do `ReviewerDecision`) também não entra: o que ela significaria numa\naprovação — ressalva? condição? — é decisão de produto que ninguém tomou, e um campo\nlivre gravado junto de um ato nominal pareceria ter efeito jurídico sem tê-lo.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "ApproveValuationRequest",
+        "type": "object"
+      },
       "ArcGeometry": {
         "additionalProperties": false,
         "properties": {
@@ -2306,6 +2322,22 @@
           "status"
         ],
         "title": "ExportArtifactResponse",
+        "type": "object"
+      },
+      "ExportBulletinRequest": {
+        "additionalProperties": false,
+        "description": "Exportação do boletim: espelho de `ApproveValuationRequest`.\n\nNão há nada a escolher na exportação — nem formato, nem layout, nem \"exportar assim\nmesmo\". A medição publicada é a da cabeça da rodada, o layout é o da prefeitura\n(`default_template()`) e a aprovação válida é precondição, não opção.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "ExportBulletinRequest",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -8577,9 +8609,86 @@
         ]
       }
     },
+    "/v1/valuation-rounds/{round_id}/approve": {
+      "post": {
+        "description": "Aprova nominalmente a medição da cabeça, amarrando o ato ao digest do conteúdo.\n\nEste é o ato que o portão de exportação cobra. Ele não recalcula, não confere preço e\nnão decide nada sobre o boletim: ele registra QUEM assumiu a medição como está, QUANDO\ne SOBRE QUAL conteúdo — e é essa terceira parte que impede a assinatura de sobreviver\na uma mudança do que foi assinado.\n\nA identidade é do JWT e só dele (critério 3 da F-025). O corpo carrega apenas\n`base_version`, e `ApproveValuationRequest` documenta por que não existe campo de\nnome nem de observação. A revisão nova AVANÇA `version`, porque aprovar é ato humano\ndeliberado e a próxima decisão do orçamentista tem de partir do que ele viu aprovado.\n\nBoletim ainda não construído é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem;\nboletim que não revalida é `422`, pela mesma razão do `GET`: ninguém aprova um\nartefato que o domínio recusa.\n\nAprovar de novo é o caminho normal da aprovação caduca do desenho aprovado, e não um\nerro: o ato é idempotente por conteúdo (mesmo revisor, mesmo digest e mesmo instante\nproduzem o mesmo `decision_id`), mas cada chamada é uma revisão nova da cadeia\nappend-only — o histórico guarda as duas assinaturas, que é o que um registro de\naprovação existe para fazer.",
+        "operationId": "approve_valuation_round_v1_valuation_rounds__round_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveValuationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Approve Valuation Round V1 Valuation Rounds  Round Id  Approve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Approve Valuation Round",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
     "/v1/valuation-rounds/{round_id}/bulletin": {
       "get": {
-        "description": "Boletim gravado, com os totais recomputados na leitura pelos validadores do modelo.\n\nBoletim ainda não construído é `409 ROUND_STAGE_NOT_READY`; boletim que não passa na\nrevalidação é `422`, nunca um `200` com número que ninguém conferiu.",
+        "description": "Boletim gravado, com os totais recomputados na leitura pelos validadores do modelo.\n\nBoletim ainda não construído é `409 ROUND_STAGE_NOT_READY`; boletim que não passa na\nrevalidação é `422`, nunca um `200` com número que ninguém conferiu.\n\nA URL assinada da planilha é montada AQUI, na leitura, e só quando há planilha\npublicada — ela é credencial de leitura de curta vida e não pertence a nenhum\nartefato durável.",
         "operationId": "get_valuation_bulletin_v1_valuation_rounds__round_id__bulletin_get",
         "parameters": [
           {
@@ -8628,9 +8737,86 @@
         ]
       }
     },
+    "/v1/valuation-rounds/{round_id}/bulletin/export": {
+      "post": {
+        "description": "Publica o `.xlsx` do boletim: portão do domínio, auditoria e só então object store.\n\nA ordem é o portão, igual à do orçamento-base (ADR-0038). Primeiro\n`Valuation.ensure_exportable`, que é a regra do DOMÍNIO e não uma cópia dela aqui:\nmedição sem aprovação, com aprovação de recusa ou com aprovação que não confere com o\nconteúdo atual sai como `422 DOMAIN_VALIDATION_FAILED` com\n`details.code = VALUATION_EXPORT_BLOCKED` e a lista de violações em `details.errors`.\nDepois a planilha é escrita num arquivo temporário, reaberta e reconferida contra a\nmedição e o catálogo instalado — e só um laudo aprovado deixa os bytes subirem e a\nrevisão nascer. Auditoria reprovada é `500` e não publica nada.\n\nO consolidado que o portão recebe é o `bulletin_export_contract` da rodada, cuja\nlimitação está declarada por extenso lá: a cadeia de `/v1` não importa consolidado\ncontratual, então os códigos de saldo e contrato não têm fato que os alimente, a\nconferência de preço fica com o auditor (`CATALOG_PRICE_MISMATCH`) e a aprovação\ncontinua valendo integralmente. Nenhum número é inventado para o portão passar.\n\nA exportação NÃO altera a medição: a revisão nova carrega o mesmo `valuation_json` da\ncabeça e acrescenta só a referência e o digest do `.xlsx`. `version` avança porque\npublicar é ato humano deliberado, no mesmo desenho do `build_estimate`.",
+        "operationId": "export_valuation_bulletin_v1_valuation_rounds__round_id__bulletin_export_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportBulletinRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Export Valuation Bulletin V1 Valuation Rounds  Round Id  Bulletin Export Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Valuation Bulletin",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
     "/v1/valuation-rounds/{round_id}/calc": {
       "post": {
-        "description": "Constrói boletim e memória de cálculo do takeoff confirmado e dos códigos decididos.\n\nA identidade da obra vem da RODADA (`worksite_key`, `worksite_name`,\n`period_number`, `reference_label`, `address`, `contract_label`), nunca do corpo:\nem `/v1` esses rótulos são colunas de `ValuationRoundRecord` e o corpo carrega só a\nguarda de concorrência.\n\n`calc_plan=None` de propósito: o plano de cálculo é artefato de DIRETÓRIO do\nservidor de medição e a rodada de `/v1` não o publica. Sem ele, cada item recebe o\nbloco de quantidade direta que o próprio domínio gera — nunca uma receita suposta.\n\nEsta rota **não aprova nada**: aprovação nominal da medição é ato próprio, com\nportão de saldo e contrato, e não pertence à construção do boletim.\n\nDuas recusas se parecem e não são a mesma coisa. Conjunto de códigos ainda\ninexistente é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem, o orçamentista tem\no que fazer para sair dela. Conjunto existente com item confirmado sem decisão é\n`422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`: invariante do\ndomínio, e quem a levanta é `packages/valuation`. Catálogo com origem diferente do\nSCO fecha a medição licitada em `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (ADR-0027) —\nitem fora do contrato vira dossiê de aditivo, nunca preço de outra tabela.\n\nA guarda de `base_version` é mudança pretendida desta migração; ver\n`BuildValuationCalcRequest`.",
+        "description": "Constrói boletim e memória de cálculo do takeoff confirmado e dos códigos decididos.\n\nA identidade da obra vem da RODADA (`worksite_key`, `worksite_name`,\n`period_number`, `reference_label`, `address`, `contract_label`), nunca do corpo:\nem `/v1` esses rótulos são colunas de `ValuationRoundRecord` e o corpo carrega só a\nguarda de concorrência.\n\n`calc_plan=None` de propósito: o plano de cálculo é artefato de DIRETÓRIO do\nservidor de medição e a rodada de `/v1` não o publica. Sem ele, cada item recebe o\nbloco de quantidade direta que o próprio domínio gera — nunca uma receita suposta.\n\nEsta rota **não aprova nada**: aprovação nominal da medição é ato próprio, com\nportão de saldo e contrato, e não pertence à construção do boletim.\n\nO que ela faz, quando a cabeça já trazia uma aprovação, é LEVÁ-LA ADIANTE — e\npreservar não é aprovar. A aprovação carregada continua amarrada ao digest do\nconteúdo ANTIGO, então a medição recém-montada nasce com a aprovação caduca: a\nexportação recusa com `APPROVAL_CONTENT_MISMATCH` até um ato novo, e a tela mostra os\ndois digests lado a lado em vez de fingir que ninguém nunca assinou. Descartá-la aqui\napagaria em silêncio o fato de que uma aprovação existiu. Quem responde \"houve\naprovação antes?\" é a rota, que tem a revisão em mãos, e não o domínio:\n`build_worksite_valuation` continua montando medição sem aprovação nenhuma. Ver\n`carry_approval_forward`.\n\nDuas recusas se parecem e não são a mesma coisa. Conjunto de códigos ainda\ninexistente é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem, o orçamentista tem\no que fazer para sair dela. Conjunto existente com item confirmado sem decisão é\n`422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`: invariante do\ndomínio, e quem a levanta é `packages/valuation`. Catálogo com origem diferente do\nSCO fecha a medição licitada em `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (ADR-0027) —\nitem fora do contrato vira dossiê de aditivo, nunca preço de outra tabela.\n\nA guarda de `base_version` é mudança pretendida desta migração; ver\n`BuildValuationCalcRequest`.",
         "operationId": "build_valuation_calc_v1_valuation_rounds__round_id__calc_post",
         "parameters": [
           {

@@ -31,6 +31,43 @@ export const MENSAGEM_RODADA_MUDOU =
   "rodada, avançou a versão. Nada foi gravado. Recarregue o estado atual e decida de " +
   "novo; o que você escreveu no formulário continua aqui.";
 
+/**
+ * A aprovação caduca dita por extenso (`APPROVAL_CONTENT_MISMATCH` derivado na leitura).
+ *
+ * Ela não é falha do ato: alguém assinou, e a medição mudou depois. A frase diz as duas
+ * coisas que a orçamentista precisa saber — nada foi exportado, e a única saída é aprovar
+ * de novo. Não existe "exportar assim mesmo", e o texto não pode sugerir que exista.
+ */
+export const MENSAGEM_APROVACAO_CADUCA =
+  "A medição mudou depois de aprovada, e a aprovação não vale mais. Nada foi exportado, e " +
+  "nada será exportado até a medição atual ser aprovada de novo.";
+
+/** Aprovação registrada e válida: o que ela destrava, sem prometer arquivo nenhum. */
+export const MENSAGEM_MEDICAO_APROVADA =
+  "Medição aprovada. A exportação do boletim está liberada nesta rodada.";
+
+/**
+ * O que o clique de exportar faz, dito antes do clique. Três dos quatro passos acontecem
+ * antes de existir arquivo publicado, e é isso que a frase precisa deixar claro.
+ */
+export const AVISO_EXPORTACAO_FAIL_CLOSED =
+  "O arquivo é montado, gravado, reaberto e reconferido centavo a centavo antes de ser " +
+  "publicado. Se a reconferência achar qualquer divergência, nada é publicado.";
+
+/** Auditoria reprovada: o desfecho por extenso, porque "falhou" não diz o que aconteceu. */
+export const MENSAGEM_AUDITORIA_REPROVADA =
+  "A auditoria recusou o arquivo e nada foi publicado. O arquivo gerado foi descartado; a " +
+  "rodada continua como estava e a aprovação registrada segue como estava.";
+
+/**
+ * `403` da rota, **sem nomear papel**. Qual papel a mensagem deve citar é decisão de copy e
+ * de autorização ainda aberta no pacote de design aprovado da F-025; um texto que nomeasse
+ * um papel afirmaria uma decisão que ninguém tomou. Quem autoriza continua sendo o backend.
+ */
+export const MENSAGEM_SEM_ACESSO =
+  "Sua conta não tem autorização para a medição deste tenant. Peça a quem administra o " +
+  "acesso da sua organização.";
+
 /** Por que a quantidade do item ambíguo é responsabilidade de quem revisa. */
 export const AVISO_QUANTIDADE_AMBIGUA =
   "a extração não conseguiu ler este número; quem o informa é você";
@@ -254,6 +291,42 @@ const ERROR_MESSAGES: LookupTable = {
   CALC_NO_ITEMS: "Não há item medido para montar o boletim desta obra.",
   BULLETIN_PRICE_ORIGIN_FORBIDDEN:
     "Em obra licitada o preço vem do contrato: item de outra tabela não entra no boletim, vira pedido de aditivo.",
+  // Aprovação nominal e portão de exportação (VAL-05). Os códigos são do domínio
+  // (`Valuation.export_errors`) e chegam na lista de `VALUATION_EXPORT_BLOCKED`.
+  VALUATION_EXPORT_BLOCKED:
+    "O portão de exportação recusou esta medição; nada foi publicado. Os motivos abertos estão listados abaixo.",
+  VALUATION_NOT_APPROVED:
+    "Esta medição não tem aprovação nominal válida. Exportar é o passo depois de aprovar: aprove a medição e a exportação fica liberada.",
+  VALUATION_APPROVAL_REJECTED:
+    "A decisão registrada para esta medição é de recusa, não de aprovação; medição recusada não é exportada.",
+  APPROVAL_CONTENT_MISMATCH:
+    "A medição mudou depois da aprovação. A aprovação registrada vale para o conteúdo aprovado, não para o atual — aprove a medição atual.",
+  PERIOD_NOT_SEQUENTIAL:
+    "Esta rodada não é o próximo período do contrato: o período medido não é o que o consolidado espera.",
+  BALANCE_EXCEEDED:
+    "A quantidade medida deste código passa do saldo contratual disponível; o excedente não entra no boletim.",
+  LINE_PRICE_NOT_IN_CONTRACT:
+    "O preço unitário deste código no boletim não é o do contrato desta obra.",
+  LINE_UNIT_NOT_IN_CONTRACT:
+    "A unidade deste código no boletim não é a do contrato desta obra.",
+  VALUATION_WORKBOOK_AUDIT_FAILED:
+    "A planilha gerada não confere com a medição aprovada; nada foi publicado e o arquivo foi descartado.",
+  // Achados da auditoria de round-trip (`audit_workbook`). Só os CÓDIGOS voltam do
+  // servidor: o valor esperado e o encontrado são dinheiro e quantidade da obra.
+  SHEET_MISSING: "Uma aba que a medição exige não foi encontrada no arquivo reaberto.",
+  SHEET_UNEXPECTED: "O arquivo reaberto tem uma aba que a medição não pediu.",
+  CELL_MISSING: "Uma célula que a medição exige está vazia no arquivo reaberto.",
+  CELL_UNEXPECTED: "O arquivo reaberto tem conteúdo numa célula que deveria estar vazia.",
+  CELL_KIND_MISMATCH:
+    "Uma célula do arquivo reaberto tem outro tipo de conteúdo (texto onde deveria haver número, ou o contrário).",
+  CELL_VALUE_MISMATCH:
+    "Uma célula do arquivo reaberto não tem o valor que a medição declara; um centavo de diferença basta para não publicar.",
+  CELL_FORMULA_MISMATCH:
+    "Uma fórmula do arquivo reaberto não é a que a medição declara.",
+  CATALOG_CODE_MISSING:
+    "Um código impresso na planilha não está no catálogo instalado nesta rodada.",
+  CATALOG_PRICE_MISMATCH:
+    "Um preço impresso na planilha não é o do catálogo instalado nesta rodada.",
   MODEL_VALIDATION_FAILED:
     "O documento gravado na rodada não corresponde ao contrato do modelo.",
   // Dossiê do aditivo.
@@ -281,6 +354,38 @@ export function errorMessage(code: string, detail?: string | null): string {
       : known;
   }
   return cleaned ? `${code}: ${cleaned}` : code;
+}
+
+/**
+ * Nome de cada parte que o domínio escreve depois do código da violação, na ordem de
+ * `Valuation.export_errors` (`PERIOD_NOT_SEQUENTIAL:esperado:recebido`,
+ * `CODE_NOT_IN_CONTRACT:obra:item:código`). Sem esta tabela, `…:3:4` chegaria à tela como
+ * dois números sem nome.
+ */
+const VIOLATION_PART_LABELS: Record<string, string[] | undefined> = {
+  PERIOD_NOT_SEQUENTIAL: ["esperado", "recebido"],
+  CODE_NOT_IN_CONTRACT: ["obra", "item", "código"],
+  CODE_AMBIGUOUS_IN_CONTRACT: ["obra", "item", "código"],
+  LINE_PRICE_NOT_IN_CONTRACT: ["código"],
+  LINE_UNIT_NOT_IN_CONTRACT: ["código"],
+  BALANCE_EXCEEDED: ["código"],
+};
+
+/**
+ * Linha do código estável de uma violação do portão, com as partes nomeadas — é o que fica
+ * visível ao lado da frase para quem dá suporte. Parte sem rótulo conhecido aparece como
+ * veio: nomear por adivinhação seria pior do que mostrar o segmento cru.
+ */
+export function violationDetailLine(
+  code: string,
+  parts: readonly string[],
+): string {
+  const labels = VIOLATION_PART_LABELS[code] ?? [];
+  const described = parts.map((part, index) => {
+    const label = labels[index];
+    return label === undefined ? part : `${label} ${part}`;
+  });
+  return [code, ...described].join(" · ");
 }
 
 const EXTRACTION_FAILURE_MESSAGES: LookupTable = {
