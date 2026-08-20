@@ -112,6 +112,44 @@ export type ProposalDecision = {
   calibration_id?: string;
 };
 
+/**
+ * Um termo da cadeia: a leitura, o valor em metros e o texto cru da folha.
+ *
+ * Os decimais viajam como STRING (o servidor serializa `Decimal`), e é assim que a tela
+ * os exibe: converter para `number` para reescrever perderia a precisão escrita da cota,
+ * que é justamente o que a conferência aritmética está julgando.
+ */
+export type ChainTerm = {
+  reading_id: string;
+  value_m: string;
+  raw_text: string;
+};
+
+/** Uma soma de trechos comparada com um total, ambos lidos da folha. */
+export type DimensionChain = {
+  total: ChainTerm;
+  parts: ChainTerm[];
+  residual_m: string;
+  tolerance_m: string;
+};
+
+/**
+ * Uma cadeia declarada por uma pessoa, reconferida contra o pacote de hoje.
+ *
+ * O que fica gravado é a declaração; `chain`, `status` e `issue` são recomputados pelo
+ * servidor a cada leitura. Daí `stale`: a cota participante pode ter sido retificada ou
+ * rejeitada depois, e nesse caso a cadeia não some — ela avisa que perdeu o pé, sem
+ * `chain`, e pede um ato humano (retratar ou declarar de novo).
+ */
+export type DeclaredChain = {
+  chain_id: string;
+  declared_by: string;
+  declared_at: string;
+  chain?: DimensionChain | null;
+  status: "closes" | "mismatch" | "stale";
+  issue?: { code: string; severity: string; message: string } | null;
+};
+
 export type Review = {
   job_id: string;
   review_id: string;
@@ -147,6 +185,13 @@ export type Review = {
   // O critério de escopo viaja como par: `code` é a chave da declaração na aprovação,
   // `text` é a frase do caso que a tela mostra no lugar do código cru.
   required_criteria: { code: string; text: string }[];
+  // Conferência aritmética das cotas confirmadas: sugestão calculada na hora e
+  // declaração humana persistida. Nenhuma das duas entra em `blockers` — divergência de
+  // cadeia é aviso para o revisor, nunca veto de exportação. Opcionais porque a resposta
+  // idempotente gravada ANTES destes campos existirem é revalidada no replay e volta sem
+  // eles (mesmo motivo do `default_factory` no servidor).
+  suggested_chains?: DimensionChain[];
+  declared_chains?: DeclaredChain[];
   scene: {
     id: string;
     version: number;
@@ -648,6 +693,37 @@ export async function submitReviewRectification(
       base_version: baseVersion,
       rectifications: [rectification],
     }),
+  });
+}
+
+/**
+ * Declarar ou retratar uma cadeia. O corpo é disjunto de propósito: `declare` leva total
+ * e parcelas, `retract` leva o identificador da cadeia — o cliente não monta um comando
+ * com os dois, e quem valida o resto continua sendo o servidor (`CHAIN_INVALID`,
+ * `CHAIN_NOT_FOUND`).
+ */
+export type ReviewChainCommand =
+  | { action: "declare"; total_id: string; part_ids: string[] }
+  | { action: "retract"; chain_id: string };
+
+/**
+ * Uma `Idempotency-Key` e um `base_version` por gesto, como as demais mutações da
+ * revisão: declarar e retratar são atos humanos e cada um cria uma revisão de leitura
+ * nova no servidor. A resposta é o `Review` já reconferido.
+ */
+export async function postReviewChains(
+  accessToken: string,
+  jobId: string,
+  baseVersion: number,
+  command: ReviewChainCommand,
+): Promise<Review> {
+  return apiJson<Review>(`/v1/jobs/${jobId}/review/chains`, accessToken, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify({ base_version: baseVersion, ...command }),
   });
 }
 

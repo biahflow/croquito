@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { Review, VisionProposal } from "./api";
+import type { DimensionChain, Review, VisionProposal } from "./api";
 import {
   calibrationModeLabel,
+  chainCorroboratedReadingIds,
+  chainStatusLabel,
+  chainSumLabel,
   decisionActionLabel,
   derivedAnchorTitle,
   derivedDimensionLabel,
@@ -826,5 +829,141 @@ describe("traceContestedSpanLabel", () => {
         readings,
       ),
     ).toBe("Duas cotas confirmadas disputam o mesmo vão no eixo X (horizontal).");
+  });
+});
+
+/**
+ * A conferência aritmética das cotas (F-023). O que estes testes fixam é o que a tela
+ * PODE afirmar: a conta como está escrita na folha, o veredito em palavra, e a corroboração
+ * apenas das somas que fecham — coincidência aritmética não vira prova.
+ */
+const chainThatCloses: DimensionChain = {
+  total: { reading_id: "rd_0000000000000001", value_m: "25.90", raw_text: "25,90" },
+  parts: [
+    { reading_id: "rd_0000000000000002", value_m: "12.49", raw_text: "12,49" },
+    { reading_id: "rd_0000000000000003", value_m: "9.55", raw_text: "9,55" },
+    { reading_id: "rd_0000000000000004", value_m: "3.86", raw_text: "3,86" },
+  ],
+  residual_m: "0.00",
+  tolerance_m: "0.015",
+};
+
+const chainThatMisses: DimensionChain = {
+  total: { reading_id: "rd_0000000000000005", value_m: "21.75", raw_text: "21,75" },
+  parts: [
+    { reading_id: "rd_0000000000000006", value_m: "12.49", raw_text: "12,49" },
+    { reading_id: "rd_0000000000000007", value_m: "6.36", raw_text: "6,36" },
+  ],
+  residual_m: "-2.90",
+  tolerance_m: "0.015",
+};
+
+describe("chainSumLabel", () => {
+  it("writes the sum as it is written on the sheet, with the slack in metres", () => {
+    expect(chainSumLabel(chainThatCloses)).toBe(
+      "12,49 + 9,55 + 3,86 = 25,90 · confere (folga 0,015 m)",
+    );
+  });
+
+  it("never rounds the decimals the server confirmed", () => {
+    // 0,015 arredondado para duas casas viraria 0,02: a folga exibida deixaria de ser a
+    // folga conferida.
+    expect(chainSumLabel(chainThatCloses)).toContain("folga 0,015 m");
+  });
+
+  it("says in words that the chain does not close, with the difference in metres", () => {
+    expect(chainSumLabel(chainThatMisses)).toBe(
+      "12,49 + 6,36 ≠ 21,75 · não fecha (diferença de 2,90 m)",
+    );
+  });
+
+  it("does not print an equals sign where the server found a difference", () => {
+    expect(chainSumLabel(chainThatMisses)).not.toContain("=");
+  });
+
+  it("obeys the status the server recomputed instead of judging on its own", () => {
+    expect(chainSumLabel(chainThatCloses, "mismatch")).toContain("não fecha");
+    expect(chainSumLabel(chainThatMisses, "closes")).toContain("confere");
+  });
+
+  it("treats an unreadable decimal as not closing instead of claiming it closes", () => {
+    expect(
+      chainSumLabel({ ...chainThatCloses, residual_m: "" }),
+    ).toContain("não fecha");
+  });
+});
+
+describe("chainStatusLabel", () => {
+  it("translates every chain status", () => {
+    expect(chainStatusLabel("closes")).toBe("confere");
+    expect(chainStatusLabel("mismatch")).toBe("não fecha");
+    expect(chainStatusLabel("stale")).toBe("perdeu o pé");
+  });
+
+  it("shows an unknown status verbatim instead of hiding it", () => {
+    expect(chainStatusLabel("whatever")).toBe("whatever");
+  });
+});
+
+describe("chainCorroboratedReadingIds", () => {
+  it("collects total and parts of the suggested chains that close", () => {
+    expect(
+      chainCorroboratedReadingIds({ suggested_chains: [chainThatCloses] }),
+    ).toEqual(
+      new Set([
+        "rd_0000000000000001",
+        "rd_0000000000000002",
+        "rd_0000000000000003",
+        "rd_0000000000000004",
+      ]),
+    );
+  });
+
+  it("leaves out a chain that does not close", () => {
+    expect(
+      chainCorroboratedReadingIds({ suggested_chains: [chainThatMisses] }),
+    ).toEqual(new Set());
+  });
+
+  it("counts a declared chain only while the server still calls it closes", () => {
+    const declared = (status: "closes" | "mismatch" | "stale") => [
+      {
+        chain_id: "ch_1",
+        declared_by: "revisor",
+        declared_at: "2026-08-20T12:00:00Z",
+        chain: chainThatCloses,
+        status,
+      },
+    ];
+
+    expect(
+      chainCorroboratedReadingIds({ declared_chains: declared("closes") }).size,
+    ).toBe(4);
+    expect(
+      chainCorroboratedReadingIds({ declared_chains: declared("mismatch") }).size,
+    ).toBe(0);
+    expect(
+      chainCorroboratedReadingIds({ declared_chains: declared("stale") }).size,
+    ).toBe(0);
+  });
+
+  it("survives a chain that lost its footing and came back without the sum", () => {
+    expect(
+      chainCorroboratedReadingIds({
+        declared_chains: [
+          {
+            chain_id: "ch_1",
+            declared_by: "revisor",
+            declared_at: "2026-08-20T12:00:00Z",
+            chain: null,
+            status: "stale",
+          },
+        ],
+      }),
+    ).toEqual(new Set());
+  });
+
+  it("renders nothing from a review replayed without the new fields", () => {
+    expect(chainCorroboratedReadingIds({})).toEqual(new Set());
   });
 });

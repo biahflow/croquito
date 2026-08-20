@@ -1,4 +1,6 @@
 import type {
+  DeclaredChain,
+  DimensionChain,
   Review,
   TraceAppliedSpan,
   TraceContestedSpan,
@@ -600,4 +602,108 @@ export function traceContestedSpanLabel(
       ? parts[0]
       : `${parts.slice(0, -1).join(", ")} e ${parts[parts.length - 1]}`;
   return `${list} disputam o mesmo vão no ${axis}; os valores escritos não fecham entre si.`;
+}
+
+/**
+ * Decimal do servidor exibido como foi escrito: só a pontuação muda.
+ *
+ * `formatDecimal` arredonda para um número fixo de casas, e é o que serve para medida
+ * derivada de pixel. Aqui não serve: a folga de uma cadeia é `0,015 m` porque a cota
+ * prometeu centímetro, e reescrevê-la com duas casas ("0,02") mudaria o que o servidor
+ * conferiu. Resíduo pequeno arredondado para `0,00 m` chegaria a dizer que uma cadeia
+ * que não fecha não tem diferença nenhuma.
+ */
+function chainDecimal(value: string): string {
+  return value.trim().replace(".", ",");
+}
+
+/** Diferença em módulo: o sinal do resíduo é conta interna, não leitura de obra. */
+function chainAbsolute(value: string): string {
+  return chainDecimal(value).replace(/^[+-]/, "");
+}
+
+/** `Number("")` é zero, e zero aqui diria "fecha certinho" sobre um campo vazio. */
+function chainNumber(value: string): number {
+  const text = value.trim();
+  return text === "" ? Number.NaN : Number(text);
+}
+
+/** A cadeia fecha quando o resíduo cabe na tolerância — a mesma regra do servidor. */
+function chainCloses(chain: DimensionChain): boolean {
+  const residual = chainNumber(chain.residual_m);
+  const tolerance = chainNumber(chain.tolerance_m);
+  if (Number.isNaN(residual) || Number.isNaN(tolerance)) {
+    return false;
+  }
+  return Math.abs(residual) <= tolerance;
+}
+
+const CHAIN_STATUS_LABELS: Record<string, string> = {
+  closes: "confere",
+  mismatch: "não fecha",
+  stale: "perdeu o pé",
+};
+
+/** Estado da cadeia por extenso: cor nunca é o único indicador do que ela está dizendo. */
+export function chainStatusLabel(status: string): string {
+  return CHAIN_STATUS_LABELS[status] ?? status;
+}
+
+/**
+ * A conta como o revisor a confere na folha: as parcelas somadas contra o total.
+ *
+ * O sinal entre a soma e o total é `=` só quando a cadeia fecha; quando não fecha, `≠`,
+ * porque escrever igualdade onde há diferença seria a tela afirmando o que o servidor
+ * negou. A frase depois do `·` diz o mesmo em palavra — o símbolo sozinho não é aviso.
+ *
+ * `status` vem da cadeia declarada, que o servidor reconfere; sem ele (sugestão) a
+ * comparação é feita aqui pela mesma regra.
+ */
+export function chainSumLabel(
+  chain: DimensionChain,
+  status?: "closes" | "mismatch",
+): string {
+  const closes = status ? status === "closes" : chainCloses(chain);
+  const parts = chain.parts.map((term) => chainDecimal(term.value_m)).join(" + ");
+  const total = chainDecimal(chain.total.value_m);
+  if (closes) {
+    return `${parts} = ${total} · confere (folga ${chainDecimal(
+      chain.tolerance_m,
+    )} m)`;
+  }
+  return `${parts} ≠ ${total} · não fecha (diferença de ${chainAbsolute(
+    chain.residual_m,
+  )} m)`;
+}
+
+/**
+ * Leituras que participam de alguma soma que fecha — total e parcelas.
+ *
+ * É indício fraco de propósito: no croqui real, 3 das 4 somas que fecham são
+ * coincidência aritmética. Serve para o revisor olhar antes, nunca para confirmar
+ * leitura, liberar exportação ou dispensar a evidência. Cadeia que não fecha (e a que
+ * perdeu o pé) não corrobora ninguém.
+ */
+export function chainCorroboratedReadingIds(chains: {
+  suggested_chains?: DimensionChain[];
+  declared_chains?: DeclaredChain[];
+}): Set<string> {
+  const ids = new Set<string>();
+  const add = (chain: DimensionChain) => {
+    ids.add(chain.total.reading_id);
+    for (const part of chain.parts) {
+      ids.add(part.reading_id);
+    }
+  };
+  for (const chain of chains.suggested_chains ?? []) {
+    if (chainCloses(chain)) {
+      add(chain);
+    }
+  }
+  for (const declared of chains.declared_chains ?? []) {
+    if (declared.status === "closes" && declared.chain) {
+      add(declared.chain);
+    }
+  }
+  return ids;
 }

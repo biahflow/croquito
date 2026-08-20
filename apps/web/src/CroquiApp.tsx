@@ -25,6 +25,7 @@ import {
   getTraceSolve,
   listChatSessions,
   listProjects,
+  postReviewChains,
   requestExport,
   submitProposalBatch,
   submitProposalDecision,
@@ -32,8 +33,11 @@ import {
   submitReviewRectification,
   type ChatActDraft,
   type ChatSession,
+  type DeclaredChain,
+  type DimensionChain,
   type ExportArtifact,
   type Review,
+  type ReviewChainCommand,
   type ReviewDecision,
   type ReviewReading,
   type ProjectSummary,
@@ -51,6 +55,9 @@ import {
 } from "./approval";
 import {
   calibrationModeLabel,
+  chainCorroboratedReadingIds,
+  chainStatusLabel,
+  chainSumLabel,
   decisionActionLabel,
   derivedAnchorTitle,
   derivedDimensionLabel,
@@ -519,6 +526,270 @@ export function AppAlert({
 }
 
 /**
+ * Rascunho da declaração de cadeia (F-023). `totalId` é o primeiro clique — o total que
+ * as parcelas prometem somar. Fora do modo de declaração o rascunho é `null`.
+ */
+export type ChainDraft = {
+  totalId: string | null;
+  partIds: string[];
+};
+
+export const EMPTY_CHAIN_DRAFT: ChainDraft = { totalId: null, partIds: [] };
+
+/** Teto de parcelas, igual ao `max_length` de `ReviewChainCommand` no servidor. */
+export const CHAIN_PART_MAX = 16;
+
+/** Um total e duas parcelas: abaixo de três confirmadas não há cadeia a declarar. */
+export const CHAIN_MIN_READINGS = 3;
+
+/**
+ * Um clique por termo: o primeiro define o total, os seguintes marcam parcelas, e clicar
+ * de novo desmarca. A regra mora aqui, fora do DOM, porque é ela que decide o que será
+ * enviado — não a marcação visual.
+ */
+export function toggleChainTerm(
+  draft: ChainDraft,
+  readingId: string,
+): ChainDraft {
+  if (draft.totalId === readingId) {
+    return { ...draft, totalId: null };
+  }
+  if (draft.partIds.includes(readingId)) {
+    return {
+      ...draft,
+      partIds: draft.partIds.filter((id) => id !== readingId),
+    };
+  }
+  if (draft.totalId === null) {
+    return { ...draft, totalId: readingId };
+  }
+  return { ...draft, partIds: [...draft.partIds, readingId] };
+}
+
+/**
+ * `null` quando a cadeia pode ser declarada; senão a frase que o revisor lê no lugar de
+ * um 422. O servidor continua sendo a autoridade (`CHAIN_INVALID`): isto só evita a
+ * viagem até a rede para uma recusa que já se sabe.
+ */
+export function chainDraftIssue(draft: ChainDraft): string | null {
+  if (draft.totalId === null) {
+    return "Marque na lista a leitura que é o total da cadeia.";
+  }
+  if (draft.partIds.length < 2) {
+    return "Uma cadeia precisa de pelo menos duas parcelas.";
+  }
+  if (draft.partIds.length > CHAIN_PART_MAX) {
+    return `A cadeia vai até ${CHAIN_PART_MAX} parcelas, e ${draft.partIds.length} passam desse limite.`;
+  }
+  return null;
+}
+
+/**
+ * Indício fraco, e de propósito: no croqui real, 3 das 4 somas que fecham são
+ * coincidência aritmética. O balão não confirma leitura, não dispensa a evidência e não
+ * decide nada — ele só diz que vale a pena olhar.
+ */
+export function ChainCloseHint({ corroborated }: { corroborated: boolean }) {
+  if (!corroborated) {
+    return null;
+  }
+  return (
+    <small
+      className="chain-hint"
+      title="Uma soma de cotas confirmadas fecha com esta leitura. É pista aritmética, não confirmação."
+    >
+      Σ fecha
+    </small>
+  );
+}
+
+/** Os termos da cadeia como atalho para a lista: clicar num deles seleciona a leitura. */
+function ChainTerms({
+  chain,
+  onSelectReading,
+}: {
+  chain: DimensionChain;
+  onSelectReading: (readingId: string) => void;
+}) {
+  const terms = [
+    { term: chain.total, role: "total" },
+    ...chain.parts.map((term) => ({ term, role: "parcela" })),
+  ];
+  return (
+    <div className="chain-terms">
+      {terms.map(({ term, role }) => (
+        <button
+          key={`${role}-${term.reading_id}`}
+          type="button"
+          className="chain-term"
+          aria-label={`Ver a leitura ${term.raw_text} na lista (${role} da cadeia)`}
+          onClick={() => onSelectReading(term.reading_id)}
+        >
+          {role}: {term.raw_text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * "Somas de cotas": o que as cotas confirmadas dizem umas das outras.
+ *
+ * Declaradas primeiro, porque são ato humano e podem estar avisando que não fecham;
+ * sugestões depois, com a cautela escrita ao lado. O aviso de uma cadeia que não fecha
+ * (ou que perdeu o pé depois de uma retificação) aparece sempre, com a frase do servidor
+ * e o código cru — nunca só por cor, nunca escondido para "limpar" a tela.
+ *
+ * Nada aqui confirma leitura, entra em `blockers` ou libera exportação: o portão da cena
+ * continua sendo o único caminho até o DXF.
+ */
+export function ChainsSection({
+  suggested,
+  declared,
+  draft,
+  candidateCount,
+  submitting,
+  onStartDeclaring,
+  onCancelDeclaring,
+  onConfirmDeclaring,
+  onRetract,
+  onSelectReading,
+}: {
+  suggested: DimensionChain[];
+  declared: DeclaredChain[];
+  /** `null` fora do modo de declaração. */
+  draft: ChainDraft | null;
+  /** Leituras confirmadas com valor numérico, elegíveis a termo de cadeia. */
+  candidateCount: number;
+  submitting: boolean;
+  onStartDeclaring: () => void;
+  onCancelDeclaring: () => void;
+  onConfirmDeclaring: () => void;
+  onRetract: (chainId: string) => void;
+  onSelectReading: (readingId: string) => void;
+}) {
+  const podeDeclarar = candidateCount >= CHAIN_MIN_READINGS;
+  if (
+    suggested.length === 0 &&
+    declared.length === 0 &&
+    draft === null &&
+    !podeDeclarar
+  ) {
+    return null;
+  }
+  const issue = draft ? chainDraftIssue(draft) : null;
+  return (
+    <section className="chain-panel" aria-label="Somas de cotas">
+      <h3>Somas de cotas</h3>
+      <p className="batch-hint">
+        Conferência aritmética entre cotas confirmadas. Ela não confirma leitura, não
+        libera exportação e não trava o croqui — quem decide continua sendo você.
+      </p>
+      {declared.length > 0 ? (
+        <ul className="chain-list" aria-label="Cadeias declaradas">
+          {declared.map((item) => (
+            <li key={item.chain_id} className="chain-item">
+              <p className="chain-state">
+                <strong>Cadeia declarada</strong> · {chainStatusLabel(item.status)}
+              </p>
+              {item.chain ? (
+                <>
+                  <p className="chain-sum">
+                    {chainSumLabel(
+                      item.chain,
+                      item.status === "closes" ? "closes" : "mismatch",
+                    )}
+                  </p>
+                  <ChainTerms
+                    chain={item.chain}
+                    onSelectReading={onSelectReading}
+                  />
+                </>
+              ) : null}
+              <p className="chain-author">
+                Declarada por <strong>{item.declared_by}</strong> em{" "}
+                {decisionMoment(item.declared_at)}.
+              </p>
+              {item.issue ? (
+                <p className="chain-warning">
+                  ⚠ {item.issue.message}{" "}
+                  <small className="chain-code">{item.issue.code}</small>
+                </p>
+              ) : null}
+              <div className="batch-buttons">
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => onRetract(item.chain_id)}
+                >
+                  Retirar
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {suggested.length > 0 ? (
+        <>
+          <p className="batch-hint">
+            Coincidência aritmética é comum; use como pista, não como prova
+          </p>
+          <ul className="chain-list" aria-label="Somas sugeridas">
+            {suggested.map((chain, index) => (
+              <li
+                key={`${chain.total.reading_id}-${index}`}
+                className="chain-item"
+              >
+                <p className="chain-sum">{chainSumLabel(chain)}</p>
+                <ChainTerms chain={chain} onSelectReading={onSelectReading} />
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {draft ? (
+        <section className="batch-controls" aria-label="Declaração de cadeia">
+          {/* A marcação muda na lista das leituras, longe deste painel: quem usa leitor
+              de tela precisa ouvir o que já está marcado. */}
+          <p className="batch-count" aria-live="polite">
+            {draft.totalId ? "Total marcado" : "Total ainda não marcado"} ·{" "}
+            <strong>{draft.partIds.length}</strong> parcelas marcadas
+          </p>
+          <p className="batch-hint">
+            Marque na lista das leituras confirmadas: o primeiro clique define o total e
+            os seguintes marcam as parcelas. Clique de novo para desmarcar. Nada é
+            enviado até você confirmar.
+          </p>
+          {issue ? <p className="chain-warning">{issue}</p> : null}
+          <div className="batch-buttons">
+            <button
+              type="button"
+              disabled={submitting || issue !== null}
+              onClick={onConfirmDeclaring}
+            >
+              Confirmar cadeia
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={onCancelDeclaring}
+            >
+              Cancelar
+            </button>
+          </div>
+        </section>
+      ) : podeDeclarar ? (
+        <div className="batch-buttons">
+          <button type="button" disabled={submitting} onClick={onStartDeclaring}>
+            Declarar cadeia
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/**
  * Jornada da revisão do croqui. A sessão OIDC é da casca (`App.tsx`) e chega por prop:
  * `readSession()` consome o authorization code do redirect, que é de uso único, então
  * ela tem um dono só. A casca também é quem decide não montar esta jornada sem sessão.
@@ -571,6 +842,9 @@ export function CroquiApp({
   const [readingBatchIds, setReadingBatchIds] = useState<Set<string>>(new Set());
   // Nunca pré-preenchido: o texto gravado como justificativa é sempre do revisor.
   const [readingBatchJustification, setReadingBatchJustification] = useState("");
+  // Declaração de cadeia em curso. `null` fora do modo: a marcação dos termos só existe
+  // enquanto o revisor está declarando, e nada é enviado sem o botão de confirmar.
+  const [chainDraft, setChainDraft] = useState<ChainDraft | null>(null);
   const [bindingReadingId, setBindingReadingId] = useState<string | null>(null);
   // Nunca pré-preenchido: o texto gravado como justificativa é sempre do revisor.
   const [bindingJustification, setBindingJustification] = useState("");
@@ -717,6 +991,29 @@ export function CroquiApp({
   const annotationBatchSize = annotationCandidateIds.filter((readingId) =>
     readingBatchIds.has(readingId),
   ).length;
+  // Elegíveis a termo de cadeia: confirmada e com valor numérico. Anotação da folha e
+  // leitura pendente não entram — o servidor recusaria (`CHAIN_INVALID`), e a lista não
+  // deve oferecer o que ele recusa.
+  const chainCandidateIds = useMemo(
+    () =>
+      new Set(
+        (review?.packet.readings ?? [])
+          .filter(
+            (reading) =>
+              reading.status === "confirmed" &&
+              reading.value_si !== null &&
+              reading.value_si !== undefined,
+          )
+          .map((reading) => reading.id),
+      ),
+    [review],
+  );
+  // Leituras que participam de alguma soma que fecha. Pista fraca de propósito: o balão
+  // que ela acende não confirma nada.
+  const chainCorroborated = useMemo(
+    () => chainCorroboratedReadingIds(review ?? {}),
+    [review],
+  );
   const proposals = review?.proposals?.proposals ?? [];
   const proposalById = new Map(
     proposals.map((proposal) => [proposal.id, proposal]),
@@ -1059,6 +1356,9 @@ export function CroquiApp({
     try {
       const current = await getReview(accessToken, requestedJobId);
       setReview(current);
+      // A marcação de cadeia é de uma revisão específica; abrir outra revisão (ou outro
+      // job) sai do modo em vez de carregar ids de um pacote que já não está na tela.
+      setChainDraft(null);
       const firstPending = current.packet.readings.find((reading) =>
         ["proposed", "ambiguous"].includes(reading.status),
       );
@@ -1701,6 +2001,83 @@ export function CroquiApp({
     } finally {
       setSubmitting(false);
     }
+  }
+
+  /**
+   * Declarar e retratar cadeia pelo mesmo caminho das demais mutações da revisão: um
+   * `base_version`, uma `Idempotency-Key` e o `Review` novo substituindo o da tela.
+   * Devolve `true` só quando o servidor gravou — quem chamou decide o que limpar.
+   */
+  async function submitChain(
+    command: ReviewChainCommand,
+    success: string,
+    failure: string,
+  ): Promise<boolean> {
+    if (!session?.access_token) {
+      setMessage("Sua sessão não está ativa. Entre novamente para declarar.");
+      return false;
+    }
+    if (!review) {
+      return false;
+    }
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const next = await postReviewChains(
+        session.access_token,
+        jobId,
+        review.version,
+        command,
+      );
+      setReview(next);
+      setConflict(false);
+      setToast(success);
+      return true;
+    } catch (error) {
+      const text = error instanceof Error ? error.message : failure;
+      setConflict(text.includes("REVISION_CONFLICT"));
+      setMessage(text);
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  /**
+   * A cadeia declarada é afirmação de uma pessoa: estas parcelas partilham este total.
+   * Cadeia que NÃO fecha é declarável de propósito — o desencontro é o achado.
+   */
+  async function declareChain() {
+    const draft = chainDraft;
+    if (!draft) {
+      return;
+    }
+    const issue = chainDraftIssue(draft);
+    if (issue !== null || draft.totalId === null) {
+      setMessage(issue ?? "Marque na lista a leitura que é o total da cadeia.");
+      return;
+    }
+    const declared = await submitChain(
+      {
+        action: "declare",
+        total_id: draft.totalId,
+        part_ids: draft.partIds,
+      },
+      "Cadeia declarada.",
+      "Não foi possível declarar a cadeia.",
+    );
+    if (declared) {
+      setChainDraft(null);
+    }
+  }
+
+  /** Retratar é ato humano também: a cadeia sai da revisão nova, e o histórico fica. */
+  async function retractChain(chainId: string) {
+    await submitChain(
+      { action: "retract", chain_id: chainId },
+      "Cadeia retirada.",
+      "Não foi possível retirar a cadeia.",
+    );
   }
 
   /** Abre o mesmo formulário da decisão com os valores vigentes já preenchidos. */
@@ -3115,6 +3492,17 @@ export function CroquiApp({
                 <div className="review-list">
                   {review.packet.readings.map((reading) => {
                     const batchable = annotationCandidateIdSet.has(reading.id);
+                    // Termo de cadeia só entra em leitura confirmada, e só enquanto a
+                    // declaração está em curso. Os dois lotes nunca disputam a mesma
+                    // caixa: o de anotações é de leitura ainda não decidida.
+                    const chainRole =
+                      chainDraft === null || !chainCandidateIds.has(reading.id)
+                        ? null
+                        : chainDraft.totalId === reading.id
+                          ? "total"
+                          : chainDraft.partIds.includes(reading.id)
+                            ? "parcela"
+                            : "";
                     return (
                       // A caixa do lote fica FORA do botão da linha: interativo dentro
                       // de interativo não é alcançável por teclado nem anunciável por
@@ -3130,6 +3518,30 @@ export function CroquiApp({
                               reading,
                             )} no lote de anotações`}
                             onChange={() => toggleReadingBatch(reading.id)}
+                          />
+                        ) : chainRole !== null ? (
+                          <input
+                            type="checkbox"
+                            className="review-row-check"
+                            checked={chainRole !== ""}
+                            aria-label={
+                              chainRole === ""
+                                ? `Marcar ${readingLabel(reading)} como ${
+                                    chainDraft?.totalId === null
+                                      ? "total"
+                                      : "parcela"
+                                  } da cadeia`
+                                : `${readingLabel(
+                                    reading,
+                                  )} está marcada como ${chainRole} da cadeia; desmarcar`
+                            }
+                            onChange={() =>
+                              setChainDraft((current) =>
+                                current === null
+                                  ? current
+                                  : toggleChainTerm(current, reading.id),
+                              )
+                            }
                           />
                         ) : (
                           <span className="review-row-check" aria-hidden="true" />
@@ -3156,12 +3568,37 @@ export function CroquiApp({
                                 ⚠ sem 2ª testemunha
                               </small>
                             ) : null}
+                            <ChainCloseHint
+                              corroborated={chainCorroborated.has(reading.id)}
+                            />
+                            {/* O papel na cadeia por extenso: a caixa marcada não é o
+                                único sinal de qual leitura é o total. */}
+                            {chainRole ? (
+                              <small className="chain-term-role">
+                                {chainRole} da cadeia
+                              </small>
+                            ) : null}
                           </span>
                         </button>
                       </div>
                     );
                   })}
                 </div>
+                <ChainsSection
+                  suggested={review.suggested_chains ?? []}
+                  declared={review.declared_chains ?? []}
+                  draft={chainDraft}
+                  candidateCount={chainCandidateIds.size}
+                  submitting={submitting}
+                  onStartDeclaring={() => {
+                    setChainDraft(EMPTY_CHAIN_DRAFT);
+                    setMessage(null);
+                  }}
+                  onCancelDeclaring={() => setChainDraft(null)}
+                  onConfirmDeclaring={() => void declareChain()}
+                  onRetract={(chainId) => void retractChain(chainId)}
+                  onSelectReading={setSelectedReadingId}
+                />
                 {review.packet.safety_notes?.includes(
                   "REGION_CLASSIFICATION_REQUIRED",
                 ) ? (
