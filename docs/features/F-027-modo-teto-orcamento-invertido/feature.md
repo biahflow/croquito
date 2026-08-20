@@ -24,7 +24,7 @@ orçamento (montagem/BDI e planilha) e mudam o que a orçamentista percebe e dec
 
 ## Priority
 
-`HIGH` (da seleção) — sequenciada DEPOIS de F-025 e F-026 na rodada.
+`HIGH` (da seleção) — sequenciada DEPOIS de F-028 e F-026 na rodada.
 
 ## Problem
 
@@ -80,7 +80,7 @@ decisão de escopo humana.
 - [ADR-0040](../../adr/0040-teto-de-verba-do-orcamento-base.md) — **Accepted em
   2026-08-20**; decisões 1–6 são a especificação.
 - [Design Approval Package rev. 1](mock/README.md) — **aprovado em 2026-08-20**.
-- F-020 mergeada — satisfeita. F-025/F-026 não bloqueiam tecnicamente; a ordem é
+- F-020 mergeada — satisfeita. F-028/F-026 não bloqueiam tecnicamente; a ordem é
   decisão da rodada.
 
 ## Unknowns

@@ -879,7 +879,7 @@ class BuildAmendmentDossierRequest(ApiModel):
 
 
 class ApproveValuationRequest(ApiModel):
-    """Aprovação nominal da medição: o corpo é SÓ a guarda de concorrência (F-025).
+    """Aprovação nominal da medição: o corpo é SÓ a guarda de concorrência (F-028).
 
     Nenhum campo de identidade existe aqui, e a ausência é o desenho. `reviewer_id`,
     `reviewer_role`, `decided_at` e `decision_id` são carimbo do servidor — o nome que a
@@ -6512,7 +6512,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         e SOBRE QUAL conteúdo — e é essa terceira parte que impede a assinatura de sobreviver
         a uma mudança do que foi assinado.
 
-        A identidade é do JWT e só dele (critério 3 da F-025). O corpo carrega apenas
+        A identidade é do JWT e só dele (critério 3 da F-028). O corpo carrega apenas
         `base_version`, e `ApproveValuationRequest` documenta por que não existe campo de
         nome nem de observação. A revisão nova AVANÇA `version`, porque aprovar é ato humano
         deliberado e a próxima decisão do orçamentista tem de partir do que ele viu aprovado.

@@ -61,7 +61,7 @@ export const MENSAGEM_AUDITORIA_REPROVADA =
 
 /**
  * `403` da rota, **sem nomear papel**. Qual papel a mensagem deve citar é decisão de copy e
- * de autorização ainda aberta no pacote de design aprovado da F-025; um texto que nomeasse
+ * de autorização ainda aberta no pacote de design aprovado da F-028; um texto que nomeasse
  * um papel afirmaria uma decisão que ninguém tomou. Quem autoriza continua sendo o backend.
  */
 export const MENSAGEM_SEM_ACESSO =

@@ -1,7 +1,7 @@
 # T1 — BUILD REPORT
 
 Relatório do Builder para o [Task Contract T1](T1-rotas-aprovacao-export.md) da
-[F-025](../feature.md). Executado no worktree `croquito-f025`, branch `f-025-boletim-web`,
+[F-028](../feature.md). Executado no worktree `croquito-f025`, branch `f-025-boletim-web`,
 sem commit — o diff está na árvore.
 
 ## Notas de execução
@@ -41,7 +41,7 @@ Files changed:
     `POST .../calc` passa a levar adiante a aprovação da cabeça (PLAN_DEVIATION); duas rotas
     novas: `POST .../approve` e `POST .../bulletin/export`.
   - tests/api/test_valuation_round_routes.py
-    13 testes novos da F-025 (seção própria ao final) + imports.
+    13 testes novos da F-028 (seção própria ao final) + imports.
   - tests/api/test_openapi_contract.py
     `ROTAS_DE_MEDICAO` passa de 18 para 20 rotas — ato deliberado exigido pela lista fechada.
   - tests/api/openapi.snapshot.json

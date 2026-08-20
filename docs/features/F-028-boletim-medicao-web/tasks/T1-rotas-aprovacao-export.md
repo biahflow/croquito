@@ -7,9 +7,9 @@ o [Design Approval Package aprovado](../mock/README.md) e o repositório.
 ## Identity
 
 ```text
-feature_id: F-025
+feature_id: F-028
 task_id: T1
-parent_plan: docs/features/F-025-boletim-medicao-web/plan.md
+parent_plan: docs/features/F-028-boletim-medicao-web/plan.md
 depends_on: []
 ```
 
@@ -127,4 +127,4 @@ READ, WRITE, VALIDATE. Sem COMMIT: deixe o diff na árvore.
 ## Report
 
 `BUILD REPORT` completo em
-docs/features/F-025-boletim-medicao-web/tasks/T1-build-report.md.
+docs/features/F-028-boletim-medicao-web/tasks/T1-build-report.md.

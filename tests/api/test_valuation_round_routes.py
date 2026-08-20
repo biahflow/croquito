@@ -2822,7 +2822,7 @@ def test_calc_que_perde_a_corrida_e_conflito_e_nao_erro_de_servidor(
     assert response.json()["detail"]["code"] == "REVISION_CONFLICT"
 
 
-# --- F-025: aprovação nominal e exportação auditada do boletim ----------------------------
+# --- F-028: aprovação nominal e exportação auditada do boletim ----------------------------
 
 
 def _approve(
@@ -2974,7 +2974,7 @@ def test_a_exportacao_sem_aprovacao_e_recusada_pelo_portao_do_dominio(tmp_path: 
 def test_o_consolidado_derivado_nao_dispara_codigo_de_contrato_nem_afrouxa_a_aprovacao(
     tmp_path: Path,
 ) -> None:
-    """O par que caracteriza a decisão do consolidado derivado do portão (F-025).
+    """O par que caracteriza a decisão do consolidado derivado do portão (F-028).
 
     A rodada de `/v1` não importa consolidado contratual, então `bulletin_export_contract`
     declara só o que a medição sabe. As duas metades precisam valer ao mesmo tempo:
@@ -2983,7 +2983,7 @@ def test_o_consolidado_derivado_nao_dispara_codigo_de_contrato_nem_afrouxa_a_apr
       confere com a medição por construção, e um portão que reprovasse aqui estaria
       inventando um saldo que a rodada não tem;
     - a APROVAÇÃO continua integralmente obrigatória — é exatamente o que sobra do portão, e
-      é o que a F-025 transforma em recusa de rota.
+      é o que a F-028 transforma em recusa de rota.
 
     Se algum dia a primeira metade passar a reprovar, é porque a rodada ganhou consolidado de
     verdade — e aí este teste é o lugar certo para a conversa.
@@ -3039,7 +3039,7 @@ def test_a_aprovacao_caduca_quando_o_conteudo_muda_sob_ela(tmp_path: Path) -> No
 
 
 def test_o_recalculo_faz_a_aprovacao_caducar_e_a_exportacao_recusa(tmp_path: Path) -> None:
-    """Recalcular depois de aprovar produz a APROVAÇÃO CADUCA do desenho aprovado (F-025).
+    """Recalcular depois de aprovar produz a APROVAÇÃO CADUCA do desenho aprovado (F-028).
 
     A aprovação anterior é levada adiante pela rota do `/calc`, ainda amarrada ao digest do
     conteúdo que ela cobria. O resultado é o estado que o mock desenha por extenso: houve uma

@@ -407,7 +407,7 @@ def test_excecao_de_baseline_que_deixou_de_existir_reprova() -> None:
 
 
 # As rotas de medição publicadas: as 18 do ADR-0028 (F-003, T12) mais a aprovação nominal e a
-# exportação auditada do boletim (F-025). Listadas explicitamente para que uma rota esquecida no
+# exportação auditada do boletim (F-028). Listadas explicitamente para que uma rota esquecida no
 # futuro — em qualquer um dos dois lados — apareça como falha nomeada, e não como conjunto que
 # encolheu em silêncio.
 ROTAS_DE_MEDICAO: frozenset[str] = frozenset(
@@ -444,7 +444,7 @@ def test_as_rotas_da_medicao_estao_todas_vigentes_e_expostas() -> None:
     rotas, para que uma rota que suma de qualquer lado no futuro reprove nomeada — e não
     como contagem que encolheu em silêncio.
 
-    Começou com as 18 rotas do ADR-0028 (F-003, T12); a F-025 acrescentou a aprovação
+    Começou com as 18 rotas do ADR-0028 (F-003, T12); a F-028 acrescentou a aprovação
     nominal e a exportação auditada do boletim. A lista é FECHADA nos dois sentidos de
     propósito: publicar rota de medição sem passar por aqui reprova, que é como expor uma
     rota nova continua sendo ato deliberado e não efeito colateral.

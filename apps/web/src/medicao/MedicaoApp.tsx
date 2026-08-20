@@ -487,7 +487,7 @@ export function BannerRodadaMudou({ onReload }: { onReload?: () => void }) {
  * `403` da rota, como TELA e **sem nomear papel**.
  *
  * Qual papel a mensagem deve citar é decisão de copy e de autorização ainda aberta no
- * pacote de design aprovado da F-025: um texto que nomeasse um papel afirmaria uma decisão
+ * pacote de design aprovado da F-028: um texto que nomeasse um papel afirmaria uma decisão
  * que ninguém tomou. Quem autoriza continua sendo o backend — a etapa é montada pelo
  * estado da rodada, e quem chega sem autorização lê o motivo em vez de achar tela vazia.
  */

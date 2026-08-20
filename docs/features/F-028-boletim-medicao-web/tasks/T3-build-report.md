@@ -1,4 +1,4 @@
-# BUILD REPORT — F-025 T3 (e2e: aprovação nominal + export do boletim pelas rotas `/v1`)
+# BUILD REPORT — F-028 T3 (e2e: aprovação nominal + export do boletim pelas rotas `/v1`)
 
 ```text
 Status: BUILD_COMPLETE
@@ -72,7 +72,7 @@ Unavailable capabilities: none.
 Assumptions:
   - `run_export_valuation` (services/worker/src/croquito_worker/valuation/cli.py:
     858-882) foi lido como referência do desenho fail-closed do CLI, mas sua
-    assinatura exige `contract: ContractWorkbook` NÃO opcional. A rota de F-025 T1
+    assinatura exige `contract: ContractWorkbook` NÃO opcional. A rota de F-028 T1
     publica o `.xlsx` do boletim com `contract=None`
     (`render_valuation_workbook(valuation, catalog, default_template())` em
     main.py, sem consolidado — a rodada de `/v1` não importa contrato). Como

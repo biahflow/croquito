@@ -8,7 +8,7 @@
 > [plan.md](plan.md)), revisada e com evidência em [evidence.md](evidence.md).
 > Pende o merge, represado por decisão humana da mesma data.
 
-> Selecionada por decisão humana de 2026-08-20, na rodada pós-F-020, junto com F-025 e
+> Selecionada por decisão humana de 2026-08-20, na rodada pós-F-020, junto com F-028 e
 > F-027. Fecha o bullet reservado do roadmap ("cascata configurável de fontes de preço
 > além do SCO... cada fonte com importador próprio — tabela de preços é dado, não
 > código"). A decisão técnica é o

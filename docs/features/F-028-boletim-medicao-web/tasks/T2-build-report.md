@@ -1,7 +1,7 @@
 # T2 — BUILD REPORT
 
 Relatório do Builder para o [Task Contract T2](T2-etapa-web.md) da
-[F-025](../feature.md), executado sobre o [Design Approval Package aprovado
+[F-028](../feature.md), executado sobre o [Design Approval Package aprovado
 (rev. 1)](../mock/README.md). Worktree `croquito-f025`, branch `f-025-boletim-web`, sem
 commit — o diff está na árvore, ao lado do de T1 (rotas) e do de T3 (e2e), que não foram
 tocados.
@@ -100,7 +100,7 @@ Remaining risks:
 Human decisions required:
   - **FDD e VAL-05 não foram atualizados.** `apps/web/AGENTS.md` manda que mudança de
     comportamento na jornada de medição atualize a seção de medição do FDD e os critérios
-    VAL-*, e nenhum Task Contract da F-025 recebeu esse escopo (T1 ficou com o
+    VAL-*, e nenhum Task Contract da F-028 recebeu esse escopo (T1 ficou com o
     API_CONTRACT; T2 tem lista fechada que não inclui docs de produto). Não ampliei o
     escopo em silêncio: fica como ato pendente da feature, junto com ROADMAP/STATUS.
   - Copy final da etapa (todo texto do pacote é rascunho declarado) — lista abaixo.
@@ -180,7 +180,7 @@ conteúdo, não de composição.
 
 - **FDD / ACCEPTANCE_CRITERIA (VAL-05) / ROADMAP / STATUS** — a feature muda o que o
   produto entrega, e a disciplina do repositório pede a atualização; nenhum Task Contract
-  da F-025 a recebeu. Listada acima como decisão humana pendente.
+  da F-028 a recebeu. Listada acima como decisão humana pendente.
 - **Unificar a mensagem de `FORBIDDEN` da medição** com a decisão do pacote (não nomear
   papel) — é copy definitiva e mexe em texto coberto por teste na jornada inteira.
 - **Declarar a planilha velha** quando a aprovação caduca depois de uma exportação: hoje a

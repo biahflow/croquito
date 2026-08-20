@@ -1,9 +1,9 @@
-# F-025 — Plano de execução
+# F-028 — Plano de execução
 
 ```text
 FEATURE EXECUTION PLAN
 
-feature_id: F-025
+feature_id: F-028
 goal: a orçamentista aprova nominalmente a medição montada (ato próprio, digest
       amarrado, identidade do JWT) e exporta o boletim .xlsx pelo gate auditado,
       tudo pelas rotas /v1 e pela jornada de medição — sem CLI
@@ -16,7 +16,7 @@ assumptions:
       (:485-493) e o portão export_errors/ensure_exportable (:495-552) produzindo
       VALUATION_NOT_APPROVED / VALUATION_APPROVAL_REJECTED /
       APPROVAL_CONTENT_MISMATCH / VALUATION_EXPORT_BLOCKED e os códigos de
-      contrato/saldo — a F-025 NÃO cria semântica de aprovação, só a exerce
+      contrato/saldo — a F-028 NÃO cria semântica de aprovação, só a exerce
     - valuation_json persiste o model_dump inteiro de Valuation ⇒ aprovação
       embutida na coluna existente; planilha publicada usa
       artifact_refs_json/artifact_digests_json como a F-020 ⇒ SEM migração e o

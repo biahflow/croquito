@@ -89,7 +89,7 @@ O CSS verbatim do artefato foi **recortado das folhas reais por script**, não r
 | Valor | Origem | Novo? |
 | --- | --- | --- |
 | Tokens de cor (`--bg`, `--ink`, `--accent`, `--accent-text`, `--dark`, …) e reset | cópia verbatim de `apps/web/src/styles.css:24-72` | não |
-| Topbar da casca, marca e wordmark | cópia verbatim de `apps/web/src/styles.css:508-556`; o SVG do wordmark é o mesmo dos pacotes da F-020 e da F-025 | não |
+| Topbar da casca, marca e wordmark | cópia verbatim de `apps/web/src/styles.css:508-556`; o SVG do wordmark é o mesmo dos pacotes da F-020 e da F-028 | não |
 | `h1` em Georgia, 25px, peso 600 | cópia verbatim de `apps/web/src/styles.css:930-946` | não |
 | Pílulas do topbar e seletor de jornadas | cópia verbatim de `apps/web/src/styles.css:689-756` | não |
 | Painel, cartão, etapa, banner, campo, botão, selo, tabela, `mono`, `digest`, `dica`, `aviso-fixo`, `workspace` | cópia verbatim de `apps/web/src/orcamento/styles.css:31-732` (a folha da **jornada do orçamento** inteira, sem o wrapper `.jornada-orcamento`) | não |
@@ -104,7 +104,7 @@ O CSS verbatim do artefato foi **recortado das folhas reais por script**, não r
 | Campos “Teto da verba” e “Demanda de origem” | composição nova sobre `.campo`/`.campo-dica`/`.campo-erro` existentes | **sim** |
 | Painel “Teto da verba” na etapa BDI e montagem | composição nova sobre `.painel` existente | **sim** |
 | Coluna com dois painéis empilhados (`.coluna-empilhada`) | cola de layout nova, com o mesmo respiro de 16px da grade `.workspace` | **sim** |
-| Moldura do caderno (capa, índice, rótulo de estado, quadro, nota de caderno, fecho) | forma nova — é do artefato, não do produto; herdada dos pacotes da F-020 e da F-025, exceto `.mock-nota-caderno`, que é deste | **sim** |
+| Moldura do caderno (capa, índice, rótulo de estado, quadro, nota de caderno, fecho) | forma nova — é do artefato, não do produto; herdada dos pacotes da F-020 e da F-028, exceto `.mock-nota-caderno`, que é deste | **sim** |
 | Tamanho, espaçamento e raio de tudo acima | valores novos: o Design System registra que o projeto **não tem** escala tipográfica, de espaçamento nem de raio | **sim** |
 
 Nenhum valor de cor novo entra neste pacote. Criar escala tipográfica, de espaçamento ou de
@@ -218,7 +218,7 @@ implementação:
   outra tarefa.
 - **Precedentes:** o [pacote aprovado da F-020](../../F-020-orcamento-base-web/mock/README.md)
   é a jornada em que esta feature entra, e o
-  [pacote aprovado da F-025](../../F-025-boletim-medicao-web/mock/README.md) é o modelo de
+  [pacote aprovado da F-028](../../F-028-boletim-medicao-web/mock/README.md) é o modelo de
   estrutura deste — inclusive na separação entre aprovação de visual e aprovação de texto.
 - **Fronteira:** nada disto alcança a medição licitada. Lá o saldo contratual já cumpre o
   papel, e a fronteira do [ADR-0027](../../../adr/0027-price-source-provenance-and-bid-boundary.md)

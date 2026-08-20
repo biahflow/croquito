@@ -48,7 +48,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-025 | A DEFINIR | READY_FOR_SPEC | Consultor do traçado — cada "não aplicada" com causa e conserto de um clique (forma freeform, associação no vizinho errado, cotas em conflito no mesmo vão); diagnóstico determinístico dos dados do solver, sem IA (a definir em contrato) |
 | F-024 | HIGH | READY_FOR_HUMAN_REVIEW | [Leitura com valor não morre por falta de target_hint](../features/F-024-leitura-sem-target-hint/feature.md) |
 | F-023 | A DEFINIR | READY_FOR_SPEC | Survey Quality Score — nota do levantamento com recomendações de campo, agregando sinais existentes (blockers, leituras não aplicadas, corroboração, resíduos); calibrar com V14/V15/V16 (a definir em contrato) |
-| F-025 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-025-boletim-medicao-web/feature.md) |
+| F-028 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
 
@@ -268,10 +268,15 @@ corroboração), mas não devolve isso como nota com recomendações de campo ("
 diagonal A–C"). Sequenciada de propósito DEPOIS da V16: o Document AI muda o que é
 "falta de dado", e V14/V15/V16 são as primeiras amostras de calibração.
 
-F-025, F-026 e F-027 nascem em 2026-08-20, por seleção humana, na rodada imediatamente
+F-028, F-026 e F-027 nascem em 2026-08-20, por seleção humana, na rodada imediatamente
 posterior ao merge da [F-020](../features/F-020-orcamento-base-web/feature.md): com a
 jornada do orçamento-base no ar, o usuário selecionou as três frentes que a completam.
-[F-025](../features/F-025-boletim-medicao-web/feature.md) fecha a dívida que a própria
+F-028 nasceu registrada como "F-025" na sessão da rodada do orçamento, em paralelo com a
+sessão que registrou F-025 (consultor do traçado) na main; a colisão foi detectada na
+integração de 2026-08-20 e o boletim foi renumerado para F-028 — a main é canônica e o
+ID que ela publicou primeiro prevalece. Referências históricas a "F-025" em commits da
+rodada do orçamento leem-se F-028.
+[F-028](../features/F-028-boletim-medicao-web/feature.md) fecha a dívida que a própria
 F-020 declarou — aprovação nominal (VAL-05) e exportação `.xlsx` do boletim pela web,
 com o mesmo gate auditado que o orçamento já tem; é `INTERFACE_CHANGE`, e a revisão 1
 do seu Design Approval Package foi aprovada na mesma data (dois atos explícitos

@@ -205,7 +205,7 @@ class _ChainThroughCalc:
 
     Devolvido por `_build_round_through_calc` para as duas continuações que partem do
     MESMO boletim construído pela MESMA cadeia real: o final feliz original (dossiê +
-    estado final) e a aprovação/exportação da F-025 (T3).
+    estado final) e a aprovação/exportação da F-028 (T3).
     """
 
     client: TestClient
@@ -223,7 +223,7 @@ def _build_round_through_calc(
 ) -> _ChainThroughCalc:
     """Cadeia real até o boletim construído e servido pela rota (steps 0-9 do e2e).
 
-    Extraído de `test_valuation_round_full_chain_through_v1_api` (F-025 T3) para ser
+    Extraído de `test_valuation_round_full_chain_through_v1_api` (F-028 T3) para ser
     reusado pela aprovação/exportação nominal: as duas cenas partem do MESMO boletim
     construído pela MESMA cadeia real — presign, extração via worker, decisões de
     takeoff e de código, `/calc` — e nenhuma delas escreve o artefato direto no banco.
@@ -529,7 +529,7 @@ def test_valuation_round_full_chain_through_v1_api(
     assert summary["extraction_status"] == "done"
 
 
-# --- F-025 T3: aprovação nominal + export do boletim pelas rotas /v1, sem CLI -------------
+# --- F-028 T3: aprovação nominal + export do boletim pelas rotas /v1, sem CLI -------------
 
 
 def _assert_route_workbook_matches_cli(
@@ -541,7 +541,7 @@ def _assert_route_workbook_matches_cli(
 ) -> None:
     """Reabre o `.xlsx` publicado pela rota e o compara, por CANONICALIZAÇÃO, com o que o
     caminho de exportação do CLI produziria para a MESMA `Valuation` aprovada e o MESMO
-    catálogo (critério 6 da F-025: a rota fecha a cadeia sem o CLI, e o boletim que ela
+    catálogo (critério 6 da F-028: a rota fecha a cadeia sem o CLI, e o boletim que ela
     publica não é um produto paralelo).
 
     Import das funções do worker/domínio **só aqui dentro**, porque só este teste de
@@ -560,7 +560,7 @@ def _assert_route_workbook_matches_cli(
     A comparação, então, chama diretamente as DUAS funções que `run_export_valuation`
     embrulha — `write_valuation_workbook` e `audit_workbook` — com `contract=None`: são
     as MESMAS funções de produção que tanto o comando `export-valuation` do CLI quanto
-    `render_valuation_workbook` da rota (F-025 T1) chamam por baixo, então a paridade
+    `render_valuation_workbook` da rota (F-028 T1) chamam por baixo, então a paridade
     provada aqui é a paridade real da produção, não uma reimplementação do teste.
     """
     from croquito_valuation.canonical import audit_workbook, canonicalize_workbook
@@ -585,9 +585,9 @@ def test_aprovacao_e_exportacao_do_boletim_fecham_por_v1_sem_cli(
     monkeypatch: pytest.MonkeyPatch,
     stack: tuple[TestClient, FakeObjectStore, FakeQueue, str],
 ) -> None:
-    """Critérios 5 e 6 da F-025: aprovação nominal + export do boletim fecham pela rota
+    """Critérios 5 e 6 da F-028: aprovação nominal + export do boletim fecham pela rota
     `/v1`, sem CLI, e o `.xlsx` publicado é logicamente idêntico ao que a MESMA medição
-    aprovada produziria pelo caminho de exportação do CLI (F-025 T3).
+    aprovada produziria pelo caminho de exportação do CLI (F-028 T3).
 
     Parte do MESMO boletim de `test_valuation_round_full_chain_through_v1_api`
     (`_build_round_through_calc`); esta cena prova só o que aquele teste não cobre:

@@ -344,7 +344,7 @@ function medicaoMontada(approval: Partial<ApprovalState> = {}, workbook = false)
 }
 
 /**
- * A etapa nova (F-025). Ela espelha o bloco de aprovação do servidor e nada mais: os três
+ * A etapa nova (F-028). Ela espelha o bloco de aprovação do servidor e nada mais: os três
  * estados que importam são "aguardando o ato", "caduca" e "publicada", e a diferença entre
  * os dois primeiros só existe lendo `approved` e `stale` JUNTOS.
  */

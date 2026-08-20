@@ -12,7 +12,7 @@ assumptions:
     especificação; as 6 decisões do ADR e as 6 telas do mock são vinculantes
   - teto NÃO muda schema publicado nem goldens (ADR-0040, decisões 1 e 5)
   - base da branch: f-027-especificacao (contém ADR+mock); o código de F-020
-    está na main (base da branch); F-025/F-026 NÃO são dependência
+    está na main (base da branch); F-028/F-026 NÃO são dependência
   - persistência: duas colunas novas em estimate_rounds (valor como TEXTO exato
     + rótulo), migração 0004 escrita à mão (make db-revision exige banco;
     precedente da 0003) — primeira migração incremental (add_column) do repo,

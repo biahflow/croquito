@@ -740,7 +740,7 @@ APPROVAL_ACTION: Final = "confirm"
 """A única decisão que a rota de aprovação escreve.
 
 O domínio aceita `reject` em `ReviewerDecision`, e a recusa registrada da medição continua
-sem existir no produto: o Design Approval Package da F-025 não a desenha porque ninguém
+sem existir no produto: o Design Approval Package da F-028 não a desenha porque ninguém
 decidiu o que ela destrava na tela. Nada é desenhado como "reservado", e nada é escrito
 aqui como reservado."""
 
@@ -777,7 +777,7 @@ def approve_valuation(valuation: Valuation, *, reviewer_id: str, decided_at: dat
     lê essa divergência como `APPROVAL_CONTENT_MISMATCH`.
 
     Identidade e instante são do SERVIDOR: `reviewer_id` é o subject do JWT e `decided_at` é
-    o relógio do processo. Nenhum dos dois viaja no corpo (critério 3 da F-025), e por isso
+    o relógio do processo. Nenhum dos dois viaja no corpo (critério 3 da F-028), e por isso
     esta função os recebe por parâmetro nomeado em vez de aceitar uma decisão pronta.
 
     A cópia não revalida a medição de propósito: quem entra aqui já foi revalidado pela
@@ -807,7 +807,7 @@ def approval_state(valuation: Valuation | None) -> dict[str, Any]:
 
     `stale` nunca é gravado, pela mesma razão do `takeoff_overlay_state`: ele é a relação
     entre dois digests que só existe no instante da leitura. Aprovação caduca é o estado que
-    o desenho aprovado da F-025 mostra por extenso — os dois digests lado a lado e uma única
+    o desenho aprovado da F-028 mostra por extenso — os dois digests lado a lado e uma única
     saída, aprovar de novo —, e escondê-lo faria a tela oferecer uma exportação que a rota já
     sabe que vai recusar com `APPROVAL_CONTENT_MISMATCH`.
 
@@ -867,7 +867,7 @@ def carry_approval_forward(valuation: Valuation, previous: Valuation | None) -> 
     Descartá-la seria perder essa informação em silêncio. O orçamentista que recalculasse
     depois de aprovar veria "não aprovada", como se ninguém nunca tivesse assinado, e a tela
     não teria como oferecer a única saída correta — aprovar de novo, ciente de que o conteúdo
-    mudou. É o estado de aprovação caduca do desenho aprovado da F-025.
+    mudou. É o estado de aprovação caduca do desenho aprovado da F-028.
 
     Nada disso é decisão do DOMÍNIO: `build_worksite_valuation` continua montando medição sem
     aprovação nenhuma, que é o certo para uma função que só sabe calcular. Quem tem a
@@ -908,7 +908,7 @@ def bulletin_export_contract(valuation: Valuation) -> ContractWorkbook:
       que os alimentaria, e um código que nunca dispara é honesto quando está escrito; o
       perigoso é o que finge conferir.
     - o que continua valendo integralmente é a APROVAÇÃO — `VALUATION_NOT_APPROVED`,
-      `VALUATION_APPROVAL_REJECTED` e `APPROVAL_CONTENT_MISMATCH` —, que é o que a F-025
+      `VALUATION_APPROVAL_REJECTED` e `APPROVAL_CONTENT_MISMATCH` —, que é o que a F-028
       transforma em recusa de rota (VAL-05).
     - a conferência entre o boletim e o catálogo instalado não se perde: ela acontece no
       AUDITOR, que compara cada preço impresso com `catalog.entry_for(code)` e reprova com
