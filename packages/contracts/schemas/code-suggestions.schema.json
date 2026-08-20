@@ -116,11 +116,13 @@
       "type": "object"
     },
     "PriceOrigin": {
-      "description": "Fonte de preço de um catálogo: onde a cotação nasceu.\n\nRegra da orçamentista (M8): em obra LICITADA (`Valuation`/`WorksiteBulletin`), o\ncontrato manda e preço nunca vem da EMOP (`BULLETIN_PRICE_ORIGIN_FORBIDDEN` em\n`calc.py`/`workbook_writer.py`). A cadeia SCO → EMOP → composição só vale\nPRÉ-licitação (orçamento-base, fase futura); um catálogo carrega só UMA origem\n(`CATALOG_ORIGIN_MIXED`) — mistura de fontes acontece na cascata, nunca dentro dele.",
+      "description": "Fonte de preço de um catálogo: onde a cotação nasceu.\n\nRegra da orçamentista (M8): em obra LICITADA (`Valuation`/`WorksiteBulletin`), o\ncontrato manda e preço nunca vem de outra fonte (`BULLETIN_PRICE_ORIGIN_FORBIDDEN` em\n`calc.py`/`workbook_writer.py`). A cadeia SCO → EMOP → SINAPI → SICRO → composição só\nvale PRÉ-licitação (orçamento-base, fase futura); um catálogo carrega só UMA origem\n(`CATALOG_ORIGIN_MIXED`) — mistura de fontes acontece na cascata, nunca dentro dele.\n\n`SINAPI` e `SICRO` (ADR-0039) são as duas tabelas de referência nacionais, cada uma\ncom importador próprio (F-026); caem no mesmo superset estrutural não-SCO que a EMOP\ne a composição (`NON_SCO_CODE_PATTERN`) — o padrão real do código de cada fonte é\ndado do layout do importador dela, não deste enum.",
       "enum": [
         "sco",
         "emop",
-        "composition"
+        "composition",
+        "sinapi",
+        "sicro"
       ],
       "title": "PriceOrigin",
       "type": "string"
@@ -200,7 +202,7 @@
       "type": "object"
     }
   },
-  "$id": "https://schemas.croquito.local/valuation/code-suggestions/1.1.0.json",
+  "$id": "https://schemas.croquito.local/valuation/code-suggestions/1.2.0.json",
   "additionalProperties": false,
   "description": "Pacote de sugestões de uma prancha: observação, nunca decisão.\n\n`suggester_version` conta a origem da ordem publicada, em duas dimensões independentes:\nquem MONTOU a shortlist (lexical determinístico ou fusão híbrida) e se ela foi\n**reordenada** depois por provider pago (sufixo `+llm-rerank-v1`). Os dois blocos de\nlineage seguem a mesma regra de existir se e somente se o estágio aconteceu:\n`refinement` para a chamada de refino, `semantic` para o braço de embeddings. É o que\nimpede o artefato de dizer \"refinado\" ou \"híbrido\" sem lineage — ou de carregar lineage\nde uma chamada que não aconteceu.\n\nO `Literal` de `suggester_version` aceita `hybrid-sco-suggester-v1` E\n`hybrid-sco-suggester-v2` (mais as formas `+llm-rerank-v1` de ambas): um artefato\ngravado antes do bump para `v2` (rodada 2.2, amortecimento de ruído de legenda)\ncontinua válido ao ser relido, e `validate_semantic_lineage` reconhece as duas versões\ncomo híbridas pelo prefixo de família `SCO_HYBRID_SUGGESTER_FAMILY`, não pela versão\ncorrente — só a produção NOVA escreve `v2`.\n\nCom `lexical-cascade-sco-suggester-v1` (orçamento-base, `suggest_codes_over_cascade`) o\nconjunto abrange mais de um catálogo: `catalog_sha256` do cabeçalho é o do catálogo\n**cabeça** da cascata e a proveniência autoritativa passa a ser a de cada candidato\n(`CodeCandidate.catalog_origin`/`catalog_sha256`). O cabeçalho continua existindo\nporque ele amarra o conjunto à rodada; ele não afirma que todo candidato veio dali.",
   "properties": {
@@ -258,8 +260,8 @@
       "type": "array"
     },
     "schema_version": {
-      "const": "1.1.0",
-      "default": "1.1.0",
+      "const": "1.2.0",
+      "default": "1.2.0",
       "title": "Schema Version",
       "type": "string"
     },

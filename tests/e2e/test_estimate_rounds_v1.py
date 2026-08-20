@@ -3,17 +3,24 @@
 Contraponto de `tests/e2e/test_valuation_full_chain.py` (`estimate_chain`, linhas 785-908):
 aquele arquivo prova que a cadeia SCO -> EMOP -> composição fecha pelos comandos do CLI,
 sobre a MESMA obra sintética da medição (`chain.reviewed_packet`). Este arquivo prova a
-MESMA jornada de negócio — mesmas três fontes de preço, mesmas decisões do orçamentista
-sintético (`croquito_worker.valuation.estimate_fixture`) — pela superfície nova: upload
-assinado e rotas HTTP autenticadas de `/v1/estimate-rounds`, com o worker consumindo a
-fila no mesmo processo (`LocalQueueWorker.dispatch`, ESTIMATE_ROUND_CHAIN, F-020 T6).
+MESMA jornada de negócio — mesmas decisões do orçamentista sintético
+(`croquito_worker.valuation.estimate_fixture`), mais a fonte SINAPI (F-026/T3) — pela
+superfície nova: upload assinado e rotas HTTP autenticadas de `/v1/estimate-rounds`, com o
+worker consumindo a fila no mesmo processo (`LocalQueueWorker.dispatch`,
+ESTIMATE_ROUND_CHAIN, F-020 T6).
 
-Nenhum passo importa `croquito_worker.valuation.cli`: os três catálogos da cascata nascem
-das mesmas funções de domínio que os comandos `import-emop`/`import-compositions` chamam
-por baixo (`croquito_valuation.catalog.read_price_catalog`,
+Nenhum passo importa `croquito_worker.valuation.cli`: os quatro catálogos da cascata
+nascem das mesmas funções de domínio que os comandos `import-emop`/`import-sinapi`/
+`import-compositions` chamam por baixo (`croquito_valuation.catalog.read_price_catalog`,
 `croquito_valuation.emop.read_emop_catalog_with_report`,
+`croquito_valuation.sinapi.read_sinapi_catalog`,
 `croquito_valuation.composition.compile_compositions`), nunca do CLI que os embrulha — é
-essa ausência de import que prova que a jornada não depende dele.
+essa ausência de import que prova que a jornada não depende dele. A quarta fonte (SINAPI)
+não tem decisão própria na fixture do orçamentista (`estimate_fixture.py`, fora de escopo
+desta task): este teste substitui, só localmente, a decisão do mobiliário (banco de
+concreto) para citar a SINAPI em vez da EMOP — mesmo item, mesma quantidade, fonte
+diferente — e é essa substituição que prova a cascata de quatro fontes ponta a ponta sem
+alterar nenhuma contagem existente.
 
 A extração da legenda entra pelo mesmo seam de fixture que `tests/e2e/test_valuation_v1_chain.py`
 usa (`legend_fixture_adapter` sobre a MESMA prancha sintética). O portão de ambiente da
@@ -45,7 +52,8 @@ from croquito_valuation.composition import compile_compositions
 from croquito_valuation.emop import read_emop_catalog_with_report
 from croquito_valuation.estimate import Estimate
 from croquito_valuation.estimate_workbook import audit_estimate_workbook
-from croquito_valuation.models import PriceCatalog
+from croquito_valuation.models import PriceCatalog, PriceOrigin
+from croquito_valuation.sinapi import read_sinapi_catalog
 from croquito_valuation.takeoff import TakeoffPacket
 from croquito_valuation.template import default_template
 from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
@@ -59,6 +67,7 @@ from croquito_worker.valuation.estimate_fixture import (
 from croquito_worker.valuation.legend_fixtures import legend_fixture_adapter
 from croquito_worker.valuation.plate import SYNTHETIC_LEGEND_ROWS, render_synthetic_plate
 from croquito_worker.valuation.round_extraction import AI_BUDGET_ENV
+from croquito_worker.valuation.sinapi_fixture import sinapi_fixture_layout, write_sinapi_xlsx
 from croquito_worker.valuation.synthetic import (
     SYNTHETIC_CONTRACT_SOURCE_LABEL,
     SYNTHETIC_REFERENCE_MONTH,
@@ -220,7 +229,9 @@ def test_estimate_round_full_chain_through_v1_api(
     composition_catalog = compile_compositions(
         composition_set, source_sha256=composition_source_sha256
     )
-    cascade = (sco_catalog, emop_catalog, composition_catalog)
+    sinapi_path = write_sinapi_xlsx(tmp_path / "sinapi-sintetico.xlsx")
+    sinapi_catalog = read_sinapi_catalog(sinapi_path, sinapi_fixture_layout())
+    cascade = (sco_catalog, emop_catalog, composition_catalog, sinapi_catalog)
 
     # 1. `POST /v1/estimate-rounds`: abre a rodada, ainda sem fonte de preço.
     created = client.post(
@@ -363,7 +374,26 @@ def test_estimate_round_full_chain_through_v1_api(
     final_packet = _packet_from_takeoff_response(final_takeoff)
 
     # 5. Confirma (ou rejeita) o código de cada item, CITANDO a fonte da cascata.
-    code_decisions = build_demo_estimate_assignments(final_packet, list(cascade)).assignments
+    #
+    # A fixture do orçamentista (`estimate_fixture.py`, fora de escopo desta task) decide o
+    # banco de concreto pela EMOP; aqui, só neste teste, a mesma decisão é reescrita para
+    # citar a SINAPI (código "0009012", "MOBILIARIO SINTETICO SINAPI", unidade "UN" — bate a
+    # unidade "UN" do item, `SINAPI_FIXTURE_ROWS[2]` em `sinapi_fixture.py`) — prova que a
+    # cascata de quatro fontes fecha com pelo menos um item decidido pela origem nova, sem
+    # mudar quantas decisões existem nem a contagem de confirmados/rejeitados.
+    bench_item_id = item_for_label(final_packet, "BANCO DE CONCRETO SINTETICO").id
+    code_decisions = [
+        assignment.model_copy(
+            update={
+                "code": "0009012",
+                "catalog_sha256": sinapi_catalog.source_sha256,
+                "note": "mobiliario cotado pela SINAPI nesta pre-licitacao",
+            }
+        )
+        if assignment.item_id == bench_item_id
+        else assignment
+        for assignment in build_demo_estimate_assignments(final_packet, list(cascade)).assignments
+    ]
     for index, assignment in enumerate(code_decisions):
         response = client.post(
             f"/v1/estimate-rounds/{round_id}/code-assignments/decisions",
@@ -423,6 +453,17 @@ def test_estimate_round_full_chain_through_v1_api(
         item_for_label(final_packet, "LUMINARIA DUPLA SINTETICA").id
     ]
 
+    # A cascata tem quatro fontes: a linha do banco de concreto (item redecidido no passo 5)
+    # cita a origem nova e o código do catálogo SINAPI.
+    sinapi_line_index, sinapi_line = next(
+        (index, line)
+        for index, line in enumerate(estimate.lines)
+        if line.price_origin.value == "sinapi"
+    )
+    assert sinapi_line.price_origin == PriceOrigin.SINAPI
+    assert sinapi_line.code == "0009012"
+    assert sinapi_line.catalog_sha256 == sinapi_catalog.source_sha256
+
     # 8. `GET .../estimate`: auditoria ok, planilha publicada — a URL assinada da fixture
     # não é buscável por HTTP, então a conferência lê o BLOB diretamente do object store,
     # pela mesma chave que a API deriva do digest do orçamento.
@@ -456,6 +497,12 @@ def test_estimate_round_full_chain_through_v1_api(
     assert cells[f"{columns.source.letter}{header_row}"]["value"] == "FONTE"
     bdi_price_header = cells[f"{columns.unit_price_with_bdi.letter}{header_row}"]["value"]
     assert bdi_price_header == "VALOR UNIT. C/ BDI"
+
+    # A linha do banco de concreto (fonte SINAPI) reabre com "SINAPI" na célula FONTE.
+    sinapi_row = header_row + sinapi_line_index + 1
+    sinapi_source_cell = cells[f"{columns.source.letter}{sinapi_row}"]["value"]
+    assert isinstance(sinapi_source_cell, str)
+    assert "SINAPI" in sinapi_source_cell
 
     # `total_amount - total_amount_without_bdi` bate com o BDI impresso na planilha.
     n_lines = len(estimate.lines)

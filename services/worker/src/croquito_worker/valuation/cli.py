@@ -113,6 +113,8 @@ from croquito_valuation.estimate_workbook import (
     write_estimate_workbook,
 )
 from croquito_valuation.models import PriceCatalog, Valuation
+from croquito_valuation.sicro import SicroCatalogLayout, read_sicro_catalog_with_report
+from croquito_valuation.sinapi import SinapiCatalogLayout, read_sinapi_catalog_with_report
 from croquito_valuation.takeoff import (
     TakeoffDecisionBatch,
     TakeoffDecisionInput,
@@ -213,6 +215,8 @@ IMPORT_REPORT_FILENAME = "import-report.json"
 IMPORT_DIAGNOSIS_FILENAME = "import-diagnosis.json"
 CATALOG_IMPORT_REPORT_FILENAME = "catalog-import-report.json"
 EMOP_IMPORT_REPORT_FILENAME = "emop-import-report.json"
+SINAPI_IMPORT_REPORT_FILENAME = "sinapi-import-report.json"
+SICRO_IMPORT_REPORT_FILENAME = "sicro-import-report.json"
 COMPOSITIONS_FILENAME = "compositions.json"
 COMPOSITIONS_IMPORT_REPORT_FILENAME = "compositions-import-report.json"
 ESTIMATE_FILENAME = "estimate.json"
@@ -302,6 +306,42 @@ class ValuationEmopImportResult:
     catalog_path: Path
     report_path: Path
     layout: EmopCatalogLayout
+    catalog: PriceCatalog
+    report: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class ValuationSinapiImportResult:
+    """Artefatos produzidos pela importação isolada do catálogo SINAPI (.xlsx).
+
+    Espelho de `ValuationEmopImportResult`: sem `template` (o layout da SINAPI é
+    `SinapiCatalogLayout`, não `WorkbookTemplate`). `catalog.origin` sai sempre
+    `PriceOrigin.SINAPI`; é esse dado que os guardrails da cadeia licitada
+    (`BULLETIN_PRICE_ORIGIN_FORBIDDEN`) usam para recusar este catálogo em
+    `build-calc`/`export-valuation`.
+    """
+
+    catalog_path: Path
+    report_path: Path
+    layout: SinapiCatalogLayout
+    catalog: PriceCatalog
+    report: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class ValuationSicroImportResult:
+    """Artefatos produzidos pela importação isolada do catálogo SICRO (.xlsx).
+
+    Espelho de `ValuationEmopImportResult`: sem `template` (o layout da SICRO é
+    `SicroCatalogLayout`, não `WorkbookTemplate`). `catalog.origin` sai sempre
+    `PriceOrigin.SICRO`; é esse dado que os guardrails da cadeia licitada
+    (`BULLETIN_PRICE_ORIGIN_FORBIDDEN`) usam para recusar este catálogo em
+    `build-calc`/`export-valuation`.
+    """
+
+    catalog_path: Path
+    report_path: Path
+    layout: SicroCatalogLayout
     catalog: PriceCatalog
     report: dict[str, object]
 
@@ -799,6 +839,98 @@ def run_import_emop(
     atomic_write_text(catalog_path, _document(catalog))
     atomic_write_text(report_path, _serialize(report))
     return ValuationEmopImportResult(
+        catalog_path=catalog_path,
+        report_path=report_path,
+        layout=layout,
+        catalog=catalog,
+        report=report,
+    )
+
+
+def run_import_sinapi(
+    input_path: Path,
+    output_dir: Path,
+    layout: SinapiCatalogLayout,
+) -> ValuationSinapiImportResult:
+    """Importa o catálogo SINAPI (.xlsx) offline, sem tocar em nada da cadeia da medição.
+
+    Espelho de `run_import_emop` (ADR-0039, decisão 2). O catálogo publicado nasce com
+    `origin=PriceOrigin.SINAPI`. Nenhum guardrail é contornado por este comando:
+    `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (`calc.py`, `workbook_writer.py`) continua recusando
+    este catálogo em `build-calc` e `export-valuation` — a cadeia SCO → EMOP → SINAPI →
+    SICRO → composição só vale pré-licitação (orçamento-base, fase futura). A tabela SINAPI
+    real é pública, mas não existe layout default aqui, `--layout` é sempre obrigatório.
+    """
+    catalog, notes = read_sinapi_catalog_with_report(input_path, layout)
+    report: dict[str, object] = {
+        "source_sha256": catalog.source_sha256,
+        "layout_label": layout.source_label,
+        "catalog_entries": len(catalog.entries),
+        "family_count": len({entry.family_code for entry in catalog.entries}),
+        "subgroup_count": len({entry.subgroup_code for entry in catalog.entries}),
+        "blank_rows": {
+            "count": notes.blank_row_count,
+            "rows": list(notes.blank_rows),
+        },
+        "consolidado": "not_imported",
+        "note": (
+            "catálogo SINAPI importado isoladamente, origin=sinapi: a cadeia da medição "
+            "licitada nunca aceita este catálogo (BULLETIN_PRICE_ORIGIN_FORBIDDEN); a "
+            "cadeia SCO -> EMOP -> SINAPI -> SICRO -> composição vale só pré-licitação "
+            "(fase futura). Este comando NÃO produz contract-workbook.json."
+        ),
+    }
+    catalog_path = output_dir / CATALOG_FILENAME
+    report_path = output_dir / SINAPI_IMPORT_REPORT_FILENAME
+    atomic_write_text(catalog_path, _document(catalog))
+    atomic_write_text(report_path, _serialize(report))
+    return ValuationSinapiImportResult(
+        catalog_path=catalog_path,
+        report_path=report_path,
+        layout=layout,
+        catalog=catalog,
+        report=report,
+    )
+
+
+def run_import_sicro(
+    input_path: Path,
+    output_dir: Path,
+    layout: SicroCatalogLayout,
+) -> ValuationSicroImportResult:
+    """Importa o catálogo SICRO (.xlsx) offline, sem tocar em nada da cadeia da medição.
+
+    Espelho de `run_import_emop` (ADR-0039, decisão 2). O catálogo publicado nasce com
+    `origin=PriceOrigin.SICRO`. Nenhum guardrail é contornado por este comando:
+    `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (`calc.py`, `workbook_writer.py`) continua recusando
+    este catálogo em `build-calc` e `export-valuation` — a cadeia SCO → EMOP → SINAPI →
+    SICRO → composição só vale pré-licitação (orçamento-base, fase futura). A tabela SICRO
+    real é pública, mas não existe layout default aqui, `--layout` é sempre obrigatório.
+    """
+    catalog, notes = read_sicro_catalog_with_report(input_path, layout)
+    report: dict[str, object] = {
+        "source_sha256": catalog.source_sha256,
+        "layout_label": layout.source_label,
+        "catalog_entries": len(catalog.entries),
+        "family_count": len({entry.family_code for entry in catalog.entries}),
+        "subgroup_count": len({entry.subgroup_code for entry in catalog.entries}),
+        "blank_rows": {
+            "count": notes.blank_row_count,
+            "rows": list(notes.blank_rows),
+        },
+        "consolidado": "not_imported",
+        "note": (
+            "catálogo SICRO importado isoladamente, origin=sicro: a cadeia da medição "
+            "licitada nunca aceita este catálogo (BULLETIN_PRICE_ORIGIN_FORBIDDEN); a "
+            "cadeia SCO -> EMOP -> SINAPI -> SICRO -> composição vale só pré-licitação "
+            "(fase futura). Este comando NÃO produz contract-workbook.json."
+        ),
+    }
+    catalog_path = output_dir / CATALOG_FILENAME
+    report_path = output_dir / SICRO_IMPORT_REPORT_FILENAME
+    atomic_write_text(catalog_path, _document(catalog))
+    atomic_write_text(report_path, _serialize(report))
+    return ValuationSicroImportResult(
         catalog_path=catalog_path,
         report_path=report_path,
         layout=layout,
@@ -1863,6 +1995,56 @@ def _command_import_emop(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_import_sinapi(args: argparse.Namespace) -> int:
+    try:
+        layout = SinapiCatalogLayout.model_validate_json(
+            Path(args.layout).read_text(encoding="utf-8")
+        )
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    output_dir = Path(args.output)
+    try:
+        result = run_import_sinapi(Path(args.input), output_dir, layout)
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    _print(
+        {
+            "input": str(args.input),
+            "catalog": str(result.catalog_path),
+            "report": str(result.report_path),
+            **result.report,
+        }
+    )
+    return 0
+
+
+def _command_import_sicro(args: argparse.Namespace) -> int:
+    try:
+        layout = SicroCatalogLayout.model_validate_json(
+            Path(args.layout).read_text(encoding="utf-8")
+        )
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    output_dir = Path(args.output)
+    try:
+        result = run_import_sicro(Path(args.input), output_dir, layout)
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    _print(
+        {
+            "input": str(args.input),
+            "catalog": str(result.catalog_path),
+            "report": str(result.report_path),
+            **result.report,
+        }
+    )
+    return 0
+
+
 def _command_import_compositions(args: argparse.Namespace) -> int:
     output_dir = Path(args.output)
     try:
@@ -2717,6 +2899,38 @@ def build_parser() -> argparse.ArgumentParser:
     import_emop.add_argument("--layout", type=Path, required=True)
     import_emop.add_argument("--output", type=Path, required=True)
 
+    import_sinapi = subcommands.add_parser(
+        "import-sinapi",
+        help="importa o catálogo SINAPI (.xlsx) offline; origin=sinapi nunca entra na medição",
+        description=(
+            "Lê uma planilha .xlsx da tabela SINAPI a partir de um layout declarado "
+            "(--layout, obrigatório: nenhum layout default real existe neste "
+            "repositório). Publica SÓ catalog.json (origin=sinapi) + "
+            "sinapi-import-report.json. O guardrail BULLETIN_PRICE_ORIGIN_FORBIDDEN "
+            "recusa este catálogo em build-calc/export-valuation: a cadeia SCO -> EMOP -> "
+            "SINAPI -> SICRO -> composição vale só pré-licitação (fase futura)."
+        ),
+    )
+    import_sinapi.add_argument("--input", type=Path, required=True)
+    import_sinapi.add_argument("--layout", type=Path, required=True)
+    import_sinapi.add_argument("--output", type=Path, required=True)
+
+    import_sicro = subcommands.add_parser(
+        "import-sicro",
+        help="importa o catálogo SICRO (.xlsx) offline; origin=sicro nunca entra na medição",
+        description=(
+            "Lê uma planilha .xlsx da tabela SICRO a partir de um layout declarado "
+            "(--layout, obrigatório: nenhum layout default real existe neste "
+            "repositório). Publica SÓ catalog.json (origin=sicro) + "
+            "sicro-import-report.json. O guardrail BULLETIN_PRICE_ORIGIN_FORBIDDEN "
+            "recusa este catálogo em build-calc/export-valuation: a cadeia SCO -> EMOP -> "
+            "SINAPI -> SICRO -> composição vale só pré-licitação (fase futura)."
+        ),
+    )
+    import_sicro.add_argument("--input", type=Path, required=True)
+    import_sicro.add_argument("--layout", type=Path, required=True)
+    import_sicro.add_argument("--output", type=Path, required=True)
+
     import_compositions = subcommands.add_parser(
         "import-compositions",
         help="compila composições manuais em catálogo origin=composition; nunca entra na medição",
@@ -3080,6 +3294,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _command_import_catalog(args)
     if args.command == "import-emop":
         return _command_import_emop(args)
+    if args.command == "import-sinapi":
+        return _command_import_sinapi(args)
+    if args.command == "import-sicro":
+        return _command_import_sicro(args)
     if args.command == "import-compositions":
         return _command_import_compositions(args)
     if args.command == "export-valuation":

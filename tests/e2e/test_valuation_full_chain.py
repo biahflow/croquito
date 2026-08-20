@@ -64,6 +64,8 @@ from croquito_worker.valuation.estimate_fixture import (
     build_synthetic_composition_set,
 )
 from croquito_worker.valuation.plate import SYNTHETIC_LEGEND_ROWS, SYNTHETIC_PLATE_ID
+from croquito_worker.valuation.sicro_fixture import sicro_fixture_layout, write_sicro_xlsx
+from croquito_worker.valuation.sinapi_fixture import sinapi_fixture_layout, write_sinapi_xlsx
 from croquito_worker.valuation.synthetic import (
     SYNTHETIC_CODE_DECIDED_AT,
     SYNTHETIC_CONTRACT_LABEL,
@@ -978,3 +980,168 @@ def test_build_estimate_refuses_a_cited_source_missing_from_the_cascade(
     assert exit_code == 2
     assert _stdout(capsys)["refused"] == "ASSIGNMENT_CATALOG_UNKNOWN"
     assert not (output_dir / ESTIMATE_FILENAME).exists()
+
+
+def test_estimate_chain_with_five_sources_including_sinapi_and_sicro(
+    chain: ChainArtifacts,
+    estimate_chain: EstimateChainArtifacts,
+    tmp_path: Path,
+) -> None:
+    """F-026/T3: `import-sinapi` + `import-sicro` fecham a cascata do orçamento em cinco fontes.
+
+    Reaproveita o SCO/EMOP/COMPOSIÇÃO já importados por `estimate_chain` (mesmos bytes,
+    mesmos digests) e soma as duas fontes novas por cima, pelos comandos `import-sinapi`/
+    `import-sicro` reais — nunca por chamada direta ao domínio, como o resto deste arquivo.
+    A decisão do banco de concreto é redecidida, só nesta cascata, para citar a SINAPI (em
+    vez da EMOP que `build_demo_estimate_assignments` decide por padrão): é essa
+    redecisão que prova que a origem nova precifica uma linha de verdade
+    (`price_origin == "sinapi"`) e não só ocupa um lugar vazio na cascata. Nenhuma fonte
+    cita a SICRO — o critério aceito para este arquivo é a cascata de cinco fontes fechar
+    no `build-estimate`, não que toda origem precifique algo — mas a SICRO ainda entra na
+    cascata e é conferida pela origem, literalmente.
+
+    `test_estimate_chain_happy_path` continua rodando, sem alteração, sobre a cascata de
+    três fontes original de `estimate_chain`.
+    """
+    root = tmp_path / "estimate-chain-five-sources"
+
+    sinapi_dir = root / "sinapi"
+    sinapi_input_path = write_sinapi_xlsx(root / "inputs" / "sinapi-sintetico.xlsx")
+    sinapi_layout_path = _write_json(
+        root / "inputs" / "sinapi-layout.json",
+        sinapi_fixture_layout().model_dump_json(indent=2),
+    )
+    assert (
+        main(
+            [
+                "import-sinapi",
+                "--input",
+                str(sinapi_input_path),
+                "--layout",
+                str(sinapi_layout_path),
+                "--output",
+                str(sinapi_dir),
+            ]
+        )
+        == 0
+    )
+
+    sicro_dir = root / "sicro"
+    sicro_input_path = write_sicro_xlsx(root / "inputs" / "sicro-sintetico.xlsx")
+    sicro_layout_path = _write_json(
+        root / "inputs" / "sicro-layout.json",
+        sicro_fixture_layout().model_dump_json(indent=2),
+    )
+    assert (
+        main(
+            [
+                "import-sicro",
+                "--input",
+                str(sicro_input_path),
+                "--layout",
+                str(sicro_layout_path),
+                "--output",
+                str(sicro_dir),
+            ]
+        )
+        == 0
+    )
+
+    catalog_paths = (
+        *estimate_chain.catalog_paths,
+        sinapi_dir / CATALOG_FILENAME,
+        sicro_dir / CATALOG_FILENAME,
+    )
+    cascade = tuple(
+        PriceCatalog.model_validate_json(path.read_text(encoding="utf-8")) for path in catalog_paths
+    )
+    assert [catalog.origin for catalog in cascade] == [
+        PriceOrigin.SCO,
+        PriceOrigin.EMOP,
+        PriceOrigin.COMPOSITION,
+        PriceOrigin.SINAPI,
+        PriceOrigin.SICRO,
+    ]
+    sinapi_catalog = cascade[3]
+
+    decisions = build_demo_estimate_assignments(chain.reviewed_packet, cascade)
+    decisions = CodeAssignmentBatch(
+        assignments=[
+            assignment.model_copy(
+                update={
+                    "code": "0009012",
+                    "catalog_sha256": sinapi_catalog.source_sha256,
+                    "note": "mobiliario cotado pela SINAPI nesta pre-licitacao",
+                }
+            )
+            if assignment.item_id == _BENCH_ITEM_ID
+            else assignment
+            for assignment in decisions.assignments
+        ]
+    )
+    decisions_path = _write_json(
+        root / "inputs" / "estimate-code-decisions.json", decisions.model_dump_json(indent=2)
+    )
+
+    assign_dir = root / "assign"
+    assert (
+        main(
+            [
+                "confirm-codes",
+                "--packet",
+                str(chain.reviewed_packet_path),
+                "--decisions",
+                str(decisions_path),
+                *_catalog_args(catalog_paths),
+                "--output",
+                str(assign_dir),
+            ]
+        )
+        == 0
+    )
+    assignments_path = assign_dir / CODE_ASSIGNMENTS_FILENAME
+
+    calc_plan_path = _write_json(
+        root / "inputs" / CALC_PLAN_FILENAME,
+        build_demo_calc_plan(chain.reviewed_packet).model_dump_json(indent=2),
+    )
+    estimate_dir = root / "estimate"
+    assert (
+        main(
+            [
+                "build-estimate",
+                "--packet",
+                str(chain.reviewed_packet_path),
+                "--assignments",
+                str(assignments_path),
+                *_catalog_args(catalog_paths),
+                "--worksite-key",
+                SYNTHETIC_ESTIMATE_WORKSITE_KEY,
+                "--worksite-name",
+                SYNTHETIC_ESTIMATE_WORKSITE_NAME,
+                "--bdi",
+                str(SYNTHETIC_ESTIMATE_BDI_PERCENT),
+                "--calc-plan",
+                str(calc_plan_path),
+                "--output",
+                str(estimate_dir),
+            ]
+        )
+        == 0
+    )
+    estimate_path = estimate_dir / ESTIMATE_FILENAME
+    estimate = Estimate.model_validate_json(estimate_path.read_text(encoding="utf-8"))
+
+    assert [source.origin for source in estimate.cascade] == [
+        PriceOrigin.SCO,
+        PriceOrigin.EMOP,
+        PriceOrigin.COMPOSITION,
+        PriceOrigin.SINAPI,
+        PriceOrigin.SICRO,
+    ]
+    sinapi_lines = [line for line in estimate.lines if line.price_origin == PriceOrigin.SINAPI]
+    assert len(sinapi_lines) == 1
+    sinapi_line = sinapi_lines[0]
+    assert sinapi_line.price_origin.value == "sinapi"
+    assert sinapi_line.code == "0009012"
+    assert sinapi_line.catalog_sha256 == sinapi_catalog.source_sha256

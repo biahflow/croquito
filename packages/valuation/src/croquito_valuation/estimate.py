@@ -56,7 +56,7 @@ from croquito_valuation.rounding import money_trunc, quantity_round
 from croquito_valuation.sco import SCO_CODE_PATTERN
 from croquito_valuation.takeoff import TakeoffItem, TakeoffPacket
 
-ESTIMATE_SCHEMA_VERSION: Final = "2.0.0"
+ESTIMATE_SCHEMA_VERSION: Final = "2.1.0"
 
 _ITEM_ID_PATTERN: Final = r"^ti_[a-f0-9]{16}$"
 
@@ -167,7 +167,7 @@ class Estimate(ValuationContractModel):
     nunca o percentual aplicado ao total geral (decisão 4).
     """
 
-    schema_version: Literal["2.0.0"] = ESTIMATE_SCHEMA_VERSION
+    schema_version: Literal["2.1.0"] = ESTIMATE_SCHEMA_VERSION
     worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
     worksite_name: str = Field(min_length=1, max_length=120)
     address: str | None = Field(default=None, min_length=1, max_length=200)
