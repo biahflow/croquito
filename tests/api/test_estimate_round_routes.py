@@ -459,6 +459,10 @@ def test_sem_o_papel_toda_rota_recusa_antes_do_lookup(tmp_path: Path) -> None:
             f"/v1/estimate-rounds/{round_id}/catalogs/order",
             {"base_version": 1, "cascade": ["a" * 64]},
         ),
+        (
+            f"/v1/estimate-rounds/{round_id}/catalogs/remove",
+            {"base_version": 1, "source_sha256": "a" * 64},
+        ),
         (f"/v1/estimate-rounds/{round_id}/plate", {"upload_id": str(uuid4()), "base_version": 1}),
         (f"/v1/estimate-rounds/{round_id}/plate/extractions", {"base_version": 1}),
         (
@@ -732,6 +736,143 @@ def test_reordenar_depois_da_decisao_de_codigo_recusa_no_ato(tmp_path: Path) -> 
         record = session.get(EstimateRoundRecord, round_id)
         assert record is not None
         assert [entry["origin"] for entry in record.catalog_cascade_json] == ["sco", "emop"]
+
+
+# --- remoção da cascata (T7) --------------------------------------------------------------
+
+
+def test_remocao_encolhe_a_cascata_e_avanca_a_versao(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    sco = _install_catalog(client, round_id, origin=PriceOrigin.SCO, base_version=1)
+    assert sco.status_code == 201, sco.text
+    emop = _install_catalog(client, round_id, origin=PriceOrigin.EMOP, base_version=2)
+    assert emop.status_code == 201, emop.text
+    sco_sha256 = sco.json()["cascade"][0]["source_sha256"]
+
+    response = client.post(
+        f"/v1/estimate-rounds/{round_id}/catalogs/remove",
+        headers=_headers(key="remocao-sco"),
+        json={"base_version": 3, "source_sha256": sco_sha256},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == 4
+    assert [entry["origin"] for entry in body["cascade"]] == ["emop"]
+    assert [entry["position"] for entry in body["cascade"]] == [1]
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert [entry["origin"] for entry in record.catalog_cascade_json] == ["emop"]
+        assert record.version == 4
+
+
+def test_remocao_sem_idempotency_key_recusa(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    state = _round_with_cascade_and_takeoff(client)
+    digests = [entry["source_sha256"] for entry in state["cascade"]]
+    headers = _headers(key="remocao-sem-chave")
+    headers.pop("Idempotency-Key")
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/catalogs/remove",
+        headers=headers,
+        json={"base_version": state["version"], "source_sha256": digests[0]},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
+
+
+def test_remocao_com_base_version_velha_recusa(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    state = _round_with_cascade_and_takeoff(client)
+    digests = [entry["source_sha256"] for entry in state["cascade"]]
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/catalogs/remove",
+        headers=_headers(key="remocao-versao-velha"),
+        json={"base_version": 1, "source_sha256": digests[0]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "REVISION_CONFLICT"
+
+
+def test_remocao_de_digest_desconhecido_recusa(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    state = _round_with_cascade_and_takeoff(client)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/catalogs/remove",
+        headers=_headers(key="remocao-digest-desconhecido"),
+        json={"base_version": state["version"], "source_sha256": "f" * 64},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "ESTIMATE_CASCADE_ORDER_INVALID"
+
+
+def test_remocao_de_fonte_citada_por_decisao_recusa(tmp_path: Path) -> None:
+    """Recusa por FONTE: só a citada trava, e não a cascata inteira (ao contrário da ordem)."""
+    client = _client(tmp_path)
+    state = _round_with_cascade_and_takeoff(client)
+    round_id = state["round_id"]
+    digests = [entry["source_sha256"] for entry in state["cascade"]]
+    decided = _confirm_code(
+        client,
+        round_id,
+        item_id=_ITEM_FIRST,
+        code=_SCO_CODE,
+        catalog_sha256=digests[0],
+        base_version=state["version"],
+        key="decisao-remocao-1",
+    )
+    assert decided.status_code == 200, decided.text
+
+    response = client.post(
+        f"/v1/estimate-rounds/{round_id}/catalogs/remove",
+        headers=_headers(key="remocao-tarde"),
+        json={"base_version": decided.json()["version"], "source_sha256": digests[0]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "ESTIMATE_CASCADE_LOCKED"
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert [entry["origin"] for entry in record.catalog_cascade_json] == ["sco", "emop"]
+
+
+def test_remocao_de_fonte_nao_citada_e_permitida_mesmo_com_decisao_registrada(
+    tmp_path: Path,
+) -> None:
+    """A trava é por fonte: remover a que NENHUMA decisão citou não é recusada."""
+    client = _client(tmp_path)
+    state = _round_with_cascade_and_takeoff(client)
+    round_id = state["round_id"]
+    digests = [entry["source_sha256"] for entry in state["cascade"]]
+    decided = _confirm_code(
+        client,
+        round_id,
+        item_id=_ITEM_FIRST,
+        code=_SCO_CODE,
+        catalog_sha256=digests[0],
+        base_version=state["version"],
+        key="decisao-remocao-2",
+    )
+    assert decided.status_code == 200, decided.text
+
+    response = client.post(
+        f"/v1/estimate-rounds/{round_id}/catalogs/remove",
+        headers=_headers(key="remocao-nao-citada"),
+        json={"base_version": decided.json()["version"], "source_sha256": digests[1]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert [entry["origin"] for entry in response.json()["cascade"]] == ["sco"]
 
 
 def test_busca_sem_termo_utilizavel_recusa(tmp_path: Path) -> None:

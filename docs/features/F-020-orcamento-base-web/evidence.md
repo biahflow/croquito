@@ -34,6 +34,7 @@ Nenhuma falha preexistente.
 | T4 — jornada na SPA | [T4](tasks/T4-jornada-web.md) | [report](tasks/T4-build-report.md) | BUILD_COMPLETE | implementador-opus |
 | T5 — e2e `/v1` sem CLI | [T5](tasks/T5-e2e-v1.md) | [report](tasks/T5-build-report.md) | BUILD_COMPLETE | implementador-sonnet |
 | T6 — worker consome a fila | [T6](tasks/T6-worker-consumo.md) | [report](tasks/T6-build-report.md) | BUILD_COMPLETE | implementador-opus |
+| T7 — remoção da cascata + acabamento CLI (pós-merge, 2026-08-20) | [T7](tasks/T7-remocao-cascata-cli.md) | [report](tasks/T7-build-report.md) | BUILD_COMPLETE | implementador-sonnet |
 
 Cada task rodou os comandos da própria seção Validation com resultado verde; os números
 por task estão nos Build Reports. Estado final integrado antes do rebase:

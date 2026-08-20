@@ -20,6 +20,7 @@
 import { parseDecimalInput } from "./format";
 import type {
   CascadeOrderDraft,
+  CascadeRemoveDraft,
   CodeDecisionDraft,
   CreateEstimateDraft,
   TakeoffDecisionDraft,
@@ -93,6 +94,16 @@ export function cascadeOrderBody(
   draft: CascadeOrderDraft,
 ): Record<string, string[] | number> {
   return { ...versionBody(draft.baseVersion), cascade: [...draft.cascade] };
+}
+
+/** Corpo do `POST .../catalogs/remove`: o digest da fonte a remover, e nada mais. */
+export function cascadeRemoveBody(
+  draft: CascadeRemoveDraft,
+): Record<string, string | number> {
+  return {
+    ...versionBody(draft.baseVersion),
+    source_sha256: draft.sourceSha256,
+  };
 }
 
 export function takeoffDecisionBody(

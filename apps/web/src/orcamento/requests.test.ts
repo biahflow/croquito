@@ -4,6 +4,7 @@ import {
   bdiPercentError,
   buildEstimateBody,
   cascadeOrderBody,
+  cascadeRemoveBody,
   codeDecisionBody,
   createEstimateBody,
   installCatalogBody,
@@ -60,6 +61,15 @@ describe("corpos das mutações", () => {
 
     expect(body).toEqual({ base_version: 5, cascade });
     expect(body.cascade).not.toBe(cascade);
+  });
+
+  it("a remoção manda só o digest da fonte e base_version, nada mais", () => {
+    const body = cascadeRemoveBody({
+      sourceSha256: "a".repeat(64),
+      baseVersion: 5,
+    });
+
+    expect(body).toEqual({ base_version: 5, source_sha256: "a".repeat(64) });
   });
 
   it("a decisão de takeoff não carrega carimbo de identidade", () => {

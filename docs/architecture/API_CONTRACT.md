@@ -874,6 +874,19 @@ Rodada que já tem decisão de código devolve `409 ESTIMATE_CASCADE_LOCKED`: o 
 decisões é amarrado ao catálogo cabeça da cascata, e reordenar invalidaria as decisões já
 registradas — que esta API não apaga. Reordene antes de decidir código.
 
+### `POST /v1/estimate-rounds/{round_id}/catalogs/remove`
+
+Entrada: `base_version` e `source_sha256`, o digest da fonte a remover. Remove uma fonte da
+cascata instalada; a `version` da rodada avança.
+
+Digest que não está instalado devolve `422 ESTIMATE_CASCADE_ORDER_INVALID` — o mesmo código
+da reordenação, porque o corpo cita algo que a cascata não reconhece.
+
+A trava é por FONTE, não pela cascata inteira: remover devolve `409 ESTIMATE_CASCADE_LOCKED`
+só quando alguma decisão de código registrada citou justamente a fonte removida
+(`CodeAssignment.catalog_sha256`). Remover uma fonte que nenhuma decisão citou é permitido
+mesmo com outras decisões já registradas na rodada.
+
 ### `POST /v1/estimate-rounds/{round_id}/plate`
 
 Entrada: `upload_id`, `base_version`. Mesmo regime da prancha da medição: uma rodada tem no

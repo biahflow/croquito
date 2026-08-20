@@ -483,6 +483,22 @@ def _entry_document(entry: CascadeEntry) -> dict[str, Any]:
     }
 
 
+def removed_cascade(entries: Sequence[CascadeEntry], source_sha256: str) -> list[dict[str, Any]]:
+    """A cascata sem a fonte citada; o digest tem de estar entre as fontes instaladas.
+
+    Mesmo código de recusa da reordenação (`ESTIMATE_CASCADE_ORDER_INVALID`) para o mesmo
+    motivo: o corpo cita uma fonte que a cascata instalada não reconhece. Não é código
+    novo — a rota de ordem já usa esta condição para "o corpo não corresponde às fontes
+    instaladas", e remover um digest desconhecido é o mesmo caso.
+    """
+    if not any(entry.source_sha256 == source_sha256 for entry in entries):
+        raise cascade_order_invalid(
+            "a fonte informada não está instalada nesta rodada",
+            {"expected": [entry.source_sha256 for entry in entries]},
+        )
+    return [_entry_document(entry) for entry in entries if entry.source_sha256 != source_sha256]
+
+
 def require_cascade_unlocked(revision: EstimateRoundRevisionRecord | None) -> None:
     """Recusa reordenar a cascata depois que a rodada já tem decisão de código.
 
@@ -503,6 +519,36 @@ def require_cascade_unlocked(revision: EstimateRoundRevisionRecord | None) -> No
             "a rodada já tem decisão de código: reordenar a cascata invalidaria as "
             "decisões registradas, e apagar decisão do orçamentista não é ato desta API",
             {},
+        )
+
+
+def require_cascade_source_unlocked(
+    revision: EstimateRoundRevisionRecord | None, source_sha256: str
+) -> None:
+    """Recusa remover uma fonte que alguma decisão de código já citou.
+
+    Mesmo código de `require_cascade_unlocked` (`ESTIMATE_CASCADE_LOCKED`), mas por FONTE
+    em vez de pela cascata inteira: reordenar mexe na posição de TODAS as fontes, então
+    qualquer decisão registrada já trava a reordenação; remover só tira UMA fonte, e por
+    isso só trava quando a decisão citou justamente essa (`CodeAssignment.catalog_sha256`,
+    `assignment.py`). Remover uma fonte que nenhuma decisão usou não invalida nada.
+    """
+    assignments = assignments_of(revision)
+    if assignments is None:
+        return
+    cited = {
+        assignment.catalog_sha256
+        for assignment in assignments.assignments
+        if assignment.catalog_sha256 is not None
+    }
+    if source_sha256 in cited:
+        raise RoundRefusal(
+            409,
+            ESTIMATE_CASCADE_LOCKED,
+            "esta fonte já foi citada por decisão de código registrada: removê-la "
+            "invalidaria as decisões registradas, e apagar decisão do orçamentista não é "
+            "ato desta API",
+            {"source_sha256": source_sha256},
         )
 
 

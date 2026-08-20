@@ -16,6 +16,7 @@ import {
   postCodeDecision,
   postSuggestionsRecompute,
   postTakeoffDecision,
+  removeCascadeSource,
   reorderCascade,
   searchCascade,
 } from "./api";
@@ -167,6 +168,16 @@ describe("mutações do orçamento", () => {
       `${BASE}/v1/estimate-rounds/${ROUND}/catalogs/order`,
     );
     expect(corpoDaChamada()).toEqual({ base_version: 7, cascade: [EMOP, SCO] });
+  });
+
+  it("remover manda só o digest da fonte e base_version, e a chave de idempotência", async () => {
+    await removeCascadeSource(TOKEN, ROUND, { sourceSha256: SCO, baseVersion: 7 });
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/estimate-rounds/${ROUND}/catalogs/remove`,
+    );
+    expect(corpoDaChamada()).toEqual({ base_version: 7, source_sha256: SCO });
+    expect(headersDaChamada()["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("a decisão de takeoff cita base_version e não carimba identidade", async () => {

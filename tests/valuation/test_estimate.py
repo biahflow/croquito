@@ -850,6 +850,9 @@ def test_cli_build_estimate_publishes_the_estimate(
     assert payload["cascade"] == ["sco", "emop", "composition"]
     assert payload["lines_by_origin"] == {"composition": 1, "emop": 1, "sco": 1}
     assert payload["unpriced"] == [_LAMP_ITEM]
+    assert payload["bdi_percent"] == str(_BDI_PERCENT)
+    assert payload["total_amount_without_bdi"] == "47441.31"
+    assert payload["total_amount"] == "59292.38"
     estimate = Estimate.model_validate_json(
         (output_dir / ESTIMATE_FILENAME).read_text(encoding="utf-8")
     )
@@ -868,4 +871,21 @@ def test_cli_build_estimate_refuses_a_cascade_with_two_sources_of_the_same_origi
 
     assert exit_code == 2
     assert _stdout(capsys)["refused"] == "ESTIMATE_CASCADE_ORIGIN_DUPLICATE"
+    assert not output_dir.exists() or list(output_dir.iterdir()) == []
+
+
+def test_cli_build_estimate_refuses_an_unreadable_bdi_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output_dir = tmp_path / "estimate"
+    args = _cli_args(tmp_path, _write_cascade(tmp_path), output_dir)
+    args[args.index("--bdi") + 1] = "abc"
+
+    with pytest.raises(SystemExit) as raised:
+        main(args)
+
+    assert raised.value.code == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "decimal" in err.lower()
     assert not output_dir.exists() or list(output_dir.iterdir()) == []
