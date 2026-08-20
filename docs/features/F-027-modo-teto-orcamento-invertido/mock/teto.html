@@ -1,0 +1,2211 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F-027 — Design Approval Package rev. 1 — teto de verba do orçamento-base</title>
+<!--
+  Artefato de aprovação de desenho da F-027, gerado em 2026-08-20.
+  NÃO É IMPLEMENTAÇÃO: HTML estático, sem comportamento, sem acessibilidade auditada e
+  sem estado. Nada aqui é copiado para apps/web como código.
+-->
+<style>
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:24-72 (tokens da marca e reset) ===== */
+
+:root {
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --surface-subtle: #f4f4f1;
+  --surface-sunken: #efefeb;
+  --ink: #14181d;
+  --ink-secondary: #5b6169;
+  --muted: #9aa0a8;
+  --line: #e5e5e0;
+  --accent: #00c877;
+  --accent-hover: #00b169;
+  --accent-ink: #0e1116;
+  --accent-text: #00744a;
+  --accent-soft: #e6f6ee;
+  --accent-line: #9bdcc0;
+  --dark: #0e1116;
+  --dark-ink: #f2f4f7;
+  --dark-ink-soft: rgba(242, 244, 247, 0.72);
+  --dark-line: rgba(242, 244, 247, 0.12);
+  --dark-line-strong: rgba(242, 244, 247, 0.34);
+
+  color: var(--ink);
+  background: var(--bg);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(0, 200, 119, 0.1), transparent 28rem),
+    var(--bg);
+}
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:508-556 (topbar, marca e o flex que os alinha) ===== */
+
+.topbar {
+  min-height: 76px;
+  padding: 14px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--dark-ink);
+  background: var(--dark);
+  border-bottom: 1px solid var(--dark-line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  color: inherit;
+  text-decoration: none;
+}
+
+/* O wordmark é a marca no topbar escuro; o `alt` carrega o nome para quem não vê a
+   imagem, e o subtítulo continua em texto. Altura maior por decisão da revisão humana de
+   2026-08-19 ("a marca está bem pequena aqui também"), com a mesma compensação óptica da
+   porta: o lettering começa em x≈136 do viewBox (620 × 150), e a margem negativa alinha o
+   desenho — não a caixa — com a borda do padding. */
+.brand-logo {
+  --brand-logo-h: 34px;
+  height: var(--brand-logo-h);
+  width: auto;
+  aspect-ratio: 620 / 150;
+  display: block;
+  margin-left: calc(var(--brand-logo-h) * -0.9);
+}
+
+.brand small {
+  display: block;
+  color: var(--dark-ink-soft);
+  font-size: 12px;
+}
+
+.topbar-actions,
+.context-bar,
+.difficulty,
+.pipeline,
+.panel-heading,
+.view-tabs,
+footer {
+  display: flex;
+  align-items: center;
+}
+
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:930-946 (tipografia: h1 em Georgia) ===== */
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  margin-top: 4px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: 600;
+}
+
+h2 {
+  margin-top: 3px;
+  font-size: 15px;
+}
+
+/* ===== COPIA VERBATIM: apps/web/src/styles.css:689-756 (pilulas e seletor de jornadas) ===== */
+
+.topbar-actions {
+  gap: 10px;
+}
+
+.schema-pill {
+  margin-right: 8px;
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+/* Navegação sobre o topbar escuro. O verde da marca é preenchimento e nunca cor de
+   texto: o texto é `--dark-ink-soft` e o estado ativo (hover/foco) sobe para
+   `--dark-ink`, com a borda mais firme. */
+.topbar-link {
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.topbar-link:hover,
+.topbar-link:focus-visible {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+}
+
+/* Alternância entre as jornadas do app (ADR-0028, D9). São botões e não links porque a
+   troca é de estado da casca, sem recarregar a SPA. A jornada aberta é anunciada por
+   `aria-current` e marcada por peso e borda: cor sozinha não indicaria nada a quem não
+   a distingue. */
+.journey-switch {
+  display: flex;
+  gap: 6px;
+  margin-right: 4px;
+}
+
+.journey-switch .topbar-link {
+  background: transparent;
+}
+
+.journey-switch .topbar-link[aria-current="page"] {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+  font-weight: 750;
+}
+
+.demo-pill {
+  padding: 7px 10px;
+  color: #f0d899;
+  border: 1px solid #665a38;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.identity-pill {
+  padding: 7px 10px;
+  color: var(--dark-ink);
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ===== COPIA VERBATIM: apps/web/src/orcamento/styles.css:31-732 (a folha da jornada do
+   ORÇAMENTO inteira, sem o wrapper .jornada-orcamento — uma página só não precisa dele.
+   É a folha do ORÇAMENTO e não a da medição: a F-020 já a criou, e esta feature entra
+   numa jornada que existe) ===== */
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* O anel de foco é indicador gráfico: usa o verde escuro (5,8:1 sobre branco), porque
+   `--accent` puro sumiria sobre a superfície clara. */
+:focus-visible {
+  outline: 3px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+h1 {
+  margin: 2px 0 0;
+  font-size: 1.35rem;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+h3 {
+  margin: 16px 0 6px;
+  font-size: 0.98rem;
+}
+
+h4 {
+  margin: 12px 0 4px;
+  font-size: 0.92rem;
+}
+
+p {
+  margin: 6px 0;
+  line-height: 1.45;
+}
+
+.eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  color: var(--dark-ink-soft);
+}
+
+.topbar-meta {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--dark-ink-soft);
+}
+
+.topbar-acoes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Sessão sobre o topbar escuro desta jornada: o verde da marca é preenchimento e nunca
+   cor de texto. O `.topbar-link` da casca não serve — lá ele veste `<a>`, e aqui veste
+   também os `<button>` de trocar de orçamento e sair. */
+.topbar-link {
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  background: transparent;
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.topbar-link:hover,
+.topbar-link:focus-visible {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+}
+
+.topbar-link-botao {
+  font-family: inherit;
+  line-height: inherit;
+}
+
+/* A linha fixa que declara o momento da jornada (o aviso permanente do orçamento). */
+.aviso-fixo {
+  max-width: 40rem;
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: #2a1a05;
+  background: #f6d99a;
+  border-left: 5px solid #b47512;
+  border-radius: 4px;
+}
+
+.aviso-inline {
+  margin-bottom: 12px;
+}
+
+.etapas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 28px;
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--line);
+}
+
+.etapa-tab {
+  padding: 8px 14px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+.etapa-tab.ativa {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.etapa-tab.done {
+  border-left: 5px solid var(--accent-text);
+}
+
+.etapa-tab.blocked {
+  border-left: 5px solid #8a8f8b;
+}
+
+.recarregar {
+  margin-left: auto;
+}
+
+.banner-erro,
+.banner-conflito,
+.banner-sucesso {
+  margin: 12px 28px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.banner-erro {
+  color: #4a1010;
+  background: #f7d9d9;
+  border-left: 5px solid #a02323;
+}
+
+.banner-conflito {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #3c2708;
+  background: #fbe6c2;
+  border-left: 5px solid #b47512;
+}
+
+.banner-sucesso {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-left: 5px solid var(--accent-text);
+}
+
+.conteudo {
+  padding: 16px 28px 48px;
+}
+
+.painel {
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.painel-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cabecalho-controles {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.2fr) minmax(280px, 1fr) minmax(300px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.workspace.duas-colunas {
+  grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.4fr);
+}
+
+@media (max-width: 1200px) {
+  .workspace,
+  .workspace.duas-colunas {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cartoes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 12px 0 20px;
+  padding: 0;
+  list-style: none;
+}
+
+.cartao {
+  padding: 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-left: 5px solid #8a8f8b;
+  border-radius: 6px;
+}
+
+.cartao.available {
+  border-left-color: #b47512;
+}
+
+.cartao.done {
+  border-left-color: var(--accent-text);
+}
+
+.cartao h3 {
+  margin-top: 0;
+}
+
+.cartao-status {
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.cartao-motivo {
+  font-size: 0.86rem;
+  color: #6b3a06;
+}
+
+.botao-primario,
+.botao-secundario {
+  padding: 9px 16px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.botao-primario {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+  text-decoration: none;
+}
+
+.botao-primario:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* A borda é a afordância do secundário: fica no verde escuro, que se destaca sobre
+   branco (5,8:1) — `--accent-line` apagaria o contorno do botão. */
+.botao-secundario {
+  color: var(--accent-text);
+  background: var(--surface);
+  border-color: var(--accent-text);
+}
+
+.acoes-linha {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.confirmados-lista {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.confirmados {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.confirmados-lista li {
+  margin-bottom: 10px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.digest {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.8em;
+  color: var(--ink-secondary);
+}
+
+.dica {
+  font-size: 0.84rem;
+  color: var(--ink-secondary);
+}
+
+/* Listas de item ----------------------------------------------------------- */
+
+.itens,
+.codigos {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 640px;
+  overflow: auto;
+}
+
+.item {
+  border-bottom: 1px solid var(--line);
+}
+
+.item-botao {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-left: 5px solid transparent;
+}
+
+.item.proposed .item-botao {
+  border-left-color: #b47512;
+}
+
+.item.ambiguous .item-botao {
+  border-left-color: #a02323;
+}
+
+.item.confirmed .item-botao {
+  border-left-color: var(--accent-text);
+}
+
+.item.rejected .item-botao {
+  border-left-color: #5a625c;
+}
+
+.item.selecionado .item-botao {
+  background: var(--accent-soft);
+}
+
+.item-numero {
+  flex: 0 0 1.6rem;
+  height: 1.6rem;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.item-corpo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.item-rotulo {
+  font-weight: 600;
+}
+
+.item-estado {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-secondary);
+}
+
+.item-quantidade {
+  font-size: 0.88rem;
+}
+
+.item-raw,
+.item-nota {
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+}
+
+/* Formulários -------------------------------------------------------------- */
+
+.formulario {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.acoes {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.acoes label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+.campo input,
+.campo textarea {
+  padding: 8px 10px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+.campo-dica {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.campo-aviso {
+  font-size: 0.8rem;
+  color: #6b3a06;
+}
+
+.campo-erro {
+  font-size: 0.85rem;
+  color: #7a1212;
+}
+
+.busca {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.busca .campo {
+  flex: 1;
+}
+
+/* Códigos ------------------------------------------------------------------ */
+
+.codigo-card {
+  padding: 12px;
+  margin-bottom: 10px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.codigo-card.escolhido {
+  border-color: var(--accent-text);
+  border-left-width: 5px;
+}
+
+.codigo-topo {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.codigo-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+.codigo-descricao {
+  max-height: 8rem;
+  overflow: auto;
+  font-size: 0.86rem;
+}
+
+.codigo-selos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.selo {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--muted);
+  background: var(--surface);
+}
+
+.selo-neutro {
+  border-color: #8a8f8b;
+  color: var(--ink-secondary);
+}
+
+.selo-ok {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.selo-atencao {
+  border-color: #a02323;
+  color: #7a1212;
+}
+
+/* Selo de fonte do preço — o dado que o orçamento imprime e a medição não tem.
+   Composição nova sobre o `.selo` existente, com as cores que já vivem na folha da
+   medição. A cor é REDUNDÂNCIA: origem, data-base e posição vão escritas dentro do
+   selo, e nenhuma decisão depende de distinguir a borda. */
+
+.selo-fonte-sco {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.selo-fonte-emop {
+  border-color: #b47512;
+  color: #6b3a06;
+}
+
+.selo-fonte-composicao {
+  border-color: #5a625c;
+  color: #5a625c;
+}
+
+.selo-fonte-ausente {
+  border-color: #a02323;
+  color: #7a1212;
+}
+
+/* Cascata de catálogos — a etapa que a medição não tem ---------------------- */
+/* A ordem é a regra de precificação, então ela é numerada e visível: o número no
+   círculo é composição nova sobre `.item-numero`, e a posição também aparece por
+   extenso no selo de fonte ("2ª fonte da cascata"). */
+
+.cascata {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cascata > li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.cascata-ordem {
+  flex: 0 0 1.8rem;
+  height: 1.8rem;
+  display: grid;
+  place-items: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.cascata-corpo {
+  flex: 1;
+}
+
+.cascata-corpo h4 {
+  margin: 0 0 2px;
+}
+
+.cascata-controles {
+  display: flex;
+  gap: 6px;
+}
+
+.cascata-controles button {
+  padding: 4px 9px;
+  font-size: 0.78rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+/* Extração automática da legenda ------------------------------------------- */
+
+.extracao-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* Linhas do orçamento ------------------------------------------------------ */
+
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.tabela caption {
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+  padding-bottom: 6px;
+}
+
+.tabela th,
+.tabela td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tabela .numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.celula-descricao {
+  min-width: 22rem;
+  white-space: normal;
+}
+
+.tabela tfoot th,
+.tabela tfoot td {
+  font-weight: 700;
+  border-top: 2px solid var(--muted);
+}
+
+/* Orçamentos do tenant ------------------------------------------------------ */
+
+.rodadas-lista {
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.rodada-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+/* Prancha e overlay das âncoras --------------------------------------------- */
+/* A borda tracejada do overlay vencido é redundância do texto que já vai no `summary`
+   ("desenho do pacote anterior"): cor e forma nunca substituem a palavra. */
+
+.overlay-bloco {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.overlay-bloco.overlay-vencido {
+  border-style: dashed;
+  border-color: #b47512;
+}
+
+.overlay-imagem {
+  display: block;
+  max-width: 100%;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+}
+
+
+/* ===== AUTORAL DESTE PACOTE — e o que ele pede para aprovar ===== */
+
+/*
+ * TUDO NESTE BLOCO É AUTORAL E ESTÁ SENDO DECIDIDO POR ESTA APROVAÇÃO.
+ *
+ * COR: nenhuma cor nova. Todo valor aqui é `var(--token)` da tabela do Design System ou um
+ * hex que JÁ VIVE na folha do orçamento (#b47512 âmbar de atenção, #6b3a06 e #3c2708 tinta
+ * sobre âmbar, #fbe6c2 âmbar claro, #f6d99a âmbar do aviso permanente, #a02323/#7a1212
+ * vermelho de recusa). Repetir o hex existente é citação; inventar um matiz novo seria
+ * paleta nova, e paleta nova tem portão próprio.
+ *
+ * A DECISÃO DE COR MAIS IMPORTANTE DESTE PACOTE É UMA SUBTRAÇÃO: o estouro de teto é
+ * ÂMBAR, nunca vermelho. Nesta jornada o vermelho (`.banner-erro`) diz exatamente uma
+ * coisa — "o servidor recusou e nada foi gravado". O estouro não recusa nada (ADR-0040,
+ * decisão 4), e vesti-lo de vermelho ensinaria a orçamentista a ler recusa onde não há.
+ * O peso de primeira ordem vem da FORMA e da REPETIÇÃO — faixa de largura inteira,
+ * etiqueta escrita, número grande, presença em toda etapa —, não do matiz.
+ *
+ * TAMANHO, ESPAÇAMENTO E RAIO: valores NOVOS, não citações — o Design System registra que o
+ * projeto não tem escala tipográfica, de espaçamento nem de raio. Onde deu, o valor repete
+ * um que a folha do orçamento já usa (6px de raio, 8px/12px/16px de espaçamento,
+ * 0.8rem/0.84rem/0.86rem de texto miúdo).
+ */
+
+/* Moldura do próprio caderno de aprovação (não é produto) ------------------- */
+/* Herdada verbatim dos pacotes aprovados da F-020 e da F-025. */
+
+.mock-deck {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 28px 28px 80px;
+}
+
+.mock-capa {
+  padding: 22px 24px;
+  margin-bottom: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--accent-text);
+  border-radius: 8px;
+}
+
+.mock-capa h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  font-weight: 600;
+  margin: 4px 0 8px;
+}
+
+.mock-capa p {
+  max-width: 78ch;
+  color: var(--ink-secondary);
+}
+
+.mock-capa .eyebrow {
+  color: var(--ink-secondary);
+  text-transform: uppercase;
+}
+
+.mock-indice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.mock-indice a {
+  display: block;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  color: var(--ink);
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+.mock-tela {
+  margin: 32px 0;
+}
+
+.mock-tela-cabecalho {
+  padding: 12px 0 10px;
+  border-top: 2px solid var(--ink);
+}
+
+.mock-tela-cabecalho h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  margin: 0;
+}
+
+.mock-tela-nota {
+  max-width: 82ch;
+  margin: 6px 0 14px;
+  font-size: 0.9rem;
+  color: var(--ink-secondary);
+}
+
+.mock-tela-nota strong {
+  color: var(--ink);
+}
+
+/* O "quadro" é a janela do navegador fingida: dentro dele é produto, fora é caderno. */
+.mock-quadro {
+  margin-bottom: 16px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mock-estado {
+  display: inline-block;
+  margin: 18px 0 6px;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+  background: var(--surface-sunken);
+  border-radius: 999px;
+}
+
+/* Nota do caderno: afirmação que NÃO tem tela, e que por isso não pode virar tela. */
+.mock-nota-caderno {
+  margin: 8px 0 16px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--ink);
+  border-radius: 8px;
+}
+
+/* Cola de layout: dois painéis empilhados na coluna esquerda do `.workspace`, com o mesmo
+   respiro de 16px que a grade da jornada já usa entre colunas. */
+.coluna-empilhada {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.mock-nota-caderno h3 {
+  margin: 0 0 6px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 17px;
+}
+
+.mock-nota-caderno p {
+  max-width: 84ch;
+}
+
+/* O BLOCO DE CONSUMO — o que este pacote existe para decidir ---------------- */
+/*
+ * Mora na "Prévia do orçamento", colado no Total geral: o consumo é uma LEITURA daquele
+ * número, e separar os dois na tela seria abrir espaço para eles se contradizerem.
+ *
+ * O estado vem escrito na etiqueta ANTES de qualquer cor: "Dentro do teto", "No limite
+ * exato", "Teto estourado". Quem não distingue o âmbar do verde lê a palavra e os números.
+ */
+
+.teto-consumo {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 6px;
+}
+
+/* Dentro do teto e no limite exato compartilham a MESMA veste, e isso é decisão: os dois
+   são o mesmo estado de domínio (consumo dentro do teto). Uma terceira cor para o limite
+   exato inventaria uma terceira semântica que o ADR-0040 não tem. O que distingue é a
+   palavra — e no limite exato ela diz, por extenso, que aquilo não é estouro. */
+.teto-dentro,
+.teto-limite {
+  color: var(--ink);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-left: 5px solid var(--accent-text);
+}
+
+.teto-estourado {
+  color: #3c2708;
+  background: #fbe6c2;
+  border: 1px solid #b47512;
+  border-left: 5px solid #b47512;
+}
+
+.teto-etiqueta {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.teto-dentro .teto-etiqueta,
+.teto-limite .teto-etiqueta {
+  color: var(--accent-text);
+  border: 1px solid var(--accent-text);
+}
+
+.teto-estourado .teto-etiqueta {
+  color: #6b3a06;
+  border: 1px solid #b47512;
+}
+
+/* Os três números em linhas de rótulo + valor, tabulares, para conferir a subtração de
+   cima para baixo sem a tela somar coisa nenhuma. */
+.teto-linhas {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.teto-linhas li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.teto-linhas li:last-child {
+  border-bottom: 0;
+}
+
+.teto-rotulo {
+  font-size: 0.86rem;
+}
+
+.teto-valor {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A linha do resultado — restante ou excedente — é a que a orçamentista procura. */
+.teto-linhas .teto-resultado {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 2px solid var(--muted);
+  border-bottom: 0;
+  font-weight: 700;
+}
+
+.teto-linhas .teto-resultado .teto-valor {
+  font-size: 1.15rem;
+}
+
+.teto-origem {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+}
+
+.teto-estourado .teto-origem {
+  color: #6b3a06;
+}
+
+.teto-consequencia {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.teto-consequencia li {
+  max-width: 84ch;
+  margin-bottom: 6px;
+  line-height: 1.45;
+}
+
+/* A FAIXA DO ESTOURO — o aviso permanente de primeira ordem ---------------- */
+/*
+ * Ela ocupa a mesma posição dos banners da jornada (entre a barra de etapas e o conteúdo)
+ * e a mesma margem, mas não é um deles: banner é episódio ("nada foi gravado", "publicado"),
+ * e este aviso é CONDIÇÃO da rodada. A diferença é dita de três formas ao mesmo tempo:
+ * a borda fecha em volta (banner só tem a barra à esquerda), a etiqueta escrita nomeia o
+ * estado, e o texto declara a própria permanência. Ela aparece em TODA etapa enquanto o
+ * consumo passar o teto — inclusive na Planilha, ao lado do botão de exportar que continua
+ * funcionando.
+ */
+
+.teto-faixa {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 12px 28px;
+  padding: 12px 16px;
+  color: #3c2708;
+  background: #fbe6c2;
+  border: 1px solid #b47512;
+  border-left: 5px solid #b47512;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.teto-faixa-etiqueta {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b3a06;
+  background: var(--surface);
+  border: 1px solid #b47512;
+  border-radius: 999px;
+}
+
+.teto-faixa p {
+  margin: 0 0 4px;
+  max-width: 88ch;
+}
+
+.teto-faixa .teto-faixa-numero {
+  font-weight: 700;
+}
+
+/* Fecho do caderno --------------------------------------------------------- */
+
+.mock-fecho {
+  margin-top: 40px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid #b47512;
+  border-radius: 8px;
+}
+
+.mock-fecho h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 20px;
+  margin: 0 0 8px;
+}
+
+.mock-fecho ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.mock-fecho li {
+  margin-bottom: 6px;
+  max-width: 88ch;
+}
+</style>
+</head>
+<body>
+<div class="mock-deck">
+
+<header class="mock-capa">
+  <span class="eyebrow">F-027 · Design Approval Package · revisão 1</span>
+  <h1>Teto de verba: declarar, consumir à vista e estourar sem ser cortado</h1>
+  <p>
+    Este caderno é <strong>artefato de aprovação</strong>, não implementação. Ele existe para
+    que a discordância sobre o desenho aconteça agora, enquanto descartar é barato. Cada tela
+    aparece dentro de uma moldura: <strong>dentro da moldura é produto</strong>, fora dela é
+    comentário meu.
+  </p>
+  <p>
+    A jornada do orçamento-base já existe e foi aprovada na
+    <strong>F-020</strong>; este pacote quase não a redesenha. O que entra é
+    <strong>um campo na abertura da rodada</strong>, <strong>um painel de teto na etapa “BDI e
+    montagem”</strong>, <strong>um bloco de consumo colado no total</strong> e
+    <strong>uma faixa de aviso permanente</strong> para o estouro. Tudo o mais — cascata,
+    prancha, revisão, códigos, planilha, 403, 409, recusas traduzidas — continua exatamente
+    como o pacote da F-020 aprovou, e por isso <strong>não é redesenhado aqui</strong>.
+  </p>
+  <p>
+    A semântica não é matéria desta aprovação: ela já está decidida no
+    <strong>ADR-0040</strong>. O teto é dado da rodada e opcional; o consumo é o total
+    <strong>com BDI</strong>; <strong>limite exato não é estouro</strong>; o estouro
+    <strong>nunca recusa e nunca corta</strong>; a planilha <strong>não imprime o teto</strong>;
+    rodada sem teto se comporta exatamente como hoje. O que se aprova aqui é
+    <strong>que peso visual essas frases ganham</strong>.
+  </p>
+  <p class="dica">
+    Todo texto aqui é <strong>proposta</strong>: aprovar o visual não aprova a copy. Obra,
+    demanda, códigos, quantidades, valores, percentuais e datas são
+    <strong>sintéticos e ilustrativos</strong> — não são especificação.
+  </p>
+  <ul class="mock-indice">
+    <li><a href="#t1">1 · Declarar o teto ao abrir</a></li>
+    <li><a href="#t2">2 · Editar o teto na rodada aberta</a></li>
+    <li><a href="#t3">3 · O consumo na etapa BDI e montagem</a></li>
+    <li><a href="#t4">4 · Rodada sem teto</a></li>
+    <li><a href="#t5">5 · O estouro atravessa a rodada — e para na planilha</a></li>
+    <li><a href="#t6">6 · Estados transversais novos</a></li>
+    <li><a href="#fecho">O que este caderno não decide</a></li>
+  </ul>
+</header>
+
+<!-- ==================================================================== TELA 1 -->
+<section class="mock-tela" id="t1">
+  <div class="mock-tela-cabecalho"><h2>Tela 1 — Declarar o teto ao abrir a rodada</h2></div>
+  <p class="mock-tela-nota">
+    O teto entra <strong>onde a rodada nasce</strong>, e não numa etapa própria: ele é
+    contexto de trabalho da rodada (ADR-0040, decisão 1), como a obra e o rótulo do
+    orçamento, não um passo da cadeia de precificação. Etapa própria diria que existe algo a
+    fazer com o teto; não existe — ele é declarado uma vez e lido o tempo todo. São
+    <strong>dois campos opcionais</strong>: o valor e o rótulo da demanda que originou a
+    verba. Deixá-los vazios é o caminho normal, e não custa um clique a mais.
+  </p>
+
+  <div class="mock-quadro">
+    <header class="topbar">
+      <a class="brand" href="#t1" aria-label="Croquito - início">
+        <svg class="brand-logo" role="img" aria-label="Croquito" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 150">
+<g transform="translate(136.816,112) scale(0.082)">
+<path d="M310.62939453125 12.0Q224.28173828125 12.0 163.26025390625 -18.04345703125Q102.23876953125 -48.0869140625 69.80419921875 -109.358642578125Q37.36962890625 -170.63037109375 37.36962890625 -263.54345703125Q37.36962890625 -357.45654296875 70.032470703125 -418.5Q102.6953125 -479.54345703125 163.716796875 -509.5869140625Q224.73828125 -539.63037109375 310.62939453125 -539.63037109375Q367.43359375 -539.63037109375 414.955078125 -526.63037109375Q462.4765625 -513.63037109375 497.682861328125 -486.858642578125Q532.88916015625 -460.0869140625 551.965087890625 -418.9130859375Q571.041015625 -377.7392578125 571.041015625 -321.3916015625H409.54248046875Q409.54248046875 -355.130859375 398.270751953125 -376.95703125Q386.9990234375 -398.783203125 364.770751953125 -409.65283203125Q342.54248046875 -420.5224609375 309.71630859375 -420.5224609375Q271.97705078125 -420.5224609375 248.422607421875 -404.511474609375Q224.8681640625 -388.50048828125 213.726806640625 -357.52197265625Q202.58544921875 -326.54345703125 202.58544921875 -281.49951171875V-244.58740234375Q202.58544921875 -200.0 213.99853515625 -169.06494140625Q225.41162109375 -138.1298828125 249.966064453125 -122.34716796875Q274.5205078125 -106.564453125 314.1728515625 -106.564453125Q347.62939453125 -106.564453125 370.12939453125 -117.43408203125Q392.62939453125 -128.3037109375 404.62939453125 -150.858154296875Q416.62939453125 -173.41259765625 416.62939453125 -206.7822265625H571.041015625Q571.041015625 -151.80419921875 551.965087890625 -110.358642578125Q532.88916015625 -68.9130859375 497.9111328125 -41.9130859375Q462.93310546875 -14.9130859375 415.183349609375 -1.45654296875Q367.43359375 12.0 310.62939453125 12.0Z M674.28271484375 0.0V-527.0869140625H809.43359375L821.06396484375 -445.71728515625H828.06396484375Q839.6943359375 -473.4345703125 857.455078125 -494.662841796875Q875.2158203125 -515.89111328125 900.3896484375 -527.7607421875Q925.5634765625 -539.63037109375 956.93310546875 -539.63037109375Q975.10693359375 -539.63037109375 989.965576171875 -536.0869140625Q1004.82421875 -532.54345703125 1011.82421875 -529.0V-385.740234375H960.15087890625Q928.607421875 -385.740234375 905.422607421875 -377.240234375Q882.23779296875 -368.740234375 867.3681640625 -351.555419921875Q852.49853515625 -334.37060546875 845.313720703125 -309.272705078125Q838.12890625 -284.1748046875 838.12890625 -251.435546875V0.0Z M1336.4775390625 12.0Q1248.3037109375 12.0 1185.684326171875 -18.04345703125Q1123.06494140625 -48.0869140625 1089.71728515625 -109.358642578125Q1056.36962890625 -170.63037109375 1056.36962890625 -263.54345703125Q1056.36962890625 -357.45654296875 1089.71728515625 -418.228271484375Q1123.06494140625 -479.0 1185.684326171875 -509.04345703125Q1248.3037109375 -539.0869140625 1336.4775390625 -539.0869140625Q1425.10791015625 -539.0869140625 1487.770751953125 -509.04345703125Q1550.43359375 -479.0 1583.78125 -418.228271484375Q1617.12890625 -357.45654296875 1617.12890625 -263.54345703125Q1617.12890625 -170.63037109375 1583.78125 -109.358642578125Q1550.43359375 -48.0869140625 1487.770751953125 -18.04345703125Q1425.10791015625 12.0 1336.4775390625 12.0ZM1336.4775390625 -107.02099609375Q1377.41259765625 -107.02099609375 1402.836669921875 -122.8037109375Q1428.2607421875 -138.58642578125 1439.858642578125 -169.293212890625Q1451.45654296875 -200.0 1451.45654296875 -244.58740234375V-281.9560546875Q1451.45654296875 -326.54345703125 1439.858642578125 -357.52197265625Q1428.2607421875 -388.50048828125 1402.836669921875 -404.283203125Q1377.41259765625 -420.06591796875 1336.4775390625 -420.06591796875Q1295.54248046875 -420.06591796875 1270.39013671875 -404.283203125Q1245.23779296875 -388.50048828125 1233.639892578125 -357.52197265625Q1222.0419921875 -326.54345703125 1222.0419921875 -281.9560546875V-244.58740234375Q1222.0419921875 -200.0 1233.639892578125 -169.293212890625Q1245.23779296875 -138.58642578125 1270.39013671875 -122.8037109375Q1295.54248046875 -107.02099609375 1336.4775390625 -107.02099609375Z M2060.0869140625 186.04296875V-53.93505859375H2053.54345703125Q2036.45654296875 -32.65234375 2014.0 -17.78271484375Q1991.54345703125 -2.9130859375 1963.989013671875 4.54345703125Q1936.4345703125 12.0 1904.7822265625 12.0Q1840.2607421875 12.0 1792.0869140625 -17.815185546875Q1743.9130859375 -47.63037109375 1717.641357421875 -108.63037109375Q1691.36962890625 -169.63037109375 1691.36962890625 -262.54345703125Q1691.36962890625 -356.9130859375 1717.4130859375 -418.184814453125Q1743.45654296875 -479.45654296875 1792.0869140625 -509.271728515625Q1840.71728515625 -539.0869140625 1907.97802734375 -539.0869140625Q1958.97802734375 -539.0869140625 2001.47802734375 -517.771728515625Q2043.97802734375 -496.45654296875 2068.97802734375 -454.36962890625H2075.97802734375L2089.7822265625 -527.0869140625H2223.93310546875V186.04296875ZM1959.02099609375 -115.8251953125Q1986.1298828125 -115.8251953125 2005.640869140625 -125.73828125Q2025.15185546875 -135.6513671875 2037.249755859375 -153.662353515625Q2049.34765625 -171.67333984375 2055.2607421875 -196.73876953125Q2061.173828125 -221.80419921875 2061.173828125 -252.10888671875V-275.521484375Q2061.173828125 -316.5654296875 2050.575927734375 -347.08740234375Q2039.97802734375 -377.609375 2017.510498046875 -394.435546875Q1995.04296875 -411.26171875 1959.02099609375 -411.26171875Q1921.62939453125 -411.26171875 1899.205322265625 -396.47900390625Q1876.78125 -381.6962890625 1866.91162109375 -352.532958984375Q1857.0419921875 -323.36962890625 1857.0419921875 -280.9560546875V-245.76123046875Q1857.0419921875 -203.80419921875 1866.91162109375 -174.869140625Q1876.78125 -145.93408203125 1899.205322265625 -130.879638671875Q1921.62939453125 -115.8251953125 1959.02099609375 -115.8251953125Z M2524.4345703125 12.0Q2438.65234375 12.0 2392.510986328125 -35.206298828125Q2346.36962890625 -82.41259765625 2346.36962890625 -179.15185546875V-527.0869140625H2510.2158203125V-202.23876953125Q2510.2158203125 -180.76025390625 2515.62890625 -164.705810546875Q2521.0419921875 -148.6513671875 2531.096435546875 -137.966552734375Q2541.15087890625 -127.28173828125 2556.43359375 -122.010009765625Q2571.71630859375 -116.73828125 2590.45556640625 -116.73828125Q2619.10791015625 -116.73828125 2641.26025390625 -130.292724609375Q2663.41259765625 -143.84716796875 2676.1953125 -167.184326171875Q2688.97802734375 -190.521484375 2688.97802734375 -218.9130859375V-527.0869140625H2852.82421875V0.0H2718.1298828125L2708.1298828125 -75.4345703125H2701.1298828125Q2682.58642578125 -48.71728515625 2655.369140625 -28.858642578125Q2628.15185546875 -9.0 2594.749755859375 1.5Q2561.34765625 12.0 2524.4345703125 12.0Z M2978.28271484375 0.0V-527.0869140625H3142.12890625V0.0Z M3451.4765625 12.0Q3399.75927734375 12.0 3364.422607421875 -3.69580078125Q3329.0859375 -19.3916015625 3311.336181640625 -50.163330078125Q3293.58642578125 -80.93505859375 3293.58642578125 -124.89111328125V-408.06591796875H3224.6083984375V-527.0869140625H3299.3037109375L3332.71630859375 -681.15185546875H3457.4326171875V-527.0869140625H3559.84521484375V-408.06591796875H3457.4326171875V-164.607421875Q3457.4326171875 -136.54248046875 3468.4326171875 -121.78173828125Q3479.4326171875 -107.02099609375 3507.9541015625 -107.02099609375H3559.84521484375V-5.0869140625Q3546.58447265625 -0.54345703125 3527.193359375 3.5Q3507.80224609375 7.54345703125 3487.726318359375 9.771728515625Q3467.650390625 12.0 3451.4765625 12.0Z M3906.4775390625 12.0Q3818.3037109375 12.0 3755.684326171875 -18.04345703125Q3693.06494140625 -48.0869140625 3659.71728515625 -109.358642578125Q3626.36962890625 -170.63037109375 3626.36962890625 -263.54345703125Q3626.36962890625 -357.45654296875 3659.71728515625 -418.228271484375Q3693.06494140625 -479.0 3755.684326171875 -509.04345703125Q3818.3037109375 -539.0869140625 3906.4775390625 -539.0869140625Q3995.10791015625 -539.0869140625 4057.770751953125 -509.04345703125Q4120.43359375 -479.0 4153.78125 -418.228271484375Q4187.12890625 -357.45654296875 4187.12890625 -263.54345703125Q4187.12890625 -170.63037109375 4153.78125 -109.358642578125Q4120.43359375 -48.0869140625 4057.770751953125 -18.04345703125Q3995.10791015625 12.0 3906.4775390625 12.0ZM3906.4775390625 -107.02099609375Q3947.41259765625 -107.02099609375 3972.836669921875 -122.8037109375Q3998.2607421875 -138.58642578125 4009.858642578125 -169.293212890625Q4021.45654296875 -200.0 4021.45654296875 -244.58740234375V-281.9560546875Q4021.45654296875 -326.54345703125 4009.858642578125 -357.52197265625Q3998.2607421875 -388.50048828125 3972.836669921875 -404.283203125Q3947.41259765625 -420.06591796875 3906.4775390625 -420.06591796875Q3865.54248046875 -420.06591796875 3840.39013671875 -404.283203125Q3815.23779296875 -388.50048828125 3803.639892578125 -357.52197265625Q3792.0419921875 -326.54345703125 3792.0419921875 -281.9560546875V-244.58740234375Q3792.0419921875 -200.0 3803.639892578125 -169.293212890625Q3815.23779296875 -138.58642578125 3840.39013671875 -122.8037109375Q3865.54248046875 -107.02099609375 3906.4775390625 -107.02099609375Z" fill="#F2F4F7"/>
+<rect x="2960.0" y="-876.0" width="200" height="200" fill="#0E1116" stroke="#00E389" stroke-width="58"/>
+</g>
+</svg>
+        <small>Revisão humana autenticada</small>
+      </a>
+      <div class="topbar-actions">
+        <nav class="journey-switch" aria-label="Jornadas">
+          <button class="topbar-link" type="button">Croqui</button>
+          <button class="topbar-link" type="button">Medição</button>
+          <button class="topbar-link" type="button" aria-current="page">Orçamento</button>
+        </nav>
+        <span class="identity-pill">Sessão: orcamentista.exemplo</span>
+        <button class="topbar-link" type="button">Sair</button>
+      </div>
+    </header>
+
+    <header class="topbar">
+      <div>
+        <span class="eyebrow">ORÇAMENTO-BASE · PRÉ-LICITAÇÃO</span>
+        <h1>Nenhum orçamento aberto</h1>
+        <p class="topbar-meta">Escolha um orçamento da lista ou abra um novo.</p>
+      </div>
+      <p class="aviso-fixo">
+        Orçamento-base de pré-licitação; o preço vem da cascata declarada — nenhum preço
+        daqui alcança um boletim de medição.
+      </p>
+      <div class="topbar-acoes">
+        <span class="topbar-meta">Sessão: orcamentista.exemplo</span>
+        <button type="button" class="topbar-link topbar-link-botao">Sair</button>
+      </div>
+    </header>
+
+    <div class="conteudo">
+      <div class="workspace duas-colunas">
+        <section class="painel" aria-label="Orçamentos do tenant">
+          <div class="painel-cabecalho">
+            <h2>Orçamentos do tenant</h2>
+            <div class="cabecalho-controles">
+              <button type="button" class="botao-secundario">Recarregar lista</button>
+            </div>
+          </div>
+          <ul class="rodadas-lista">
+            <li class="rodada-linha">
+              <div>
+                <strong>Praça do Exemplo</strong> <span class="mono">(praca-do-exemplo)</span>
+                <p class="dica">
+                  ORÇAMENTO-BASE 2026 · etapa orçamento montado · leitura da legenda concluída
+                  · versão 12
+                </p>
+                <p class="dica">Cascata: 1. SCO · data-base 2026-06 · 2. EMOP · data-base 2026-05</p>
+                <p class="dica">Teto R$ 85.000,00 · Relação de Praças 2026 · demanda 14</p>
+              </div>
+              <button type="button" class="botao-primario">Abrir orçamento</button>
+            </li>
+            <li class="rodada-linha">
+              <div>
+                <strong>Largo Sintético</strong> <span class="mono">(largo-sintetico)</span>
+                <p class="dica">
+                  ORÇAMENTO-BASE 2026 · etapa decisão de código · leitura da legenda concluída
+                  · versão 4
+                </p>
+                <p class="dica">Cascata: 1. SCO · data-base 2026-06</p>
+              </div>
+              <button type="button" class="botao-primario">Abrir orçamento</button>
+            </li>
+          </ul>
+          <p class="dica">
+            A linha do teto <strong>só existe na rodada que tem teto</strong>. O Largo
+            Sintético não ganha “sem teto”, “teto: —”, nem espaço reservado: ausência de teto
+            não é um estado a comunicar, é o comportamento de sempre.
+          </p>
+          <p class="dica">
+            Nota de fidelidade: os metadados desta lista aparecem aqui em
+            <span class="mono">.dica</span>; o código de hoje os renderiza com
+            <span class="mono">.topbar-meta</span>, cuja cor é a do topbar escuro e some sobre
+            superfície clara. É defeito de legibilidade pré-existente da F-020, alheio a esta
+            feature — registrado no README em vez de consertado de carona.
+          </p>
+        </section>
+
+        <section class="painel" aria-label="Abrir orçamento novo">
+          <div class="painel-cabecalho"><h2>Abrir orçamento novo</h2></div>
+          <div class="formulario">
+            <p class="dica">
+              O catálogo não é pedido aqui: a cascata é a etapa seguinte, e ela aceita mais de
+              uma fonte, em ordem declarada.
+            </p>
+            <label class="campo">
+              Chave da obra
+              <span class="campo-dica">
+                minúsculas, números e hífen (ex.: praca-do-exemplo). É ela que amarra os
+                artefatos.
+              </span>
+              <input type="text" value="praca-do-exemplo" />
+            </label>
+            <label class="campo">
+              Nome da obra
+              <input type="text" value="Praça do Exemplo" />
+            </label>
+            <label class="campo">
+              Rótulo do orçamento
+              <span class="campo-dica">como aparece na planilha (ex.: ORÇAMENTO-BASE 2026)</span>
+              <input type="text" value="ORÇAMENTO-BASE 2026" />
+            </label>
+            <label class="campo">
+              Endereço (opcional)
+              <input type="text" value="Rua Sintética, s/n — bairro de exemplo" />
+            </label>
+            <label class="campo">
+              Teto da verba (opcional)
+              <span class="campo-dica">
+                a verba prevista para esta demanda, em reais. Escreva 85.000,00 ou 85000.00 —
+                o valor viaja como texto e o servidor o lê exato.
+              </span>
+              <input type="text" value="85.000,00" />
+            </label>
+            <label class="campo">
+              Demanda de origem (opcional)
+              <span class="campo-dica">
+                de onde a verba veio, como você a chama (ex.: Relação de Praças 2026 ·
+                demanda 14). É rótulo de leitura, não identificador.
+              </span>
+              <input type="text" value="Relação de Praças 2026 · demanda 14" />
+            </label>
+            <p class="dica">
+              O teto é <strong>meta de trabalho desta rodada</strong>: ele não entra no
+              orçamento montado, não é impresso na planilha e não impede nada. Sem ele, o
+              orçamento se comporta exatamente como hoje.
+            </p>
+            <div class="acoes-linha">
+              <button type="button" class="botao-primario">Abrir orçamento</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: sem teto — o caminho normal</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel" aria-label="Abrir orçamento novo">
+        <div class="painel-cabecalho"><h2>Abrir orçamento novo</h2></div>
+        <div class="formulario">
+          <label class="campo">
+            Teto da verba (opcional)
+            <span class="campo-dica">
+              a verba prevista para esta demanda, em reais. Escreva 85.000,00 ou 85000.00 —
+              o valor viaja como texto e o servidor o lê exato.
+            </span>
+            <input type="text" value="" />
+          </label>
+          <label class="campo">
+            Demanda de origem (opcional)
+            <span class="campo-dica">
+              de onde a verba veio, como você a chama (ex.: Relação de Praças 2026 ·
+              demanda 14). É rótulo de leitura, não identificador.
+            </span>
+            <input type="text" value="" />
+          </label>
+          <div class="acoes-linha">
+            <button type="button" class="botao-primario">Abrir orçamento</button>
+          </div>
+        </div>
+        <p class="dica">
+          Campo vazio é o padrão e não pede justificativa: não há “declarar depois”, não há
+          aviso de que falta preencher, e o botão não muda. Quem não tem verba prevista abre a
+          rodada como sempre abriu.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: valor recusado antes de sair da tela</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel" aria-label="Abrir orçamento novo">
+        <div class="formulario">
+          <label class="campo">
+            Teto da verba (opcional)
+            <span class="campo-dica">
+              a verba prevista para esta demanda, em reais. Escreva 85.000,00 ou 85000.00 —
+              o valor viaja como texto e o servidor o lê exato.
+            </span>
+            <input type="text" value="0,00" aria-invalid="true" />
+          </label>
+          <p class="campo-erro" role="alert">
+            O teto é a verba prevista para a demanda e precisa ser maior que zero. Para abrir a
+            rodada sem teto, deixe o campo vazio.
+          </p>
+          <div class="acoes-linha">
+            <button type="button" class="botao-primario" disabled>Abrir orçamento</button>
+          </div>
+        </div>
+        <p class="dica">
+          Mesma forma que o BDI já usa nesta jornada: a recusa aparece embaixo do campo, o
+          botão fica indisponível e nada é enviado. <strong>Zero não é “sem teto”</strong> —
+          “sem teto” é campo vazio, e o desenho recusa a ambiguidade em vez de escolher por
+          você.
+        </p>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 2 -->
+<section class="mock-tela" id="t2">
+  <div class="mock-tela-cabecalho"><h2>Tela 2 — Editar o teto na rodada aberta</h2></div>
+  <p class="mock-tela-nota">
+    O teto muda: verba é remanejada, a demanda é reavaliada, o número chegou errado da
+    Relação de Praças. Editar tem <strong>painel próprio na etapa “BDI e montagem”</strong>,
+    ao lado do BDI — os dois são o mesmo tipo de coisa (parâmetro da rodada sob o qual o
+    orçamento é montado) e ficam no mesmo lugar. A guarda é a de sempre:
+    <strong>versão base</strong> e chave de idempotência, como toda mutação desta jornada.
+    O painel <strong>diz o que a edição não faz</strong>, porque a pergunta aparece sozinha:
+    o orçamento já montado não é remontado, não é recalculado e não muda de valor — muda a
+    régua, não a peça. “Gravar teto” é botão <strong>secundário</strong>: o ato primário desta
+    etapa é montar o orçamento, e dois preenchimentos verdes na mesma coluna disputariam a
+    atenção que pertence a ele.
+  </p>
+
+  <span class="mock-estado">Estado: teto declarado, em repouso</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel" aria-label="Teto da verba">
+        <div class="painel-cabecalho"><h2>Teto da verba</h2></div>
+        <div class="formulario">
+          <label class="campo">
+            Teto da verba (opcional)
+            <span class="campo-dica">
+              Escreva 85.000,00 ou 85000.00 — o valor viaja como texto e o servidor o lê
+              exato.
+            </span>
+            <input type="text" value="85.000,00" />
+          </label>
+          <label class="campo">
+            Demanda de origem (opcional)
+            <input type="text" value="Relação de Praças 2026 · demanda 14" />
+          </label>
+          <p class="dica">
+            Alterar o teto <strong>não remonta o orçamento e não muda um centavo dele</strong>:
+            o consumo passa a ser lido contra o teto novo, e o orçamento montado continua o
+            mesmo documento, com os mesmos totais. O teto vive na rodada, não no orçamento —
+            quem abrir o arquivo montado não encontra teto nenhum lá dentro.
+          </p>
+          <div class="acoes-linha">
+            <button type="button" class="botao-secundario">Gravar teto</button>
+          </div>
+          <p class="digest">rodada versão 12 · gravado sobre esta versão</p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: gravando</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel" aria-label="Teto da verba">
+        <div class="painel-cabecalho"><h2>Teto da verba</h2></div>
+        <div class="formulario">
+          <label class="campo">
+            Teto da verba (opcional)
+            <input type="text" value="120.000,00" disabled />
+          </label>
+          <div class="acoes-linha">
+            <button type="button" class="botao-secundario" disabled>Gravando…</button>
+          </div>
+          <p class="dica">
+            Enquanto grava, o campo e o botão ficam indisponíveis: repetir o clique não grava
+            duas vezes (a mutação vai com chave de idempotência), mas a tela também não pode
+            sugerir que gravaria.
+          </p>
+        </div>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 3 -->
+<section class="mock-tela" id="t3">
+  <div class="mock-tela-cabecalho"><h2>Tela 3 — O consumo na etapa “BDI e montagem”</h2></div>
+  <p class="mock-tela-nota">
+    O coração do pacote. O bloco de consumo mora <strong>dentro da “Prévia do orçamento”,
+    colado ao Total geral</strong>, porque o consumo é uma leitura daquele número: separá-los
+    abriria espaço para os dois se contradizerem na mesma tela. O consumo é o total
+    <strong>com BDI</strong> — é ele que vai à licitação — e isso vai escrito, porque a
+    tela mostra os dois totais e a comparação precisa dizer qual deles ela usou. Três
+    estados; os dois primeiros são o mesmo estado de domínio. O painel de teto da Tela 2
+    aparece aqui no lugar em que vive: embaixo do BDI, na coluna esquerda desta etapa.
+  </p>
+
+  <div class="mock-quadro">
+    <nav class="etapas" aria-label="Etapas do orçamento">
+      <button type="button" class="etapa-tab">Resumo</button>
+      <button type="button" class="etapa-tab done">Cascata · concluída</button>
+      <button type="button" class="etapa-tab done">Prancha · concluída</button>
+      <button type="button" class="etapa-tab done">Revisão do takeoff · concluída</button>
+      <button type="button" class="etapa-tab done">Códigos · concluída</button>
+      <button type="button" class="etapa-tab ativa" aria-current="true">
+        BDI e montagem · em aberto
+      </button>
+      <button type="button" class="etapa-tab blocked" disabled>Planilha · bloqueada</button>
+      <button type="button" class="botao-secundario recarregar">Recarregar estado atual</button>
+    </nav>
+    <div class="conteudo">
+      <div class="workspace duas-colunas">
+        <div class="coluna-empilhada">
+          <section class="painel" aria-label="BDI do orçamento">
+            <div class="painel-cabecalho"><h2>BDI</h2></div>
+            <div class="formulario">
+              <label class="campo">
+                Percentual de BDI
+                <span class="campo-dica">
+                  Escreva 25,00 ou 25.00 — o percentual viaja como texto e o servidor o lê
+                  exato.
+                </span>
+                <input type="text" value="25,00" />
+              </label>
+              <p class="dica">
+                Percentual único deste orçamento, aplicado a todas as linhas. O preço unitário
+                com BDI é truncado no centavo, linha a linha, e o total sai da soma truncada —
+                o BDI impresso é a diferença entre os dois totais, não o percentual aplicado
+                ao total.
+              </p>
+              <div class="acoes-linha">
+                <button type="button" class="botao-primario">Montar orçamento</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="painel" aria-label="Teto da verba">
+            <div class="painel-cabecalho"><h2>Teto da verba</h2></div>
+            <div class="formulario">
+              <label class="campo">
+                Teto da verba (opcional)
+                <input type="text" value="95.000,00" />
+              </label>
+              <label class="campo">
+                Demanda de origem (opcional)
+                <input type="text" value="Relação de Praças 2026 · demanda 14" />
+              </label>
+              <div class="acoes-linha">
+                <button type="button" class="botao-secundario">Gravar teto</button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section class="painel" aria-label="Prévia do orçamento">
+          <div class="painel-cabecalho"><h2>Prévia do orçamento</h2></div>
+          <ul class="confirmados-lista">
+            <li>4 itens precificados · 1 sem preço</li>
+            <li>Total sem BDI · <span class="mono">R$ 73.598,74</span></li>
+            <li>BDI (25,00%) · <span class="mono">diferença entre os dois totais truncados</span></li>
+            <li>Total geral · <span class="mono">R$ 91.996,44</span></li>
+          </ul>
+
+          <div class="teto-consumo teto-dentro">
+            <span class="teto-etiqueta">Dentro do teto</span>
+            <ul class="teto-linhas">
+              <li>
+                <span class="teto-rotulo">
+                  Teto da verba
+                  <span class="teto-origem">Relação de Praças 2026 · demanda 14</span>
+                </span>
+                <span class="teto-valor">R$ 95.000,00</span>
+              </li>
+              <li>
+                <span class="teto-rotulo">
+                  Consumo — total com BDI
+                  <span class="teto-origem">96,84% do teto</span>
+                </span>
+                <span class="teto-valor">R$ 91.996,44</span>
+              </li>
+              <li class="teto-resultado">
+                <span class="teto-rotulo">Restante</span>
+                <span class="teto-valor">R$ 3.003,56</span>
+              </li>
+            </ul>
+            <p class="dica">
+              O consumo é o <strong>total com BDI</strong>, que é o valor submissível; o total
+              sem BDI não é comparado com o teto. Os dois lados são valores já truncados no
+              centavo pelo servidor — a tela não soma, não arredonda e não recalcula dinheiro.
+            </p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: consumo exatamente igual ao teto — não é estouro</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel" aria-label="Prévia do orçamento">
+        <div class="painel-cabecalho"><h2>Prévia do orçamento</h2></div>
+        <ul class="confirmados-lista">
+          <li>Total geral · <span class="mono">R$ 91.996,44</span></li>
+        </ul>
+        <div class="teto-consumo teto-limite">
+          <span class="teto-etiqueta">No limite exato — não é estouro</span>
+          <ul class="teto-linhas">
+            <li>
+              <span class="teto-rotulo">
+                Teto da verba
+                <span class="teto-origem">Relação de Praças 2026 · demanda 14</span>
+              </span>
+              <span class="teto-valor">R$ 91.996,44</span>
+            </li>
+            <li>
+              <span class="teto-rotulo">
+                Consumo — total com BDI
+                <span class="teto-origem">100,00% do teto</span>
+              </span>
+              <span class="teto-valor">R$ 91.996,44</span>
+            </li>
+            <li class="teto-resultado">
+              <span class="teto-rotulo">Restante</span>
+              <span class="teto-valor">R$ 0,00</span>
+            </li>
+          </ul>
+          <p class="dica">
+            <strong>Consumir o teto inteiro é estar dentro dele.</strong> O estouro começa no
+            primeiro centavo além do teto, e este orçamento não passou nenhum. Nenhum aviso de
+            estouro aparece nesta rodada.
+          </p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Estado: estourado — aviso permanente, nada recusado</span>
+  <div class="mock-quadro">
+    <nav class="etapas" aria-label="Etapas do orçamento">
+      <button type="button" class="etapa-tab">Resumo</button>
+      <button type="button" class="etapa-tab done">Cascata · concluída</button>
+      <button type="button" class="etapa-tab done">Prancha · concluída</button>
+      <button type="button" class="etapa-tab done">Revisão do takeoff · concluída</button>
+      <button type="button" class="etapa-tab done">Códigos · concluída</button>
+      <button type="button" class="etapa-tab ativa done" aria-current="true">
+        BDI e montagem · concluída
+      </button>
+      <button type="button" class="etapa-tab">Planilha · em aberto</button>
+      <button type="button" class="botao-secundario recarregar">Recarregar estado atual</button>
+    </nav>
+
+    <div class="teto-faixa" role="status">
+      <span class="teto-faixa-etiqueta">Teto estourado</span>
+      <div>
+        <p>
+          O orçamento montado passa a verba declarada em
+          <span class="teto-faixa-numero">R$ 6.996,44</span> — 8,23% acima do teto de
+          R$ 85.000,00 (Relação de Praças 2026 · demanda 14).
+        </p>
+        <p>
+          <strong>Nada foi recusado e nada foi cortado.</strong> O orçamento está montado, a
+          planilha continua disponível e nenhuma linha foi removida. Este aviso não fecha, não
+          recolhe e acompanha a rodada em todas as etapas enquanto o consumo passar o teto.
+        </p>
+      </div>
+    </div>
+
+    <div class="conteudo">
+      <div class="workspace duas-colunas">
+        <div class="coluna-empilhada">
+          <section class="painel" aria-label="BDI do orçamento">
+            <div class="painel-cabecalho"><h2>BDI</h2></div>
+            <div class="formulario">
+              <label class="campo">
+                Percentual de BDI
+                <input type="text" value="25,00" />
+              </label>
+              <div class="acoes-linha">
+                <button type="button" class="botao-primario">Montar de novo</button>
+              </div>
+              <p class="dica">
+                O botão continua o mesmo botão, habilitado, com o mesmo texto: estourar o teto
+                não muda o que a montagem faz.
+              </p>
+            </div>
+          </section>
+
+          <section class="painel" aria-label="Teto da verba">
+            <div class="painel-cabecalho"><h2>Teto da verba</h2></div>
+            <div class="formulario">
+              <label class="campo">
+                Teto da verba (opcional)
+                <input type="text" value="85.000,00" />
+              </label>
+              <label class="campo">
+                Demanda de origem (opcional)
+                <input type="text" value="Relação de Praças 2026 · demanda 14" />
+              </label>
+              <div class="acoes-linha">
+                <button type="button" class="botao-secundario">Gravar teto</button>
+              </div>
+              <p class="dica">
+                O painel do teto continua aqui, do mesmo tamanho de sempre, e o aviso de
+                estouro <strong>não aponta para ele</strong>. Subir o teto é um ato legítimo
+                quando a verba foi suplementada — nunca o remédio oferecido para o aviso
+                sumir.
+              </p>
+            </div>
+          </section>
+        </div>
+
+        <section class="painel" aria-label="Prévia do orçamento">
+          <div class="painel-cabecalho"><h2>Prévia do orçamento</h2></div>
+          <ul class="confirmados-lista">
+            <li>4 itens precificados · 1 sem preço</li>
+            <li>Total sem BDI · <span class="mono">R$ 73.598,74</span></li>
+            <li>BDI (25,00%) · <span class="mono">diferença entre os dois totais truncados</span></li>
+            <li>Total geral · <span class="mono">R$ 91.996,44</span></li>
+          </ul>
+
+          <div class="teto-consumo teto-estourado">
+            <span class="teto-etiqueta">Teto estourado</span>
+            <ul class="teto-linhas">
+              <li>
+                <span class="teto-rotulo">
+                  Teto da verba
+                  <span class="teto-origem">Relação de Praças 2026 · demanda 14</span>
+                </span>
+                <span class="teto-valor">R$ 85.000,00</span>
+              </li>
+              <li>
+                <span class="teto-rotulo">
+                  Consumo — total com BDI
+                  <span class="teto-origem">108,23% do teto</span>
+                </span>
+                <span class="teto-valor">R$ 91.996,44</span>
+              </li>
+              <li class="teto-resultado">
+                <span class="teto-rotulo">Acima do teto</span>
+                <span class="teto-valor">R$ 6.996,44</span>
+              </li>
+            </ul>
+            <ul class="teto-consequencia">
+              <li>
+                <strong>O orçamento não foi recusado.</strong> Ele está montado, com as mesmas
+                linhas, e a planilha continua disponível para exportação.
+              </li>
+              <li>
+                <strong>Nenhuma linha foi removida nem sugerida para remoção.</strong> Que item
+                sai para caber na verba é julgamento de engenharia, e o produto não escolhe
+                item.
+              </li>
+              <li>
+                <strong>Pedir verba adicional para a demanda é um caminho legítimo</strong>, e
+                é fora daqui que ele acontece. O número que você precisa levar para essa
+                conversa é o de cima.
+              </li>
+            </ul>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="mock-nota-caderno">
+    <h3>Por que o bloco do estouro não tem botão nenhum</h3>
+    <p>
+      É a decisão mais fácil de recusar deste caderno, e a que eu defendo com mais convicção.
+      Toda saída do estouro é decisão humana <em>fora</em> desta tela: cortar escopo, remanejar
+      quantitativo, pedir verba. Um botão “ajustar para caber” seria o corte automático que o
+      contrato proíbe. Um botão “rever o teto” colado no aviso ensinaria a saída errada — subir
+      o número até o aviso sumir —, e por isso editar o teto continua sendo ato do painel de
+      teto, na mesma etapa, a dois palmos de distância e sem estar oferecido como remédio.
+    </p>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 4 -->
+<section class="mock-tela" id="t4">
+  <div class="mock-tela-cabecalho"><h2>Tela 4 — Rodada sem teto: exatamente como hoje</h2></div>
+  <p class="mock-tela-nota">
+    A prova visual da <strong>decisão 6 do ADR-0040</strong>. É a mesma etapa da Tela 3, na
+    mesma rodada, sem teto declarado: <strong>nenhum bloco de consumo, nenhuma faixa de
+    aviso, nenhuma etiqueta “sem teto”, nenhum espaço reservado, nenhum número novo</strong>.
+    A prévia termina no Total geral, como termina hoje.
+  </p>
+  <p class="mock-tela-nota">
+    E aqui vai a <strong>ressalva honesta</strong>, porque ela é sua para aceitar ou recusar:
+    “exatamente como hoje” tem <strong>uma</strong> exceção, e é o painel “Teto da verba” com
+    os dois campos vazios. Ele precisa existir — sem ele, uma rodada aberta sem teto nunca
+    poderia ganhar um. Ele não avisa, não bloqueia, não marca nada e não muda o resto da
+    etapa; mas é um painel a mais na tela de quem nunca vai usar teto. A alternativa
+    considerada foi escondê-lo atrás de um link (“declarar um teto para esta rodada”), o que
+    devolveria a etapa ao estado idêntico ao de hoje — e é a recusa mais barata deste caderno.
+  </p>
+
+  <div class="mock-quadro">
+    <nav class="etapas" aria-label="Etapas do orçamento">
+      <button type="button" class="etapa-tab">Resumo</button>
+      <button type="button" class="etapa-tab done">Cascata · concluída</button>
+      <button type="button" class="etapa-tab done">Prancha · concluída</button>
+      <button type="button" class="etapa-tab done">Revisão do takeoff · concluída</button>
+      <button type="button" class="etapa-tab done">Códigos · concluída</button>
+      <button type="button" class="etapa-tab ativa" aria-current="true">
+        BDI e montagem · em aberto
+      </button>
+      <button type="button" class="etapa-tab blocked" disabled>Planilha · bloqueada</button>
+      <button type="button" class="botao-secundario recarregar">Recarregar estado atual</button>
+    </nav>
+    <div class="conteudo">
+      <div class="workspace duas-colunas">
+        <div class="coluna-empilhada">
+          <section class="painel" aria-label="BDI do orçamento">
+            <div class="painel-cabecalho"><h2>BDI</h2></div>
+            <div class="formulario">
+              <label class="campo">
+                Percentual de BDI
+                <span class="campo-dica">
+                  Escreva 25,00 ou 25.00 — o percentual viaja como texto e o servidor o lê
+                  exato.
+                </span>
+                <input type="text" value="25,00" />
+              </label>
+              <p class="dica">
+                Percentual único deste orçamento, aplicado a todas as linhas. O preço unitário
+                com BDI é truncado no centavo, linha a linha, e o total sai da soma truncada.
+              </p>
+              <div class="acoes-linha">
+                <button type="button" class="botao-primario">Montar orçamento</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="painel" aria-label="Teto da verba">
+            <div class="painel-cabecalho"><h2>Teto da verba</h2></div>
+            <div class="formulario">
+              <label class="campo">
+                Teto da verba (opcional)
+                <input type="text" value="" />
+              </label>
+              <label class="campo">
+                Demanda de origem (opcional)
+                <input type="text" value="" />
+              </label>
+              <div class="acoes-linha">
+                <button type="button" class="botao-secundario">Gravar teto</button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section class="painel" aria-label="Prévia do orçamento">
+          <div class="painel-cabecalho"><h2>Prévia do orçamento</h2></div>
+          <ul class="confirmados-lista">
+            <li>4 itens precificados · 1 sem preço</li>
+            <li>Total sem BDI · <span class="mono">R$ 73.598,74</span></li>
+            <li>BDI (25,00%) · <span class="mono">diferença entre os dois totais truncados</span></li>
+            <li>Total geral · <span class="mono">R$ 91.996,44</span></li>
+          </ul>
+          <p class="dica">
+            É aqui que o bloco de consumo entraria. Sem teto declarado não há o que comparar,
+            e a prévia termina no Total geral — como termina hoje.
+          </p>
+        </section>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 5 -->
+<section class="mock-tela" id="t5">
+  <div class="mock-tela-cabecalho">
+    <h2>Tela 5 — O estouro atravessa a rodada, e para na planilha</h2>
+  </div>
+  <p class="mock-tela-nota">
+    O aviso é <strong>de primeira ordem</strong>, e isso quer dizer que ele não é só da etapa
+    onde o número foi calculado: ele acompanha a rodada. A tela que prova a
+    <strong>decisão 4</strong> é esta — a faixa de estouro na etapa “Planilha”, do lado de um
+    botão de exportar que <strong>funciona</strong>. E é a mesma tela que prova a
+    <strong>decisão 5</strong>: o arquivo publicado <strong>não carrega o teto</strong>.
+  </p>
+
+  <span class="mock-estado">Estado: estourado, na etapa Planilha — exportação disponível</span>
+  <div class="mock-quadro">
+    <nav class="etapas" aria-label="Etapas do orçamento">
+      <button type="button" class="etapa-tab">Resumo</button>
+      <button type="button" class="etapa-tab done">Cascata · concluída</button>
+      <button type="button" class="etapa-tab done">Prancha · concluída</button>
+      <button type="button" class="etapa-tab done">Revisão do takeoff · concluída</button>
+      <button type="button" class="etapa-tab done">Códigos · concluída</button>
+      <button type="button" class="etapa-tab done">BDI e montagem · concluída</button>
+      <button type="button" class="etapa-tab ativa" aria-current="true">Planilha · em aberto</button>
+      <button type="button" class="botao-secundario recarregar">Recarregar estado atual</button>
+    </nav>
+
+    <div class="teto-faixa" role="status">
+      <span class="teto-faixa-etiqueta">Teto estourado</span>
+      <div>
+        <p>
+          O orçamento montado passa a verba declarada em
+          <span class="teto-faixa-numero">R$ 6.996,44</span> — 8,23% acima do teto de
+          R$ 85.000,00 (Relação de Praças 2026 · demanda 14).
+        </p>
+        <p>
+          <strong>Nada foi recusado e nada foi cortado.</strong> O orçamento está montado, a
+          planilha continua disponível e nenhuma linha foi removida. Este aviso não fecha, não
+          recolhe e acompanha a rodada em todas as etapas enquanto o consumo passar o teto.
+        </p>
+      </div>
+    </div>
+
+    <div class="conteudo">
+      <section class="painel" aria-label="Planilha do orçamento">
+        <div class="painel-cabecalho"><h2>Planilha</h2></div>
+        <p class="banner-sucesso" role="status">
+          Planilha publicada: a auditoria reabriu o arquivo e o reconferiu antes de qualquer
+          publicação.
+        </p>
+        <div class="acoes-linha">
+          <button type="button" class="botao-primario">Baixar planilha (.xlsx)</button>
+          <button type="button" class="botao-secundario">Gerar de novo</button>
+        </div>
+        <p class="digest">
+          orcamento-base-praca-do-exemplo.xlsx · sha256 7ad1…9b02 · 20/08/2026 15:12
+        </p>
+        <p class="dica">
+          <strong>O arquivo não traz o teto.</strong> A planilha é o documento que a prefeitura
+          valida; a verba prevista da demanda é meta interna de trabalho e não é linha do
+          orçamento. Quem abrir este <span class="mono">.xlsx</span> encontra o orçamento
+          montado, e só.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <div class="mock-nota-caderno">
+    <h3>A planilha não é redesenhada aqui — e é de propósito</h3>
+    <p>
+      O layout impresso do orçamento-base foi aprovado na F-020 e <strong>não muda nesta
+      feature</strong>: nenhuma coluna nova, nenhuma linha informativa de teto, nenhum
+      cabeçalho com a demanda de origem (ADR-0040, decisão 5). Desenhar a planilha neste
+      caderno convidaria a mexer nela; a única afirmação que este pacote faz sobre o
+      <span class="mono">.xlsx</span> é a de cima, e ela é uma <em>subtração</em>. Se um dia a
+      prefeitura pedir a verba impressa no documento, isso é decisão de design própria, com um
+      exemplar real na mesa.
+    </p>
+  </div>
+</section>
+
+<!-- ==================================================================== TELA 6 -->
+<section class="mock-tela" id="t6">
+  <div class="mock-tela-cabecalho"><h2>Tela 6 — Estados transversais novos</h2></div>
+  <p class="mock-tela-nota">
+    Só o que <strong>nasce com esta feature</strong>. O 403 da jornada, o banner de conflito
+    genérico e as recusas de domínio da montagem já foram aprovados no pacote da F-020 e
+    <strong>não são redesenhados</strong> — se este caderno os repetisse, criaria uma segunda
+    versão deles para divergir da primeira.
+  </p>
+
+  <span class="mock-estado">A rodada andou entre a leitura e o ato de gravar o teto (409)</span>
+  <div class="mock-quadro">
+    <div class="banner-conflito" role="alert">
+      <span>
+        O orçamento mudou depois desta leitura — outra sessão, ou o processamento da própria
+        rodada, avançou a versão. Nada foi gravado. Recarregue o estado atual e refaça o ato
+        sobre a versão nova; o que você escreveu no formulário continua aqui.
+      </span>
+      <button type="button" class="botao-secundario">Recarregar estado atual</button>
+    </div>
+    <div class="conteudo">
+      <section class="painel" aria-label="Teto da verba">
+        <div class="painel-cabecalho"><h2>Teto da verba</h2></div>
+        <div class="formulario">
+          <label class="campo">
+            Teto da verba (opcional)
+            <input type="text" value="120.000,00" />
+          </label>
+          <label class="campo">
+            Demanda de origem (opcional)
+            <input type="text" value="Relação de Praças 2026 · demanda 14 (suplementada)" />
+          </label>
+          <div class="acoes-linha">
+            <button type="button" class="botao-secundario">Gravar teto</button>
+          </div>
+        </div>
+        <p class="dica">
+          Frase existente da jornada, reusada <strong>sem uma palavra nova</strong>: gravar o
+          teto é mais uma mutação com versão base, e não precisa de dialeto próprio para dizer
+          a mesma coisa. O que a última linha dela promete está cumprido acima — o valor
+          digitado continua no campo.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <span class="mock-estado">Recusa do valor, antes de sair da tela</span>
+  <div class="mock-quadro">
+    <div class="conteudo">
+      <section class="painel" aria-label="Teto da verba">
+        <div class="formulario">
+          <label class="campo">
+            Teto da verba (opcional)
+            <input type="text" value="oitenta e cinco mil" aria-invalid="true" />
+          </label>
+          <p class="campo-erro" role="alert">
+            O teto precisa ser um valor em reais, maior que zero. Escreva 85.000,00 ou
+            85000.00; para abrir a rodada sem teto, deixe o campo vazio.
+          </p>
+          <div class="acoes-linha">
+            <button type="button" class="botao-secundario" disabled>Gravar teto</button>
+          </div>
+        </div>
+        <p class="dica">
+          Esta é a validação <strong>da tela</strong>, na mesma forma que o BDI já usa. A
+          recusa equivalente do servidor tem código estável, e
+          <strong>este pacote não inventa o nome dele</strong>: nomear invariante é ato do
+          domínio, no plano de execução, não de um caderno de desenho.
+        </p>
+      </section>
+    </div>
+  </div>
+
+  <div class="mock-nota-caderno">
+    <h3>O que este caderno cita em vez de redesenhar</h3>
+    <p>
+      Do pacote aprovado da F-020, e sem alteração: o <strong>403 sem nome de papel</strong>
+      (“Sua conta não tem o papel que autoriza a jornada de orçamento neste tenant”), o
+      <strong>409 genérico</strong> das demais mutações, as <strong>recusas de domínio da
+      montagem</strong> traduzidas por tabela, os estados <strong>vazio, carregando e erro de
+      leitura</strong> da abertura, e a <strong>tela de auditoria reprovada</strong> da
+      planilha. Nenhum deles muda por existir teto.
+    </p>
+  </div>
+</section>
+
+<!-- ==================================================================== FECHO -->
+<div class="mock-fecho" id="fecho">
+  <h2>O que este caderno não decide</h2>
+  <ul>
+    <li>
+      <strong>Copy final.</strong> Todo texto aqui é proposta — inclusive as três frases do
+      bloco de estouro, que são a parte mais escrita e a mais fácil de errar. Aprovar o visual
+      não aprova o texto: são atos separados, como foi na F-007, na F-020 e na F-025.
+    </li>
+    <li>
+      <strong>A forma exata do payload.</strong> O ADR-0040 fixa que a rodada deriva
+      <span class="mono">{target, consumed, remaining, over}</span> a cada leitura; se o rótulo
+      da demanda viaja junto, com que nome, e se a porcentagem é derivada no servidor ou lida
+      na tela a partir dos dois valores truncados, é decisão do plano. O que este pacote fixa é
+      que <strong>a tela nunca recomputa dinheiro</strong>.
+    </li>
+    <li>
+      <strong>O código estável da recusa de teto inválido.</strong> A validação desenhada aqui
+      é a da tela; nomear a invariante do domínio é do plano de execução.
+    </li>
+    <li>
+      <strong>Remover o teto de uma rodada que já o tem.</strong> Apagar o campo é
+      “voltar a ser rodada sem teto”, ou é ato que o servidor recusa? O ADR não decide, e este
+      caderno não inventa: não há botão de remover, e a pergunta fica aberta para o gate.
+    </li>
+    <li>
+      <strong>Teto por grupo ou por etapa, e mais de uma demanda por rodada.</strong> Fora de
+      escopo por contrato — e por isso <strong>nada é desenhado como reservado</strong> neste
+      pacote. Um segundo campo em cinza diria que a coisa existe e está desligada.
+    </li>
+    <li>
+      <strong>Onde a etapa do teto entra, se você preferir outra.</strong> Este caderno propõe
+      abertura + painel na etapa “BDI e montagem”. A alternativa que considerei e descartei foi
+      uma etapa própria “Teto”, que daria ao teto o peso de um passo da cadeia de precificação
+      — e ele não é um: é parâmetro da rodada.
+    </li>
+    <li>
+      <strong>O âmbar do estouro.</strong> É a decisão de cor deste pacote, e ela é uma
+      recusa: o vermelho desta jornada significa “o servidor recusou e nada foi gravado”, e o
+      estouro não recusa nada. Se você quiser o estouro em vermelho, é revisão nova — e ela
+      muda o significado que o vermelho tem no resto do produto.
+    </li>
+    <li>
+      <strong>Nada do que a F-020 já aprovou.</strong> Cascata, prancha, revisão, códigos,
+      layout da planilha, 403, 409 e recusas traduzidas continuam valendo como estão. Aprovar
+      este caderno não reabre aquele.
+    </li>
+  </ul>
+</div>
+
+</div>
+
+</body>
+</html>

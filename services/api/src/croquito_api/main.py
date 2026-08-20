@@ -922,12 +922,20 @@ class CreateEstimateRoundRequest(ApiModel):
     `worksite_key` repete `WORKSITE_KEY_PATTERN`, que o domínio exige do `Estimate`, pelo
     mesmo motivo da medição: a chave é imutável na rodada, e aceitá-la livre aqui faria uma
     rodada nascer válida e só quebrar na montagem, dezenas de decisões depois.
+
+    `target_amount`/`target_label` são o teto de verba (ADR-0040), OPCIONAIS: a tela de
+    abertura da rodada é onde ele nasce, mas uma rodada sem verba prevista continua se
+    abrindo exatamente como antes desta feature. `target_amount` viaja como TEXTO pelo
+    mesmo motivo do BDI — é `Decimal` exato, e um número de JSON já teria passado por
+    binário antes de chegar aqui.
     """
 
     worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
     worksite_name: str = Field(min_length=1, max_length=120)
     reference_label: str = Field(min_length=1, max_length=120)
     address: str | None = Field(default=None, min_length=1, max_length=200)
+    target_amount: str | None = Field(default=None, min_length=1, max_length=32)
+    target_label: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class EstimateRoundResponse(ApiModel):
@@ -938,7 +946,13 @@ class EstimateRoundResponse(ApiModel):
 
 
 class EstimateRoundSummary(ApiModel):
-    """Linha da listagem. `cascade_origins` sai na ORDEM da cascata, que é a precedência."""
+    """Linha da listagem. `cascade_origins` sai na ORDEM da cascata, que é a precedência.
+
+    `target_amount`/`target_label` são os dois textos CRUS da raiz da rodada (ADR-0040),
+    sem `consumed`/`remaining`/`over`: a listagem não busca a cabeça de cada rodada, e
+    aquele bloco só pode ser derivado contra o `total_amount` de um `estimate_json` que
+    vive na revisão, não na raiz. Rodada sem teto devolve os dois `None`.
+    """
 
     round_id: UUID
     worksite_key: str
@@ -949,6 +963,8 @@ class EstimateRoundSummary(ApiModel):
     stage: str
     extraction_status: str
     cascade_origins: list[str]
+    target_amount: str | None = None
+    target_label: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -1035,6 +1051,22 @@ class BuildEstimateRequest(ApiModel):
 
     base_version: int = Field(ge=1)
     bdi_percent: str = Field(min_length=1, max_length=12)
+
+
+class SetEstimateTargetRequest(ApiModel):
+    """Declara ou edita o teto de verba da rodada (ADR-0040): valor exato + rótulo opcional.
+
+    `target_amount` viaja como TEXTO pelo mesmo motivo do BDI — `Decimal` exato, e um
+    número de JSON já teria passado por binário. Zero e negativo recusam com
+    `422 ESTIMATE_TARGET_INVALID`; "sem teto" é ausência do campo na criação da rodada, e
+    esta rota não tem contraparte de remoção — o Design Approval Package não desenha
+    apagar um teto já declarado (questão em aberto do pacote), e por isso esta rota só
+    declara ou edita.
+    """
+
+    base_version: int = Field(ge=1)
+    target_amount: str = Field(min_length=1, max_length=32)
+    target_label: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class ValuationDocumentResponse(RootModel[dict[str, Any]]):
@@ -6955,6 +6987,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             "unpriced_item_ids": list(estimate.unpriced_item_ids),
             "workbook_present": estimate_rounds.estimate_workbook_ref(revision) is not None,
             "workbook_sha256": digests.get(estimate_rounds.ESTIMATE_WORKBOOK_DIGEST),
+            **estimate_rounds.target_state(record, revision),
         }
 
     def _revalidated_estimate(document: Mapping[str, Any]) -> Estimate:
@@ -7029,6 +7062,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         if existing is not None:
             return EstimateRoundResponse.model_validate(existing)
 
+        target_amount = (
+            None
+            if payload.target_amount is None
+            else str(estimate_rounds.parse_target_amount(payload.target_amount))
+        )
         now = datetime.now(UTC)
         round_id = new_uuid7()
         record = EstimateRoundRecord(
@@ -7038,6 +7076,8 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             worksite_name=payload.worksite_name,
             reference_label=payload.reference_label,
             address=payload.address,
+            target_amount=target_amount,
+            target_label=payload.target_label,
             status="OPEN",
             version=1,
             catalog_cascade_json=[],
@@ -7128,6 +7168,8 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     cascade_origins=[
                         entry.origin for entry in estimate_rounds.cascade_entries(record)
                     ],
+                    target_amount=record.target_amount,
+                    target_label=record.target_label,
                     created_at=record.created_at,
                     updated_at=record.updated_at,
                 )
@@ -7153,6 +7195,73 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             session, round_id=record.id, tenant_id=principal.tenant_id
         )
         return estimate_rounds.round_state_payload(record, revision)
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/target",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def set_estimate_target(
+        round_id: UUID,
+        payload: SetEstimateTargetRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Declara ou edita o teto de verba da rodada (ADR-0040); sem rota de remoção.
+
+        O teto é dado da RODADA, não do artefato (decisão 1): grava só as duas colunas
+        novas de `estimate_rounds` e avança a versão da rodada, como qualquer outro ato
+        humano. Nenhuma revisão append-only nasce daqui — o teto não é artefato da cadeia,
+        é parâmetro da rodada, como o BDI.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.target:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        amount = estimate_rounds.parse_target_amount(payload.target_amount)
+        record.target_amount = str(amount)
+        record.target_label = payload.target_label
+        record.version += 1
+        record.updated_at = datetime.now(UTC)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        response: dict[str, Any] = {
+            "round_id": record.id,
+            "version": record.version,
+            **estimate_rounds.target_state(record, revision),
+        }
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_TARGET_SET",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
 
     @application.post(
         "/v1/estimate-rounds/{round_id}/catalogs",

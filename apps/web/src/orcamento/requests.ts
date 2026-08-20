@@ -18,6 +18,7 @@
  */
 
 import { parseDecimalInput } from "./format";
+import { ehZeroDecimal } from "./teto";
 import type {
   CascadeOrderDraft,
   CodeDecisionDraft,
@@ -56,8 +57,44 @@ export function worksiteKeyError(value: string): string | null {
 }
 
 /**
+ * Motivo de o teto escrito não servir — ou `null` quando ele serve, **campo vazio
+ * incluído**: teto é opcional, e vazio é "sem teto" (ADR-0040, decisão 6).
+ *
+ * As duas recusas são separadas porque as causas são diferentes e o caminho de saída
+ * também: texto que não é valor em reais precisa da notação aceita, e zero precisa saber
+ * que **zero não é "sem teto"** — quem não tem verba prevista deixa o campo vazio, e a
+ * tela recusa a ambiguidade em vez de escolher por quem digitou. O servidor continua sendo
+ * a autoridade (`422 ESTIMATE_TARGET_INVALID`); esta é só a recusa que evita a viagem.
+ */
+export function tetoAmountError(value: string): string | null {
+  if (value.trim().length === 0) {
+    return null;
+  }
+  const amount = parseDecimalInput(value);
+  if (amount === null) {
+    return (
+      "O teto precisa ser um valor em reais, maior que zero. Escreva 85.000,00 ou " +
+      "85000.00; para abrir a rodada sem teto, deixe o campo vazio."
+    );
+  }
+  if (ehZeroDecimal(amount)) {
+    return (
+      "O teto é a verba prevista para a demanda e precisa ser maior que zero. Para " +
+      "abrir a rodada sem teto, deixe o campo vazio."
+    );
+  }
+  return null;
+}
+
+/**
  * Corpo do `POST /v1/estimate-rounds`. Sem catálogo e sem período: a cascata é a etapa
  * seguinte (e aceita mais de uma fonte), e período é conceito da obra já licitada.
+ *
+ * O teto entra pelas mesmas regras dos outros opcionais — campo vazio é OMITIDO, e a
+ * rodada nasce sem teto, que é o caminho normal. Valor que não serve também é omitido em
+ * vez de ir torto: a tela já o recusou (`tetoAmountError`) e o botão não estava
+ * disponível, então chegar aqui com ele significa que algo escapou, e mandar "0,00" numa
+ * rodada nova gravaria uma ambiguidade que o ADR-0040 recusa.
  */
 export function createEstimateBody(
   draft: CreateEstimateDraft,
@@ -71,7 +108,53 @@ export function createEstimateBody(
   if (address) {
     body.address = address;
   }
-  return body;
+  return { ...body, ...targetFields(draft.targetAmount, draft.targetLabel) };
+}
+
+/**
+ * As duas chaves do teto — ou `{}`, que é "não mande teto nenhum".
+ *
+ * Uma definição só para as duas rotas que aceitam teto (abrir a rodada e gravar o teto),
+ * porque a regra é a mesma nas duas: valor que a tela recusaria não vira corpo, e rótulo
+ * vazio é omitido em vez de virar rótulo em branco gravado na rodada.
+ */
+function targetFields(
+  targetAmount?: string,
+  targetLabel?: string,
+): Record<string, string> {
+  const escrito = targetAmount?.trim();
+  if (!escrito || tetoAmountError(escrito) !== null) {
+    return {};
+  }
+  const amount = parseDecimalInput(escrito);
+  if (amount === null) {
+    return {};
+  }
+  const fields: Record<string, string> = { target_amount: amount };
+  const label = targetLabel?.trim();
+  if (label) {
+    fields.target_label = label;
+  }
+  return fields;
+}
+
+/**
+ * Corpo do `POST .../target`: a guarda otimista de sempre mais o teto em texto decimal.
+ *
+ * Devolve `null` quando o teto não serve — inclusive quando ele é zero. É a mesma forma do
+ * `buildEstimateBody`: valor que a tela recusaria não vira viagem, e a recusa continua
+ * sendo do servidor por último.
+ */
+export function targetBody(
+  baseVersion: number,
+  targetAmount: string,
+  targetLabel?: string,
+): Record<string, string | number> | null {
+  const fields = targetFields(targetAmount, targetLabel);
+  if (fields.target_amount === undefined) {
+    return null;
+  }
+  return { ...versionBody(baseVersion), ...fields };
 }
 
 /** Corpo do `POST .../catalogs`: o JSON do catálogo já subiu pelo presign. */

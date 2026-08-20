@@ -2,16 +2,20 @@
 
 ## Status
 
-`READY_FOR_SPEC`
+`READY_FOR_HUMAN_REVIEW`
 
-> Selecionada por decisão humana de 2026-08-20, na rodada pós-F-020. Realiza o bullet
+> Implementação integrada em 2026-08-20 na branch `f-027-especificacao` (T1–T3,
+> [plan.md](plan.md)), revisada e com evidência em [evidence.md](evidence.md).
+> Pende o merge, represado por decisão humana da mesma data.
+
+> Selecionada por decisão humana de 2026-08-20, na rodada pós-F-020. Os DOIS gates
+> foram exercidos na mesma data: o [ADR-0040](../../adr/0040-teto-de-verba-do-orcamento-base.md)
+> foi aceito e a revisão 1 do [Design Approval Package](mock/README.md) foi aprovada
+> por Daniel Campos (estouro em âmbar sem botão no aviso, mantido). Realiza o bullet
 > reservado do roadmap ("modo teto / orçamento invertido — 'escopo dentro de R$ X' da
 > relação de demanda; porta: `EstimateTarget` reservado no glossário do contexto") e o
 > ponto de partida da cadeia na visão de produto: a Relação de Praças chega com escopo
-> itemizado E verba prevista por demanda. Este contrato **não** está
-> `READY_FOR_PLANNING`: faltam os DOIS gates — o ADR da semântica do teto e o Design
-> Approval Package. Por decisão do plano da rodada, esta feature é especificada em
-> detalhe por último, com o aprendizado de F-025/F-026.
+> itemizado E verba prevista por demanda.
 
 ## Classification
 
@@ -36,19 +40,19 @@ montagem mostra o consumo contra o teto (com BDI incluído, que é o total submi
 o comportamento no estouro é o que o ADR fixar — nunca corte automático de linha, que é
 decisão de escopo humana.
 
-## Scope (esboço — fecha no gate)
+## Scope (fixado pelo ADR-0040 e pelo design aprovado)
 
-1. **`EstimateTarget` como conceito de domínio**: teto declarado (`ExactDecimal`),
-   comparação sempre contra `total_amount` (com BDI), resultado da comparação como dado
-   do `Estimate` — semântica exata (aviso vs. recusa de montagem, teto ausente =
-   comportamento atual) é a matéria do ADR-0040.
-2. **Rota/persistência**: teto como dado da rodada (`estimate_rounds`), mutação com as
-   guardas de sempre.
-3. **Tela**: declaração do teto e leitura do consumo na etapa de BDI/montagem + na
-   planilha (se e como o teto é impresso é decisão do pacote de design — a planilha é
-   documento que a prefeitura valida, imprimir o teto pode não ser desejável).
-4. **Contrato gerado**: campos novos no `Estimate` ⇒ bump de `ESTIMATE_SCHEMA_VERSION`
-   antes de publicar (disciplina do ADR-0038, decisão 6).
+1. **Teto como dado da RODADA** (`estimate_rounds`: valor `ExactDecimal > 0` + rótulo
+   opcional da demanda), declarado na abertura ou editado depois, sempre com
+   `base_version` + `Idempotency-Key`; zero recusa (`sem teto` é ausência, não zero).
+2. **Comparação derivada na leitura** no payload da rodada: `{target, consumed,
+   remaining, over}` a partir do `total_amount` (com BDI) da cabeça; limite exato não
+   é estouro; nada persiste resultado de comparação.
+3. **Tela conforme o mock aprovado**: campos na abertura, painel "Teto da verba" na
+   etapa BDI/montagem, bloco de consumo com os três estados, aviso permanente de
+   estouro em âmbar SEM botão, rodada sem teto idêntica a hoje.
+4. **`Estimate` e planilha INALTERADOS** — sem campo novo, sem bump, teto nunca
+   impresso (ADR-0040, decisões 1 e 5).
 
 ## Out of Scope
 
@@ -59,8 +63,7 @@ decisão de escopo humana.
 
 ## Acceptance Criteria (esboço — fecha no gate)
 
-1. `make check`/`make test` verdes; schema com bump antes da publicação; goldens só
-   mudam onde o plano declarar.
+1. `make check`/`make test` verdes; NENHUM schema publicado muda; goldens intocados.
 2. Comportamento no estouro exatamente o do ADR-0040, coberto por teste nos dois lados
    do limite (inclusive o caso truncamento-no-centavo no limite exato).
 3. Rodada sem teto se comporta exatamente como hoje (retrocompatibilidade coberta).
@@ -74,18 +77,18 @@ decisão de escopo humana.
 
 ## Dependencies
 
-- **ADR-0040 (a escrever): semântica do teto** — aviso vs. recusa, teto editável depois
-  de montado ou não, impressão na planilha. Gate humano.
-- **Design Approval Package** (a produzir) — gate humano.
+- [ADR-0040](../../adr/0040-teto-de-verba-do-orcamento-base.md) — **Accepted em
+  2026-08-20**; decisões 1–6 são a especificação.
+- [Design Approval Package rev. 1](mock/README.md) — **aprovado em 2026-08-20**.
 - F-020 mergeada — satisfeita. F-025/F-026 não bloqueiam tecnicamente; a ordem é
   decisão da rodada.
 
 ## Unknowns
 
-1. Estouro recusa a montagem ou monta com aviso declarado? (ADR-0040.)
-2. O teto é imutável após a primeira montagem? (ADR-0040.)
-3. O teto aparece na planilha impressa? (Design + ADR.)
-4. `EstimateTarget` guarda só o valor ou também a origem da verba (rótulo da demanda)?
+1. RESOLVIDO (ADR-0040, decisão 4): monta com aviso permanente; nunca recusa.
+2. RESOLVIDO (ADR-0040, decisão 1): editável por ato humano com `base_version`.
+3. RESOLVIDO (ADR-0040, decisão 5): não aparece; o teto vive na jornada e na rodada.
+4. RESOLVIDO (ADR-0040, decisão 1): valor + rótulo opcional da demanda de origem.
 
 ## Risks
 
@@ -97,8 +100,10 @@ decisão de escopo humana.
 ## Human Gates
 
 1. Seleção (2026-08-20) — exercida.
-2. Aceite do ADR-0040 (a escrever quando esta feature entrar em especificação fina).
-3. Design Approval Package aprovado.
+2. Aceite do [ADR-0040](../../adr/0040-teto-de-verba-do-orcamento-base.md) —
+   exercido em 2026-08-20.
+3. Design Approval Package aprovado — revisão 1, exercido em 2026-08-20:
+   [mock/](mock/README.md).
 4. Merge e deploy.
 
 ## References

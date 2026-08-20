@@ -730,5 +730,182 @@ p {
   border: 1px solid var(--line);
 }
 
+/* Teto de verba: consumo e estouro (F-027) ---------------------------------- */
+/*
+ * Composição nova sobre a veste dos banners que a jornada já tem, e NENHUMA cor nova: o
+ * verde do "dentro do teto" é o mesmo `--accent-*` do `.banner-sucesso`, e o âmbar do
+ * estouro é o mesmo `#fbe6c2`/`#b47512`/`#3c2708`/`#6b3a06` que já veste `.banner-conflito`,
+ * `.aviso-fixo`, `.cartao.available` e `.campo-aviso`.
+ *
+ * O estouro é âmbar e nunca vermelho, e isso é decisão do pacote aprovado: nesta jornada o
+ * vermelho (`.banner-erro`) significa uma coisa só — "o servidor recusou e nada foi
+ * gravado". O estouro não recusa nada (ADR-0040, decisão 4), e vesti-lo de vermelho
+ * ensinaria a ler recusa onde não há. O peso de primeira ordem vem da forma e da
+ * repetição — borda fechada, etiqueta escrita, número em destaque, presença em toda etapa.
+ */
+
+/* Cola de layout: dois painéis empilhados numa coluna do `.workspace`, com o mesmo respiro
+   de 16px que a grade já usa entre colunas. */
+.coluna-empilhada {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.teto-consumo {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 6px;
+}
+
+/* Dentro do teto e no limite exato compartilham a MESMA veste: os dois são o mesmo estado
+   de domínio (ADR-0040, decisão 3). O que distingue é a palavra da etiqueta, e no limite
+   exato ela diz por extenso que aquilo não é estouro — uma terceira cor inventaria uma
+   terceira semântica que o ADR não tem. */
+.teto-dentro,
+.teto-limite {
+  color: var(--ink);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-left: 5px solid var(--accent-text);
+}
+
+.teto-estourado {
+  color: #3c2708;
+  background: #fbe6c2;
+  border: 1px solid #b47512;
+  border-left: 5px solid #b47512;
+}
+
+.teto-etiqueta {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.teto-dentro .teto-etiqueta,
+.teto-limite .teto-etiqueta {
+  color: var(--accent-text);
+  border: 1px solid var(--accent-text);
+}
+
+.teto-estourado .teto-etiqueta {
+  color: #6b3a06;
+  border: 1px solid #b47512;
+}
+
+/* Os três números em linhas de rótulo + valor, tabulares, para conferir a subtração de
+   cima para baixo sem a tela somar coisa nenhuma. */
+.teto-linhas {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.teto-linhas li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.teto-linhas li:last-child {
+  border-bottom: 0;
+}
+
+.teto-rotulo {
+  font-size: 0.86rem;
+}
+
+.teto-valor {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A linha do resultado — restante ou excedente — é a que a orçamentista procura. */
+.teto-linhas .teto-resultado {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 2px solid var(--muted);
+  border-bottom: 0;
+  font-weight: 700;
+}
+
+.teto-linhas .teto-resultado .teto-valor {
+  font-size: 1.15rem;
+}
+
+.teto-origem {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+}
+
+.teto-estourado .teto-origem {
+  color: #6b3a06;
+}
+
+.teto-consequencia {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.teto-consequencia li {
+  max-width: 84ch;
+  margin-bottom: 6px;
+  line-height: 1.45;
+}
+
+/*
+ * A faixa ocupa a mesma posição dos banners da jornada (entre a barra de etapas e o
+ * conteúdo) e a mesma margem, mas não é um deles: banner é episódio ("nada foi gravado",
+ * "publicado"), e este aviso é CONDIÇÃO da rodada. A diferença é dita de três formas ao
+ * mesmo tempo — a borda fecha em volta (banner só tem a barra à esquerda), a etiqueta
+ * escrita nomeia o estado, e o texto declara a própria permanência.
+ */
+.teto-faixa {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 12px 28px;
+  padding: 12px 16px;
+  color: #3c2708;
+  background: #fbe6c2;
+  border: 1px solid #b47512;
+  border-left: 5px solid #b47512;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.teto-faixa-etiqueta {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b3a06;
+  background: var(--surface);
+  border: 1px solid #b47512;
+  border-radius: 999px;
+}
+
+.teto-faixa p {
+  margin: 0 0 4px;
+  max-width: 88ch;
+}
+
+.teto-faixa .teto-faixa-numero {
+  font-weight: 700;
+}
+
 /* Fecha o `.jornada-orcamento` aberto no topo do arquivo. */
 }

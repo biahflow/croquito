@@ -15,6 +15,7 @@
 import type { TakeoffPacket } from "@croquito/contracts";
 
 import type { PriceOrigin } from "./api";
+import type { TetoEstado } from "./teto";
 
 /**
  * Aviso permanente da jornada — a linha fixa que declara o momento do orçamento
@@ -93,6 +94,108 @@ export const DESCRICAO_CALCULO_SHORTLIST =
 export const DESCRICAO_MONTAGEM =
   "Montar grava o orçamento na rodada e publica a planilha — depois de a auditoria " +
   "reabrir o arquivo e reconferi-lo. Auditoria reprovada não publica nada.";
+
+/* Teto de verba da rodada (ADR-0040) ---------------------------------------- */
+
+/** Como escrever o teto; o servidor recebe o número exato, sem arredondar. */
+export const DICA_TETO =
+  "a verba prevista para esta demanda, em reais. Escreva 85.000,00 ou 85000.00 — o valor " +
+  "viaja como texto e o servidor o lê exato.";
+
+/** O rótulo é de LEITURA: ele nomeia a verba para quem lê, e não identifica nada. */
+export const DICA_TETO_DEMANDA =
+  "de onde a verba veio, como você a chama (ex.: Relação de Praças 2026 · demanda 14). É " +
+  "rótulo de leitura, não identificador.";
+
+/** O que declarar um teto significa — e o que ele não faz — dito na abertura da rodada. */
+export const AVISO_TETO_ABERTURA =
+  "O teto é meta de trabalho desta rodada: ele não entra no orçamento montado, não é " +
+  "impresso na planilha e não impede nada. Sem ele, o orçamento se comporta exatamente " +
+  "como hoje.";
+
+/**
+ * A pergunta que aparece sozinha quando o teto muda: o orçamento já montado é refeito?
+ * Não — muda a régua, não a peça (ADR-0040, decisão 1: o teto é da rodada, não do
+ * artefato).
+ */
+export const AVISO_TETO_EDICAO =
+  "Alterar o teto não remonta o orçamento e não muda um centavo dele: o consumo passa a " +
+  "ser lido contra o teto novo, e o orçamento montado continua o mesmo documento, com os " +
+  "mesmos totais. O teto vive na rodada, não no orçamento — quem abrir o arquivo montado " +
+  "não encontra teto nenhum lá dentro.";
+
+/** Qual dos dois totais o consumo compara — a prévia mostra os dois, e ela precisa dizer. */
+export const AVISO_CONSUMO_COM_BDI =
+  "O consumo é o total com BDI, que é o valor submissível; o total sem BDI não é " +
+  "comparado com o teto. Os dois lados são valores já truncados no centavo pelo servidor " +
+  "— a tela não soma, não arredonda e não recalcula dinheiro.";
+
+/** Limite exato dito por extenso como NÃO estouro (ADR-0040, decisão 3). */
+export const AVISO_TETO_LIMITE =
+  "Consumir o teto inteiro é estar dentro dele. O estouro começa no primeiro centavo além " +
+  "do teto, e este orçamento não passou nenhum. Nenhum aviso de estouro aparece nesta " +
+  "rodada.";
+
+/**
+ * O segundo parágrafo da faixa de estouro: o aviso declara a própria permanência e diz o
+ * que ele NÃO é. Estouro não recusa nada (ADR-0040, decisão 4).
+ */
+export const AVISO_TETO_ESTOURADO = {
+  destaque: "Nada foi recusado e nada foi cortado.",
+  texto:
+    "O orçamento está montado, a planilha continua disponível e nenhuma linha foi " +
+    "removida. Este aviso não fecha, não recolhe e acompanha a rodada em todas as etapas " +
+    "enquanto o consumo passar o teto.",
+} as const;
+
+/**
+ * As três consequências do estouro, escritas. São a parte mais autoral do texto e a mais
+ * fácil de errar — o pacote de design aprovou a composição e registrou que a copy final
+ * continua sendo gate humano aberto.
+ */
+export const CONSEQUENCIAS_DO_ESTOURO: readonly {
+  destaque: string;
+  texto: string;
+}[] = [
+  {
+    destaque: "O orçamento não foi recusado.",
+    texto:
+      "Ele está montado, com as mesmas linhas, e a planilha continua disponível para " +
+      "exportação.",
+  },
+  {
+    destaque: "Nenhuma linha foi removida nem sugerida para remoção.",
+    texto:
+      "Que item sai para caber na verba é julgamento de engenharia, e o produto não " +
+      "escolhe item.",
+  },
+  {
+    destaque: "Pedir verba adicional para a demanda é um caminho legítimo,",
+    texto:
+      "e é fora daqui que ele acontece. O número que você precisa levar para essa " +
+      "conversa é o de cima.",
+  },
+];
+
+const TETO_ETIQUETAS: Record<TetoEstado, string> = {
+  dentro: "Dentro do teto",
+  limite: "No limite exato — não é estouro",
+  estourado: "Teto estourado",
+};
+
+/**
+ * O estado do consumo ESCRITO — a palavra vem antes de qualquer cor, e no limite exato ela
+ * diz por extenso que aquilo não é estouro, porque limite exato e "dentro do teto" são o
+ * mesmo estado de domínio e compartilham a veste.
+ */
+export function tetoEtiqueta(estado: TetoEstado): string {
+  return TETO_ETIQUETAS[estado];
+}
+
+/** Classe da veste do bloco de consumo; é redundância da etiqueta escrita, nunca o dado. */
+export function tetoClasse(estado: TetoEstado): string {
+  return `teto-${estado}`;
+}
 
 /** Tabela de rótulos por chave livre: a busca pode não achar, e o tipo diz isso. */
 type LookupTable = Record<string, string | undefined>;
@@ -278,6 +381,10 @@ const ERROR_MESSAGES: LookupTable = {
     "A quantidade informada não é um número decimal exato. Use ponto ou vírgula como separador decimal (ex.: 18.40).",
   ESTIMATE_BDI_INVALID:
     "O BDI informado não é um percentual decimal finito e não negativo. Escreva 25,00 ou 25.00.",
+  // Teto de verba: zero e negativo são recusados pelo servidor, e "sem teto" é a ausência
+  // do campo — nunca zero (ADR-0040, decisão 1).
+  ESTIMATE_TARGET_INVALID:
+    "O teto de verba não é um valor em reais maior que zero. Escreva 85.000,00 ou 85000.00; para a rodada não ter teto, o campo fica vazio.",
   // Revisão do takeoff.
   TAKEOFF_ITEM_ALREADY_REVIEWED:
     "Este item já foi decidido; decisão não se sobrescreve.",

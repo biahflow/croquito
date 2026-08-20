@@ -50,7 +50,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-023 | A DEFINIR | READY_FOR_SPEC | Survey Quality Score — nota do levantamento com recomendações de campo, agregando sinais existentes (blockers, leituras não aplicadas, corroboração, resíduos); calibrar com V14/V15/V16 (a definir em contrato) |
 | F-025 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-025-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
-| F-027 | HIGH | READY_FOR_SPEC | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
+| F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002

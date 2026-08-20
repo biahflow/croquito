@@ -16,6 +16,7 @@ import {
   postCodeDecision,
   postSuggestionsRecompute,
   postTakeoffDecision,
+  postTarget,
   reorderCascade,
   searchCascade,
 } from "./api";
@@ -285,6 +286,47 @@ describe("BDI da montagem", () => {
     await expect(postBuildEstimate(TOKEN, ROUND, "25%", 11)).rejects.toBeInstanceOf(
       ApiError,
     );
+
+    expect(chamadas).toHaveLength(0);
+  });
+});
+
+/**
+ * Teto de verba (ADR-0040): mutação como qualquer outra — versão base, chave de
+ * idempotência e o valor em TEXTO. Não existe rota de remoção, e a tela não inventa uma.
+ */
+describe("teto da rodada", () => {
+  it("grava na rota da rodada, com base_version e chave de idempotência", async () => {
+    await postTarget(TOKEN, ROUND, 12, "85.000,00", "Relação de Praças 2026 · demanda 14");
+
+    expect(chamadas[0].url).toBe(`${BASE}/v1/estimate-rounds/${ROUND}/target`);
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(headersDaChamada()).toHaveProperty("Idempotency-Key");
+    const corpo = corpoDaChamada();
+    expect(corpo).toEqual({
+      base_version: 12,
+      target_amount: "85000.00",
+      target_label: "Relação de Praças 2026 · demanda 14",
+    });
+    expect(typeof corpo.target_amount).toBe("string");
+  });
+
+  it("sem rótulo da demanda, o corpo não leva rótulo em branco", async () => {
+    await postTarget(TOKEN, ROUND, 12, "85000.00");
+
+    expect(corpoDaChamada()).toEqual({
+      base_version: 12,
+      target_amount: "85000.00",
+    });
+  });
+
+  /** Zero não é "sem teto": ele nem chega a virar chamada. */
+  it("valor recusado pela tela não chega a viajar", async () => {
+    for (const invalido of ["0,00", "oitenta e cinco mil", ""]) {
+      await expect(postTarget(TOKEN, ROUND, 12, invalido)).rejects.toBeInstanceOf(
+        ApiError,
+      );
+    }
 
     expect(chamadas).toHaveLength(0);
   });
