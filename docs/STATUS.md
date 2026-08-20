@@ -93,7 +93,12 @@ descritos em "Quinto marco: medição de obra (M1 a M5 em código)".
 - Adapters reais locais para OpenAI, Bedrock/Claude e Textract, com schemas
   estritos, retries transitórios, lineage, respostas brutas privadas e autorização
   contratual imutável por job. Permanecem desligados por padrão e não foram chamados neste
-  repositório; o piloto limita explicitamente a análise à primeira página.
+  repositório; o piloto limita explicitamente a análise à primeira página. O braço `ocr` da
+  suite hospedada ganhou depois um segundo adapter real, Document AI, montável no lugar do
+  Cloud Vision por `CROQUITO_DOCAI_PROCESSOR`
+  ([ADR-0037](adr/0037-document-ai-como-braco-de-ocr.md), que revisa D3 do
+  [ADR-0035](adr/0035-suite-hospedada-openai-anthropic-direto.md)); nenhum processador está
+  provisionado até esta revisão, e a suite segue montando Cloud Vision por padrão.
 - A tela autenticada lista projetos do tenant, abre revisões sem exigir UUID e não
   expõe aceite de IA por job. O entitlement contratual é administrado somente por
   `platform_operator`, registrado por tenant e revalidado pelo worker.
@@ -759,7 +764,10 @@ primeiro dossiê de aditivo real depende da rodada da Toca homologada.
 - AWS gerenciada em `sa-east-1`.
 - Processamento de IA global controlado.
 - OpenAI e Anthropic como provedores independentes.
-- Textract como OCR auxiliar.
+- OCR auxiliar: Cloud Vision por padrão; Document AI monta no lugar dele por
+  `CROQUITO_DOCAI_PROCESSOR`, escalada nomeada em
+  [ADR-0037](adr/0037-document-ai-como-braco-de-ocr.md), que revisa D3 do
+  [ADR-0035](adr/0035-suite-hospedada-openai-anthropic-direto.md) (ambos `Proposed`).
 - Step Functions e Fargate no lugar de Celery/Redis.
 - Scene graph canônico entre extração e DXF.
 - DXF R2018 em metros; DWG fora do MVP.

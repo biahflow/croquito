@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import time
 from base64 import b64encode
 from collections.abc import Callable, Sequence
@@ -38,6 +39,7 @@ class ProviderName(StrEnum):
     BEDROCK_ANTHROPIC = "bedrock_anthropic"
     TEXTRACT = "textract"
     GCP_VISION = "gcp_vision"
+    GCP_DOCUMENT_AI = "gcp_document_ai"
 
 
 class PromptTask(StrEnum):
@@ -939,6 +941,7 @@ def _ocr_failure(
     code: ProviderFailureCode,
     *,
     error: BaseException | None = None,
+    provider: ProviderName = ProviderName.GCP_VISION,
 ) -> ProviderFailureCode:
     """Registra uma falha do braço OCR que acontece ANTES (ou fora) do HTTP e devolve o código.
 
@@ -947,6 +950,12 @@ def _ocr_failure(
     muda, e a degradação para `OCR_UNAVAILABLE` apagava o último rastro: em produção o braço
     nunca apareceu, sem um único `provider_http_failure` de `gcp_vision` e sem raw no bucket,
     e não havia como saber em que ponto ele caía.
+
+    `provider` tem default porque o braço nasceu com um fornecedor só; desde que ele é
+    montável como Document AI ou Cloud Vision por configuração
+    ([ADR-0037](../../../../docs/adr/0037-document-ai-como-braco-de-ocr.md)), o log precisa
+    dizer QUAL dos dois caiu — dois fornecedores sob o mesmo rótulo tornariam o rastro
+    inútil justamente na comparação entre eles.
 
     Saem a classe da exceção e um recorte da mensagem do fornecedor. NUNCA token, credencial,
     imagem, payload ou URL assinada — o objeto de credencial não é tocado aqui, e só a
@@ -957,12 +966,12 @@ def _ocr_failure(
     logger.warning(
         "%s provider=%s failure_code=%s error_type=%s detail=%s",
         event,
-        ProviderName.GCP_VISION.value,
+        provider.value,
         code.value,
         error_type,
         detail,
         extra={
-            "provider": ProviderName.GCP_VISION.value,
+            "provider": provider.value,
             "task": PromptTask.OCR.value,
             "failure_code": code.value,
             "error_type": error_type,
@@ -2065,6 +2074,308 @@ class GcpVisionOcrAdapter:
         )
 
 
+DOCAI_PROCESSOR_ENV: Final = "CROQUITO_DOCAI_PROCESSOR"
+"""Nome completo do processador de Document AI. Definido, é ele quem monta o braço `ocr`.
+
+Ausente (ou vazio), a suite segue montando o Cloud Vision exatamente como antes: a troca é
+ato de deploy, não de merge
+([ADR-0037](../../../../docs/adr/0037-document-ai-como-braco-de-ocr.md)).
+"""
+
+DOCAI_PROCESSOR_PATTERN: Final = re.compile(
+    r"^projects/[A-Za-z0-9._\-]+/locations/(?P<location>[a-z0-9\-]+)/processors/[A-Za-z0-9]+$"
+)
+"""Formato do nome do processador, com a região capturada — é dela que sai o endpoint."""
+
+GCP_DOCUMENT_AI_MODEL_ID: Final = "document-ai/ocr-processor"
+
+DOCAI_RAW_DOCUMENT_MIME_TYPE: Final = "image/png"
+"""Constante, não parâmetro: a ingestão deste produto rasteriza tudo em PNG 200 DPI
+(`ingest.py`), e um `mimeType` configurável convidaria a declarar um tipo que os bytes
+enviados não têm."""
+
+OCR_LINE_TEXT_LIMIT: Final = 200
+"""Recorte do texto de uma linha de OCR, igual ao `max_length` de `OcrLineOutput`.
+
+Linha maior que isso não é cota: é bloco de texto que o layout juntou. Truncar mantém a
+evidência utilizável em vez de derrubar a resposta inteira por uma linha comprida.
+"""
+
+
+def _document_ai_endpoint(processor_name: str) -> str:
+    """Endpoint regional derivado do nome do processador — a região mora DENTRO do nome.
+
+    `projects/p/locations/us/processors/x` só é atendido por
+    `https://us-documentai.googleapis.com`; não existe host global para este produto, ao
+    contrário do `images:annotate` do Cloud Vision. Nome fora do formato é erro de
+    CONFIGURAÇÃO, não de chamada: recusar aqui faz a suite falhar na construção, antes de
+    qualquer byte sair, em vez de virar 404 por página no meio de uma rodada paga.
+    """
+    match = DOCAI_PROCESSOR_PATTERN.match(processor_name)
+    if match is None:
+        raise ValueError(
+            f"{DOCAI_PROCESSOR_ENV} deve nomear "
+            "projects/<projeto>/locations/<regiao>/processors/<id>"
+        )
+    location = match.group("location")
+    return f"https://{location}-documentai.googleapis.com/v1/{processor_name}:process"
+
+
+def _document_ai_index(value: object) -> int | None:
+    """Índice de `textSegments`, que o JSON do proto3 serializa como string.
+
+    `startIndex`/`endIndex` são `int64` e chegam como `"12"`; um `12` numérico também é
+    aceito porque o contrato REST não proíbe. `bool` é `int` em Python e não é índice.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _document_ai_segment_text(text: str, segments: object) -> str:
+    """Texto de uma linha: as fatias de `document.text` apontadas pelo `textAnchor`.
+
+    O Document AI não repete o texto dentro da linha — ele devolve índices sobre o texto do
+    documento, e uma linha pode ser descrita por mais de um segmento (concatenados NA ORDEM
+    declarada). Segmento fora do texto, invertido ou malformado devolve string vazia, e a
+    linha inteira é recusada adiante: metade de uma cota transcrita seria uma leitura nova,
+    inventada por nós, não o que o fornecedor leu. `startIndex` ausente é o zero que o
+    proto3 omite — aqui ele é o começo do documento, não um índice desconhecido.
+    """
+    if not isinstance(segments, list) or not segments:
+        return ""
+    parts: list[str] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            return ""
+        raw_start = segment.get("startIndex")
+        start = 0 if raw_start is None else _document_ai_index(raw_start)
+        end = _document_ai_index(segment.get("endIndex"))
+        if start is None or end is None or start < 0 or end <= start or end > len(text):
+            return ""
+        parts.append(text[start:end])
+    return "".join(parts)
+
+
+def _document_ai_bbox(layout: object) -> dict[str, float] | None:
+    """Bbox 0-1 do `boundingPoly.normalizedVertices` de uma linha do Document AI.
+
+    O polígono já chega normalizado, diferente do `fullTextAnnotation` do Cloud Vision (que
+    só dá pixel): nenhuma dimensão de imagem entra aqui, a caixa é o min/max dos vértices.
+
+    Coordenada AUSENTE não é lida como zero. O JSON do proto3 omite o valor default, então
+    `{"y": 0.4}` tanto pode ser um vértice legítimo em `x = 0` quanto um vértice truncado —
+    e assumir zero estica a caixa até a borda da folha. A corroboração de `provider_review`
+    confirma leitura por texto igual MAIS interseção de bbox, então caixa inflada intersecta
+    leituras que não são dela e vira falso-confirmado, a falha cara deste braço. Caixa
+    incompleta, degenerada ou de área não positiva recusa a linha; nunca a conserta.
+    """
+    if not isinstance(layout, dict):
+        return None
+    bounding_poly = layout.get("boundingPoly")
+    vertices = bounding_poly.get("normalizedVertices") if isinstance(bounding_poly, dict) else None
+    if not isinstance(vertices, list) or not vertices:
+        return None
+    xs: list[float] = []
+    ys: list[float] = []
+    for vertex in vertices:
+        if not isinstance(vertex, dict):
+            return None
+        x, y = vertex.get("x"), vertex.get("y")
+        if not isinstance(x, int | float) or isinstance(x, bool):
+            return None
+        if not isinstance(y, int | float) or isinstance(y, bool):
+            return None
+        xs.append(float(x))
+        ys.append(float(y))
+    left = max(0.0, min(xs))
+    top = max(0.0, min(ys))
+    right = min(1.0, max(xs))
+    bottom = min(1.0, max(ys))
+    if right <= left or bottom <= top:
+        return None
+    return {"left": left, "top": top, "right": right, "bottom": bottom}
+
+
+def _document_ai_lines(document: object) -> list[dict[str, object]]:
+    """Uma `OcrLineOutput` por `line` de `document.pages[]`.
+
+    Aqui "linha" É unidade de primeira classe da resposta, diferente do Cloud Vision, onde
+    o parágrafo teve de fazer as vezes de linha (ver `_cloud_vision_lines`). É essa a mudança
+    de granularidade que o
+    [ADR-0037](../../../../docs/adr/0037-document-ai-como-braco-de-ocr.md) manda o eval
+    comparativo confirmar antes de promover o braço.
+
+    `text_type` fica sempre `"unknown"`: o processador de OCR não declara impresso x
+    manuscrito por linha de forma estável na resposta, diferente do `TextType` por bloco do
+    Textract. Dizer `printed` por omissão afirmaria o que a resposta não diz.
+    """
+    if not isinstance(document, dict):
+        return []
+    text = document.get("text")
+    if not isinstance(text, str):
+        return []
+    pages = document.get("pages")
+    if not isinstance(pages, list):
+        return []
+    lines: list[dict[str, object]] = []
+    for page in pages:
+        page_lines = page.get("lines") if isinstance(page, dict) else None
+        if not isinstance(page_lines, list):
+            continue
+        for line in page_lines:
+            layout = line.get("layout") if isinstance(line, dict) else None
+            if not isinstance(layout, dict):
+                continue
+            anchor = layout.get("textAnchor")
+            segments = anchor.get("textSegments") if isinstance(anchor, dict) else None
+            raw_text = _document_ai_segment_text(text, segments).strip()
+            raw_text = raw_text[:OCR_LINE_TEXT_LIMIT].strip()
+            bbox = _document_ai_bbox(layout)
+            if not raw_text or bbox is None:
+                continue
+            lines.append({"raw_text": raw_text, "bbox": bbox, "text_type": "unknown"})
+    return lines
+
+
+@dataclass(frozen=True)
+class GcpDocumentAiOcrAdapter:
+    """Document AI (processador de OCR), autenticado por ADC — espelho do adapter do Vision.
+
+    Mesmas escolhas do irmão mais velho e pelas mesmas razões: REST puro com `urllib`, sem o
+    SDK do produto, só `google-auth` para o token; schema estrito na saída; raw-store e
+    lineage por documento. O que muda é o fornecedor e a forma da resposta — o contrato
+    `OcrOutput` é idêntico, e `provider_review.py` não sabe qual dos dois respondeu
+    ([ADR-0037](../../../../docs/adr/0037-document-ai-como-braco-de-ocr.md)).
+
+    `processor_name` é o nome completo do processador; o endpoint sai dele, e um nome fora
+    do formato recusa a CONSTRUÇÃO do adapter.
+    """
+
+    credentials: Any
+    processor_name: str
+    timeout_seconds: float = 30.0
+    raw_store: ProtectedRawResponseStore | None = None
+    http_post: HttpPost = _http_post
+    model_id: str = GCP_DOCUMENT_AI_MODEL_ID
+
+    def __post_init__(self) -> None:
+        _document_ai_endpoint(self.processor_name)
+
+    @property
+    def endpoint(self) -> str:
+        return _document_ai_endpoint(self.processor_name)
+
+    def _failure(
+        self, event: str, code: ProviderFailureCode, *, error: BaseException | None = None
+    ) -> ProviderFailureCode:
+        return _ocr_failure(event, code, error=error, provider=ProviderName.GCP_DOCUMENT_AI)
+
+    def _access_token(self) -> str:
+        try:
+            if not self.credentials.valid:
+                self.credentials.refresh(_UrllibAuthRequest(timeout_seconds=self.timeout_seconds))
+        except Exception as error:  # google-auth levanta tipos concretos próprios
+            raise ProviderExecutionError(
+                self._failure("ocr_token_failure", ProviderFailureCode.UNAVAILABLE, error=error)
+            ) from error
+        token = getattr(self.credentials, "token", None)
+        if not isinstance(token, str) or not token:
+            raise ProviderExecutionError(
+                self._failure("ocr_token_empty", ProviderFailureCode.REFUSED)
+            )
+        return token
+
+    def execute(self, request: ProviderRequest) -> ProviderExecution:
+        if request.task is not PromptTask.OCR:
+            raise ProviderExecutionError(
+                self._failure("ocr_task_mismatch", ProviderFailureCode.REFUSED)
+            )
+        try:
+            image_bytes = _require_image_bytes(request)
+        except ProviderExecutionError as error:
+            raise ProviderExecutionError(self._failure("ocr_missing_image", error.code)) from error
+        if request.image_width_px is None or request.image_height_px is None:
+            # As dimensões não entram no corpo (o Document AI devolve vértice já
+            # normalizado), mas uma requisição de visão sem elas está malformada na origem e
+            # o braço não inventa evidência para seguir.
+            raise ProviderExecutionError(
+                self._failure("ocr_missing_dimensions", ProviderFailureCode.INVALID_SCHEMA)
+            )
+        token = self._access_token()
+        body = {
+            "rawDocument": {
+                "content": b64encode(image_bytes).decode("ascii"),
+                "mimeType": DOCAI_RAW_DOCUMENT_MIME_TYPE,
+            }
+        }
+        started = time.monotonic()
+        try:
+            status, response = self.http_post(
+                self.endpoint,
+                {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                json.dumps(body, separators=(",", ":")).encode(),
+                self.timeout_seconds,
+            )
+        except ProviderExecutionError as error:
+            # Transporte que nem chega a ter status (DNS, egress fechado, timeout): sem esta
+            # linha a chamada some sem status E sem log, que é exatamente o buraco de HML.
+            raise ProviderExecutionError(
+                self._failure("ocr_transport_failure", error.code, error=error)
+            ) from error
+        if not 200 <= status < 300:
+            raise ProviderExecutionError(
+                _http_failure(
+                    provider=ProviderName.GCP_DOCUMENT_AI,
+                    task=request.task.value,
+                    status=status,
+                    started=started,
+                    detail=_http_error_detail(response),
+                )
+            )
+        if isinstance(response.get("error"), dict):
+            # Erro por documento (ex.: payload ilegível) dentro de um HTTP 200; sem código
+            # granular na resposta para distinguir permanente de transitório aqui, então
+            # segue o mesmo tratamento do Textract e do Vision: UNAVAILABLE.
+            raise ProviderExecutionError(
+                self._failure("ocr_image_error", ProviderFailureCode.UNAVAILABLE)
+            )
+        document = response.get("document")
+        if not isinstance(document, dict):
+            raise ProviderExecutionError(
+                self._failure("ocr_invalid_response", ProviderFailureCode.INVALID_SCHEMA)
+            )
+        try:
+            output = _parse_output(PromptTask.OCR, {"lines": _document_ai_lines(document)})
+        except ProviderExecutionError as error:
+            raise ProviderExecutionError(
+                self._failure("ocr_invalid_output", error.code, error=error)
+            ) from error
+        raw_ref = None
+        if self.raw_store is not None:
+            raw_ref = self.raw_store.persist(
+                provider=ProviderName.GCP_DOCUMENT_AI,
+                input_digest=request.image_sha256,
+                payload=json.dumps(response, separators=(",", ":")).encode(),
+            )
+        return ProviderExecution(
+            provider=ProviderName.GCP_DOCUMENT_AI,
+            model_id=self.model_id,
+            prompt=request.prompt,
+            input_digest=request.image_sha256,
+            latency_ms=round((time.monotonic() - started) * 1000),
+            raw_response_ref=raw_ref,
+            output=output,
+        )
+
+
 EMBEDDINGS_MODEL: Final = "text-embedding-3-small"
 """Modelo padrão do braço semântico (M7 Fase 2). Trocável por `CROQUITO_EMBEDDINGS_MODEL`.
 
@@ -2509,8 +2820,14 @@ def build_real_provider_suite(
     chave explícita. Nenhum cliente AWS é construído aqui: as credenciais de ambiente do
     ambiente hospedado pertencem ao object storage, e usá-las implicitamente para
     Bedrock/Textract chamaria um serviço que ninguém configurou. O braço `ocr` é sempre
-    montado (Cloud Vision via ADC, sem chave nova) e reserva no MESMO `CostBudget` da
-    rodada — não há uma allowlist separada para ele.
+    montado (via ADC, sem chave nova) e reserva no MESMO `CostBudget` da rodada — não há
+    uma allowlist separada para ele.
+
+    QUAL fornecedor de OCR é escolha de configuração: com `CROQUITO_DOCAI_PROCESSOR`
+    definido, o braço é o Document AI daquele processador; sem ele, é o Cloud Vision, com o
+    mesmo custo estimado e o mesmo teto
+    ([ADR-0037](../../../../docs/adr/0037-document-ai-como-braco-de-ocr.md)). Nome de
+    processador malformado recusa a construção da suite, em vez de virar 404 por página.
 
     O braço `openai` é o único opcional por configuração: com
     `CROQUITO_OPENAI_ARM_ENABLED=false` ele sai da suite (`openai=None`) e a chave deixa
@@ -2539,7 +2856,25 @@ def build_real_provider_suite(
     # Mesma variável nos braços de extração; os defaults diferem porque cada adapter tem
     # o seu, exatamente como em `build_extraction_arm`.
     timeout_env = os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS")
+    # Um escopo só para os dois fornecedores: `cloud-platform` cobre Cloud Vision e
+    # Document AI, e pedir escopo diferente por braço só criaria uma segunda credencial
+    # para autorizar exatamente a mesma coisa.
     ocr_credentials, _ = google.auth.default(scopes=GCP_VISION_SCOPES)
+    docai_processor = os.getenv(DOCAI_PROCESSOR_ENV, "").strip()
+    ocr_adapter: ProviderAdapter
+    if docai_processor:
+        ocr_adapter = GcpDocumentAiOcrAdapter(
+            credentials=ocr_credentials,
+            processor_name=docai_processor,
+            timeout_seconds=float(timeout_env or "30"),
+            raw_store=raw_store,
+        )
+    else:
+        ocr_adapter = GcpVisionOcrAdapter(
+            credentials=ocr_credentials,
+            timeout_seconds=float(timeout_env or "30"),
+            raw_store=raw_store,
+        )
     openai_arm: ProviderAdapter | None = None
     if openai_enabled:
         openai_arm = RetryingProviderAdapter(
@@ -2569,15 +2904,7 @@ def build_real_provider_suite(
             )
         ),
         ocr=RetryingProviderAdapter(
-            BudgetedProviderAdapter(
-                GcpVisionOcrAdapter(
-                    credentials=ocr_credentials,
-                    timeout_seconds=float(timeout_env or "30"),
-                    raw_store=raw_store,
-                ),
-                budget=budget,
-                estimated_cost_usd=ocr_cost,
-            )
+            BudgetedProviderAdapter(ocr_adapter, budget=budget, estimated_cost_usd=ocr_cost)
         ),
     )
 

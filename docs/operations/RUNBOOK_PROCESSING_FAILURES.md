@@ -2,7 +2,8 @@
 
 Status: Accepted baseline  
 Responsável: Platform / AI / CAD Engineering  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-20 (seção "Textract failure" substituída pela falha real do braço
+`ocr`, Cloud Vision/Document AI por configuração — ADR-0037)
 
 ## Antes de agir
 
@@ -25,11 +26,24 @@ Responsável: Platform / AI / CAD Engineering
 3. Reexecutar uma vez se infraestrutura.
 4. Se determinístico, abrir defect com input digest, sem anexar documento.
 
-## Textract failure
+## Falha do braço OCR
 
-1. Conferir status/quota/permission.
-2. Após retries, permitir continuação com `OCR_EVIDENCE_MISSING`.
-3. Não promover leitura de um LLM por ausência do Textract.
+O braço `ocr` da suite hospedada é Cloud Vision hoje; Document AI monta no lugar dele quando
+`CROQUITO_DOCAI_PROCESSOR` está definido — escalada nomeada em
+[ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md). Ambos os fornecedores caem no mesmo
+tratamento de falha; o log identifica qual dos dois falhou (`provider=gcp_vision` ou
+`provider=gcp_document_ai`).
+
+1. Conferir status/quota/permission do fornecedor ativo na rodada (ver
+   [Model Routing](../ai/MODEL_ROUTING.md) para qual está montado).
+2. Braço ausente da suite ou falha permanente após retries: o pacote segue com uma nota única
+   `OCR_UNAVAILABLE`, sem bloquear a revisão.
+3. Braço presente mas sem confirmar uma leitura específica: nota por leitura
+   `READING_{n}_OCR_EVIDENCE_MISSING`; nenhuma das duas notas rebaixa o `status` já calculado
+   da leitura.
+4. `BUDGET_EXCEEDED` no braço OCR propaga como em qualquer outro braço — nunca é absorvido em
+   modo degradado.
+5. Não promover leitura de um LLM por ausência de confirmação OCR.
 
 ## Um LLM falha
 

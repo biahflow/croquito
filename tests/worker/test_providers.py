@@ -27,11 +27,14 @@ from croquito_worker.provider_review import (
     pair_readings_by_evidence,
 )
 from croquito_worker.providers import (
+    DOCAI_PROCESSOR_ENV,
     EMBEDDINGS_MAX_BATCH,
     EMBEDDINGS_MODEL,
+    GCP_DOCUMENT_AI_MODEL_ID,
     HTTP_ERROR_DETAIL_LIMIT,
     IMAGE_TEXT_TASKS,
     OCR_FAILURE_DETAIL_LIMIT,
+    OCR_LINE_TEXT_LIMIT,
     OPENAI_ARM_ENABLED_ENV,
     OPENAI_STRICT_PATTERN_REWRITES,
     PROMPT_SPECS,
@@ -48,6 +51,7 @@ from croquito_worker.providers import (
     CostBudget,
     EmbeddingsExecution,
     FixtureProviderAdapter,
+    GcpDocumentAiOcrAdapter,
     GcpVisionOcrAdapter,
     GeometryElementOutput,
     GeometryExtractionOutput,
@@ -1316,6 +1320,350 @@ def test_gcp_vision_adapter_maps_http_status_like_the_other_rest_adapters() -> N
         adapter.execute(_request(PromptTask.OCR))
 
     assert error.value.code is ProviderFailureCode.RATE_LIMITED
+
+
+DOCAI_PROCESSOR = "projects/croquito-hml/locations/us/processors/9f2c1a"
+"""Processador sintético: nome no formato real, projeto e id sem existir em lugar nenhum."""
+
+
+def _docai_vertices(left: float, top: float, right: float, bottom: float) -> list[dict[str, float]]:
+    """Polígono retangular como o Document AI o devolve: quatro vértices normalizados."""
+    return [
+        {"x": left, "y": top},
+        {"x": right, "y": top},
+        {"x": right, "y": bottom},
+        {"x": left, "y": bottom},
+    ]
+
+
+def _docai_line(
+    *, segments: list[dict[str, str]], vertices: list[dict[str, float]] | None
+) -> dict[str, object]:
+    layout: dict[str, object] = {"textAnchor": {"textSegments": segments}}
+    if vertices is not None:
+        layout["boundingPoly"] = {"normalizedVertices": vertices}
+    return {"layout": layout}
+
+
+def _docai_response(text: str, lines: list[dict[str, object]]) -> dict[str, object]:
+    return {"document": {"text": text, "pages": [{"lines": lines}]}}
+
+
+def _docai_post(response: dict[str, object], status: int = 200) -> HttpPost:
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        return status, response
+
+    return post
+
+
+def _docai_adapter(
+    post: HttpPost, *, raw_store: ProtectedRawResponseStore | None = None
+) -> GcpDocumentAiOcrAdapter:
+    return GcpDocumentAiOcrAdapter(
+        credentials=_FakeGcpCredentials(),
+        processor_name=DOCAI_PROCESSOR,
+        http_post=post,
+        raw_store=raw_store,
+    )
+
+
+def _docai_lines_of(response: dict[str, object]) -> list[OcrLineOutput]:
+    execution = _docai_adapter(_docai_post(response)).execute(_request(PromptTask.OCR))
+    assert isinstance(execution.output, OcrOutput)
+    return execution.output.lines
+
+
+def test_document_ai_adapter_parses_the_text_anchor_into_normalized_lines() -> None:
+    """O texto não vem dentro da linha: vem por índices sobre `document.text`.
+
+    A fixture repete a forma real — `startIndex` omitido quando é zero, índices como string
+    (int64 do proto3 em JSON), uma linha descrita por DOIS segmentos e a quebra de linha no
+    fim da fatia.
+    """
+    text = "9,55\n3,86 m\n"
+    response = _docai_response(
+        text,
+        [
+            _docai_line(
+                segments=[{"endIndex": "5"}],
+                vertices=_docai_vertices(0.10, 0.20, 0.90, 0.40),
+            ),
+            _docai_line(
+                segments=[
+                    {"startIndex": "5", "endIndex": "9"},
+                    {"startIndex": "9", "endIndex": "12"},
+                ],
+                vertices=_docai_vertices(0.10, 0.50, 0.60, 0.70),
+            ),
+            # Linha sem polígono: recusada, nunca posicionada por conta própria.
+            _docai_line(segments=[{"startIndex": "0", "endIndex": "5"}], vertices=None),
+        ],
+    )
+    seen: dict[str, object] = {}
+
+    def post(
+        url: str, headers: dict[str, str], body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        seen["url"] = url
+        seen["authorization"] = headers["Authorization"]
+        seen["body"] = json.loads(body)
+        return 200, response
+
+    execution = _docai_adapter(post).execute(_request(PromptTask.OCR))
+
+    assert seen["url"] == f"https://us-documentai.googleapis.com/v1/{DOCAI_PROCESSOR}:process"
+    assert seen["authorization"] == "Bearer fake-access-token"
+    assert seen["body"] == {
+        "rawDocument": {
+            "content": b64encode(b"synthetic-provider-input").decode("ascii"),
+            "mimeType": "image/png",
+        }
+    }
+    assert execution.provider is ProviderName.GCP_DOCUMENT_AI
+    assert execution.model_id == GCP_DOCUMENT_AI_MODEL_ID
+    assert isinstance(execution.output, OcrOutput)
+    assert [line.raw_text for line in execution.output.lines] == ["9,55", "3,86 m"]
+    assert [line.text_type for line in execution.output.lines] == ["unknown", "unknown"]
+    first = execution.output.lines[0]
+    assert first.bbox.left == pytest.approx(0.10)
+    assert first.bbox.top == pytest.approx(0.20)
+    assert first.bbox.right == pytest.approx(0.90)
+    assert first.bbox.bottom == pytest.approx(0.40)
+    assert execution.raw_response_ref is None
+
+
+def test_document_ai_adapter_persists_the_raw_response_under_its_own_provider() -> None:
+    """O raw vai ao bucket protegido nomeando QUEM respondeu — Vision e DocAI não se misturam."""
+    store = _RecordingRawStore()
+    response = _docai_response(
+        "9,55\n",
+        [_docai_line(segments=[{"endIndex": "5"}], vertices=_docai_vertices(0.1, 0.2, 0.9, 0.4))],
+    )
+
+    execution = _docai_adapter(_docai_post(response), raw_store=store).execute(
+        _request(PromptTask.OCR)
+    )
+
+    assert execution.raw_response_ref == store.calls[0].reference
+    assert store.calls[0].provider is ProviderName.GCP_DOCUMENT_AI
+    assert store.calls[0].input_digest == _request(PromptTask.OCR).image_sha256
+
+
+@pytest.mark.parametrize(
+    "vertices",
+    [
+        pytest.param(_docai_vertices(0.4, 0.4, 0.4, 0.6), id="largura-zero"),
+        pytest.param(_docai_vertices(0.4, 0.5, 0.6, 0.5), id="altura-zero"),
+        pytest.param([], id="poligono-vazio"),
+        pytest.param([{"y": 0.2}, {"x": 0.9, "y": 0.4}], id="coordenada-omitida"),
+    ],
+)
+def test_document_ai_adapter_refuses_a_line_it_cannot_place(
+    vertices: list[dict[str, float]],
+) -> None:
+    """Caixa degenerada ou incompleta pula a linha; nenhuma coordenada é preenchida por nós.
+
+    `coordenada-omitida` é o caso sutil: o JSON do proto3 omite o valor default, então um
+    `x` ausente PODE ser um zero legítimo. Assumir isso estica a caixa até a borda da folha,
+    e a corroboração de `provider_review` confirma por texto igual MAIS interseção de bbox —
+    caixa inflada intersecta leitura que não é dela e vira falso-confirmado. Perder a linha
+    é a falha barata; confirmar a cota errada é a cara.
+    """
+    response = _docai_response(
+        "9,55\n", [_docai_line(segments=[{"endIndex": "5"}], vertices=vertices)]
+    )
+
+    assert _docai_lines_of(response) == []
+
+
+@pytest.mark.parametrize(
+    "segments",
+    [
+        pytest.param([{"startIndex": "0", "endIndex": "99"}], id="fim-fora-do-texto"),
+        pytest.param([{"startIndex": "4", "endIndex": "2"}], id="segmento-invertido"),
+        pytest.param([{"startIndex": "0"}], id="sem-fim"),
+        pytest.param([{"startIndex": "x", "endIndex": "4"}], id="indice-nao-numerico"),
+        pytest.param([], id="sem-segmento"),
+        pytest.param(
+            [{"startIndex": "0", "endIndex": "4"}, {"startIndex": "4", "endIndex": "99"}],
+            id="segundo-segmento-fora",
+        ),
+    ],
+)
+def test_document_ai_adapter_refuses_a_line_whose_anchor_is_unusable(
+    segments: list[dict[str, str]],
+) -> None:
+    """Âncora quebrada recusa a linha INTEIRA: meia cota transcrita seria leitura inventada."""
+    response = _docai_response(
+        "9,55\n", [_docai_line(segments=segments, vertices=_docai_vertices(0.1, 0.2, 0.9, 0.4))]
+    )
+
+    assert _docai_lines_of(response) == []
+
+
+def test_document_ai_adapter_truncates_a_line_at_the_contract_limit() -> None:
+    """Bloco de texto que o layout juntou entra recortado, sem derrubar a resposta inteira."""
+    text = "9" * 400
+    response = _docai_response(
+        text,
+        [
+            _docai_line(
+                segments=[{"startIndex": "0", "endIndex": str(len(text))}],
+                vertices=_docai_vertices(0.1, 0.2, 0.9, 0.4),
+            )
+        ],
+    )
+
+    lines = _docai_lines_of(response)
+
+    assert len(lines[0].raw_text) == OCR_LINE_TEXT_LIMIT
+
+
+def test_ocr_line_text_limit_matches_the_output_contract() -> None:
+    """O recorte do adapter e o `max_length` do contrato não podem divergir em silêncio."""
+    schema = OcrLineOutput.model_json_schema()
+    assert schema["properties"]["raw_text"]["maxLength"] == OCR_LINE_TEXT_LIMIT
+
+
+def test_document_ai_adapter_refuses_a_response_without_a_document() -> None:
+    response: dict[str, object] = {"unexpected": {}}
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _docai_adapter(_docai_post(response)).execute(_request(PromptTask.OCR))
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+
+
+def test_document_ai_error_inside_a_200_is_unavailable(caplog: pytest.LogCaptureFixture) -> None:
+    """Erro por documento embrulhado em HTTP 200: mesmo tratamento do Vision e do Textract."""
+    response: dict[str, object] = {"error": {"code": 3, "message": "unsupported document"}}
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        _docai_adapter(_docai_post(response)).execute(_request(PromptTask.OCR))
+
+    assert error.value.code is ProviderFailureCode.UNAVAILABLE
+    assert "ocr_image_error" in caplog.text
+    assert "provider=gcp_document_ai" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (429, ProviderFailureCode.RATE_LIMITED),
+        (403, ProviderFailureCode.REFUSED),
+        (404, ProviderFailureCode.REFUSED),
+        (503, ProviderFailureCode.UNAVAILABLE),
+    ],
+)
+def test_document_ai_adapter_maps_http_status_like_the_other_rest_adapters(
+    status: int, expected: ProviderFailureCode
+) -> None:
+    """Processador inexistente (404) é defeito de configuração: permanente, sem retentativa."""
+    with pytest.raises(ProviderExecutionError) as error:
+        _docai_adapter(_docai_post({}, status=status)).execute(_request(PromptTask.OCR))
+
+    assert error.value.code is expected
+
+
+def test_document_ai_transport_failure_names_its_own_provider(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        raise ProviderExecutionError(ProviderFailureCode.TIMEOUT)
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        _docai_adapter(post).execute(_request(PromptTask.OCR))
+
+    assert error.value.code is ProviderFailureCode.TIMEOUT
+    assert "ocr_transport_failure" in caplog.text
+    assert "provider=gcp_document_ai" in caplog.text
+
+
+def test_document_ai_token_failure_is_logged_without_the_credential(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Mesmo rastro do Vision, sob o nome do fornecedor certo — e sem token no log."""
+    adapter = GcpDocumentAiOcrAdapter(
+        credentials=_BrokenGcpCredentials(RuntimeError("could not refresh ADC: reauth required")),
+        processor_name=DOCAI_PROCESSOR,
+    )
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError) as error,
+    ):
+        adapter.execute(_request(PromptTask.OCR))
+
+    assert error.value.code is ProviderFailureCode.UNAVAILABLE
+    record = next(entry for entry in caplog.records if entry.name == "croquito_worker.providers")
+    message = record.getMessage()
+    assert "ocr_token_failure" in message
+    assert "provider=gcp_document_ai" in message
+    assert record.provider == "gcp_document_ai"  # type: ignore[attr-defined]
+    assert "detail=could not refresh ADC: reauth required" in message
+    # Nunca credencial, token ou evidência.
+    assert "ya29." not in message
+    assert "synthetic-provider-input" not in message
+
+
+def test_cloud_vision_keeps_logging_under_its_own_name(caplog: pytest.LogCaptureFixture) -> None:
+    """O parâmetro novo de `_ocr_failure` tem default: o braço antigo loga como sempre logou."""
+    adapter = GcpVisionOcrAdapter(credentials=_BrokenGcpCredentials(RuntimeError("boom")))
+
+    with (
+        caplog.at_level("WARNING", logger="croquito_worker.providers"),
+        pytest.raises(ProviderExecutionError),
+    ):
+        adapter.execute(_request(PromptTask.OCR))
+
+    assert "provider=gcp_vision" in caplog.text
+    assert "gcp_document_ai" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "processor_name",
+    [
+        "",
+        "9f2c1a",
+        "projects/croquito-hml/processors/9f2c1a",
+        "projects/croquito-hml/locations/us/processors/",
+        "projects/croquito-hml/locations/US/processors/9f2c1a",
+        "projects//locations/us/processors/9f2c1a",
+        "https://us-documentai.googleapis.com/v1/projects/p/locations/us/processors/9f2c1a",
+        "projects/croquito-hml/locations/us/processors/9f2c1a:process",
+    ],
+)
+def test_document_ai_refuses_a_malformed_processor_name_at_construction(
+    processor_name: str,
+) -> None:
+    """Nome errado é defeito de CONFIGURAÇÃO: morre na construção, antes de qualquer byte sair."""
+    with pytest.raises(ValueError, match=DOCAI_PROCESSOR_ENV):
+        GcpDocumentAiOcrAdapter(credentials=_FakeGcpCredentials(), processor_name=processor_name)
+
+
+@pytest.mark.parametrize("location", ["us", "eu", "southamerica-east1"])
+def test_document_ai_endpoint_takes_the_region_from_inside_the_processor_name(
+    location: str,
+) -> None:
+    """Não existe host global neste produto: a região do endpoint mora dentro do nome."""
+    processor_name = f"projects/croquito-hml/locations/{location}/processors/9f2c1a"
+    adapter = GcpDocumentAiOcrAdapter(
+        credentials=_FakeGcpCredentials(), processor_name=processor_name
+    )
+
+    assert adapter.endpoint == (
+        f"https://{location}-documentai.googleapis.com/v1/{processor_name}:process"
+    )
 
 
 def _openai_response(output_text: str, **overrides: object) -> dict[str, object]:
@@ -2698,6 +3046,10 @@ def _hosted_suite_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # declara na própria função, e nenhum teste do caminho padrão depende do que estiver
     # exportado no shell de quem roda a suíte.
     monkeypatch.delenv(OPENAI_ARM_ENABLED_ENV, raising=False)
+    # Mesma razão para o processador de Document AI: quem exercita a escolha do fornecedor
+    # de OCR declara na própria função. Sem isso, um `CROQUITO_DOCAI_PROCESSOR` exportado no
+    # shell trocaria o braço `ocr` de toda a suíte sem ninguém pedir.
+    monkeypatch.delenv(DOCAI_PROCESSOR_ENV, raising=False)
     # `build_real_provider_suite` também monta o braço `ocr` sempre, via ADC
     # (`google.auth.default`) — sem rede/credencial real em teste, mocka a única chamada
     # de autenticação envolvida na construção da suite.
@@ -2754,6 +3106,62 @@ def test_real_provider_suite_builds_two_direct_arms_without_aws(
     assert isinstance(ocr_adapter.credentials, _FakeGcpCredentials)
     assert _budgeted(openai_arm).budget is _budgeted(suite.anthropic).budget
     assert _budgeted(ocr_arm).budget is _budgeted(openai_arm).budget
+
+
+def test_real_provider_suite_keeps_cloud_vision_without_the_processor_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sem a variável nova, a suite é a de antes: o braço `ocr` continua Cloud Vision."""
+    _hosted_suite_env(monkeypatch)
+
+    suite = build_real_provider_suite()
+
+    assert suite.ocr is not None
+    assert isinstance(_budgeted(suite.ocr).adapter, GcpVisionOcrAdapter)
+
+
+@pytest.mark.parametrize("configured", ["projects/p/locations/us/processors/9f2c1a", "  {name}  "])
+def test_real_provider_suite_builds_document_ai_when_the_processor_is_configured(
+    configured: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A troca de fornecedor de OCR é ato de deploy: a variável define, o merge não."""
+    processor_name = "projects/p/locations/us/processors/9f2c1a"
+    _hosted_suite_env(monkeypatch)
+    monkeypatch.setenv(DOCAI_PROCESSOR_ENV, configured.replace("{name}", processor_name))
+
+    suite = build_real_provider_suite()
+
+    assert suite.ocr is not None
+    ocr_adapter = cast(GcpDocumentAiOcrAdapter, _budgeted(suite.ocr).adapter)
+    assert ocr_adapter.processor_name == processor_name
+    assert isinstance(ocr_adapter.credentials, _FakeGcpCredentials)
+    # Mesmo teto e mesmo custo estimado do braço que ele substitui: o budget é da rodada.
+    assert _budgeted(suite.ocr).budget is _budgeted(suite.anthropic).budget
+    assert _budgeted(suite.ocr).estimated_cost_usd == Decimal("0.0015")
+
+
+def test_an_empty_processor_env_does_not_switch_the_ocr_arm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Variável exportada vazia é ausência, não escolha de fornecedor."""
+    _hosted_suite_env(monkeypatch)
+    monkeypatch.setenv(DOCAI_PROCESSOR_ENV, "   ")
+
+    suite = build_real_provider_suite()
+
+    assert suite.ocr is not None
+    assert isinstance(_budgeted(suite.ocr).adapter, GcpVisionOcrAdapter)
+
+
+def test_a_malformed_processor_env_refuses_the_whole_suite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Config errada derruba a construção, em vez de virar 404 por página numa rodada paga."""
+    _hosted_suite_env(monkeypatch)
+    monkeypatch.setenv(DOCAI_PROCESSOR_ENV, "projects/p/processors/9f2c1a")
+
+    with pytest.raises(ValueError, match=DOCAI_PROCESSOR_ENV):
+        build_real_provider_suite()
 
 
 def test_real_provider_suite_without_the_openai_arm_needs_no_openai_key(

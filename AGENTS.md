@@ -2,7 +2,8 @@
 
 Status: Accepted  
 Responsável: Engineering  
-Última revisão: 2026-08-18
+Última revisão: 2026-08-20 (OCR auxiliar deixa de nomear Textract; braço real é
+Cloud Vision/Document AI por configuração — ADR-0037)
 
 ## Escopo
 
@@ -87,7 +88,7 @@ delegação ou paralelismo.
 - Use somente schemas estruturados e rejeite saídas fora do contrato.
 - Uma divergência entre provedores deve virar `Issue`; nenhum modelo vence em
   silêncio.
-- Textract ajuda a localizar e transcrever, mas não determina geometria.
+- O OCR auxiliar corrobora leitura e transcrição, mas não determina geometria.
 - Confiança do modelo não libera exportação nem substitui regra determinística.
 - Mudança de prompt, modelo, roteamento ou normalização exige eval comparativa e
   plano de rollback.

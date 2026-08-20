@@ -2,8 +2,8 @@
 
 Status: Accepted for MVP  
 Responsável: AI Engineering / Platform  
-Última revisão: 2026-08-20 (braço OpenAI opcional por configuração,
-`CROQUITO_OPENAI_ARM_ENABLED`)
+Última revisão: 2026-08-20 (braço `ocr` montável como Document AI por configuração,
+`CROQUITO_DOCAI_PROCESSOR`, [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md))
 
 ## Rotas padrão
 
@@ -16,7 +16,7 @@ Bedrock nem Textract — o caminho AWS nunca rodou no ambiente publicado (GCP,
 |---|---|---|
 | Extração — braço primário | Anthropic API direta `claude-opus-5` (`CROQUITO_ANTHROPIC_MODEL`) | page survey, extração de geometria, e um dos dois lados da extração de medida |
 | Extração — braço reserva/contraparte (opcional) | OpenAI `gpt-5.6-terra` (`CROQUITO_OPENAI_MODEL`), ligado/desligado por `CROQUITO_OPENAI_ARM_ENABLED` | contraparte da comparação dupla de medida; assume por fallback quando o braço primário falha de forma permanente em survey/geometria |
-| OCR auxiliar | Google Cloud Vision, `document text detection` (`GcpVisionOcrAdapter`, `ProviderName.GCP_VISION`) | corrobora cada leitura de medida extraída; uma chamada por documento, não por leitura |
+| OCR auxiliar | Google Cloud Vision, `document text detection` (`GcpVisionOcrAdapter`, `ProviderName.GCP_VISION`) por padrão; Google Document AI (`GcpDocumentAiOcrAdapter`, `ProviderName.GCP_DOCUMENT_AI`) quando `CROQUITO_DOCAI_PROCESSOR` está definido — escalada nomeada em [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md) | corrobora cada leitura de medida extraída; uma chamada por documento, não por leitura |
 
 Model IDs efetivos são resolvidos por configuração validada no startup
 (`CROQUITO_ANTHROPIC_MODEL`, `CROQUITO_OPENAI_MODEL`) e gravados em cada `ProviderReading`/nota
@@ -75,24 +75,32 @@ entrega, mantém o default histórico do eixo `bedrock:...` — ajustar esse def
 
 A autorização de providers por job na API (`providers_json`) passa a listar `["openai",
 "anthropic"]` — a lacuna registrada nesta seção antes desta revisão ("ainda não inclui
-`anthropic`") está fechada. O braço `ocr` (Cloud Vision) **não** entra nessa lista: é suporte
-determinístico sempre ligado quando a suite real é construída, não um provider de LLM que o
-tenant consente por si — decisão registrada em
-[ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md).
+`anthropic`") está fechada. O braço `ocr` (Cloud Vision ou Document AI, conforme
+`CROQUITO_DOCAI_PROCESSOR`) **não** entra nessa lista: é suporte determinístico sempre
+ligado quando a suite real é construída, não um provider de LLM que o tenant consente por
+si — decisão registrada em
+[ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md) e revisada, na escolha
+de fornecedor do braço, pelo [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md).
 
 ## Estado de implementação local
 
 O worker possui portas tipadas e mocks determinísticos para os três braços da suite hospedada
-(OpenAI, Anthropic e Cloud Vision) e, à parte, para Bedrock/Claude e Textract, usados só pela
-eval de linha de comando. Eles são ativados somente por injeção em teste ou pelo demo sintético;
-o worker normal não lê flag de ambiente para fabricar observações e não chama serviços externos
-por conta própria. Adapters reais são configuráveis por `CROQUITO_REAL_PROVIDERS_ENABLED=true`;
-exigem entitlement contratual ativo por tenant e snapshot imutável por job, credenciais fora do
-Git, budget, eval comparativa e plano de rollback. O piloto processa a primeira página e sinaliza
-as demais como não analisadas. `build_real_provider_suite` não importa `boto3`: os dois braços de
-extração falam a API direta do respectivo fornecedor com a própria chave
-(`CROQUITO_OPENAI_API_KEY`, `CROQUITO_ANTHROPIC_API_KEY`), e o braço `ocr` autentica por
-Application Default Credentials da service account de runtime do worker — nenhuma chave nova.
+(OpenAI, Anthropic e o braço `ocr`, montável como Cloud Vision ou Document AI) e, à parte, para
+Bedrock/Claude e Textract, usados só pela eval de linha de comando. Eles são ativados somente
+por injeção em teste ou pelo demo sintético; o worker normal não lê flag de ambiente para
+fabricar observações e não chama serviços externos por conta própria. Adapters reais são
+configuráveis por `CROQUITO_REAL_PROVIDERS_ENABLED=true`; exigem entitlement contratual ativo
+por tenant e snapshot imutável por job, credenciais fora do Git, budget, eval comparativa e
+plano de rollback. O piloto processa a primeira página e sinaliza as demais como não
+analisadas. `build_real_provider_suite` não importa `boto3`: os dois braços de extração falam a
+API direta do respectivo fornecedor com a própria chave (`CROQUITO_OPENAI_API_KEY`,
+`CROQUITO_ANTHROPIC_API_KEY`), e o braço `ocr` autentica por Application Default Credentials da
+service account de runtime do worker — nenhuma chave nova, para qualquer um dos dois
+fornecedores. Qual dos dois monta é decisão de `CROQUITO_DOCAI_PROCESSOR`: definido (nome
+completo do processador), o braço é o Document AI daquele processador; ausente ou vazio, é o
+Cloud Vision, exatamente como antes — troca reversível por configuração, sem redeploy de
+código ([ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md)). Nenhum processador está
+provisionado em HML até esta revisão; a suite hospedada segue montando Cloud Vision.
 Antes de cada chamada (inclusive OCR), o worker reserva o custo estimado configurado
 (`CROQUITO_AI_ESTIMATED_COST_PER_LLM_CALL_USD`, `CROQUITO_AI_ESTIMATED_COST_PER_OCR_CALL_USD`,
 default `0.0015`) no mesmo `CostBudget` da rodada; ultrapassar
@@ -135,8 +143,10 @@ desambiguação. Não recebe a preferência do sistema.
 - Braço OpenAI desligado por configuração (`CROQUITO_OPENAI_ARM_ENABLED=false`): mesmo pacote
   do caso acima, sem chamada nenhuma à contraparte; o primário falhando propaga direto, porque
   não há reserva para assumir.
-- OCR (Cloud Vision) indisponível, ausente da suite, ou falha permanente: uma nota única
-  `OCR_UNAVAILABLE`, sem nota por leitura; pacote segue normal.
+- OCR (Cloud Vision ou Document AI, conforme `CROQUITO_DOCAI_PROCESSOR`) indisponível, ausente
+  da suite, ou falha permanente: uma nota única `OCR_UNAVAILABLE`, sem nota por leitura; pacote
+  segue normal. O log de falha do braço nomeia qual dos dois fornecedores caiu
+  (`provider=gcp_vision` ou `provider=gcp_document_ai`).
   `OCR_EVIDENCE_MISSING`, documentado numa revisão anterior deste documento, nunca chegou a
   existir como fallback de fato — a chamada de OCR do Textract no snapshot era código morto
   (schema validado e resultado descartado) até a F-009. O comportamento real, implementado por

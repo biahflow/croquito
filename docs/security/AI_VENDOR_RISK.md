@@ -2,15 +2,25 @@
 
 Status: Accepted baseline  
 Responsável: Security / AI / Procurement  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-20 (suite hospedada real — ADR-0035/ADR-0037; AWS Bedrock/Textract
+saem da tabela ativa)
 
 ## Fornecedores
 
+Suite hospedada real ([ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md)):
+
 | Fornecedor | Uso | Dependência crítica |
 |---|---|---|
-| OpenAI | extração multimodal e escalonamento | qualidade/latência externa |
-| AWS Bedrock/Anthropic | leitura independente e escalonamento | modelo e perfil global |
-| Amazon Textract | OCR e boxes auxiliares | não bloqueante |
+| Anthropic (API direta) | extração de geometria e medida — braço primário | qualidade/latência externa |
+| OpenAI (API direta, opcional por `CROQUITO_OPENAI_ARM_ENABLED`) | contraparte da comparação dupla de medida e reserva de fallback | qualidade/latência externa |
+| Google Cloud Vision / Document AI | OCR auxiliar (braço `ocr`; Document AI monta por `CROQUITO_DOCAI_PROCESSOR` — [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md)) | não bloqueante |
+
+> Histórico: AWS Bedrock (Anthropic) e Amazon Textract foram o desenho original do
+> [ADR-0002](../adr/0002-aws-managed-architecture.md), nunca exercido pela suite hospedada —
+> nenhuma chamada real saiu deste repositório por esse caminho. O
+> [ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md) descontinuou os dois
+> fornecedores para a suite real; as classes de adapter permanecem no código só para a via de
+> eval por linha de comando.
 
 ## Riscos
 

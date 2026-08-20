@@ -3,7 +3,8 @@
 Status: Accepted  
 Responsável: Platform / Engineering  
 Última revisão: 2026-08-20 (braço OpenAI desligado por configuração na rodada atual,
-`CROQUITO_OPENAI_ARM_ENABLED=false`)
+`CROQUITO_OPENAI_ARM_ENABLED=false`; escalada do braço `ocr` para Document AI registrada como
+pendente, ADR-0037)
 
 Fonte única do ambiente hospedado. A decisão e as alternativas estão no
 [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md); o desenho AWS de
@@ -260,9 +261,11 @@ autenticada do Pub/Sub, e a prova de vida dele é o job andar.
 
 Status real: descrito em [ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md)
 (`Proposed`) e implementado pela [F-009](../features/F-009-suite-hospedada-sem-aws/feature.md).
-A suite hospedada é Anthropic (braço primário) + OpenAI (reserva/contraparte) + Cloud Vision
-(braço `ocr`, sempre ligado quando a suite real é construída) — sem Bedrock nem Textract; o
-caminho AWS nunca rodou neste ambiente. Roteamento, fallback e semântica de falha em
+A suite hospedada é Anthropic (braço primário) + OpenAI (reserva/contraparte) + o braço `ocr`
+(sempre ligado quando a suite real é construída, hoje Cloud Vision; Document AI monta no lugar
+dele quando `CROQUITO_DOCAI_PROCESSOR` está definido —
+[ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md)) — sem Bedrock nem Textract; o caminho
+AWS nunca rodou neste ambiente. Roteamento, fallback e semântica de falha em
 [Model Routing](../ai/MODEL_ROUTING.md). O gate de autorização por documento (D6 do ADR-0035)
 foi revisto pela [F-012](../features/F-012-operacao-saas-autorizacao-ia/feature.md)
 ([ADR-0036](../adr/0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md), `Proposed`):
@@ -289,9 +292,22 @@ e toda leitura ambígua ([Model Routing](../ai/MODEL_ROUTING.md)). Religar é tr
 `true` no `deploy-hml.yml`: `CROQUITO_OPENAI_API_KEY` continua montada no serviço de propósito,
 para que religar não passe por secret.
 
-O braço `ocr` (Cloud Vision) não usa chave própria: autentica pela conta de serviço de runtime
-do worker, que precisa da API `vision.googleapis.com` habilitada no projeto — é o que o PR de
+O braço `ocr` não usa chave própria: autentica pela conta de serviço de runtime do worker. Hoje,
+com Cloud Vision, precisa da API `vision.googleapis.com` habilitada no projeto — é o que o PR de
 infra descrito no runbook de ativação, abaixo, faz.
+
+**Escalada para Document AI ([ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md)) —
+PENDENTE, dois atos de infra ainda não executados:**
+
+- Habilitar a API `documentai.googleapis.com` e provisionar o processador de OCR no
+  repositório `biahflow/infra` (fora deste repositório, ato humano de Terraform).
+- Definir `CROQUITO_DOCAI_PROCESSOR` (nome completo do processador) no serviço do worker em
+  `deploy-hml.yml`, junto da revisão de
+  `CROQUITO_AI_ESTIMATED_COST_PER_OCR_CALL_USD` (o preço por página do Document AI é maior que
+  o do Cloud Vision — consequência já registrada no ADR-0037).
+
+Até esses dois atos, o env não existe no serviço e a suite hospedada continua montando Cloud
+Vision, como hoje.
 
 ### Runbook de ativação
 

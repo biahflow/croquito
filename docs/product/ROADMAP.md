@@ -2,11 +2,10 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-19 (F-012 documentada — operação SaaS da autorização de IA,
-ADR-0036 `Proposed`, implementação completa; inventário F-013..F-017 aberto; F-018 e F-019
-abertas — edição de forma da proposta e preview visual da revisão, nascidas da primeira
-revisão real em nuvem; F-020 aberta com contrato — jornada web do orçamento-base, destravada
-pelo exemplar real de planilha)
+Última revisão: 2026-08-20 (F-021 e F-022 abertas com contrato — nota pré-classificada na
+decisão e Document AI no braço de OCR, nascidas da segunda revisão real do Guaxindiba,
+ADR-0037 `Proposed`; antes: F-012 documentada com ADR-0036 `Proposed`; inventário
+F-013..F-017 aberto; F-018/F-019 abertas; F-020 aberta com contrato)
 
 ## Uso no ciclo de engenharia
 
@@ -44,6 +43,8 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-018 | A DEFINIR | READY_FOR_SPEC | Edição de forma da proposta na UI da revisão — corrigir vértice/recuo manualmente (a definir em contrato) |
 | F-019 | A DEFINIR | READY_FOR_SPEC | Preview visual da cena resolvida na revisão (a definir em contrato) |
 | F-020 | HIGH | READY_FOR_SPEC | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
+| F-021 | HIGH | READY_FOR_HUMAN_REVIEW | [Nota pré-classificada na decisão da leitura](../features/F-021-nota-pre-classificada/feature.md) |
+| F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -219,6 +220,21 @@ orçamento-base de pré-licitação sem BDI não é submissível. A feature é `
 exigirá Design Approval Package antes do planejamento; o contrato está em
 [F-020](../features/F-020-orcamento-base-web/feature.md), com prioridade `HIGH` por decisão
 humana. Segue como dependência externa o arquivo `.DBF` real do catálogo EMOP.
+
+F-021 — nota pré-classificada na decisão da leitura — e F-022 — Document AI como braço de
+OCR — nascem em 2026-08-20, por seleção humana, durante a segunda revisão real do
+Guaxindiba. A revisão expôs os dois custos: oito das dez leituras eram grandezas de
+elevação que o revisor reclassificou uma a uma como "Anotação da folha", descartando um
+sinal (`kind="note"`) que o contrato de extração já emite; e a folha escreve ~16 números
+dos quais só 10 viraram leitura — o braço Cloud Vision não alcança a letra manuscrita, e
+o `make ocr-eval` sintético não enxerga isso. F-021 transforma o sinal do modelo e o
+padrão `h=` em sugestão pré-preenchida mantendo o portão humano; F-022 exerce a escalada
+que o [ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md) registrava
+nominalmente, agora como [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md)
+(Proposed). Contratos em [F-021](../features/F-021-nota-pre-classificada/feature.md) e
+[F-022](../features/F-022-document-ai-braco-ocr/feature.md), ambas `HIGH` por decisão
+humana. F-018/F-019 permanecem na fila de propósito: o inventário de formas erradas da
+próxima rodada real, já com F-021+F-022 no ar, é o insumo dos seus specs.
 
 ## Agora — MVP privado
 

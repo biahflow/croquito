@@ -2,7 +2,7 @@
 
 Status: Accepted product policy; requer revisão jurídica antes de venda  
 Responsável: Product / Security / Legal  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-20 (suboperadores da suite hospedada real — ADR-0035/ADR-0037)
 
 Este documento descreve controles de produto e não substitui aconselhamento
 jurídico.
@@ -51,9 +51,17 @@ haja automação específica.
 
 ## Suboperadores do MVP
 
-- AWS, incluindo S3, RDS, Textract e Bedrock.
-- Anthropic via Bedrock.
-- OpenAI API.
+- AWS, incluindo S3 e RDS (armazenamento de objeto e banco).
+- Anthropic API direta (extração de geometria e medida — braço primário).
+- OpenAI API direta (contraparte da comparação dupla e reserva; opcional por
+  `CROQUITO_OPENAI_ARM_ENABLED`).
+- Google Cloud Vision / Document AI (OCR auxiliar; Document AI monta por configuração —
+  [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md)).
+
+> Histórico: Textract e Bedrock/Anthropic (desenho AWS `sa-east-1` do
+> [ADR-0002](../adr/0002-aws-managed-architecture.md)) nunca foram exercidos pela suite
+> hospedada ([ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md)) — não são
+> suboperadores ativos.
 
 Manter inventário contratual, termos comerciais e política de retenção de cada
 fornecedor antes de produção.
