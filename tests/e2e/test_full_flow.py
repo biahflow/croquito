@@ -644,6 +644,20 @@ def test_trace_solve_reaches_a_metric_scene_through_the_queue(
     assert body["approximate_entity_count"] == 0
     assert body["scale_m_per_px"] > 0
     assert body["unapplied_reading_ids"] == []
+    # O diagnóstico do traçado atravessa worker → banco → API: nada aqui ficou por aplicar
+    # nem em disputa, e cada cota confirmada diz de onde até onde ancorou, em metros.
+    assert body["unapplied_readings"] == []
+    assert body["contested_spans"] == []
+    ancoras = {report["reading_id"]: report for report in body["applied_spans"]}
+    assert set(ancoras) == {WIDTH_READING_ID, HEIGHT_READING_ID}
+    for report in ancoras.values():
+        assert report["gap"] is False
+        assert report["second_proposal_id"] is None
+        # Números, não texto: `value_m` chega como número mesmo tendo nascido `Decimal`.
+        assert isinstance(report["value_m"], float)
+        assert report["end_m"] - report["start_m"] > 0
+    assert ancoras[WIDTH_READING_ID]["axis"] == "x"
+    assert ancoras[HEIGHT_READING_ID]["axis"] == "y"
     assert body["result_scene_version"] == 2
     assert body["result_review_version"] == 3
 

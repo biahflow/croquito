@@ -43,6 +43,7 @@ export function serializeTraceDraft(
     hatch: [...draft.hatch],
     unlabelled: [...draft.unlabelled],
     freeform: [...draft.freeform],
+    manualFreeformIds: [...draft.manualFreeformIds],
     keepApartPairs: draft.keepApartPairs,
     detailGroups: draft.detailGroups,
     associations: draft.associations,
@@ -260,6 +261,9 @@ export function parseTraceDraft(
       hatch: new Set(stringList(parsed.hatch)),
       unlabelled: new Set(stringList(parsed.unlabelled)),
       freeform: new Set(stringList(parsed.freeform)),
+      // Rascunho gravado antes do campo volta com conjunto vazio: nada foi tocado à
+      // mão que este navegador possa provar, e a re-semeadura reassume o default.
+      manualFreeformIds: new Set(stringList(parsed.manualFreeformIds)),
       keepApartPairs: keepApartPairs(parsed.keepApartPairs),
       detailGroups: detailGroups(parsed.detailGroups),
       associations: associations(parsed.associations),

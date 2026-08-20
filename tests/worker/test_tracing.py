@@ -312,6 +312,33 @@ def _title_texts(scene: SceneRevision) -> list[str]:
     ]
 
 
+def _cause_of(result: TraceSolveResult, reading_id: str) -> str:
+    """A causa declarada para uma leitura não aplicada, com a paridade dos dois campos.
+
+    A conferência de paridade mora aqui de propósito: todo cenário que consulta uma causa
+    prova, de graça, que `unapplied_reading_ids` continua sendo exatamente a lista de ids
+    dos relatórios, na mesma ordem — que é a promessa aditiva da F-025.
+    """
+    assert result.unapplied_reading_ids == [
+        report.reading_id for report in result.unapplied_readings
+    ]
+    causes = [
+        report.cause for report in result.unapplied_readings if report.reading_id == reading_id
+    ]
+    assert len(causes) == 1, f"esperava um relatório para {reading_id}, veio {causes}"
+    return causes[0]
+
+
+def _unapplied_target_ids(result: TraceSolveResult, reading_id: str) -> list[str]:
+    targets = [
+        report.target_proposal_ids
+        for report in result.unapplied_readings
+        if report.reading_id == reading_id
+    ]
+    assert len(targets) == 1
+    return targets[0]
+
+
 def test_cota_manda_sobre_o_tracado() -> None:
     """As medidas cotadas substituem a métrica projetada dos pixels."""
     result = _solve()
@@ -644,6 +671,10 @@ def test_vao_sem_eixo_declarado_fica_como_nao_aplicado() -> None:
     result = _solve_com_muro_norte(gap_kind="length")
     assert result.status == "solved_unapproved", result.blockers
     assert GAP_READING in result.unapplied_reading_ids
+    # A causa vem do ponto do descarte: o conserto é declarar o eixo, e o relatório diz
+    # isso em vez de deixar o revisor procurar esquadro que não é o problema.
+    assert _cause_of(result, GAP_READING) == "TRACE_SPAN_AXIS_UNDECLARED"
+    assert _unapplied_target_ids(result, GAP_READING) == [MURO_NORTE_PROPOSAL, CAMPO_PROPOSAL]
 
 
 def test_nota_ancorada_viaja_para_o_desenho() -> None:
@@ -1350,6 +1381,9 @@ def test_sem_keep_apart_o_recuo_do_degrau_fica_como_nao_aplicado() -> None:
 
     assert result.status == "solved_unapproved", result.blockers
     assert result.unapplied_reading_ids == [DEGRAU_RECUO_B]
+    # "Não tem duas incógnitas para amarrar" deixou de ser só o texto do docstring: é o
+    # código que o resultado carrega, e é ele que aponta para a declaração `keep_apart`.
+    assert _cause_of(result, DEGRAU_RECUO_B) == "TRACE_SPAN_SAME_BAND"
     assert result.scene is not None
 
     unapplied_issues = [
@@ -1359,6 +1393,9 @@ def test_sem_keep_apart_o_recuo_do_degrau_fica_como_nao_aplicado() -> None:
     assert unapplied_issues[0].severity is IssueSeverity.WARNING
     assert unapplied_issues[0].status is IssueStatus.OPEN
     assert DEGRAU_RECUO_B in unapplied_issues[0].message
+    # A mensagem deixou de ser fixa: carrega o código e a frase da causa.
+    assert "TRACE_SPAN_SAME_BAND" in unapplied_issues[0].message
+    assert "mesma faixa" in unapplied_issues[0].message
 
     campo = _bbox(_entity_of(result.scene, DEGRAU_CAMPO).geometry)
     muro = _degrau_muro(result.scene)
@@ -1710,6 +1747,7 @@ def test_leitura_diagonal_fica_declarada_como_nao_aplicada() -> None:
     )
     assert result.status == "solved_unapproved", result.blockers
     assert result.unapplied_reading_ids == ["rd_" + "7" * 16]
+    assert _cause_of(result, "rd_" + "7" * 16) == "TRACE_SPAN_NOT_ORTHOGONAL"
     assert result.scene is not None
     assert any(issue.code == "CONFIRMED_READING_NOT_APPLIED" for issue in result.scene.issues)
     notes = _title_texts(result.scene)
@@ -2233,6 +2271,45 @@ def test_sem_freeform_os_afastamentos_distintos_conflitam() -> None:
     )
     gap_residuals = [residual for residual in result.residuals if residual.code.startswith("GAP")]
     assert gap_residuals and not all(residual.passed for residual in gap_residuals)
+
+
+def test_cota_de_elemento_unico_em_forma_livre_declara_a_causa() -> None:
+    """A assinatura da rodada V17: o alvo aceito "como desenhado" não amarra cota simples.
+
+    Elemento `freeform` guarda a coordenada de cada vértice e não forma faixa por aresta —
+    é exatamente o que a declaração pede. Uma cota de elemento único mirando esse alvo não
+    tem duas faixas ortogonais para ligar, e antes saía como "não aplicada" sem dizer por
+    quê: o revisor procurava esquadro num elemento que ele mesmo declarou torto. O conserto
+    é outro (tirar o alvo de `freeform` ou declarar o vão por âncoras), e a causa aponta
+    para ele.
+    """
+    packet, proposals, acceptance = _lote_livre_fixture()
+    result = solve_trace(
+        packet,
+        proposals,
+        acceptance,
+        confirmed_associations={
+            REF_ALTURA_READING: ALAMBRADO_REF_PROPOSAL,
+            # A mesma leitura que, como vão contra o alambrado, aplica sem reclamar.
+            GAP_TOPO_READING: LOTE_LIVRE_PROPOSAL,
+            GAP_DOBRA_READING: [LOTE_LIVRE_PROPOSAL, ALAMBRADO_REF_PROPOSAL],
+            GAP_BASE_READING: [LOTE_LIVRE_PROPOSAL, ALAMBRADO_REF_PROPOSAL],
+        },
+        image_width=600,
+        image_height=700,
+    )
+
+    assert result.status == "solved_unapproved", result.blockers
+    assert result.unapplied_reading_ids == [GAP_TOPO_READING]
+    assert _cause_of(result, GAP_TOPO_READING) == "TRACE_TARGET_AS_DRAWN"
+    assert _unapplied_target_ids(result, GAP_TOPO_READING) == [LOTE_LIVRE_PROPOSAL]
+
+    assert result.scene is not None
+    issue = next(
+        issue for issue in result.scene.issues if issue.code == "CONFIRMED_READING_NOT_APPLIED"
+    )
+    assert "TRACE_TARGET_AS_DRAWN" in issue.message
+    assert "como desenhado" in issue.message
 
 
 def test_freeform_exige_proposta_aceita() -> None:
@@ -3430,3 +3507,157 @@ def test_aprovacao_do_tracado_recusa_criterio_nao_declarado_e_codigo_estranho() 
     # Blocker de geometria nunca é declarável: o código não está entre os exigidos.
     with pytest.raises(ValueError, match="critério de escopo"):
         approve_trace(result, _aprovacao(result.scene.id, acknowledged=["MEASUREMENT_MISMATCH"]))
+
+
+# --- Diagnóstico do traçado: vão em disputa e âncoras aplicadas (F-025) ----------------
+
+
+DISPUTA_PROPOSAL = "vp_" + "c1" * 8
+DISPUTA_LARGURA_A = "rd_" + "c1" * 8
+DISPUTA_LARGURA_B = "rd_" + "c2" * 8
+
+
+def _disputa_fixture() -> tuple[ReviewPacket, list[VisionProposal], TraceAcceptance]:
+    """Um retângulo só, com duas larguras confirmadas que não podem ser ambas verdade.
+
+    5,00 escrito perto da borda de cima e 8,00 perto da de baixo: as duas amarram o MESMO
+    par de faixas X (o retângulo tem duas, esquerda e direita), então disputam uma única
+    incógnita. É a forma mínima do defeito que o Guaxindiba v2 mostrou espalhado em cinco
+    resíduos de 0,66 m sem dizer quem discordava de quem.
+    """
+    proposals = [
+        VisionProposal(
+            id=DISPUTA_PROPOSAL,
+            kind="contour",
+            geometry=_rect(100.0, 100.0, 500.0, 300.0),
+            algorithm="fixture",
+            quality_score=0.9,
+            label="Quadra sintética",
+        )
+    ]
+    packet = ReviewPacket(
+        dataset_id=DATASET_ID,
+        page_number=1,
+        image_sha256=DIGEST,
+        readings=[
+            _reading(DISPUTA_LARGURA_A, value="5.00", kind="width", centre=(300, 90)),
+            _reading(DISPUTA_LARGURA_B, value="8.00", kind="width", centre=(300, 310)),
+        ],
+        safety_notes=["Fixture local.", "Revisão humana obrigatória."],
+    )
+    acceptance = TraceAcceptance(
+        acceptance_id="ta_" + "c1" * 8,
+        reviewer_id="eng-teste",
+        reviewer_role="engineer",
+        decided_at=datetime(2026, 8, 20, 12, 0, tzinfo=UTC),
+        proposal_ids=[DISPUTA_PROPOSAL],
+    )
+    return packet, proposals, acceptance
+
+
+def test_duas_cotas_no_mesmo_vao_saem_nomeadas_par_a_par() -> None:
+    """O resíduo diz que alguma coisa não fecha; a disputa diz QUAIS duas cotas brigam."""
+    packet, proposals, acceptance = _disputa_fixture()
+    result = solve_trace(
+        packet,
+        proposals,
+        acceptance,
+        confirmed_associations={
+            DISPUTA_LARGURA_A: DISPUTA_PROPOSAL,
+            DISPUTA_LARGURA_B: DISPUTA_PROPOSAL,
+        },
+        image_width=600,
+        image_height=600,
+    )
+
+    assert len(result.contested_spans) == 1
+    disputa = result.contested_spans[0]
+    assert disputa.axis == "x"
+    assert disputa.reading_ids == sorted([DISPUTA_LARGURA_A, DISPUTA_LARGURA_B])
+    assert disputa.values_m == [Decimal("5.00"), Decimal("8.00")]
+    assert disputa.proposal_ids == [DISPUTA_PROPOSAL]
+
+    # Diagnóstico não é portão: quem decide o desfecho continua sendo o resíduo, e nenhum
+    # blocker novo aparece por causa da disputa.
+    assert result.blockers == ["NUMERIC_RESIDUAL_EXCEEDS_TOLERANCE"]
+    assert result.status == "conflict"
+    assert not all(residual.passed for residual in result.residuals)
+    # As duas foram aplicadas: disputa não é descarte.
+    assert result.unapplied_reading_ids == []
+    assert result.unapplied_readings == []
+
+
+def test_cotas_concordantes_no_mesmo_vao_nao_viram_disputa() -> None:
+    """Contraprova: mesma fixture com o mesmo valor escrito duas vezes não acusa nada.
+
+    Duas leituras podem legitimamente cotar o mesmo trecho (a folha repete a largura em
+    cima e embaixo). O que caracteriza a disputa é a divergência maior que a tolerância da
+    cota mais grosseira envolvida, não a coincidência de par de faixas.
+    """
+    packet, proposals, acceptance = _disputa_fixture()
+    packet = packet.model_copy(
+        update={
+            "readings": [
+                _reading(DISPUTA_LARGURA_A, value="5.00", kind="width", centre=(300, 90)),
+                _reading(DISPUTA_LARGURA_B, value="5.00", kind="width", centre=(300, 310)),
+            ]
+        }
+    )
+    result = solve_trace(
+        packet,
+        proposals,
+        acceptance,
+        confirmed_associations={
+            DISPUTA_LARGURA_A: DISPUTA_PROPOSAL,
+            DISPUTA_LARGURA_B: DISPUTA_PROPOSAL,
+        },
+        image_width=600,
+        image_height=600,
+    )
+
+    assert result.contested_spans == []
+    assert result.blockers == []
+    assert all(residual.passed for residual in result.residuals)
+
+
+def test_ancoras_das_cotas_aplicadas_saem_em_metros() -> None:
+    """Cada cota aplicada diz de onde até onde amarrou, no frame CAD da prancha."""
+    result = _solve()
+    assert result.scene is not None
+
+    reports = {report.reading_id: report for report in result.applied_spans}
+    # Uma entrada por cota aplicada, e nenhuma para as que não aplicaram.
+    assert set(reports) == set(_associations()) - set(result.unapplied_reading_ids)
+
+    for report in result.applied_spans:
+        assert report.start_m <= report.end_m
+        assert report.value_m > 0
+
+    largura = reports[LARGURA_READING]
+    assert largura.axis == "x"
+    assert largura.gap is False
+    assert largura.proposal_id == CAMPO_PROPOSAL
+    assert largura.second_proposal_id is None
+    assert largura.value_m == Decimal("25.90")
+    # O campo abre a prancha na origem: 25,90 m de largura cotada, ancorados nas bordas.
+    campo = _bbox(_entity_of(result.scene, CAMPO_PROPOSAL).geometry)
+    assert largura.start_m == pytest.approx(campo[0], abs=1e-6)
+    assert largura.end_m == pytest.approx(campo[2], abs=1e-6)
+    assert largura.end_m - largura.start_m == pytest.approx(25.90, abs=0.01)
+
+    altura = reports[ALTURA_READING]
+    assert altura.axis == "y"
+    assert altura.end_m - altura.start_m == pytest.approx(21.75, abs=0.01)
+
+
+def test_vao_entre_elementos_registra_as_duas_propostas_na_ancora() -> None:
+    """A âncora de um vão nomeia os dois elementos e se declara `gap`."""
+    result = _solve_com_muro_norte()
+    report = next(report for report in result.applied_spans if report.reading_id == GAP_READING)
+    assert report.gap is True
+    assert report.axis == "y"
+    assert {report.proposal_id, report.second_proposal_id} == {
+        MURO_NORTE_PROPOSAL,
+        CAMPO_PROPOSAL,
+    }
+    assert report.end_m - report.start_m == pytest.approx(6.60, abs=0.01)

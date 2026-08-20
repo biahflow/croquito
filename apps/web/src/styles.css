@@ -2084,6 +2084,24 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+/* Consertos do consultor: botões que só mexem no rascunho do aceite, nunca enviam. */
+.advisor-fixes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.advisor-fixes button {
+  padding: 4px 7px;
+  color: var(--accent-text);
+  background: var(--surface);
+  border: 1px solid var(--accent-line);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
 /*
  * A cota ocupa poucas centenas de pixels numa imagem de 4875x6718: no viewer inteiro
  * ela é ilegível. Aqui ela enche o painel, com giro próprio porque as cotas da folha

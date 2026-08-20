@@ -71,6 +71,13 @@ export type TraceDraft = {
   unlabelled: Set<string>;
   /** Elementos declarados intencionalmente não-ortogonais: entram como desenhados. */
   freeform: Set<string>;
+  /**
+   * Formas cujo "como desenhado" o revisor mexeu à mão nesta sessão. A re-semeadura do
+   * default NUNCA as toca: o ponto de partida pode ser recalculado, o ato humano não.
+   * Entrar aqui é definitivo enquanto o rascunho existir — desfazer o toque continua
+   * sendo outro toque, e ele também é do revisor.
+   */
+  manualFreeformIds: Set<string>;
   /** Elementos desenhados coincidentes que o revisor declara distintos. */
   keepApartPairs: KeepApartDraft[];
   detailGroups: TraceDetailGroupDraft[];
@@ -92,6 +99,7 @@ export function emptyTraceDraft(): TraceDraft {
     hatch: new Set(),
     unlabelled: new Set(),
     freeform: new Set(),
+    manualFreeformIds: new Set(),
     keepApartPairs: [],
     detailGroups: [],
     associations: {},
@@ -362,6 +370,39 @@ export function withDefaultProposalFlags(
     return draft;
   }
   return { ...draft, freeform: new Set([...draft.freeform, ...freeform]) };
+}
+
+/**
+ * Recalcula o ponto de partida de "como desenhado" para as formas JÁ aceitas quando o
+ * que o default lê muda — uma cota foi confirmada depois, uma amarração foi declarada,
+ * uma decisão foi retificada. Sem isso a forma nasceria "como desenhada" por falta de
+ * cota e continuaria assim depois de a cota chegar, sem ninguém avisar.
+ *
+ * Re-semeia nos DOIS sentidos (entra e sai de `freeform`), e só para forma que o revisor
+ * nunca tocou à mão: `manualFreeformIds` é ato humano e a semente não escreve por cima
+ * dele. Nada mudou devolve o MESMO objeto, para não disparar render nem regravação do
+ * rascunho à toa.
+ */
+export function reseedProposalFlags(
+  draft: TraceDraft,
+  context: ProposalFlagContext,
+): TraceDraft {
+  const freeform = new Set(draft.freeform);
+  let changed = false;
+  for (const proposalId of draft.proposalIds) {
+    if (draft.manualFreeformIds.has(proposalId)) {
+      continue;
+    }
+    const seeded = defaultFlagsForProposal(proposalId, context).freeform;
+    if (seeded && !freeform.has(proposalId)) {
+      freeform.add(proposalId);
+      changed = true;
+    } else if (!seeded && freeform.has(proposalId)) {
+      freeform.delete(proposalId);
+      changed = true;
+    }
+  }
+  return changed ? { ...draft, freeform } : draft;
 }
 
 /**

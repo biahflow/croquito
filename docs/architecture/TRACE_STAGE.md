@@ -93,6 +93,33 @@ assim que o sistema acusou que a folha do Guaxindiba "não fechava" na direita �
 conflito de 1,50 m entre o 4,80 e a cadeia do recuo — até o usuário explicar o dente do
 muro.
 
+## O que o resultado diagnostica
+
+O resultado do traçado não diz só *o que* falhou; diz *por quê*, *quem disputa com quem* e
+*onde a cota que aplicou ancorou*. Os três campos são aditivos: `unapplied_reading_ids`,
+`blockers`, `residual_summary` e `solve_status` continuam exatamente como eram, e nada
+aqui cria blocker novo nem muda o portão de export — isto é o consultor, não o juiz.
+
+- **Causa por leitura não aplicada** (`unapplied_readings`). O código nasce no ponto do
+  descarte, onde a decisão é tomada, nunca reconstruído depois a partir do id: "não pôde
+  virar vão ortogonal" cabe em situações com consertos diferentes. `TRACE_TARGET_AS_DRAWN`
+  (o alvo está declarado `freeform` e cota de elemento único não amarra forma livre) e
+  `TRACE_SPAN_SAME_BAND` (as duas âncoras caíram na mesma faixa, o caso que
+  `keep_apart_pairs` resolve) são os dois que a rodada real mais produziu. A tabela
+  completa dos códigos está no [API Contract](API_CONTRACT.md). A `Issue`
+  `CONFIRMED_READING_NOT_APPLIED` da cena carrega a frase da causa; o código dela não
+  mudou.
+- **Vão em disputa** (`contested_spans`). Duas ou mais leituras confirmadas que amarram o
+  MESMO par de faixas no mesmo eixo disputam uma única incógnita, e o LSQ cede para algum
+  lugar entre elas. O resíduo já acusava o estrago espalhado; o que faltava era o par
+  nomeado — no Guaxindiba v2 foram cinco resíduos de 0,66 m sem nenhum deles dizer quais
+  duas cotas discordavam. Só entra quando a divergência excede a tolerância da cota mais
+  grosseira do par: repetir a mesma medida em cima e embaixo é legítimo.
+- **Âncoras aplicadas** (`applied_spans`). Para cada cota que aplicou, de onde até onde ela
+  amarrou em metros da prancha (frame CAD, origem no canto inferior esquerdo), com o eixo,
+  o valor, os elementos envolvidos e se é vão entre dois. É o que permite conferir "esta
+  cota amarra daqui até ali" sem reabrir o DXF.
+
 ## Os controles do revisor
 
 Todos os insumos são declarações humanas registradas; o sistema nunca adivinha. Exemplo

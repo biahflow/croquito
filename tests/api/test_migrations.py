@@ -211,29 +211,26 @@ def test_banco_anterior_ao_runner_e_carimbado(schema_url: str) -> None:
     finally:
         engine.dispose()
 
-    # A adoção não recria nem altera o que já existia: nenhuma tabela da BASELINE sofre
-    # `ALTER`/`DROP`, e as únicas tabelas criadas são a de versão e as nascidas DEPOIS da
-    # baseline, que o `upgrade` logo após o carimbo cria. Nenhuma tabela da baseline aparece
-    # como criada.
+    # A adoção não reescreve nem destrói o que já existia, e as únicas tabelas criadas são
+    # a de versão e as nascidas DEPOIS da baseline, que o `upgrade` logo após o carimbo
+    # cria. Nenhuma tabela da baseline aparece como criada.
     #
-    # Tabela nascida DEPOIS da baseline pode legitimamente sofrer `ALTER` dentro do MESMO
-    # `upgrade`: ela acabou de nascer segundos antes, não é o "banco anterior ao runner" que
-    # esta adoção existe para preservar intocado. A `0004` fez disso um caso real pela
-    # primeira vez (`estimate_rounds`, criada pela `0003`, ganha coluna pela `0004`), e por
-    # isso a asserção verifica a tabela ALVO do `ALTER`/`DROP`, não a mera presença do verbo.
-    def _ddl_target(statement: str, prefix: str) -> str | None:
-        if not statement.startswith(prefix):
-            return None
-        return statement.removeprefix(prefix).split()[0].strip('"')
-
+    # `ADD COLUMN` é a exceção declarada, e não um afrouxamento: até a `0003` toda revisão
+    # posterior à baseline só criava tabela, e o teste podia proibir `alter` inteiro. A
+    # `0004` fez do ALTER aditivo um caso real em tabela pós-baseline (`estimate_rounds`,
+    # criada pela `0003`, ganha coluna de teto) e a `0005` em tabela da PRÓPRIA baseline
+    # (`trace_solves` ganha as colunas de diagnóstico do traçado) — evolução aditiva
+    # aplicada pelo `upgrade` DEPOIS do carimbo, da mesma natureza dos `CREATE TABLE` que
+    # o teste já tolera. O que a adoção continua não podendo emitir é `DROP` ou `ALTER`
+    # que remova, retipe ou renomeie o que já existe.
     ddl = [statement for statement in recorded if statement.startswith(_DDL_VERBS)]
-    baseline_altered_or_dropped = [
+    destrutivo = [
         statement
         for statement in ddl
-        if _ddl_target(statement, "alter table ") in BASELINE_TABLES
-        or _ddl_target(statement, "drop table ") in BASELINE_TABLES
+        if statement.startswith("drop ")
+        or (statement.startswith("alter ") and " add column " not in statement)
     ]
-    assert baseline_altered_or_dropped == [], baseline_altered_or_dropped
+    assert destrutivo == []
     created = {
         statement.removeprefix("create table ").split("(")[0].split()[0].strip('"')
         for statement in ddl

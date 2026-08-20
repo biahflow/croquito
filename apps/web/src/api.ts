@@ -270,6 +270,38 @@ export type TraceResidualSummary = {
   worst_tolerance_m: number | null;
 };
 
+/**
+ * Diagnóstico do traçado (F-025), espelho aditivo do contrato: por que uma leitura
+ * confirmada não virou vão, quem disputa o mesmo vão com quem e onde cada cota aplicada
+ * ancorou na prancha. `cause` é código estável do domínio (mesmo formato de `Issue.code`)
+ * — a frase em língua de obra é montada na tela, nunca no servidor.
+ */
+export type TraceUnappliedReading = {
+  reading_id: string;
+  cause: string;
+  target_proposal_ids: string[];
+};
+
+export type TraceContestedSpan = {
+  axis: "x" | "y";
+  reading_ids: string[];
+  /** Na mesma ordem de `reading_ids`. */
+  values_m: number[];
+  proposal_ids: string[];
+};
+
+export type TraceAppliedSpan = {
+  reading_id: string;
+  axis: "x" | "y";
+  value_m: number;
+  /** Coordenada ao longo do eixo no frame CAD da prancha, com `start_m <= end_m`. */
+  start_m: number;
+  end_m: number;
+  proposal_id: string;
+  second_proposal_id?: string | null;
+  gap?: boolean;
+};
+
 export type TraceSolveResponse = {
   trace_solve_id: string;
   job_id: string;
@@ -280,6 +312,12 @@ export type TraceSolveResponse = {
   solve_status: "solved_unapproved" | "review_required" | "conflict" | null;
   blockers: string[];
   unapplied_reading_ids: string[];
+  // Aditivos: `unapplied_reading_ids` continua sendo o contrato antigo, na mesma ordem.
+  // Opcionais porque registro persistido antes da mudança responde sem eles — e a tela
+  // precisa se comportar como antes diante de um job antigo.
+  unapplied_readings?: TraceUnappliedReading[];
+  contested_spans?: TraceContestedSpan[];
+  applied_spans?: TraceAppliedSpan[];
   residual_summary: TraceResidualSummary | null;
   exact_entity_count: number | null;
   approximate_entity_count: number | null;

@@ -176,6 +176,66 @@
         "title": "AnnotateNoteRequest",
         "type": "object"
       },
+      "AppliedSpanOut": {
+        "additionalProperties": false,
+        "description": "Onde, em metros da prancha, cada cota aplicada ancorou (`start_m <= end_m`).",
+        "properties": {
+          "axis": {
+            "enum": [
+              "x",
+              "y"
+            ],
+            "title": "Axis",
+            "type": "string"
+          },
+          "end_m": {
+            "title": "End M",
+            "type": "number"
+          },
+          "gap": {
+            "default": false,
+            "title": "Gap",
+            "type": "boolean"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "reading_id": {
+            "title": "Reading Id",
+            "type": "string"
+          },
+          "second_proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second Proposal Id"
+          },
+          "start_m": {
+            "title": "Start M",
+            "type": "number"
+          },
+          "value_m": {
+            "title": "Value M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "reading_id",
+          "axis",
+          "value_m",
+          "start_m",
+          "end_m",
+          "proposal_id"
+        ],
+        "title": "AppliedSpanOut",
+        "type": "object"
+      },
       "ApproveRequest": {
         "additionalProperties": false,
         "description": "Mirrors the SceneApproval contract: every verification is stated, never inferred.",
@@ -1042,6 +1102,46 @@
           "tolerance"
         ],
         "title": "Constraint",
+        "type": "object"
+      },
+      "ContestedSpanOut": {
+        "additionalProperties": false,
+        "description": "Duas ou mais leituras confirmadas prometendo distâncias diferentes para o mesmo vão.\n\nDiagnóstico: não é blocker e não muda `solve_status` — quem decide o desfecho continua\nsendo o resíduo.",
+        "properties": {
+          "axis": {
+            "enum": [
+              "x",
+              "y"
+            ],
+            "title": "Axis",
+            "type": "string"
+          },
+          "proposal_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Proposal Ids",
+            "type": "array"
+          },
+          "reading_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reading Ids",
+            "type": "array"
+          },
+          "values_m": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Values M",
+            "type": "array"
+          }
+        },
+        "required": [
+          "axis"
+        ],
+        "title": "ContestedSpanOut",
         "type": "object"
       },
       "CreateChatSessionRequest": {
@@ -4830,6 +4930,13 @@
             "title": "Acceptance Id",
             "type": "string"
           },
+          "applied_spans": {
+            "items": {
+              "$ref": "#/components/schemas/AppliedSpanOut"
+            },
+            "title": "Applied Spans",
+            "type": "array"
+          },
           "approximate_entity_count": {
             "anyOf": [
               {
@@ -4861,6 +4968,13 @@
               "type": "string"
             },
             "title": "Blockers",
+            "type": "array"
+          },
+          "contested_spans": {
+            "items": {
+              "$ref": "#/components/schemas/ContestedSpanOut"
+            },
+            "title": "Contested Spans",
             "type": "array"
           },
           "detail_group_scales": {
@@ -5000,6 +5114,13 @@
             },
             "title": "Unapplied Reading Ids",
             "type": "array"
+          },
+          "unapplied_readings": {
+            "items": {
+              "$ref": "#/components/schemas/UnappliedReadingOut"
+            },
+            "title": "Unapplied Readings",
+            "type": "array"
           }
         },
         "required": [
@@ -5010,6 +5131,33 @@
           "base_review_version"
         ],
         "title": "TraceSolveResponse",
+        "type": "object"
+      },
+      "UnappliedReadingOut": {
+        "additionalProperties": false,
+        "description": "Uma leitura confirmada que não virou vão, com o motivo declarado pelo traçado.\n\n`cause` é código estável do domínio (mesmo formato de `Issue.code`), nunca frase de\nsolver: a frase que o profissional lê vive na `Issue` da cena.",
+        "properties": {
+          "cause": {
+            "title": "Cause",
+            "type": "string"
+          },
+          "reading_id": {
+            "title": "Reading Id",
+            "type": "string"
+          },
+          "target_proposal_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Proposal Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "reading_id",
+          "cause"
+        ],
+        "title": "UnappliedReadingOut",
         "type": "object"
       },
       "UnitCode": {

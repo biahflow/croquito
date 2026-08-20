@@ -255,6 +255,97 @@ class TraceAcceptance(TraceModel):
         ]
 
 
+TraceUnappliedCause = Literal[
+    "TRACE_SPAN_VALUE_OR_DECISION_MISSING",
+    "TRACE_SPAN_AXIS_UNDECLARED",
+    "TRACE_SPAN_EDGE_NOT_FOUND",
+    "TRACE_SPAN_SAME_BAND",
+    "TRACE_TARGET_AS_DRAWN",
+    "TRACE_SPAN_NOT_ORTHOGONAL",
+    "TRACE_NOTE_ZERO_LENGTH",
+    "TRACE_NOTE_UNSUPPORTED_GEOMETRY",
+]
+"""Os motivos pelos quais uma leitura confirmada e associada não virou vão nem nota.
+
+O tipo é fechado aqui dentro (o mypy acusa código inventado no ponto do descarte) e
+aberto no modelo (`UnappliedReadingReport.cause` é `str` com o mesmo padrão de
+`Issue.code`): um registro gravado com um código de ontem continua legível amanhã.
+"""
+
+UNAPPLIED_CAUSE_MESSAGES: Final[dict[str, str]] = {
+    "TRACE_SPAN_VALUE_OR_DECISION_MISSING": (
+        "a leitura chegou sem valor em metros ou sem decisão humana completa"
+    ),
+    "TRACE_SPAN_AXIS_UNDECLARED": (
+        "o vão não declara eixo (largura ou altura), e sem ele não há distância a amarrar"
+    ),
+    "TRACE_SPAN_EDGE_NOT_FOUND": (
+        "nenhuma aresta perpendicular ao eixo foi encontrada para uma das âncoras do vão"
+    ),
+    "TRACE_SPAN_SAME_BAND": (
+        "as duas âncoras caíram na mesma faixa, então não há duas incógnitas para amarrar"
+    ),
+    "TRACE_TARGET_AS_DRAWN": (
+        "o alvo está aceito como desenhado; cota de elemento único não amarra em forma livre"
+    ),
+    "TRACE_SPAN_NOT_ORTHOGONAL": (
+        "o elemento não tem segmento ortogonal compatível com o eixo da cota"
+    ),
+    "TRACE_NOTE_ZERO_LENGTH": "o segmento âncora da nota tem comprimento zero no desenho",
+    "TRACE_NOTE_UNSUPPORTED_GEOMETRY": "a geometria do alvo não suporta nota ancorada",
+}
+"""Frase curta por código, para a mensagem da `Issue` que o revisor lê na cena."""
+
+
+class UnappliedReadingReport(TraceModel):
+    """Uma leitura confirmada que não virou vão, com o MOTIVO no ponto do descarte.
+
+    Só o id não diz o que fazer: "não pôde virar vão ortogonal" cabe em várias situações
+    diferentes, e cada uma tem um conserto diferente (declarar o eixo, declarar
+    `keep_apart`, tirar o alvo de `freeform`…). O código nasce onde a decisão é tomada,
+    nunca reconstruído depois por quem só tem o id.
+    """
+
+    reading_id: str
+    # Mesmo padrão de `Issue.code`: código estável, nunca frase.
+    cause: str = Field(pattern=r"^[A-Z0-9_]{3,64}$")
+    target_proposal_ids: list[str] = Field(default_factory=list)
+
+
+class ContestedSpan(TraceModel):
+    """Duas ou mais cotas confirmadas prometendo distâncias diferentes para o MESMO vão.
+
+    Diagnóstico, não portão: quem decide o desfecho continua sendo o resíduo
+    (`NUMERIC_RESIDUAL_EXCEEDS_TOLERANCE`). O que faltava era o par nomeado — o revisor
+    via cinco resíduos estourados e nenhum deles dizia quais duas leituras disputam a
+    mesma incógnita.
+    """
+
+    axis: Literal["x", "y"]
+    reading_ids: list[str] = Field(min_length=2)
+    # Mesma ordem de `reading_ids`: o valor que cada leitura promete para o vão.
+    values_m: list[Decimal] = Field(min_length=2)
+    proposal_ids: list[str] = Field(default_factory=list)
+
+
+class AppliedSpanReport(TraceModel):
+    """Onde, em metros da prancha, a cota aplicada ancorou.
+
+    `start_m`/`end_m` são a coordenada ao longo do eixo da cota no frame CAD (origem no
+    canto inferior esquerdo), com `start_m <= end_m`. É o que permite dizer "esta cota
+    amarra daqui até ali" sem reabrir o DXF.
+    """
+
+    reading_id: str
+    axis: Literal["x", "y"]
+    value_m: Decimal
+    start_m: float
+    end_m: float
+    proposal_id: str
+    second_proposal_id: str | None = None
+    gap: bool = False
+
+
 class TraceSolveResult(TraceModel):
     schema_version: Literal["1.0.0"] = "1.0.0"
     solver_version: Literal["trace-solver-v1"] = TRACER_VERSION
@@ -275,6 +366,11 @@ class TraceSolveResult(TraceModel):
     # declarar cobertos ou reconhecer como pendentes.
     required_criteria: list[ScopeCriterion] = Field(default_factory=list)
     safety_notes: list[str] = Field(min_length=2)
+    # Diagnóstico do traçado, aditivo: `unapplied_reading_ids` continua sendo a lista de
+    # ids, na mesma ordem, e estes três campos dizem POR QUE, QUEM DISPUTA e ONDE ANCOROU.
+    unapplied_readings: list[UnappliedReadingReport] = Field(default_factory=list)
+    contested_spans: list[ContestedSpan] = Field(default_factory=list)
+    applied_spans: list[AppliedSpanReport] = Field(default_factory=list)
 
 
 class ApprovedTraceRevision(TraceModel):
@@ -588,8 +684,11 @@ def _span_from_reading(
     tie_tolerance_px: float,
     declared_spans_px: Sequence[tuple[tuple[float, float], tuple[float, float]]] = (),
     freeform_ids: frozenset[str] = frozenset(),
-) -> list[tuple[SpanConstraint, _AppliedSpan]] | None:
+) -> list[tuple[SpanConstraint, _AppliedSpan]] | TraceUnappliedCause:
     """Converte uma leitura confirmada e associada em restrição(ões) e vão(s) desenhado(s).
+
+    Falha devolve o CÓDIGO da causa, não `None`: o motivo é conhecido exatamente aqui, no
+    ponto do descarte, e reconstruí-lo depois a partir do id da leitura seria adivinhação.
 
     `traced_x`/`traced_y` são as posições traçadas das FAIXAS (não das junções): é delas
     que sai o lado de cada restrição, em `_band_span_constraint`. A ordem das junções em
@@ -602,7 +701,7 @@ def _span_from_reading(
     """
     value = _value_m(reading)
     if value is None or reading.decision is None:
-        return None
+        return "TRACE_SPAN_VALUE_OR_DECISION_MISSING"
     box = reading.evidence.bbox
     centre = ((box.left + box.right) / 2, (box.top + box.bottom) / 2)
     required_axis = _required_axis(reading)
@@ -614,7 +713,7 @@ def _span_from_reading(
         # âncora elege a aresta perpendicular mais próxima e a cota amarra as duas faixas.
         # Todas as âncoras resolvem ou a leitura inteira fica como não aplicada.
         if required_axis is None:
-            return None
+            return "TRACE_SPAN_AXIS_UNDECLARED"
         proposal = targets[0]
         freeform = proposal.id in freeform_ids
         traced_axis = traced_x if required_axis == "x" else traced_y
@@ -626,8 +725,10 @@ def _span_from_reading(
             edge_b = _gap_edge(
                 proposal, junction_of, bands, topology, anchor_b, required_axis, freeform=freeform
             )
-            if edge_a is None or edge_b is None or edge_a[1] == edge_b[1]:
-                return None
+            if edge_a is None or edge_b is None:
+                return "TRACE_SPAN_EDGE_NOT_FOUND"
+            if edge_a[1] == edge_b[1]:
+                return "TRACE_SPAN_SAME_BAND"
             # Mesma eleição do vão em par, mesmo motivo: a ordem em que o revisor declarou
             # as duas âncoras do trecho não pode decidir nada (`_edge_order_key`).
             near_edge, far_edge = sorted(
@@ -671,7 +772,7 @@ def _span_from_reading(
         # Vão entre dois elementos: exige eixo declarado pelo revisor (width/height) —
         # sem ele não há como saber que distância entre as duas arestas a cota promete.
         if required_axis is None:
-            return None
+            return "TRACE_SPAN_AXIS_UNDECLARED"
         edges = [
             _gap_edge(
                 proposal,
@@ -685,8 +786,10 @@ def _span_from_reading(
             for proposal in targets
         ]
         first_edge, second_edge = edges[0], edges[1]
-        if first_edge is None or second_edge is None or first_edge[1] == second_edge[1]:
-            return None
+        if first_edge is None or second_edge is None:
+            return "TRACE_SPAN_EDGE_NOT_FOUND"
+        if first_edge[1] == second_edge[1]:
+            return "TRACE_SPAN_SAME_BAND"
         # A posição do elemento no par é ordem de clique, não declaração: a eleição
         # near/far sai por chave total do traçado (`_edge_order_key`), nunca pelo array.
         traced_axis = traced_x if required_axis == "x" else traced_y
@@ -723,9 +826,16 @@ def _span_from_reading(
         return [(constraint, applied)]
 
     proposal = targets[0]
+    if proposal.id in freeform_ids:
+        # Elemento aceito "como desenhado" não tem faixa por aresta — cada vértice guarda a
+        # própria coordenada —, então uma cota de elemento único nunca teria duas incógnitas
+        # ortogonais para amarrar. Dizer isso aqui, e não deixar o laço de segmentos morrer
+        # em "não ortogonal", é a diferença entre o revisor tirar o alvo de `freeform` (ou
+        # declarar o vão por âncoras) e ficar procurando um esquadro que não é o problema.
+        return "TRACE_TARGET_AS_DRAWN"
     junctions = _proposal_junctions(proposal, junction_of)
     if not junctions:
-        return None
+        return "TRACE_SPAN_NOT_ORTHOGONAL"
     chosen: tuple[int, int, Literal["x", "y"]] | None = None
     for first, second in _candidate_segments(proposal, junctions, centre):
         if first == second:
@@ -741,7 +851,7 @@ def _span_from_reading(
         chosen = (first, second, segment_axis)
         break
     if chosen is None:
-        return None
+        return "TRACE_SPAN_NOT_ORTHOGONAL"
     first, second, axis = chosen
     band_of = bands.x_band_of if axis == "x" else bands.y_band_of
     position = {
@@ -1146,6 +1256,56 @@ def _sketch_group_geometry(
     )
 
 
+def _contested_spans(
+    outcomes: Sequence[tuple[SpanConstraint, _AppliedSpan]],
+) -> list[ContestedSpan]:
+    """Nomeia, par a par, as leituras que prometem distâncias diferentes para o mesmo vão.
+
+    O critério é o do próprio sistema de faixas: duas restrições que ligam o MESMO par de
+    faixas no mesmo eixo disputam uma única incógnita. Quando os valores escritos divergem
+    por mais do que a tolerância da cota mais grosseira envolvida, o LSQ vai ceder para
+    algum lugar entre elas e estourar os resíduos — e é aqui que se sabe quem discorda com
+    quem, informação que o resíduo sozinho não carrega.
+
+    `first_band`/`second_band` já vêm na ordem traçada (`_band_span_constraint`), então o
+    par é estável e não depende da ordem em que as leituras foram emitidas. Isto é
+    diagnóstico: não cria blocker, não muda status, não mexe no solver.
+    """
+    grouped: dict[tuple[str, int, int], list[tuple[SpanConstraint, _AppliedSpan]]] = {}
+    for constraint, applied in outcomes:
+        key = (constraint.axis, constraint.first_band, constraint.second_band)
+        grouped.setdefault(key, []).append((constraint, applied))
+
+    contested: list[ContestedSpan] = []
+    for _key, members in sorted(grouped.items()):
+        # O eixo sai do vão desenhado (já tipado), não da string da restrição.
+        axis = members[0][1].axis
+        value_of: dict[str, Decimal] = {}
+        proposal_ids: set[str] = set()
+        tolerance = Decimal(0)
+        for constraint, applied in members:
+            value_of.setdefault(constraint.source_id, applied.value_m)
+            proposal_ids.add(applied.proposal_id)
+            if applied.second_proposal_id is not None:
+                proposal_ids.add(applied.second_proposal_id)
+            tolerance = max(tolerance, _span_tolerance_m(applied))
+        if len(value_of) < 2:
+            continue
+        values = list(value_of.values())
+        if max(values) - min(values) <= tolerance:
+            continue
+        reading_ids = sorted(value_of)
+        contested.append(
+            ContestedSpan(
+                axis=axis,
+                reading_ids=reading_ids,
+                values_m=[value_of[reading_id] for reading_id in reading_ids],
+                proposal_ids=sorted(proposal_ids),
+            )
+        )
+    return contested
+
+
 def _solve_group_geometry(
     group_proposals: Sequence[VisionProposal],
     *,
@@ -1159,11 +1319,21 @@ def _solve_group_geometry(
     declared_spans: Mapping[str, list[tuple[tuple[float, float], tuple[float, float]]]]
     | None = None,
     freeform_ids: frozenset[str] = frozenset(),
-) -> tuple[_GroupState | None, list[SpanConstraint], list[_AppliedSpan], list[str]]:
+) -> tuple[
+    _GroupState | None,
+    list[SpanConstraint],
+    list[_AppliedSpan],
+    list[UnappliedReadingReport],
+    list[ContestedSpan],
+]:
     """Resolve a geometria de um grupo: topologia, bandas, cotas e espelho para CAD.
 
     Devolve estado `None` quando nenhuma cota confirmada alcança o grupo — o chamador
     decide o blocker; `unapplied` sobrevive para o relatório mesmo nesse caso.
+
+    Os vãos em disputa saem daqui, e não do agregado do chamador, porque o id de faixa é
+    local ao grupo: comparar faixas de grupos distintos acusaria disputa entre cotas que
+    nunca partilharam incógnita.
     """
     topology = build_topology(
         group_proposals,
@@ -1195,7 +1365,8 @@ def _solve_group_geometry(
 
     constraints: list[SpanConstraint] = []
     applied_spans: list[_AppliedSpan] = []
-    unapplied: list[str] = []
+    unapplied: list[UnappliedReadingReport] = []
+    span_outcomes: list[tuple[SpanConstraint, _AppliedSpan]] = []
     for reading_id, targets in sorted(span_targets.items()):
         outcomes = _span_from_reading(
             readings[reading_id],
@@ -1209,18 +1380,27 @@ def _solve_group_geometry(
             declared_spans_px=(declared_spans or {}).get(reading_id, []),
             freeform_ids=freeform_ids,
         )
-        if not outcomes:
-            unapplied.append(reading_id)
+        if isinstance(outcomes, str):
+            unapplied.append(
+                UnappliedReadingReport(
+                    reading_id=reading_id,
+                    cause=outcomes,
+                    target_proposal_ids=list(targets),
+                )
+            )
             continue
         for constraint, applied in outcomes:
             constraints.append(constraint)
             applied_spans.append(applied)
+            span_outcomes.append((constraint, applied))
+
+    contested = _contested_spans(span_outcomes)
 
     solved = solve_geometry(
         topology, bands, constraints, order_tie_tolerance_px=order_tie_tolerance_px
     )
     if solved is None:
-        return None, constraints, applied_spans, unapplied
+        return None, constraints, applied_spans, unapplied, contested
 
     # Espelhamento imagem→CAD: pixel cresce para baixo, o desenho cresce para cima.
     # Normalizar para origem (0,0) no canto inferior esquerdo remove translações
@@ -1244,7 +1424,7 @@ def _solve_group_geometry(
         y_map=(-scale_y, max_y - offset_y),
         radius_scale=(abs(scale_x) + abs(scale_y)) / 2,
     )
-    return state, constraints, applied_spans, unapplied
+    return state, constraints, applied_spans, unapplied, contested
 
 
 def solve_trace(
@@ -1400,16 +1580,18 @@ def solve_trace(
 
     freeform_ids = frozenset(acceptance.freeform_proposal_ids)
     plan_proposals = [proposal for proposal in accepted if group_of[proposal.id] == ""]
-    plan_state, _plan_constraints, applied_spans, unapplied = _solve_group_geometry(
-        plan_proposals,
-        readings=readings,
-        span_targets=span_targets_by_group.get("", {}),
-        proposal_by_id=proposal_by_id,
-        keep_apart=acceptance.keep_apart_separations(),
-        image_width=image_width,
-        image_height=image_height,
-        declared_spans=declared_spans,
-        freeform_ids=freeform_ids,
+    plan_state, _plan_constraints, applied_spans, unapplied, contested_spans = (
+        _solve_group_geometry(
+            plan_proposals,
+            readings=readings,
+            span_targets=span_targets_by_group.get("", {}),
+            proposal_by_id=proposal_by_id,
+            keep_apart=acceptance.keep_apart_separations(),
+            image_width=image_width,
+            image_height=image_height,
+            declared_spans=declared_spans,
+            freeform_ids=freeform_ids,
+        )
     )
     if plan_state is None:
         return TraceSolveResult(
@@ -1417,7 +1599,8 @@ def solve_trace(
             dataset_id=packet.dataset_id,
             feature_id=feature_id,
             blockers=["NO_CONFIRMED_MEASUREMENT_REACHES_TRACE"],
-            unapplied_reading_ids=unapplied,
+            unapplied_reading_ids=[report.reading_id for report in unapplied],
+            unapplied_readings=unapplied,
             residuals=[],
             exact_entity_count=0,
             approximate_entity_count=0,
@@ -1442,19 +1625,23 @@ def solve_trace(
                 plan_scale_m_per_px=plan_state.scale_m_per_px,
             )
         else:
-            maybe_state, _detail_constraints, detail_spans, detail_unapplied = (
-                _solve_group_geometry(
-                    members,
-                    readings=readings,
-                    span_targets=span_targets_by_group.get(detail_group.detail_id, {}),
-                    proposal_by_id=proposal_by_id,
-                    keep_apart=acceptance.keep_apart_separations(),
-                    image_width=image_width,
-                    image_height=image_height,
-                    tolerance_ratio=group_tolerance,
-                    declared_spans=declared_spans,
-                    freeform_ids=freeform_ids,
-                )
+            (
+                maybe_state,
+                _detail_constraints,
+                detail_spans,
+                detail_unapplied,
+                detail_contested,
+            ) = _solve_group_geometry(
+                members,
+                readings=readings,
+                span_targets=span_targets_by_group.get(detail_group.detail_id, {}),
+                proposal_by_id=proposal_by_id,
+                keep_apart=acceptance.keep_apart_separations(),
+                image_width=image_width,
+                image_height=image_height,
+                tolerance_ratio=group_tolerance,
+                declared_spans=declared_spans,
+                freeform_ids=freeform_ids,
             )
             if maybe_state is None:
                 return TraceSolveResult(
@@ -1462,7 +1649,10 @@ def solve_trace(
                     dataset_id=packet.dataset_id,
                     feature_id=feature_id,
                     blockers=[f"DETAIL_GROUP_WITHOUT_APPLIED_READING:{detail_group.detail_id}"],
-                    unapplied_reading_ids=[*unapplied, *detail_unapplied],
+                    unapplied_reading_ids=[
+                        report.reading_id for report in (*unapplied, *detail_unapplied)
+                    ],
+                    unapplied_readings=[*unapplied, *detail_unapplied],
                     residuals=[],
                     exact_entity_count=0,
                     approximate_entity_count=0,
@@ -1472,6 +1662,7 @@ def solve_trace(
             detail_state = maybe_state
             applied_spans.extend(detail_spans)
             unapplied.extend(detail_unapplied)
+            contested_spans.extend(detail_contested)
         detail_states[detail_group.detail_id] = detail_state
         for member in members:
             _state_of[member.id] = detail_state
@@ -1671,6 +1862,7 @@ def solve_trace(
     # Uma leitura com vãos declarados aplica o mesmo valor em mais de um trecho (as duas
     # pontas cheias do painel); cada ocorrência precisa de constraint e DIMENSION próprias.
     span_occurrences: dict[str, int] = {}
+    applied_span_reports: list[AppliedSpanReport] = []
     for span in applied_spans:
         occurrence = span_occurrences.get(span.reading_id, 0)
         span_occurrences[span.reading_id] = occurrence + 1
@@ -1693,6 +1885,24 @@ def solve_trace(
         else:
             first = span_state.cad_position[span.first_junction]
             second = span_state.cad_position[span.second_junction]
+        # Onde a cota ancorou, em metros da prancha: as duas pontas ao longo do eixo dela.
+        # `first`/`second` já estão no frame CAD (origem no canto inferior esquerdo), e o
+        # relatório sai ordenado porque "de onde até onde" não depende de qual ponta o
+        # traçado elegeu primeiro.
+        span_anchor_a = first.x if span.axis == "x" else first.y
+        span_anchor_b = second.x if span.axis == "x" else second.y
+        applied_span_reports.append(
+            AppliedSpanReport(
+                reading_id=span.reading_id,
+                axis=span.axis,
+                value_m=span.value_m,
+                start_m=min(span_anchor_a, span_anchor_b),
+                end_m=max(span_anchor_a, span_anchor_b),
+                proposal_id=span.proposal_id,
+                second_proposal_id=span.second_proposal_id,
+                gap=span.gap,
+            )
+        )
         actual = math.hypot(second.x - first.x, second.y - first.y)
         tolerance = _span_tolerance_m(span)
         residual = SolverResidual(
@@ -2074,7 +2284,13 @@ def solve_trace(
             anchor_b = note_state.cad_position[note_segments[0][1]]
             length = math.hypot(anchor_b.x - anchor_a.x, anchor_b.y - anchor_a.y)
             if length < 1e-9:
-                unapplied.append(reading_id)
+                unapplied.append(
+                    UnappliedReadingReport(
+                        reading_id=reading_id,
+                        cause="TRACE_NOTE_ZERO_LENGTH",
+                        target_proposal_ids=[base_target],
+                    )
+                )
                 continue
             unit_x = (anchor_b.x - anchor_a.x) / length
             unit_y = (anchor_b.y - anchor_a.y) / length
@@ -2098,7 +2314,13 @@ def solve_trace(
             )
             unit_x, unit_y = 1.0, 0.0
         else:
-            unapplied.append(reading_id)
+            unapplied.append(
+                UnappliedReadingReport(
+                    reading_id=reading_id,
+                    cause="TRACE_NOTE_UNSUPPORTED_GEOMETRY",
+                    target_proposal_ids=[base_target],
+                )
+            )
             continue
 
         rotation = math.atan2(unit_y, unit_x)
@@ -2201,16 +2423,22 @@ def solve_trace(
     # construída (o revisor precisa ver as duas), mas o traçado sai em conflito.
     blockers.extend(circle_conflicts)
 
-    for reading_id in unapplied:
+    for report in unapplied:
+        # A causa vem do ponto do descarte; o código da issue não muda (o consumidor dela
+        # continua o mesmo), só a frase deixa de ser fixa e passa a dizer o que consertar.
+        cause_phrase = UNAPPLIED_CAUSE_MESSAGES.get(
+            report.cause, "o traçado não encontrou vão ortogonal para a leitura"
+        )
         issues.append(
             Issue(
-                id=_uuid(packet.dataset_id, feature_id, f"issue:unapplied:{reading_id}"),
+                id=_uuid(packet.dataset_id, feature_id, f"issue:unapplied:{report.reading_id}"),
                 code="CONFIRMED_READING_NOT_APPLIED",
                 severity=IssueSeverity.WARNING,
                 message=(
-                    f"A leitura confirmada {reading_id} "
-                    f"({readings[reading_id].raw_text!r}) não pôde virar vão ortogonal "
-                    "no traçado; a geometria correspondente permanece aproximada — conferir."
+                    f"A leitura confirmada {report.reading_id} "
+                    f"({readings[report.reading_id].raw_text!r}) não pôde virar vão ortogonal "
+                    f"no traçado ({report.cause}): {cause_phrase}. A geometria correspondente "
+                    "permanece aproximada — conferir."
                 ),
             )
         )
@@ -2310,7 +2538,7 @@ def solve_trace(
         dataset_id=packet.dataset_id,
         feature_id=feature_id,
         title=title or packet.dataset_id.upper(),
-        unapplied=[readings[reading_id] for reading_id in unapplied],
+        unapplied=[readings[report.reading_id] for report in unapplied],
         approximate_count=approximate_count,
         general_notes=general_notes,
         # O carimbo começa abaixo de tudo que as cotas e notas já ocupam sob o desenho.
@@ -2389,7 +2617,10 @@ def solve_trace(
         dataset_id=packet.dataset_id,
         feature_id=feature_id,
         blockers=blockers,
-        unapplied_reading_ids=unapplied,
+        unapplied_reading_ids=[report.reading_id for report in unapplied],
+        unapplied_readings=unapplied,
+        contested_spans=contested_spans,
+        applied_spans=applied_span_reports,
         residuals=residuals,
         exact_entity_count=exact_count,
         approximate_entity_count=approximate_count,

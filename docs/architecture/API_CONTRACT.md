@@ -459,10 +459,42 @@ chamada reenfileira.
 
 Polling do ciclo `QUEUED → RUNNING → COMPLETED|FAILED`. Retorna `status`, `solve_status`
 (`solved_unapproved`, `review_required` ou `conflict`), `blockers`,
-`unapplied_reading_ids`, `residual_summary`, `exact_entity_count`,
-`approximate_entity_count`, `note_count`, `scale_m_per_px`, `detail_group_scales`,
-`result_scene_revision_id`, `result_scene_version`, `result_review_version` e
-`failure_code`. Registro de outro tenant retorna `404`.
+`unapplied_reading_ids`, `unapplied_readings`, `contested_spans`, `applied_spans`,
+`residual_summary`, `exact_entity_count`, `approximate_entity_count`, `note_count`,
+`scale_m_per_px`, `detail_group_scales`, `result_scene_revision_id`,
+`result_scene_version`, `result_review_version` e `failure_code`. Registro de outro tenant
+retorna `404`.
+
+Os três campos de diagnóstico são **aditivos** (F-025): `unapplied_reading_ids` continua
+existindo, com o mesmo conteúdo e a mesma ordem, e `blockers`, `residual_summary` e
+`solve_status` não mudam por causa deles. Diagnóstico não é portão — quem decide o
+desfecho continua sendo o resíduo e os blockers de sempre. Registro anterior à mudança
+responde com as três listas vazias.
+
+- `unapplied_readings`: uma entrada por leitura confirmada que não virou vão, com
+  `reading_id`, `cause` (código estável, mesmo formato de `Issue.code`) e
+  `target_proposal_ids` (o que a associação apontava). Para todo índice `i`,
+  `unapplied_reading_ids[i] == unapplied_readings[i].reading_id`.
+- `contested_spans`: os vãos disputados por duas ou mais leituras confirmadas, com `axis`,
+  `reading_ids` (ordenados), `values_m` (na mesma ordem de `reading_ids`) e
+  `proposal_ids`. Só aparece quando a divergência entre os valores escritos excede a
+  tolerância da cota mais grosseira do par.
+- `applied_spans`: onde cada cota aplicada ancorou, com `reading_id`, `axis`, `value_m`,
+  `start_m`/`end_m` (coordenada ao longo do eixo no frame CAD da prancha, com
+  `start_m <= end_m`), `proposal_id`, `second_proposal_id` e `gap`.
+
+Os códigos de causa, que o [Trace Stage](TRACE_STAGE.md) descreve no estágio:
+
+| `cause` | O que aconteceu | O que costuma consertar |
+|---|---|---|
+| `TRACE_SPAN_VALUE_OR_DECISION_MISSING` | A leitura chegou sem valor em metros ou sem decisão humana completa | Rever a leitura na revisão de cotas |
+| `TRACE_SPAN_AXIS_UNDECLARED` | O vão não declara eixo (`width`/`height`) | Declarar o eixo da cota |
+| `TRACE_SPAN_EDGE_NOT_FOUND` | Nenhuma aresta perpendicular ao eixo foi encontrada para uma das âncoras | Reapontar a âncora do vão |
+| `TRACE_SPAN_SAME_BAND` | As duas âncoras caíram na mesma faixa | Declarar `keep_apart_pairs` no eixo do problema |
+| `TRACE_TARGET_AS_DRAWN` | O alvo está em `freeform_proposal_ids`, e cota de elemento único não amarra forma livre | Tirar o alvo de `freeform` ou declarar o vão por âncoras |
+| `TRACE_SPAN_NOT_ORTHOGONAL` | O elemento não tem segmento ortogonal compatível com o eixo da cota | Associar a cota ao trecho ortogonal certo |
+| `TRACE_NOTE_ZERO_LENGTH` | O segmento âncora da nota tem comprimento zero | Reapontar a nota |
+| `TRACE_NOTE_UNSUPPORTED_GEOMETRY` | A geometria do alvo não suporta nota ancorada | Reapontar a nota para um elemento com aresta |
 
 `blockers` são os códigos estáveis do traçado (por exemplo
 `TRACE_HUMAN_CONFIRMATION_REQUIRED:<reading_id>`,
