@@ -291,6 +291,38 @@ export function suggestedAxisHint(evidence: Reading["evidence"]): string | null 
   return null;
 }
 
+/**
+ * Padrão de elevação escrito na folha: `h` seguido de `=`, com espaço opcional e em
+ * qualquer posição do texto ("muro Vizinho h=3,80", "H = 2,50"). A fronteira de palavra
+ * existe para o `h` ser palavra e não sílaba de outra.
+ */
+const ELEVATION_PATTERN = /\bh\s*=/i;
+
+/**
+ * Sugestão de que a leitura é anotação da folha — um recado escrito, não a medida de um
+ * elemento. Dois sinais independentes, cada um com a sua frase, para o revisor saber de
+ * ONDE veio a sugestão: o pipeline classificou a linha como recado, ou o próprio texto
+ * declara altura de elemento.
+ *
+ * Sugerir não é decidir: a opção só nasce marcada no formulário. A justificativa
+ * continua obrigatória, os candidatos continuam na lista e trocar a seleção à mão vale
+ * mais do que qualquer sugestão daqui.
+ *
+ * A heurística de texto é deliberadamente estreita. `h=` é inequívoco; "mureta 1,54" não
+ * é — palavra de elemento vertical seguida de número puro continua sendo cota candidata,
+ * e adivinhar classificação a partir dela seria inventar o que o revisor não escreveu.
+ * Esse caso fica para o sinal do modelo.
+ */
+export function suggestedAnnotationHint(reading: Reading): string | null {
+  if (reading.annotation_suggested === true) {
+    return "sugestão: anotação da folha (o modelo leu como recado, não como cota)";
+  }
+  if (ELEVATION_PATTERN.test(reading.raw_text)) {
+    return "sugestão: anotação da folha (o texto declara altura de elemento)";
+  }
+  return null;
+}
+
 function capitalise(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }

@@ -64,6 +64,7 @@ import {
   regionKindLabel,
   relationLabel,
   reviewBlockerLabel,
+  suggestedAnnotationHint,
   suggestedAxisHint,
   traceBlockerLabel,
 } from "./labels";
@@ -172,6 +173,27 @@ const MEASUREMENT_KINDS = [
  * O valor nunca é enviado — não colide com o padrão `vp_...`.
  */
 const ANNOTATION_OPTION = "annotation:no-element";
+
+/**
+ * Com que opção o formulário de decisão NASCE ao abrir uma leitura.
+ *
+ * Sugerir não é decidir: a pré-seleção só muda o ponto de partida. A justificativa
+ * continua obrigatória, os candidatos continuam todos na lista, e trocar a opção à mão
+ * vale mais do que a sugestão — o revisor é quem declara.
+ *
+ * Leitura já decidida fica exatamente como estava: o registro dela é outro bloco da
+ * tela, e a correção declarada preenche o formulário pelos valores vigentes
+ * (`startRectification`), nunca por palpite.
+ */
+function initialAssociationValue(
+  reading: ReviewReading | null | undefined,
+  firstCandidateId: string,
+): string {
+  if (reading && !reading.decision && suggestedAnnotationHint(reading)) {
+    return ANNOTATION_OPTION;
+  }
+  return firstCandidateId;
+}
 
 /** A cota escrita usa vírgula; a API exige ponto e conta as casas escritas. */
 function parseWrittenValue(
@@ -1006,7 +1028,9 @@ export function CroquiApp({
       const firstCandidate = current.associations.candidates.find(
         (candidate) => candidate.reading_id === reading?.id,
       );
-      setSelectedProposalId(firstCandidate?.proposal_id ?? "");
+      setSelectedProposalId(
+        initialAssociationValue(reading, firstCandidate?.proposal_id ?? ""),
+      );
       const firstProposal = current.proposals?.proposals.find(
         (proposal) =>
           !current.proposal_decisions.some(
@@ -1188,7 +1212,7 @@ export function CroquiApp({
 
   useEffect(() => {
     const candidate = candidates[0]?.proposal_id ?? "";
-    setSelectedProposalId(candidate);
+    setSelectedProposalId(initialAssociationValue(selectedReading, candidate));
     setCorrection("");
     setCorrectionValue("");
     setCorrectionUnit("m");
@@ -2888,6 +2912,14 @@ export function CroquiApp({
                           </option>
                         ))}
                       </select>
+                      {/* Dica lida do sinal do pipeline ou do próprio texto da cota. A
+                          opção nasce marcada, e nada mais: confirmar continua exigindo
+                          justificativa escrita, e trocar a seleção desfaz a sugestão. */}
+                      {suggestedAnnotationHint(selectedReading) ? (
+                        <small className="field-hint">
+                          {suggestedAnnotationHint(selectedReading)}
+                        </small>
+                      ) : null}
                     </label>
                     <p className="reading-current">
                       Proposta atual: <strong>{selectedReading.raw_text}</strong>

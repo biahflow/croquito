@@ -560,12 +560,26 @@ def build_provider_review_snapshot(
                 ocr_ran = True
     for position, (observation, counterpart) in enumerate(pairs, start=1):
         if observation.normalized_value is None or observation.target_hint is None:
-            safety_notes.append(f"READING_{position}_INCOMPLETE")
+            # Recado sem valor é insumo da rodada seguinte (quantos "note" o modelo
+            # emitiu sem número), não o mesmo silêncio do caso geral incompleto.
+            safety_notes.append(
+                f"READING_{position}_NOTE_WITHOUT_VALUE"
+                if observation.kind == "note"
+                else f"READING_{position}_INCOMPLETE"
+            )
             continue
         target_hint = observation.target_hint
+        annotation_suggested = observation.kind == "note"
         try:
             unit = _unit(observation.unit)
-            kind = _measurement_kind(observation.kind)
+            # kind="note" completo é recado da folha, não cota: o eixo é irrelevante
+            # para anotação, e LENGTH é o kind neutro que nunca cria constraint sem
+            # eixo no traçado. count/unknown seguem rejeitados por _measurement_kind.
+            kind = (
+                MeasurementKind.LENGTH
+                if annotation_suggested
+                else _measurement_kind(observation.kind)
+            )
         except ProviderContractError:
             safety_notes.append(f"READING_{position}_UNSUPPORTED_UNIT_OR_KIND")
             continue
@@ -619,6 +633,7 @@ def build_provider_review_snapshot(
                 extractor=extractor,
                 extractor_version=extractor_version,
                 provider_lineage=lineage,
+                annotation_suggested=annotation_suggested,
                 # Sem comparação dupla não existe leitura `proposed`: o que um único braço
                 # entrega é observação sem corroboração, e a revisão precisa ver isso.
                 status=(

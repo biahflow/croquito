@@ -105,6 +105,10 @@ Regras:
 - `normalized_value=null` quando ilegível.
 - Alternativas são explicitadas; nenhuma escolha é escondida.
 - `target_hint` é hipótese, não ID geométrico definitivo.
+- `kind="note"` completo (`normalized_value` e `target_hint` presentes) vira leitura
+  no pacote de revisão com `annotation_suggested=true` e `kind` neutro (`length`);
+  sem valor, é descartada com `READING_{n}_NOTE_WITHOUT_VALUE`. `count` e `unknown`
+  continuam descartados com `READING_{n}_UNSUPPORTED_UNIT_OR_KIND`.
 
 ### `semantic-elements@1.1.1`
 

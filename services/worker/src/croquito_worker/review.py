@@ -125,6 +125,10 @@ class DimensionReading(ReviewModel):
     extractor: str = Field(min_length=1, max_length=80)
     extractor_version: str = Field(min_length=1, max_length=80)
     provider_lineage: list[ProviderLineage] = Field(default_factory=list, max_length=4)
+    # Sinal do provider (kind="note" completo). Default False preserva pacotes
+    # persistidos antigos em ReviewPacket.model_validate(record.packet_json) — nenhum
+    # outro campo muda.
+    annotation_suggested: bool = False
     status: ReadingStatus
     decision: HumanDecision | None = None
 

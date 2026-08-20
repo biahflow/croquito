@@ -174,6 +174,34 @@ digest/página, decisões imutáveis de propostas e a calibração corrente. Geo
 de proposta permanecem em `source_image_pixels`; imagens e URLs privadas não são
 incluídas nesse objeto.
 
+Cada leitura de `packet.readings` carrega `annotation_suggested`: `true` quando o
+pipeline leu a linha como **anotação da folha** — um recado escrito, não a medida de um
+elemento:
+
+```json
+{
+  "packet": {
+    "readings": [
+      {
+        "id": "rd_...",
+        "raw_text": "muro Vizinho h=3,80",
+        "kind": "length",
+        "status": "proposed",
+        "value_si": "3.80",
+        "unit": "m",
+        "annotation_suggested": true
+      }
+    ]
+  }
+}
+```
+
+É sugestão observada, nunca decisão: ela não confirma a leitura, não substitui
+`"annotation": true` no comando de decisão e não dispensa a justificativa escrita. A
+tela pode nascer com a opção de anotação pré-selecionada, e trocar a seleção à mão
+continua valendo mais do que a sugestão. Pacote persistido antes do campo responde sem
+ele, e o cliente trata a ausência como `false`.
+
 `required_criteria` lista os critérios de escopo declarados para o caso quando a
 evidência foi carregada, como pares `{code, text}`:
 

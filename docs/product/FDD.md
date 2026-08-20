@@ -162,6 +162,12 @@ texto; a interface não desabilita o botão em silêncio. O texto gravado é aud
 palavra do revisor, no mesmo padrão já usado pelo aceite em lote e pela decisão
 individual de proposta geométrica.
 
+Leitura que o pipeline reconhece como recado da folha — sinal `annotation_suggested`
+do pacote ou o padrão `h=` no próprio texto — abre o formulário com "Anotação da
+folha" pré-selecionada e uma frase dizendo de onde veio a sugestão (F-021). Sugerir
+não é decidir: os candidatos continuam todos na lista, trocar a seleção à mão vale
+mais que a sugestão, e a justificativa continua nascendo vazia.
+
 #### Corrigir uma decisão já registrada
 
 Leitura decidida deixa de mostrar os botões de decisão e passa a mostrar o registro:

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+from base64 import b64encode
 from collections.abc import Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -635,6 +636,119 @@ def test_single_extractor_openai_survives_anthropic_extraction_failure(tmp_path:
     assert snapshot.packet.readings[0].provider_lineage[0].provider == "openai"
     assert snapshot.packet.readings[0].extractor == "openai"
     assert "PROVIDER_FALLBACK_SINGLE_EXTRACTOR_OPENAI" in snapshot.packet.safety_notes
+
+
+def _note_reading(*, with_value: bool = True) -> MeasurementExtractionOutput:
+    """Recado da folha: kind="note", com ou sem valor — o filtro de completude decide o destino."""
+    return MeasurementExtractionOutput(
+        readings=[
+            MeasurementReadingOutput(
+                raw_text="ver detalhe A",
+                kind="note",
+                normalized_value=Decimal("1") if with_value else None,
+                unit="m",
+                written_precision=0,
+                bbox=NormalizedBox(left=0.08, top=0.12, right=0.20, bottom=0.18),
+                target_hint=(
+                    TargetHint(entity_label="campo", feature="observação") if with_value else None
+                ),
+                legibility="clear",
+            )
+        ]
+    )
+
+
+def _count_reading() -> MeasurementExtractionOutput:
+    """kind="count" completo: continua fora do enum de MeasurementKind."""
+    return MeasurementExtractionOutput(
+        readings=[
+            MeasurementReadingOutput(
+                raw_text="3 un",
+                kind="count",
+                normalized_value=Decimal("3"),
+                unit="m",
+                written_precision=0,
+                bbox=NormalizedBox(left=0.08, top=0.12, right=0.20, bottom=0.18),
+                target_hint=TargetHint(entity_label="campo", feature="quantidade"),
+                legibility="clear",
+            )
+        ]
+    )
+
+
+def test_note_reading_with_value_enters_the_packet_with_annotation_suggested(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        openai_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED}
+    )
+    cast(FixtureProviderAdapter, suite.anthropic).outputs[PromptTask.MEASUREMENT_EXTRACTION] = (
+        _note_reading()
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.packet.readings[0].annotation_suggested is True
+    assert snapshot.packet.readings[0].kind is MeasurementKind.LENGTH
+    assert not any(note.endswith("_NOTE_WITHOUT_VALUE") for note in snapshot.packet.safety_notes)
+
+
+def test_note_reading_without_value_is_discarded_with_its_own_note(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        openai_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED}
+    )
+    cast(FixtureProviderAdapter, suite.anthropic).outputs[PromptTask.MEASUREMENT_EXTRACTION] = (
+        _note_reading(with_value=False)
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.packet.readings == []
+    assert "READING_1_NOTE_WITHOUT_VALUE" in snapshot.packet.safety_notes
+    assert "READING_1_INCOMPLETE" not in snapshot.packet.safety_notes
+
+
+def test_count_reading_is_still_discarded_as_unsupported_kind(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        openai_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED}
+    )
+    cast(FixtureProviderAdapter, suite.anthropic).outputs[PromptTask.MEASUREMENT_EXTRACTION] = (
+        _count_reading()
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.packet.readings == []
+    assert "READING_1_UNSUPPORTED_UNIT_OR_KIND" in snapshot.packet.safety_notes
+
+
+def test_ordinary_reading_does_not_suggest_annotation(tmp_path: Path) -> None:
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        openai_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED}
+    )
+    cast(FixtureProviderAdapter, suite.anthropic).outputs[PromptTask.MEASUREMENT_EXTRACTION] = (
+        _distinct_reading("25,90 m")
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.packet.readings[0].annotation_suggested is False
 
 
 def test_geometry_extraction_falls_back_to_openai_without_promoting_proposals(

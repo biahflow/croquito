@@ -18,6 +18,7 @@ import {
   regionKindLabel,
   relationLabel,
   reviewBlockerLabel,
+  suggestedAnnotationHint,
   suggestedAxisHint,
   traceBlockerLabel,
 } from "./labels";
@@ -555,5 +556,58 @@ describe("suggestedAxisHint", () => {
         evidence({ left: 0, top: 0, right: 400, bottom: 40 }, "page_points"),
       ),
     ).toBeNull();
+  });
+});
+
+describe("suggestedAnnotationHint", () => {
+  type Reading = Review["packet"]["readings"][number];
+
+  function reading(overrides: Partial<Reading> = {}): Reading {
+    return {
+      id: "rd_0000000000000001",
+      raw_text: "25,90",
+      kind: "width",
+      status: "proposed",
+      ...overrides,
+    };
+  }
+
+  it("names the model as the source when the pipeline read the line as a note", () => {
+    expect(
+      suggestedAnnotationHint(reading({ annotation_suggested: true })),
+    ).toBe("sugestão: anotação da folha (o modelo leu como recado, não como cota)");
+  });
+
+  it("names the text as the source when the reading declares an elevation", () => {
+    expect(suggestedAnnotationHint(reading({ raw_text: "muro Vizinho h=3,80" }))).toBe(
+      "sugestão: anotação da folha (o texto declara altura de elemento)",
+    );
+  });
+
+  it("reads the elevation pattern with spaces and in upper case", () => {
+    expect(suggestedAnnotationHint(reading({ raw_text: "H = 2,50" }))).toBe(
+      "sugestão: anotação da folha (o texto declara altura de elemento)",
+    );
+  });
+
+  /** Cota escrita continua sendo cota: sem sinal nenhum, não há sugestão. */
+  it("says nothing about a plain written dimension", () => {
+    expect(suggestedAnnotationHint(reading())).toBeNull();
+    // Palavra de elemento vertical com número puro NÃO é o padrão inequívoco.
+    expect(suggestedAnnotationHint(reading({ raw_text: "mureta 1,54" }))).toBeNull();
+    // O `h` precisa ser palavra, não sílaba de outra.
+    expect(suggestedAnnotationHint(reading({ raw_text: "largura ph=1" }))).toBeNull();
+  });
+
+  /**
+   * Pacote antigo responde sem o campo, e um pacote novo pode trazê-lo `false`: a
+   * heurística de texto continua valendo por si, sem reprocessar a revisão.
+   */
+  it("still reads the text when the packet says the model saw no note", () => {
+    expect(
+      suggestedAnnotationHint(
+        reading({ annotation_suggested: false, raw_text: "muro Vizinho h=3,80" }),
+      ),
+    ).toBe("sugestão: anotação da folha (o texto declara altura de elemento)");
   });
 });

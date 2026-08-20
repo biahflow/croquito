@@ -1669,6 +1669,11 @@
       "DimensionReading": {
         "additionalProperties": false,
         "properties": {
+          "annotation_suggested": {
+            "default": false,
+            "title": "Annotation Suggested",
+            "type": "boolean"
+          },
           "decision": {
             "anyOf": [
               {
