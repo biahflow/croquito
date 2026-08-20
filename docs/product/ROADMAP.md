@@ -45,6 +45,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-020 | HIGH | READY_FOR_SPEC | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
 | F-021 | HIGH | READY_FOR_HUMAN_REVIEW | [Nota pré-classificada na decisão da leitura](../features/F-021-nota-pre-classificada/feature.md) |
 | F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |
+| F-023 | A DEFINIR | READY_FOR_SPEC | Survey Quality Score — nota do levantamento com recomendações de campo, agregando sinais existentes (blockers, leituras não aplicadas, corroboração, resíduos); calibrar com V14/V15/V16 (a definir em contrato) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -235,6 +236,13 @@ nominalmente, agora como [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md
 [F-022](../features/F-022-document-ai-braco-ocr/feature.md), ambas `HIGH` por decisão
 humana. F-018/F-019 permanecem na fila de propósito: o inventário de formas erradas da
 próxima rodada real, já com F-021+F-022 no ar, é o insumo dos seus specs.
+
+F-023 — Survey Quality Score — nasce em 2026-08-20, por seleção humana, na conversa que
+comparou a arquitetura do produto com uma proposta externa: o sistema já sabe quando o
+levantamento não sustenta o desenho (blockers, leituras não aplicadas, resíduos,
+corroboração), mas não devolve isso como nota com recomendações de campo ("meça a
+diagonal A–C"). Sequenciada de propósito DEPOIS da V16: o Document AI muda o que é
+"falta de dado", e V14/V15/V16 são as primeiras amostras de calibração.
 
 ## Agora — MVP privado
 
