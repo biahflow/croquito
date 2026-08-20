@@ -104,11 +104,19 @@ Regras:
 - `raw_text` é literal.
 - `normalized_value=null` quando ilegível.
 - Alternativas são explicitadas; nenhuma escolha é escondida.
-- `target_hint` é hipótese, não ID geométrico definitivo.
-- `kind="note"` completo (`normalized_value` e `target_hint` presentes) vira leitura
-  no pacote de revisão com `annotation_suggested=true` e `kind` neutro (`length`);
-  sem valor, é descartada com `READING_{n}_NOTE_WITHOUT_VALUE`. `count` e `unknown`
-  continuam descartados com `READING_{n}_UNSUPPORTED_UNIT_OR_KIND`.
+- `target_hint` é hipótese, não ID geométrico definitivo, e é opcional: quem amarra a
+  leitura à geometria é a associação explícita do revisor por proximidade
+  (`association.py`), que nunca leu o hint.
+- `kind="note"` completo (`normalized_value` presente) vira leitura no pacote de
+  revisão com `annotation_suggested=true` e `kind` neutro (`length`); sem valor, é
+  descartada com `READING_{n}_NOTE_WITHOUT_VALUE`. `count` e `unknown` continuam
+  descartados com `READING_{n}_UNSUPPORTED_UNIT_OR_KIND`.
+- `normalized_value=null` é o único teste fatal do funil (`READING_{n}_INCOMPLETE`,
+  ou `READING_{n}_NOTE_WITHOUT_VALUE` quando `kind="note"`). Com valor presente e
+  `target_hint=null`, a leitura entra no pacote como status ambíguo normal, com
+  `target_hint=null` e a nota `READING_{n}_WITHOUT_TARGET_HINT` — os dois sinais
+  (`annotation_suggested` e a nota de hint) coexistem quando `kind="note"` (F-024,
+  2026-08-20: 12 de 13 cotas de chão claras da V16 caíam só por falta do hint).
 
 ### `semantic-elements@1.1.1`
 

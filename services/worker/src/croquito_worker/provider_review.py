@@ -559,7 +559,7 @@ def build_provider_review_snapshot(
                 ocr_lines = list(ocr_execution.output.lines)
                 ocr_ran = True
     for position, (observation, counterpart) in enumerate(pairs, start=1):
-        if observation.normalized_value is None or observation.target_hint is None:
+        if observation.normalized_value is None:
             # Recado sem valor é insumo da rodada seguinte (quantos "note" o modelo
             # emitiu sem número), não o mesmo silêncio do caso geral incompleto.
             safety_notes.append(
@@ -568,6 +568,12 @@ def build_provider_review_snapshot(
                 else f"READING_{position}_INCOMPLETE"
             )
             continue
+        if observation.target_hint is None:
+            # Hint é dica de leitura, não amarração: a associação explícita do revisor usa
+            # candidatos por proximidade (association.py), nunca o hint. Valor presente
+            # entra no pacote como status ambíguo normal; a nota avisa a ausência em vez
+            # de descartar a leitura (F-024).
+            safety_notes.append(f"READING_{position}_WITHOUT_TARGET_HINT")
         target_hint = observation.target_hint
         annotation_suggested = observation.kind == "note"
         try:
@@ -629,7 +635,11 @@ def build_provider_review_snapshot(
                 unit=unit,
                 kind=kind,
                 written_decimals=observation.written_precision,
-                target_hint=f"{target_hint.entity_label}: {target_hint.feature}",
+                target_hint=(
+                    f"{target_hint.entity_label}: {target_hint.feature}"
+                    if target_hint is not None
+                    else None
+                ),
                 extractor=extractor,
                 extractor_version=extractor_version,
                 provider_lineage=lineage,

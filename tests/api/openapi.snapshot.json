@@ -1725,10 +1725,17 @@
             "$ref": "#/components/schemas/ReadingStatus"
           },
           "target_hint": {
-            "maxLength": 120,
-            "minLength": 1,
-            "title": "Target Hint",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Hint"
           },
           "unit": {
             "$ref": "#/components/schemas/UnitCode"
@@ -1759,7 +1766,6 @@
           "unit",
           "kind",
           "written_decimals",
-          "target_hint",
           "extractor",
           "extractor_version",
           "status"

@@ -104,8 +104,9 @@ from croquito_worker.providers import (
     embeddings_input_digest,
     image_text_input_digest,
 )
-from croquito_worker.review import ReadingStatus
+from croquito_worker.review import ReadingStatus, ReviewPacket
 from croquito_worker.synthetic import render_synthetic_input
+from tests.bundles import build_packet
 
 
 class _FakeGcpCredentials:
@@ -662,6 +663,26 @@ def _note_reading(*, with_value: bool = True) -> MeasurementExtractionOutput:
     )
 
 
+def _reading_without_target_hint(
+    *, kind: str = "width", with_value: bool = True
+) -> MeasurementExtractionOutput:
+    """Cota legível com o hint ausente: dica é nota, não amarração (F-024)."""
+    return MeasurementExtractionOutput(
+        readings=[
+            MeasurementReadingOutput(
+                raw_text="3,20 m",
+                kind=kind,
+                normalized_value=Decimal("3.20") if with_value else None,
+                unit="m",
+                written_precision=2,
+                bbox=NormalizedBox(left=0.08, top=0.12, right=0.20, bottom=0.18),
+                target_hint=None,
+                legibility="clear",
+            )
+        ]
+    )
+
+
 def _count_reading() -> MeasurementExtractionOutput:
     """kind="count" completo: continua fora do enum de MeasurementKind."""
     return MeasurementExtractionOutput(
@@ -718,6 +739,79 @@ def test_note_reading_without_value_is_discarded_with_its_own_note(tmp_path: Pat
     assert snapshot.packet.readings == []
     assert "READING_1_NOTE_WITHOUT_VALUE" in snapshot.packet.safety_notes
     assert "READING_1_INCOMPLETE" not in snapshot.packet.safety_notes
+
+
+def test_reading_with_value_and_without_target_hint_enters_the_packet(tmp_path: Path) -> None:
+    """12 de 13 cotas de chão da V16 caíram só por falta do hint — dica, não amarração."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        openai_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED}
+    )
+    cast(FixtureProviderAdapter, suite.anthropic).outputs[PromptTask.MEASUREMENT_EXTRACTION] = (
+        _reading_without_target_hint()
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert len(snapshot.packet.readings) == 1
+    assert snapshot.packet.readings[0].target_hint is None
+    assert "READING_1_WITHOUT_TARGET_HINT" in snapshot.packet.safety_notes
+    assert not any(note.endswith("_INCOMPLETE") for note in snapshot.packet.safety_notes)
+
+
+def test_reading_without_value_stays_discarded_as_incomplete(tmp_path: Path) -> None:
+    """Sem valor o comportamento atual segue intacto — o hint nunca foi o teste fatal."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        openai_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED}
+    )
+    cast(FixtureProviderAdapter, suite.anthropic).outputs[PromptTask.MEASUREMENT_EXTRACTION] = (
+        _reading_without_target_hint(with_value=False)
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert snapshot.packet.readings == []
+    assert "READING_1_INCOMPLETE" in snapshot.packet.safety_notes
+    assert not any(note.endswith("_WITHOUT_TARGET_HINT") for note in snapshot.packet.safety_notes)
+
+
+def test_note_reading_without_target_hint_keeps_both_signals(tmp_path: Path) -> None:
+    """kind="note" completo sem hint: annotation_suggested E a nota de hint coexistem."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    suite = _fallback_suite(
+        openai_failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED}
+    )
+    cast(FixtureProviderAdapter, suite.anthropic).outputs[PromptTask.MEASUREMENT_EXTRACTION] = (
+        _reading_without_target_hint(kind="note")
+    )
+
+    snapshot = build_provider_review_snapshot(
+        image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+    )
+
+    assert len(snapshot.packet.readings) == 1
+    assert snapshot.packet.readings[0].annotation_suggested is True
+    assert snapshot.packet.readings[0].target_hint is None
+    assert "READING_1_WITHOUT_TARGET_HINT" in snapshot.packet.safety_notes
+    assert not any(note.endswith("_NOTE_WITHOUT_VALUE") for note in snapshot.packet.safety_notes)
+
+
+def test_legacy_packet_with_target_hint_still_validates() -> None:
+    """Pacote persistido antes da F-024 tinha hint em toda leitura — o campo opcional segue
+    aceitando o valor antigo e o round-trip de (de)serialização não perde a dica."""
+    packet = build_packet(dataset_id="synthetic-provider-contract-v1", digest="b" * 64)
+
+    reloaded = ReviewPacket.model_validate(packet.model_dump(mode="json"))
+
+    assert reloaded.readings[0].target_hint == "campo principal"
 
 
 def test_count_reading_is_still_discarded_as_unsupported_kind(tmp_path: Path) -> None:

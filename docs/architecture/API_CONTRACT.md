@@ -202,6 +202,14 @@ tela pode nascer com a opção de anotação pré-selecionada, e trocar a seleç
 continua valendo mais do que a sugestão. Pacote persistido antes do campo responde sem
 ele, e o cliente trata a ausência como `false`.
 
+`target_hint` de `packet.readings` é `string | null` (F-024, 2026-08-20): é dica de
+leitura para o revisor, não amarração — quem liga a leitura à geometria é a associação
+explícita por proximidade (`association.py`), que nunca lê o hint. Leitura com valor e
+sem hint entra no pacote com `target_hint: null` e a nota
+`READING_{n}_WITHOUT_TARGET_HINT` em vez de ser descartada; sem valor, o comportamento
+de descarte (`READING_{n}_INCOMPLETE`, ou `READING_{n}_NOTE_WITHOUT_VALUE` quando
+`kind="note"`) continua intacto.
+
 `required_criteria` lista os critérios de escopo declarados para o caso quando a
 evidência foi carregada, como pares `{code, text}`:
 

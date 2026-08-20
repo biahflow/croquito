@@ -121,7 +121,7 @@ class DimensionReading(ReviewModel):
     unit: UnitCode
     kind: MeasurementKind
     written_decimals: int = Field(ge=0, le=8)
-    target_hint: str = Field(min_length=1, max_length=120)
+    target_hint: str | None = Field(default=None, min_length=1, max_length=120)
     extractor: str = Field(min_length=1, max_length=80)
     extractor_version: str = Field(min_length=1, max_length=80)
     provider_lineage: list[ProviderLineage] = Field(default_factory=list, max_length=4)

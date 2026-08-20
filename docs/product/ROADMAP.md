@@ -45,6 +45,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-020 | HIGH | READY_FOR_SPEC | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
 | F-021 | HIGH | READY_FOR_HUMAN_REVIEW | [Nota pré-classificada na decisão da leitura](../features/F-021-nota-pre-classificada/feature.md) |
 | F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |
+| F-024 | HIGH | READY_FOR_HUMAN_REVIEW | [Leitura com valor não morre por falta de target_hint](../features/F-024-leitura-sem-target-hint/feature.md) |
 | F-023 | A DEFINIR | READY_FOR_SPEC | Survey Quality Score — nota do levantamento com recomendações de campo, agregando sinais existentes (blockers, leituras não aplicadas, corroboração, resíduos); calibrar com V14/V15/V16 (a definir em contrato) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
