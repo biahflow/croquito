@@ -1,7 +1,9 @@
-/* Folha da jornada de medição, inteira aninhada em `.jornada-medicao` (ADR-0028, D9). O
-   `@import` precisa ser a primeira regra do arquivo; a ordem não decide nada, porque o
-   escopo dá a ela uma classe a mais de especificidade. */
+/* Folhas das jornadas, cada uma inteira aninhada na classe da sua (`.jornada-medicao`,
+   ADR-0028 D9; `.jornada-orcamento`, F-020). O `@import` precisa ser a primeira regra do
+   arquivo; a ordem entre as duas não decide nada, porque o escopo dá a cada uma uma
+   classe a mais de especificidade e elas nunca se sobrepõem. */
 @import "./medicao/styles.css";
+@import "./orcamento/styles.css";
 
 /*
  * Identidade "Grafite técnico" do croquito. Os tokens abaixo são a paleta da marca, agora

@@ -57,6 +57,9 @@ describe("App", () => {
     expect(html).not.toContain("identity-pill");
     expect(html).not.toContain('aria-label="Jornadas"');
     expect(html).not.toContain(">Medição<");
+    expect(html).not.toContain(">Orçamento<");
+    // A promessa da porta cita a palavra "orçamento" e é texto aprovado: o que não pode
+    // aparecer é o BOTÃO da jornada, conferido acima na forma exata do elemento.
     expect(html).toContain("Do croqui ao orçamento.");
   });
 
@@ -97,6 +100,35 @@ describe("seletor de jornadas", () => {
     expect(html).toContain(">Plataforma<");
     expect(html).toContain(">Croqui<");
     expect(html).toContain(">Medição<");
+    expect(html).toContain(">Orçamento<");
+  });
+
+  /**
+   * "Orçamento é jornada, não modo da medição" (Design Approval Package da F-020): o
+   * terceiro botão fica ao lado de Croqui e Medição, e não atrás de um seletor dentro da
+   * tela ambígua que originou a feature. Ele é INCONDICIONAL como os outros dois — qual
+   * papel autoriza a jornada é decisão humana ainda aberta, e escondê-lo por um papel
+   * que ninguém escolheu seria tomá-la no cliente. Quem autoriza é o backend.
+   */
+  it("Orçamento é o terceiro botão, sem depender de papel nenhum", () => {
+    const html = renderToStaticMarkup(
+      <JourneySwitch route={CROQUI} roles={[]} onOpen={() => {}} />,
+    );
+
+    expect(html).toContain(">Orçamento<");
+    expect(html).not.toContain("disabled");
+  });
+
+  it("a jornada do orçamento aberta é declarada em aria-current", () => {
+    const html = renderToStaticMarkup(
+      <JourneySwitch
+        route={{ kind: "orcamento", roundId: null }}
+        roles={[]}
+        onOpen={() => {}}
+      />,
+    );
+
+    expect(html).toContain('aria-current="page">Orçamento<');
   });
 
   /**

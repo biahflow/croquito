@@ -1,9 +1,10 @@
 /**
- * Fronteira entre as jornadas do app: a revisão do croqui, a medição de obra e a
- * plataforma. Módulo puro, sem DOM e sem lib de router — quem tem `window` (a casca) lê a
- * query e pergunta aqui qual jornada abrir; quem navega pede a query canônica de volta.
+ * Fronteira entre as jornadas do app: a revisão do croqui, a medição de obra, o
+ * orçamento-base e a plataforma. Módulo puro, sem DOM e sem lib de router — quem tem
+ * `window` (a casca) lê a query e pergunta aqui qual jornada abrir; quem navega pede a
+ * query canônica de volta.
  *
- * Três regras carregam o desenho:
+ * Quatro regras carregam o desenho:
  *
  * - O croqui é a jornada sem marca. `?job=<uuid>` e a raiz da SPA continuam abrindo a
  *   revisão exatamente como antes desta casca existir — é o que preserva todo link já
@@ -11,6 +12,11 @@
  * - A medição é declarada por `?rodada`. Aí quem manda é a PRESENÇA do parâmetro, não o
  *   valor: `?rodada=` é "jornada de medição, nenhuma rodada aberta", um estado que
  *   precisa ser representável na URL para sobreviver a um reload.
+ * - O orçamento-base é declarado por `?orcamento`, pela mesma regra de presença. O
+ *   recurso aberto é a RODADA DE ORÇAMENTO (`/v1/estimate-rounds/{id}`), e a ausência
+ *   dela é `null` em vez do `""` que a medição usa: nesta jornada "nenhum orçamento
+ *   aberto" é um estado que a tela de abertura representa por inteiro, e um tipo que o
+ *   diz é melhor do que uma string vazia que cada leitor precisa lembrar de interpretar.
  * - A plataforma é declarada por `?plataforma`, também por PRESENÇA. Ela não tem recurso
  *   aberto — não existe "uma plataforma" para citar na query —, então `?plataforma=` é a
  *   forma única, e é a última a ser consultada: link de croqui e link de rodada já
@@ -33,6 +39,7 @@
 export type Route =
   | { readonly kind: "croqui"; readonly jobId: string }
   | { readonly kind: "medicao"; readonly roundId: string }
+  | { readonly kind: "orcamento"; readonly roundId: string | null }
   | { readonly kind: "plataforma" };
 
 /** Nome histórico do parâmetro da revisão; mudá-lo quebraria links já entregues. */
@@ -40,6 +47,9 @@ export const JOB_PARAM = "job";
 
 /** Marca da medição, em português como o resto do vocabulário dessa jornada. */
 export const ROUND_PARAM = "rodada";
+
+/** Marca do orçamento-base; o valor é a rodada de orçamento aberta, quando há uma. */
+export const ORCAMENTO_PARAM = "orcamento";
 
 /** Marca da plataforma; sem valor, porque não há recurso aberto para citar. */
 export const PLATFORM_PARAM = "plataforma";
@@ -109,9 +119,11 @@ export function entryRedirect(
 /**
  * `search` é a query com ou sem `?` (aceita `window.location.search` direto).
  *
- * A precedência é `job > rodada > plataforma`. Não é sorteio nem ordem de leitura: o link
- * do croqui é o que já circula, o da rodada é o segundo mais entregue, e um parâmetro
- * colado depois deles não pode sequestrar o trabalho que o profissional pediu. A
+ * A precedência é `job > rodada > orcamento > plataforma`. Não é sorteio nem ordem de
+ * leitura: o link do croqui é o que já circula, o da rodada é o segundo mais entregue, e
+ * um parâmetro colado depois deles não pode sequestrar o trabalho que o profissional
+ * pediu. O orçamento entra depois da medição porque é a jornada mais nova — nenhum link
+ * dele existia antes desta feature, então ele nunca é o que já estava em circulação. A
  * plataforma fica por último porque ela é a única cujo endereço se digita.
  */
 export function readRoute(search: string): Route {
@@ -125,6 +137,13 @@ export function readRoute(search: string): Route {
   if (roundId !== null) {
     return { kind: "medicao", roundId };
   }
+  // Presença manda também aqui; o valor, quando existe, é a rodada de orçamento aberta.
+  // `?orcamento=` (vazio) é "jornada do orçamento, nenhum orçamento aberto" — o estado
+  // que a tela de abertura representa —, e por isso ele vira `null`, não `""`.
+  const estimateId = params.get(ORCAMENTO_PARAM);
+  if (estimateId !== null) {
+    return { kind: "orcamento", roundId: estimateId === "" ? null : estimateId };
+  }
   // Presença manda, e o valor é ignorado: `?plataforma=qualquer-coisa` é a mesma
   // jornada, e `routeSearch` a devolve na forma canônica.
   if (params.has(PLATFORM_PARAM)) {
@@ -135,8 +154,8 @@ export function readRoute(search: string): Route {
 
 /**
  * Query canônica da rota, com `?` quando há algo a escrever e `""` quando não há. As
- * formas canônicas são `""`, `?job=<id>`, `?rodada=`, `?rodada=<id>` e `?plataforma=`, e
- * para elas `routeSearch(readRoute(s)) === s`.
+ * formas canônicas são `""`, `?job=<id>`, `?rodada=`, `?rodada=<id>`, `?orcamento=`,
+ * `?orcamento=<id>` e `?plataforma=`, e para elas `routeSearch(readRoute(s)) === s`.
  */
 export function routeSearch(route: Route): string {
   const params = new URLSearchParams();
@@ -147,6 +166,8 @@ export function routeSearch(route: Route): string {
     params.set(JOB_PARAM, route.jobId);
   } else if (route.kind === "medicao") {
     params.set(ROUND_PARAM, route.roundId);
+  } else if (route.kind === "orcamento") {
+    params.set(ORCAMENTO_PARAM, route.roundId ?? "");
   } else {
     params.set(PLATFORM_PARAM, "");
   }

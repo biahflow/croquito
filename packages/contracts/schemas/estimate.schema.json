@@ -1,0 +1,389 @@
+{
+  "$defs": {
+    "CalcBlock": {
+      "additionalProperties": false,
+      "description": "Bloco de cálculo de um item: operandos multiplicados menos deduções.",
+      "properties": {
+        "deductions": {
+          "items": {
+            "$ref": "#/$defs/CalcOperand"
+          },
+          "title": "Deductions",
+          "type": "array"
+        },
+        "label": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "operands": {
+          "items": {
+            "$ref": "#/$defs/CalcOperand"
+          },
+          "minItems": 1,
+          "title": "Operands",
+          "type": "array"
+        },
+        "recipe": {
+          "$ref": "#/$defs/CalcRecipe"
+        },
+        "subtotal": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Subtotal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "recipe",
+        "operands",
+        "subtotal"
+      ],
+      "title": "CalcBlock",
+      "type": "object"
+    },
+    "CalcOperand": {
+      "additionalProperties": false,
+      "description": "Parcela impressa da memória de cálculo.\n\n`name` é dado, não identificador: chega em português na planilha (\"PERÍMETRO\").",
+      "properties": {
+        "name": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "value": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "CalcOperand",
+      "type": "object"
+    },
+    "CalcRecipe": {
+      "description": "Receitas de cálculo aceitas na memória; a lista é fechada por marco.",
+      "enum": [
+        "direct_quantity",
+        "length_times_width",
+        "perimeter_times_height",
+        "perim_height_minus_openings",
+        "qty_times_months",
+        "days_times_hours"
+      ],
+      "title": "CalcRecipe",
+      "type": "string"
+    },
+    "CalcSheet": {
+      "additionalProperties": false,
+      "description": "Memória de cálculo de um item do boletim de uma obra.\n\nA obra faz parte da identidade: o mesmo `item_number` se repete entre obras da mesma\nmedição, e só o par `(worksite_key, item_number)` identifica a memória.",
+      "properties": {
+        "blocks": {
+          "items": {
+            "$ref": "#/$defs/CalcBlock"
+          },
+          "minItems": 1,
+          "title": "Blocks",
+          "type": "array"
+        },
+        "item_number": {
+          "pattern": "^\\d{1,3}(\\.\\d{1,3}){0,3}$",
+          "title": "Item Number",
+          "type": "string"
+        },
+        "total_quantity": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Total Quantity",
+          "type": "string"
+        },
+        "worksite_key": {
+          "pattern": "^[a-z0-9][a-z0-9-]{2,63}$",
+          "title": "Worksite Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "worksite_key",
+        "item_number",
+        "blocks",
+        "total_quantity"
+      ],
+      "title": "CalcSheet",
+      "type": "object"
+    },
+    "CatalogSource": {
+      "additionalProperties": false,
+      "description": "Uma fonte de preço no manifesto da cascata: quem é, de quando e de qual arquivo.",
+      "properties": {
+        "origin": {
+          "$ref": "#/$defs/PriceOrigin"
+        },
+        "reference_month": {
+          "pattern": "^\\d{4}-\\d{2}$",
+          "title": "Reference Month",
+          "type": "string"
+        },
+        "source_label": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Source Label",
+          "type": "string"
+        },
+        "source_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Source Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "origin",
+        "source_sha256",
+        "reference_month",
+        "source_label"
+      ],
+      "title": "CatalogSource",
+      "type": "object"
+    },
+    "EstimateLine": {
+      "additionalProperties": false,
+      "description": "Linha do orçamento-base: preço, quantidade e a fonte de onde o preço veio.\n\nEspelho de `BulletinLine` com a diferença que dá nome ao módulo: o boletim só tem preço\nde contrato e por isso não precisa dizer de onde ele veio; aqui a fonte é parte da\nlinha, e o código obedece à forma da origem dela. `unit_price` é o preço de fonte, sem\nBDI; `unit_price_with_bdi` é o preço com o percentual do orçamento aplicado e truncado\nno centavo (ADR-0038, decisão 3) — é ele, não `unit_price`, que o total recomputa.",
+      "properties": {
+        "catalog_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Catalog Sha256",
+          "type": "string"
+        },
+        "code": {
+          "maxLength": 30,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "item_number": {
+          "pattern": "^\\d{1,3}(\\.\\d{1,3}){0,3}$",
+          "title": "Item Number",
+          "type": "string"
+        },
+        "price_origin": {
+          "$ref": "#/$defs/PriceOrigin"
+        },
+        "quantity": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Quantity",
+          "type": "string"
+        },
+        "reference_month": {
+          "pattern": "^\\d{4}-\\d{2}$",
+          "title": "Reference Month",
+          "type": "string"
+        },
+        "source_label": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Source Label",
+          "type": "string"
+        },
+        "total": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Total",
+          "type": "string"
+        },
+        "unit": {
+          "maxLength": 20,
+          "minLength": 1,
+          "title": "Unit",
+          "type": "string"
+        },
+        "unit_price": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Unit Price",
+          "type": "string"
+        },
+        "unit_price_with_bdi": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Unit Price With Bdi",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_number",
+        "code",
+        "description",
+        "unit",
+        "unit_price",
+        "unit_price_with_bdi",
+        "quantity",
+        "total",
+        "price_origin",
+        "catalog_sha256",
+        "reference_month",
+        "source_label"
+      ],
+      "title": "EstimateLine",
+      "type": "object"
+    },
+    "PriceOrigin": {
+      "description": "Fonte de preço de um catálogo: onde a cotação nasceu.\n\nRegra da orçamentista (M8): em obra LICITADA (`Valuation`/`WorksiteBulletin`), o\ncontrato manda e preço nunca vem da EMOP (`BULLETIN_PRICE_ORIGIN_FORBIDDEN` em\n`calc.py`/`workbook_writer.py`). A cadeia SCO → EMOP → composição só vale\nPRÉ-licitação (orçamento-base, fase futura); um catálogo carrega só UMA origem\n(`CATALOG_ORIGIN_MIXED`) — mistura de fontes acontece na cascata, nunca dentro dele.",
+      "enum": [
+        "sco",
+        "emop",
+        "composition"
+      ],
+      "title": "PriceOrigin",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.croquito.local/valuation/estimate/2.0.0.json",
+  "additionalProperties": false,
+  "description": "Orçamento-base de uma obra, amarrado à prancha e à cascata que o precificou.\n\nSem período, sem contrato, sem saldo e sem aprovação: nenhum desses conceitos existe\nantes da licitação. A memória de cálculo é a MESMA do boletim (`CalcSheet`, montada por\n`build_calc_blocks`), e a relação 1:1 entre linha e memória é validada como na medição —\nquantidade que diverge da memória recusa.\n\n`bdi_percent` é o BDI do orçamento inteiro (ADR-0038): percentual único, nunca por\nlinha nem por grupo. `total_amount` já embute o BDI (é a soma dos `total` das linhas,\nque recomputam sobre `unit_price_with_bdi`); `total_amount_without_bdi` é a mesma soma\nsem o percentual, para quem for imprimir a diferença entre os dois totais truncados —\nnunca o percentual aplicado ao total geral (decisão 4).",
+  "properties": {
+    "address": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Address"
+    },
+    "bdi_percent": {
+      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+      "title": "Bdi Percent",
+      "type": "string"
+    },
+    "calc_sheets": {
+      "items": {
+        "$ref": "#/$defs/CalcSheet"
+      },
+      "minItems": 1,
+      "title": "Calc Sheets",
+      "type": "array"
+    },
+    "cascade": {
+      "items": {
+        "$ref": "#/$defs/CatalogSource"
+      },
+      "minItems": 1,
+      "title": "Cascade",
+      "type": "array"
+    },
+    "image_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Image Sha256",
+      "type": "string"
+    },
+    "lines": {
+      "items": {
+        "$ref": "#/$defs/EstimateLine"
+      },
+      "minItems": 1,
+      "title": "Lines",
+      "type": "array"
+    },
+    "page_number": {
+      "minimum": 1,
+      "title": "Page Number",
+      "type": "integer"
+    },
+    "plate_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Plate Id",
+      "type": "string"
+    },
+    "safety_notes": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "title": "Safety Notes",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "2.0.0",
+      "default": "2.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_pdf_sha256": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Source Pdf Sha256",
+      "type": "string"
+    },
+    "total_amount": {
+      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+      "title": "Total Amount",
+      "type": "string"
+    },
+    "total_amount_without_bdi": {
+      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+      "title": "Total Amount Without Bdi",
+      "type": "string"
+    },
+    "unpriced_item_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unpriced Item Ids",
+      "type": "array"
+    },
+    "worksite_key": {
+      "pattern": "^[a-z0-9][a-z0-9-]{2,63}$",
+      "title": "Worksite Key",
+      "type": "string"
+    },
+    "worksite_name": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Worksite Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "worksite_key",
+    "worksite_name",
+    "plate_id",
+    "page_number",
+    "image_sha256",
+    "source_pdf_sha256",
+    "bdi_percent",
+    "cascade",
+    "lines",
+    "calc_sheets",
+    "total_amount_without_bdi",
+    "total_amount",
+    "safety_notes"
+  ],
+  "title": "Croquito Estimate",
+  "type": "object"
+}

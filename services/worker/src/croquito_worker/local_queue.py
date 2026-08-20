@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import closing, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -149,22 +149,127 @@ VALUATION_OVERLAY_VERSION: Final = "valuation-overlay-v1"
 Distinto do autor da extração de propósito: as duas revisões carregam o mesmo pacote e só
 o autor diz qual delas foi ato de sistema derivado de uma decisão humana."""
 
-_REVISION_HEAD_COLUMNS: Final = (
-    "id, version, takeoff_packet_json, takeoff_registration_json, code_suggestions_json, "
-    "code_assignments_json, valuation_json, amendment_dossier_json, extraction_lineage_json, "
-    "artifact_refs_json, artifact_digests_json"
+ESTIMATE_EXTRACTION_VERSION: Final = "estimate-extraction-v1"
+"""Autor da revisão que a extração da rodada de ORÇAMENTO-BASE publica (ADR-0038).
+
+Distinto do autor da medição de propósito: as duas cadeias publicam o mesmo tipo de pacote
+sobre tabelas diferentes, e é o autor gravado na revisão que diz de qual delas ela veio."""
+
+ESTIMATE_OVERLAY_VERSION: Final = "estimate-overlay-v1"
+"""Autor da revisão que o re-render do overlay do orçamento-base publica."""
+
+
+def _estimate_plate_image_object_key(*, tenant_id: str, round_id: str) -> str:
+    """PNG da página promovida da rodada de orçamento, sempre sob `tenants/{tenant_id}/`.
+
+    Espelho de `round_extraction.plate_image_object_key` com o segmento da OUTRA cadeia —
+    o mesmo prefixo que a rota da API já usa para a planilha publicada da rodada
+    (`estimate_rounds`), e não o da medição: rodada de orçamento não escreve blob sob
+    `valuation-rounds/`.
+    """
+    return f"tenants/{tenant_id}/estimate-rounds/{round_id}/plate/page-001.png"
+
+
+def _estimate_takeoff_overlay_object_key(*, tenant_id: str, round_id: str) -> str:
+    return f"tenants/{tenant_id}/estimate-rounds/{round_id}/takeoff/overlay.png"
+
+
+@dataclass(frozen=True, slots=True)
+class RoundChain:
+    """A cadeia de rodada que um comando de fila opera: medição de obra ou orçamento-base.
+
+    Os dois comandos de rodada — extração paga da legenda e re-render do overlay — fazem o
+    MESMO trabalho nas duas cadeias, e o que muda é só onde ele é gravado: tabela raiz,
+    tabela de revisões, conjunto de colunas JSON da revisão e prefixo dos blobs. Descrever
+    essa diferença como DADO é o que impede a segunda cadeia de nascer como cópia da
+    primeira — cópia na qual uma correção de claim, de digest ou de janela de corrida seria
+    aplicada num lado só e silenciosamente esqueceria o outro.
+
+    `document_columns` é a lista completa e ordenada das colunas JSON da revisão, e é a
+    fonte tanto do `SELECT` da cabeça quanto do `INSERT` da revisão nova. Coluna esquecida
+    aqui é coluna que deixa de viajar para a revisão seguinte, e append-only não perdoa: o
+    que não viaja, some.
+    """
+
+    label: str
+    """Nome da cadeia nas mensagens de recusa do despacho; nunca vai para log estruturado."""
+    rounds_table: str
+    revisions_table: str
+    document_columns: tuple[str, ...]
+    extraction_author: str
+    overlay_author: str
+    plate_image_key: Callable[..., str]
+    takeoff_overlay_key: Callable[..., str]
+
+    @property
+    def head_columns(self) -> str:
+        """Colunas da cabeça da rodada que uma revisão nova precisa carregar adiante."""
+        return ", ".join(("id", "version", *self.document_columns))
+
+
+VALUATION_ROUND_CHAIN: Final = RoundChain(
+    label="medição",
+    rounds_table="valuation_rounds",
+    revisions_table="valuation_round_revisions",
+    document_columns=(
+        "takeoff_packet_json",
+        "takeoff_registration_json",
+        "code_suggestions_json",
+        "code_assignments_json",
+        "valuation_json",
+        "amendment_dossier_json",
+        "extraction_lineage_json",
+        "artifact_refs_json",
+        "artifact_digests_json",
+    ),
+    extraction_author=VALUATION_EXTRACTION_VERSION,
+    overlay_author=VALUATION_OVERLAY_VERSION,
+    plate_image_key=plate_image_object_key,
+    takeoff_overlay_key=takeoff_overlay_object_key,
 )
-"""Colunas da cabeça da rodada que uma revisão nova precisa carregar adiante."""
+
+ESTIMATE_ROUND_CHAIN: Final = RoundChain(
+    label="orçamento-base",
+    rounds_table="estimate_rounds",
+    revisions_table="estimate_round_revisions",
+    # Sem `valuation_json` nem `amendment_dossier_json`, e com `estimate_json` no lugar:
+    # boletim e dossiê de aditivo são artefatos da obra LICITADA e não existem deste lado
+    # da fronteira (ADR-0027/ADR-0038).
+    document_columns=(
+        "takeoff_packet_json",
+        "takeoff_registration_json",
+        "code_suggestions_json",
+        "code_assignments_json",
+        "estimate_json",
+        "extraction_lineage_json",
+        "artifact_refs_json",
+        "artifact_digests_json",
+    ),
+    extraction_author=ESTIMATE_EXTRACTION_VERSION,
+    overlay_author=ESTIMATE_OVERLAY_VERSION,
+    plate_image_key=_estimate_plate_image_object_key,
+    takeoff_overlay_key=_estimate_takeoff_overlay_object_key,
+)
+
+_ROUND_EXTRACTION_COMMANDS: Final[Mapping[str, RoundChain]] = {
+    "extract_valuation_plate": VALUATION_ROUND_CHAIN,
+    "extract_estimate_plate": ESTIMATE_ROUND_CHAIN,
+}
+
+_ROUND_OVERLAY_COMMANDS: Final[Mapping[str, RoundChain]] = {
+    "rerender_takeoff_overlay": VALUATION_ROUND_CHAIN,
+    "rerender_estimate_takeoff_overlay": ESTIMATE_ROUND_CHAIN,
+}
 
 
 def _head_revision_row(
-    connection: Connection, *, round_id: str, tenant_id: str
+    connection: Connection, chain: RoundChain, *, round_id: str, tenant_id: str
 ) -> RowMapping | None:
     """Cabeça da cadeia de revisões da rodada; `tenant_id` no MESMO `where` do `round_id`."""
     return (
         connection.execute(
             text(
-                f"SELECT {_REVISION_HEAD_COLUMNS} FROM valuation_round_revisions "
+                f"SELECT {chain.head_columns} FROM {chain.revisions_table} "
                 "WHERE round_id = :round_id AND tenant_id = :tenant_id "
                 "ORDER BY version DESC LIMIT 1"
             ),
@@ -172,6 +277,66 @@ def _head_revision_row(
         )
         .mappings()
         .one_or_none()
+    )
+
+
+def _insert_round_revision(
+    connection: Connection,
+    chain: RoundChain,
+    *,
+    dialect: str,
+    tenant_id: str,
+    round_id: str,
+    version: int,
+    parent_revision_id: Any,
+    created_by: str,
+    documents: Mapping[str, Any],
+) -> None:
+    """Grava UMA revisão da cadeia: toda coluna declarada viaja, ausente vira `NULL`.
+
+    Montar a lista de colunas a partir de `chain.document_columns` — em vez de escrevê-la
+    duas vezes por cadeia — é o que garante que o `INSERT` e o `SELECT` da cabeça nunca
+    discordem sobre o que uma revisão carrega.
+    """
+    parameters: dict[str, Any] = {
+        "id": str(new_uuid7()),
+        "tenant_id": tenant_id,
+        "round_id": round_id,
+        "version": version,
+        "parent_revision_id": parent_revision_id,
+        "created_by": created_by,
+    }
+    expressions = [
+        _json_parameter(parameters, dialect, name, documents.get(name))
+        for name in chain.document_columns
+    ]
+    columns = ", ".join(
+        (
+            "id",
+            "tenant_id",
+            "round_id",
+            "version",
+            "parent_revision_id",
+            *chain.document_columns,
+            "created_by",
+            "created_at",
+        )
+    )
+    values = ", ".join(
+        (
+            ":id",
+            ":tenant_id",
+            ":round_id",
+            ":version",
+            ":parent_revision_id",
+            *expressions,
+            ":created_by",
+            "CURRENT_TIMESTAMP",
+        )
+    )
+    connection.execute(
+        text(f"INSERT INTO {chain.revisions_table} ({columns}) VALUES ({values})"),
+        parameters,
     )
 
 
@@ -505,26 +670,39 @@ class LocalQueueWorker:
         tenant_id = body.get("tenant_id")
         if not isinstance(tenant_id, str):
             raise UnroutableMessageError("Mensagem de processamento inválida")
-        if command == "extract_valuation_plate":
-            # A rodada de medição não tem `job_id` e nunca terá: `Job` é vocabulário proibido
-            # neste contexto delimitado (ADR-0016). Por isso o roteamento por comando vem
-            # ANTES da guarda de `job_id`, que continua valendo para os quatro comandos do
-            # croqui — exigi-la primeiro rejeitaria este envelope antes de alguém o ler.
+        extraction_chain = _ROUND_EXTRACTION_COMMANDS.get(command)
+        if extraction_chain is not None:
+            # Rodada — de medição ou de orçamento-base — não tem `job_id` e nunca terá:
+            # `Job` é vocabulário proibido nesses contextos delimitados (ADR-0016). Por isso
+            # o roteamento por comando vem ANTES da guarda de `job_id`, que continua valendo
+            # para os quatro comandos do croqui — exigi-la primeiro rejeitaria estes
+            # envelopes antes de alguém os ler.
             round_id = body.get("round_id")
             extraction_id = body.get("extraction_id")
             if not isinstance(round_id, str) or not isinstance(extraction_id, str):
-                raise UnroutableMessageError("Mensagem de extração de medição inválida")
-            return self._handle_valuation_extraction(
-                round_id=round_id, extraction_id=extraction_id, tenant_id=tenant_id
+                raise UnroutableMessageError(
+                    f"Mensagem de extração de {extraction_chain.label} inválida"
+                )
+            return self._handle_round_extraction(
+                extraction_chain,
+                round_id=round_id,
+                extraction_id=extraction_id,
+                tenant_id=tenant_id,
             )
-        if command == "rerender_takeoff_overlay":
-            # Segundo comando da medição, e pelo mesmo motivo antes da guarda de `job_id`.
+        overlay_chain = _ROUND_OVERLAY_COMMANDS.get(command)
+        if overlay_chain is not None:
+            # Segundo comando de cada cadeia, e pelo mesmo motivo antes da guarda de `job_id`.
             round_id = body.get("round_id")
             packet_sha256 = body.get("packet_sha256")
             if not isinstance(round_id, str) or not isinstance(packet_sha256, str):
-                raise UnroutableMessageError("Mensagem de overlay de medição inválida")
+                raise UnroutableMessageError(
+                    f"Mensagem de overlay de {overlay_chain.label} inválida"
+                )
             return self._handle_takeoff_overlay_rerender(
-                round_id=round_id, tenant_id=tenant_id, packet_sha256=packet_sha256
+                overlay_chain,
+                round_id=round_id,
+                tenant_id=tenant_id,
+                packet_sha256=packet_sha256,
             )
         job_id = body.get("job_id")
         if not isinstance(job_id, str):
@@ -1451,10 +1629,14 @@ class LocalQueueWorker:
         )
         return 1
 
-    # -- Medição de obra: extração paga da legenda (ADR-0028 D7) ------------------------
+    # -- Rodada: extração paga da legenda (ADR-0028 D7) --------------------------------
 
     def _valuation_extraction_adapter(self, arm_spec: str) -> ProviderAdapter:
         """Braço pago da extração, ou a recusa declarada de por que ele não existe.
+
+        Um só seam para as duas cadeias: a legenda quantificada é a MESMA tarefa de prompt
+        na medição e no orçamento-base, e um segundo ponto de injeção só criaria a chance
+        de um deles ficar sem o gate de teto de gasto.
 
         O adapter injetado é fixture de teste ou demo — nada sai da máquina —, e por isso
         dispensa o gate de teto de gasto e credencial, exatamente como a `ProviderSuite`
@@ -1478,8 +1660,14 @@ class LocalQueueWorker:
             **({"ServerSideEncryption": "AES256"} if self.settings.storage_sse_enabled else {}),
         )
 
-    def _settle_valuation_extraction(
-        self, *, round_id: str, extraction_id: str, tenant_id: str, failure_code: str
+    def _settle_round_extraction(
+        self,
+        chain: RoundChain,
+        *,
+        round_id: str,
+        extraction_id: str,
+        tenant_id: str,
+        failure_code: str,
     ) -> None:
         """Fecha a extração como `failed`: nenhuma revisão, versão da rodada intacta.
 
@@ -1490,7 +1678,7 @@ class LocalQueueWorker:
         with self.engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE valuation_rounds SET extraction_status = 'failed', "
+                    f"UPDATE {chain.rounds_table} SET extraction_status = 'failed', "
                     "extraction_failure_code = :failure_code, "
                     "extraction_updated_at = CURRENT_TIMESTAMP, "
                     "updated_at = CURRENT_TIMESTAMP "
@@ -1505,8 +1693,9 @@ class LocalQueueWorker:
                 },
             )
 
-    def _publish_valuation_extraction(
+    def _publish_round_extraction(
         self,
+        chain: RoundChain,
         *,
         round_id: str,
         extraction_id: str,
@@ -1527,79 +1716,39 @@ class LocalQueueWorker:
         """
         dialect = self.engine.dialect.name
         with self.engine.begin() as connection:
-            head = (
-                connection.execute(
-                    text(
-                        "SELECT id, version, code_suggestions_json, code_assignments_json, "
-                        "valuation_json, amendment_dossier_json, artifact_refs_json, "
-                        "artifact_digests_json FROM valuation_round_revisions "
-                        "WHERE round_id = :round_id AND tenant_id = :tenant_id "
-                        "ORDER BY version DESC LIMIT 1"
-                    ),
-                    {"round_id": round_id, "tenant_id": tenant_id},
-                )
-                .mappings()
-                .one_or_none()
+            head = _head_revision_row(connection, chain, round_id=round_id, tenant_id=tenant_id)
+            carried: dict[str, Any] = (
+                {name: _json_column(head[name]) for name in chain.document_columns}
+                if head is not None
+                else {}
             )
-            carried_refs = dict(_json_column(head["artifact_refs_json"]) or {}) if head else {}
-            carried_digests = (
-                dict(_json_column(head["artifact_digests_json"]) or {}) if head else {}
-            )
+            carried_refs = dict(carried.get("artifact_refs_json") or {})
+            carried_digests = dict(carried.get("artifact_digests_json") or {})
             carried_refs.update(refs)
             carried_digests.update(digests)
-            parameters: dict[str, Any] = {
-                "id": str(new_uuid7()),
-                "tenant_id": tenant_id,
-                "round_id": round_id,
-                "version": 1 if head is None else int(head["version"]) + 1,
-                "parent_revision_id": None if head is None else head["id"],
-                "created_by": VALUATION_EXTRACTION_VERSION,
-            }
-            columns = {
-                "takeoff_packet_json": packet,
-                "takeoff_registration_json": registration,
-                "code_suggestions_json": _json_column(head["code_suggestions_json"])
-                if head
-                else None,
-                "code_assignments_json": _json_column(head["code_assignments_json"])
-                if head
-                else None,
-                "valuation_json": _json_column(head["valuation_json"]) if head else None,
-                "amendment_dossier_json": _json_column(head["amendment_dossier_json"])
-                if head
-                else None,
-                "extraction_lineage_json": lineage,
-                "artifact_refs_json": carried_refs,
-                "artifact_digests_json": carried_digests,
-            }
-            expressions = {
-                name: _json_parameter(parameters, dialect, name, value)
-                for name, value in columns.items()
-            }
-            connection.execute(
-                text(
-                    "INSERT INTO valuation_round_revisions "
-                    "(id, tenant_id, round_id, version, parent_revision_id, takeoff_packet_json, "
-                    "takeoff_registration_json, code_suggestions_json, code_assignments_json, "
-                    "valuation_json, amendment_dossier_json, extraction_lineage_json, "
-                    "artifact_refs_json, artifact_digests_json, created_by, created_at) "
-                    "VALUES (:id, :tenant_id, :round_id, :version, :parent_revision_id, "
-                    f"{expressions['takeoff_packet_json']}, "
-                    f"{expressions['takeoff_registration_json']}, "
-                    f"{expressions['code_suggestions_json']}, "
-                    f"{expressions['code_assignments_json']}, "
-                    f"{expressions['valuation_json']}, "
-                    f"{expressions['amendment_dossier_json']}, "
-                    f"{expressions['extraction_lineage_json']}, "
-                    f"{expressions['artifact_refs_json']}, "
-                    f"{expressions['artifact_digests_json']}, "
-                    ":created_by, CURRENT_TIMESTAMP)"
-                ),
-                parameters,
+            _insert_round_revision(
+                connection,
+                chain,
+                dialect=dialect,
+                tenant_id=tenant_id,
+                round_id=round_id,
+                version=1 if head is None else int(head["version"]) + 1,
+                parent_revision_id=None if head is None else head["id"],
+                created_by=chain.extraction_author,
+                documents={
+                    # A cabeça viaja inteira e a extração sobrescreve só o que ela produziu:
+                    # pacote, registro e lineage.
+                    **carried,
+                    "takeoff_packet_json": packet,
+                    "takeoff_registration_json": registration,
+                    "extraction_lineage_json": lineage,
+                    "artifact_refs_json": carried_refs,
+                    "artifact_digests_json": carried_digests,
+                },
             )
             published = connection.execute(
                 text(
-                    "UPDATE valuation_rounds SET extraction_status = 'done', "
+                    f"UPDATE {chain.rounds_table} SET extraction_status = 'done', "
                     "extraction_failure_code = NULL, plate_page_count = :page_count, "
                     "version = version + 1, extraction_updated_at = CURRENT_TIMESTAMP, "
                     "updated_at = CURRENT_TIMESTAMP "
@@ -1617,10 +1766,10 @@ class LocalQueueWorker:
                 # Dentro da transação de propósito: levantar aqui desfaz a revisão recém
                 # inserida, em vez de deixar um pacote publicado numa rodada que outra
                 # extração já tomou.
-                raise ValueError("Rodada de medição saiu do estado de extração em curso")
+                raise ValueError(f"Rodada de {chain.label} saiu do estado de extração em curso")
 
-    def _extract_valuation_plate(
-        self, *, round_id: str, extraction_id: str, tenant_id: str
+    def _extract_round_plate(
+        self, chain: RoundChain, *, round_id: str, extraction_id: str, tenant_id: str
     ) -> None:
         """Ingere a página da prancha, extrai a legenda e publica o pacote da rodada.
 
@@ -1631,7 +1780,8 @@ class LocalQueueWorker:
             record = (
                 connection.execute(
                     text(
-                        "SELECT plate_object_key, plate_source_sha256 FROM valuation_rounds "
+                        "SELECT plate_object_key, plate_source_sha256 "
+                        f"FROM {chain.rounds_table} "
                         "WHERE id = :round_id AND tenant_id = :tenant_id"
                     ),
                     {"round_id": round_id, "tenant_id": tenant_id},
@@ -1681,13 +1831,13 @@ class LocalQueueWorker:
             image_bytes = image_path.read_bytes()
             overlay_bytes = overlay_path.read_bytes()
 
-        plate_key = plate_image_object_key(tenant_id=tenant_id, round_id=round_id)
-        overlay_key = takeoff_overlay_object_key(tenant_id=tenant_id, round_id=round_id)
+        plate_key = chain.plate_image_key(tenant_id=tenant_id, round_id=round_id)
+        overlay_key = chain.takeoff_overlay_key(tenant_id=tenant_id, round_id=round_id)
         self._put_round_png(object_key=plate_key, payload=image_bytes)
         self._put_round_png(object_key=overlay_key, payload=overlay_bytes)
 
         lineage: dict[str, Any] = {
-            "worker_version": VALUATION_EXTRACTION_VERSION,
+            "worker_version": chain.extraction_author,
             "arm": arm_spec,
             "plate_id": result.packet.plate_id,
             "page_number": result.packet.page_number,
@@ -1698,7 +1848,8 @@ class LocalQueueWorker:
             "execution": execution_payload(result.execution),
         }
         packet_document = result.packet.model_dump(mode="json")
-        self._publish_valuation_extraction(
+        self._publish_round_extraction(
+            chain,
             round_id=round_id,
             extraction_id=extraction_id,
             tenant_id=tenant_id,
@@ -1718,8 +1869,8 @@ class LocalQueueWorker:
             page_count=manifest.page_count,
         )
 
-    def _handle_valuation_extraction(
-        self, *, round_id: str, extraction_id: str, tenant_id: str
+    def _handle_round_extraction(
+        self, chain: RoundChain, *, round_id: str, extraction_id: str, tenant_id: str
     ) -> int:
         """Executa a extração paga da legenda no máximo UMA vez por comando enfileirado.
 
@@ -1736,7 +1887,7 @@ class LocalQueueWorker:
         with self.engine.begin() as connection:
             claimed = connection.execute(
                 text(
-                    "UPDATE valuation_rounds SET extraction_status = 'running', "
+                    f"UPDATE {chain.rounds_table} SET extraction_status = 'running', "
                     "extraction_updated_at = CURRENT_TIMESTAMP, "
                     "updated_at = CURRENT_TIMESTAMP "
                     "WHERE id = :round_id AND tenant_id = :tenant_id "
@@ -1748,12 +1899,13 @@ class LocalQueueWorker:
             return 1
 
         try:
-            self._extract_valuation_plate(
-                round_id=round_id, extraction_id=extraction_id, tenant_id=tenant_id
+            self._extract_round_plate(
+                chain, round_id=round_id, extraction_id=extraction_id, tenant_id=tenant_id
             )
         except Exception as error:
             # A mensagem da exceção pode carregar evidência da prancha; só o código sai.
-            self._settle_valuation_extraction(
+            self._settle_round_extraction(
+                chain,
                 round_id=round_id,
                 extraction_id=extraction_id,
                 tenant_id=tenant_id,
@@ -1761,7 +1913,7 @@ class LocalQueueWorker:
             )
         return 1
 
-    # -- Medição de obra: overlay do takeoff reconstruído na fila (ADR-0030) ------------
+    # -- Rodada: overlay do takeoff reconstruído na fila (ADR-0030) --------------------
 
     def _render_round_overlay(self, packet: TakeoffPacket, *, plate_key: str) -> bytes:
         """Redesenha o overlay sobre o PNG já promovido da prancha.
@@ -1785,11 +1937,11 @@ class LocalQueueWorker:
             return overlay_path.read_bytes()
 
     def _current_takeoff_head(
-        self, *, round_id: str, tenant_id: str, packet_sha256: str
+        self, chain: RoundChain, *, round_id: str, tenant_id: str, packet_sha256: str
     ) -> RowMapping | None:
         """A cabeça da rodada, mas só enquanto ela ainda carregar o pacote deste comando."""
         with self.engine.connect() as connection:
-            head = _head_revision_row(connection, round_id=round_id, tenant_id=tenant_id)
+            head = _head_revision_row(connection, chain, round_id=round_id, tenant_id=tenant_id)
         if head is None:
             return None
         packet_document = _json_column(head["takeoff_packet_json"])
@@ -1802,6 +1954,7 @@ class LocalQueueWorker:
 
     def _publish_takeoff_overlay(
         self,
+        chain: RoundChain,
         *,
         round_id: str,
         tenant_id: str,
@@ -1822,17 +1975,18 @@ class LocalQueueWorker:
         """
         dialect = self.engine.dialect.name
         with self.engine.begin() as connection:
-            head = _head_revision_row(connection, round_id=round_id, tenant_id=tenant_id)
+            head = _head_revision_row(connection, chain, round_id=round_id, tenant_id=tenant_id)
             if head is None:
                 return
-            packet_document = _json_column(head["takeoff_packet_json"])
+            carried = {name: _json_column(head[name]) for name in chain.document_columns}
+            packet_document = carried["takeoff_packet_json"]
             if (
                 not isinstance(packet_document, dict)
                 or document_digest(packet_document) != packet_sha256
             ):
                 return
-            head_refs = dict(_json_column(head["artifact_refs_json"]) or {})
-            head_digests = dict(_json_column(head["artifact_digests_json"]) or {})
+            head_refs = dict(carried["artifact_refs_json"] or {})
+            head_digests = dict(carried["artifact_digests_json"] or {})
             carried_refs = {**head_refs, **refs}
             carried_digests = {**head_digests, **digests}
             if carried_refs == head_refs and carried_digests == head_digests:
@@ -1840,53 +1994,24 @@ class LocalQueueWorker:
                 # aponta para ele. Append-only não é motivo para acrescentar uma revisão
                 # que não muda nada.
                 return
-            parameters: dict[str, Any] = {
-                "id": str(new_uuid7()),
-                "tenant_id": tenant_id,
-                "round_id": round_id,
-                "version": int(head["version"]) + 1,
-                "parent_revision_id": head["id"],
-                "created_by": VALUATION_OVERLAY_VERSION,
-            }
-            columns = {
-                "takeoff_packet_json": packet_document,
-                "takeoff_registration_json": _json_column(head["takeoff_registration_json"]),
-                "code_suggestions_json": _json_column(head["code_suggestions_json"]),
-                "code_assignments_json": _json_column(head["code_assignments_json"]),
-                "valuation_json": _json_column(head["valuation_json"]),
-                "amendment_dossier_json": _json_column(head["amendment_dossier_json"]),
-                "extraction_lineage_json": _json_column(head["extraction_lineage_json"]),
-                "artifact_refs_json": carried_refs,
-                "artifact_digests_json": carried_digests,
-            }
-            expressions = {
-                name: _json_parameter(parameters, dialect, name, value)
-                for name, value in columns.items()
-            }
-            connection.execute(
-                text(
-                    "INSERT INTO valuation_round_revisions "
-                    "(id, tenant_id, round_id, version, parent_revision_id, takeoff_packet_json, "
-                    "takeoff_registration_json, code_suggestions_json, code_assignments_json, "
-                    "valuation_json, amendment_dossier_json, extraction_lineage_json, "
-                    "artifact_refs_json, artifact_digests_json, created_by, created_at) "
-                    "VALUES (:id, :tenant_id, :round_id, :version, :parent_revision_id, "
-                    f"{expressions['takeoff_packet_json']}, "
-                    f"{expressions['takeoff_registration_json']}, "
-                    f"{expressions['code_suggestions_json']}, "
-                    f"{expressions['code_assignments_json']}, "
-                    f"{expressions['valuation_json']}, "
-                    f"{expressions['amendment_dossier_json']}, "
-                    f"{expressions['extraction_lineage_json']}, "
-                    f"{expressions['artifact_refs_json']}, "
-                    f"{expressions['artifact_digests_json']}, "
-                    ":created_by, CURRENT_TIMESTAMP)"
-                ),
-                parameters,
+            _insert_round_revision(
+                connection,
+                chain,
+                dialect=dialect,
+                tenant_id=tenant_id,
+                round_id=round_id,
+                version=int(head["version"]) + 1,
+                parent_revision_id=head["id"],
+                created_by=chain.overlay_author,
+                documents={
+                    **carried,
+                    "artifact_refs_json": carried_refs,
+                    "artifact_digests_json": carried_digests,
+                },
             )
 
     def _handle_takeoff_overlay_rerender(
-        self, *, round_id: str, tenant_id: str, packet_sha256: str
+        self, chain: RoundChain, *, round_id: str, tenant_id: str, packet_sha256: str
     ) -> int:
         """Redesenha o overlay do pacote declarado no envelope, ou descarta o comando.
 
@@ -1900,7 +2025,7 @@ class LocalQueueWorker:
         e não toca provider (ADR-0030).
         """
         head = self._current_takeoff_head(
-            round_id=round_id, tenant_id=tenant_id, packet_sha256=packet_sha256
+            chain, round_id=round_id, tenant_id=tenant_id, packet_sha256=packet_sha256
         )
         if head is None:
             return 1
@@ -1925,15 +2050,16 @@ class LocalQueueWorker:
         # transação de `_publish_takeoff_overlay` refaz antes de gravar.
         if (
             self._current_takeoff_head(
-                round_id=round_id, tenant_id=tenant_id, packet_sha256=packet_sha256
+                chain, round_id=round_id, tenant_id=tenant_id, packet_sha256=packet_sha256
             )
             is None
         ):
             return 1
 
-        overlay_key = takeoff_overlay_object_key(tenant_id=tenant_id, round_id=round_id)
+        overlay_key = chain.takeoff_overlay_key(tenant_id=tenant_id, round_id=round_id)
         self._put_round_png(object_key=overlay_key, payload=overlay_bytes)
         self._publish_takeoff_overlay(
+            chain,
             round_id=round_id,
             tenant_id=tenant_id,
             packet_sha256=packet_sha256,

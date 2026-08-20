@@ -612,56 +612,78 @@ CATALOG_CACHE: Final = CatalogCache()
 """Cache do processo. As funções o recebem por parâmetro para que teste use o seu."""
 
 
-def load_catalog(
+def read_catalog(
     store: RoundArtifactStore,
-    round_record: ValuationRoundRecord,
     *,
-    cache: CatalogCache = CATALOG_CACHE,
+    object_key: str,
+    digest: str,
+    cache: CatalogCache,
+    details: Mapping[str, object],
 ) -> PriceCatalog:
-    """O catálogo instalado na rodada, lido do object store e validado pelo domínio.
+    """Um catálogo instalado, lido do object store, conferido contra o digest e validado.
 
-    O digest instalado (`catalog_source_sha256`) manda duas vezes: é a chave do cache e é
-    o que os bytes lidos têm de reproduzir. Objeto ausente, maior que o teto, com digest
-    divergente ou que deixou de validar recusam com `CATALOG_REQUIRED` — o catálogo foi
-    validado na criação da rodada, então uma falha aqui é do ambiente, não do ato.
+    O digest manda duas vezes: é a chave do cache e é o que os bytes lidos têm de
+    reproduzir. Objeto ausente, maior que o teto, com digest divergente ou que deixou de
+    validar recusam com `CATALOG_REQUIRED` — o catálogo foi validado no ato que o
+    instalou, então uma falha aqui é do ambiente, não do ato.
+
+    Recebe `object_key` e `digest` soltos, e não o registro da rodada, porque as duas
+    cadeias que instalam catálogo guardam essa referência em lugares diferentes: a medição
+    numa coluna própria da raiz e o orçamento-base numa posição da cascata. O que é
+    idêntico nas duas — teto de leitura, conferência de digest, validação de domínio e
+    cache por digest — mora aqui uma vez só. `details` viaja para a recusa para que ela
+    continue nomeando a rodada de quem chamou.
     """
-    digest = round_record.catalog_source_sha256
     cached = cache.get(digest)
     if cached is not None:
         return cached
 
-    payload = store.read_object(
-        object_key=round_record.catalog_object_key, max_bytes=CATALOG_MAX_BYTES
-    )
+    payload = store.read_object(object_key=object_key, max_bytes=CATALOG_MAX_BYTES)
     if payload is None:
         raise catalog_required(
             "o catálogo instalado nesta rodada não está disponível no armazenamento",
-            {"round_id": round_record.id},
+            details,
         )
     if len(payload) > CATALOG_MAX_BYTES:
         raise catalog_required(
             "o catálogo instalado nesta rodada excede o limite de leitura",
-            {"round_id": round_record.id, "max_bytes": CATALOG_MAX_BYTES},
+            {**details, "max_bytes": CATALOG_MAX_BYTES},
         )
     if hashlib.sha256(payload).hexdigest() != digest:
         raise catalog_required(
             "o catálogo armazenado diverge do digest instalado na rodada",
-            {"round_id": round_record.id},
+            details,
         )
     try:
         catalog = PriceCatalog.model_validate_json(payload)
     except ValuationValidationError as error:
         raise catalog_required(
             "o catálogo instalado nesta rodada não pôde ser lido",
-            {"round_id": round_record.id, "reason": error.code},
+            {**details, "reason": error.code},
         ) from error
     except ValidationError as error:
         raise catalog_required(
             "o catálogo instalado nesta rodada não pôde ser lido",
-            {"round_id": round_record.id, "reason": "MODEL_VALIDATION_FAILED"},
+            {**details, "reason": "MODEL_VALIDATION_FAILED"},
         ) from error
     cache.put(digest, catalog)
     return catalog
+
+
+def load_catalog(
+    store: RoundArtifactStore,
+    round_record: ValuationRoundRecord,
+    *,
+    cache: CatalogCache = CATALOG_CACHE,
+) -> PriceCatalog:
+    """O catálogo instalado na rodada de medição, lido do store e validado pelo domínio."""
+    return read_catalog(
+        store,
+        object_key=round_record.catalog_object_key,
+        digest=round_record.catalog_source_sha256,
+        cache=cache,
+        details={"round_id": round_record.id},
+    )
 
 
 def _artifact_digests(revision: ValuationRoundRevisionRecord | None) -> dict[str, str]:

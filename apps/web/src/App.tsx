@@ -12,6 +12,7 @@ import {
 } from "./auth";
 import { CroquiApp } from "./CroquiApp";
 import { MedicaoApp } from "./medicao/MedicaoApp";
+import { OrcamentoApp } from "./orcamento/OrcamentoApp";
 import { fetchMe, PLATFORM_OPERATOR_ROLE } from "./plataforma/api";
 import { PlatformApp } from "./plataforma/PlatformApp";
 import { entryRedirect, readRoute, routeSearch, type Route } from "./route";
@@ -19,6 +20,7 @@ import logoDark from "./assets/croquito-logo-dark.svg";
 
 const CROQUI_ROOT: Route = { kind: "croqui", jobId: "" };
 const MEDICAO_ROOT: Route = { kind: "medicao", roundId: "" };
+const ORCAMENTO_ROOT: Route = { kind: "orcamento", roundId: null };
 const PLATAFORMA: Route = { kind: "plataforma" };
 
 function currentRoute(): Route {
@@ -132,6 +134,21 @@ export function JourneySwitch({
         onClick={() => onOpen(MEDICAO_ROOT)}
       >
         Medição
+      </button>
+      {/* Orçamento é jornada, não modo da medição (Design Approval Package da F-020): foi
+          exatamente a ambiguidade "medição × orçamento" que originou a feature, e
+          resolvê-la com mais um controle dentro da tela ambígua a manteria. Ele é
+          incondicional como Croqui e Medição — QUAL papel autoriza esta jornada é
+          decisão humana ainda aberta, e esconder o botão por um papel que ninguém
+          escolheu seria tomá-la aqui. Quem autoriza é o backend, que recusa cada rota
+          com `403`, e a jornada mostra esse motivo por extenso. */}
+      <button
+        className="topbar-link"
+        type="button"
+        aria-current={route.kind === "orcamento" ? "page" : undefined}
+        onClick={() => onOpen(ORCAMENTO_ROOT)}
+      >
+        Orçamento
       </button>
       {roles.includes(PLATFORM_OPERATOR_ROLE) ? (
         <button
@@ -252,6 +269,17 @@ export function App() {
    */
   const handleOpenRound = useCallback((roundId: string) => {
     const next: Route = { kind: "medicao", roundId };
+    setRoute(next);
+    window.history.replaceState(null, "", routeSearch(next));
+  }, []);
+
+  /**
+   * Mesma regra para o orçamento aberto (`?orcamento=<id>`), com uma diferença de tipo: a
+   * ausência é `null`, não `""` — "nenhum orçamento aberto" é um estado da jornada, e o
+   * tipo o diz em vez de deixar cada leitor interpretar uma string vazia.
+   */
+  const handleOpenEstimate = useCallback((roundId: string | null) => {
+    const next: Route = { kind: "orcamento", roundId };
     setRoute(next);
     window.history.replaceState(null, "", routeSearch(next));
   }, []);
@@ -525,6 +553,14 @@ export function App() {
           session={session}
           roundId={route.roundId}
           onOpenRound={handleOpenRound}
+        />
+      ) : route.kind === "orcamento" ? (
+        /* O orçamento-base fala com a mesma API `/v1` autenticada: a sessão desce por
+           prop e o orçamento aberto vem da URL, para sobreviver a um reload. */
+        <OrcamentoApp
+          session={session}
+          roundId={route.roundId}
+          onOpenEstimate={handleOpenEstimate}
         />
       ) : route.kind === "plataforma" ? (
         /* A jornada é montada pela rota, não pelo papel: quem digita `?plataforma=` sem

@@ -455,6 +455,29 @@
         "title": "BuildAmendmentDossierRequest",
         "type": "object"
       },
+      "BuildEstimateRequest": {
+        "additionalProperties": false,
+        "description": "Montagem do orçamento-base: a guarda de concorrência e o BDI do orçamento.\n\n`bdi_percent` viaja como TEXTO porque é `ExactDecimal` no domínio (ADR-0038, decisão\n2), que recusa `float`: um número de JSON já teria passado por binário antes de chegar\naqui. É percentual ÚNICO do orçamento inteiro — BDI por linha ou por grupo é decisão\nrecusada no ADR, não campo omitido.\n\nA identidade da obra não entra por aqui: `worksite_key`, `worksite_name` e `address`\nsão atributos da rodada, e o `extra=\"forbid\"` do `ApiModel` recusa quem tentar\nreescrevê-los no meio da cadeia.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "bdi_percent": {
+            "maxLength": 12,
+            "minLength": 1,
+            "title": "Bdi Percent",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "bdi_percent"
+        ],
+        "title": "BuildEstimateRequest",
+        "type": "object"
+      },
       "BuildValuationCalcRequest": {
         "additionalProperties": false,
         "description": "Construção do boletim e da memória de cálculo: o corpo é só a guarda de concorrência.\n\nA identidade da obra NÃO entra por aqui. No servidor de medição (`POST /calc/build`),\n`worksite_key`, `worksite_name`, `period_number`, `reference_label`, `address` e\n`contract_label` viajavam no payload; em `/v1` eles são atributos da RODADA (decisão\nhumana de 2026-08-17, colunas de `ValuationRoundRecord`) e é de lá que o cálculo os lê.\nAceitá-los aqui deixaria o cliente reescrever a identidade da obra no meio da cadeia —\nquem recusa é o `extra=\"forbid\"` do `ApiModel`, não uma lista negra.\n\n`base_version` é MUDANÇA pretendida desta migração (F-003, achado 7): `/calc/build` não\ntem guarda de concorrência nenhuma e sempre reconstrói do estado corrente dos dois\nartefatos de origem. Em `/v1` a construção é ato humano da cadeia — ela avança a versão\nda rodada e pode devolver `409 REVISION_CONFLICT`.",
@@ -1029,6 +1052,49 @@
           "question"
         ],
         "title": "CreateChatTurnRequest",
+        "type": "object"
+      },
+      "CreateEstimateRoundRequest": {
+        "additionalProperties": false,
+        "description": "Rodada de orçamento-base nova: a obra e o rótulo, nada mais.\n\nTrês diferenças de `CreateValuationRoundRequest` dão nome à fronteira do ADR-0027.\nNão há `catalog_upload_id`: a rodada abre SEM fonte e as fontes entram depois, uma a\numa, em ordem declarada (`POST .../catalogs`) — instalar uma só na criação faria a\nprimeira fonte parecer privilegiada. Não há `period_number` nem `contract_label`:\nperíodo é da medição e contrato é da obra licitada, e antes da licitação não existe\nnenhum dos dois.\n\n`worksite_key` repete `WORKSITE_KEY_PATTERN`, que o domínio exige do `Estimate`, pelo\nmesmo motivo da medição: a chave é imutável na rodada, e aceitá-la livre aqui faria uma\nrodada nascer válida e só quebrar na montagem, dezenas de decisões depois.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "reference_label": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Reference Label",
+            "type": "string"
+          },
+          "worksite_key": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,63}$",
+            "title": "Worksite Key",
+            "type": "string"
+          },
+          "worksite_name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Worksite Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worksite_key",
+          "worksite_name",
+          "reference_label"
+        ],
+        "title": "CreateEstimateRoundRequest",
         "type": "object"
       },
       "CreateExportRequest": {
@@ -1880,6 +1946,235 @@
         "title": "EntityKind",
         "type": "string"
       },
+      "EstimateCascadeResponse": {
+        "additionalProperties": false,
+        "description": "A cascata como a tela a lê. `object_key` e `upload_id` não saem daqui.",
+        "properties": {
+          "cascade": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Cascade",
+            "type": "array"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "round_id",
+          "version",
+          "cascade"
+        ],
+        "title": "EstimateCascadeResponse",
+        "type": "object"
+      },
+      "EstimateCodeAssignmentDecisionRequest": {
+        "additionalProperties": false,
+        "description": "Decisão de código do orçamento-base: a confirmação CITA a fonte de preço.\n\nÉ a única diferença de contrato para `CodeAssignmentDecisionRequest` da medição, e é a\nrazão de este modelo existir: com mais de uma tabela na rodada, resolver o código pela\nordem da cascata seria a máquina escolhendo quem precifica o item. A citação é\nobrigatória na confirmação e proibida na rejeição — rejeitar é recusar TODAS as fontes,\nnão uma delas.",
+        "properties": {
+          "action": {
+            "enum": [
+              "confirm",
+              "reject"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "catalog_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Sha256"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "item_id": {
+            "pattern": "^ti_[a-f0-9]{16}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "base_version",
+          "item_id",
+          "action"
+        ],
+        "title": "EstimateCodeAssignmentDecisionRequest",
+        "type": "object"
+      },
+      "EstimateRoundPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EstimateRoundSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "EstimateRoundPage",
+        "type": "object"
+      },
+      "EstimateRoundResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "round_id",
+          "version",
+          "status",
+          "created_at"
+        ],
+        "title": "EstimateRoundResponse",
+        "type": "object"
+      },
+      "EstimateRoundSummary": {
+        "additionalProperties": false,
+        "description": "Linha da listagem. `cascade_origins` sai na ORDEM da cascata, que é a precedência.",
+        "properties": {
+          "cascade_origins": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cascade Origins",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "extraction_status": {
+            "title": "Extraction Status",
+            "type": "string"
+          },
+          "reference_label": {
+            "title": "Reference Label",
+            "type": "string"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "worksite_key": {
+            "title": "Worksite Key",
+            "type": "string"
+          },
+          "worksite_name": {
+            "title": "Worksite Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "round_id",
+          "worksite_key",
+          "worksite_name",
+          "reference_label",
+          "version",
+          "status",
+          "stage",
+          "extraction_status",
+          "cascade_origins",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "EstimateRoundSummary",
+        "type": "object"
+      },
       "EvidenceRegion": {
         "additionalProperties": false,
         "properties": {
@@ -2095,6 +2390,28 @@
           "decided_at"
         ],
         "title": "HumanDecision",
+        "type": "object"
+      },
+      "InstallEstimateCatalogRequest": {
+        "additionalProperties": false,
+        "description": "Instala UMA fonte de preço no fim da cascata; o JSON sobe pelo presign de sempre.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "upload_id": {
+            "format": "uuid",
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "base_version"
+        ],
+        "title": "InstallEstimateCatalogRequest",
         "type": "object"
       },
       "Issue": {
@@ -3498,6 +3815,32 @@
           "polygon"
         ],
         "title": "RegionCandidate",
+        "type": "object"
+      },
+      "ReorderEstimateCascadeRequest": {
+        "additionalProperties": false,
+        "description": "Reordena a cascata. O corpo é a lista COMPLETA dos digests, na ordem nova.\n\nCompleta, e não um \"mova esta fonte para a posição N\", porque a ordem inteira é a regra\nde precificação: um corpo parcial obrigaria o servidor a decidir onde as fontes\nomitidas entram, e essa decisão é exatamente a que o ADR-0027 tira do código.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "cascade": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Cascade",
+            "type": "array"
+          }
+        },
+        "required": [
+          "base_version",
+          "cascade"
+        ],
+        "title": "ReorderEstimateCascadeRequest",
         "type": "object"
       },
       "RequiredCriterion": {
@@ -5048,6 +5391,1167 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/estimate-rounds": {
+      "get": {
+        "description": "Rodadas do tenant, da mais recente para a mais antiga, com cursor opaco.",
+        "operationId": "list_estimate_rounds_v1_estimate_rounds_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateRoundPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Estimate Rounds",
+        "tags": [
+          "estimate"
+        ]
+      },
+      "post": {
+        "description": "Abre a rodada do orçamento-base; a cascata de fontes entra depois, em ordem.",
+        "operationId": "create_estimate_round_v1_estimate_rounds_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEstimateRoundRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateRoundResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Estimate Round",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}": {
+      "get": {
+        "description": "Estado da rodada por etapa, com a cascata na ordem que decide a precificação.",
+        "operationId": "get_estimate_round_v1_estimate_rounds__round_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Estimate Round V1 Estimate Rounds  Round Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Estimate Round",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/catalog/search": {
+      "get": {
+        "description": "Busca léxica na cascata inteira; cada resultado diz de qual fonte e posição veio.\n\nSem `arm`: o braço híbrido da medição depende de índice de embeddings publicado na\nrodada, e nenhuma rota de `/v1` publica esse índice. Expor o parâmetro aqui só para\ndevolver `503` acrescentaria superfície que não existe — o motivo do braço ausente\ncontinua viajando em `semantic_notes`, e a busca nunca degrada em silêncio.",
+        "operationId": "search_estimate_cascade_v1_estimate_rounds__round_id__catalog_search_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Search Estimate Cascade V1 Estimate Rounds  Round Id  Catalog Search Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Estimate Cascade",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/catalogs": {
+      "post": {
+        "description": "Instala uma fonte de preço no FIM da cascata; a posição é a precedência.\n\nO catálogo é lido e validado ANTES de a entrada existir, como na criação da rodada\nde medição: uma fonte que não valida aqui viraria uma cascata inutilizável em toda\netapa seguinte. Segunda fonte da mesma origem recusa com\n`409 ESTIMATE_CASCADE_ORIGIN_DUPLICATE` — o mesmo código que o domínio usa —, e não\nna montagem do orçamento, quando já não haveria o que corrigir sem abrir rodada nova.",
+        "operationId": "install_estimate_catalog_v1_estimate_rounds__round_id__catalogs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallEstimateCatalogRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateCascadeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Install Estimate Catalog",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/catalogs/order": {
+      "post": {
+        "description": "Reordena a cascata instalada; nenhuma fonte entra nem sai por aqui.\n\nReordenar é ATO humano com consequência visível: a shortlist e a busca passam a\ndevolver o bloco da fonte promovida primeiro, e é assim que o orçamentista muda a\npreferência de tabela sem que nada seja recalculado escondido. Por isso avança o\ntoken de concorrência da rodada.",
+        "operationId": "reorder_estimate_cascade_v1_estimate_rounds__round_id__catalogs_order_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderEstimateCascadeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateCascadeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reorder Estimate Cascade",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/code-assignments": {
+      "get": {
+        "description": "Decisões de código da rodada e os itens confirmados que ainda esperam por uma.",
+        "operationId": "get_estimate_code_assignments_v1_estimate_rounds__round_id__code_assignments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Estimate Code Assignments V1 Estimate Rounds  Round Id  Code Assignments Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Estimate Code Assignments",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/code-assignments/decisions": {
+      "post": {
+        "description": "Confirma ou rejeita o código de UM item CITANDO a fonte, acumulando sobre o anterior.\n\nA citação viaja na DECISÃO, e não só no relatório final: é ela que o orçamento usa,\nlinha a linha, para dizer de qual tabela o preço veio. Código fora do catálogo\ncitado, fonte fora da cascata, item já decidido e unidade incompatível sem nota\ncontinuam sendo recusa do domínio, que esta rota não reimplementa.",
+        "operationId": "decide_estimate_item_code_v1_estimate_rounds__round_id__code_assignments_decisions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EstimateCodeAssignmentDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Decide Estimate Item Code V1 Estimate Rounds  Round Id  Code Assignments Decisions Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Decide Estimate Item Code",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/code-suggestions": {
+      "get": {
+        "description": "Shortlist de código sobre a CASCATA por item confirmado: observação, nunca decisão.\n\nOs candidatos saem na ordem da cascata — cada fonte é um bloco —, e a gravação entra\nna cadeia de revisões **sem avançar a versão da rodada**: a shortlist é artefato\nderivado, e se um `GET` movesse o token de concorrência, a próxima decisão do\norçamentista levaria `409` por algo que ele não fez.",
+        "operationId": "get_estimate_code_suggestions_v1_estimate_rounds__round_id__code_suggestions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Estimate Code Suggestions V1 Estimate Rounds  Round Id  Code Suggestions Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Estimate Code Suggestions",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/code-suggestions/recompute": {
+      "post": {
+        "description": "Recalcula a shortlist sobre a cascata CORRENTE e avança a rodada.\n\nÉ o caminho declarado de reler o efeito de uma reordenação da cascata: ao contrário\ndo `GET`, este é ato humano, exige `base_version` e move o token de concorrência.",
+        "operationId": "recompute_estimate_code_suggestions_v1_estimate_rounds__round_id__code_suggestions_recompute_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecomputeSuggestionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Recompute Estimate Code Suggestions V1 Estimate Rounds  Round Id  Code Suggestions Recompute Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Recompute Estimate Code Suggestions",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/estimate": {
+      "get": {
+        "description": "Orçamento gravado, revalidado na leitura, com a URL assinada da planilha.\n\nOrçamento ainda não montado devolve `409 ROUND_STAGE_NOT_READY`; orçamento que não\npassa na revalidação devolve `422`, nunca `200` com número que ninguém conferiu. A\nURL é montada aqui e agora, depois de conferido o prefixo do tenant, e nunca é\ngravada nem registrada em log ou auditoria.",
+        "operationId": "get_estimate_v1_estimate_rounds__round_id__estimate_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Estimate V1 Estimate Rounds  Round Id  Estimate Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Estimate",
+        "tags": [
+          "estimate"
+        ]
+      },
+      "post": {
+        "description": "Monta o orçamento-base, audita a planilha e só então publica as duas coisas.\n\nA ordem é o portão. O `Estimate` é montado pelo domínio, a planilha é gravada num\narquivo temporário, reaberta e reconferida centavo a centavo, e só um relatório\naprovado deixa os bytes irem ao object store e a revisão nascer — auditoria\nreprovada não publica nada (ADR-0038). O `.xlsx` é endereçado pelo digest do\norçamento, de modo que uma montagem nova nunca sobrescreve a planilha que uma\nrevisão anterior ainda referencia.\n\nTrês precondições recusam com `409 ROUND_STAGE_NOT_READY`, porque as três são ORDEM\nda cadeia e não invariante violada: cascata vazia, takeoff ainda não revisado por\ninteiro e nenhuma decisão de código registrada. Confirmação sem fonte citada, código\nfora do catálogo citado e item confirmado sem decisão continuam sendo `422\nDOMAIN_VALIDATION_FAILED` com o código `ESTIMATE_*`/`ASSIGNMENT_*` do domínio.\n\nA identidade da obra vem da RODADA; o corpo carrega só a guarda de concorrência e o\nBDI.",
+        "operationId": "build_estimate_v1_estimate_rounds__round_id__estimate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildEstimateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Build Estimate V1 Estimate Rounds  Round Id  Estimate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Build Estimate",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/plate": {
+      "get": {
+        "description": "Metadados e URL assinada da página promovida; a URL não vai para log nem auditoria.",
+        "operationId": "get_estimate_plate_v1_estimate_rounds__round_id__plate_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationPlateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Estimate Plate",
+        "tags": [
+          "estimate"
+        ]
+      },
+      "post": {
+        "description": "Associa o PDF já enviado pelo presign; a API não renderiza nem lê a prancha.",
+        "operationId": "associate_estimate_plate_v1_estimate_rounds__round_id__plate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssociatePlateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationPlateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Associate Estimate Plate",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/plate/extractions": {
+      "post": {
+        "description": "Enfileira a extração paga da legenda; nenhum provider é chamado no request path.",
+        "operationId": "create_estimate_plate_extraction_v1_estimate_rounds__round_id__plate_extractions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePlateExtractionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationExtractionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Estimate Plate Extraction",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/takeoff": {
+      "get": {
+        "description": "Pacote de takeoff da rodada, com a âncora de evidência de cada item.",
+        "operationId": "get_estimate_takeoff_v1_estimate_rounds__round_id__takeoff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Estimate Takeoff V1 Estimate Rounds  Round Id  Takeoff Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Estimate Takeoff",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/takeoff/decisions": {
+      "post": {
+        "description": "Aplica UMA decisão do orçamentista, grava a revisão nova e enfileira o overlay.",
+        "operationId": "decide_estimate_takeoff_item_v1_estimate_rounds__round_id__takeoff_decisions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TakeoffDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Decide Estimate Takeoff Item V1 Estimate Rounds  Round Id  Takeoff Decisions Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Decide Estimate Takeoff Item",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/takeoff/overlay": {
+      "get": {
+        "description": "URL assinada do overlay e a idade dele; overlay vencido é `200`, nunca erro.",
+        "operationId": "get_estimate_takeoff_overlay_v1_estimate_rounds__round_id__takeoff_overlay_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationTakeoffOverlayResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Estimate Takeoff Overlay",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
     "/v1/jobs": {
       "post": {
         "operationId": "create_job_v1_jobs_post",

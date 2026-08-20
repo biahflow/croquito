@@ -42,7 +42,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-017 | A DEFINIR | READY_FOR_SPEC | Custo agregado por tenant e trilha de auditoria do entitlement na tela (a definir em contrato) |
 | F-018 | A DEFINIR | READY_FOR_SPEC | Edição de forma da proposta na UI da revisão — corrigir vértice/recuo manualmente (a definir em contrato) |
 | F-019 | A DEFINIR | READY_FOR_SPEC | Preview visual da cena resolvida na revisão (a definir em contrato) |
-| F-020 | HIGH | READY_FOR_SPEC | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
+| F-020 | HIGH | READY_FOR_HUMAN_REVIEW | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
 | F-021 | HIGH | READY_FOR_HUMAN_REVIEW | [Nota pré-classificada na decisão da leitura](../features/F-021-nota-pre-classificada/feature.md) |
 | F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |
 | F-024 | HIGH | READY_FOR_HUMAN_REVIEW | [Leitura com valor não morre por falta de target_hint](../features/F-024-leitura-sem-target-hint/feature.md) |
@@ -221,7 +221,15 @@ nenhum arquivo do repositório** e por decisão humana da mesma data entra no es
 orçamento-base de pré-licitação sem BDI não é submissível. A feature é `INTERFACE_CHANGE` e
 exigirá Design Approval Package antes do planejamento; o contrato está em
 [F-020](../features/F-020-orcamento-base-web/feature.md), com prioridade `HIGH` por decisão
-humana. Segue como dependência externa o arquivo `.DBF` real do catálogo EMOP.
+humana. Segue como dependência externa o arquivo `.DBF` real do catálogo EMOP. Em
+2026-08-20 o gate de Design Approval foi exercido — revisão 1 do pacote aprovada, papel de
+acesso decidido (reusa o da medição) — e, na mesma data, a implementação inteira (T1–T6:
+domínio BDI + contrato gerado, escritor/auditor da planilha, rotas `/v1/estimate-rounds*`,
+worker da fila, jornada na SPA, e2e sem CLI) foi integrada e revisada na branch
+`f-020-orcamento-web`, levando a feature a `READY_FOR_HUMAN_REVIEW`
+([evidência](../features/F-020-orcamento-base-web/evidence.md)). Pendem o aceite do
+[ADR-0038](../adr/0038-bdi-como-conceito-de-pre-licitacao.md) (BDI como conceito de
+pré-licitação), copy final, conferência contra o exemplar real e o merge.
 
 F-021 — nota pré-classificada na decisão da leitura — e F-022 — Document AI como braço de
 OCR — nascem em 2026-08-20, por seleção humana, durante a segunda revisão real do

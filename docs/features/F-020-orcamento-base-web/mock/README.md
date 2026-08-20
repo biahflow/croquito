@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE
 Revision: 1
-Status: Awaiting approval
+Status: Approved (2026-08-20)
 Date: 2026-08-19
 Produced by: agente (Claude Code)
 
@@ -14,10 +14,10 @@ Produced by: agente (Claude Code)
 
 | Campo | Valor |
 | --- | --- |
-| O que foi aprovado | nada ainda |
-| Aprovado por | — |
-| Data | — |
-| Revisão aprovada | — |
+| O que foi aprovado | a composição visual da revisão 1: as oito telas com seus estados e as decisões listadas em "Decisões que este pacote carrega" |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-20 |
+| Revisão aprovada | 1 |
 | Explicitamente **não** aprovado | papel de autorização; forma do escritor e do auditor de planilha; BDI por grupo; copy final; conferência contra o exemplar real da prefeitura |
 
 Aprovar esta revisão não aprova a seguinte. Pacote materialmente alterado é revisão nova e

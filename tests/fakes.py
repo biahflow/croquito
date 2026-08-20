@@ -66,6 +66,10 @@ class FakeObjectStore:
             checksum_sha256=base64.b64encode(hashlib.sha256(stored.body).digest()).decode("ascii"),
         )
 
+    def write_object(self, *, object_key: str, body: bytes, content_type: str) -> None:
+        """Gravação de artefato produzido pela própria API (planilha do orçamento-base)."""
+        self.objects[object_key] = StoredObject(body=body, content_type=content_type)
+
     def presign_private_read(self, *, object_key: str) -> str:
         return f"https://storage.invalid/{object_key}?temporary=true"
 

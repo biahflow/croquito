@@ -66,6 +66,7 @@ import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Final
 
@@ -106,6 +107,11 @@ from croquito_valuation.emop import (
 )
 from croquito_valuation.errors import ValuationValidationError, valuation_errors
 from croquito_valuation.estimate import Estimate, build_worksite_estimate
+from croquito_valuation.estimate_workbook import (
+    EstimateAuditReport,
+    audit_estimate_workbook,
+    write_estimate_workbook,
+)
 from croquito_valuation.models import PriceCatalog, Valuation
 from croquito_valuation.takeoff import (
     TakeoffDecisionBatch,
@@ -134,6 +140,7 @@ from croquito_worker.providers import (
 )
 from croquito_worker.valuation.emop_fixture import emop_fixture_layout, write_emop_dbf
 from croquito_worker.valuation.estimate_fixture import (
+    SYNTHETIC_ESTIMATE_BDI_PERCENT,
     SYNTHETIC_ESTIMATE_WORKSITE_ADDRESS,
     SYNTHETIC_ESTIMATE_WORKSITE_KEY,
     SYNTHETIC_ESTIMATE_WORKSITE_NAME,
@@ -246,6 +253,11 @@ _PENDING_WORKBOOK_FILENAME = ".medicao-pendente.xlsx"
 """Nome do arquivo antes da auditoria: oculto, temporário e com a extensão que o openpyxl
 reabre. Só vira `medicao.xlsx` depois que a auditoria de round-trip aprova."""
 
+ESTIMATE_WORKBOOK_FILENAME = "orcamento.xlsx"
+ESTIMATE_WORKBOOK_AUDIT_FILENAME = "orcamento-audit.json"
+_PENDING_ESTIMATE_WORKBOOK_FILENAME = ".orcamento-pendente.xlsx"
+"""Mesmo desenho do par acima (ADR-0038), para a planilha do orçamento-base."""
+
 
 @dataclass(frozen=True, slots=True)
 class ValuationImportResult:
@@ -341,6 +353,9 @@ class EstimateDemoResult:
     compositions_path: Path
     estimate: Estimate
     estimate_path: Path
+    workbook_path: Path | None
+    workbook_audit: EstimateAuditReport
+    workbook_audit_path: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -859,6 +874,28 @@ def run_export_valuation(
     try:
         write_valuation_workbook(valuation, catalog, template, pending_path, contract)
         audit = audit_workbook(pending_path, valuation, catalog, template, contract)
+        if audit.status != "ok":
+            return None, audit
+        os.replace(pending_path, workbook_path)
+        return workbook_path, audit
+    finally:
+        pending_path.unlink(missing_ok=True)
+
+
+def run_export_estimate_workbook(
+    estimate: Estimate, template: WorkbookTemplate, output_dir: Path
+) -> tuple[Path | None, EstimateAuditReport]:
+    """Grava a planilha do orçamento-base em nome pendente e só a publica com a auditoria
+    aprovada — o mesmo desenho de `run_export_valuation` (ADR-0038): nome temporário,
+    auditoria de round-trip e só então `os.replace`; falha do auditor não publica nada e
+    o pendente é removido no `finally`.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pending_path = output_dir / _PENDING_ESTIMATE_WORKBOOK_FILENAME
+    workbook_path = output_dir / ESTIMATE_WORKBOOK_FILENAME
+    try:
+        write_estimate_workbook(estimate, template, pending_path)
+        audit = audit_estimate_workbook(pending_path, estimate, template)
         if audit.status != "ok":
             return None, audit
         os.replace(pending_path, workbook_path)
@@ -1548,6 +1585,7 @@ def run_build_estimate(
     *,
     worksite_key: str,
     worksite_name: str,
+    bdi_percent: Decimal,
     address: str | None,
     calc_plan_path: Path | None,
 ) -> BuildEstimateResult:
@@ -1574,6 +1612,7 @@ def run_build_estimate(
         cascade,
         worksite_key=worksite_key,
         worksite_name=worksite_name,
+        bdi_percent=bdi_percent,
         address=address,
         calc_plan=calc_plan,
     )
@@ -1655,11 +1694,18 @@ def run_estimate_demo(output_dir: Path) -> EstimateDemoResult:
         cascade,
         worksite_key=SYNTHETIC_ESTIMATE_WORKSITE_KEY,
         worksite_name=SYNTHETIC_ESTIMATE_WORKSITE_NAME,
+        bdi_percent=SYNTHETIC_ESTIMATE_BDI_PERCENT,
         address=SYNTHETIC_ESTIMATE_WORKSITE_ADDRESS,
         calc_plan=calc_plan,
     )
     estimate_path = output_dir / ESTIMATE_FILENAME
     atomic_write_text(estimate_path, _document(result.estimate))
+
+    workbook_path, workbook_audit = run_export_estimate_workbook(
+        result.estimate, default_template(), output_dir
+    )
+    workbook_audit_path = output_dir / ESTIMATE_WORKBOOK_AUDIT_FILENAME
+    atomic_write_text(workbook_audit_path, _serialize(workbook_audit.model_dump(mode="json")))
 
     return EstimateDemoResult(
         plate=plate,
@@ -1676,10 +1722,23 @@ def run_estimate_demo(output_dir: Path) -> EstimateDemoResult:
         compositions_path=compositions_path,
         estimate=result.estimate,
         estimate_path=estimate_path,
+        workbook_path=workbook_path,
+        workbook_audit=workbook_audit,
+        workbook_audit_path=workbook_audit_path,
     )
 
 
 def _audit_failure_payload(workbook_path: Path, audit: AuditReport) -> dict[str, object]:
+    return {
+        "status": audit.status,
+        "workbook": str(workbook_path),
+        "findings": [finding.model_dump(mode="json") for finding in audit.findings],
+    }
+
+
+def _estimate_audit_failure_payload(
+    workbook_path: Path, audit: EstimateAuditReport
+) -> dict[str, object]:
     return {
         "status": audit.status,
         "workbook": str(workbook_path),
@@ -2415,6 +2474,7 @@ def _command_build_estimate(args: argparse.Namespace) -> int:
             Path(args.output),
             worksite_key=args.worksite_key,
             worksite_name=args.worksite_name,
+            bdi_percent=args.bdi,
             address=args.address,
             calc_plan_path=None if args.calc_plan is None else Path(args.calc_plan),
         )
@@ -2437,6 +2497,13 @@ def _command_estimate_demo(args: argparse.Namespace) -> int:
     except (ValuationValidationError, ValidationError) as error:
         _print(_refused_payload(error))
         return 2
+    if result.workbook_path is None:
+        _print(
+            _estimate_audit_failure_payload(
+                Path(args.output) / ESTIMATE_WORKBOOK_FILENAME, result.workbook_audit
+            )
+        )
+        return 1
     _print(
         {
             "status": "ok",
@@ -2447,6 +2514,9 @@ def _command_estimate_demo(args: argparse.Namespace) -> int:
             "assignments": str(result.assignments_path),
             **_estimate_payload(result.estimate),
             "output": str(result.estimate_path),
+            "workbook": str(result.workbook_path),
+            "workbook_sha256": result.workbook_audit.workbook_sha256,
+            "workbook_audit": str(result.workbook_audit_path),
         }
     )
     return 0
@@ -2881,6 +2951,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_catalog_option(build_estimate_command)
     build_estimate_command.add_argument("--worksite-key", required=True)
     build_estimate_command.add_argument("--worksite-name", required=True)
+    build_estimate_command.add_argument(
+        "--bdi",
+        type=Decimal,
+        required=True,
+        help="percentual único de BDI do orçamento (ADR-0038), ex.: 25.00",
+    )
     build_estimate_command.add_argument("--address", default=None)
     build_estimate_command.add_argument(
         "--calc-plan",

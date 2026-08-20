@@ -1,0 +1,2196 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { User } from "oidc-client-ts";
+import type { CodeSuggestionSet } from "@croquito/contracts";
+
+import {
+  associatePlate,
+  createEstimate,
+  createPlateExtraction,
+  getCodes,
+  getEstimate,
+  getEstimateState,
+  getPlate,
+  getSuggestions,
+  getTakeoff,
+  getTakeoffOverlay,
+  installCatalog,
+  listEstimates,
+  postBuildEstimate,
+  postCodeDecision,
+  postSuggestionsRecompute,
+  postTakeoffDecision,
+  reorderCascade,
+  searchCascade,
+  uploadCatalog,
+  uploadPlateFile,
+  type CascadeEntry,
+  type CascadeSearchResponse,
+  type CodesResponse,
+  type EstimateResponse,
+  type EstimateState,
+  type EstimateStateExtraction,
+  type EstimateSummary,
+  type OverlayResponse,
+  type PriceOrigin,
+  type SuggestionsResponse,
+  type TakeoffItem,
+  type TakeoffResponse,
+} from "./api";
+import { signOut } from "../auth";
+import { canMove, entryOfDigest, reorderedDigests } from "./cascata";
+import { derivarEtapas, etapaStatusLabel, type Etapa, type EtapaId } from "./etapas";
+import {
+  describeError,
+  isAbortError,
+  isForbidden,
+  recusaDeMutacao,
+  workbookAuditFindings,
+} from "./errors";
+import {
+  formatDecimalText,
+  formatMoneyText,
+  formatPercentText,
+  formatQuantityText,
+  formatTimestamp,
+  parseDecimalInput,
+  shortDigest,
+} from "./format";
+import {
+  assignmentStatusLabel,
+  AVISO_BDI,
+  AVISO_CASCATA,
+  AVISO_CASCATA_TRAVADA,
+  AVISO_LOCALIZACAO_NAO_CONFIRMADA,
+  AVISO_ORCAMENTO,
+  AVISO_QUANTIDADE_AMBIGUA,
+  AVISO_SEM_PRECO,
+  cascadePositionLabel,
+  DESCRICAO_CALCULO_SHORTLIST,
+  DESCRICAO_MONTAGEM,
+  DICA_BDI,
+  DICA_QUANTIDADE,
+  extractionFailureMessage,
+  extractionStatusLabel,
+  itemStatusLabel,
+  MENSAGEM_ORCAMENTO_MUDOU,
+  priceOriginSeloClass,
+  priceSourceLabel,
+  stageLabel,
+  unitLabel,
+  unitMismatchHint,
+} from "./labels";
+import { overlayFreshness } from "./overlay";
+import { bdiPercentError, worksiteKeyError } from "./requests";
+
+/** Duração do aviso de sucesso; recusa nenhuma expira sozinha. */
+const TOAST_MS = 5000;
+
+/** Intervalo do poll do estado enquanto a leitura automática está na fila ou rodando. */
+const EXTRACTION_POLL_MS = 3000;
+
+/** Debounce da busca incremental na cascata. */
+const BUSCA_DEBOUNCE_MS = 300;
+
+type DecisionAction = "" | "confirm" | "reject";
+
+/**
+ * O código escolhido para um item, com a FONTE junto. No orçamento a fonte não é
+ * decoração do relatório: ela viaja na decisão (`catalog_sha256`), porque confirmar um
+ * código é escolher de qual catálogo, e com que data-base, aquele preço sai.
+ */
+type CodeChoice = {
+  code: string;
+  description: string;
+  unit: string;
+  unit_price: string;
+  catalogSha256: string;
+  priceOrigin: PriceOrigin;
+  /** Vem do servidor quando a escolha saiu da shortlist; `null` quando saiu da busca. */
+  unit_compatible: boolean | null;
+};
+
+const EMPTY_DECISION = {
+  action: "" as DecisionAction,
+  quantity: "",
+  unit: "",
+  note: "",
+  itemNote: "",
+};
+
+const EMPTY_ESTIMATE_FORM = {
+  worksiteKey: "",
+  worksiteName: "",
+  referenceLabel: "",
+  address: "",
+};
+
+/**
+ * Leitura OBSERVACIONAL: a falha dela não derruba o carregamento do orçamento.
+ *
+ * Vale só para a imagem da prancha e para o overlay das âncoras — os dois ilustram o que
+ * já foi decidido e não decidem nada. A ausência de qualquer um deles é declarada na
+ * tela, então engolir a recusa aqui não esconde estado nenhum. Decisão, artefato,
+ * contagem e preço nunca passam por aqui.
+ */
+async function leituraObservacional<T>(
+  leitura: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await leitura();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Selo da fonte de um preço: origem por extenso, data-base e a posição na cascata.
+ *
+ * É o elemento que a medição não tem, e a razão dele é a decisão do pacote aprovado: com
+ * mais de uma tabela na rodada, "de onde veio o preço" deixa de ser redundante. A classe
+ * de cor é redundância — origem, data-base e posição vão escritas dentro do selo.
+ */
+export function SeloFonte({
+  origin,
+  referenceMonth,
+  position,
+}: {
+  origin: PriceOrigin | string;
+  referenceMonth?: string | null;
+  position?: number | null;
+}) {
+  return (
+    <>
+      <span className={`selo ${priceOriginSeloClass(origin)}`}>
+        {priceSourceLabel(origin, referenceMonth)}
+      </span>
+      {position == null ? null : (
+        <span className="selo selo-neutro">{cascadePositionLabel(position)}</span>
+      )}
+    </>
+  );
+}
+
+/**
+ * Item confirmado que nenhuma fonte da cascata precifica. Ele é DECLARADO, nunca
+ * precificado por fora: aparece aqui e ganha bloco próprio na planilha.
+ */
+export function SemPrecoNaCascata({ rotulos }: { rotulos: readonly string[] }) {
+  if (rotulos.length === 0) {
+    return null;
+  }
+  return (
+    <div className="confirmados">
+      <h3>Sem preço em nenhuma fonte</h3>
+      <p className="dica">{AVISO_SEM_PRECO}</p>
+      <ul className="confirmados-lista">
+        {/* A chave leva o índice porque dois itens da legenda podem ter rótulo e
+            quantidade idênticos — é o caso do mesmo serviço repetido em dois trechos. */}
+        {rotulos.map((rotulo, index) => (
+          <li key={`${index}:${rotulo}`}>
+            {rotulo}{" "}
+            <span className="selo selo-fonte-ausente">sem preço na cascata</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Estado da leitura automática da legenda, os cinco estados do pacote aprovado: ociosa,
+ * na fila, em curso, concluída e falhou. A frase da falha é escrita a partir do
+ * `failure_code` estável da rodada — a API não manda mensagem pronta, e inventar uma sem
+ * código seria pior do que dizer o que se sabe.
+ */
+export function EstadoExtracao({
+  extraction,
+  onRun,
+  running,
+}: {
+  extraction: EstimateStateExtraction;
+  onRun: () => void;
+  running: boolean;
+}) {
+  return (
+    <div className="extracao-status">
+      <p className="dica">
+        Leitura automática da legenda: {extractionStatusLabel(extraction.status)}.
+      </p>
+      {extraction.status === "queued" || extraction.status === "running" ? (
+        <p className="dica" role="status">
+          {extraction.status === "queued"
+            ? "Pedido na fila; o processamento começa em instantes."
+            : "Lendo a legenda da prancha… isso pode levar alguns instantes."}
+        </p>
+      ) : extraction.status === "done" ? (
+        <p className="dica">
+          Leitura concluída
+          {extraction.lineage_present
+            ? " — o lineage da chamada (modelo, tokens, custo) ficou registrado na rodada."
+            : "."}
+        </p>
+      ) : extraction.status === "failed" ? (
+        <>
+          <p className="banner-erro" role="alert">
+            {extractionFailureMessage(extraction.failure_code)}
+            {extraction.failure_code === null ? null : (
+              <>
+                {" "}
+                <span className="mono">({extraction.failure_code})</span>
+              </>
+            )}
+          </p>
+          <button
+            type="button"
+            className="botao-secundario"
+            onClick={onRun}
+            disabled={running}
+          >
+            Tentar leitura novamente
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="dica">
+            Prancha enviada; a leitura automática ainda não foi disparada.
+          </p>
+          <p className="aviso-fixo aviso-inline">
+            Disparar a leitura é uma chamada paga de IA, autorizada por contrato do seu
+            tenant.
+          </p>
+          <button
+            type="button"
+            className="botao-secundario"
+            onClick={onRun}
+            disabled={running}
+          >
+            Disparar leitura automática
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Overlay das âncoras, com a IDADE dele declarada em palavra (ADR-0030). Espelho do que a
+ * medição já faz: o desenho é reconstruído por comando de fila e, entre a decisão e o
+ * re-render, o que está aqui é do pacote anterior.
+ */
+export function OverlayDoTakeoff({
+  overlay,
+  onRefresh,
+}: {
+  overlay: OverlayResponse;
+  onRefresh?: () => void;
+}) {
+  const estado = overlayFreshness(overlay);
+  if (estado === null) {
+    return null;
+  }
+  return (
+    <details className={`overlay-bloco ${estado.stale ? "overlay-vencido" : ""}`}>
+      <summary>Overlay das âncoras — {estado.label}</summary>
+      <p className="dica">{estado.explanation}</p>
+      {estado.stale ? (
+        <p className="aviso-fixo aviso-inline" role="status">
+          Desenho vencido: ele é do pacote{" "}
+          <span className="digest">{shortDigest(overlay.overlay_packet_sha256)}</span> e o
+          pacote atual é{" "}
+          <span className="digest">{shortDigest(overlay.packet_sha256)}</span>.
+        </p>
+      ) : null}
+      {overlay.present ? (
+        <img
+          className="overlay-imagem"
+          src={overlay.image_url}
+          alt={`Overlay das âncoras sobre a prancha — ${estado.label}`}
+          draggable={false}
+        />
+      ) : null}
+      {onRefresh === undefined ? null : (
+        <button type="button" className="botao-secundario" onClick={onRefresh}>
+          Atualizar desenho
+        </button>
+      )}
+    </details>
+  );
+}
+
+/**
+ * Banner do `409 REVISION_CONFLICT`. Ele não é o alerta comum de erro: o orçamento andou,
+ * o ato não foi gravado, e o caminho é recarregar — com o que já estava escrito no
+ * formulário intacto.
+ */
+export function BannerOrcamentoMudou({ onReload }: { onReload?: () => void }) {
+  return (
+    <div className="banner-conflito" role="alert">
+      <p>{MENSAGEM_ORCAMENTO_MUDOU}</p>
+      {onReload === undefined ? null : (
+        <button type="button" className="botao-primario" onClick={onReload}>
+          Recarregar estado atual
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * `403` da rota, como TELA e **sem nomear papel**.
+ *
+ * Qual papel autoriza esta jornada é decisão humana ainda aberta (Design Approval
+ * Package, "questões em aberto"): um texto que nomeasse um papel afirmaria uma decisão
+ * que ninguém tomou. Quem autoriza continua sendo o backend — a jornada é montada pela
+ * rota, e quem chega por link direto lê o motivo em vez de encontrar tela vazia.
+ */
+export function PainelSemAcesso({ detalhe }: { detalhe?: string | null }) {
+  return (
+    <section className="painel" aria-label="Sem acesso ao orçamento">
+      <div className="painel-cabecalho">
+        <h2>Sem acesso ao orçamento</h2>
+      </div>
+      <p role="alert">
+        Sua conta não tem o papel que autoriza a jornada de orçamento neste tenant. Peça a
+        quem administra o acesso da sua organização.
+      </p>
+      {detalhe ? <p className="digest">{detalhe}</p> : null}
+    </section>
+  );
+}
+
+/**
+ * Auditoria da planilha reprovada, como TELA e não rodapé (ADR-0038).
+ *
+ * O arquivo é gravado, reaberto e reconferido antes de qualquer publicação: quando a
+ * conferência falha, nada vai ao object store e nenhuma revisão nasce. Dizer isso por
+ * extenso é o que separa "falhou" de "publicou algo que ninguém conferiu". Só os CÓDIGOS
+ * dos achados aparecem — `expected`/`found` são preço e quantidade do cliente, e a rota
+ * não os devolve.
+ */
+export function TelaAuditoriaReprovada({
+  findings,
+  onDismiss,
+}: {
+  findings: readonly string[];
+  onDismiss?: () => void;
+}) {
+  return (
+    <section className="painel" aria-label="Auditoria da planilha reprovada">
+      <div className="painel-cabecalho">
+        <h2>A auditoria reprovou a planilha — nada foi publicado</h2>
+      </div>
+      <p className="banner-erro" role="alert">
+        A planilha gerada não confere com o orçamento montado. O arquivo foi descartado, o
+        object store não recebeu nada e o orçamento continua exatamente como estava.
+      </p>
+      {findings.length === 0 ? null : (
+        <ul className="confirmados-lista">
+          {findings.map((code) => (
+            <li key={code} className="digest">
+              {code}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="dica">
+        O portão é o mesmo da medição: o arquivo só é publicado depois de reaberto e
+        reconferido, e falha do auditor não publica nada. Refazer a montagem é seguro.
+      </p>
+      {onDismiss === undefined ? null : (
+        <div className="acoes-linha">
+          <button type="button" className="botao-secundario" onClick={onDismiss}>
+            Voltar à montagem
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Um item confirmado sem decisão de código ainda não tem preço: rótulo para a lista. */
+function rotuloDoItem(label: string, quantity: string | null, unit: string): string {
+  return `${label} · ${formatQuantityText(quantity, unitLabel(unit))}`;
+}
+
+/** Item cuja âncora não passou pelo registro fino; a tela diz isso por extenso. */
+function itemAnchor(item: TakeoffItem): "registered" | "raw" {
+  return item.anchor === "registered" ? "registered" : "raw";
+}
+
+/**
+ * Jornada do orçamento-base sobre a API `/v1` autenticada (F-020, ADR-0027/ADR-0038).
+ *
+ * A sessão é da casca, não desta jornada: quem lê o OIDC, consome o authorization code
+ * (que é de uso único) e renova o token é `App.tsx`. Aqui ela chega pronta — e sem ela
+ * nada é chamado, porque toda rota do orçamento é autenticada e por tenant.
+ *
+ * `roundId` é o orçamento aberto, declarado na URL pela casca (`?orcamento=`); `null` é
+ * "jornada do orçamento, nenhum orçamento aberto", que é a tela de escolher ou abrir.
+ *
+ * O que esta tela NÃO faz, e a fronteira é a mesma da medição: ela não soma, não
+ * multiplica e não arredonda dinheiro nem quantidade — exibe as strings decimais que o
+ * servidor mandou. O único decimal que ela escreve é o que a orçamentista digitou, e ele
+ * viaja como texto.
+ */
+export function OrcamentoApp({
+  session,
+  roundId = null,
+  onOpenEstimate,
+}: {
+  session: User | null;
+  roundId?: string | null;
+  onOpenEstimate?: (roundId: string | null) => void;
+}) {
+  // O token é lido no instante da chamada (o `automaticSilentRenew` da casca troca o
+  // objeto da sessão sem avisar quem já capturou o valor), então os handlers consultam
+  // esta ref em vez de fechar sobre a sessão do render em que nasceram.
+  const sessionRef = useRef<User | null>(session);
+  sessionRef.current = session;
+  const tokenDaSessao = useCallback(
+    (): string | null => sessionRef.current?.access_token ?? null,
+    [],
+  );
+  const autenticado = session !== null;
+
+  // Orçamento aberto. A URL é a fonte declarada (`?orcamento=`), mas quem navega dentro
+  // da jornada é esta tela: o estado local segue a prop e avisa a casca ao mudar.
+  const [orcamento, setOrcamento] = useState<string | null>(roundId);
+  useEffect(() => setOrcamento(roundId), [roundId]);
+
+  // Estado servido pela rodada; nada aqui é derivado de cálculo local.
+  const [state, setState] = useState<EstimateState | null>(null);
+  // Versão da rodada: token de concorrência de TODA a cadeia. Ele vem da última resposta
+  // lida, e é ele que a próxima mutação cita em `base_version`.
+  const [version, setVersion] = useState<number | null>(null);
+  const [takeoff, setTakeoff] = useState<TakeoffResponse | null>(null);
+  const [overlay, setOverlay] = useState<OverlayResponse | null>(null);
+  const [plateSrc, setPlateSrc] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<SuggestionsResponse | null>(null);
+  const [codes, setCodes] = useState<CodesResponse | null>(null);
+  const [estimate, setEstimate] = useState<EstimateResponse | null>(null);
+
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [revisionConflict, setRevisionConflict] = useState(false);
+  const [semAcesso, setSemAcesso] = useState<string | null>(null);
+  const [auditoriaReprovada, setAuditoriaReprovada] = useState<string[] | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [openStep, setOpenStep] = useState<EtapaId | null>(null);
+
+  // Escolha e abertura de orçamento.
+  const [lista, setLista] = useState<EstimateSummary[] | null>(null);
+  const [listaCursor, setListaCursor] = useState<string | null>(null);
+  const [form, setForm] = useState(EMPTY_ESTIMATE_FORM);
+
+  // Cascata e prancha.
+  const [catalogFile, setCatalogFile] = useState<File | null>(null);
+  const [plateFile, setPlateFile] = useState<File | null>(null);
+
+  // Revisão do takeoff.
+  const [selectedItemId, setSelectedItemId] = useState("");
+  const [decision, setDecision] = useState(EMPTY_DECISION);
+
+  // Códigos.
+  const [selectedPendingId, setSelectedPendingId] = useState("");
+  const [codeChoice, setCodeChoice] = useState<CodeChoice | null>(null);
+  const [codeNote, setCodeNote] = useState("");
+  const [query, setQuery] = useState("");
+  const [searchResult, setSearchResult] = useState<CascadeSearchResponse | null>(null);
+  // A busca incremental nunca toca `submitting` (cada tecla congelaria a tela inteira) e
+  // nunca escreve no alerta global — erro transitório vira aviso ao lado do campo.
+  const [buscando, setBuscando] = useState(false);
+  const [buscaAviso, setBuscaAviso] = useState<string | null>(null);
+  const buscaAbortRef = useRef<AbortController | null>(null);
+  const buscaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // BDI e montagem.
+  const [bdiInput, setBdiInput] = useState("");
+
+  useEffect(() => {
+    if (toast === null) {
+      return;
+    }
+    const timer = setTimeout(() => setToast(null), TOAST_MS);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  /** Aplica a versão que a resposta declarou; ela é a base da próxima mutação. */
+  const aplicarVersao = useCallback((proxima: number) => {
+    setVersion(proxima);
+    setState((current) =>
+      current === null ? current : { ...current, version: proxima },
+    );
+  }, []);
+
+  /** Recusa de LEITURA: `403` vira tela própria, o resto vira o alerta comum. */
+  const registrarFalhaDeLeitura = useCallback((error: unknown) => {
+    if (isForbidden(error)) {
+      setSemAcesso(error instanceof Error ? error.message : null);
+      return;
+    }
+    setAlertMessage(describeError(error));
+  }, []);
+
+  const carregarLista = useCallback(async () => {
+    const token = tokenDaSessao();
+    if (token === null) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const page = await listEstimates(token);
+      setLista(page.items);
+      setListaCursor(page.next_cursor);
+      setAlertMessage(null);
+      setSemAcesso(null);
+    } catch (error) {
+      registrarFalhaDeLeitura(error);
+    } finally {
+      setLoading(false);
+    }
+  }, [registrarFalhaDeLeitura, tokenDaSessao]);
+
+  const carregarMais = async () => {
+    const token = tokenDaSessao();
+    if (token === null || listaCursor === null) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const page = await listEstimates(token, { cursor: listaCursor });
+      setLista((current) => [...(current ?? []), ...page.items]);
+      setListaCursor(page.next_cursor);
+    } catch (error) {
+      registrarFalhaDeLeitura(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const carregarEstado = useCallback(async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const next = await getEstimateState(token, orcamento);
+      setState(next);
+      setVersion(next.version);
+      setRevisionConflict(false);
+      setAlertMessage(null);
+      setSemAcesso(null);
+      if (next.takeoff.present) {
+        setTakeoff(await getTakeoff(token, orcamento));
+        setCodes(await getCodes(token, orcamento));
+        setOverlay(
+          await leituraObservacional(() => getTakeoffOverlay(token, orcamento)),
+        );
+      } else {
+        setTakeoff(null);
+        setCodes(null);
+        setOverlay(null);
+      }
+      // A URL da imagem é assinada e de curta duração: ela é relida junto com o estado e
+      // vai direto no `src`, sem header nenhum e sem nunca aparecer em log.
+      setPlateSrc(
+        next.plate.present
+          ? ((await leituraObservacional(() => getPlate(token, orcamento)))
+              ?.image_url ?? null)
+          : null,
+      );
+      // A shortlist só é buscada quando já existe na rodada: a primeira leitura
+      // **calcula e grava** o artefato, e isso é ato da orçamentista, não efeito
+      // colateral de abrir a tela.
+      setSuggestions(
+        next.codes.suggestions_present
+          ? await getSuggestions(token, orcamento)
+          : null,
+      );
+      const montado = next.estimate.present
+        ? await leituraObservacional(() => getEstimate(token, orcamento))
+        : null;
+      setEstimate(montado);
+      if (montado !== null) {
+        // O BDI gravado preenche o campo para conferência, e SÓ enquanto ninguém escreveu
+        // nada. A forma funcional é o que mantém `carregarEstado` fora da dependência do
+        // texto digitado: com `bdiInput` na lista, cada tecla no campo reconstruiria a
+        // função e, com ela, o intervalo do poll da extração que depende dela. O valor
+        // continua sendo texto e nenhum dígito é acrescentado.
+        setBdiInput((atual) =>
+          atual.trim().length === 0 ? montado.bdi_percent : atual,
+        );
+      }
+    } catch (error) {
+      registrarFalhaDeLeitura(error);
+    } finally {
+      setLoading(false);
+    }
+  }, [orcamento, registrarFalhaDeLeitura, tokenDaSessao]);
+
+  useEffect(() => {
+    if (!autenticado) {
+      return;
+    }
+    if (orcamento === null) {
+      void carregarLista();
+    } else {
+      void carregarEstado();
+    }
+  }, [autenticado, carregarEstado, carregarLista, orcamento]);
+
+  /**
+   * Busca em voo não sobrevive à saída da tela: o timer do debounce e a consulta pendente
+   * são cancelados, e o cancelamento nunca vira alerta (`isAbortError`).
+   */
+  useEffect(
+    () => () => {
+      if (buscaTimerRef.current !== null) {
+        clearTimeout(buscaTimerRef.current);
+      }
+      buscaAbortRef.current?.abort();
+    },
+    [],
+  );
+
+  /** Poll do estado enquanto a chamada paga está na fila ou rodando. */
+  useEffect(() => {
+    const status = state?.extraction.status;
+    if (status !== "queued" && status !== "running") {
+      return;
+    }
+    const timer = setInterval(() => void carregarEstado(), EXTRACTION_POLL_MS);
+    return () => clearInterval(timer);
+  }, [carregarEstado, state?.extraction.status]);
+
+  const abrirOrcamento = useCallback(
+    (next: string | null) => {
+      setOrcamento(next);
+      setState(null);
+      setVersion(null);
+      setTakeoff(null);
+      setOverlay(null);
+      setCodes(null);
+      setSuggestions(null);
+      setEstimate(null);
+      setPlateSrc(null);
+      setOpenStep(null);
+      setSelectedItemId("");
+      setSelectedPendingId("");
+      setCodeChoice(null);
+      setCodeNote("");
+      setSearchResult(null);
+      setQuery("");
+      setBdiInput("");
+      setAuditoriaReprovada(null);
+      setRevisionConflict(false);
+      setAlertMessage(null);
+      onOpenEstimate?.(next);
+    },
+    [onOpenEstimate],
+  );
+
+  /** Envelope comum das mutações: conflito, auditoria reprovada e alerta comum. */
+  const registrarRecusa = useCallback((error: unknown) => {
+    if (isForbidden(error)) {
+      setSemAcesso(error instanceof Error ? error.message : null);
+      return;
+    }
+    const recusa = recusaDeMutacao(error);
+    setRevisionConflict(recusa.conflito);
+    if (recusa.auditoria) {
+      setAuditoriaReprovada(workbookAuditFindings(error));
+      return;
+    }
+    setAlertMessage(recusa.conflito ? null : recusa.mensagem);
+  }, []);
+
+  const criarOrcamento = async () => {
+    const token = tokenDaSessao();
+    if (token === null) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const created = await createEstimate(token, {
+        worksiteKey: form.worksiteKey,
+        worksiteName: form.worksiteName,
+        referenceLabel: form.referenceLabel,
+        address: form.address,
+      });
+      setForm(EMPTY_ESTIMATE_FORM);
+      setToast("Orçamento aberto. A próxima etapa é instalar a cascata de fontes.");
+      abrirOrcamento(created.round_id);
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const instalarCatalogo = async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null || catalogFile === null) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const uploadId = await uploadCatalog(token, catalogFile);
+      const cascade = await installCatalog(token, orcamento, uploadId, version);
+      aplicarVersao(cascade.version);
+      setCatalogFile(null);
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast("Fonte instalada no fim da cascata.");
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const moverFonte = async (entry: CascadeEntry, move: "up" | "down") => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null || state === null) {
+      return;
+    }
+    const cascade = reorderedDigests(state.cascade, entry.source_sha256, move);
+    if (cascade === null) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const next = await reorderCascade(token, orcamento, {
+        cascade,
+        baseVersion: version,
+      });
+      aplicarVersao(next.version);
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast("Ordem da cascata alterada; a próxima shortlist já sai nela.");
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const enviarPrancha = async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null || plateFile === null) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const uploadId = await uploadPlateFile(token, plateFile);
+      const plate = await associatePlate(token, orcamento, uploadId, version);
+      aplicarVersao(plate.version);
+      setPlateFile(null);
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast("Prancha associada ao orçamento.");
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const dispararExtracao = async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const response = await createPlateExtraction(token, orcamento, version);
+      aplicarVersao(response.version);
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast("Leitura automática enfileirada.");
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const decidirItem = async () => {
+    const token = tokenDaSessao();
+    if (
+      token === null ||
+      orcamento === null ||
+      version === null ||
+      selectedItemId === "" ||
+      decision.action === ""
+    ) {
+      return;
+    }
+    const quantidade =
+      decision.quantity.trim().length === 0
+        ? undefined
+        : (parseDecimalInput(decision.quantity) ?? undefined);
+    if (decision.quantity.trim().length > 0 && quantidade === undefined) {
+      setAlertMessage(
+        "A quantidade escrita não é um decimal exato; nada foi enviado. " +
+          DICA_QUANTIDADE,
+      );
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const response = await postTakeoffDecision(token, orcamento, {
+        itemId: selectedItemId,
+        action: decision.action,
+        baseVersion: version,
+        quantity: quantidade,
+        unit: decision.unit,
+        note: decision.note,
+        itemNote: decision.itemNote,
+      });
+      aplicarVersao(response.version);
+      setTakeoff(response);
+      setDecision(EMPTY_DECISION);
+      setSelectedItemId("");
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast("Decisão registrada.");
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const calcularShortlist = async (recompute: boolean) => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const response =
+        recompute && version !== null
+          ? await postSuggestionsRecompute(token, orcamento, version)
+          : await getSuggestions(token, orcamento);
+      setSuggestions(response);
+      aplicarVersao(response.version);
+      setAlertMessage(null);
+      setRevisionConflict(false);
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Busca incremental na cascata: cada tecla cancela a consulta anterior. O cancelamento
+   * não é falha de rede e não vira alerta (`isAbortError`).
+   */
+  const agendarBusca = (texto: string) => {
+    setQuery(texto);
+    if (buscaTimerRef.current !== null) {
+      clearTimeout(buscaTimerRef.current);
+    }
+    if (texto.trim().length === 0) {
+      setSearchResult(null);
+      setBuscaAviso(null);
+      return;
+    }
+    buscaTimerRef.current = setTimeout(() => {
+      void (async () => {
+        const token = tokenDaSessao();
+        if (token === null || orcamento === null) {
+          return;
+        }
+        buscaAbortRef.current?.abort();
+        const controller = new AbortController();
+        buscaAbortRef.current = controller;
+        setBuscando(true);
+        try {
+          setSearchResult(
+            await searchCascade(token, orcamento, texto, 20, {
+              signal: controller.signal,
+            }),
+          );
+          setBuscaAviso(null);
+        } catch (error) {
+          if (!isAbortError(error)) {
+            setBuscaAviso(describeError(error));
+          }
+        } finally {
+          setBuscando(false);
+        }
+      })();
+    }, BUSCA_DEBOUNCE_MS);
+  };
+
+  const decidirCodigo = async (action: "confirm" | "reject") => {
+    const token = tokenDaSessao();
+    if (
+      token === null ||
+      orcamento === null ||
+      version === null ||
+      selectedPendingId === ""
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const response = await postCodeDecision(token, orcamento, {
+        itemId: selectedPendingId,
+        action,
+        baseVersion: version,
+        code: action === "confirm" ? codeChoice?.code : undefined,
+        catalogSha256:
+          action === "confirm" ? codeChoice?.catalogSha256 : undefined,
+        note: codeNote,
+      });
+      aplicarVersao(response.version);
+      setCodes(response);
+      setCodeChoice(null);
+      setCodeNote("");
+      setSelectedPendingId("");
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast(
+        action === "confirm"
+          ? "Código confirmado, com a fonte citada."
+          : "Item declarado sem preço na cascata.",
+      );
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const montarOrcamento = async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null) {
+      return;
+    }
+    const erroBdi = bdiPercentError(bdiInput);
+    if (erroBdi !== null) {
+      setAlertMessage(erroBdi);
+      return;
+    }
+    setSubmitting(true);
+    setAuditoriaReprovada(null);
+    try {
+      const response = await postBuildEstimate(token, orcamento, bdiInput, version);
+      aplicarVersao(response.version);
+      setEstimate(response);
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast("Orçamento montado e planilha publicada depois da auditoria.");
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const jornada = useMemo(() => derivarEtapas(state), [state]);
+  const etapaVisivel: EtapaId | "resumo" = openStep ?? "resumo";
+
+  const abrirEtapa = (etapa: Etapa) => {
+    if (etapa.status === "blocked") {
+      return;
+    }
+    setOpenStep(etapa.id);
+  };
+
+  const cascade = state?.cascade ?? [];
+  const cascataTravada = state?.codes.assignments_present ?? false;
+  const itens = takeoff?.packet.items ?? [];
+  const itemSelecionado = itens.find((item) => item.id === selectedItemId) ?? null;
+  const pendingItems = codes?.pending_items ?? [];
+  const itemPendente =
+    pendingItems.find((item) => item.item_id === selectedPendingId) ?? null;
+  const candidatos: CodeSuggestionSet.CodeCandidate[] =
+    suggestions?.suggestions.suggestions.find(
+      (suggestion) => suggestion.item_id === selectedPendingId,
+    )?.candidates ?? [];
+  const semCandidato = (suggestions?.suggestions.unmatched_item_ids ?? []).filter(
+    (itemId) => pendingItems.some((item) => item.item_id === itemId),
+  );
+  const bdiErro = bdiInput.trim().length === 0 ? null : bdiPercentError(bdiInput);
+
+  // Sem sessão a jornada não chama nada e não inventa orçamento: quem tem a tela de
+  // entrar é a casca (`App.tsx`), e as rotas do orçamento são autenticadas e por tenant.
+  if (!autenticado) {
+    return (
+      <div className="jornada-orcamento">
+        <section className="painel" aria-label="Orçamento-base">
+          <span className="eyebrow">ORÇAMENTO-BASE · PRÉ-LICITAÇÃO</span>
+          <h1>Entre para abrir um orçamento</h1>
+          <p>
+            O orçamento-base é autenticado e por tenant: cascata, prancha e decisões só são
+            lidos com a sessão de quem decide.
+          </p>
+          <p className="aviso-fixo">{AVISO_ORCAMENTO}</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (semAcesso !== null) {
+    return (
+      <div className="jornada-orcamento">
+        <header className="topbar">
+          <div>
+            <span className="eyebrow">ORÇAMENTO-BASE · PRÉ-LICITAÇÃO</span>
+            <h1>Orçamento-base</h1>
+          </div>
+          <p className="aviso-fixo">{AVISO_ORCAMENTO}</p>
+        </header>
+        <main className="conteudo">
+          <PainelSemAcesso detalhe={semAcesso} />
+        </main>
+      </div>
+    );
+  }
+
+  // Nenhum orçamento aberto: a jornada começa escolhendo — ou abrindo — um.
+  if (orcamento === null) {
+    const keyErro = worksiteKeyError(form.worksiteKey);
+    return (
+      <div className="jornada-orcamento">
+        <header className="topbar">
+          <div>
+            <span className="eyebrow">ORÇAMENTO-BASE · PRÉ-LICITAÇÃO</span>
+            <h1>Nenhum orçamento aberto</h1>
+            <p className="topbar-meta">
+              Escolha um orçamento da lista ou abra um novo.
+            </p>
+          </div>
+          <p className="aviso-fixo">{AVISO_ORCAMENTO}</p>
+        </header>
+
+        {alertMessage === null ? null : (
+          <p className="banner-erro" role="alert">
+            {alertMessage}
+          </p>
+        )}
+        {toast === null ? null : (
+          <p className="banner-sucesso" role="status">
+            {toast}
+          </p>
+        )}
+
+        <main className="conteudo">
+          <div className="workspace duas-colunas">
+            <section className="painel" aria-label="Orçamentos do tenant">
+              <div className="painel-cabecalho">
+                <h2>Orçamentos do tenant</h2>
+                <div className="cabecalho-controles">
+                  <button
+                    type="button"
+                    className="botao-secundario"
+                    onClick={() => void carregarLista()}
+                    disabled={loading}
+                  >
+                    {loading ? "Carregando…" : "Recarregar lista"}
+                  </button>
+                </div>
+              </div>
+              {lista === null ? (
+                <p className="dica">
+                  {loading
+                    ? "Carregando orçamentos…"
+                    : "A lista de orçamentos ainda não foi lida."}
+                </p>
+              ) : lista.length === 0 ? (
+                <p className="dica">
+                  Nenhum orçamento neste tenant ainda. Abra o primeiro ao lado — ele começa
+                  pela cascata de catálogos.
+                </p>
+              ) : (
+                <ul className="rodadas-lista">
+                  {lista.map((item) => (
+                    <li key={item.round_id} className="rodada-linha">
+                      <div>
+                        <strong>{item.worksite_name}</strong>{" "}
+                        <span className="mono">({item.worksite_key})</span>
+                        <p className="topbar-meta">
+                          {item.reference_label} · etapa {stageLabel(item.stage)} ·
+                          leitura da legenda{" "}
+                          {extractionStatusLabel(item.extraction_status)} · versão{" "}
+                          {item.version}
+                        </p>
+                        <p className="topbar-meta">
+                          Cascata:{" "}
+                          {item.cascade_origins.length === 0
+                            ? "nenhuma fonte instalada"
+                            : item.cascade_origins
+                                .map(
+                                  (origin, index) =>
+                                    `${index + 1}. ${priceSourceLabel(origin)}`,
+                                )
+                                .join(" · ")}
+                        </p>
+                        <p className="topbar-meta">
+                          Atualizado em {formatTimestamp(item.updated_at)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="botao-primario"
+                        onClick={() => abrirOrcamento(item.round_id)}
+                      >
+                        Abrir orçamento
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {listaCursor === null ? null : (
+                <button
+                  type="button"
+                  className="botao-secundario"
+                  onClick={() => void carregarMais()}
+                  disabled={loading}
+                >
+                  Carregar mais orçamentos
+                </button>
+              )}
+            </section>
+
+            <section className="painel" aria-label="Abrir orçamento novo">
+              <div className="painel-cabecalho">
+                <h2>Abrir orçamento novo</h2>
+              </div>
+              <form
+                className="formulario"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void criarOrcamento();
+                }}
+              >
+                <p className="dica">
+                  O catálogo não é pedido aqui: a cascata é a etapa seguinte, e ela aceita
+                  mais de uma fonte, em ordem declarada.
+                </p>
+                <label className="campo">
+                  Chave da obra
+                  <span className="campo-dica">
+                    minúsculas, números e hífen (ex.: praca-do-exemplo). É ela que amarra
+                    os artefatos.
+                  </span>
+                  <input
+                    type="text"
+                    value={form.worksiteKey}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        worksiteKey: event.target.value,
+                      }))
+                    }
+                    aria-invalid={form.worksiteKey.length > 0 && keyErro !== null}
+                    required
+                  />
+                </label>
+                {form.worksiteKey.length > 0 && keyErro !== null ? (
+                  <p className="campo-erro" role="alert">
+                    {keyErro}
+                  </p>
+                ) : null}
+                <label className="campo">
+                  Nome da obra
+                  <input
+                    type="text"
+                    value={form.worksiteName}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        worksiteName: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </label>
+                <label className="campo">
+                  Rótulo do orçamento
+                  <span className="campo-dica">
+                    como aparece na planilha (ex.: ORÇAMENTO-BASE 2026)
+                  </span>
+                  <input
+                    type="text"
+                    value={form.referenceLabel}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        referenceLabel: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </label>
+                <label className="campo">
+                  Endereço (opcional)
+                  <input
+                    type="text"
+                    value={form.address}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        address: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <button type="submit" className="botao-primario" disabled={submitting}>
+                  {submitting ? "Abrindo…" : "Abrir orçamento"}
+                </button>
+              </form>
+            </section>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="jornada-orcamento">
+      <header className="topbar">
+        <div>
+          <span className="eyebrow">ORÇAMENTO-BASE · PRÉ-LICITAÇÃO</span>
+          <h1>{state === null ? "Orçamento não carregado" : state.worksite_name}</h1>
+          {state === null ? (
+            <p className="topbar-meta">
+              O estado deste orçamento ainda não foi lido da API.
+            </p>
+          ) : (
+            <>
+              <p className="topbar-meta mono">
+                {state.worksite_key} · orçamento {shortDigest(state.round_id)}
+              </p>
+              {/* O BDI só é afirmado quando o orçamento montado foi lido: `present` diz
+                  que ele existe na rodada, mas o percentual vem do documento, e um
+                  "BDI %" vazio seria pior do que dizer que ele ainda não foi lido. */}
+              <p className="topbar-meta">
+                {state.reference_label} · versão {state.version} ·{" "}
+                {estimate !== null
+                  ? `BDI ${formatPercentText(estimate.bdi_percent)}`
+                  : state.estimate.present
+                    ? "BDI ainda não lido"
+                    : "BDI não declarado"}
+              </p>
+            </>
+          )}
+        </div>
+        {/* Aviso permanente: ele não fecha, não recolhe e não expira. */}
+        <p className="aviso-fixo">{AVISO_ORCAMENTO}</p>
+        <div className="topbar-acoes">
+          <button
+            type="button"
+            className="topbar-link topbar-link-botao"
+            onClick={() => abrirOrcamento(null)}
+          >
+            Trocar de orçamento
+          </button>
+          {session === null ? null : (
+            <>
+              <span className="topbar-meta">
+                Sessão: {session.profile.preferred_username ?? session.profile.sub}
+              </span>
+              <button
+                type="button"
+                className="topbar-link topbar-link-botao"
+                onClick={() => void signOut()}
+              >
+                Sair
+              </button>
+            </>
+          )}
+        </div>
+      </header>
+
+      <nav className="etapas" aria-label="Etapas do orçamento">
+        <button
+          type="button"
+          className={`etapa-tab ${etapaVisivel === "resumo" ? "ativa" : ""}`}
+          onClick={() => setOpenStep(null)}
+          aria-current={etapaVisivel === "resumo"}
+        >
+          Resumo
+        </button>
+        {jornada.etapas.map((etapa) => (
+          <button
+            key={etapa.id}
+            type="button"
+            className={`etapa-tab ${etapaVisivel === etapa.id ? "ativa" : ""} ${
+              etapa.status
+            }`}
+            onClick={() => abrirEtapa(etapa)}
+            disabled={etapa.status === "blocked"}
+            aria-current={etapaVisivel === etapa.id}
+            title={etapa.blockedReason ?? etapa.summary}
+          >
+            {etapa.title} · {etapaStatusLabel(etapa.status)}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="botao-secundario recarregar"
+          onClick={() => void carregarEstado()}
+          disabled={loading}
+        >
+          {loading ? "Recarregando…" : "Recarregar estado atual"}
+        </button>
+      </nav>
+
+      {revisionConflict ? (
+        <BannerOrcamentoMudou onReload={() => void carregarEstado()} />
+      ) : null}
+
+      {alertMessage === null ? null : (
+        <p className="banner-erro" role="alert">
+          {alertMessage}
+        </p>
+      )}
+
+      {toast === null ? null : (
+        <p className="banner-sucesso" role="status">
+          {toast}
+        </p>
+      )}
+
+      <main className="conteudo">
+        {auditoriaReprovada !== null ? (
+          <TelaAuditoriaReprovada
+            findings={auditoriaReprovada}
+            onDismiss={() => setAuditoriaReprovada(null)}
+          />
+        ) : etapaVisivel === "resumo" ? (
+          <section className="painel" aria-label="Situação do orçamento">
+            <h2>Situação do orçamento</h2>
+            <ul className="cartoes">
+              {jornada.etapas.map((etapa) => (
+                <li key={etapa.id} className={`cartao ${etapa.status}`}>
+                  <h3>{etapa.title}</h3>
+                  <p className="cartao-status">
+                    Etapa {etapaStatusLabel(etapa.status)}
+                  </p>
+                  <p>{etapa.summary}</p>
+                  {etapa.blockedReason === undefined ? null : (
+                    <p className="cartao-motivo">
+                      Bloqueada porque {etapa.blockedReason}.
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : etapaVisivel === "cascata" ? (
+          <section className="painel" aria-label="Cascata de fontes de preço">
+            <div className="painel-cabecalho">
+              <h2>Cascata de fontes de preço</h2>
+            </div>
+            <p className="dica">{AVISO_CASCATA}</p>
+            {cascataTravada ? (
+              <p className="aviso-fixo aviso-inline">{AVISO_CASCATA_TRAVADA}</p>
+            ) : null}
+            {cascade.length === 0 ? (
+              <p className="dica">
+                Nenhuma fonte instalada. Um orçamento sem cascata não precifica nada —
+                comece pelo catálogo oficial da prefeitura.
+              </p>
+            ) : (
+              <ol className="cascata">
+                {cascade.map((entry) => (
+                  <li key={entry.source_sha256}>
+                    <span className="cascata-ordem" aria-hidden="true">
+                      {entry.position}
+                    </span>
+                    <div className="cascata-corpo">
+                      <h4>{entry.source_label}</h4>
+                      <div className="codigo-selos">
+                        <SeloFonte
+                          origin={entry.origin}
+                          referenceMonth={entry.reference_month}
+                          position={entry.position}
+                        />
+                        {entry.summary.entries === undefined ? null : (
+                          <span className="selo selo-neutro">
+                            {entry.summary.entries} itens
+                          </span>
+                        )}
+                      </div>
+                      <p className="digest" title={entry.source_sha256}>
+                        sha256 {shortDigest(entry.source_sha256)}
+                      </p>
+                    </div>
+                    <div className="cascata-controles">
+                      <button
+                        type="button"
+                        onClick={() => void moverFonte(entry, "up")}
+                        disabled={
+                          submitting ||
+                          cascataTravada ||
+                          !canMove(cascade, entry.source_sha256, "up")
+                        }
+                        aria-label={`Subir ${entry.source_label} na cascata`}
+                      >
+                        Subir
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void moverFonte(entry, "down")}
+                        disabled={
+                          submitting ||
+                          cascataTravada ||
+                          !canMove(cascade, entry.source_sha256, "down")
+                        }
+                        aria-label={`Descer ${entry.source_label} na cascata`}
+                      >
+                        Descer
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+            <form
+              className="formulario"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void instalarCatalogo();
+              }}
+            >
+              <label className="campo">
+                Catálogo de preços (JSON)
+                <span className="campo-dica">
+                  Entra no FIM da cascata. Uma origem só entra uma vez.
+                </span>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={(event) => setCatalogFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <div className="acoes-linha">
+                <button
+                  type="submit"
+                  className="botao-primario"
+                  disabled={submitting || catalogFile === null}
+                >
+                  {submitting ? "Instalando…" : "Instalar catálogo"}
+                </button>
+              </div>
+            </form>
+          </section>
+        ) : etapaVisivel === "prancha" ? (
+          <section className="painel" aria-label="Prancha e extração">
+            <div className="painel-cabecalho">
+              <h2>Prancha</h2>
+            </div>
+            {state?.plate.present ? (
+              <>
+                <p className="dica">
+                  Prancha associada{" "}
+                  {state.plate.page_count === null
+                    ? ""
+                    : `· ${state.plate.page_count} páginas`}{" "}
+                  ·{" "}
+                  <span className="digest" title={state.plate.source_sha256 ?? ""}>
+                    sha256 {shortDigest(state.plate.source_sha256)}
+                  </span>
+                </p>
+                {plateSrc === null ? (
+                  <p className="dica">
+                    Imagem da página ainda não publicada pelo processamento.
+                  </p>
+                ) : (
+                  <img
+                    className="overlay-imagem"
+                    src={plateSrc}
+                    alt="Página promovida da prancha deste orçamento"
+                    draggable={false}
+                  />
+                )}
+                <EstadoExtracao
+                  extraction={state.extraction}
+                  onRun={() => void dispararExtracao()}
+                  running={submitting}
+                />
+              </>
+            ) : (
+              <form
+                className="formulario"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void enviarPrancha();
+                }}
+              >
+                <p className="dica">
+                  Um orçamento é uma prancha. O PDF sobe direto para o armazenamento; a
+                  API recebe só o identificador do envio.
+                </p>
+                <label className="campo">
+                  Prancha do projetista (PDF)
+                  <input
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    onChange={(event) => setPlateFile(event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                <div className="acoes-linha">
+                  <button
+                    type="submit"
+                    className="botao-primario"
+                    disabled={submitting || plateFile === null}
+                  >
+                    {submitting ? "Enviando…" : "Enviar prancha"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </section>
+        ) : etapaVisivel === "revisao" ? (
+          <div className="workspace duas-colunas">
+            <section className="painel" aria-label="Prancha do orçamento">
+              <div className="painel-cabecalho">
+                <h2>Prancha</h2>
+              </div>
+              {plateSrc === null ? (
+                <p className="dica">Imagem da prancha ainda não publicada.</p>
+              ) : (
+                <img
+                  className="overlay-imagem"
+                  src={plateSrc}
+                  alt="Página promovida da prancha deste orçamento"
+                  draggable={false}
+                />
+              )}
+              {overlay === null ? null : <OverlayDoTakeoff overlay={overlay} />}
+            </section>
+
+            <section className="painel" aria-label="Itens da legenda">
+              <div className="painel-cabecalho">
+                <h2>Itens da legenda</h2>
+              </div>
+              <ul className="itens">
+                {itens.map((item, index) => (
+                  <li
+                    key={item.id}
+                    className={`item ${item.status} ${
+                      item.id === selectedItemId ? "selecionado" : ""
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      className="item-botao"
+                      onClick={() => {
+                        setSelectedItemId(item.id);
+                        setDecision(EMPTY_DECISION);
+                      }}
+                      aria-pressed={item.id === selectedItemId}
+                    >
+                      <span className="item-numero" aria-hidden="true">
+                        {index + 1}
+                      </span>
+                      <span className="item-corpo">
+                        <span className="item-rotulo">{item.label}</span>
+                        <span className="item-estado">
+                          {itemStatusLabel(item.status)}
+                        </span>
+                        <span className="item-quantidade">
+                          {formatQuantityText(
+                            item.quantity ?? null,
+                            unitLabel(item.unit),
+                          )}
+                        </span>
+                        {item.raw_text ? (
+                          <span className="item-raw">
+                            lido da legenda: “{item.raw_text}”
+                          </span>
+                        ) : null}
+                        {itemAnchor(item) === "registered" ? null : (
+                          <span className="item-nota">
+                            {AVISO_LOCALIZACAO_NAO_CONFIRMADA}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+
+              {itemSelecionado === null ? (
+                <p className="dica">
+                  Escolha um item da lista para decidir. Nada nasce pré-marcado e não
+                  existe “confirmar tudo”.
+                </p>
+              ) : (
+                <form
+                  className="formulario"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void decidirItem();
+                  }}
+                >
+                  <h3>{itemSelecionado.label}</h3>
+                  {itemSelecionado.status === "ambiguous" ? (
+                    <p className="campo-aviso">{AVISO_QUANTIDADE_AMBIGUA}</p>
+                  ) : null}
+                  <div className="acoes">
+                    <label>
+                      <input
+                        type="radio"
+                        name="decisao-item"
+                        checked={decision.action === "confirm"}
+                        onChange={() =>
+                          setDecision((current) => ({ ...current, action: "confirm" }))
+                        }
+                      />
+                      Confirmar
+                    </label>
+                    <label>
+                      <input
+                        type="radio"
+                        name="decisao-item"
+                        checked={decision.action === "reject"}
+                        onChange={() =>
+                          setDecision((current) => ({ ...current, action: "reject" }))
+                        }
+                      />
+                      Rejeitar
+                    </label>
+                  </div>
+                  <label className="campo">
+                    Quantidade
+                    <span className="campo-dica">{DICA_QUANTIDADE}</span>
+                    <input
+                      type="text"
+                      value={decision.quantity}
+                      onChange={(event) =>
+                        setDecision((current) => ({
+                          ...current,
+                          quantity: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="campo">
+                    Unidade
+                    <input
+                      type="text"
+                      value={decision.unit}
+                      onChange={(event) =>
+                        setDecision((current) => ({
+                          ...current,
+                          unit: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="campo">
+                    Nota da decisão
+                    <textarea
+                      value={decision.note}
+                      onChange={(event) =>
+                        setDecision((current) => ({
+                          ...current,
+                          note: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <div className="acoes-linha">
+                    <button
+                      type="submit"
+                      className="botao-primario"
+                      disabled={submitting || decision.action === ""}
+                    >
+                      {submitting ? "Registrando…" : "Registrar decisão"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </section>
+          </div>
+        ) : etapaVisivel === "codigos" ? (
+          <div className="workspace duas-colunas">
+            <section className="painel" aria-label="Decisões de código">
+              <div className="painel-cabecalho">
+                <h2>Decisões</h2>
+                <div className="cabecalho-controles">
+                  <button
+                    type="button"
+                    className="botao-secundario"
+                    onClick={() => void calcularShortlist(suggestions !== null)}
+                    disabled={submitting}
+                  >
+                    {suggestions === null
+                      ? "Calcular shortlist"
+                      : "Recalcular shortlist"}
+                  </button>
+                </div>
+              </div>
+              <p className="dica">{DESCRICAO_CALCULO_SHORTLIST}</p>
+              {(suggestions?.semantic_notes ?? []).map((note) => (
+                <p key={note} className="dica">
+                  {note}
+                </p>
+              ))}
+
+              <ul className="confirmados-lista">
+                {(codes?.assignments?.assignments ?? []).map((assignment) => {
+                  const fonte = entryOfDigest(cascade, assignment.catalog_sha256);
+                  return (
+                    <li key={assignment.item_id}>
+                      <strong>{assignment.item_id}</strong>{" "}
+                      {assignment.code ? (
+                        <span className="mono">{assignment.code}</span>
+                      ) : null}
+                      <p className="topbar-meta">
+                        {assignmentStatusLabel(assignment.status)}
+                      </p>
+                      {fonte === null ? null : (
+                        <div className="codigo-selos">
+                          <SeloFonte
+                            origin={fonte.origin}
+                            referenceMonth={fonte.reference_month}
+                            position={fonte.position}
+                          />
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <h3>Itens sem decisão de código</h3>
+              <ul className="itens">
+                {pendingItems.map((item) => (
+                  <li
+                    key={item.item_id}
+                    className={`item ${item.status} ${
+                      item.item_id === selectedPendingId ? "selecionado" : ""
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      className="item-botao"
+                      onClick={() => {
+                        setSelectedPendingId(item.item_id);
+                        setCodeChoice(null);
+                        setCodeNote("");
+                      }}
+                      aria-pressed={item.item_id === selectedPendingId}
+                    >
+                      <span className="item-corpo">
+                        <span className="item-rotulo">{item.label}</span>
+                        <span className="item-quantidade">
+                          {formatQuantityText(item.quantity, unitLabel(item.unit))}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+
+              <SemPrecoNaCascata
+                rotulos={semCandidato.map((itemId) => {
+                  const item = pendingItems.find(
+                    (pending) => pending.item_id === itemId,
+                  );
+                  return item === undefined
+                    ? itemId
+                    : rotuloDoItem(item.label, item.quantity, item.unit);
+                })}
+              />
+            </section>
+
+            <section className="painel" aria-label="Candidatos de código">
+              <div className="painel-cabecalho">
+                <h2>
+                  {itemPendente === null
+                    ? "Escolha um item"
+                    : itemPendente.label}
+                </h2>
+              </div>
+              {itemPendente === null ? (
+                <p className="dica">
+                  Confirmar um código é escolher de qual fonte da cascata, e com que
+                  data-base, o preço daquele item sai.
+                </p>
+              ) : (
+                <>
+                  <div className="busca">
+                    <label className="campo">
+                      Buscar na cascata
+                      <input
+                        type="text"
+                        value={query}
+                        onChange={(event) => agendarBusca(event.target.value)}
+                      />
+                    </label>
+                    {buscando ? <span className="dica">Buscando…</span> : null}
+                  </div>
+                  {buscaAviso === null ? null : (
+                    <p className="campo-aviso" role="alert">
+                      {buscaAviso}
+                    </p>
+                  )}
+
+                  <ul className="codigos">
+                    {candidatos.map((candidate) => {
+                      const fonte = entryOfDigest(
+                        cascade,
+                        candidate.catalog_sha256 ?? null,
+                      );
+                      const escolhido = codeChoice?.code === candidate.code;
+                      return (
+                        <li
+                          key={`${candidate.catalog_sha256 ?? ""}:${candidate.code}`}
+                          className={`codigo-card ${escolhido ? "escolhido" : ""}`}
+                        >
+                          <div className="codigo-topo">
+                            <span className="codigo-code">{candidate.code}</span>
+                            <span className="mono">
+                              {formatMoneyText(candidate.unit_price)} /{" "}
+                              {unitLabel(candidate.unit)}
+                            </span>
+                          </div>
+                          <div className="codigo-selos">
+                            <SeloFonte
+                              origin={candidate.catalog_origin ?? "sco"}
+                              referenceMonth={fonte?.reference_month}
+                              position={fonte?.position}
+                            />
+                            <span
+                              className={`selo ${
+                                candidate.unit_compatible ? "selo-ok" : "selo-atencao"
+                              }`}
+                            >
+                              {candidate.unit_compatible
+                                ? "unidade compatível"
+                                : "unidade diferente da do item"}
+                            </span>
+                          </div>
+                          <p className="codigo-descricao">{candidate.description}</p>
+                          <button
+                            type="button"
+                            className="botao-secundario"
+                            disabled={fonte === null}
+                            onClick={() =>
+                              fonte === null
+                                ? undefined
+                                : setCodeChoice({
+                                    code: candidate.code,
+                                    description: candidate.description,
+                                    unit: candidate.unit,
+                                    unit_price: candidate.unit_price,
+                                    catalogSha256: fonte.source_sha256,
+                                    priceOrigin: fonte.origin,
+                                    unit_compatible: candidate.unit_compatible,
+                                  })
+                            }
+                          >
+                            {escolhido ? "Escolhido" : "Escolher este código"}
+                          </button>
+                          {fonte === null ? (
+                            <p className="campo-aviso">
+                              Este candidato cita um catálogo que não está na cascata
+                              deste orçamento; ele não pode ser confirmado.
+                            </p>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                    {(searchResult?.results ?? []).map((result) => {
+                      const escolhido =
+                        codeChoice?.code === result.code &&
+                        codeChoice?.catalogSha256 === result.catalog_sha256;
+                      return (
+                        <li
+                          key={`busca:${result.catalog_sha256}:${result.code}`}
+                          className={`codigo-card ${escolhido ? "escolhido" : ""}`}
+                        >
+                          <div className="codigo-topo">
+                            <span className="codigo-code">{result.code}</span>
+                            <span className="mono">
+                              {formatMoneyText(result.unit_price)} /{" "}
+                              {unitLabel(result.unit)}
+                            </span>
+                          </div>
+                          <div className="codigo-selos">
+                            <SeloFonte
+                              origin={result.price_origin}
+                              referenceMonth={
+                                entryOfDigest(cascade, result.catalog_sha256)
+                                  ?.reference_month
+                              }
+                              position={result.cascade_position}
+                            />
+                          </div>
+                          <p className="codigo-descricao">{result.description}</p>
+                          <button
+                            type="button"
+                            className="botao-secundario"
+                            onClick={() =>
+                              setCodeChoice({
+                                code: result.code,
+                                description: result.description,
+                                unit: result.unit,
+                                unit_price: result.unit_price,
+                                catalogSha256: result.catalog_sha256,
+                                priceOrigin: result.price_origin,
+                                unit_compatible: null,
+                              })
+                            }
+                          >
+                            {escolhido ? "Escolhido" : "Escolher este código"}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+
+                  {codeChoice !== null &&
+                  codeChoice.unit.trim().toLowerCase() !==
+                    itemPendente.unit.trim().toLowerCase() ? (
+                    <p className="campo-aviso">
+                      {unitMismatchHint(itemPendente.unit, codeChoice.unit)}
+                    </p>
+                  ) : null}
+
+                  <label className="campo">
+                    Nota da decisão
+                    <span className="campo-dica">
+                      Obrigatória na rejeição: é ela que registra por que nenhuma fonte
+                      precifica o item.
+                    </span>
+                    <textarea
+                      value={codeNote}
+                      onChange={(event) => setCodeNote(event.target.value)}
+                    />
+                  </label>
+                  <div className="acoes-linha">
+                    <button
+                      type="button"
+                      className="botao-primario"
+                      onClick={() => void decidirCodigo("confirm")}
+                      disabled={submitting || codeChoice === null}
+                    >
+                      Confirmar código
+                    </button>
+                    <button
+                      type="button"
+                      className="botao-secundario"
+                      onClick={() => void decidirCodigo("reject")}
+                      disabled={submitting || codeNote.trim().length === 0}
+                    >
+                      Rejeitar com nota
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
+        ) : etapaVisivel === "montagem" ? (
+          <div className="workspace duas-colunas">
+            <section className="painel" aria-label="BDI do orçamento">
+              <div className="painel-cabecalho">
+                <h2>BDI</h2>
+              </div>
+              <form
+                className="formulario"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void montarOrcamento();
+                }}
+              >
+                <label className="campo">
+                  Percentual de BDI
+                  <span className="campo-dica">{DICA_BDI}</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={bdiInput}
+                    onChange={(event) => setBdiInput(event.target.value)}
+                    aria-invalid={bdiErro !== null}
+                    required
+                  />
+                </label>
+                {bdiErro === null ? null : (
+                  <p className="campo-erro" role="alert">
+                    {bdiErro}
+                  </p>
+                )}
+                <p className="dica">{AVISO_BDI}</p>
+                <p className="dica">{DESCRICAO_MONTAGEM}</p>
+                <div className="acoes-linha">
+                  <button
+                    type="submit"
+                    className="botao-primario"
+                    disabled={submitting || bdiPercentError(bdiInput) !== null}
+                  >
+                    {submitting ? "Montando…" : "Montar orçamento"}
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            <section className="painel" aria-label="Prévia do orçamento">
+              <div className="painel-cabecalho">
+                <h2>Prévia do orçamento</h2>
+              </div>
+              {estimate === null ? (
+                <p className="dica">
+                  Nenhum orçamento montado ainda: os totais aparecem aqui depois da
+                  montagem, exatamente como o servidor os recomputou.
+                </p>
+              ) : (
+                <ul className="confirmados-lista">
+                  <li>
+                    {estimate.estimate.lines.length} itens precificados ·{" "}
+                    {estimate.unpriced_item_ids.length} sem preço
+                  </li>
+                  <li>
+                    Total sem BDI ·{" "}
+                    <span className="mono">
+                      {formatMoneyText(estimate.total_amount_without_bdi)}
+                    </span>
+                  </li>
+                  <li>
+                    BDI ({formatPercentText(estimate.bdi_percent)}) ·{" "}
+                    <span className="mono">
+                      diferença entre os dois totais truncados
+                    </span>
+                  </li>
+                  <li>
+                    Total geral ·{" "}
+                    <span className="mono">
+                      {formatMoneyText(estimate.total_amount)}
+                    </span>
+                  </li>
+                </ul>
+              )}
+            </section>
+          </div>
+        ) : (
+          <section className="painel" aria-label="Planilha do orçamento">
+            <div className="painel-cabecalho">
+              <h2>Planilha</h2>
+            </div>
+            {estimate === null ? (
+              <p className="dica">
+                Nenhum orçamento montado; não há planilha publicada nesta rodada.
+              </p>
+            ) : (
+              <>
+                {estimate.workbook_present ? (
+                  <p className="banner-sucesso" role="status">
+                    Planilha publicada: a auditoria reabriu o arquivo e o reconferiu antes
+                    de qualquer publicação.
+                  </p>
+                ) : (
+                  <p className="banner-erro" role="alert">
+                    O orçamento está montado, mas nenhuma planilha aprovada pela auditoria
+                    foi publicada nesta rodada.
+                  </p>
+                )}
+                <table className="tabela">
+                  <caption>
+                    Linhas do orçamento como o servidor as recomputou; a tela não soma.
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>Cód.</th>
+                      <th>Fonte</th>
+                      <th>Descrição</th>
+                      <th>Un</th>
+                      <th className="numero">Valor unit.</th>
+                      <th className="numero">Valor unit. c/ BDI</th>
+                      <th className="numero">Quant.</th>
+                      <th className="numero">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {estimate.estimate.lines.map((line) => (
+                      <tr key={line.item_number}>
+                        <td className="numero">{line.item_number}</td>
+                        <td className="mono">{line.code}</td>
+                        <td>
+                          {priceSourceLabel(line.price_origin, line.reference_month)}
+                        </td>
+                        <td className="celula-descricao">{line.description}</td>
+                        <td>{unitLabel(line.unit)}</td>
+                        <td className="numero">{formatDecimalText(line.unit_price)}</td>
+                        <td className="numero">
+                          {formatDecimalText(line.unit_price_with_bdi)}
+                        </td>
+                        <td className="numero">{formatDecimalText(line.quantity)}</td>
+                        <td className="numero">{formatDecimalText(line.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colSpan={8}>Total sem BDI</td>
+                      <td className="numero">
+                        {formatDecimalText(estimate.total_amount_without_bdi)}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td colSpan={8}>
+                        Total geral (BDI {formatPercentText(estimate.bdi_percent)})
+                      </td>
+                      <td className="numero">
+                        {formatDecimalText(estimate.total_amount)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+
+                {estimate.unpriced_item_ids.length === 0 ? null : (
+                  <div className="confirmados">
+                    <h3>Itens sem preço na cascata</h3>
+                    <p className="dica">{AVISO_SEM_PRECO}</p>
+                    <ul className="confirmados-lista">
+                      {estimate.unpriced_item_ids.map((itemId) => (
+                        <li key={itemId} className="mono">
+                          {itemId}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <p className="digest" title={estimate.estimate_sha256}>
+                  orçamento {shortDigest(estimate.estimate_sha256)} · planilha{" "}
+                  {shortDigest(estimate.workbook_sha256)}
+                </p>
+                {estimate.workbook_url ? (
+                  <div className="acoes-linha">
+                    <a
+                      className="botao-primario"
+                      href={estimate.workbook_url}
+                      download="orcamento.xlsx"
+                    >
+                      Baixar planilha
+                    </a>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}

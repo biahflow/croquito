@@ -1,0 +1,362 @@
+{
+  "schema_version": "1.0.0",
+  "sheets": [
+    {
+      "cells": [
+        {
+          "kind": "text",
+          "ref": "A1",
+          "value": "ORÇAMENTO-BASE"
+        },
+        {
+          "kind": "text",
+          "ref": "A2",
+          "value": "INTERVENÇÃO"
+        },
+        {
+          "kind": "text",
+          "ref": "C2",
+          "value": "PRACA SINTETICA OESTE (ORCAMENTO-BASE)"
+        },
+        {
+          "kind": "text",
+          "ref": "A3",
+          "value": "ENDEREÇO"
+        },
+        {
+          "kind": "text",
+          "ref": "C3",
+          "value": "RUA SINTETICA 400 — BAIRRO SINTETICO"
+        },
+        {
+          "kind": "text",
+          "ref": "A4",
+          "value": "BDI"
+        },
+        {
+          "kind": "text",
+          "ref": "C4",
+          "value": "25.00%"
+        },
+        {
+          "kind": "text",
+          "ref": "A6",
+          "value": "ITEM"
+        },
+        {
+          "kind": "text",
+          "ref": "B6",
+          "value": "COD."
+        },
+        {
+          "kind": "text",
+          "ref": "C6",
+          "value": "FONTE"
+        },
+        {
+          "kind": "text",
+          "ref": "D6",
+          "value": "DESCRIÇÃO"
+        },
+        {
+          "kind": "text",
+          "ref": "E6",
+          "value": "UN"
+        },
+        {
+          "kind": "text",
+          "ref": "F6",
+          "value": "VALOR UNIT"
+        },
+        {
+          "kind": "text",
+          "ref": "G6",
+          "value": "VALOR UNIT. C/ BDI"
+        },
+        {
+          "kind": "text",
+          "ref": "H6",
+          "value": "QUANT"
+        },
+        {
+          "kind": "text",
+          "ref": "I6",
+          "value": "TOTAL"
+        },
+        {
+          "kind": "text",
+          "ref": "A7",
+          "value": "1"
+        },
+        {
+          "kind": "text",
+          "ref": "B7",
+          "value": "AD04050060(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C7",
+          "value": "SCO 2026-01"
+        },
+        {
+          "kind": "text",
+          "ref": "D7",
+          "value": "PISO INTERTRAVADO SINTETICO 10CM TRAFEGO"
+        },
+        {
+          "kind": "text",
+          "ref": "E7",
+          "value": "m2"
+        },
+        {
+          "kind": "number",
+          "ref": "F7",
+          "value": "131.20"
+        },
+        {
+          "kind": "number",
+          "ref": "G7",
+          "value": "164.00"
+        },
+        {
+          "kind": "number",
+          "ref": "H7",
+          "value": "61.20"
+        },
+        {
+          "formula": "=TRUNC(H7*G7,2)",
+          "kind": "formula",
+          "ref": "I7",
+          "value": "10036.80"
+        },
+        {
+          "kind": "text",
+          "ref": "A8",
+          "value": "2"
+        },
+        {
+          "kind": "text",
+          "ref": "B8",
+          "value": "COMP.GRAMADO.001"
+        },
+        {
+          "kind": "text",
+          "ref": "C8",
+          "value": "COMPOSITION 2026-07"
+        },
+        {
+          "kind": "text",
+          "ref": "D8",
+          "value": "EXECUCAO DE GRAMADO SINTETICO EM PLACAS, INCLUSIVE PREPARO"
+        },
+        {
+          "kind": "text",
+          "ref": "E8",
+          "value": "m2"
+        },
+        {
+          "kind": "number",
+          "ref": "F8",
+          "value": "28.75"
+        },
+        {
+          "kind": "number",
+          "ref": "G8",
+          "value": "35.93"
+        },
+        {
+          "kind": "number",
+          "ref": "H8",
+          "value": "1234.50"
+        },
+        {
+          "formula": "=TRUNC(H8*G8,2)",
+          "kind": "formula",
+          "ref": "I8",
+          "value": "44355.58"
+        },
+        {
+          "kind": "text",
+          "ref": "A9",
+          "value": "3"
+        },
+        {
+          "kind": "text",
+          "ref": "B9",
+          "value": "CE02100010(/)"
+        },
+        {
+          "kind": "text",
+          "ref": "C9",
+          "value": "SCO 2026-01"
+        },
+        {
+          "kind": "text",
+          "ref": "D9",
+          "value": "ALAMBRADO SINTETICO TELA GALVANIZADA 2POL"
+        },
+        {
+          "kind": "text",
+          "ref": "E9",
+          "value": "m2"
+        },
+        {
+          "kind": "number",
+          "ref": "F9",
+          "value": "128.35"
+        },
+        {
+          "kind": "number",
+          "ref": "G9",
+          "value": "160.43"
+        },
+        {
+          "kind": "number",
+          "ref": "H9",
+          "value": "58.50"
+        },
+        {
+          "formula": "=TRUNC(H9*G9,2)",
+          "kind": "formula",
+          "ref": "I9",
+          "value": "9385.15"
+        },
+        {
+          "kind": "text",
+          "ref": "A10",
+          "value": "4"
+        },
+        {
+          "kind": "text",
+          "ref": "B10",
+          "value": "EMOP.CE.001"
+        },
+        {
+          "kind": "text",
+          "ref": "C10",
+          "value": "EMOP 2026-06"
+        },
+        {
+          "kind": "text",
+          "ref": "D10",
+          "value": "MOBILIARIO SINTETICO EMOP"
+        },
+        {
+          "kind": "text",
+          "ref": "E10",
+          "value": "UN"
+        },
+        {
+          "kind": "number",
+          "ref": "F10",
+          "value": "980.00"
+        },
+        {
+          "kind": "number",
+          "ref": "G10",
+          "value": "1225.00"
+        },
+        {
+          "kind": "number",
+          "ref": "H10",
+          "value": "4.00"
+        },
+        {
+          "formula": "=TRUNC(H10*G10,2)",
+          "kind": "formula",
+          "ref": "I10",
+          "value": "4900.00"
+        },
+        {
+          "kind": "text",
+          "ref": "A11",
+          "value": "5"
+        },
+        {
+          "kind": "text",
+          "ref": "B11",
+          "value": "EMOP.AD.001"
+        },
+        {
+          "kind": "text",
+          "ref": "C11",
+          "value": "EMOP 2026-06"
+        },
+        {
+          "kind": "text",
+          "ref": "D11",
+          "value": "PAVIMENTAÇÃO SINTÉTICA EMOP TIPO 1"
+        },
+        {
+          "kind": "text",
+          "ref": "E11",
+          "value": "M2"
+        },
+        {
+          "kind": "number",
+          "ref": "F11",
+          "value": "123.45"
+        },
+        {
+          "kind": "number",
+          "ref": "G11",
+          "value": "154.31"
+        },
+        {
+          "kind": "number",
+          "ref": "H11",
+          "value": "18.40"
+        },
+        {
+          "formula": "=TRUNC(H11*G11,2)",
+          "kind": "formula",
+          "ref": "I11",
+          "value": "2839.30"
+        },
+        {
+          "kind": "text",
+          "ref": "D13",
+          "value": "TOTAL SEM BDI"
+        },
+        {
+          "kind": "number",
+          "ref": "I13",
+          "value": "57221.26"
+        },
+        {
+          "kind": "text",
+          "ref": "D14",
+          "value": "BDI (25.00%)"
+        },
+        {
+          "formula": "=I15-I13",
+          "kind": "formula",
+          "ref": "I14",
+          "value": "14295.57"
+        },
+        {
+          "kind": "text",
+          "ref": "D15",
+          "value": "TOTAL GERAL"
+        },
+        {
+          "formula": "=SUM(I7:I11)",
+          "kind": "formula",
+          "ref": "I15",
+          "value": "71516.83"
+        },
+        {
+          "kind": "text",
+          "ref": "A17",
+          "value": "ITENS SEM PREÇO NA CASCATA"
+        },
+        {
+          "kind": "text",
+          "ref": "A18",
+          "value": "ti_d16efef092c62fc9"
+        }
+      ],
+      "name": "ORÇAMENTO"
+    }
+  ]
+}

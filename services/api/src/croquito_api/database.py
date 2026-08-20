@@ -537,6 +537,111 @@ class ValuationRoundRevisionRecord(Base):
     )
 
 
+class EstimateRoundRecord(Base):
+    """Raiz da rodada de ORÇAMENTO-BASE (pré-licitação, ADR-0038), escopada por tenant.
+
+    Espelho de ``ValuationRoundRecord`` com a diferença que define a fronteira do ADR-0027:
+    aqui não há contrato, não há período e não há saldo, porque nenhum deles existe antes
+    da licitação. As duas colunas que a medição usa para nomeá-los (``period_number`` e
+    ``contract_label``) ficam de fora por isso — carregá-las obrigaria a rodada a declarar
+    um número de medição e um contrato que ela não tem, e uma coluna que só pode ser
+    preenchida com mentira é pior do que uma coluna ausente.
+
+    No lugar do catálogo ÚNICO da medição entra ``catalog_cascade_json``: a cascata de
+    fontes de preço, ORDENADA, com a ordem sendo o dado que decide a precificação
+    (ADR-0027). Cada entrada referencia o objeto no store por digest — catálogo é blob e
+    blob nunca entra em coluna de banco (ADR-0028 D2).
+    """
+
+    __tablename__ = "estimate_rounds"
+    __table_args__ = (
+        # Espelho de `ix_valuation_rounds_tenant_created`: índice da listagem com cursor
+        # opaco, com `id` na chave porque duas rodadas podem nascer no mesmo instante.
+        Index("ix_estimate_rounds_tenant_created", "tenant_id", "created_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    worksite_key: Mapped[str] = mapped_column(String(64))
+    worksite_name: Mapped[str] = mapped_column(String(120))
+    reference_label: Mapped[str] = mapped_column(String(120))
+    """Rótulo livre da rodada, o que a listagem mostra. Não é período nem contrato."""
+    address: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="OPEN")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    """Contador ÚNICO de toda a cadeia da rodada, como o da medição (ADR-0028 D3): só ato
+    humano o incrementa, e artefato derivado persistido sem decisão humana não o move."""
+    catalog_cascade_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    """Cascata ORDENADA de fontes de preço; a posição é a precedência declarada.
+
+    Cada entrada é ``{upload_id, object_key, source_sha256, origin, reference_month,
+    source_label, summary}``. A lista nasce vazia — a rodada de orçamento abre antes de
+    ter fonte, ao contrário da rodada de medição, que nasce com catálogo por construção —
+    e cresce por ato humano (``POST .../catalogs``). Uma origem só pode aparecer uma vez:
+    duas fontes da mesma origem fariam "o preço veio da EMOP" deixar de identificar de
+    qual arquivo ele veio (``ESTIMATE_CASCADE_ORIGIN_DUPLICATE``)."""
+    plate_upload_id: Mapped[str | None] = mapped_column(ForeignKey("uploads.id"), nullable=True)
+    plate_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    plate_source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    plate_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    extraction_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    extraction_status: Mapped[str] = mapped_column(String(16), default="idle")
+    """`idle` | `queued` | `running` | `done` | `failed`, como na medição: há no máximo uma
+    extração em voo por rodada, e ela é estado da raiz e não tabela própria."""
+    extraction_failure_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    extraction_requested_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    extraction_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class EstimateRoundRevisionRecord(Base):
+    """Estado imutável da cadeia do orçamento-base numa versão da rodada.
+
+    Espelho append-only de ``ValuationRoundRevisionRecord``: mutação cria linha nova e
+    nenhuma coluna JSON é atualizada no lugar. Sem ``valuation_json`` nem
+    ``amendment_dossier_json`` — boletim e dossiê de aditivo são artefatos da obra
+    LICITADA e não existem deste lado da fronteira (ADR-0027).
+
+    O conteúdo dessas colunas é artefato de trabalho do cliente — quantitativo, código,
+    preço, memória de cálculo — e **nunca** é copiado para log de aplicação.
+    """
+
+    __tablename__ = "estimate_round_revisions"
+    __table_args__ = (UniqueConstraint("round_id", "version", name="uq_estimate_round_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    round_id: Mapped[str] = mapped_column(ForeignKey("estimate_rounds.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    parent_revision_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    takeoff_packet_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    takeoff_registration_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    """Relatório do registro fino de bbox: é ele que separa âncora `registered` de `raw`."""
+    code_suggestions_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    code_assignments_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    estimate_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    """O `Estimate` montado: linhas com proveniência, BDI declarado e memória de cálculo."""
+    extraction_lineage_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    artifact_refs_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    """Chaves de objeto sob o prefixo do tenant (prancha, overlay, planilha publicada);
+    nunca URL assinada."""
+    artifact_digests_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 class Database:
     def __init__(self, database_url: str) -> None:
         connect_args: dict[str, Any] = {}

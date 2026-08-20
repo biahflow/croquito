@@ -106,6 +106,26 @@ class ArtifactStore:
         with closing(body):
             return cast(bytes, body.read(max_bytes + 1))
 
+    def write_object(self, *, object_key: str, body: bytes, content_type: str) -> None:
+        """Grava um artefato PEQUENO que a própria API produziu, sob o prefixo do tenant.
+
+        Contraparte de `read_object`, e com o mesmo limite de intenção: aqui passa só o
+        artefato determinístico que a API acabou de montar e auditar — hoje, a planilha do
+        orçamento-base (ADR-0038). Byte que veio do cliente continua entrando por
+        `presign_upload`: a API não recebe upload no request path, e o que ela grava aqui é
+        resultado de cálculo próprio, não conteúdo de terceiro.
+
+        A gravação acontece DEPOIS do portão de auditoria de quem chama; este método não
+        sabe auditar nada, e é justamente por isso que ele não pode ser o lugar onde alguém
+        decida publicar.
+        """
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=object_key,
+            Body=body,
+            ContentType=content_type,
+        )
+
     def presign_private_read(self, *, object_key: str) -> str:
         """Returns a short-lived URL only after the route has checked ownership."""
         return str(

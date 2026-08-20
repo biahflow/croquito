@@ -423,6 +423,82 @@ class AmendmentLayout(ValuationContractModel):
         return self
 
 
+class EstimateColumns(ValuationContractModel):
+    """As sete colunas do boletim mais FONTE e VALOR UNIT. C/ BDI (ADR-0038, decisão 5).
+
+    Aditivas e opcionais ao layout do boletim: o boletim da medição nunca lê nem escreve
+    esta seção, e nada da forma existente do template muda por causa dela.
+    """
+
+    item: SheetColumn
+    code: SheetColumn
+    source: SheetColumn
+    description: SheetColumn
+    unit: SheetColumn
+    unit_price: SheetColumn
+    unit_price_with_bdi: SheetColumn
+    quantity: SheetColumn
+    total: SheetColumn
+
+    @property
+    def ordered(self) -> tuple[SheetColumn, ...]:
+        """Colunas na ordem impressa."""
+        return (
+            self.item,
+            self.code,
+            self.source,
+            self.description,
+            self.unit,
+            self.unit_price,
+            self.unit_price_with_bdi,
+            self.quantity,
+            self.total,
+        )
+
+    @model_validator(mode="after")
+    def validate_distinct_letters(self) -> EstimateColumns:
+        letters = [column.letter for column in self.ordered]
+        if len(letters) != len(set(letters)):
+            raise ValuationValidationError(
+                "TEMPLATE_DUPLICATE_COLUMN",
+                "duas colunas do template apontam para a mesma letra",
+                {"letters": letters},
+            )
+        return self
+
+
+class EstimateLayout(ValuationContractModel):
+    """Layout da planilha do orçamento-base (ADR-0038): seção própria, nunca usada pelo
+    escritor da medição.
+
+    `header_row` precisa deixar espaço para o bloco de identificação (INTERVENÇÃO,
+    ENDEREÇO quando declarado, BDI) — o mesmo desenho de `BulletinLayout`, conferido pelo
+    escritor do orçamento na hora de planejar a aba, não aqui.
+    """
+
+    sheet_name: str = Field(default="ORÇAMENTO", min_length=1, max_length=MAX_SHEET_NAME_LENGTH)
+    title: str = Field(default="ORÇAMENTO-BASE", min_length=1, max_length=120)
+    header_row: int = Field(default=6, ge=2)
+    columns: EstimateColumns
+    intervention_label: str = Field(default="INTERVENÇÃO", min_length=1, max_length=40)
+    address_label: str = Field(default="ENDEREÇO", min_length=1, max_length=40)
+    bdi_label: str = Field(default="BDI", min_length=1, max_length=40)
+    total_without_bdi_label: str = Field(default="TOTAL SEM BDI", min_length=1, max_length=60)
+    total_label: str = Field(default="TOTAL GERAL", min_length=1, max_length=60)
+    unpriced_section_label: str = Field(
+        default="ITENS SEM PREÇO NA CASCATA", min_length=1, max_length=60
+    )
+    label_column: str = Field(default="A", pattern=COLUMN_LETTER_PATTERN)
+    value_column: str = Field(default="C", pattern=COLUMN_LETTER_PATTERN)
+    money_number_format: str = Field(default="#,##0.00", min_length=1, max_length=40)
+    quantity_number_format: str = Field(default="#,##0.00", min_length=1, max_length=40)
+
+    @model_validator(mode="after")
+    def validate_sheet_name(self) -> EstimateLayout:
+        _validate_sheet_name(self.sheet_name)
+        return self
+
+
 class WorkbookTemplate(ValuationContractModel):
     """Descrição completa do layout usado para ler o catálogo e escrever a medição.
 
@@ -433,6 +509,10 @@ class WorkbookTemplate(ValuationContractModel):
     código; o código aceito ainda precisa ter a estrutura de `CONTRACT_CODE_PATTERN` — o
     leitor revalida isso de qualquer forma, então um padrão frouxo demais aqui não basta
     para injetar identidade fora da estrutura.
+
+    `estimate` é a seção opcional do orçamento-base (ADR-0038): aditiva, nunca lida nem
+    escrita pelo boletim da medição. Sem ela, o template continua servindo só o boletim,
+    exatamente como antes do ADR.
     """
 
     label: str = Field(min_length=1, max_length=120)
@@ -443,6 +523,7 @@ class WorkbookTemplate(ValuationContractModel):
     memory: MemoryLayout
     general: GeneralLayout
     amendment: AmendmentLayout | None = None
+    estimate: EstimateLayout | None = None
     extra_code_patterns: list[str] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
@@ -480,6 +561,8 @@ class WorkbookTemplate(ValuationContractModel):
         names = [self.catalog.sheet_name, self.general.sheet_name]
         if self.amendment is not None:
             names.append(self.amendment.sheet_name)
+        if self.estimate is not None:
+            names.append(self.estimate.sheet_name)
         if len(names) != len(set(names)):
             raise ValuationValidationError(
                 "TEMPLATE_SHEET_NAME_CONFLICT",
@@ -606,5 +689,18 @@ def default_template() -> WorkbookTemplate:
                     new_item_column="K",
                 )
             ],
+        ),
+        estimate=EstimateLayout(
+            columns=EstimateColumns(
+                item=SheetColumn(letter="A", label="ITEM", width=8),
+                code=SheetColumn(letter="B", label="COD.", width=18),
+                source=SheetColumn(letter="C", label="FONTE", width=18),
+                description=SheetColumn(letter="D", label="DESCRIÇÃO", width=56),
+                unit=SheetColumn(letter="E", label="UN", width=8),
+                unit_price=SheetColumn(letter="F", label="VALOR UNIT", width=14),
+                unit_price_with_bdi=SheetColumn(letter="G", label="VALOR UNIT. C/ BDI", width=16),
+                quantity=SheetColumn(letter="H", label="QUANT", width=12),
+                total=SheetColumn(letter="I", label="TOTAL", width=16),
+            ),
         ),
     )

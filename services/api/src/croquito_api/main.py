@@ -35,6 +35,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from croquito_api import estimate_rounds
 from croquito_api.auth import OidcAuthenticator, Principal, require_principal
 from croquito_api.config import ApiSettings
 from croquito_api.database import (
@@ -44,6 +45,8 @@ from croquito_api.database import (
     ChatSessionRecord,
     ChatTurnRecord,
     Database,
+    EstimateRoundRecord,
+    EstimateRoundRevisionRecord,
     ExportArtifactRecord,
     IdempotencyRecord,
     JobRecord,
@@ -112,9 +115,11 @@ from croquito_valuation.assignment import (
     CodeAssignmentSet,
     CodeSuggestionSet,
     apply_code_assignments,
+    apply_code_assignments_over_cascade,
 )
 from croquito_valuation.calc import build_worksite_valuation
 from croquito_valuation.errors import ValuationValidationError, valuation_errors
+from croquito_valuation.estimate import Estimate, build_worksite_estimate
 from croquito_valuation.models import WORKSITE_KEY_PATTERN, PriceCatalog, Valuation
 from croquito_valuation.takeoff import (
     TakeoffDecisionBatch,
@@ -122,6 +127,7 @@ from croquito_valuation.takeoff import (
     TakeoffPacket,
     apply_takeoff_decisions,
 )
+from croquito_valuation.template import default_template
 from croquito_worker.association import AssociationSet
 from croquito_worker.criteria import (
     FALLBACK_CRITERION_MESSAGE,
@@ -861,6 +867,137 @@ class BuildAmendmentDossierRequest(ApiModel):
     base_version: int = Field(ge=1)
 
 
+SHA256_HEX_PATTERN: Final = r"^[a-f0-9]{64}$"
+
+
+class CreateEstimateRoundRequest(ApiModel):
+    """Rodada de orçamento-base nova: a obra e o rótulo, nada mais.
+
+    Três diferenças de `CreateValuationRoundRequest` dão nome à fronteira do ADR-0027.
+    Não há `catalog_upload_id`: a rodada abre SEM fonte e as fontes entram depois, uma a
+    uma, em ordem declarada (`POST .../catalogs`) — instalar uma só na criação faria a
+    primeira fonte parecer privilegiada. Não há `period_number` nem `contract_label`:
+    período é da medição e contrato é da obra licitada, e antes da licitação não existe
+    nenhum dos dois.
+
+    `worksite_key` repete `WORKSITE_KEY_PATTERN`, que o domínio exige do `Estimate`, pelo
+    mesmo motivo da medição: a chave é imutável na rodada, e aceitá-la livre aqui faria uma
+    rodada nascer válida e só quebrar na montagem, dezenas de decisões depois.
+    """
+
+    worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
+    worksite_name: str = Field(min_length=1, max_length=120)
+    reference_label: str = Field(min_length=1, max_length=120)
+    address: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class EstimateRoundResponse(ApiModel):
+    round_id: UUID
+    version: int
+    status: str
+    created_at: datetime
+
+
+class EstimateRoundSummary(ApiModel):
+    """Linha da listagem. `cascade_origins` sai na ORDEM da cascata, que é a precedência."""
+
+    round_id: UUID
+    worksite_key: str
+    worksite_name: str
+    reference_label: str
+    version: int
+    status: str
+    stage: str
+    extraction_status: str
+    cascade_origins: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class EstimateRoundPage(ApiModel):
+    items: list[EstimateRoundSummary]
+    next_cursor: str | None = None
+
+
+class InstallEstimateCatalogRequest(ApiModel):
+    """Instala UMA fonte de preço no fim da cascata; o JSON sobe pelo presign de sempre."""
+
+    upload_id: UUID
+    base_version: int = Field(ge=1)
+
+
+class ReorderEstimateCascadeRequest(ApiModel):
+    """Reordena a cascata. O corpo é a lista COMPLETA dos digests, na ordem nova.
+
+    Completa, e não um "mova esta fonte para a posição N", porque a ordem inteira é a regra
+    de precificação: um corpo parcial obrigaria o servidor a decidir onde as fontes
+    omitidas entram, e essa decisão é exatamente a que o ADR-0027 tira do código.
+    """
+
+    base_version: int = Field(ge=1)
+    cascade: list[str] = Field(min_length=1, max_length=8)
+
+    @field_validator("cascade")
+    @classmethod
+    def validate_digests(cls, value: list[str]) -> list[str]:
+        if any(re.fullmatch(SHA256_HEX_PATTERN, digest) is None for digest in value):
+            # Mensagem fixa: nada do corpo recusado volta ao cliente pelo erro de contrato.
+            raise ValueError("cada item da cascata é o sha256 hexadecimal de uma fonte")
+        return value
+
+
+class EstimateCascadeResponse(ApiModel):
+    """A cascata como a tela a lê. `object_key` e `upload_id` não saem daqui."""
+
+    round_id: UUID
+    version: int
+    cascade: list[dict[str, Any]]
+
+
+class EstimateCodeAssignmentDecisionRequest(ApiModel):
+    """Decisão de código do orçamento-base: a confirmação CITA a fonte de preço.
+
+    É a única diferença de contrato para `CodeAssignmentDecisionRequest` da medição, e é a
+    razão de este modelo existir: com mais de uma tabela na rodada, resolver o código pela
+    ordem da cascata seria a máquina escolhendo quem precifica o item. A citação é
+    obrigatória na confirmação e proibida na rejeição — rejeitar é recusar TODAS as fontes,
+    não uma delas.
+    """
+
+    base_version: int = Field(ge=1)
+    item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
+    action: Literal["confirm", "reject"]
+    code: str | None = Field(default=None, min_length=1, max_length=30)
+    catalog_sha256: str | None = Field(default=None, pattern=SHA256_HEX_PATTERN)
+    note: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> EstimateCodeAssignmentDecisionRequest:
+        if self.action == "reject" and self.note is None:
+            # Mensagem fixa: nada do corpo recusado volta ao cliente pelo erro de contrato.
+            raise ValueError("rejeição de código exige justificativa em `note`")
+        if self.action == "confirm" and self.catalog_sha256 is None:
+            raise ValueError("confirmação de código exige a fonte de preço em `catalog_sha256`")
+        return self
+
+
+class BuildEstimateRequest(ApiModel):
+    """Montagem do orçamento-base: a guarda de concorrência e o BDI do orçamento.
+
+    `bdi_percent` viaja como TEXTO porque é `ExactDecimal` no domínio (ADR-0038, decisão
+    2), que recusa `float`: um número de JSON já teria passado por binário antes de chegar
+    aqui. É percentual ÚNICO do orçamento inteiro — BDI por linha ou por grupo é decisão
+    recusada no ADR, não campo omitido.
+
+    A identidade da obra não entra por aqui: `worksite_key`, `worksite_name` e `address`
+    são atributos da rodada, e o `extra="forbid"` do `ApiModel` recusa quem tentar
+    reescrevê-los no meio da cadeia.
+    """
+
+    base_version: int = Field(ge=1)
+    bdi_percent: str = Field(min_length=1, max_length=12)
+
+
 class ValuationDocumentResponse(RootModel[dict[str, Any]]):
     """Resposta de medição cuja FORMA vem do domínio, guardada para o `Idempotency-Key`.
 
@@ -972,6 +1109,52 @@ class ProcessingQueue:
             MessageBody=json.dumps(
                 {
                     "command": "rerender_takeoff_overlay",
+                    "round_id": round_id,
+                    "tenant_id": tenant_id,
+                    "packet_sha256": packet_sha256,
+                }
+            ),
+        )
+
+    def enqueue_estimate_plate_extraction(
+        self, *, round_id: str, extraction_id: str, tenant_id: str
+    ) -> None:
+        """Publica a extração paga da legenda da rodada de ORÇAMENTO-BASE.
+
+        Comando próprio, e não o da medição com outro `round_id`: os dois lados leem
+        tabelas diferentes, e um envelope ambíguo faria o worker procurar uma rodada de
+        medição que não existe — ou, pior, encontrar uma de mesmo id em outra tabela.
+
+        Quem consome este comando é o `dispatch` de `local_queue.py` no worker
+        (`ESTIMATE_ROUND_CHAIN`, F-020 T6). A rota nunca depende dele para responder: a
+        extração paga já é recusada antes daqui quando o ambiente não tem provider
+        configurado.
+        """
+        if self.queue_url is None:
+            return
+        self.client.send_message(
+            QueueUrl=self.queue_url,
+            MessageBody=json.dumps(
+                {
+                    "command": "extract_estimate_plate",
+                    "round_id": round_id,
+                    "extraction_id": extraction_id,
+                    "tenant_id": tenant_id,
+                }
+            ),
+        )
+
+    def enqueue_estimate_takeoff_overlay_rerender(
+        self, *, round_id: str, tenant_id: str, packet_sha256: str
+    ) -> None:
+        """Re-render do overlay da rodada de orçamento; espelho do comando da medição."""
+        if self.queue_url is None:
+            return
+        self.client.send_message(
+            QueueUrl=self.queue_url,
+            MessageBody=json.dumps(
+                {
+                    "command": "rerender_estimate_takeoff_overlay",
                     "round_id": round_id,
                     "tenant_id": tenant_id,
                     "packet_sha256": packet_sha256,
@@ -1347,8 +1530,12 @@ def _valuation_round_heads(
     return {record.round_id: record for record in records}
 
 
-def _encode_round_cursor(record: ValuationRoundRecord) -> str:
+def _encode_round_cursor(record: ValuationRoundRecord | EstimateRoundRecord) -> str:
     """Cursor opaco sobre `(created_at, id)` — a mesma chave do índice da listagem.
+
+    Serve as duas raízes de rodada porque o cursor depende só de `created_at` e `id`, que
+    as duas têm com o mesmo significado e sob o mesmo índice composto. Duplicá-lo por
+    tabela criaria duas codificações que ninguém garantiria idênticas.
 
     O carimbo sai do valor que o próprio banco devolveu, e não de um `datetime` montado
     aqui: é isso que faz a comparação da página seguinte usar exatamente a representação
@@ -6287,6 +6474,1349 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             detail="a rodada ainda não tem dossiê de aditivo construído",
         )
         return _dossier_payload(record, document=document, dossier=_revalidated_dossier(document))
+
+    # -- Orçamento-base de obra (F-020, ADR-0038) ---------------------------------------
+    #
+    # Espelho de `/v1/valuation-rounds*`, com a mesma disciplina — papel `orcamentista`
+    # como primeira linha de todo handler (inclusive de leitura), `Idempotency-Key` em
+    # todo POST, `base_version` em toda mutação e `problem+json` com código estável. O que
+    # muda é a fronteira do ADR-0027: aqui há CASCATA de fontes de preço e BDI, e não há
+    # contrato, período, saldo nem aprovação.
+
+    def _load_estimate_round(
+        session: Session, *, round_id: UUID, tenant_id: str
+    ) -> EstimateRoundRecord:
+        """A rodada do tenant, ou `404`. Rodada de outro tenant é indistinguível de ausente."""
+        record = estimate_rounds.load_round(session, round_id=str(round_id), tenant_id=tenant_id)
+        if record is None:
+            raise _problem(
+                "NOT_FOUND", status.HTTP_404_NOT_FOUND, "Rodada de orçamento não encontrada."
+            )
+        return record
+
+    def _estimate_round_heads(
+        session: Session, *, tenant_id: str, round_ids: Sequence[str]
+    ) -> dict[str, EstimateRoundRevisionRecord]:
+        """Cabeça de cada rodada da página, numa consulta só (espelho da medição)."""
+        if not round_ids:
+            return {}
+        latest = (
+            select(
+                EstimateRoundRevisionRecord.round_id.label("round_id"),
+                func.max(EstimateRoundRevisionRecord.version).label("version"),
+            )
+            .where(
+                EstimateRoundRevisionRecord.tenant_id == tenant_id,
+                EstimateRoundRevisionRecord.round_id.in_(round_ids),
+            )
+            .group_by(EstimateRoundRevisionRecord.round_id)
+            .subquery()
+        )
+        records = session.scalars(
+            select(EstimateRoundRevisionRecord)
+            .join(
+                latest,
+                and_(
+                    EstimateRoundRevisionRecord.round_id == latest.c.round_id,
+                    EstimateRoundRevisionRecord.version == latest.c.version,
+                ),
+            )
+            .where(EstimateRoundRevisionRecord.tenant_id == tenant_id)
+        )
+        return {record.round_id: record for record in records}
+
+    def _estimate_cascade(record: EstimateRoundRecord) -> list[PriceCatalog]:
+        """Os catálogos da cascata NA ORDEM instalada, decodificados uma vez por digest.
+
+        O cache é o mesmo da medição de propósito: ele é chaveado pelo digest do objeto,
+        que é conteúdo idêntico byte a byte por construção, e não por rodada nem por
+        tenant. Objeto sumido, divergente ou ilegível recusa com `CATALOG_REQUIRED`.
+        """
+        return estimate_rounds.load_cascade(
+            application.state.artifact_store, record, cache=application.state.catalog_cache
+        )
+
+    def _estimate_cascade_response(record: EstimateRoundRecord) -> EstimateCascadeResponse:
+        return EstimateCascadeResponse(
+            round_id=UUID(record.id),
+            version=record.version,
+            cascade=estimate_rounds.cascade_entry_payload(estimate_rounds.cascade_entries(record)),
+        )
+
+    def _estimate_plate_response(
+        record: EstimateRoundRecord,
+        revision: EstimateRoundRevisionRecord | None,
+        *,
+        tenant: str,
+    ) -> ValuationPlateResponse:
+        """Metadados da prancha e, quando a página já foi promovida, a URL assinada dela.
+
+        Reusa o modelo de resposta da medição porque a prancha é o MESMO conceito nas duas
+        cadeias — um PDF ingerido e uma página promovida. `image_url` nulo é estado honesto;
+        chave gravada fora do prefixo do tenant é tratada como inexistente e o presign nunca
+        chega a ser chamado.
+        """
+        plate = estimate_rounds.require_plate(record)
+        refs = {} if revision is None else dict(revision.artifact_refs_json or {})
+        image_key = refs.get(PLATE_IMAGE_REF)
+        image_url: str | None = None
+        if image_key is not None:
+            image_url = signed_artifact_url(
+                application.state.artifact_store, object_key=image_key, tenant_id=tenant
+            )
+            if image_url is None:
+                raise _problem(
+                    "NOT_FOUND",
+                    status.HTTP_404_NOT_FOUND,
+                    "Imagem da prancha não encontrada.",
+                )
+        return ValuationPlateResponse(
+            round_id=UUID(record.id),
+            version=record.version,
+            upload_id=UUID(plate.upload_id),
+            source_sha256=plate.source_sha256,
+            page_count=plate.page_count,
+            image_url=image_url,
+        )
+
+    def _estimate_takeoff_payload(
+        record: EstimateRoundRecord, revision: EstimateRoundRevisionRecord | None
+    ) -> dict[str, Any]:
+        stored = estimate_rounds.require_document(
+            revision,
+            "takeoff_packet_json",
+            stage=STAGE_TAKEOFF,
+            detail="a rodada ainda não tem pacote de takeoff publicado",
+        )
+        packet = estimate_rounds.require_takeoff_packet(revision)
+        registered = registered_item_ids(
+            None if revision is None else revision.takeoff_registration_json
+        )
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "packet": anchored_packet(packet, registered),
+            "packet_sha256": document_digest(stored),
+            "review_status": review_status(packet),
+            **takeoff_counts(packet),
+            **anchor_counts(packet, registered),
+        }
+
+    def _estimate_suggestions_payload(
+        record: EstimateRoundRecord,
+        *,
+        document: Mapping[str, Any],
+        suggestions: CodeSuggestionSet,
+        computed: bool,
+        notes: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "suggestions": suggestions.model_dump(mode="json"),
+            "suggestions_sha256": document_digest(document),
+            "computed": computed,
+            "matching": matching_of(suggestions),
+            "semantic_notes": notes,
+        }
+
+    def _estimate_assignments_payload(
+        record: EstimateRoundRecord,
+        *,
+        packet: TakeoffPacket,
+        assignments: CodeAssignmentSet | None,
+        document: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "assignments": None if assignments is None else assignments.model_dump(mode="json"),
+            "assignments_sha256": None if document is None else document_digest(document),
+            "confirmed": 0 if assignments is None else count_status(assignments, "confirmed"),
+            "rejected": 0 if assignments is None else count_status(assignments, "rejected"),
+            "pending_items": [
+                item_payload(item) for item in pending_code_items(packet, assignments)
+            ],
+        }
+
+    def _estimate_payload(
+        record: EstimateRoundRecord,
+        revision: EstimateRoundRevisionRecord | None,
+        *,
+        document: Mapping[str, Any],
+        estimate: Estimate,
+    ) -> dict[str, Any]:
+        """O orçamento como a tela o recebe. Dinheiro sai como TEXTO, e URL nunca sai daqui.
+
+        Os totais viajam em texto pelo mesmo motivo do boletim: são `Decimal` truncados no
+        centavo, e serializá-los como número de JSON devolveria um binário aproximado do
+        valor que o domínio acabou de fixar.
+
+        A URL assinada da planilha **não** entra: esta forma é a que o registro de
+        idempotência guarda no banco, e gravar uma URL assinada seria persistir uma
+        credencial de leitura num lugar que ninguém trata como segredo. Ela sai só no `GET`,
+        montada na hora.
+        """
+        digests = {} if revision is None else dict(revision.artifact_digests_json or {})
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "estimate": estimate.model_dump(mode="json"),
+            "estimate_sha256": document_digest(document),
+            "bdi_percent": str(estimate.bdi_percent),
+            "total_amount_without_bdi": str(estimate.total_amount_without_bdi),
+            "total_amount": str(estimate.total_amount),
+            "unpriced_item_ids": list(estimate.unpriced_item_ids),
+            "workbook_present": estimate_rounds.estimate_workbook_ref(revision) is not None,
+            "workbook_sha256": digests.get(estimate_rounds.ESTIMATE_WORKBOOK_DIGEST),
+        }
+
+    def _revalidated_estimate(document: Mapping[str, Any]) -> Estimate:
+        """Orçamento gravado, revalidado na leitura: quem recomputa os totais é o modelo.
+
+        `Estimate` refaz o BDI de cada linha, o total de cada linha, os dois totais do
+        orçamento e o 1:1 com a memória de cálculo, além de conferir que toda linha aponta
+        para uma fonte que está na cascata declarada. Servir o total como ele foi gravado
+        faria um orçamento adulterado no banco passar por bom.
+        """
+        try:
+            return Estimate.model_validate(dict(document))
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+
+    def _enqueue_estimate_plate_extraction(
+        *, round_id: str, extraction_id: str, tenant_id: str
+    ) -> None:
+        """Publica o comando com o intent já durável; falha de transporte é 503 repetível."""
+        queue: QueueAdapter = application.state.queue
+        try:
+            queue.enqueue_estimate_plate_extraction(
+                round_id=round_id,
+                extraction_id=extraction_id,
+                tenant_id=tenant_id,
+            )
+        except QUEUE_TRANSPORT_ERRORS as error:
+            raise _problem(
+                "PROCESSING_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Extração registrada; repita o mesmo comando para reenfileirar com segurança.",
+            ) from error
+
+    def _enqueue_estimate_overlay_rerender(
+        *, round_id: str, tenant_id: str, packet_sha256: str
+    ) -> None:
+        """Publica o re-render do overlay. Falha de transporte NÃO derruba a decisão.
+
+        Mesma assimetria deliberada da medição (ADR-0030): o ato é a decisão do
+        orçamentista, que já está durável quando este comando é publicado, e traduzir a
+        recusa da fila em `503` faria o cliente supor que a decisão não valeu.
+        """
+        queue: QueueAdapter = application.state.queue
+        with suppress(*QUEUE_TRANSPORT_ERRORS):
+            queue.enqueue_estimate_takeoff_overlay_rerender(
+                round_id=round_id, tenant_id=tenant_id, packet_sha256=packet_sha256
+            )
+
+    @application.post(
+        "/v1/estimate-rounds",
+        response_model=EstimateRoundResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["estimate"],
+    )
+    async def create_estimate_round(
+        payload: CreateEstimateRoundRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> EstimateRoundResponse:
+        """Abre a rodada do orçamento-base; a cascata de fontes entra depois, em ordem."""
+        _require_valuation_reviewer(principal)
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation="estimate-rounds.create",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return EstimateRoundResponse.model_validate(existing)
+
+        now = datetime.now(UTC)
+        round_id = new_uuid7()
+        record = EstimateRoundRecord(
+            id=str(round_id),
+            tenant_id=principal.tenant_id,
+            worksite_key=payload.worksite_key,
+            worksite_name=payload.worksite_name,
+            reference_label=payload.reference_label,
+            address=payload.address,
+            status="OPEN",
+            version=1,
+            catalog_cascade_json=[],
+            extraction_status="idle",
+            created_by=principal.subject,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(record)
+        response = EstimateRoundResponse(
+            round_id=round_id,
+            version=record.version,
+            status=record.status,
+            created_at=now,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation="estimate-rounds.create",
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_ROUND_CREATED",
+            resource_type="estimate_round",
+            resource_id=str(round_id),
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/estimate-rounds",
+        response_model=EstimateRoundPage,
+        tags=["estimate"],
+    )
+    async def list_estimate_rounds(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+        cursor: str | None = None,
+    ) -> EstimateRoundPage:
+        """Rodadas do tenant, da mais recente para a mais antiga, com cursor opaco."""
+        _require_valuation_reviewer(principal)
+        query = select(EstimateRoundRecord).where(
+            EstimateRoundRecord.tenant_id == principal.tenant_id
+        )
+        if cursor is not None:
+            created_at, identifier = _decode_round_cursor(cursor)
+            # Forma explícita em vez de comparação de tupla, como na medição: row values
+            # dependem da versão do SQLite.
+            query = query.where(
+                or_(
+                    EstimateRoundRecord.created_at < created_at,
+                    and_(
+                        EstimateRoundRecord.created_at == created_at,
+                        EstimateRoundRecord.id < identifier,
+                    ),
+                )
+            )
+        records = list(
+            session.scalars(
+                query.order_by(
+                    EstimateRoundRecord.created_at.desc(), EstimateRoundRecord.id.desc()
+                ).limit(limit + 1)
+            )
+        )
+        page = records[:limit]
+        heads = _estimate_round_heads(
+            session,
+            tenant_id=principal.tenant_id,
+            round_ids=[record.id for record in page],
+        )
+        return EstimateRoundPage(
+            items=[
+                EstimateRoundSummary(
+                    round_id=UUID(record.id),
+                    worksite_key=record.worksite_key,
+                    worksite_name=record.worksite_name,
+                    reference_label=record.reference_label,
+                    version=record.version,
+                    status=record.status,
+                    stage=estimate_rounds.current_stage(record, heads.get(record.id)),
+                    extraction_status=record.extraction_status,
+                    cascade_origins=[
+                        entry.origin for entry in estimate_rounds.cascade_entries(record)
+                    ],
+                    created_at=record.created_at,
+                    updated_at=record.updated_at,
+                )
+                for record in page
+            ],
+            next_cursor=_encode_round_cursor(page[-1]) if len(records) > limit and page else None,
+        )
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def get_estimate_round(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Estado da rodada por etapa, com a cascata na ordem que decide a precificação."""
+        _require_valuation_reviewer(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        return estimate_rounds.round_state_payload(record, revision)
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/catalogs",
+        response_model=EstimateCascadeResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["estimate"],
+    )
+    async def install_estimate_catalog(
+        round_id: UUID,
+        payload: InstallEstimateCatalogRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> EstimateCascadeResponse:
+        """Instala uma fonte de preço no FIM da cascata; a posição é a precedência.
+
+        O catálogo é lido e validado ANTES de a entrada existir, como na criação da rodada
+        de medição: uma fonte que não valida aqui viraria uma cascata inutilizável em toda
+        etapa seguinte. Segunda fonte da mesma origem recusa com
+        `409 ESTIMATE_CASCADE_ORIGIN_DUPLICATE` — o mesmo código que o domínio usa —, e não
+        na montagem do orçamento, quando já não haveria o que corrigir sem abrir rodada nova.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.catalogs:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return EstimateCascadeResponse.model_validate(existing)
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        entries = estimate_rounds.cascade_entries(record)
+        upload = _require_valuation_upload(
+            session,
+            application,
+            upload_id=payload.upload_id,
+            principal=principal,
+            content_type=CATALOG_CONTENT_TYPE,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        catalog, summary = _install_catalog(application, upload)
+        estimate_rounds.ensure_source_installable(entries, catalog)
+
+        installed = estimate_rounds.installed_entry(
+            upload_id=str(payload.upload_id),
+            object_key=upload.object_key,
+            object_sha256=upload.sha256.lower(),
+            catalog=catalog,
+            summary=summary,
+        )
+        # Lista NOVA em vez de `append`: a coluna é JSON e o SQLAlchemy não observa mutação
+        # no lugar de um `list` — sem reatribuir, a instalação não chegaria ao `UPDATE`.
+        record.catalog_cascade_json = [
+            *(entry_document for entry_document in record.catalog_cascade_json or []),
+            installed,
+        ]
+        record.version += 1
+        record.updated_at = datetime.now(UTC)
+        upload.status = "VERIFIED"
+        response = _estimate_cascade_response(record)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_CATALOG_INSTALLED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/catalogs/order",
+        response_model=EstimateCascadeResponse,
+        tags=["estimate"],
+    )
+    async def reorder_estimate_cascade(
+        round_id: UUID,
+        payload: ReorderEstimateCascadeRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> EstimateCascadeResponse:
+        """Reordena a cascata instalada; nenhuma fonte entra nem sai por aqui.
+
+        Reordenar é ATO humano com consequência visível: a shortlist e a busca passam a
+        devolver o bloco da fonte promovida primeiro, e é assim que o orçamentista muda a
+        preferência de tabela sem que nada seja recalculado escondido. Por isso avança o
+        token de concorrência da rodada.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.catalogs-order:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return EstimateCascadeResponse.model_validate(existing)
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        entries = estimate_rounds.require_cascade(record)
+        estimate_rounds.require_cascade_unlocked(
+            estimate_rounds.head_revision(
+                session, round_id=record.id, tenant_id=principal.tenant_id
+            )
+        )
+        record.catalog_cascade_json = estimate_rounds.reordered_cascade(entries, payload.cascade)
+        record.version += 1
+        record.updated_at = datetime.now(UTC)
+        response = _estimate_cascade_response(record)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_CASCADE_REORDERED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/plate",
+        response_model=ValuationPlateResponse,
+        tags=["estimate"],
+    )
+    async def associate_estimate_plate(
+        round_id: UUID,
+        payload: AssociatePlateRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ValuationPlateResponse:
+        """Associa o PDF já enviado pelo presign; a API não renderiza nem lê a prancha."""
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.plate:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ValuationPlateResponse.model_validate(existing)
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        if record.plate_object_key is not None:
+            raise _problem(
+                "ROUND_PLATE_ALREADY_PRESENT",
+                status.HTTP_409_CONFLICT,
+                "A rodada já tem uma prancha associada.",
+            )
+        upload = _require_valuation_upload(
+            session,
+            application,
+            upload_id=payload.upload_id,
+            principal=principal,
+            content_type=PDF_CONTENT_TYPE,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        now = datetime.now(UTC)
+        record.plate_upload_id = str(payload.upload_id)
+        record.plate_object_key = upload.object_key
+        record.plate_source_sha256 = upload.sha256.lower()
+        record.version += 1
+        record.updated_at = now
+        upload.status = "VERIFIED"
+        response = _estimate_plate_response(record, None, tenant=principal.tenant_id)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_PLATE_ASSOCIATED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/plate",
+        response_model=ValuationPlateResponse,
+        tags=["estimate"],
+    )
+    async def get_estimate_plate(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ValuationPlateResponse:
+        """Metadados e URL assinada da página promovida; a URL não vai para log nem auditoria."""
+        _require_valuation_reviewer(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        return _estimate_plate_response(record, revision, tenant=principal.tenant_id)
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/plate/extractions",
+        response_model=ValuationExtractionResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["estimate"],
+    )
+    async def create_estimate_plate_extraction(
+        round_id: UUID,
+        payload: CreatePlateExtractionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ValuationExtractionResponse:
+        """Enfileira a extração paga da legenda; nenhum provider é chamado no request path."""
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.extractions:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            replay = ValuationExtractionResponse.model_validate(existing)
+            # Repetir o mesmo comando é o caminho de retomada quando a fila recusou: o
+            # intent já está durável e o claim atômico do worker impede repagar o provider.
+            _enqueue_estimate_plate_extraction(
+                round_id=str(round_id),
+                extraction_id=str(replay.extraction_id),
+                tenant_id=principal.tenant_id,
+            )
+            return replay
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        estimate_rounds.require_plate(record)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        if revision is not None and revision.takeoff_packet_json is not None:
+            raise _problem(
+                "ROUND_PLATE_ALREADY_PRESENT",
+                status.HTTP_409_CONFLICT,
+                "A rodada já tem pacote de takeoff publicado.",
+            )
+        if record.extraction_status in ("queued", "running"):
+            raise _problem(
+                "EXTRACTION_IN_PROGRESS",
+                status.HTTP_409_CONFLICT,
+                "Já existe uma extração em andamento nesta rodada.",
+            )
+        # Chamada paga de provider: entitlement contratual do tenant primeiro, e sem
+        # enfileirar nada quando ele falta (ADR-0012).
+        _require_active_ai_entitlement(
+            session,
+            principal,
+            real_providers_enabled=runtime_settings.real_providers_enabled,
+        )
+        unavailable = extraction_unavailable(extraction_arm_spec())
+        if unavailable is not None:
+            raise _problem(
+                "PROVIDER_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "A extração automática não está disponível neste ambiente.",
+                {"code": unavailable.code},
+            )
+
+        now = datetime.now(UTC)
+        extraction_id = new_uuid7()
+        record.extraction_id = str(extraction_id)
+        record.extraction_status = "queued"
+        record.extraction_failure_code = None
+        record.extraction_requested_by = principal.subject
+        record.extraction_updated_at = now
+        record.version += 1
+        record.updated_at = now
+        response = ValuationExtractionResponse(
+            round_id=round_id,
+            version=record.version,
+            extraction_id=extraction_id,
+            status=record.extraction_status,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_EXTRACTION_REQUESTED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        # O intent é durável ANTES da fila, e nenhuma transação atravessa a publicação.
+        session.commit()
+        _enqueue_estimate_plate_extraction(
+            round_id=str(round_id),
+            extraction_id=str(extraction_id),
+            tenant_id=principal.tenant_id,
+        )
+        return response
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/takeoff",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def get_estimate_takeoff(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Pacote de takeoff da rodada, com a âncora de evidência de cada item."""
+        _require_valuation_reviewer(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        return _estimate_takeoff_payload(record, revision)
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/takeoff/overlay",
+        response_model=ValuationTakeoffOverlayResponse,
+        tags=["estimate"],
+    )
+    async def get_estimate_takeoff_overlay(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ValuationTakeoffOverlayResponse:
+        """URL assinada do overlay e a idade dele; overlay vencido é `200`, nunca erro."""
+        _require_valuation_reviewer(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        stored = estimate_rounds.require_document(
+            revision,
+            "takeoff_packet_json",
+            stage=STAGE_TAKEOFF,
+            detail="a rodada ainda não tem pacote de takeoff publicado",
+        )
+        overlay_key = estimate_rounds.require_takeoff_overlay(revision)
+        image_url = signed_artifact_url(
+            application.state.artifact_store,
+            object_key=overlay_key,
+            tenant_id=principal.tenant_id,
+        )
+        if image_url is None:
+            raise _problem(
+                "NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Overlay do takeoff não encontrado.",
+            )
+        packet_sha256 = document_digest(stored)
+        state = estimate_rounds.takeoff_overlay_state(revision, packet_sha256=packet_sha256)
+        return ValuationTakeoffOverlayResponse(
+            round_id=UUID(record.id),
+            version=record.version,
+            image_url=image_url,
+            image_sha256=cast(str | None, state["image_sha256"]),
+            packet_sha256=packet_sha256,
+            overlay_packet_sha256=cast(str | None, state["overlay_packet_sha256"]),
+            stale=cast(bool, state["stale"]),
+        )
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/takeoff/decisions",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def decide_estimate_takeoff_item(
+        round_id: UUID,
+        payload: TakeoffDecisionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Aplica UMA decisão do orçamentista, grava a revisão nova e enfileira o overlay."""
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.takeoff-decisions:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        packet = estimate_rounds.require_takeoff_packet(revision)
+        try:
+            # Identidade do `Principal` e instante do servidor: o corpo não carimba nenhum
+            # dos dois. A regra de decisão é do domínio e não é reimplementada aqui.
+            decision = TakeoffDecisionInput(
+                item_id=payload.item_id,
+                action=payload.action,
+                reviewer_id=principal.subject,
+                reviewer_role=VALUATION_REVIEWER_ROLE,
+                decided_at=datetime.now(UTC),
+                quantity=parse_quantity(payload.quantity),
+                unit=payload.unit,
+                note=payload.note,
+                item_note=payload.item_note,
+            )
+            reviewed = apply_takeoff_decisions(packet, TakeoffDecisionBatch(decisions=[decision]))
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+
+        document = reviewed.model_dump(mode="json")
+        packet_sha256 = document_digest(document)
+        new_revision = estimate_rounds.append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"takeoff_packet_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = {
+            **_estimate_takeoff_payload(record, new_revision),
+            "overlay": estimate_rounds.takeoff_overlay_state(
+                new_revision, packet_sha256=packet_sha256
+            ),
+        }
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_TAKEOFF_ITEM_DECIDED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        # A decisão fica durável ANTES da fila, e nenhuma transação atravessa a publicação.
+        _commit_valuation_revision(session)
+        _enqueue_estimate_overlay_rerender(
+            round_id=record.id,
+            tenant_id=principal.tenant_id,
+            packet_sha256=packet_sha256,
+        )
+        return response
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/code-suggestions",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def get_estimate_code_suggestions(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Shortlist de código sobre a CASCATA por item confirmado: observação, nunca decisão.
+
+        Os candidatos saem na ordem da cascata — cada fonte é um bloco —, e a gravação entra
+        na cadeia de revisões **sem avançar a versão da rodada**: a shortlist é artefato
+        derivado, e se um `GET` movesse o token de concorrência, a próxima decisão do
+        orçamentista levaria `409` por algo que ele não fez.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        stored = None if revision is None else revision.code_suggestions_json
+        if stored is not None:
+            try:
+                # Artefato gravado que não valida é recusa, e não recálculo silencioso: a
+                # cura dele é o recompute explícito, que é ato humano e declarado.
+                suggestions = CodeSuggestionSet.model_validate(stored)
+            except ValidationError as error:
+                raise _valuation_model_problem(error) from error
+            return _estimate_suggestions_payload(
+                record, document=stored, suggestions=suggestions, computed=False, notes=[]
+            )
+
+        packet = estimate_rounds.require_takeoff_packet(revision)
+        require_reviewed_packet(packet)
+        computed, notes = estimate_rounds.compute_round_suggestions(
+            packet, _estimate_cascade(record)
+        )
+        document = computed.model_dump(mode="json")
+        estimate_rounds.append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_suggestions_json": document},
+            advance_version=False,
+        )
+        response = _estimate_suggestions_payload(
+            record, document=document, suggestions=computed, computed=True, notes=notes
+        )
+        try:
+            session.commit()
+        except IntegrityError:
+            # Duas leituras simultâneas — e a tela faz polling — calculam a mesma shortlist
+            # e disputam a mesma posição da cadeia. O cálculo é determinístico, então servir
+            # o artefato de quem chegou antes é a resposta certa.
+            session.rollback()
+            revision = estimate_rounds.head_revision(
+                session, round_id=record.id, tenant_id=principal.tenant_id
+            )
+            stored = None if revision is None else revision.code_suggestions_json
+            if stored is None:
+                raise
+            return _estimate_suggestions_payload(
+                record,
+                document=stored,
+                suggestions=CodeSuggestionSet.model_validate(stored),
+                computed=False,
+                notes=[],
+            )
+        return response
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/code-suggestions/recompute",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def recompute_estimate_code_suggestions(
+        round_id: UUID,
+        payload: RecomputeSuggestionsRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Recalcula a shortlist sobre a cascata CORRENTE e avança a rodada.
+
+        É o caminho declarado de reler o efeito de uma reordenação da cascata: ao contrário
+        do `GET`, este é ato humano, exige `base_version` e move o token de concorrência.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.suggestions-recompute:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        packet = estimate_rounds.require_takeoff_packet(revision)
+        require_reviewed_packet(packet)
+        require_unrefined_suggestions(estimate_rounds.suggestions_of(revision))
+        computed, notes = estimate_rounds.compute_round_suggestions(
+            packet, _estimate_cascade(record)
+        )
+        document = computed.model_dump(mode="json")
+        estimate_rounds.append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_suggestions_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _estimate_suggestions_payload(
+            record, document=document, suggestions=computed, computed=True, notes=notes
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_CODE_SUGGESTIONS_RECOMPUTED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/catalog/search",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def search_estimate_cascade(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        q: Annotated[str, Query(min_length=1, max_length=200)],
+        limit: Annotated[
+            int, Query(ge=1, le=CATALOG_SEARCH_MAX_LIMIT)
+        ] = CATALOG_SEARCH_DEFAULT_LIMIT,
+    ) -> dict[str, Any]:
+        """Busca léxica na cascata inteira; cada resultado diz de qual fonte e posição veio.
+
+        Sem `arm`: o braço híbrido da medição depende de índice de embeddings publicado na
+        rodada, e nenhuma rota de `/v1` publica esse índice. Expor o parâmetro aqui só para
+        devolver `503` acrescentaria superfície que não existe — o motivo do braço ausente
+        continua viajando em `semantic_notes`, e a busca nunca degrada em silêncio.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            **estimate_rounds.search_round_cascade(_estimate_cascade(record), q, limit),
+        }
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/code-assignments",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def get_estimate_code_assignments(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Decisões de código da rodada e os itens confirmados que ainda esperam por uma."""
+        _require_valuation_reviewer(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        packet = estimate_rounds.require_takeoff_packet(revision)
+        return _estimate_assignments_payload(
+            record,
+            packet=packet,
+            assignments=estimate_rounds.assignments_of(revision),
+            document=None if revision is None else revision.code_assignments_json,
+        )
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/code-assignments/decisions",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def decide_estimate_item_code(
+        round_id: UUID,
+        payload: EstimateCodeAssignmentDecisionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Confirma ou rejeita o código de UM item CITANDO a fonte, acumulando sobre o anterior.
+
+        A citação viaja na DECISÃO, e não só no relatório final: é ela que o orçamento usa,
+        linha a linha, para dizer de qual tabela o preço veio. Código fora do catálogo
+        citado, fonte fora da cascata, item já decidido e unidade incompatível sem nota
+        continuam sendo recusa do domínio, que esta rota não reimplementa.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.code-decisions:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        packet = estimate_rounds.require_takeoff_packet(revision)
+        previous = estimate_rounds.assignments_of(revision)
+        cascade = _estimate_cascade(record)
+        try:
+            decision = CodeAssignmentInput(
+                item_id=payload.item_id,
+                action=payload.action,
+                code=payload.code,
+                catalog_sha256=payload.catalog_sha256,
+                reviewer_id=principal.subject,
+                reviewer_role=VALUATION_REVIEWER_ROLE,
+                decided_at=datetime.now(UTC),
+                note=payload.note,
+            )
+            batch = CodeAssignmentBatch(assignments=[decision])
+        except ValidationError as error:
+            # Invariante do domínio embrulhada pelo validador: o código estável sai, a
+            # mensagem do Pydantic não — ela pode ecoar o valor recusado.
+            raise _valuation_model_problem(error) from error
+        assignments = apply_code_assignments_over_cascade(packet, batch, cascade, previous=previous)
+
+        document = assignments.model_dump(mode="json")
+        estimate_rounds.append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_assignments_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _estimate_assignments_payload(
+            record, packet=packet, assignments=assignments, document=document
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_ITEM_CODE_DECIDED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/estimate",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def build_estimate(
+        round_id: UUID,
+        payload: BuildEstimateRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Monta o orçamento-base, audita a planilha e só então publica as duas coisas.
+
+        A ordem é o portão. O `Estimate` é montado pelo domínio, a planilha é gravada num
+        arquivo temporário, reaberta e reconferida centavo a centavo, e só um relatório
+        aprovado deixa os bytes irem ao object store e a revisão nascer — auditoria
+        reprovada não publica nada (ADR-0038). O `.xlsx` é endereçado pelo digest do
+        orçamento, de modo que uma montagem nova nunca sobrescreve a planilha que uma
+        revisão anterior ainda referencia.
+
+        Três precondições recusam com `409 ROUND_STAGE_NOT_READY`, porque as três são ORDEM
+        da cadeia e não invariante violada: cascata vazia, takeoff ainda não revisado por
+        inteiro e nenhuma decisão de código registrada. Confirmação sem fonte citada, código
+        fora do catálogo citado e item confirmado sem decisão continuam sendo `422
+        DOMAIN_VALIDATION_FAILED` com o código `ESTIMATE_*`/`ASSIGNMENT_*` do domínio.
+
+        A identidade da obra vem da RODADA; o corpo carrega só a guarda de concorrência e o
+        BDI.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.estimate:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        bdi_percent = estimate_rounds.parse_bdi_percent(payload.bdi_percent)
+        cascade = _estimate_cascade(record)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        packet = estimate_rounds.require_takeoff_packet(revision)
+        estimate_rounds.require_reviewed_takeoff_stage(packet)
+        assignments = estimate_rounds.require_assignments(revision)
+        built = build_worksite_estimate(
+            packet,
+            assignments,
+            cascade,
+            worksite_key=record.worksite_key,
+            worksite_name=record.worksite_name,
+            bdi_percent=bdi_percent,
+            address=record.address,
+            calc_plan=None,
+        )
+
+        document = built.estimate.model_dump(mode="json")
+        estimate_sha256 = document_digest(document)
+        # Portão fail-closed: grava, reabre e audita ANTES de qualquer publicação.
+        rendered = estimate_rounds.render_estimate_workbook(built.estimate, default_template())
+        object_key = estimate_rounds.estimate_workbook_key(
+            tenant_id=principal.tenant_id,
+            round_id=record.id,
+            estimate_sha256=estimate_sha256,
+        )
+        # O objeto sobe ANTES do commit: uma revisão que referenciasse um objeto ainda
+        # ausente seria um estado que nenhuma leitura conseguiria servir. O contrário —
+        # objeto no store sem revisão que o cite — é inerte, porque a chave é derivada do
+        # conteúdo e nada o alcança sem a revisão.
+        application.state.artifact_store.write_object(
+            object_key=object_key,
+            body=rendered.body,
+            content_type=estimate_rounds.ESTIMATE_WORKBOOK_CONTENT_TYPE,
+        )
+        head_refs = {} if revision is None else dict(revision.artifact_refs_json or {})
+        head_digests = {} if revision is None else dict(revision.artifact_digests_json or {})
+        new_revision = estimate_rounds.append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={
+                "estimate_json": document,
+                "artifact_refs_json": {
+                    **head_refs,
+                    estimate_rounds.ESTIMATE_WORKBOOK_REF: object_key,
+                },
+                "artifact_digests_json": {
+                    **head_digests,
+                    estimate_rounds.ESTIMATE_WORKBOOK_DIGEST: rendered.audit.workbook_sha256,
+                },
+            },
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _estimate_payload(
+            record, new_revision, document=document, estimate=built.estimate
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_BUILT",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/estimate",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def get_estimate(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """Orçamento gravado, revalidado na leitura, com a URL assinada da planilha.
+
+        Orçamento ainda não montado devolve `409 ROUND_STAGE_NOT_READY`; orçamento que não
+        passa na revalidação devolve `422`, nunca `200` com número que ninguém conferiu. A
+        URL é montada aqui e agora, depois de conferido o prefixo do tenant, e nunca é
+        gravada nem registrada em log ou auditoria.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        document = estimate_rounds.require_document(
+            revision,
+            "estimate_json",
+            stage=estimate_rounds.STAGE_ESTIMATE,
+            detail="a rodada ainda não tem orçamento montado",
+        )
+        payload = _estimate_payload(
+            record, revision, document=document, estimate=_revalidated_estimate(document)
+        )
+        workbook_url = signed_artifact_url(
+            application.state.artifact_store,
+            object_key=estimate_rounds.estimate_workbook_ref(revision),
+            tenant_id=principal.tenant_id,
+        )
+        return {**payload, "workbook_url": workbook_url}
 
     return application
 

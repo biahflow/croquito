@@ -56,7 +56,7 @@ from croquito_valuation.rounding import money_trunc, quantity_round
 from croquito_valuation.sco import SCO_CODE_PATTERN
 from croquito_valuation.takeoff import TakeoffItem, TakeoffPacket
 
-ESTIMATE_SCHEMA_VERSION: Final = "1.0.0"
+ESTIMATE_SCHEMA_VERSION: Final = "2.0.0"
 
 _ITEM_ID_PATTERN: Final = r"^ti_[a-f0-9]{16}$"
 
@@ -99,7 +99,9 @@ class EstimateLine(ValuationContractModel):
 
     Espelho de `BulletinLine` com a diferença que dá nome ao módulo: o boletim só tem preço
     de contrato e por isso não precisa dizer de onde ele veio; aqui a fonte é parte da
-    linha, e o código obedece à forma da origem dela.
+    linha, e o código obedece à forma da origem dela. `unit_price` é o preço de fonte, sem
+    BDI; `unit_price_with_bdi` é o preço com o percentual do orçamento aplicado e truncado
+    no centavo (ADR-0038, decisão 3) — é ele, não `unit_price`, que o total recomputa.
     """
 
     item_number: str = Field(pattern=ITEM_NUMBER_PATTERN)
@@ -107,6 +109,7 @@ class EstimateLine(ValuationContractModel):
     description: str = Field(min_length=1, max_length=MAX_DESCRIPTION_LENGTH)
     unit: str = Field(min_length=1, max_length=20)
     unit_price: ExactDecimal = Field(ge=0)
+    unit_price_with_bdi: ExactDecimal = Field(ge=0)
     quantity: ExactDecimal = Field(ge=0)
     total: ExactDecimal = Field(ge=0)
     price_origin: PriceOrigin
@@ -116,8 +119,8 @@ class EstimateLine(ValuationContractModel):
 
     @property
     def expected_total(self) -> Decimal:
-        """Total recomputado: dinheiro trunca, nunca arredonda — igual ao do boletim."""
-        return money_trunc(self.quantity * self.unit_price)
+        """Total recomputado sobre o preço COM BDI: dinheiro trunca, nunca arredonda."""
+        return money_trunc(self.quantity * self.unit_price_with_bdi)
 
     @model_validator(mode="after")
     def validate_code_for_origin(self) -> EstimateLine:
@@ -156,9 +159,15 @@ class Estimate(ValuationContractModel):
     antes da licitação. A memória de cálculo é a MESMA do boletim (`CalcSheet`, montada por
     `build_calc_blocks`), e a relação 1:1 entre linha e memória é validada como na medição —
     quantidade que diverge da memória recusa.
+
+    `bdi_percent` é o BDI do orçamento inteiro (ADR-0038): percentual único, nunca por
+    linha nem por grupo. `total_amount` já embute o BDI (é a soma dos `total` das linhas,
+    que recomputam sobre `unit_price_with_bdi`); `total_amount_without_bdi` é a mesma soma
+    sem o percentual, para quem for imprimir a diferença entre os dois totais truncados —
+    nunca o percentual aplicado ao total geral (decisão 4).
     """
 
-    schema_version: Literal["1.0.0"] = ESTIMATE_SCHEMA_VERSION
+    schema_version: Literal["2.0.0"] = ESTIMATE_SCHEMA_VERSION
     worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
     worksite_name: str = Field(min_length=1, max_length=120)
     address: str | None = Field(default=None, min_length=1, max_length=200)
@@ -166,10 +175,12 @@ class Estimate(ValuationContractModel):
     page_number: int = Field(ge=1)
     image_sha256: str = Field(pattern=SHA256_PATTERN)
     source_pdf_sha256: str = Field(pattern=SHA256_PATTERN)
+    bdi_percent: ExactDecimal = Field(ge=0)
     cascade: list[CatalogSource] = Field(min_length=1)
     lines: list[EstimateLine] = Field(min_length=1)
     unpriced_item_ids: list[str] = Field(default_factory=list)
     calc_sheets: list[CalcSheet] = Field(min_length=1)
+    total_amount_without_bdi: ExactDecimal = Field(ge=0)
     total_amount: ExactDecimal = Field(ge=0)
     safety_notes: list[str] = Field(min_length=2)
 
@@ -217,6 +228,23 @@ class Estimate(ValuationContractModel):
         return self
 
     @model_validator(mode="after")
+    def validate_line_bdi(self) -> Estimate:
+        """Preço com BDI de cada linha recomputa sobre o percentual único do orçamento."""
+        mismatched = [
+            line.item_number
+            for line in self.lines
+            if line.unit_price_with_bdi
+            != money_trunc(line.unit_price * (1 + self.bdi_percent / 100))
+        ]
+        if mismatched:
+            raise ValuationValidationError(
+                "ESTIMATE_LINE_BDI_MISMATCH",
+                "preço com BDI da linha não confere com o percentual declarado no orçamento",
+                {"item_numbers": mismatched, "bdi_percent": str(self.bdi_percent)},
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_unpriced_item_ids(self) -> Estimate:
         invalid = sorted(
             item_id
@@ -241,6 +269,24 @@ class Estimate(ValuationContractModel):
                 "ESTIMATE_UNPRICED_ITEM_INVALID",
                 "id de item sem preço repetido",
                 {"item_ids": duplicated},
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_total_amount_without_bdi(self) -> Estimate:
+        expected = sum(
+            (money_trunc(line.unit_price * line.quantity) for line in self.lines),
+            Decimal("0.00"),
+        )
+        if self.total_amount_without_bdi != expected:
+            raise ValuationValidationError(
+                "ESTIMATE_TOTAL_WITHOUT_BDI_MISMATCH",
+                "total sem BDI do orçamento não confere com a soma dos totais das linhas sem BDI",
+                {
+                    "worksite_key": self.worksite_key,
+                    "expected": str(expected),
+                    "declared": str(self.total_amount_without_bdi),
+                },
             )
         return self
 
@@ -318,6 +364,7 @@ def build_worksite_estimate(
     *,
     worksite_key: str,
     worksite_name: str,
+    bdi_percent: Decimal,
     address: str | None = None,
     calc_plan: CalcPlan | None = None,
 ) -> EstimateBuildResult:
@@ -340,6 +387,10 @@ def build_worksite_estimate(
     Item confirmado no takeoff cujo código foi rejeitado não vira linha: ele sai declarado
     em `unpriced_item_ids`, porque rejeitar o código com a cascata inteira à vista significa
     que nenhuma fonte o precifica.
+
+    `bdi_percent` é o percentual único do orçamento (ADR-0038): cada linha recebe
+    `unit_price_with_bdi = TRUNC(unit_price * (1 + bdi_percent / 100), 2)` e o total da
+    linha passa a recomputar sobre esse preço, não sobre `unit_price`.
     """
     if (
         assignments.plate_id != packet.plate_id
@@ -470,6 +521,7 @@ def build_worksite_estimate(
             )
 
         entry = catalog.entry_for(code)
+        unit_price_with_bdi = money_trunc(entry.unit_price * (1 + bdi_percent / 100))
         lines.append(
             EstimateLine(
                 item_number=item_number,
@@ -477,8 +529,9 @@ def build_worksite_estimate(
                 description=entry.description,
                 unit=entry.unit,
                 unit_price=entry.unit_price,
+                unit_price_with_bdi=unit_price_with_bdi,
                 quantity=quantity,
-                total=money_trunc(quantity * entry.unit_price),
+                total=money_trunc(quantity * unit_price_with_bdi),
                 price_origin=catalog.origin,
                 catalog_sha256=catalog.source_sha256,
                 reference_month=catalog.reference_month,
@@ -502,10 +555,14 @@ def build_worksite_estimate(
         page_number=packet.page_number,
         image_sha256=packet.image_sha256,
         source_pdf_sha256=packet.source_pdf_sha256,
+        bdi_percent=bdi_percent,
         cascade=[CatalogSource.of(catalog) for catalog in cascade],
         lines=lines,
         unpriced_item_ids=unpriced_item_ids,
         calc_sheets=calc_sheets,
+        total_amount_without_bdi=sum(
+            (money_trunc(line.unit_price * line.quantity) for line in lines), Decimal("0.00")
+        ),
         total_amount=sum((line.total for line in lines), Decimal("0.00")),
         safety_notes=list(_ESTIMATE_SAFETY_NOTES),
     )

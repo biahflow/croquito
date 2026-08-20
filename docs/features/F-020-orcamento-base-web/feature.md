@@ -2,7 +2,11 @@
 
 ## Status
 
-`READY_FOR_SPEC`
+`READY_FOR_HUMAN_REVIEW`
+
+> Implementação integrada em 2026-08-20 na branch `f-020-orcamento-web` (T1–T6,
+> [plan.md](plan.md)), com revisão do modelo da sessão e evidência consolidada em
+> [evidence.md](evidence.md). Pendem os gates humanos listados ao final.
 
 > Selecionada por decisão humana de 2026-08-19, numa sessão de revisão visual em que
 > o usuário perguntou se "Medição" era o orçamento. Não era: o orçamento-base existe
@@ -13,8 +17,10 @@
 > [ADR-0027](../../adr/0027-price-source-provenance-and-bid-boundary.md) listava como
 > pré-requisito, confirmando que o orçamento sai no mesmo layout do boletim.
 
-Este contrato **não** está `READY_FOR_PLANNING`: a classificação é
-`INTERFACE_CHANGE` e o gate de Design Approval precede o planejamento.
+A classificação é `INTERFACE_CHANGE` e o gate de Design Approval precede o
+planejamento. O gate foi exercido em 2026-08-20: a revisão 1 do
+[pacote de aprovação](mock/README.md) foi aprovada por Daniel Campos, e na mesma
+decisão o papel de acesso foi definido (reusar o papel da medição — Unknown 3).
 
 ## Classification
 
@@ -148,8 +154,9 @@ para submissão. Sem CLI.
 2. **Forma do auditor de recomputação do orçamento.** A medição tem auditoria que
    reabre o `.xlsx` e compara centavo a centavo; o orçamento não tem equivalente.
    Reaproveitar o mesmo auditor ou escrever um próprio, não decidido.
-3. **Papel de acesso.** Reusar o papel da medição ou criar um próprio para
-   pré-licitação — decisão de autorização, ainda em aberto.
+3. **Papel de acesso.** Resolvido por decisão humana de 2026-08-20: **reusa o papel
+   da medição** — a mesma orçamentista opera as duas cadeias; papel próprio de
+   pré-licitação fica como possibilidade futura, sem espaço reservado em código.
 4. **Granularidade do BDI.** Decisão humana de 2026-08-19: **percentual único por
    orçamento**, com o BDI por grupo reservado como espaço futuro. Desenhado assim na
    revisão 1 do [pacote de aprovação](mock/README.md), que ainda não foi aprovada.
@@ -178,9 +185,10 @@ para submissão. Sem CLI.
 
 1. **Seleção de prioridade** — exercida em 2026-08-19 (registro no roadmap canônico).
 2. **Design Approval Package** aprovado antes do planejamento; nenhum agente aprova
-   design. A revisão 1 existe e aguarda decisão humana:
-   [`mock/`](mock/README.md).
-3. **Aceite do ADR** que estender a fronteira do ADR-0027 com o BDI.
+   design — exercido em 2026-08-20, revisão 1 aprovada: [`mock/`](mock/README.md).
+   Copy final e conferência contra o exemplar real permanecem abertas.
+3. **Aceite do ADR** que estende a fronteira do ADR-0027 com o BDI:
+   [ADR-0038](../../adr/0038-bdi-como-conceito-de-pre-licitacao.md), Proposed.
 4. **Obtenção do `.DBF` real da EMOP** (assinatura GRE).
 5. **Merge e deploy**.
 

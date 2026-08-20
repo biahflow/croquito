@@ -57,6 +57,7 @@ from croquito_worker.valuation.cli import (
 )
 from croquito_worker.valuation.emop_fixture import emop_fixture_layout, write_emop_dbf
 from croquito_worker.valuation.estimate_fixture import (
+    SYNTHETIC_ESTIMATE_BDI_PERCENT,
     SYNTHETIC_ESTIMATE_WORKSITE_KEY,
     SYNTHETIC_ESTIMATE_WORKSITE_NAME,
     build_demo_estimate_assignments,
@@ -888,6 +889,8 @@ def estimate_chain(
                 SYNTHETIC_ESTIMATE_WORKSITE_KEY,
                 "--worksite-name",
                 SYNTHETIC_ESTIMATE_WORKSITE_NAME,
+                "--bdi",
+                str(SYNTHETIC_ESTIMATE_BDI_PERCENT),
                 "--calc-plan",
                 str(calc_plan_path),
                 "--output",
@@ -965,6 +968,8 @@ def test_build_estimate_refuses_a_cited_source_missing_from_the_cascade(
             SYNTHETIC_ESTIMATE_WORKSITE_KEY,
             "--worksite-name",
             SYNTHETIC_ESTIMATE_WORKSITE_NAME,
+            "--bdi",
+            str(SYNTHETIC_ESTIMATE_BDI_PERCENT),
             "--output",
             str(output_dir),
         ]

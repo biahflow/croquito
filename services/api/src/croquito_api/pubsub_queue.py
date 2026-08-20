@@ -137,6 +137,32 @@ class PubSubProcessingQueue:
             }
         )
 
+    def enqueue_estimate_plate_extraction(
+        self, *, round_id: str, extraction_id: str, tenant_id: str
+    ) -> None:
+        """Extração paga da legenda do ORÇAMENTO-BASE; o corpo é o mesmo do SQS, byte a byte."""
+        self._publish(
+            {
+                "command": "extract_estimate_plate",
+                "round_id": round_id,
+                "extraction_id": extraction_id,
+                "tenant_id": tenant_id,
+            }
+        )
+
+    def enqueue_estimate_takeoff_overlay_rerender(
+        self, *, round_id: str, tenant_id: str, packet_sha256: str
+    ) -> None:
+        """Re-render do overlay da rodada de orçamento; o corpo é o mesmo do SQS, byte a byte."""
+        self._publish(
+            {
+                "command": "rerender_estimate_takeoff_overlay",
+                "round_id": round_id,
+                "tenant_id": tenant_id,
+                "packet_sha256": packet_sha256,
+            }
+        )
+
     def enqueue_chat_turn(self, *, chat_turn_id: str, job_id: str, tenant_id: str) -> None:
         """Publishes the chat turn; no model is ever called from the request path."""
         self._publish(

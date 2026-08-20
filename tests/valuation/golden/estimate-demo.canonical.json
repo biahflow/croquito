@@ -1,5 +1,6 @@
 {
   "address": "RUA SINTETICA 400 — BAIRRO SINTETICO",
+  "bdi_percent": "25.00",
   "calc_sheets": [
     {
       "blocks": [
@@ -138,9 +139,10 @@
       "quantity": "61.20",
       "reference_month": "2026-01",
       "source_label": "MAPÃO SINTÉTICO FGV06 (fixture)",
-      "total": "8029.44",
+      "total": "10036.80",
       "unit": "m2",
-      "unit_price": "131.20"
+      "unit_price": "131.20",
+      "unit_price_with_bdi": "164.00"
     },
     {
       "catalog_sha256": "<sha256:catalogo-composition>",
@@ -151,9 +153,10 @@
       "quantity": "1234.50",
       "reference_month": "2026-07",
       "source_label": "COMPOSICOES SINTETICAS DO ORCAMENTISTA (fixture)",
-      "total": "35491.87",
+      "total": "44355.58",
       "unit": "m2",
-      "unit_price": "28.75"
+      "unit_price": "28.75",
+      "unit_price_with_bdi": "35.93"
     },
     {
       "catalog_sha256": "<sha256:catalogo-sco>",
@@ -164,9 +167,10 @@
       "quantity": "58.50",
       "reference_month": "2026-01",
       "source_label": "MAPÃO SINTÉTICO FGV06 (fixture)",
-      "total": "7508.47",
+      "total": "9385.15",
       "unit": "m2",
-      "unit_price": "128.35"
+      "unit_price": "128.35",
+      "unit_price_with_bdi": "160.43"
     },
     {
       "catalog_sha256": "<sha256:catalogo-emop>",
@@ -177,9 +181,10 @@
       "quantity": "4",
       "reference_month": "2026-06",
       "source_label": "CATALOGO EMOP SINTETICO (fixture)",
-      "total": "3920.00",
+      "total": "4900.00",
       "unit": "UN",
-      "unit_price": "980.00"
+      "unit_price": "980.00",
+      "unit_price_with_bdi": "1225.00"
     },
     {
       "catalog_sha256": "<sha256:catalogo-emop>",
@@ -190,9 +195,10 @@
       "quantity": "18.40",
       "reference_month": "2026-06",
       "source_label": "CATALOGO EMOP SINTETICO (fixture)",
-      "total": "2271.48",
+      "total": "2839.30",
       "unit": "M2",
-      "unit_price": "123.45"
+      "unit_price": "123.45",
+      "unit_price_with_bdi": "154.31"
     }
   ],
   "page_number": 1,
@@ -202,9 +208,10 @@
     "Cada linha declara a origem, o catálogo e a data-base do preço; conferir a data-base antes de usar o valor.",
     "Item confirmado sem preço em nenhuma fonte fica declarado em unpriced_item_ids; ele exige composição nova, nunca preço de item parecido."
   ],
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "source_pdf_sha256": "<sha256:prancha-pdf>",
-  "total_amount": "57221.26",
+  "total_amount": "71516.83",
+  "total_amount_without_bdi": "57221.26",
   "unpriced_item_ids": [
     "ti_d16efef092c62fc9"
   ],

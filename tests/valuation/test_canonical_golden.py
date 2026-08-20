@@ -13,10 +13,17 @@ São três goldens, e eles respondem perguntas diferentes:
   `estimate-demo` publica: as três origens de preço, a proveniência de cada linha, o item
   que nenhuma fonte precificou e os totais. Ele não é planilha nenhuma — é o `estimate.json`
   em si, que é a fonte de verdade daquela cadeia.
+- `estimate-workbook.canonical.json` (ADR-0038/T2) descreve a **planilha** `orcamento.xlsx`
+  que o mesmo comando `estimate-demo` agora também publica: as colunas que o boletim não
+  tem (FONTE, VALOR UNIT. C/ BDI), o BDI declarado uma vez e o bloco de totais em que o
+  valor do BDI é a diferença entre os totais truncados. Ele não tem digest nenhum a
+  canonicalizar — a planilha do orçamento nunca imprime `image_sha256`/`source_pdf_sha256`
+  nem os digests da cascata, só origem e data-base por linha (ambos determinísticos na
+  fixture) —, então não precisa da mesma canonicalização mínima do golden do JSON.
 
-O golden do orçamento passa por uma canonicalização mínima e declarada: cada digest de
-FONTE vira um rótulo do papel dele (`<sha256:catalogo-emop>`, `<sha256:prancha-pdf>`…). Os
-bytes de duas fontes sintéticas não se repetem entre execuções — o pymupdf grava
+O golden do orçamento (JSON) passa por uma canonicalização mínima e declarada: cada digest
+de FONTE vira um rótulo do papel dele (`<sha256:catalogo-emop>`, `<sha256:prancha-pdf>`…).
+Os bytes de duas fontes sintéticas não se repetem entre execuções — o pymupdf grava
 identificadores novos a cada `save` e o openpyxl carimba a hora nos membros do .zip —,
 então fixá-los transformaria o golden num detector de relógio. O que ele fixa é a
 estrutura, os valores e as RELAÇÕES: uma linha que passasse a apontar para outra fonte
@@ -27,15 +34,20 @@ from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal
 from pathlib import Path
 
 from croquito_valuation.canonical import canonicalize_workbook
+from croquito_valuation.template import default_template
 from croquito_worker.valuation.cli import EstimateDemoResult, run_estimate_demo, run_valuation_demo
 from tests.valuation.builders import build_fixture, write_fixture_workbook
 
 GOLDEN_PATH = Path(__file__).parent / "golden" / "valuation-demo.canonical.json"
 GOLDEN_M4_PATH = Path(__file__).parent / "golden" / "valuation-demo-m4.canonical.json"
 GOLDEN_ESTIMATE_PATH = Path(__file__).parent / "golden" / "estimate-demo.canonical.json"
+GOLDEN_ESTIMATE_WORKBOOK_PATH = (
+    Path(__file__).parent / "golden" / "estimate-workbook.canonical.json"
+)
 
 _SHA256_RE = re.compile(r"[a-f0-9]{64}")
 
@@ -202,9 +214,70 @@ def test_the_estimate_golden_carries_the_three_price_origins_and_the_unpriced_it
     # O gramado sai pela composição manual: preço somado de coeficientes, não de tabela.
     lawn = next(line for line in golden["lines"] if line["price_origin"] == "composition")
     assert lawn["unit_price"] == "28.75"
-    assert lawn["total"] == "35491.87"
+    # Preço com BDI (25%, ADR-0038) truncado por linha; o total recomputa sobre ele.
+    assert lawn["unit_price_with_bdi"] == "35.93"
+    assert lawn["total"] == "44355.58"
     assert len(golden["unpriced_item_ids"]) == 1
-    assert golden["total_amount"] == "57221.26"
+    assert golden["bdi_percent"] == "25.00"
+    # Sem BDI é a mesma aritmética que o golden fixava antes do ADR-0038.
+    assert golden["total_amount_without_bdi"] == "57221.26"
+    assert golden["total_amount"] == "71516.83"
+
+
+def _canonical_of_estimate_workbook(output_dir: Path) -> dict[str, object]:
+    result = run_estimate_demo(output_dir)
+    assert result.workbook_path is not None, result.workbook_audit.findings
+    return canonicalize_workbook(result.workbook_path, default_template())
+
+
+def test_estimate_workbook_canonical_matches_the_versioned_golden(tmp_path: Path) -> None:
+    canonical = _canonical_of_estimate_workbook(tmp_path / "estimate-demo")
+
+    golden = json.loads(GOLDEN_ESTIMATE_WORKBOOK_PATH.read_text(encoding="utf-8"))
+
+    assert canonical == golden
+
+
+def test_estimate_workbook_is_idempotent_in_logical_content(tmp_path: Path) -> None:
+    first = _canonical_of_estimate_workbook(tmp_path / "estimate-demo-a")
+    second = _canonical_of_estimate_workbook(tmp_path / "estimate-demo-b")
+
+    assert first == second
+
+
+def test_the_estimate_workbook_golden_carries_the_new_columns_and_the_bdi_totals() -> None:
+    """O que este golden existe para fixar: as duas colunas aditivas e o bloco de totais
+    em que o BDI impresso é a diferença dos truncados (ADR-0038, decisões 4 e 5)."""
+    golden = json.loads(GOLDEN_ESTIMATE_WORKBOOK_PATH.read_text(encoding="utf-8"))
+
+    sheets = {sheet["name"]: sheet for sheet in golden["sheets"]}
+    assert list(sheets) == ["ORÇAMENTO"]
+    cells = {cell["ref"]: cell for cell in sheets["ORÇAMENTO"]["cells"]}
+
+    assert cells["C6"]["value"] == "FONTE"
+    assert cells["G6"]["value"] == "VALOR UNIT. C/ BDI"
+    # FONTE combina origem e data-base numa célula só; nenhum digest aparece na planilha.
+    assert cells["C7"]["value"] == "SCO 2026-01"
+    assert cells["A4"]["value"] == "BDI"
+    assert cells["C4"]["value"] == "25.00%"
+    # bloco de totais: sem BDI, BDI (diferença dos truncados) e total geral.
+    total_without_bdi = next(
+        cell for cell in sheets["ORÇAMENTO"]["cells"] if cell["value"] == "TOTAL SEM BDI"
+    )
+    total_row = int(str(total_without_bdi["ref"])[1:])
+    without_bdi_cell = cells[f"I{total_row}"]
+    bdi_cell = cells[f"I{total_row + 1}"]
+    total_cell = cells[f"I{total_row + 2}"]
+    assert bdi_cell["formula"] == f"=I{total_row + 2}-I{total_row}"
+    assert Decimal(total_cell["value"]) - Decimal(without_bdi_cell["value"]) == Decimal(
+        bdi_cell["value"]
+    )
+    unpriced_label = next(
+        cell
+        for cell in sheets["ORÇAMENTO"]["cells"]
+        if cell["value"] == "ITENS SEM PREÇO NA CASCATA"
+    )
+    assert unpriced_label["ref"] == "A17"
 
 
 def test_golden_carries_the_truncation_evidence() -> None:

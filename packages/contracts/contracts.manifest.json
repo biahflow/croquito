@@ -52,5 +52,14 @@
     "title": "Croquito Amendment Dossier",
     "schema": "schemas/amendment-dossier.schema.json",
     "typescript": "src/amendment-dossier.generated.ts"
+  },
+  {
+    "module": "croquito_valuation.estimate",
+    "model": "Estimate",
+    "version_attr": "ESTIMATE_SCHEMA_VERSION",
+    "id": "https://schemas.croquito.local/valuation/estimate/{version}.json",
+    "title": "Croquito Estimate",
+    "schema": "schemas/estimate.schema.json",
+    "typescript": "src/estimate.generated.ts"
   }
 ]

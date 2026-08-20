@@ -804,6 +804,180 @@ com `409 REVISION_CONFLICT` para versão divergente. Decisão de código pendent
 
 Retorna o dossiê revalidado. Dossiê não construído devolve `409 ROUND_STAGE_NOT_READY`.
 
+## Orçamento-base de obra
+
+O orçamento-base é o outro lado da fronteira que o
+[ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md) fixou: em obra
+**licitada** o contrato manda e item fora dele vira dossiê de aditivo; **antes** da
+licitação vale a cascata SCO → EMOP → composição, e é dela que sai o orçamento-base
+([ADR-0038](../adr/0038-bdi-como-conceito-de-pre-licitacao.md)). A raiz é a **rodada de
+orçamento** (`EstimateRound`), que leva uma prancha do levantamento de quantitativos à
+planilha `.xlsx` com proveniência por linha.
+
+Regras que valem em toda a seção, idênticas às da medição:
+
+- Papel exigido: `orcamentista`, em toda rota — inclusive de leitura. Papel ausente devolve
+  `403 FORBIDDEN` antes de qualquer lookup, e por isso ninguém descobre pela diferença
+  entre `403` e `404` o que existe no tenant vizinho.
+- `tenant_id` vem do JWT. Rodada de outro tenant devolve `404 NOT_FOUND`.
+- Toda mutação exige `Idempotency-Key` e `base_version`; versão divergente devolve
+  `409 REVISION_CONFLICT`. A versão é **da rodada**, uma só para toda a cadeia.
+- O carimbo de identidade é sempre do servidor: o corpo recusa `reviewer_id`,
+  `reviewer_role`, `decided_at` e `decision_id`.
+- Invariante de domínio de `packages/valuation` devolve `422 DOMAIN_VALIDATION_FAILED` com
+  o código de domínio (`ESTIMATE_*`, `ASSIGNMENT_*`, `TAKEOFF_*`) em `details`.
+
+O que **não** existe aqui, por construção: contrato, período, saldo e aprovação. Nenhum
+deles existe antes da licitação, e o `Estimate` não passa pelo portão de exportação da
+medição.
+
+### `POST /v1/estimate-rounds`
+
+Entrada: `worksite_key`, `worksite_name`, `reference_label`, `address` (opcional).  
+Saída: `round_id`, `version=1`, `status`, `created_at`.
+
+`worksite_key` segue `WORKSITE_KEY_PATTERN`, como na medição: a chave é imutável na rodada.
+A rodada nasce **sem** fonte de preço — as fontes entram uma a uma, em ordem declarada.
+
+### `GET /v1/estimate-rounds`
+
+Lista as rodadas do tenant, com cursor opaco. Devolve `round_id`, `worksite_key`,
+`reference_label`, `version`, `status`, etapa corrente e `cascade_origins` na ordem da
+cascata.
+
+### `GET /v1/estimate-rounds/{round_id}`
+
+Estado da rodada: `version`, cascata instalada (origem, digest, data-base e rótulo de cada
+fonte, na ordem), etapas por presença e digest de artefato, estado da extração paga e o
+estado do orçamento (`estimate_sha256`, `workbook_sha256`).
+
+### `POST /v1/estimate-rounds/{round_id}/catalogs`
+
+Entrada: `upload_id`, `base_version`. Instala uma fonte de preço no **fim** da cascata; o
+JSON do catálogo sobe por `POST /v1/uploads/presign`, como o catálogo da medição.
+
+A fonte é lida e validada antes de a entrada existir. Segunda fonte da mesma origem devolve
+`409 ESTIMATE_CASCADE_ORIGIN_DUPLICATE` — o mesmo código do domínio —, porque a origem
+deixaria de identificar de qual arquivo o preço de cada linha veio. Catálogo ilegível
+devolve `422 DOMAIN_VALIDATION_FAILED`.
+
+### `POST /v1/estimate-rounds/{round_id}/catalogs/order`
+
+Entrada: `base_version` e `cascade`, a lista **completa** dos digests na ordem nova.
+Reordenar é ato humano com consequência visível — a shortlist e a busca passam a devolver
+primeiro o bloco da fonte promovida — e por isso avança a versão da rodada.
+
+Nenhuma fonte entra nem sai por aqui: lista que não seja permutação da cascata instalada
+devolve `422 ESTIMATE_CASCADE_ORDER_INVALID`.
+
+Rodada que já tem decisão de código devolve `409 ESTIMATE_CASCADE_LOCKED`: o conjunto de
+decisões é amarrado ao catálogo cabeça da cascata, e reordenar invalidaria as decisões já
+registradas — que esta API não apaga. Reordene antes de decidir código.
+
+### `POST /v1/estimate-rounds/{round_id}/plate`
+
+Entrada: `upload_id`, `base_version`. Mesmo regime da prancha da medição: uma rodada tem no
+máximo uma prancha, e a segunda chamada devolve `409 ROUND_PLATE_ALREADY_PRESENT`.
+
+### `GET /v1/estimate-rounds/{round_id}/plate`
+
+Metadados da prancha e `image_url`: URL assinada de curta duração para o PNG promovido, sob
+o prefixo do tenant, nunca registrada em log nem em auditoria.
+
+### `POST /v1/estimate-rounds/{round_id}/plate/extractions`
+
+Enfileira a extração paga da legenda e retorna `202` com `extraction_id` e `status`. Mesmo
+portão da medição: autorização contratual por tenant
+([ADR-0012](../adr/0012-contractual-ai-processing-entitlements.md)),
+`403 AI_PROCESSING_NOT_AUTHORIZED` sem entitlement, `503 PROVIDER_UNAVAILABLE` sem provider
+configurado no ambiente, `409 EXTRACTION_IN_PROGRESS` com extração em voo e
+`503 PROCESSING_UNAVAILABLE` com a fila indisponível.
+
+### `GET /v1/estimate-rounds/{round_id}/takeoff`
+
+Retorna o `TakeoffPacket` da rodada, com a âncora de evidência por item e o digest do
+pacote. Sem extração publicada devolve `409 ROUND_STAGE_NOT_READY`.
+
+### `GET /v1/estimate-rounds/{round_id}/takeoff/overlay`
+
+Retorna `image_url` assinada do overlay das âncoras, mais `stale` e o digest do pacote que
+originou o desenho ([ADR-0030](../adr/0030-overlay-do-takeoff-reconstruido-na-fila.md)).
+Overlay vencido devolve `200` com a marca, nunca erro.
+
+### `POST /v1/estimate-rounds/{round_id}/takeoff/decisions`
+
+Entrada: `base_version` e uma decisão sobre um item — `item_id`, `action`, `quantity`,
+`unit`, `note`, `item_note`. `quantity` viaja como **texto**, porque quantidade é `Decimal`
+exato neste contexto. Decisão é imutável: item já revisado devolve
+`422 DOMAIN_VALIDATION_FAILED` com `TAKEOFF_ITEM_ALREADY_REVIEWED`.
+
+### `GET /v1/estimate-rounds/{round_id}/code-suggestions`
+
+Shortlist determinística de código sobre a **cascata**: um bloco por fonte, na ordem
+instalada, nunca misturados por score — a ordem das fontes é decisão do orçamentista e não
+pode ser desempatada por similaridade de texto. É observação, nunca decisão. Revisão de
+takeoff incompleta devolve `409 TAKEOFF_REVIEW_INCOMPLETE`; rodada sem cascata devolve
+`409 ROUND_STAGE_NOT_READY`.
+
+### `POST /v1/estimate-rounds/{round_id}/code-suggestions/recompute`
+
+Recalcula a shortlist sobre a cascata corrente; é o caminho declarado de reler o efeito de
+uma reordenação. Exige `Idempotency-Key` e `base_version`. Shortlist já refinada por modelo
+pago não é recalculada por caminho determinístico: `409 SUGGESTIONS_ALREADY_REFINED`.
+
+### `GET /v1/estimate-rounds/{round_id}/catalog/search`
+
+Busca léxica na cascata inteira. Parâmetros: `q`, `limit`. Cada resultado carrega
+`price_origin`, `catalog_sha256` e `cascade_position`, além do `origin` que nomeia o braço
+da busca. O corte de `limit` vale por fonte, para que uma tabela não seja espremida para
+fora da página por outra que ficou na frente da cascata.
+
+Não há parâmetro `arm`: o braço híbrido depende de índice de embeddings publicado na
+rodada, e nenhuma rota de `/v1` publica esse índice. O motivo viaja em `semantic_notes` — a
+busca nunca degrada em silêncio. Consulta sem termo utilizável devolve
+`422 CATALOG_QUERY_EMPTY`.
+
+### `GET /v1/estimate-rounds/{round_id}/code-assignments`
+
+Retorna o `CodeAssignmentSet` corrente e os itens confirmados ainda sem decisão de código.
+
+### `POST /v1/estimate-rounds/{round_id}/code-assignments/decisions`
+
+Entrada: `base_version`, `item_id`, `action`, `code`, `catalog_sha256` e `note`. A
+confirmação **cita a fonte**: com mais de uma tabela na rodada, resolver o código pela ordem
+da cascata seria a máquina escolhendo quem precifica o item. Rejeição exige justificativa e
+recusa tanto `code` quanto `catalog_sha256` — rejeitar é recusar todas as fontes.
+
+Fonte fora da cascata, código fora do catálogo citado, item não confirmado no takeoff, item
+já decidido ou unidade incompatível sem nota devolvem `422 DOMAIN_VALIDATION_FAILED` com o
+código `ASSIGNMENT_*` correspondente.
+
+### `POST /v1/estimate-rounds/{round_id}/estimate`
+
+Entrada: `base_version` e `bdi_percent`, o percentual **único** do orçamento, como texto
+(ADR-0038, decisão 2). A identidade da obra é atributo da rodada e não viaja aqui.
+
+Monta o orçamento sobre o takeoff confirmado, as decisões de código e a cascata; grava a
+planilha, reabre e reconfere centavo a centavo, e só então publica o `.xlsx` e grava a
+revisão. Auditoria reprovada não publica nada e devolve `500
+ESTIMATE_WORKBOOK_AUDIT_FAILED` com os códigos dos achados — nunca os valores divergentes.
+
+Cascata vazia, takeoff ainda não revisado por inteiro e nenhuma decisão de código devolvem
+`409 ROUND_STAGE_NOT_READY`. Confirmação sem fonte citada devolve
+`422 DOMAIN_VALIDATION_FAILED` com `ESTIMATE_ASSIGNMENT_CATALOG_REQUIRED`; item confirmado
+sem decisão de código, com `ESTIMATE_ASSIGNMENT_MISSING`. `bdi_percent` ilegível devolve
+`422 ESTIMATE_BDI_INVALID`.
+
+A resposta não carrega URL: ela é guardada no registro de idempotência, e URL assinada é
+credencial de leitura.
+
+### `GET /v1/estimate-rounds/{round_id}/estimate`
+
+Retorna o orçamento com BDI, totais e linhas **recomputados** na leitura, mais
+`workbook_url`: URL assinada de curta duração da planilha publicada, montada na hora depois
+de conferido o prefixo do tenant. Orçamento ainda não montado devolve
+`409 ROUND_STAGE_NOT_READY`; orçamento que não revalida devolve `422`.
+
 ## Exports
 
 O pacote CAD é sempre construído fora do request path, por comando idempotente no

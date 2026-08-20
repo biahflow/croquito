@@ -1,0 +1,734 @@
+/*
+ * Folha da jornada do orçamento-base, importada por `apps/web/src/styles.css` (F-020).
+ *
+ * O arquivo inteiro está ANINHADO em `.jornada-orcamento` — a chave abre logo abaixo e
+ * fecha na última linha —, exatamente como a folha da medição está em `.jornada-medicao`.
+ * É o que permite a `.painel`, `.cartao`, `.item` e companhia terem aqui a calibragem
+ * desta jornada sem renomear classe de nenhum dos dois lados.
+ *
+ * **Por que é cópia e não import.** A folha da medição está inteira dentro de
+ * `.jornada-medicao`: sob esse escopo, nenhuma das classes existe fora dela. Alcançá-las
+ * daqui exigiria ou vestir esta jornada com a classe da outra (uma jornada mentindo sobre
+ * qual é), ou editar `src/medicao/styles.css` — a folha de uma jornada intocável nesta
+ * tarefa. O Design Approval Package aprovado previu exatamente este caminho: os valores
+ * dele são "cópia verbatim de `apps/web/src/medicao/styles.css`, sem o wrapper". A folha
+ * da medição continua sendo a FONTE: se as duas divergirem, ela vence e esta está velha.
+ *
+ * **Nenhuma cor nova.** Todo token e todo hex aqui já vive em `apps/web/src/styles.css`
+ * ou na folha da medição. A composição nova — o cartão numerado da cascata e o selo de
+ * fonte do preço — é forma sobre `.cartao`, `.item-numero` e `.selo` existentes, com as
+ * mesmas cores.
+ *
+ * **Piso desktop.** Ele não é redeclarado: esta jornada só é montada dentro de
+ * `.app-shell`, que já fixa `min-width: 1180px` na casca (a decisão mora lá, e uma
+ * segunda declaração criaria duas fontes de verdade para o mesmo número).
+ *
+ * Regra que o CSS precisa respeitar: cor nunca é o único indicador. Todo estado —
+ * etapa, item, origem do preço, posição na cascata — tem texto ao lado.
+ */
+.jornada-orcamento {
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* O anel de foco é indicador gráfico: usa o verde escuro (5,8:1 sobre branco), porque
+   `--accent` puro sumiria sobre a superfície clara. */
+:focus-visible {
+  outline: 3px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+h1 {
+  margin: 2px 0 0;
+  font-size: 1.35rem;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+h3 {
+  margin: 16px 0 6px;
+  font-size: 0.98rem;
+}
+
+h4 {
+  margin: 12px 0 4px;
+  font-size: 0.92rem;
+}
+
+p {
+  margin: 6px 0;
+  line-height: 1.45;
+}
+
+.eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  color: var(--dark-ink-soft);
+}
+
+.topbar-meta {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--dark-ink-soft);
+}
+
+.topbar-acoes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Sessão sobre o topbar escuro desta jornada: o verde da marca é preenchimento e nunca
+   cor de texto. O `.topbar-link` da casca não serve — lá ele veste `<a>`, e aqui veste
+   também os `<button>` de trocar de orçamento e sair. */
+.topbar-link {
+  padding: 7px 10px;
+  color: var(--dark-ink-soft);
+  background: transparent;
+  border: 1px solid var(--dark-line);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.topbar-link:hover,
+.topbar-link:focus-visible {
+  color: var(--dark-ink);
+  border-color: var(--dark-line-strong);
+}
+
+.topbar-link-botao {
+  font-family: inherit;
+  line-height: inherit;
+}
+
+/* A linha fixa que declara o momento da jornada (o aviso permanente do orçamento). */
+.aviso-fixo {
+  max-width: 40rem;
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: #2a1a05;
+  background: #f6d99a;
+  border-left: 5px solid #b47512;
+  border-radius: 4px;
+}
+
+.aviso-inline {
+  margin-bottom: 12px;
+}
+
+.etapas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 28px;
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--line);
+}
+
+.etapa-tab {
+  padding: 8px 14px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+.etapa-tab.ativa {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.etapa-tab.done {
+  border-left: 5px solid var(--accent-text);
+}
+
+.etapa-tab.blocked {
+  border-left: 5px solid #8a8f8b;
+}
+
+.recarregar {
+  margin-left: auto;
+}
+
+.banner-erro,
+.banner-conflito,
+.banner-sucesso {
+  margin: 12px 28px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.banner-erro {
+  color: #4a1010;
+  background: #f7d9d9;
+  border-left: 5px solid #a02323;
+}
+
+.banner-conflito {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #3c2708;
+  background: #fbe6c2;
+  border-left: 5px solid #b47512;
+}
+
+.banner-sucesso {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-left: 5px solid var(--accent-text);
+}
+
+.conteudo {
+  padding: 16px 28px 48px;
+}
+
+.painel {
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.painel-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cabecalho-controles {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.2fr) minmax(280px, 1fr) minmax(300px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.workspace.duas-colunas {
+  grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.4fr);
+}
+
+@media (max-width: 1200px) {
+  .workspace,
+  .workspace.duas-colunas {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cartoes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 12px 0 20px;
+  padding: 0;
+  list-style: none;
+}
+
+.cartao {
+  padding: 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-left: 5px solid #8a8f8b;
+  border-radius: 6px;
+}
+
+.cartao.available {
+  border-left-color: #b47512;
+}
+
+.cartao.done {
+  border-left-color: var(--accent-text);
+}
+
+.cartao h3 {
+  margin-top: 0;
+}
+
+.cartao-status {
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.cartao-motivo {
+  font-size: 0.86rem;
+  color: #6b3a06;
+}
+
+.botao-primario,
+.botao-secundario {
+  padding: 9px 16px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.botao-primario {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+  text-decoration: none;
+}
+
+.botao-primario:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* A borda é a afordância do secundário: fica no verde escuro, que se destaca sobre
+   branco (5,8:1) — `--accent-line` apagaria o contorno do botão. */
+.botao-secundario {
+  color: var(--accent-text);
+  background: var(--surface);
+  border-color: var(--accent-text);
+}
+
+.acoes-linha {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.confirmados-lista {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.confirmados {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.confirmados-lista li {
+  margin-bottom: 10px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.digest {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.8em;
+  color: var(--ink-secondary);
+}
+
+.dica {
+  font-size: 0.84rem;
+  color: var(--ink-secondary);
+}
+
+/* Listas de item ----------------------------------------------------------- */
+
+.itens,
+.codigos {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 640px;
+  overflow: auto;
+}
+
+.item {
+  border-bottom: 1px solid var(--line);
+}
+
+.item-botao {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-left: 5px solid transparent;
+}
+
+.item.proposed .item-botao {
+  border-left-color: #b47512;
+}
+
+.item.ambiguous .item-botao {
+  border-left-color: #a02323;
+}
+
+.item.confirmed .item-botao {
+  border-left-color: var(--accent-text);
+}
+
+.item.rejected .item-botao {
+  border-left-color: #5a625c;
+}
+
+.item.selecionado .item-botao {
+  background: var(--accent-soft);
+}
+
+.item-numero {
+  flex: 0 0 1.6rem;
+  height: 1.6rem;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.item-corpo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.item-rotulo {
+  font-weight: 600;
+}
+
+.item-estado {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-secondary);
+}
+
+.item-quantidade {
+  font-size: 0.88rem;
+}
+
+.item-raw,
+.item-nota {
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+}
+
+/* Formulários -------------------------------------------------------------- */
+
+.formulario {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.acoes {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.acoes label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+.campo input,
+.campo textarea {
+  padding: 8px 10px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+.campo-dica {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.campo-aviso {
+  font-size: 0.8rem;
+  color: #6b3a06;
+}
+
+.campo-erro {
+  font-size: 0.85rem;
+  color: #7a1212;
+}
+
+.busca {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.busca .campo {
+  flex: 1;
+}
+
+/* Códigos ------------------------------------------------------------------ */
+
+.codigo-card {
+  padding: 12px;
+  margin-bottom: 10px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.codigo-card.escolhido {
+  border-color: var(--accent-text);
+  border-left-width: 5px;
+}
+
+.codigo-topo {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.codigo-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+.codigo-descricao {
+  max-height: 8rem;
+  overflow: auto;
+  font-size: 0.86rem;
+}
+
+.codigo-selos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.selo {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--muted);
+  background: var(--surface);
+}
+
+.selo-neutro {
+  border-color: #8a8f8b;
+  color: var(--ink-secondary);
+}
+
+.selo-ok {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.selo-atencao {
+  border-color: #a02323;
+  color: #7a1212;
+}
+
+/* Selo de fonte do preço — o dado que o orçamento imprime e a medição não tem.
+   Composição nova sobre o `.selo` existente, com as cores que já vivem na folha da
+   medição. A cor é REDUNDÂNCIA: origem, data-base e posição vão escritas dentro do
+   selo, e nenhuma decisão depende de distinguir a borda. */
+
+.selo-fonte-sco {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+
+.selo-fonte-emop {
+  border-color: #b47512;
+  color: #6b3a06;
+}
+
+.selo-fonte-composicao {
+  border-color: #5a625c;
+  color: #5a625c;
+}
+
+.selo-fonte-ausente {
+  border-color: #a02323;
+  color: #7a1212;
+}
+
+/* Cascata de catálogos — a etapa que a medição não tem ---------------------- */
+/* A ordem é a regra de precificação, então ela é numerada e visível: o número no
+   círculo é composição nova sobre `.item-numero`, e a posição também aparece por
+   extenso no selo de fonte ("2ª fonte da cascata"). */
+
+.cascata {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cascata > li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.cascata-ordem {
+  flex: 0 0 1.8rem;
+  height: 1.8rem;
+  display: grid;
+  place-items: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.cascata-corpo {
+  flex: 1;
+}
+
+.cascata-corpo h4 {
+  margin: 0 0 2px;
+}
+
+.cascata-controles {
+  display: flex;
+  gap: 6px;
+}
+
+.cascata-controles button {
+  padding: 4px 9px;
+  font-size: 0.78rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+}
+
+/* Extração automática da legenda ------------------------------------------- */
+
+.extracao-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* Linhas do orçamento ------------------------------------------------------ */
+
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.tabela caption {
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+  padding-bottom: 6px;
+}
+
+.tabela th,
+.tabela td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tabela .numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.celula-descricao {
+  min-width: 22rem;
+  white-space: normal;
+}
+
+.tabela tfoot th,
+.tabela tfoot td {
+  font-weight: 700;
+  border-top: 2px solid var(--muted);
+}
+
+/* Orçamentos do tenant ------------------------------------------------------ */
+
+.rodadas-lista {
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.rodada-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+/* Prancha e overlay das âncoras --------------------------------------------- */
+/* A borda tracejada do overlay vencido é redundância do texto que já vai no `summary`
+   ("desenho do pacote anterior"): cor e forma nunca substituem a palavra. */
+
+.overlay-bloco {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.overlay-bloco.overlay-vencido {
+  border-style: dashed;
+  border-color: #b47512;
+}
+
+.overlay-imagem {
+  display: block;
+  max-width: 100%;
+  margin: 10px 0;
+  border: 1px solid var(--line);
+}
+
+/* Fecha o `.jornada-orcamento` aberto no topo do arquivo. */
+}

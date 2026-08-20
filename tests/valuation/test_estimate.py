@@ -29,6 +29,7 @@ from croquito_valuation.models import (
     PriceOrigin,
     ReviewerDecision,
 )
+from croquito_valuation.rounding import money_trunc
 from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
@@ -49,6 +50,7 @@ _WORKSITE_KEY = "praca-sintetica-oeste"
 _WORKSITE_NAME = "PRACA SINTETICA OESTE"
 _REVIEWER = "orcamentista-sintetico"
 _DECIDED_AT = datetime(2026, 4, 15, 12, 0, tzinfo=UTC)
+_BDI_PERCENT = Decimal("25.00")
 
 _PAVEMENT_ITEM = "ti_0000000000000001"
 _LAWN_ITEM = "ti_0000000000000002"
@@ -255,6 +257,7 @@ def _build(
     assignments: CodeAssignmentSet | None = None,
     cascade: tuple[PriceCatalog, ...] | None = None,
     calc_plan: CalcPlan | None = None,
+    bdi_percent: Decimal = _BDI_PERCENT,
 ) -> Estimate:
     result = build_worksite_estimate(
         packet if packet is not None else _packet(),
@@ -262,6 +265,7 @@ def _build(
         cascade if cascade is not None else _cascade(),
         worksite_key=_WORKSITE_KEY,
         worksite_name=_WORKSITE_NAME,
+        bdi_percent=bdi_percent,
         address="RUA SINTETICA 400",
         calc_plan=calc_plan,
     )
@@ -293,9 +297,57 @@ def test_the_three_sources_price_their_own_lines_with_full_provenance() -> None:
         "COMPOSICOES SINTETICAS",
         "CATALOGO EMOP SINTETICO",
     ]
-    # 61,20 x 131,20 + 1234,50 x 28,75 + 4,00 x 980,00, cada total truncado antes da soma.
-    assert [str(line.total) for line in estimate.lines] == ["8029.44", "35491.87", "3920.00"]
-    assert estimate.total_amount == Decimal("47441.31")
+    # Preço COM BDI (25%) truncado por linha, e o total recomputa sobre ele:
+    # 61,20 x 164,00 + 1234,50 x 35,93 + 4,00 x 1225,00, cada total truncado antes da soma.
+    assert [str(line.unit_price_with_bdi) for line in estimate.lines] == [
+        "164.00",
+        "35.93",
+        "1225.00",
+    ]
+    assert [str(line.total) for line in estimate.lines] == ["10036.80", "44355.58", "4900.00"]
+    assert estimate.bdi_percent == _BDI_PERCENT
+    # A soma sem BDI é a mesma aritmética de antes: 8029,44 + 35491,87 + 3920,00.
+    assert estimate.total_amount_without_bdi == Decimal("47441.31")
+    assert estimate.total_amount == Decimal("59292.38")
+
+
+def test_the_bdi_price_truncates_before_the_total_multiplies_by_quantity() -> None:
+    """Truncar `unit_price_with_bdi` ANTES de multiplicar pela quantidade importa no centavo.
+
+    3,00 x 10,004 x 1,25 pago de uma vez fecharia em 37,515 -> truncando só no fim (uma vez
+    sobre o produto exato) o total valeria 37,51. Truncando o preço com BDI primeiro (12,50,
+    perdendo o 0,005) e só depois multiplicando pela quantidade, o total fecha em 37,50 —
+    um centavo a menos. É essa ordem, linha a linha, que o ADR-0038 (decisão 3) manda
+    seguir, e é ela que este teste prova ao provar que as duas contas divergem.
+    """
+    item = _confirmed_item(_PAVEMENT_ITEM, label="PISO INTERTRAVADO SINTETICO", quantity="3.00")
+    catalog = PriceCatalog(
+        source_label="CATALOGO SCO SINTETICO",
+        reference_month="2026-01",
+        source_sha256=_SCO_DIGEST,
+        entries=[
+            _entry(
+                code=_SCO_CODE,
+                description="PISO INTERTRAVADO SINTETICO 10CM",
+                unit="m2",
+                unit_price="10.004",
+                origin=PriceOrigin.SCO,
+            )
+        ],
+        origin=PriceOrigin.SCO,
+    )
+    assignments = _assignment_set(
+        [_assignment(_PAVEMENT_ITEM, code=_SCO_CODE, catalog_sha256=_SCO_DIGEST)]
+    )
+
+    estimate = _build(packet=_packet([item]), assignments=assignments, cascade=(catalog,))
+
+    line = estimate.lines[0]
+    assert str(line.unit_price_with_bdi) == "12.50"
+    assert str(line.total) == "37.50"
+    naive_single_truncation = money_trunc(Decimal("3.00") * Decimal("10.004") * Decimal("1.25"))
+    assert naive_single_truncation == Decimal("37.51")
+    assert line.total != naive_single_truncation
 
 
 def test_the_cascade_manifest_keeps_the_declared_order() -> None:
@@ -326,7 +378,7 @@ def test_the_order_of_the_cascade_is_the_one_the_caller_declared() -> None:
     ]
     # A ordem da cascata não muda o preço de linha nenhuma: quem escolhe a fonte é a
     # citação da confirmação, não a posição na lista.
-    assert estimate.total_amount == Decimal("47441.31")
+    assert estimate.total_amount == Decimal("59292.38")
 
 
 def test_the_item_rejected_in_the_whole_cascade_is_declared_not_priced() -> None:
@@ -585,6 +637,35 @@ def test_a_total_amount_that_diverges_on_re_read_is_refused() -> None:
     assert valuation_error_codes(raised.value) == ["ESTIMATE_TOTAL_MISMATCH"]
 
 
+def test_a_line_price_with_bdi_that_diverges_from_the_declared_percent_is_refused() -> None:
+    """Muda o preço com BDI e o total junto (consistentes entre si), só o percentual diverge.
+
+    Se só `unit_price_with_bdi` mudasse, `EstimateLine.validate_total` recusaria primeiro
+    com `ESTIMATE_LINE_TOTAL_MISMATCH` e o validador de BDI do `Estimate` nem rodaria — a
+    linha continua íntegra sozinha, e é o percentual do orçamento que ela deixa de bater.
+    """
+    payload = _estimate_payload()
+    lines = payload["lines"]
+    assert isinstance(lines, list)
+    lines[0]["unit_price_with_bdi"] = "999.99"
+    lines[0]["total"] = "61199.38"  # 61,20 x 999,99 truncado — consistente com a linha
+
+    with pytest.raises(ValidationError) as raised:
+        Estimate.model_validate(payload)
+
+    assert "ESTIMATE_LINE_BDI_MISMATCH" in valuation_error_codes(raised.value)
+
+
+def test_a_total_amount_without_bdi_that_diverges_on_re_read_is_refused() -> None:
+    payload = _estimate_payload()
+    payload["total_amount_without_bdi"] = "1.00"
+
+    with pytest.raises(ValidationError) as raised:
+        Estimate.model_validate(payload)
+
+    assert valuation_error_codes(raised.value) == ["ESTIMATE_TOTAL_WITHOUT_BDI_MISMATCH"]
+
+
 def test_a_line_pointing_to_a_source_outside_the_cascade_is_refused_on_re_read() -> None:
     payload = _estimate_payload()
     lines = payload["lines"]
@@ -743,6 +824,8 @@ def _cli_args(tmp_path: Path, catalog_paths: list[Path], output_dir: Path) -> li
         _WORKSITE_KEY,
         "--worksite-name",
         _WORKSITE_NAME,
+        "--bdi",
+        str(_BDI_PERCENT),
         "--output",
         str(output_dir),
     ]
@@ -770,7 +853,9 @@ def test_cli_build_estimate_publishes_the_estimate(
     estimate = Estimate.model_validate_json(
         (output_dir / ESTIMATE_FILENAME).read_text(encoding="utf-8")
     )
-    assert estimate.total_amount == Decimal("47441.31")
+    assert estimate.bdi_percent == _BDI_PERCENT
+    assert estimate.total_amount_without_bdi == Decimal("47441.31")
+    assert estimate.total_amount == Decimal("59292.38")
 
 
 def test_cli_build_estimate_refuses_a_cascade_with_two_sources_of_the_same_origin(
