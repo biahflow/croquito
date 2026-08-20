@@ -45,6 +45,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-020 | HIGH | READY_FOR_HUMAN_REVIEW | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
 | F-021 | HIGH | READY_FOR_HUMAN_REVIEW | [Nota pré-classificada na decisão da leitura](../features/F-021-nota-pre-classificada/feature.md) |
 | F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |
+| F-025 | A DEFINIR | READY_FOR_SPEC | Consultor do traçado — cada "não aplicada" com causa e conserto de um clique (forma freeform, associação no vizinho errado, cotas em conflito no mesmo vão); diagnóstico determinístico dos dados do solver, sem IA (a definir em contrato) |
 | F-024 | HIGH | READY_FOR_HUMAN_REVIEW | [Leitura com valor não morre por falta de target_hint](../features/F-024-leitura-sem-target-hint/feature.md) |
 | F-023 | A DEFINIR | READY_FOR_SPEC | Survey Quality Score — nota do levantamento com recomendações de campo, agregando sinais existentes (blockers, leituras não aplicadas, corroboração, resíduos); calibrar com V14/V15/V16 (a definir em contrato) |
 
@@ -245,6 +246,17 @@ nominalmente, agora como [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md
 [F-022](../features/F-022-document-ai-braco-ocr/feature.md), ambas `HIGH` por decisão
 humana. F-018/F-019 permanecem na fila de propósito: o inventário de formas erradas da
 próxima rodada real, já com F-021+F-022 no ar, é o insumo dos seus specs.
+
+F-025 — consultor do traçado — nasce em 2026-08-20, na primeira exportação real: a V17
+travou em "0 exatos, 11 não aplicadas" por três causas que o solver conhecia e não
+contava (formas freeform semeadas por rascunho anterior às decisões; associação herdada
+no vizinho da escrita; 1,5 e 8,6 disputando o mesmo vão). O diagnóstico foi feito à mão
+reproduzindo o solve localmente; a feature é o solver contar as causas com conserto de
+um clique, e o chat da revisão (ADR-0023) como camada de conversa por cima — desenho
+proposto pelo usuário: "ao clicar em Aceitar traçado, ver esses erros e corrigir".
+Também da mesma sessão: o caminho de aproximação deve se recolher quando o traçado é o
+caminho em uso (lista "pendente" gritando à toa — observação para F-011), e a semente
+de flags do rascunho deve re-semear quando as decisões mudam.
 
 F-023 — Survey Quality Score — nasce em 2026-08-20, por seleção humana, na conversa que
 comparou a arquitetura do produto com uma proposta externa: o sistema já sabe quando o
