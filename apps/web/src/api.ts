@@ -546,19 +546,46 @@ export async function getReview(
   return apiJson<Review>(`/v1/jobs/${jobId}/review`, accessToken);
 }
 
-export async function submitReviewDecision(
+/**
+ * Teto de decisões por envio, igual ao `max_length` do contrato do servidor
+ * (`SubmitReviewDecisionsRequest`, em `services/api/src/croquito_api/main.py`). Repetido
+ * aqui para o excesso morrer antes da rede: o revisor lê uma frase em vez de um 422.
+ */
+export const REVIEW_DECISION_BATCH_MAX = 50;
+
+/** `null` quando o lote cabe no contrato; senão a frase que a tela mostra ao revisor. */
+export function reviewDecisionBatchIssue(count: number): string | null {
+  if (count < 1) {
+    return "Nenhuma leitura selecionada: um envio de decisões precisa de pelo menos uma.";
+  }
+  if (count > REVIEW_DECISION_BATCH_MAX) {
+    return `O envio vai até ${REVIEW_DECISION_BATCH_MAX} decisões de uma vez, e ${count} passam desse limite. Divida em lotes menores.`;
+  }
+  return null;
+}
+
+/**
+ * Um envio, N decisões atômicas: a rota sempre recebeu uma lista, e cada item vira um
+ * `HumanDecision` próprio no servidor. Uma `Idempotency-Key` e um `base_version` por
+ * envio — o lote inteiro entra ou nada entra.
+ */
+export async function submitReviewDecisions(
   accessToken: string,
   jobId: string,
   baseVersion: number,
-  decision: ReviewDecision,
+  decisions: ReviewDecision[],
 ): Promise<Review> {
+  const issue = reviewDecisionBatchIssue(decisions.length);
+  if (issue) {
+    throw new Error(issue);
+  }
   return apiJson<Review>(`/v1/jobs/${jobId}/review/decisions`, accessToken, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "Idempotency-Key": crypto.randomUUID(),
     },
-    body: JSON.stringify({ base_version: baseVersion, decisions: [decision] }),
+    body: JSON.stringify({ base_version: baseVersion, decisions }),
   });
 }
 

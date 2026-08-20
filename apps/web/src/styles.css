@@ -1193,6 +1193,29 @@ h2 {
   overflow-y: auto;
 }
 
+/* A linha da lista é botão de seleção mais, quando cabe, a caixa do lote de anotações.
+   Os dois moram lado a lado: a caixa dentro do botão não seria alcançável por teclado.
+   O vão da caixa é reservado também na linha sem sugestão, para o texto das leituras
+   continuar alinhado numa coluna só. */
+.review-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 6px;
+}
+
+.review-row-check {
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+
+.review-row-wrap .review-row {
+  flex: 1;
+  min-width: 0;
+}
+
 .review-row {
   width: 100%;
   padding: 12px 9px;

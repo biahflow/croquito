@@ -168,6 +168,16 @@ folha" pré-selecionada e uma frase dizendo de onde veio a sugestão (F-021). Su
 não é decidir: os candidatos continuam todos na lista, trocar a seleção à mão vale
 mais que a sugestão, e a justificativa continua nascendo vazia.
 
+Folha cheia de recado ("h=" em cada muro) faz o revisor repetir dezenas de vezes o mesmo
+ato, então essas leituras — e **somente** elas — chegam pré-marcadas num lote, com uma
+caixa ao lado de cada linha da lista. O lote não decide nada sozinho: o revisor escreve
+**uma** justificativa, na mesma régua de 3 a 500 caracteres, e o envio grava N decisões
+individuais, uma por leitura, cada uma com o seu autor e o mesmo motivo — é o mesmo
+espelho que o aceite em lote de propostas já faz. Desmarcar vale mais que a sugestão e
+não é desfeito enquanto a revisão for a mesma; a revisão seguinte volta a marcar o que
+ainda restou sugerido. Cota de chão nunca entra no lote: ela declara associação e eixo,
+uma a uma.
+
 #### Corrigir uma decisão já registrada
 
 Leitura decidida deixa de mostrar os botões de decisão e passa a mostrar o registro:

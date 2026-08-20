@@ -32,7 +32,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-007 | HIGH | READY_FOR_HUMAN_REVIEW | [Porta de entrada: tela de login com marca](../features/F-007-tela-de-login/feature.md) |
 | F-008 | HIGH | BLOCKED | [Ciclo de vida de conta: convite, recuperação de senha e Google](../features/F-008-ciclo-de-vida-de-conta/feature.md) |
 | F-009 | HIGH | READY_FOR_REVIEW | [Suite hospedada de providers: OpenAI + Anthropic direto, sem AWS](../features/F-009-suite-hospedada-sem-aws/feature.md) |
-| F-010 | A DEFINIR | READY_FOR_SPEC | Revisão assistida em lote (a definir em contrato) |
+| F-010 | HIGH | READY_FOR_HUMAN_REVIEW | [Revisão assistida em lote — fatia 1: anotações sugeridas](../features/F-010-revisao-assistida-lote/feature.md) |
 | F-011 | A DEFINIR | READY_FOR_SPEC | Jornada guiada da revisão (a definir em contrato) |
 | F-012 | HIGH | READY_FOR_REVIEW | [Operação SaaS da autorização de IA](../features/F-012-operacao-saas-autorizacao-ia/feature.md) |
 | F-013 | A DEFINIR | READY_FOR_SPEC | UI de membros do tenant, depende de F-008 (a definir em contrato) |

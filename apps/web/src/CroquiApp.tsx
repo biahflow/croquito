@@ -28,7 +28,7 @@ import {
   requestExport,
   submitProposalBatch,
   submitProposalDecision,
-  submitReviewDecision,
+  submitReviewDecisions,
   submitReviewRectification,
   type ChatActDraft,
   type ChatSession,
@@ -123,6 +123,7 @@ import {
   serializeTraceDraft,
   traceDraftStorageKey,
 } from "./traceStorage";
+import { buildAnnotationBatch, suggestedAnnotationIds } from "./readingBatch";
 import {
   JUSTIFICATION_MAX_LENGTH,
   JUSTIFICATION_MIN_LENGTH,
@@ -554,6 +555,11 @@ export function CroquiApp({
   const [showProposals, setShowProposals] = useState(false);
   const [batchIds, setBatchIds] = useState<Set<string>>(new Set());
   const [batchJustification, setBatchJustification] = useState("");
+  // Lote das leituras sugeridas como anotação da folha. A marcação nasce semeada pela
+  // sugestão (F-021), mas quem tira, põe e assina é o revisor.
+  const [readingBatchIds, setReadingBatchIds] = useState<Set<string>>(new Set());
+  // Nunca pré-preenchido: o texto gravado como justificativa é sempre do revisor.
+  const [readingBatchJustification, setReadingBatchJustification] = useState("");
   const [bindingReadingId, setBindingReadingId] = useState<string | null>(null);
   // Nunca pré-preenchido: o texto gravado como justificativa é sempre do revisor.
   const [bindingJustification, setBindingJustification] = useState("");
@@ -685,6 +691,21 @@ export function CroquiApp({
   const confirmedCount =
     review?.packet.readings.filter((reading) => reading.status === "confirmed")
       .length ?? 0;
+  // Elegíveis ao lote de anotações, na ordem da lista. Memo porque a semeadura da
+  // marcação depende desta lista e não pode reagir a um array novo a cada render.
+  const annotationCandidateIds = useMemo(
+    () => suggestedAnnotationIds(review?.packet.readings ?? []),
+    [review],
+  );
+  const annotationCandidateIdSet = useMemo(
+    () => new Set(annotationCandidateIds),
+    [annotationCandidateIds],
+  );
+  // Só a interseção conta: marcação de uma versão anterior não infla o número que o
+  // botão promete confirmar.
+  const annotationBatchSize = annotationCandidateIds.filter((readingId) =>
+    readingBatchIds.has(readingId),
+  ).length;
   const proposals = review?.proposals?.proposals ?? [];
   const proposalById = new Map(
     proposals.map((proposal) => [proposal.id, proposal]),
@@ -1542,11 +1563,11 @@ export function CroquiApp({
         kind:
           action === "correct" && correctionKind ? correctionKind : undefined,
       };
-      const next = await submitReviewDecision(
+      const next = await submitReviewDecisions(
         session.access_token,
         jobId,
         review.version,
-        decision,
+        [decision],
       );
       setReview(next);
       setConflict(false);
@@ -1563,6 +1584,79 @@ export function CroquiApp({
         error instanceof Error
           ? error.message
           : "Não foi possível registrar a decisão.";
+      setConflict(text.includes("REVISION_CONFLICT"));
+      setMessage(text);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  /** Tirar e pôr no lote é gesto do revisor: a sugestão semeia, ela não manda. */
+  function toggleReadingBatch(readingId: string) {
+    setReadingBatchIds((current) => {
+      const next = new Set(current);
+      if (!next.delete(readingId)) {
+        next.add(readingId);
+      }
+      return next;
+    });
+  }
+
+  /**
+   * Uma justificativa escrita pelo revisor, N decisões individuais gravadas com ela.
+   *
+   * O lote poupa a repetição do mesmo ato, não o ato: cada leitura vira um
+   * `HumanDecision` próprio, com autor e motivo, pela mesma rota da decisão individual.
+   * Só as sugeridas entram — `buildAnnotationBatch` filtra o resto —, e nada é
+   * confirmado sem este clique.
+   */
+  async function submitAnnotationBatch() {
+    if (!session?.access_token) {
+      setMessage("Sua sessão não está ativa. Entre novamente para decidir.");
+      return;
+    }
+    if (!review) {
+      return;
+    }
+    const issue = justificationIssue(readingBatchJustification);
+    if (issue) {
+      setMessage(issue);
+      return;
+    }
+    const decisions = buildAnnotationBatch(
+      review.packet.readings,
+      readingBatchIds,
+      readingBatchJustification,
+    );
+    if (decisions.length === 0) {
+      setMessage("Marque ao menos uma leitura sugerida para confirmar em lote.");
+      return;
+    }
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const next = await submitReviewDecisions(
+        session.access_token,
+        jobId,
+        review.version,
+        decisions,
+      );
+      const decided = decisions.length;
+      setReview(next);
+      setConflict(false);
+      // A seleção não é limpa aqui: a revisão nova re-semeia o lote com o que ainda
+      // restou sugerido, e o revisor continua de onde parou.
+      setReadingBatchJustification("");
+      setToast(
+        decided === 1
+          ? "1 leitura confirmada como anotação — com a decisão gravada."
+          : `${decided} leituras confirmadas como anotação — cada uma com a sua decisão gravada.`,
+      );
+    } catch (error) {
+      const text =
+        error instanceof Error
+          ? error.message
+          : "Não foi possível registrar o lote de anotações.";
       setConflict(text.includes("REVISION_CONFLICT"));
       setMessage(text);
     } finally {
@@ -2356,6 +2450,30 @@ export function CroquiApp({
     setShowProposals(true);
   }, [visibleStep]);
 
+  /**
+   * O lote de anotações nasce marcado com as sugeridas — UMA vez por revisão.
+   *
+   * Semear é o que torna o lote útil: a sugestão já está na tela leitura a leitura, e
+   * remarcá-la à mão seria repetir o trabalho que o lote existe para poupar. A guarda
+   * por job+versão existe para a DESMARCAÇÃO valer: tirar uma leitura do lote é decisão
+   * do revisor e não é desfeita no render seguinte. Revisão nova — o lote entrou, uma
+   * decisão individual foi gravada, o conflito foi recarregado — re-semeia com o que
+   * ainda restou sugerido.
+   */
+  const seededAnnotationBatchRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!jobId || !review) {
+      seededAnnotationBatchRef.current = null;
+      return;
+    }
+    const key = `${jobId}:${review.version}`;
+    if (seededAnnotationBatchRef.current === key) {
+      return;
+    }
+    seededAnnotationBatchRef.current = key;
+    setReadingBatchIds(new Set(annotationCandidateIds));
+  }, [jobId, review, annotationCandidateIds]);
+
   async function submitCalibration() {
     if (
       !session?.access_token ||
@@ -2760,27 +2878,105 @@ export function CroquiApp({
                   </div>
                   <span className="counter">{review.packet.readings.length}</span>
                 </div>
-                <div className="review-list">
-                  {review.packet.readings.map((reading) => (
-                    <button
-                      key={reading.id}
-                      type="button"
-                      aria-pressed={reading.id === selectedReadingId}
-                      className={
-                        reading.id === selectedReadingId
-                          ? "review-row selected"
-                          : "review-row"
-                      }
-                      onClick={() => setSelectedReadingId(reading.id)}
-                    >
-                      <span
-                        className={`status-dot ${reading.status}`}
-                        aria-hidden="true"
+                {annotationCandidateIds.length > 0 ? (
+                  <section
+                    className="batch-controls"
+                    aria-label="Lote das leituras sugeridas como anotação"
+                  >
+                    {/* A contagem muda por gesto na lista, longe deste painel: quem
+                        usa leitor de tela precisa ouvir o novo total. */}
+                    <p className="batch-count" aria-live="polite">
+                      <strong>{annotationBatchSize}</strong> de{" "}
+                      {annotationCandidateIds.length} sugeridas selecionadas
+                    </p>
+                    <p className="batch-hint">
+                      O lote confirma só as leituras sugeridas como anotação. Cota de
+                      chão se decide uma a uma: cada uma declara a sua associação e o
+                      seu eixo.
+                    </p>
+                    <div className="batch-buttons">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setReadingBatchIds(new Set(annotationCandidateIds))
+                        }
+                      >
+                        Selecionar todas
+                      </button>
+                      <button
+                        type="button"
+                        disabled={annotationBatchSize === 0}
+                        onClick={() => setReadingBatchIds(new Set())}
+                      >
+                        Limpar
+                      </button>
+                    </div>
+                    <label>
+                      Justificativa do lote (
+                      {readingBatchJustification.trim().length}/
+                      {JUSTIFICATION_MAX_LENGTH})
+                      <input
+                        value={readingBatchJustification}
+                        onChange={(event) =>
+                          setReadingBatchJustification(event.target.value)
+                        }
+                        placeholder="O que você conferiu nas evidências, nas suas palavras"
+                        maxLength={JUSTIFICATION_MAX_LENGTH}
                       />
-                      <span>{readingLabel(reading)}</span>
-                      <small>{readingStatusLabel(reading.status)}</small>
-                    </button>
-                  ))}
+                    </label>
+                    <div className="batch-buttons">
+                      <button
+                        type="button"
+                        disabled={submitting || annotationBatchSize === 0}
+                        onClick={() => void submitAnnotationBatch()}
+                      >
+                        Confirmar {annotationBatchSize} como anotação
+                      </button>
+                    </div>
+                  </section>
+                ) : null}
+                <div className="review-list">
+                  {review.packet.readings.map((reading) => {
+                    const batchable = annotationCandidateIdSet.has(reading.id);
+                    return (
+                      // A caixa do lote fica FORA do botão da linha: interativo dentro
+                      // de interativo não é alcançável por teclado nem anunciável por
+                      // leitor de tela. Selecionar a leitura e incluí-la no lote são
+                      // dois gestos distintos, e continuam sendo dois alvos distintos.
+                      <div className="review-row-wrap" key={reading.id}>
+                        {batchable ? (
+                          <input
+                            type="checkbox"
+                            className="review-row-check"
+                            checked={readingBatchIds.has(reading.id)}
+                            aria-label={`Incluir ${readingLabel(
+                              reading,
+                            )} no lote de anotações`}
+                            onChange={() => toggleReadingBatch(reading.id)}
+                          />
+                        ) : (
+                          <span className="review-row-check" aria-hidden="true" />
+                        )}
+                        <button
+                          type="button"
+                          aria-pressed={reading.id === selectedReadingId}
+                          className={
+                            reading.id === selectedReadingId
+                              ? "review-row selected"
+                              : "review-row"
+                          }
+                          onClick={() => setSelectedReadingId(reading.id)}
+                        >
+                          <span
+                            className={`status-dot ${reading.status}`}
+                            aria-hidden="true"
+                          />
+                          <span>{readingLabel(reading)}</span>
+                          <small>{readingStatusLabel(reading.status)}</small>
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
                 {review.packet.safety_notes?.includes(
                   "REGION_CLASSIFICATION_REQUIRED",
