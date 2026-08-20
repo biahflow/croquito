@@ -66,7 +66,7 @@ import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Final
 
@@ -2643,6 +2643,8 @@ def _estimate_payload(estimate: Estimate) -> dict[str, object]:
         "lines_by_origin": dict(sorted(by_origin.items())),
         "cascade": [source.origin.value for source in estimate.cascade],
         "unpriced": list(estimate.unpriced_item_ids),
+        "bdi_percent": str(estimate.bdi_percent),
+        "total_amount_without_bdi": str(estimate.total_amount_without_bdi),
         "total_amount": str(estimate.total_amount),
     }
 
@@ -2790,6 +2792,23 @@ def _command_takeoff_eval(args: argparse.Namespace) -> int:
         }
     )
     return 0 if report.passed else 1
+
+
+def _bdi_percent_type(raw: str) -> Decimal:
+    """`Decimal` do `--bdi`; texto ilegível recusa com mensagem amigável de argparse.
+
+    Espelho de `estimate_rounds.parse_bdi_percent` do lado da API: aqui só o que é
+    ILEGÍVEL como decimal vira erro de linha de comando — `argparse.ArgumentTypeError`
+    termina o comando com mensagem amigável, sem traceback cru de
+    `decimal.InvalidOperation`. A semântica aceita não muda: `>= 0` continua sendo
+    recusado adiante pelo domínio.
+    """
+    try:
+        return Decimal(raw)
+    except InvalidOperation as error:
+        raise argparse.ArgumentTypeError(
+            f"'{raw}' não é um número decimal exato; escreva o BDI como 25.00"
+        ) from error
 
 
 def _add_template_option(parser: argparse.ArgumentParser) -> None:
@@ -3167,7 +3186,7 @@ def build_parser() -> argparse.ArgumentParser:
     build_estimate_command.add_argument("--worksite-name", required=True)
     build_estimate_command.add_argument(
         "--bdi",
-        type=Decimal,
+        type=_bdi_percent_type,
         required=True,
         help="percentual único de BDI do orçamento (ADR-0038), ex.: 25.00",
     )

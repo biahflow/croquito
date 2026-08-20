@@ -20,6 +20,7 @@ import {
   postSuggestionsRecompute,
   postTakeoffDecision,
   postTarget,
+  removeCascadeSource,
   reorderCascade,
   searchCascade,
   uploadCatalog,
@@ -1041,6 +1042,29 @@ export function OrcamentoApp({
     }
   };
 
+  const removerFonte = async (entry: CascadeEntry) => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const next = await removeCascadeSource(token, orcamento, {
+        sourceSha256: entry.source_sha256,
+        baseVersion: version,
+      });
+      aplicarVersao(next.version);
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast(`${entry.source_label} removida da cascata.`);
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const enviarPrancha = async () => {
     const token = tokenDaSessao();
     if (token === null || orcamento === null || version === null || plateFile === null) {
@@ -1819,6 +1843,14 @@ export function OrcamentoApp({
                         aria-label={`Descer ${entry.source_label} na cascata`}
                       >
                         Descer
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void removerFonte(entry)}
+                        disabled={submitting || cascataTravada}
+                        aria-label={`Remover ${entry.source_label} da cascata`}
+                      >
+                        Remover
                       </button>
                     </div>
                   </li>

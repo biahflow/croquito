@@ -1001,6 +1001,18 @@ class ReorderEstimateCascadeRequest(ApiModel):
         return value
 
 
+class RemoveEstimateCascadeSourceRequest(ApiModel):
+    """Remove uma fonte da cascata instalada, citada pelo `source_sha256` dela.
+
+    Espelho de `ReorderEstimateCascadeRequest`: um único digest, e não posição nem origem,
+    pelo mesmo motivo que a reordenação cita digest — é o identificador estável da fonte,
+    o mesmo que a confirmação de código cita.
+    """
+
+    base_version: int = Field(ge=1)
+    source_sha256: str = Field(pattern=SHA256_HEX_PATTERN)
+
+
 class EstimateCascadeResponse(ApiModel):
     """A cascata como a tela a lê. `object_key` e `upload_id` não saem daqui."""
 
@@ -7405,6 +7417,74 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             session,
             principal=principal,
             action="ESTIMATE_CASCADE_REORDERED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/catalogs/remove",
+        response_model=EstimateCascadeResponse,
+        tags=["estimate"],
+    )
+    async def remove_estimate_cascade_source(
+        round_id: UUID,
+        payload: RemoveEstimateCascadeSourceRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> EstimateCascadeResponse:
+        """Remove uma fonte da cascata instalada, citada pelo `source_sha256` dela.
+
+        Remover é decisão de código recusa quando decisão de código já registrada citou a
+        fonte: apagar decisão do orçamentista não é ato desta API (`ESTIMATE_CASCADE_LOCKED`,
+        mesmo código da reordenação, aqui por FONTE em vez de pela cascata inteira). Fonte
+        que não está instalada recusa com o mesmo código da reordenação
+        (`ESTIMATE_CASCADE_ORDER_INVALID`) — o corpo cita algo que a cascata não reconhece.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.catalogs-remove:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return EstimateCascadeResponse.model_validate(existing)
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        entries = estimate_rounds.require_cascade(record)
+        estimate_rounds.require_cascade_source_unlocked(
+            estimate_rounds.head_revision(
+                session, round_id=record.id, tenant_id=principal.tenant_id
+            ),
+            payload.source_sha256,
+        )
+        record.catalog_cascade_json = estimate_rounds.removed_cascade(
+            entries, payload.source_sha256
+        )
+        record.version += 1
+        record.updated_at = datetime.now(UTC)
+        response = _estimate_cascade_response(record)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_CASCADE_SOURCE_REMOVED",
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,

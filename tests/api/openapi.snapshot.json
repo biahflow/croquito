@@ -3908,6 +3908,28 @@
         "title": "RegionCandidate",
         "type": "object"
       },
+      "RemoveEstimateCascadeSourceRequest": {
+        "additionalProperties": false,
+        "description": "Remove uma fonte da cascata instalada, citada pelo `source_sha256` dela.\n\nEspelho de `ReorderEstimateCascadeRequest`: um único digest, e não posição nem origem,\npelo mesmo motivo que a reordenação cita digest — é o identificador estável da fonte,\no mesmo que a confirmação de código cita.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "source_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Source Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "source_sha256"
+        ],
+        "title": "RemoveEstimateCascadeSourceRequest",
+        "type": "object"
+      },
       "ReorderEstimateCascadeRequest": {
         "additionalProperties": false,
         "description": "Reordena a cascata. O corpo é a lista COMPLETA dos digests, na ordem nova.\n\nCompleta, e não um \"mova esta fonte para a posição N\", porque a ordem inteira é a regra\nde precificação: um corpo parcial obrigaria o servidor a decidir onde as fontes\nomitidas entram, e essa decisão é exatamente a que o ADR-0027 tira do código.",
@@ -5918,6 +5940,81 @@
           }
         ],
         "summary": "Reorder Estimate Cascade",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/catalogs/remove": {
+      "post": {
+        "description": "Remove uma fonte da cascata instalada, citada pelo `source_sha256` dela.\n\nRemover é decisão de código recusa quando decisão de código já registrada citou a\nfonte: apagar decisão do orçamentista não é ato desta API (`ESTIMATE_CASCADE_LOCKED`,\nmesmo código da reordenação, aqui por FONTE em vez de pela cascata inteira). Fonte\nque não está instalada recusa com o mesmo código da reordenação\n(`ESTIMATE_CASCADE_ORDER_INVALID`) — o corpo cita algo que a cascata não reconhece.",
+        "operationId": "remove_estimate_cascade_source_v1_estimate_rounds__round_id__catalogs_remove_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveEstimateCascadeSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateCascadeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove Estimate Cascade Source",
         "tags": [
           "estimate"
         ]

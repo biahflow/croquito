@@ -38,6 +38,7 @@ import { apiJson, ApiError } from "../api";
 import {
   buildEstimateBody,
   cascadeOrderBody,
+  cascadeRemoveBody,
   codeDecisionBody,
   createEstimateBody,
   installCatalogBody,
@@ -436,6 +437,12 @@ export type CascadeOrderDraft = {
   baseVersion: number;
 };
 
+export type CascadeRemoveDraft = {
+  /** O digest da fonte a remover; o mesmo que a confirmação de código cita. */
+  sourceSha256: string;
+  baseVersion: number;
+};
+
 export type TakeoffDecisionDraft = {
   itemId: string;
   action: "confirm" | "reject";
@@ -663,6 +670,22 @@ export function reorderCascade(
     roundPath(roundId, "/catalogs/order"),
     accessToken,
     cascadeOrderBody(draft),
+  );
+}
+
+/**
+ * Remove uma fonte da cascata pelo `source_sha256` dela. Fonte já citada por decisão de
+ * código registrada recusa (`ESTIMATE_CASCADE_LOCKED`); a rota não apaga decisão.
+ */
+export function removeCascadeSource(
+  accessToken: string,
+  roundId: string,
+  draft: CascadeRemoveDraft,
+): Promise<CascadeResponse> {
+  return post<CascadeResponse>(
+    roundPath(roundId, "/catalogs/remove"),
+    accessToken,
+    cascadeRemoveBody(draft),
   );
 }
 
