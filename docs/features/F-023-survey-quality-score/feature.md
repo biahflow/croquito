@@ -2,11 +2,13 @@
 
 ## Status
 
-`IN_PROGRESS`
+`READY_FOR_HUMAN_REVIEW`
 
-> Especificada em 2026-08-20 (sessão de especificação, decisão humana na mesma
-> sessão: rodada cobre spec + fatia 1, e a fatia 1 inclui a declaração humana
-> de cadeia). Fatia 1 em execução.
+> Especificada em 2026-08-20 (decisão humana na mesma sessão: rodada cobre
+> spec + fatia 1, e a fatia 1 inclui a declaração humana de cadeia). Fatia 1
+> executada, revisada linha a linha e integrada na main no mesmo dia
+> ([evidência](evidence.md)); pendem os atos do usuário — migração 0006 no
+> hosted, push/deploy — e a aceitação real numa rodada do Guaxindiba.
 
 ## Classification
 

@@ -302,6 +302,18 @@ descritos em "Quinto marco: medição de obra (M1 a M5 em código)".
   método: cada rodada expôs um gargalo diferente (eixo, OCR, funil) e nenhum era
   erro de leitura do modelo — insumo direto da F-023 (Survey Quality Score). O eval
   comparativo pago Vision×DocAI segue como gate declarado do ADR-0037.
+- Fatia 1 da F-023 (Survey Quality Score) executada em 2026-08-20, na mesma
+  sessão que a especificou: o motor de fechamento de cadeias de cotas
+  (`dimension_closure.py`), completo e testado desde a criação mas órfão, ganhou
+  chamadores — `suggested_chains` (somas que fecham, calculadas a cada leitura)
+  e `declared_chains` (declaração humana persistida com autoria, reconferida
+  contra o pacote corrente: `closes`/`mismatch`/`stale`) na resposta de review,
+  rota `POST /v1/jobs/{id}/review/chains` (declare/retract), migração aditiva
+  0006, CLI `check-chains` e a seção "Somas de cotas" na tela com o badge
+  "Σ fecha". Desencontro de cadeia é WARNING e nunca blocker; nada toca o portão
+  de export. Pendem migração no hosted, deploy e aceitação real
+  ([F-023](features/F-023-survey-quality-score/feature.md)); o score agregado
+  com recomendações de campo é a fatia 2, calibrada com V14–V17.
 - Primeira revisão real em nuvem processada de ponta a ponta (Guaxindiba V3,
   2026-08-19) e primeiro ciclo completo de eval-promoção de prompt motivado por
   defeito real, não por rodada de rotina: o muro com recuo 4,80→3,30 veio fragmentado

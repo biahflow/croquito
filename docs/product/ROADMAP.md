@@ -47,7 +47,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |
 | F-025 | HIGH | READY_FOR_HUMAN_REVIEW | [Consultor do traçado](../features/F-025-consultor-do-tracado/feature.md) |
 | F-024 | HIGH | READY_FOR_HUMAN_REVIEW | [Leitura com valor não morre por falta de target_hint](../features/F-024-leitura-sem-target-hint/feature.md) |
-| F-023 | HIGH | IN_PROGRESS | [Survey Quality Score](../features/F-023-survey-quality-score/feature.md) |
+| F-023 | HIGH | READY_FOR_HUMAN_REVIEW | [Survey Quality Score](../features/F-023-survey-quality-score/feature.md) |
 | F-028 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
