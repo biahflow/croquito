@@ -196,6 +196,15 @@ jobs:
       # y=1.0, 1 no survey), contra 13 rodadas do Opus sem rejeição de schema. O prompt
       # atual é prescritivo demais para o Fable (comportamento documentado do modelo);
       # retestar exige rodada própria de prompt, não só a env.
+      #
+      # `CROQUITO_DOCAI_PROCESSOR` (2026-08-20, ADR-0037): o braço de OCR passa a ser o
+      # Document AI deste processador (multi-região `us`, criado pelo biahflow/infra
+      # PR #17 — output `docai_processor_name` do stack envs/hml/croquito). A V15 do
+      # Guaxindiba mediu o limite do Cloud Vision em letra manuscrita: 6 leituras onde
+      # a folha escreve ~16, zero cota de chão. Reverter = remover esta env (o worker
+      # volta ao Cloud Vision sem redeploy de código, comportamento coberto por teste).
+      # `CROQUITO_AI_ESTIMATED_COST_PER_OCR_CALL_USD` segue no default 0.0015: o OCR
+      # do Document AI custa ~US$1,50/1000 páginas, o mesmo valor.
       - name: Publica o worker
         run: |
           set -euo pipefail
@@ -207,7 +216,7 @@ jobs:
             --command croquito-worker-push \
             --memory 2Gi --cpu 2 --timeout 900 --concurrency 4 --no-cpu-throttling \
             --set-secrets CROQUITO_DATABASE_URL=croquito-hml-database-url:latest,AWS_ACCESS_KEY_ID=croquito-hml-storage-hmac-id:latest,AWS_SECRET_ACCESS_KEY=croquito-hml-storage-hmac-secret:latest,CROQUITO_OPENAI_API_KEY=croquito-hml-openai-api-key:latest,CROQUITO_ANTHROPIC_API_KEY=croquito-hml-anthropic-api-key:latest \
-            --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_REAL_PROVIDERS_ENABLED=true,CROQUITO_AI_MAX_ESTIMATED_COST_USD=5.00,CROQUITO_OPENAI_MODEL=gpt-5.6-sol,CROQUITO_OPENAI_ARM_ENABLED=false,CROQUITO_ANTHROPIC_MODEL=claude-opus-5,CROQUITO_PROVIDER_TIMEOUT_SECONDS=240 \
+            --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_REAL_PROVIDERS_ENABLED=true,CROQUITO_AI_MAX_ESTIMATED_COST_USD=5.00,CROQUITO_OPENAI_MODEL=gpt-5.6-sol,CROQUITO_OPENAI_ARM_ENABLED=false,CROQUITO_ANTHROPIC_MODEL=claude-opus-5,CROQUITO_PROVIDER_TIMEOUT_SECONDS=240,CROQUITO_DOCAI_PROCESSOR=projects/biahflow-hml/locations/us/processors/a3d553818d4099b9 \
             --startup-probe httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=3,periodSeconds=5,failureThreshold=12,timeoutSeconds=3 \
             --quiet
 

@@ -297,17 +297,22 @@ com Cloud Vision, precisa da API `vision.googleapis.com` habilitada no projeto �
 infra descrito no runbook de ativação, abaixo, faz.
 
 **Escalada para Document AI ([ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md)) —
-PENDENTE, dois atos de infra ainda não executados:**
+EXECUTADA em 2026-08-20:**
 
-- Habilitar a API `documentai.googleapis.com` e provisionar o processador de OCR no
-  repositório `biahflow/infra` (fora deste repositório, ato humano de Terraform).
-- Definir `CROQUITO_DOCAI_PROCESSOR` (nome completo do processador) no serviço do worker em
-  `deploy-hml.yml`, junto da revisão de
-  `CROQUITO_AI_ESTIMATED_COST_PER_OCR_CALL_USD` (o preço por página do Document AI é maior que
-  o do Cloud Vision — consequência já registrada no ADR-0037).
+- API `documentai.googleapis.com` habilitada e processador `croquito-hml-ocr`
+  (`OCR_PROCESSOR`, multi-região `us`) criado pelo `biahflow/infra` PR #17, com
+  `roles/documentai.apiUser` na SA de runtime do worker. O primeiro apply falhou em 403
+  por propagação de IAM (a role `documentai.admin` da infra-deploy nasceu no mesmo
+  apply); o re-run do job, minutos depois, criou o processador — comportamento a
+  esperar em toda role recém-concedida.
+- `CROQUITO_DOCAI_PROCESSOR` definido no worker em `deploy-hml.yml`
+  (`projects/biahflow-hml/locations/us/processors/a3d553818d4099b9`).
+  `CROQUITO_AI_ESTIMATED_COST_PER_OCR_CALL_USD` permaneceu no default 0.0015: o OCR do
+  Document AI custa ~US$1,50/1000 páginas, o mesmo valor por página do Cloud Vision.
 
-Até esses dois atos, o env não existe no serviço e a suite hospedada continua montando Cloud
-Vision, como hoje.
+Reverter = remover a env do serviço; a suite volta a montar Cloud Vision sem redeploy de
+código. O eval comparativo pago entre os dois braços segue como gate declarado do
+ADR-0037.
 
 ### Runbook de ativação
 
