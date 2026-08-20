@@ -124,7 +124,8 @@ def refresh_proposals(inputs: RefreshInputs, settings: LocalWorkerSettings) -> R
             connection.execute(
                 text(
                     "SELECT id, version, packet_json, associations_json, proposals_json, "
-                    "selected_associations_json, calibration_json, proposal_decisions_json, "
+                    "selected_associations_json, declared_chains_json, calibration_json, "
+                    "proposal_decisions_json, "
                     "trace_acceptance_json, evidence_refs_json, solver_request_json, "
                     "solver_blockers_json, required_blocker_codes_json, "
                     "required_criteria_texts_json, scene_revision_id "

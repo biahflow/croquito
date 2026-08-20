@@ -151,6 +151,12 @@ from croquito_worker.dimension_annotation import (
     annotate_note,
     annotate_traced_line,
 )
+from croquito_worker.dimension_closure import (
+    ChainVerificationError,
+    DimensionChain,
+    suggest_chains,
+    verify_chain,
+)
 from croquito_worker.proposal_calibration import (
     HUMAN_ACCEPTED_PROPOSAL_SOURCE_TYPE,
     ISOTROPY_TOLERANCE,
@@ -413,6 +419,25 @@ class RectifyReviewDecisionsRequest(ApiModel):
     rectifications: list[RectifyReadingCommand] = Field(min_length=1, max_length=50)
 
 
+class ReviewChainCommand(ApiModel):
+    """Declara ou retrata uma cadeia de cotas: estas parcelas partilham este total.
+
+    A declaração é do humano, não do motor: `suggest_chains` só oferece candidatos, e é
+    aqui que alguém assume que a soma tem significado no desenho. Cadeia que NÃO fecha é
+    declarável de propósito — o desencontro é justamente o que se quer registrar.
+    """
+
+    base_version: int = Field(ge=1)
+    action: Literal["declare", "retract"]
+    total_id: str | None = Field(default=None, pattern=r"^rd_[a-f0-9]{16}$")
+    part_ids: list[Annotated[str, Field(pattern=r"^rd_[a-f0-9]{16}$")]] = Field(
+        default_factory=list, max_length=16
+    )
+    # Sem `pattern`: id desconhecido é 404, e recusar antes pelo formato transformaria a
+    # mesma pergunta ("existe esta cadeia?") em duas respostas diferentes.
+    chain_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class ProposalCalibrationAnchorRequest(ApiModel):
     proposal_id: str = Field(pattern=r"^vp_[a-f0-9]{16}$")
     # Opcional: sem isto o ajuste escolhe a aresta métrica, porque as quatro arestas de
@@ -509,6 +534,23 @@ class RequiredCriterion(ApiModel):
     text: str
 
 
+class DeclaredChainResponse(ApiModel):
+    """Uma cadeia declarada por uma pessoa, reconferida contra o pacote de hoje.
+
+    O que fica gravado é a declaração; `chain`, `status` e `issue` são recomputados a
+    cada leitura. Por isso existe `stale`: a cota participante pode ter sido retificada
+    ou rejeitada depois, e nesse caso a cadeia não é apagada — ela passa a avisar que
+    perdeu o pé, e cabe a uma pessoa retratá-la ou declará-la de novo.
+    """
+
+    chain_id: str
+    declared_by: str
+    declared_at: datetime
+    chain: DimensionChain | None = None
+    status: Literal["closes", "mismatch", "stale"]
+    issue: Issue | None = None
+
+
 class ReviewResponse(ApiModel):
     job_id: UUID
     review_id: UUID
@@ -522,6 +564,15 @@ class ReviewResponse(ApiModel):
     issues: list[Issue]
     blockers: list[str]
     required_criteria: list[RequiredCriterion] = Field(default_factory=list)
+    # Conferência aritmética das cotas confirmadas: sugestão calculada na hora e
+    # declaração humana persistida. Nenhuma das duas entra em `blockers` — divergência de
+    # cadeia é aviso para o revisor, nunca veto de exportação.
+    #
+    # `default_factory=list` nas duas porque a resposta idempotente gravada ANTES destes
+    # campos existirem é revalidada no replay; sem o default, um `Idempotency-Key` de
+    # antes do deploy passaria a responder 500.
+    suggested_chains: list[DimensionChain] = Field(default_factory=list)
+    declared_chains: list[DeclaredChainResponse] = Field(default_factory=list)
     scene: SceneRevision | None = None
     preview_urls: dict[str, str] = Field(default_factory=dict)
 
@@ -1380,6 +1431,28 @@ def _approval_id(*, scene_id: UUID, reviewer_id: str, decided_at: datetime, stat
     return f"ap_{hashlib.sha256(canonical.encode('utf-8')).hexdigest()[:16]}"
 
 
+def _chain_id(
+    *, total_id: str, part_ids: Sequence[str], declared_by: str, declared_at: datetime
+) -> str:
+    """Id determinístico da cadeia declarada, no mesmo molde dos `rd_…`/`ap_…` do repo.
+
+    Deriva do conteúdo da declaração — quem declarou, quando, e quais leituras —, de modo
+    que duas cadeias diferentes nunca colidem e a mesma declaração é sempre nomeada igual.
+    """
+    canonical = json.dumps(
+        {
+            "total_id": total_id,
+            "part_ids": list(part_ids),
+            "declared_by": declared_by,
+            "declared_at": declared_at.isoformat(),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"ch_{hashlib.sha256(canonical.encode('utf-8')).hexdigest()[:16]}"
+
+
 def _domain_messages(error: ValidationError) -> str:
     """Domain messages from a contract validator; never the rejected values themselves."""
     messages = [str(item["msg"]).removeprefix("Value error, ") for item in error.errors()]
@@ -2142,6 +2215,61 @@ def _chat_session_response(
     )
 
 
+CHAIN_READING_SUPERSEDED_CODE = "CHAIN_READING_SUPERSEDED"
+CHAIN_READING_SUPERSEDED_MESSAGE = (
+    "Uma das cotas desta cadeia deixou de estar confirmada depois que ela foi declarada; "
+    "confira a cadeia e declare de novo, ou retrate-a."
+)
+
+
+def _declared_chain_responses(
+    packet: ReviewPacket, declared: Sequence[Mapping[str, Any]]
+) -> list[DeclaredChainResponse]:
+    """Reconfere cada cadeia declarada contra o pacote corrente, sem tocar no gravado.
+
+    A declaração é histórica e imutável; o veredito não é. Retificar uma leitura da
+    cadeia não pode continuar afirmando um fechamento que já não existe, e também não
+    pode fazer a cadeia sumir sem que ninguém veja — daí `stale`, que é aviso e pede um
+    ato humano.
+    """
+    responses: list[DeclaredChainResponse] = []
+    for item in declared:
+        common = {
+            "chain_id": item["chain_id"],
+            "declared_by": item["declared_by"],
+            "declared_at": item["declared_at"],
+        }
+        try:
+            chain = verify_chain(
+                packet,
+                total_id=str(item["total_id"]),
+                part_ids=[str(part_id) for part_id in item["part_ids"]],
+            )
+        except ChainVerificationError:
+            responses.append(
+                DeclaredChainResponse(
+                    **common,
+                    chain=None,
+                    status="stale",
+                    issue=Issue(
+                        code=CHAIN_READING_SUPERSEDED_CODE,
+                        severity=IssueSeverity.WARNING,
+                        message=CHAIN_READING_SUPERSEDED_MESSAGE,
+                    ),
+                )
+            )
+            continue
+        responses.append(
+            DeclaredChainResponse(
+                **common,
+                chain=chain,
+                status="closes" if chain.closes else "mismatch",
+                issue=chain.issue(),
+            )
+        )
+    return responses
+
+
 def _review_response(
     application: FastAPI, session: Session, record: ReviewRevisionRecord
 ) -> ReviewResponse:
@@ -2207,6 +2335,8 @@ def _review_response(
             )
             for code in record.required_blocker_codes_json
         ],
+        suggested_chains=suggest_chains(packet),
+        declared_chains=_declared_chain_responses(packet, record.declared_chains_json),
         scene=scene,
         preview_urls=_preview_urls(
             application,
@@ -3137,6 +3267,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             associations_json=associations.model_dump(mode="json"),
             proposals_json=current.proposals_json,
             selected_associations_json=selected_associations,
+            declared_chains_json=current.declared_chains_json,
             calibration_json=resolved.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             evidence_refs_json=current.evidence_refs_json,
@@ -3401,6 +3532,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             associations_json=associations.model_dump(mode="json"),
             proposals_json=current.proposals_json,
             selected_associations_json=selected_associations,
+            declared_chains_json=current.declared_chains_json,
             calibration_json=resolved.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             # O aceite de traçado é ato histórico da revisão em que aconteceu: viaja
@@ -3471,6 +3603,169 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             session,
             principal=principal,
             action="REVIEW_DECISIONS_RECTIFIED",
+            resource_type="review_revision",
+            resource_id=next_review.id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/review/chains",
+        response_model=ReviewResponse,
+        tags=["review"],
+    )
+    async def declare_review_chain(
+        job_id: UUID,
+        payload: ReviewChainCommand,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReviewResponse:
+        """Declara (ou retrata) que estas parcelas partilham este total.
+
+        O motor sugere; quem afirma é uma pessoa. Cadeia que NÃO fecha é declarável de
+        propósito: o desencontro entre a soma e o total é exatamente o achado — falta um
+        trecho na folha, ou uma das medidas está incompleta. Por isso nada aqui entra em
+        `blockers`, e o export continua decidido pelo portão da cena.
+
+        Como as vizinhas, cria uma revisão de leitura nova em vez de editar a corrente:
+        declarar e retratar são atos humanos, e o histórico de cada um fica na revisão em
+        que aconteceu.
+        """
+        reviewer_role = _reviewer_role(principal)
+        job = session.scalar(
+            select(JobRecord).where(
+                JobRecord.id == str(job_id), JobRecord.tenant_id == principal.tenant_id
+            )
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        operation = f"review.chains:{job_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ReviewResponse.model_validate(existing)
+
+        current = _latest_review(session, job_id=job_id, tenant_id=principal.tenant_id)
+        if current is None:
+            raise _problem(
+                "JOB_NOT_READY",
+                status.HTTP_409_CONFLICT,
+                "Pacote de revisão ainda não está disponível.",
+            )
+        if current.version != payload.base_version:
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Existe uma revisão de leitura mais recente.",
+            )
+
+        packet = ReviewPacket.model_validate(current.packet_json)
+        declared_chains = [dict(item) for item in current.declared_chains_json]
+        if payload.action == "declare":
+            if payload.total_id is None:
+                raise _problem(
+                    "CHAIN_INVALID",
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Declarar uma cadeia exige o total e pelo menos duas parcelas.",
+                )
+            try:
+                # O resultado não é gravado: a cadeia é reconferida contra o pacote a cada
+                # leitura. Aqui a conferência serve só para recusar cadeia que não existe.
+                verify_chain(packet, total_id=payload.total_id, part_ids=list(payload.part_ids))
+            except ChainVerificationError as error:
+                raise _problem(
+                    "CHAIN_INVALID", status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)
+                ) from error
+            declared_at = datetime.now(UTC)
+            declared_chains.append(
+                {
+                    "chain_id": _chain_id(
+                        total_id=payload.total_id,
+                        part_ids=payload.part_ids,
+                        declared_by=principal.subject,
+                        declared_at=declared_at,
+                    ),
+                    "total_id": payload.total_id,
+                    "part_ids": list(payload.part_ids),
+                    "declared_by": principal.subject,
+                    "declared_role": reviewer_role,
+                    "declared_at": declared_at.isoformat(),
+                }
+            )
+            audit_action = "REVIEW_CHAIN_DECLARED"
+        else:
+            if payload.chain_id is None:
+                raise _problem(
+                    "CHAIN_INVALID",
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Retratar uma cadeia exige o identificador dela.",
+                )
+            remaining = [item for item in declared_chains if item["chain_id"] != payload.chain_id]
+            if len(remaining) == len(declared_chains):
+                raise _problem(
+                    "CHAIN_NOT_FOUND",
+                    status.HTTP_404_NOT_FOUND,
+                    "Cadeia declarada não encontrada nesta revisão.",
+                )
+            declared_chains = remaining
+            audit_action = "REVIEW_CHAIN_RETRACTED"
+
+        next_review = ReviewRevisionRecord(
+            id=str(new_uuid7()),
+            tenant_id=principal.tenant_id,
+            job_id=str(job_id),
+            version=current.version + 1,
+            parent_review_id=current.id,
+            packet_json=current.packet_json,
+            associations_json=current.associations_json,
+            proposals_json=current.proposals_json,
+            selected_associations_json=current.selected_associations_json,
+            declared_chains_json=declared_chains,
+            calibration_json=current.calibration_json,
+            proposal_decisions_json=current.proposal_decisions_json,
+            # Declarar cadeia não decide leitura nem desenha nada: o aceite de traçado, a
+            # cena e os blockers da revisão anterior seguem valendo, verbatim.
+            trace_acceptance_json=current.trace_acceptance_json,
+            evidence_refs_json=current.evidence_refs_json,
+            solver_request_json=current.solver_request_json,
+            solver_blockers_json=current.solver_blockers_json,
+            required_blocker_codes_json=current.required_blocker_codes_json,
+            required_criteria_texts_json=current.required_criteria_texts_json,
+            scene_revision_id=current.scene_revision_id,
+            created_by=principal.subject,
+        )
+        session.add(next_review)
+        try:
+            session.flush()
+        except IntegrityError as error:
+            session.rollback()
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Uma atualização concorrente criou nova revisão.",
+            ) from error
+        response = _review_response(application, session, next_review)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action=audit_action,
             resource_type="review_revision",
             resource_id=next_review.id,
             request_id=request.state.request_id,
@@ -3579,6 +3874,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             associations_json=current.associations_json,
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
+            declared_chains_json=current.declared_chains_json,
             calibration_json=calibration.model_dump(mode="json"),
             proposal_decisions_json=current.proposal_decisions_json,
             evidence_refs_json=current.evidence_refs_json,
@@ -3767,6 +4063,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             associations_json=current.associations_json,
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
+            declared_chains_json=current.declared_chains_json,
             calibration_json=current.calibration_json,
             proposal_decisions_json=decisions,
             evidence_refs_json=current.evidence_refs_json,
@@ -3999,6 +4296,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             associations_json=current.associations_json,
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
+            declared_chains_json=current.declared_chains_json,
             calibration_json=current.calibration_json,
             proposal_decisions_json=decisions,
             evidence_refs_json=current.evidence_refs_json,
@@ -4155,6 +4453,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             associations_json=current.associations_json,
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
+            declared_chains_json=current.declared_chains_json,
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             evidence_refs_json=current.evidence_refs_json,
@@ -4282,6 +4581,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             associations_json=current.associations_json,
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
+            declared_chains_json=current.declared_chains_json,
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             evidence_refs_json=current.evidence_refs_json,

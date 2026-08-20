@@ -23,6 +23,7 @@ from croquito_api.database import (
     ChatTurnRecord,
     Database,
     ExportArtifactRecord,
+    IdempotencyRecord,
     JobRecord,
     ProjectRecord,
     ProposalDecisionRecord,
@@ -679,7 +680,49 @@ def _extra_reading(digest: str) -> DimensionReading:
     )
 
 
-def _seed_review_session(client: TestClient, *, extra_reading: bool = False) -> UUID:
+def _chain_readings(digest: str) -> list[DimensionReading]:
+    """Quatro cotas de planta cujo texto é número puro, para a conferência de cadeias.
+
+    `suggest_chains` só olha cota de planta (número puro na folha), e nenhuma leitura da
+    fixture base é: `"largura sintética"` descreve o que a cota mede, não o que está
+    escrito nela. Estas quatro fecham exatamente uma soma — 12,00 + 13,90 = 25,90 — e a
+    quarta (3,00) existe para declarar uma cadeia que NÃO fecha.
+
+    Nenhuma delas entra em `associations`: são confirmadas como anotação da folha, o que
+    as mantém fora do solver e deixa a conferência de cadeia isolada do traçado.
+    """
+    values = (
+        ("rd_5555555555555555", "25,90", "25.90", 10),
+        ("rd_6666666666666666", "12,00", "12.00", 80),
+        ("rd_7777777777777777", "13,90", "13.90", 150),
+        ("rd_8888888888888888", "3,00", "3.00", 220),
+    )
+    return [
+        DimensionReading(
+            id=reading_id,
+            evidence=EvidenceRegion(
+                dataset_id="synthetic-guaxindiba-contract-v1",
+                page_number=1,
+                image_sha256=digest,
+                bbox=PixelBox(left=left, top=60, right=left + 60, bottom=90),
+            ),
+            raw_text=raw_text,
+            value_si=Decimal(value_si),
+            unit=UnitCode.METRE,
+            kind=MeasurementKind.LENGTH,
+            written_decimals=2,
+            target_hint="cadeia sintética",
+            extractor="contract-fixture",
+            extractor_version="v1",
+            status=ReadingStatus.PROPOSED,
+        )
+        for reading_id, raw_text, value_si, left in values
+    ]
+
+
+def _seed_review_session(
+    client: TestClient, *, extra_reading: bool = False, chain_readings: bool = False
+) -> UUID:
     database = cast(Database, cast(Any, client.app).state.database)
     job_id = UUID("00000000-0000-7000-8000-000000000301")
     digest = "b" * 64
@@ -743,6 +786,7 @@ def _seed_review_session(client: TestClient, *, extra_reading: bool = False) -> 
                 status=ReadingStatus.PROPOSED,
             ),
             *([_extra_reading(digest)] if extra_reading else []),
+            *(_chain_readings(digest) if chain_readings else []),
         ],
         safety_notes=["Fixture sintética.", "Revisão humana obrigatória."],
     )
@@ -1935,6 +1979,321 @@ def test_rectification_of_an_annotation_keeps_the_association_rules(tmp_path: Pa
     )
     assert annotated.status_code == 200
     assert "rd_1111111111111111" not in annotated.json()["selected_associations"]
+
+
+def _confirm_chain_readings(client: TestClient, job_id: UUID, *, base_version: int = 1) -> Any:
+    """Confirma as quatro cotas de planta como anotação: sem associação e fora do solver."""
+    return client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": f"chain-readings-{base_version}"},
+        json={
+            "base_version": base_version,
+            "decisions": [
+                {
+                    "reading_id": reading_id,
+                    "action": "confirm",
+                    "justification": "Cota de planta conferida na folha.",
+                    "annotation": True,
+                }
+                for reading_id in (
+                    "rd_5555555555555555",
+                    "rd_6666666666666666",
+                    "rd_7777777777777777",
+                    "rd_8888888888888888",
+                )
+            ],
+        },
+    )
+
+
+def _declare_chain(
+    client: TestClient,
+    job_id: UUID,
+    *,
+    base_version: int,
+    key: str,
+    total_id: str = "rd_5555555555555555",
+    part_ids: tuple[str, ...] = ("rd_6666666666666666", "rd_7777777777777777"),
+) -> Any:
+    return client.post(
+        f"/v1/jobs/{job_id}/review/chains",
+        headers={**_headers("tenant-a"), "Idempotency-Key": key},
+        json={
+            "base_version": base_version,
+            "action": "declare",
+            "total_id": total_id,
+            "part_ids": list(part_ids),
+        },
+    )
+
+
+def test_suggested_chains_only_appear_after_the_readings_are_confirmed(tmp_path: Path) -> None:
+    """A sugestão é aritmética sobre leitura CONFIRMADA: sem decisão humana não há soma."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+
+    before = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("tenant-a")).json()
+    assert before["suggested_chains"] == []
+    assert before["declared_chains"] == []
+
+    confirmed = _confirm_chain_readings(client, job_id)
+    assert confirmed.status_code == 200
+    suggested = confirmed.json()["suggested_chains"]
+
+    assert len(suggested) == 1
+    assert suggested[0]["total"]["reading_id"] == "rd_5555555555555555"
+    assert {part["reading_id"] for part in suggested[0]["parts"]} == {
+        "rd_6666666666666666",
+        "rd_7777777777777777",
+    }
+    # Decimal viaja como string: o valor escrito na cota não pode passar por float.
+    assert suggested[0]["residual_m"] == "0.00"
+    assert isinstance(suggested[0]["tolerance_m"], str)
+
+
+def test_declared_chain_that_closes_is_recorded_without_touching_the_blockers(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    confirmed = _confirm_chain_readings(client, job_id)
+    assert confirmed.status_code == 200
+    blockers_before = confirmed.json()["blockers"]
+
+    declared = _declare_chain(client, job_id, base_version=2, key="chain-declare")
+
+    assert declared.status_code == 200
+    assert declared.json()["version"] == 3
+    chains = declared.json()["declared_chains"]
+    assert len(chains) == 1
+    assert chains[0]["status"] == "closes"
+    assert chains[0]["issue"] is None
+    assert chains[0]["declared_by"] == "reviewer"
+    assert chains[0]["chain"]["total"]["reading_id"] == "rd_5555555555555555"
+    # Conferência de cota não é veto de exportação: a lista de blockers é a mesma.
+    assert declared.json()["blockers"] == blockers_before
+
+
+def test_declared_chain_that_does_not_close_is_a_warning_and_never_a_blocker(
+    tmp_path: Path,
+) -> None:
+    """Declarar cadeia que NÃO fecha é o caso desejado: é ela que denuncia o trecho faltando."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    confirmed = _confirm_chain_readings(client, job_id)
+    assert confirmed.status_code == 200
+    blockers_before = confirmed.json()["blockers"]
+
+    declared = _declare_chain(
+        client,
+        job_id,
+        base_version=2,
+        key="chain-mismatch",
+        part_ids=("rd_6666666666666666", "rd_8888888888888888"),
+    )
+
+    assert declared.status_code == 200
+    chains = declared.json()["declared_chains"]
+    assert chains[0]["status"] == "mismatch"
+    assert chains[0]["issue"]["code"] == "DIMENSION_CHAIN_MISMATCH"
+    assert chains[0]["issue"]["severity"] == "warning"
+    assert chains[0]["chain"]["residual_m"] == "-10.90"
+    assert declared.json()["blockers"] == blockers_before
+    assert "DIMENSION_CHAIN_MISMATCH" not in declared.json()["blockers"]
+
+
+def test_chain_refuses_what_cannot_be_assembled_and_a_stale_base_version(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    assert _confirm_chain_readings(client, job_id).status_code == 200
+    endpoint = f"/v1/jobs/{job_id}/review/chains"
+
+    unconfirmed = _declare_chain(
+        client,
+        job_id,
+        base_version=2,
+        key="chain-unconfirmed",
+        part_ids=("rd_6666666666666666", "rd_1111111111111111"),
+    )
+    assert unconfirmed.status_code == 422
+    assert unconfirmed.json()["detail"]["code"] == "CHAIN_INVALID"
+    assert "rd_1111111111111111" in unconfirmed.json()["detail"]["detail"]
+
+    single_part = _declare_chain(
+        client,
+        job_id,
+        base_version=2,
+        key="chain-single-part",
+        part_ids=("rd_6666666666666666",),
+    )
+    assert single_part.status_code == 422
+    assert single_part.json()["detail"]["code"] == "CHAIN_INVALID"
+
+    without_total = client.post(
+        endpoint,
+        headers={**_headers("tenant-a"), "Idempotency-Key": "chain-no-total"},
+        json={
+            "base_version": 2,
+            "action": "declare",
+            "part_ids": ["rd_6666666666666666", "rd_7777777777777777"],
+        },
+    )
+    assert without_total.status_code == 422
+    assert without_total.json()["detail"]["code"] == "CHAIN_INVALID"
+
+    stale = _declare_chain(client, job_id, base_version=1, key="chain-stale")
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "REVISION_CONFLICT"
+
+    other_tenant = client.post(
+        endpoint,
+        headers={**_headers("tenant-b"), "Idempotency-Key": "chain-other-tenant"},
+        json={
+            "base_version": 2,
+            "action": "declare",
+            "total_id": "rd_5555555555555555",
+            "part_ids": ["rd_6666666666666666", "rd_7777777777777777"],
+        },
+    )
+    assert other_tenant.status_code == 404
+
+
+def test_retracting_a_chain_removes_it_and_an_unknown_id_is_not_found(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    assert _confirm_chain_readings(client, job_id).status_code == 200
+    declared = _declare_chain(client, job_id, base_version=2, key="chain-to-retract")
+    assert declared.status_code == 200
+    chain_id = declared.json()["declared_chains"][0]["chain_id"]
+    assert chain_id.startswith("ch_")
+    endpoint = f"/v1/jobs/{job_id}/review/chains"
+
+    unknown = client.post(
+        endpoint,
+        headers={**_headers("tenant-a"), "Idempotency-Key": "chain-retract-unknown"},
+        json={"base_version": 3, "action": "retract", "chain_id": "ch_0000000000000000"},
+    )
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"]["code"] == "CHAIN_NOT_FOUND"
+
+    retracted = client.post(
+        endpoint,
+        headers={**_headers("tenant-a"), "Idempotency-Key": "chain-retract"},
+        json={"base_version": 3, "action": "retract", "chain_id": chain_id},
+    )
+    assert retracted.status_code == 200
+    assert retracted.json()["declared_chains"] == []
+    assert retracted.json()["version"] == 4
+
+
+def test_rectified_reading_makes_the_chain_stale_and_a_later_decision_keeps_it(
+    tmp_path: Path,
+) -> None:
+    """A cadeia declarada não some quando o chão sai de baixo dela — ela avisa.
+
+    E nenhuma decisão posterior a apaga: sem o carry-forward de `declared_chains_json`,
+    a declaração evaporaria na revisão seguinte sem ninguém retratá-la.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    assert _confirm_chain_readings(client, job_id).status_code == 200
+    declared = _declare_chain(client, job_id, base_version=2, key="chain-before-rect")
+    assert declared.status_code == 200
+
+    # Uma decisão sobre outra leitura NÃO pode apagar a cadeia declarada.
+    decided = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "chain-carry-forward"},
+        json={
+            "base_version": 3,
+            "decisions": [
+                {
+                    "reading_id": "rd_1111111111111111",
+                    "action": "confirm",
+                    "justification": "Evidência sintética revisada.",
+                    "association_proposal_id": "vp_1111111111111111",
+                }
+            ],
+        },
+    )
+    assert decided.status_code == 200
+    assert len(decided.json()["declared_chains"]) == 1
+    assert decided.json()["declared_chains"][0]["status"] == "closes"
+
+    previous_decision_id = _current_decision_id(client, job_id, "rd_6666666666666666")
+    rectified = client.post(
+        f"/v1/jobs/{job_id}/review/rectifications",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "chain-rectify"},
+        json={
+            "base_version": 4,
+            "rectifications": [
+                {
+                    "reading_id": "rd_6666666666666666",
+                    "action": "reject",
+                    "rectifies_decision_id": previous_decision_id,
+                    "justification": "O 12,00 é de outra folha; não vale para este croqui.",
+                }
+            ],
+        },
+    )
+
+    assert rectified.status_code == 200
+    chains = rectified.json()["declared_chains"]
+    assert len(chains) == 1
+    assert chains[0]["status"] == "stale"
+    assert chains[0]["chain"] is None
+    assert chains[0]["issue"]["code"] == "CHAIN_READING_SUPERSEDED"
+    assert chains[0]["issue"]["severity"] == "warning"
+    assert "CHAIN_READING_SUPERSEDED" not in rectified.json()["blockers"]
+
+    # Cadeia vencida continua retratável: é o único jeito de tirá-la da tela.
+    retracted = client.post(
+        f"/v1/jobs/{job_id}/review/chains",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "chain-retract-stale"},
+        json={
+            "base_version": 5,
+            "action": "retract",
+            "chain_id": chains[0]["chain_id"],
+        },
+    )
+    assert retracted.status_code == 200
+    assert retracted.json()["declared_chains"] == []
+
+
+def test_idempotent_replay_of_a_response_stored_before_the_chain_fields(tmp_path: Path) -> None:
+    """Resposta gravada antes dos campos existirem é revalidada no replay — e não pode quebrar."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    payload = {
+        "base_version": 1,
+        "decisions": [
+            {
+                "reading_id": "rd_1111111111111111",
+                "action": "confirm",
+                "justification": "Conferido no material protegido.",
+                "association_proposal_id": "vp_1111111111111111",
+            }
+        ],
+    }
+    headers = {**_headers("tenant-a"), "Idempotency-Key": "chain-legacy-replay"}
+    first = client.post(f"/v1/jobs/{job_id}/review/decisions", headers=headers, json=payload)
+    assert first.status_code == 200
+
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions.begin() as session:
+        record = session.query(IdempotencyRecord).filter_by(key="chain-legacy-replay").one()
+        legacy = dict(record.response_json)
+        legacy.pop("suggested_chains")
+        legacy.pop("declared_chains")
+        record.response_json = legacy
+
+    replayed = client.post(f"/v1/jobs/{job_id}/review/decisions", headers=headers, json=payload)
+
+    assert replayed.status_code == 200
+    assert replayed.json()["suggested_chains"] == []
+    assert replayed.json()["declared_chains"] == []
 
 
 def test_confirmed_associations_create_only_a_blocked_draft_scene(tmp_path: Path) -> None:

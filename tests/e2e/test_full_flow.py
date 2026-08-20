@@ -179,6 +179,10 @@ def test_authenticated_flow_reaches_an_audited_package(
         {"code": SCOPE_CRITERION, "text": SCOPE_CRITERION_TEXT}
     ]
     assert any("HUMAN_CONFIRMATION_REQUIRED" in item for item in review.json()["blockers"])
+    # A conferência de cadeias viaja na mesma resposta desde o começo: sem leitura
+    # confirmada as duas listas estão vazias, e nenhuma delas vira blocker.
+    assert review.json()["suggested_chains"] == []
+    assert review.json()["declared_chains"] == []
 
     # 5. Decisão humana com associação explícita: só então nasce a cena métrica.
     solved = client.post(

@@ -174,6 +174,19 @@ digest/página, decisões imutáveis de propostas e a calibração corrente. Geo
 de proposta permanecem em `source_image_pixels`; imagens e URLs privadas não são
 incluídas nesse objeto.
 
+A resposta traz ainda a conferência aritmética das cotas confirmadas umas contra as
+outras, em dois campos que nunca entram em `blockers`:
+
+- `suggested_chains`: somas que fecham dentro da tolerância, calculadas na leitura.
+  São sugestões para uma pessoa olhar — a maioria pode ser coincidência aritmética —
+  e nenhuma delas vira restrição de geometria sozinha.
+- `declared_chains`: as cadeias que uma pessoa declarou, reconferidas contra o pacote
+  corrente a cada leitura. Cada item traz `chain_id`, `declared_by`, `declared_at`,
+  `chain`, `status` (`closes`, `mismatch` ou `stale`) e `issue`. `mismatch` carrega
+  `DIMENSION_CHAIN_MISMATCH` (severidade `warning`) e `stale` carrega
+  `CHAIN_READING_SUPERSEDED` com `chain` nulo: uma cota participante deixou de estar
+  confirmada depois da declaração, e a cadeia avisa em vez de sumir.
+
 Cada leitura de `packet.readings` carrega `annotation_suggested`: `true` quando o
 pipeline leu a linha como **anotação da folha** — um recado escrito, não a medida de um
 elemento:
@@ -337,6 +350,37 @@ A resposta é a mesma de `GET /v1/jobs/{job_id}/review`; o impacto viaja em `iss
 decisão), `409 RECTIFICATION_TARGET_STALE` (o alvo não é a decisão vigente),
 `422 RECTIFICATION_ALREADY_APPLIED` (a correção não muda nada), `409 REVISION_CONFLICT`,
 `422 DOMAIN_VALIDATION_FAILED`, `403 FORBIDDEN`, `404 NOT_FOUND` e
+`409 JOB_NOT_READY`.
+
+### `POST /v1/jobs/{job_id}/review/chains`
+
+Declara ou retrata uma cadeia de cotas: estas parcelas partilham este total. O motor
+sugere; quem afirma é uma pessoa.
+
+```json
+{
+  "base_version": 3,
+  "action": "declare",
+  "total_id": "rd_...",
+  "part_ids": ["rd_...", "rd_..."]
+}
+```
+
+`action` é `declare` ou `retract`. Declarar exige `total_id` e pelo menos duas
+`part_ids`, todas de leituras **confirmadas**; retratar exige `chain_id` e funciona
+também para cadeia `stale`. Revisor, papel e horário vêm do JWT e do relógio do
+servidor, e o comando exige papel profissional elegível e `Idempotency-Key`.
+
+Uma cadeia que **não fecha** é declarável de propósito: o desencontro entre a soma e o
+total é justamente o achado, e ele viaja como `warning` em `declared_chains`, nunca em
+`blockers`. O comando cria uma revisão de leitura nova (`version + 1`) carregando todo
+o resto verbatim — pacote, associações, calibração, aceite de traçado e cena não são
+tocados.
+
+A resposta é a mesma de `GET /v1/jobs/{job_id}/review`. Erros: `422 CHAIN_INVALID` (a
+cadeia não pode ser montada — menos de duas parcelas, leitura repetida, total que é
+parcela de si mesmo ou leitura ainda não confirmada), `404 CHAIN_NOT_FOUND` (retração
+de cadeia inexistente), `409 REVISION_CONFLICT`, `403 FORBIDDEN`, `404 NOT_FOUND` e
 `409 JOB_NOT_READY`.
 
 ### Calibração e decisões de proposta

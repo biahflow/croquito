@@ -422,6 +422,52 @@ def test_refresh_recomputes_associations_and_bumps_review_version(tmp_path: Path
         )
 
 
+def test_refresh_carries_the_declared_chains_forward(tmp_path: Path) -> None:
+    """A cadeia declarada é ato humano sobre cotas; o refresh só mexe em pixels.
+
+    `insert_next_review_revision` copia verbatim toda coluna que não seja proposta,
+    associação ou calibração. Uma coluna esquecida ali não falha em lugar nenhum: ela
+    apaga em silêncio o que uma pessoa declarou, e só aparece quando a cadeia some da
+    tela sem ninguém ter retratado nada.
+    """
+    database, database_url, bundle, digest = _seed_v1(tmp_path)
+    declared_chains = [
+        {
+            "chain_id": "ch_0123456789abcdef",
+            "total_id": WIDTH_READING_ID,
+            "part_ids": [HEIGHT_READING_ID, "rd_" + "c" * 16],
+            "declared_by": "reviewer",
+            "declared_role": "engineer",
+            "declared_at": "2026-08-20T12:00:00+00:00",
+        }
+    ]
+    with database.sessions.begin() as session:
+        review = session.query(ReviewRevisionRecord).filter_by(job_id=str(JOB_ID)).one()
+        assert review.declared_chains_json == []
+        review.declared_chains_json = declared_chains
+
+    refined_path = _write_json(
+        tmp_path / "refined.json", _refined_proposals(_proposals(digest=digest), "quality")
+    )
+    result = refresh_proposals(
+        RefreshInputs(
+            job_id=JOB_ID,
+            tenant_id=TENANT_ID,
+            proposals_path=refined_path,
+            image_path=bundle["image"],
+            operator_id="tenant-admin-02",
+        ),
+        _settings(database_url),
+    )
+
+    assert result.review_version_after == 2
+    with database.sessions() as session:
+        next_review = (
+            session.query(ReviewRevisionRecord).filter_by(job_id=str(JOB_ID), version=2).one()
+        )
+        assert next_review.declared_chains_json == declared_chains
+
+
 def test_refresh_refuses_a_second_run_of_the_same_refined_file(tmp_path: Path) -> None:
     database, database_url, bundle, digest = _seed_v1(tmp_path)
     refined = _refined_proposals(_proposals(digest=digest), "quality")

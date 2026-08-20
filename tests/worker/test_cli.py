@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -225,3 +226,185 @@ def test_readings_to_packet_cli_happy_path(
     assert stdout["total_readings"] == 4
     assert (tmp_path / "out" / "review-packet-merged.json").is_file()
     assert (tmp_path / "out" / "merge-report.json").is_file()
+
+
+CHAIN_TOTAL_ID = "rd_5555555555555555"
+CHAIN_PART_IDS = ("rd_6666666666666666", "rd_7777777777777777")
+CHAIN_ODD_ID = "rd_8888888888888888"
+
+
+def _chain_packet(tmp_path: Path) -> Path:
+    """Pacote com quatro cotas de planta confirmadas: 12,00 + 13,90 fecham os 25,90."""
+    from croquito_worker.review import (
+        DimensionReading,
+        EvidenceRegion,
+        HumanDecision,
+        PixelBox,
+        ReadingStatus,
+        ReviewPacket,
+    )
+
+    digest = "c" * 64
+    values = (
+        (CHAIN_TOTAL_ID, "25,90", "25.90", 0),
+        (CHAIN_PART_IDS[0], "12,00", "12.00", 30),
+        (CHAIN_PART_IDS[1], "13,90", "13.90", 60),
+        (CHAIN_ODD_ID, "3,00", "3.00", 90),
+    )
+    packet = ReviewPacket(
+        dataset_id="chain-fixture",
+        page_number=1,
+        image_sha256=digest,
+        readings=[
+            DimensionReading(
+                id=reading_id,
+                evidence=EvidenceRegion(
+                    dataset_id="chain-fixture",
+                    page_number=1,
+                    image_sha256=digest,
+                    bbox=PixelBox(left=left, top=5, right=left + 20, bottom=15),
+                ),
+                raw_text=raw_text,
+                value_si=Decimal(value_si),
+                unit="m",
+                kind="length",
+                written_decimals=2,
+                target_hint="cadeia sintética",
+                extractor="local-fixture",
+                extractor_version="v1",
+                status=ReadingStatus.CONFIRMED,
+                decision=HumanDecision(
+                    decision_id=f"hd_{index}{'a' * 15}",
+                    action="confirm",
+                    reviewer_id="reviewer",
+                    reviewer_role="engineer",
+                    decided_at=datetime.now(UTC),
+                    note="Cota de planta conferida na folha.",
+                ),
+            )
+            for index, (reading_id, raw_text, value_si, left) in enumerate(values)
+        ],
+        safety_notes=["Fixture local.", "Revisão humana obrigatória."],
+    )
+    path = tmp_path / "reviewed-packet.json"
+    path.write_text(
+        json.dumps(packet.model_dump(mode="json"), ensure_ascii=False), encoding="utf-8"
+    )
+    return path
+
+
+def test_check_chains_suggests_and_writes_the_same_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    packet_path = _chain_packet(tmp_path)
+    output = tmp_path / "cadeias" / "sugestoes.json"
+
+    code = _run_main(
+        monkeypatch,
+        ["check-chains", "--packet", str(packet_path), "--output", str(output)],
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["suggestions"] == 1
+    assert payload["safety_status"] == "observational_only"
+    assert payload["chains"][0]["total"]["reading_id"] == CHAIN_TOTAL_ID
+    assert {part["reading_id"] for part in payload["chains"][0]["parts"]} == set(CHAIN_PART_IDS)
+    assert json.loads(output.read_text(encoding="utf-8")) == payload
+
+
+def test_check_chains_verifies_a_declared_chain_that_closes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    packet_path = _chain_packet(tmp_path)
+
+    code = _run_main(
+        monkeypatch,
+        [
+            "check-chains",
+            "--packet",
+            str(packet_path),
+            "--total",
+            CHAIN_TOTAL_ID,
+            "--part",
+            CHAIN_PART_IDS[0],
+            "--part",
+            CHAIN_PART_IDS[1],
+        ],
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload == {
+        "closes": True,
+        "residual_m": "0.00",
+        "tolerance_m": "0.015",
+        "issue": None,
+    }
+
+
+def test_check_chains_reports_a_mismatch_without_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Divergência sai com 0: o comando não é mais duro que o produto, onde ela é aviso."""
+    packet_path = _chain_packet(tmp_path)
+
+    code = _run_main(
+        monkeypatch,
+        [
+            "check-chains",
+            "--packet",
+            str(packet_path),
+            "--total",
+            CHAIN_TOTAL_ID,
+            "--part",
+            CHAIN_PART_IDS[0],
+            "--part",
+            CHAIN_ODD_ID,
+        ],
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["closes"] is False
+    assert payload["residual_m"] == "-10.90"
+    assert payload["issue"]["code"] == "DIMENSION_CHAIN_MISMATCH"
+    assert payload["issue"]["severity"] == "warning"
+
+
+def test_check_chains_fails_on_a_chain_that_cannot_be_assembled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    packet_path = _chain_packet(tmp_path)
+
+    code = _run_main(
+        monkeypatch,
+        [
+            "check-chains",
+            "--packet",
+            str(packet_path),
+            "--total",
+            CHAIN_TOTAL_ID,
+            "--part",
+            CHAIN_PART_IDS[0],
+        ],
+    )
+
+    assert code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "pelo menos duas parcelas" in captured.err
+
+
+def test_check_chains_refuses_parts_without_a_total(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    packet_path = _chain_packet(tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        _run_main(
+            monkeypatch,
+            ["check-chains", "--packet", str(packet_path), "--part", CHAIN_PART_IDS[0]],
+        )
+
+    assert excinfo.value.code == 2

@@ -28,6 +28,7 @@ from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
 from croquito_worker.tracing import TraceAcceptance
 from tests.bundles import (
     CIRCLE_PROPOSAL_ID,
+    CIRCLE_READING_ID,
     HEIGHT_PROPOSAL_ID,
     HEIGHT_READING_ID,
     WIDTH_PROPOSAL_ID,
@@ -181,6 +182,20 @@ def test_trace_solve_creates_the_scene_and_records_the_acceptance(
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
     database, database_url = _seed(tmp_path)
+    declared_chains = [
+        {
+            "chain_id": "ch_0123456789abcdef",
+            "total_id": WIDTH_READING_ID,
+            "part_ids": [HEIGHT_READING_ID, CIRCLE_READING_ID],
+            "declared_by": "eng-trace",
+            "declared_role": "engineer",
+            "declared_at": "2026-08-20T12:00:00+00:00",
+        }
+    ]
+    with database.sessions.begin() as session:
+        base = session.get(ReviewRevisionRecord, REVIEW_ID)
+        assert base is not None
+        base.declared_chains_json = declared_chains
     worker, queue = _worker(database_url, _message())
 
     assert worker.run_once() == 1
@@ -217,6 +232,9 @@ def test_trace_solve_creates_the_scene_and_records_the_acceptance(
         assert acceptance["acceptance_id"] == _acceptance().acceptance_id
         assert acceptance["reviewer_id"] == "eng-trace"
         assert review_record.trace_acceptance_json["scene_revision_id"] == scene_record.id
+        # A cadeia declarada é ato humano sobre cotas: o traçado não decide cota nenhuma
+        # e não pode fazê-la evaporar na revisão que ele cria.
+        assert review_record.declared_chains_json == declared_chains
         base_record = session.get(ReviewRevisionRecord, REVIEW_ID)
         assert base_record is not None
         # O snapshot da revisão continua íntegro: o traçado não reescreve evidência.

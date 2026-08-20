@@ -76,6 +76,7 @@ def insert_review_revision_v1(
         "associations": json.dumps(associations.model_dump(mode="json")),
         "proposals": json.dumps(proposals.model_dump(mode="json")),
         "selected_associations": json.dumps({}),
+        "declared_chains": json.dumps([]),
         "evidence_refs": json.dumps(evidence_refs),
         "solver_blockers": json.dumps(solver_blockers),
         "required_blockers": json.dumps(required_blocker_codes),
@@ -93,7 +94,8 @@ def insert_review_revision_v1(
             "INSERT INTO review_revisions "
             "(id, tenant_id, job_id, version, parent_review_id, packet_json, "
             "associations_json, proposals_json, selected_associations_json, "
-            "calibration_json, proposal_decisions_json, evidence_refs_json, "
+            "declared_chains_json, calibration_json, proposal_decisions_json, "
+            "evidence_refs_json, "
             "solver_request_json, solver_blockers_json, required_blocker_codes_json, "
             "required_criteria_texts_json, scene_revision_id, created_by, created_at) "
             "VALUES (:id, :tenant_id, :job_id, 1, NULL, "
@@ -101,6 +103,7 @@ def insert_review_revision_v1(
             f"{json_expression(dialect, 'associations')}, "
             f"{json_expression(dialect, 'proposals')}, "
             f"{json_expression(dialect, 'selected_associations')}, "
+            f"{json_expression(dialect, 'declared_chains')}, "
             "NULL, NULL, "
             f"{json_expression(dialect, 'evidence_refs')}, "
             f"{solver_request_expression}, "
@@ -148,6 +151,10 @@ def insert_next_review_revision(
         "associations_json": associations_json,
         "proposals_json": proposals_json,
         "selected_associations_json": json_column(base_review["selected_associations_json"]),
+        # A cadeia declarada é ato humano da revisão anterior e viaja verbatim: o refresh
+        # de propostas não decide nada sobre cotas, e perder a declaração aqui apagaria em
+        # silêncio o que uma pessoa afirmou.
+        "declared_chains_json": json_column(base_review["declared_chains_json"]),
         "calibration_json": calibration_json,
         "proposal_decisions_json": json_column(base_review["proposal_decisions_json"]),
         "trace_acceptance_json": json_column(base_review["trace_acceptance_json"]),
@@ -165,6 +172,7 @@ def insert_next_review_revision(
             "INSERT INTO review_revisions "
             "(id, tenant_id, job_id, version, parent_review_id, packet_json, "
             "associations_json, proposals_json, selected_associations_json, "
+            "declared_chains_json, "
             "calibration_json, proposal_decisions_json, trace_acceptance_json, "
             "evidence_refs_json, solver_request_json, solver_blockers_json, "
             "required_blocker_codes_json, required_criteria_texts_json, "
@@ -172,6 +180,7 @@ def insert_next_review_revision(
             "VALUES (:id, :tenant_id, :job_id, :version, :parent_review_id, "
             f"{expressions['packet_json']}, {expressions['associations_json']}, "
             f"{expressions['proposals_json']}, {expressions['selected_associations_json']}, "
+            f"{expressions['declared_chains_json']}, "
             f"{expressions['calibration_json']}, {expressions['proposal_decisions_json']}, "
             f"{expressions['trace_acceptance_json']}, {expressions['evidence_refs_json']}, "
             f"{expressions['solver_request_json']}, {expressions['solver_blockers_json']}, "

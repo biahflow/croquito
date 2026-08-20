@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from uuid import UUID
 
@@ -56,6 +57,33 @@ def main() -> int:
     associate_command.add_argument("--packet", type=Path, required=True)
     associate_command.add_argument("--proposals", type=Path, required=True)
     associate_command.add_argument("--output", type=Path, required=True)
+    check_chains_command = subcommands.add_parser(
+        "check-chains",
+        help=(
+            "confere cotas confirmadas umas contra as outras: sugere somas que fecham ou "
+            "verifica uma cadeia declarada"
+        ),
+    )
+    check_chains_command.add_argument("--packet", type=Path, required=True)
+    check_chains_command.add_argument(
+        "--output", type=Path, help="grava o mesmo JSON impresso na saída padrão"
+    )
+    check_chains_command.add_argument(
+        "--total", help="leitura confirmada que é o total da cadeia declarada"
+    )
+    check_chains_command.add_argument(
+        "--part",
+        action="append",
+        default=[],
+        dest="parts",
+        help="parcela da cadeia declarada; repita a opção (mínimo duas)",
+    )
+    check_chains_command.add_argument(
+        "--max-terms", type=int, default=4, help="teto de parcelas por sugestão"
+    )
+    check_chains_command.add_argument(
+        "--limit", type=int, default=12, help="teto de sugestões devolvidas"
+    )
     solve_rectangle_command = subcommands.add_parser(
         "solve-rectangle",
         help="soluciona um retângulo somente com leituras humanamente confirmadas",
@@ -758,6 +786,47 @@ def main() -> int:
                 ensure_ascii=False,
             )
         )
+        return 0
+    if args.command == "check-chains":
+        from croquito_worker.dimension_closure import (
+            ChainVerificationError,
+            suggest_chains,
+            verify_chain,
+        )
+        from croquito_worker.review import load_review_packet
+
+        packet = load_review_packet(args.packet)
+        if args.total is None:
+            if args.parts:
+                parser.error("--part exige --total: sem o total não há cadeia para conferir")
+            chains = suggest_chains(packet, max_terms=args.max_terms, limit=args.limit)
+            chain_payload: dict[str, object] = {
+                "suggestions": len(chains),
+                "chains": [chain.model_dump(mode="json") for chain in chains],
+                # O comando não confirma nada: sugestão é candidata para uma pessoa olhar,
+                # e a cadeia só nasce de uma declaração humana.
+                "safety_status": "observational_only",
+            }
+        else:
+            try:
+                chain = verify_chain(packet, total_id=args.total, part_ids=list(args.parts))
+            except ChainVerificationError as chain_error:
+                print(str(chain_error), file=sys.stderr)
+                return 1
+            issue = chain.issue()
+            chain_payload = {
+                "closes": chain.closes,
+                "residual_m": str(chain.residual_m),
+                "tolerance_m": str(chain.tolerance_m),
+                "issue": issue.model_dump(mode="json") if issue is not None else None,
+            }
+        rendered = json.dumps(chain_payload, ensure_ascii=False)
+        print(rendered)
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered + "\n", encoding="utf-8")
+        # Cadeia que não fecha sai com 0: o comando não é mais duro que o produto, onde a
+        # divergência é aviso para o revisor e nunca bloqueia a exportação.
         return 0
     if args.command == "solve-rectangle":
         from croquito_worker.rectangle_solver import (

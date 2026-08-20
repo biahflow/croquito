@@ -162,6 +162,14 @@ class ReviewRevisionRecord(Base):
     associations_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     proposals_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     selected_associations_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    declared_chains_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    """Cadeias de cotas que uma pessoa DECLAROU partilharem o mesmo total.
+
+    Guarda só a declaração (`chain_id`, `total_id`, `part_ids`, autoria e instante); o
+    resultado da conferência é recomputado contra o pacote corrente a cada leitura, para
+    que a correção de uma leitura participante apareça como cadeia vencida em vez de
+    continuar afirmando um fechamento que já não existe.
+    """
     calibration_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     proposal_decisions_json: Mapped[list[dict[str, Any]] | None] = mapped_column(
         JSON, nullable=True

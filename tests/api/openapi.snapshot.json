@@ -570,6 +570,31 @@
         "title": "BuildValuationCalcRequest",
         "type": "object"
       },
+      "ChainTerm": {
+        "additionalProperties": false,
+        "properties": {
+          "raw_text": {
+            "title": "Raw Text",
+            "type": "string"
+          },
+          "reading_id": {
+            "title": "Reading Id",
+            "type": "string"
+          },
+          "value_m": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Value M",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reading_id",
+          "value_m",
+          "raw_text"
+        ],
+        "title": "ChainTerm",
+        "type": "object"
+      },
       "ChatAnchors": {
         "additionalProperties": false,
         "description": "O que o profissional apontou ao perguntar; nada é inferido por proximidade.",
@@ -1752,6 +1777,62 @@
         "title": "DecideProposalRequest",
         "type": "object"
       },
+      "DeclaredChainResponse": {
+        "additionalProperties": false,
+        "description": "Uma cadeia declarada por uma pessoa, reconferida contra o pacote de hoje.\n\nO que fica gravado é a declaração; `chain`, `status` e `issue` são recomputados a\ncada leitura. Por isso existe `stale`: a cota participante pode ter sido retificada\nou rejeitada depois, e nesse caso a cadeia não é apagada — ela passa a avisar que\nperdeu o pé, e cabe a uma pessoa retratá-la ou declará-la de novo.",
+        "properties": {
+          "chain": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DimensionChain"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "chain_id": {
+            "title": "Chain Id",
+            "type": "string"
+          },
+          "declared_at": {
+            "format": "date-time",
+            "title": "Declared At",
+            "type": "string"
+          },
+          "declared_by": {
+            "title": "Declared By",
+            "type": "string"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Issue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "closes",
+              "mismatch",
+              "stale"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chain_id",
+          "declared_by",
+          "declared_at",
+          "status"
+        ],
+        "title": "DeclaredChainResponse",
+        "type": "object"
+      },
       "DerivedDimensionRequest": {
         "additionalProperties": false,
         "description": "Pedido do revisor para cotar um trecho desenhado com o valor da geometria resolvida.\n\nO 1,50 do recuo da mureta não está escrito na folha — é consequência de 4,80 e 3,30\nconfirmados. A cota sai `derived`: o número vem do solver, não de leitura humana.",
@@ -1833,6 +1914,41 @@
           "angle"
         ],
         "title": "DiameterDimensionGeometry",
+        "type": "object"
+      },
+      "DimensionChain": {
+        "additionalProperties": false,
+        "description": "Uma soma de trechos comparada com um total, ambos lidos da folha.",
+        "properties": {
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/ChainTerm"
+            },
+            "minItems": 2,
+            "title": "Parts",
+            "type": "array"
+          },
+          "residual_m": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Residual M",
+            "type": "string"
+          },
+          "tolerance_m": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Tolerance M",
+            "type": "string"
+          },
+          "total": {
+            "$ref": "#/components/schemas/ChainTerm"
+          }
+        },
+        "required": [
+          "total",
+          "parts",
+          "residual_m",
+          "tolerance_m"
+        ],
+        "title": "DimensionChain",
         "type": "object"
       },
       "DimensionGeometry": {
@@ -4076,6 +4192,65 @@
         "title": "RequiredCriterion",
         "type": "object"
       },
+      "ReviewChainCommand": {
+        "additionalProperties": false,
+        "description": "Declara ou retrata uma cadeia de cotas: estas parcelas partilham este total.\n\nA declaração é do humano, não do motor: `suggest_chains` só oferece candidatos, e é\naqui que alguém assume que a soma tem significado no desenho. Cadeia que NÃO fecha é\ndeclarável de propósito — o desencontro é justamente o que se quer registrar.",
+        "properties": {
+          "action": {
+            "enum": [
+              "declare",
+              "retract"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "chain_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chain Id"
+          },
+          "part_ids": {
+            "items": {
+              "pattern": "^rd_[a-f0-9]{16}$",
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Part Ids",
+            "type": "array"
+          },
+          "total_id": {
+            "anyOf": [
+              {
+                "pattern": "^rd_[a-f0-9]{16}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Id"
+          }
+        },
+        "required": [
+          "base_version",
+          "action"
+        ],
+        "title": "ReviewChainCommand",
+        "type": "object"
+      },
       "ReviewChatOutput": {
         "additionalProperties": false,
         "description": "Resposta de uma pergunta do profissional sobre a folha em revisão.\n\nÉ observação como qualquer outra saída de provider: nada aqui confirma leitura, cria\nassociação ou libera exportação — `proposed_acts` são **rascunhos** dos payloads que\nos endpoints existentes já aceitam, e cada um só vale depois do ato humano.\n\n`answer_text` não pode carregar valor novo de medida. Isso não é verificável por regex\nconfiável (a folha tem números legítimos que o texto pode citar por `reading_id`), então\na regra vive no template e no contrato documentado, não num validador que daria falsa\ngarantia.",
@@ -4374,6 +4549,13 @@
               }
             ]
           },
+          "declared_chains": {
+            "items": {
+              "$ref": "#/components/schemas/DeclaredChainResponse"
+            },
+            "title": "Declared Chains",
+            "type": "array"
+          },
           "issues": {
             "items": {
               "$ref": "#/components/schemas/Issue"
@@ -4441,6 +4623,13 @@
             },
             "title": "Selected Associations",
             "type": "object"
+          },
+          "suggested_chains": {
+            "items": {
+              "$ref": "#/components/schemas/DimensionChain"
+            },
+            "title": "Suggested Chains",
+            "type": "array"
           },
           "version": {
             "title": "Version",
@@ -7705,6 +7894,81 @@
           }
         ],
         "summary": "Create Proposal Calibration",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/review/chains": {
+      "post": {
+        "description": "Declara (ou retrata) que estas parcelas partilham este total.\n\nO motor sugere; quem afirma é uma pessoa. Cadeia que NÃO fecha é declarável de\npropósito: o desencontro entre a soma e o total é exatamente o achado — falta um\ntrecho na folha, ou uma das medidas está incompleta. Por isso nada aqui entra em\n`blockers`, e o export continua decidido pelo portão da cena.\n\nComo as vizinhas, cria uma revisão de leitura nova em vez de editar a corrente:\ndeclarar e retratar são atos humanos, e o histórico de cada um fica na revisão em\nque aconteceu.",
+        "operationId": "declare_review_chain_v1_jobs__job_id__review_chains_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewChainCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Declare Review Chain",
         "tags": [
           "review"
         ]
