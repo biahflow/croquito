@@ -82,9 +82,13 @@ por task estão nos Build Reports. Estado final integrado antes do rebase:
 - Copy da jornada é rascunho (gate humano aberto por declaração do pacote aprovado).
 - Layout impresso ainda não conferido contra o exemplar real da prefeitura.
 
-## Gates humanos pendentes
+## Gates humanos
 
-1. Aceite do [ADR-0038](../../adr/0038-bdi-como-conceito-de-pre-licitacao.md).
-2. Copy final e conferência contra o exemplar real (declarados no pacote aprovado).
-3. `.DBF` real da EMOP (assinatura GRE) — a jornada roda com fixture sintética até lá.
-4. Merge na main (coordenado com a sessão de traçado) e deploy.
+1. Aceite do [ADR-0038](../../adr/0038-bdi-como-conceito-de-pre-licitacao.md) —
+   **exercido em 2026-08-20** (junto com a decisão de merge).
+2. Copy final e conferência contra o exemplar real (declarados no pacote aprovado) —
+   **pendentes**.
+3. `.DBF` real da EMOP (assinatura GRE) — **pendente**; a jornada roda com fixture
+   sintética até lá.
+4. Merge na main — **autorizado por ato humano em 2026-08-20**; deploy segue a esteira
+   da rodada.

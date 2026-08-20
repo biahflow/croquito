@@ -188,7 +188,8 @@ para submissão. Sem CLI.
    design — exercido em 2026-08-20, revisão 1 aprovada: [`mock/`](mock/README.md).
    Copy final e conferência contra o exemplar real permanecem abertas.
 3. **Aceite do ADR** que estende a fronteira do ADR-0027 com o BDI:
-   [ADR-0038](../../adr/0038-bdi-como-conceito-de-pre-licitacao.md), Proposed.
+   [ADR-0038](../../adr/0038-bdi-como-conceito-de-pre-licitacao.md) — **aceito por
+   ato humano em 2026-08-20**.
 4. **Obtenção do `.DBF` real da EMOP** (assinatura GRE).
 5. **Merge e deploy**.
 

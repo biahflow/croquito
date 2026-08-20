@@ -57,7 +57,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0035](0035-suite-hospedada-openai-anthropic-direto.md) | Suite hospedada de providers: OpenAI e Anthropic diretos, sem AWS | Proposed |
 | [0036](0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md) | Autorização de IA contratual, sem allowlist documental por digest | Proposed |
 | [0037](0037-document-ai-como-braco-de-ocr.md) | Document AI como braço de OCR da suite hospedada | Proposed |
-| [0038](0038-bdi-como-conceito-de-pre-licitacao.md) | BDI como conceito de pré-licitação | Proposed |
+| [0038](0038-bdi-como-conceito-de-pre-licitacao.md) | BDI como conceito de pré-licitação | Accepted |
 
 ## Processo
 

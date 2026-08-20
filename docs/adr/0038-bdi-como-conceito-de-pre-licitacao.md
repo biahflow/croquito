@@ -1,7 +1,7 @@
 # ADR-0038: BDI como conceito de pré-licitação
 
-Status: Proposed  
-Data: 2026-08-20  
+Status: Accepted  
+Data: 2026-08-20 (aceito por ato humano na mesma data)  
 Responsável: Product / Engineering
 
 ## Contexto
