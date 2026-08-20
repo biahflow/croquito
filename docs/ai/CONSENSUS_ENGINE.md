@@ -2,7 +2,7 @@
 
 Status: Accepted for MVP  
 Responsável: AI / Geometry Engineering  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-19
 
 ## Objetivo
 
@@ -21,26 +21,35 @@ Nenhum normalizador corrige dígito por plausibilidade.
 
 ## Matching
 
-Leituras A/B são candidatas ao mesmo item quando:
+Implementado em `pair_readings_by_evidence` (`provider_review.py`): casamento guloso
+1:1 pelo centro do bbox da EVIDÊNCIA, com tolerância normalizada. `kind` e
+`target_hint` ficam **fora** do casamento e do juízo de propósito (revisão de
+2026-08-19, prancha real): o mesmo 25,90 saiu `length` num braço e `width` no outro —
+divergência de vocabulário não é divergência de medida. Elas viram notas
+(`READING_{n}_KIND_DIVERGENCE`), nunca recusa de par. Contrapartes sem par entram na
+nota `PROVIDER_UNMATCHED_COUNTERPART_READINGS:{n}`.
 
-- Bounding polygons se sobrepõem ou referem o mesmo crop.
-- `kind` é compatível.
-- `target_hint` converge para a mesma feature proposta.
+## Concordância
 
-Matching ambíguo gera issue, não greedy assignment irreversível.
+O juízo implementado é um booleano por par (`_readings_agree`), não uma máquina de
+estados. Um par CONCORDA quando:
 
-## Estados de comparação
+- os dois `normalized_value` existem e são iguais como `Decimal` (sem tolerância;
+  `None` nunca concorda); e
+- as unidades são iguais, **ou** a contraparte se absteve (`unknown`) diante de
+  âncora concreta — abstenção não é contradição (V11: o croqui não escreve unidade;
+  o prompt manda `unknown` sem evidência, e um braço obedece enquanto o outro infere
+  a convenção). O par concordante por abstenção carrega
+  `READING_{n}_UNIT_ABSTENTION`: o valor tem duas testemunhas, a unidade tem uma.
 
-| Estado | Condição | Ação |
-|---|---|---|
-| `agreed` | valor, unidade, precisão e alvo materialmente iguais | validar geometria |
-| `text_only_agreed` | texto igual, alvo diverge | reanalisar associação |
-| `value_disagreed` | valores/unidades divergem | escalonar crop |
-| `single_source` | somente um LLM válido | revisão humana |
-| `illegible` | ambos sem leitura | pedir medida/aceitar unresolved |
+Unidades concretas diferentes (`m` × `cm`) são contradição: nota
+`READING_{n}_PROVIDER_DISAGREEMENT` e leitura ambígua.
 
-Valores coincidem somente se iguais na precisão escrita. Tolerância geométrica é
-aplicada pelo solver depois, não pelo consenso OCR.
+O status resultante nunca confirma nada: leitura sai `proposed` somente com os dois
+braços vivos, texto legível e par concordante; qualquer outra combinação (braço
+único, ilegível, divergência, sem par) sai `ambiguous`. Toda leitura segue exigindo
+`HumanDecision` antes de virar geometria. Tolerância geométrica é aplicada pelo
+solver depois, não pelo consenso.
 
 ## Papel do Textract
 

@@ -272,10 +272,25 @@ def pair_readings_by_evidence(
     ]
 
 
+def _unit_abstention(
+    observation: MeasurementReadingOutput, counterpart: MeasurementReadingOutput | None
+) -> bool:
+    """A contraparte não escreveu unidade e a âncora escreveu: abstenção, não contradição.
+
+    Só este sentido conta. Âncora `unknown` contra contraparte concreta NÃO é abstenção aqui,
+    e nem chega a importar: `_unit` recusa `unknown`, então a leitura da âncora sai do laço
+    com `READING_{n}_UNSUPPORTED_UNIT_OR_KIND` e nunca vira `DimensionReading` — a unidade que
+    fica no pacote é sempre a da âncora, e ela precisa ser concreta.
+    """
+    return (
+        counterpart is not None and counterpart.unit == "unknown" and observation.unit != "unknown"
+    )
+
+
 def _readings_agree(
     observation: MeasurementReadingOutput, counterpart: MeasurementReadingOutput | None
 ) -> bool:
-    """Concordância entre um par casado: mesmo valor e mesma unidade, e nada além disso.
+    """Concordância entre um par casado: mesmo valor, e unidade compatível — nada além disso.
 
     `kind` fica de fora de propósito. No V6 o mesmo 25,90 saiu `length` num braço e `width`
     no outro: mesmo lugar, mesmo número, mesma unidade — a mesma cota, com rótulo diferente.
@@ -288,12 +303,26 @@ def _readings_agree(
     número, e cuja igualdade é numérica: "25,90" e 25.9 são o mesmo valor. Nenhuma tolerância
     é aplicada ao número — medida não é arredondada aqui. `None` nunca concorda: ausência de
     valor não é acordo sobre valor.
+
+    **Abstenção de unidade não é contradição** (V11, 2026-08-19, primeira prancha real com os
+    dois braços vivos). O croqui não escreve unidade em cota nenhuma; o prompt manda "use
+    unknown or null when evidence is absent" e o Sol obedece à risca — declarou `unit`
+    `"unknown"` nas 9 leituras —, enquanto o Claude infere `m` da convenção de obra. Exigir
+    unidade IGUAL fazia a contraparte calada derrubar 7 pares cujo VALOR concordava, e o
+    pacote saiu com zero leitura `proposed`. Quem não escreveu unidade não afirmou outra
+    unidade: com o mesmo valor, o par concorda, e a nota `READING_{n}_UNIT_ABSTENTION`
+    registra que o valor tem duas testemunhas e a unidade tem uma.
+
+    Isso não afrouxa a comparação de unidades escritas: `m` contra `cm` continua divergência
+    (`READING_{n}_PROVIDER_DISAGREEMENT`, leitura ambígua), porque aí os dois braços
+    afirmaram, e afirmaram coisas diferentes. Dois `unknown` seguem concordando como qualquer
+    par de unidades iguais.
     """
     if counterpart is None:
         return False
     if observation.normalized_value is None or counterpart.normalized_value is None:
         return False
-    if observation.unit != counterpart.unit:
+    if observation.unit != counterpart.unit and not _unit_abstention(observation, counterpart):
         return False
     return Decimal(observation.normalized_value) == Decimal(counterpart.normalized_value)
 
@@ -507,9 +536,16 @@ def build_provider_review_snapshot(
         if disagreed:
             safety_notes.append(f"READING_{position}_PROVIDER_DISAGREEMENT")
         elif dual and counterpart is not None and counterpart.kind != observation.kind:
-            # Mesmo lugar, mesmo valor, mesma unidade e rótulo diferente: a cota é a mesma e
-            # o `kind` da âncora prevalece, mas a divergência de classificação fica visível.
+            # Mesmo lugar, mesmo valor, unidade compatível e rótulo diferente: a cota é a
+            # mesma e o `kind` da âncora prevalece, mas a divergência de classificação fica
+            # visível.
             safety_notes.append(f"READING_{position}_KIND_DIVERGENCE")
+        if dual and not disagreed and _unit_abstention(observation, counterpart):
+            # Nota própria, fora do encadeamento acima de propósito: ela não substitui a
+            # divergência de `kind`, coexiste com ela. O par concordou, mas quem leu a
+            # unidade foi só a âncora — o revisor precisa ver o valor com duas testemunhas
+            # e a unidade com uma.
+            safety_notes.append(f"READING_{position}_UNIT_ABSTENTION")
         if ocr_ran:
             # Confirmada ou não, a nota é o dado — o status NUNCA é rebaixado por falha de
             # OCR (rotação, normalização): calibrar o status a partir disso é da F-010, não

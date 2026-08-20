@@ -13,7 +13,7 @@ from urllib.error import HTTPError
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from croquito_core.models import MeasurementKind
+from croquito_core.models import MeasurementKind, UnitCode
 from croquito_worker.ocr_eval import run_ocr_corroboration_eval
 from croquito_worker.provider_review import (
     READING_MATCH_MAX_CENTER_DISTANCE,
@@ -452,6 +452,78 @@ def test_readings_agree_compares_value_and_unit_only() -> None:
     assert not _readings_agree(anchor, _counterpart_reading(value=None))
     assert not _readings_agree(_counterpart_reading(value=None), anchor)
     assert not _readings_agree(anchor, None)
+
+
+def test_readings_agree_treats_a_silent_counterpart_unit_as_abstention() -> None:
+    """V11: o croqui não escreve unidade e o Sol devolveu `unknown` nas 9 leituras."""
+    anchor = _counterpart_reading(value="25.90", unit="m")
+
+    # Quem não escreveu unidade não afirmou outra unidade: com o mesmo valor, o par concorda.
+    assert _readings_agree(anchor, _counterpart_reading(value="25.90", unit="unknown"))
+    # Abstenção não vale para valor: número diferente segue divergindo.
+    assert not _readings_agree(anchor, _counterpart_reading(value="25.80", unit="unknown"))
+    assert not _readings_agree(anchor, _counterpart_reading(value=None, unit="unknown"))
+    # Duas unidades escritas e diferentes continuam contradição, não abstenção.
+    assert not _readings_agree(anchor, _counterpart_reading(value="25.90", unit="cm"))
+    # Dois `unknown` já concordavam como qualquer par de unidades iguais.
+    assert _readings_agree(
+        _counterpart_reading(value="25.90", unit="unknown"),
+        _counterpart_reading(value="25.90", unit="unknown"),
+    )
+    # O sentido inverso não é abstenção: a unidade do pacote é a da âncora, e ela precisa ser
+    # concreta (na prática `_unit` já recusa `unknown` e a leitura nem chega a virar cota).
+    assert not _readings_agree(
+        _counterpart_reading(value="25.90", unit="unknown"),
+        _counterpart_reading(value="25.90", unit="m"),
+    )
+
+
+def test_dual_extraction_promotes_a_reading_whose_counterpart_omitted_the_unit(
+    tmp_path: Path,
+) -> None:
+    """V11: 7 de 9 pares tinham o mesmo VALOR e saíram 0 `proposed` por causa da unidade."""
+    snapshot = _snapshot_of(tmp_path, _shuffled_counterpart(unit="unknown"))
+
+    assert snapshot.packet.readings[0].status is ReadingStatus.PROPOSED
+    assert "READING_1_UNIT_ABSTENTION" in snapshot.packet.safety_notes
+    assert "READING_1_PROVIDER_DISAGREEMENT" not in snapshot.packet.safety_notes
+    # A unidade que fica é a da âncora, a única que foi escrita.
+    assert snapshot.packet.readings[0].unit is UnitCode.METRE
+    # A abstenção é por leitura: o par vizinho, com unidade escrita dos dois lados, não a ganha.
+    assert "READING_2_UNIT_ABSTENTION" not in snapshot.packet.safety_notes
+
+
+def test_dual_extraction_keeps_a_written_unit_divergence_ambiguous(tmp_path: Path) -> None:
+    """`m` contra `cm` com o mesmo número: os dois braços afirmaram, e afirmaram diferente."""
+    snapshot = _snapshot_of(tmp_path, _shuffled_counterpart(unit="cm"))
+
+    assert snapshot.packet.readings[0].status is ReadingStatus.AMBIGUOUS
+    assert "READING_1_PROVIDER_DISAGREEMENT" in snapshot.packet.safety_notes
+    assert "READING_1_UNIT_ABSTENTION" not in snapshot.packet.safety_notes
+
+
+def test_dual_extraction_does_not_absolve_a_value_divergence_by_abstention(
+    tmp_path: Path,
+) -> None:
+    """Unidade calada não compra acordo sobre o número: 25,80 contra 25,90 segue divergência."""
+    snapshot = _snapshot_of(tmp_path, _shuffled_counterpart(unit="unknown", value="25.80"))
+
+    assert snapshot.packet.readings[0].status is ReadingStatus.AMBIGUOUS
+    assert "READING_1_PROVIDER_DISAGREEMENT" in snapshot.packet.safety_notes
+    assert "READING_1_UNIT_ABSTENTION" not in snapshot.packet.safety_notes
+
+
+def test_dual_extraction_reports_unit_abstention_and_kind_divergence_together(
+    tmp_path: Path,
+) -> None:
+    """As duas notas descrevem coisas distintas: uma nota não pode engolir a outra."""
+    snapshot = _snapshot_of(tmp_path, _shuffled_counterpart(unit="unknown", kind="length"))
+
+    assert snapshot.packet.readings[0].status is ReadingStatus.PROPOSED
+    assert "READING_1_UNIT_ABSTENTION" in snapshot.packet.safety_notes
+    assert "READING_1_KIND_DIVERGENCE" in snapshot.packet.safety_notes
+    assert "READING_1_PROVIDER_DISAGREEMENT" not in snapshot.packet.safety_notes
+    assert snapshot.packet.readings[0].kind is MeasurementKind.WIDTH
 
 
 def test_pair_readings_by_evidence_is_greedy_and_one_to_one() -> None:
