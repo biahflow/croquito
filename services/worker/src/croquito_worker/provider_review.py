@@ -66,6 +66,23 @@ def _log_ocr_unavailable(failure_code: str) -> None:
     )
 
 
+def _log_openai_arm_not_configured() -> None:
+    """Diz ao operador que o braço OpenAI está DESLIGADO por configuração, não caído.
+
+    O pacote traz `PROVIDER_FALLBACK_SINGLE_EXTRACTOR_ANTHROPIC` tanto quando a contraparte
+    falha quanto quando ela nem existe na suite. Sem este rastro, "desligado por decisão
+    humana" e "quebrou em produção" seriam a mesma linha no log — foi assim que o braço OCR
+    atravessou um HML inteiro sem ninguém notar. Sai só o nome do braço e o motivo; nunca
+    imagem, texto lido, cota ou credencial.
+    """
+    logger.warning(
+        "provider_arm_unavailable arm=%s reason=%s",
+        "openai",
+        "ARM_NOT_CONFIGURED",
+        extra={"arm": "openai", "reason": "ARM_NOT_CONFIGURED"},
+    )
+
+
 class ProviderContractError(ValueError):
     """A fixture or provider result violated the deterministic review boundary."""
 
@@ -144,7 +161,7 @@ def _measurement_output(execution: ProviderExecution, label: str) -> Measurement
 
 def _execute_with_fallback(
     primary: ProviderAdapter,
-    secondary: ProviderAdapter,
+    secondary: ProviderAdapter | None,
     request: ProviderRequest,
     notes: list[str],
     note_code: str,
@@ -159,11 +176,16 @@ def _execute_with_fallback(
     e o que este helper recebe já é a exceção final. `BUDGET_EXCEEDED` também não descreve o
     braço, e sim o teto compartilhado do job: a chamada de reserva consumiria o mesmo teto
     sem chance nenhuma de sucesso, então re-levanta antes de qualquer tentativa.
+
+    `secondary=None` é o braço reserva desligado por configuração: a falha do primário
+    propaga exatamente como propaga quando os dois braços falham, e **nenhuma** nota de
+    fallback é criada — não houve troca de braço para registrar, e uma nota dizendo o
+    contrário faria a revisão procurar uma segunda procedência que não existe.
     """
     try:
         return primary.execute(request)
     except ProviderExecutionError as error:
-        if error.code is ProviderFailureCode.BUDGET_EXCEEDED:
+        if error.code is ProviderFailureCode.BUDGET_EXCEEDED or secondary is None:
             raise
         execution = secondary.execute(request)
         notes.append(note_code)
@@ -351,11 +373,19 @@ def build_provider_review_snapshot(
 
     # Anthropic é o braço primário de toda tarefa com escolha; OpenAI é o reserva e a
     # contraparte da comparação. As notas de fallback acompanham o pacote até o fim,
-    # inclusive quando a página nem chega à extração.
+    # inclusive quando a página nem chega à extração. Com o braço reserva desligado por
+    # configuração (`openai=None`), toda tarefa roda só no primário: não há reserva para
+    # assumir survey/geometria e não há contraparte para comparar a medida.
+    openai_arm = suite.openai
+    if openai_arm is None:
+        # Uma vez por snapshot, e não por tarefa: o braço desligado atravessa survey,
+        # extração e geometria, e repetir o aviso três vezes transformaria uma decisão de
+        # configuração em ruído de log.
+        _log_openai_arm_not_configured()
     fallback_notes: list[str] = []
     survey = _execute_with_fallback(
         suite.anthropic,
-        suite.openai,
+        openai_arm,
         request(PromptTask.PAGE_SURVEY),
         fallback_notes,
         "PROVIDER_FALLBACK_PAGE_SURVEY_OPENAI",
@@ -411,25 +441,31 @@ def build_provider_review_snapshot(
         )
     # Os dois braços são chamados de propósito: a extração dupla é a comparação. Por isso
     # a captura é individual, e não pelo helper de fallback — um braço caído degrada o
-    # modo, não substitui o outro.
+    # modo, não substitui o outro. Com o braço reserva desligado, a contraparte nem é
+    # chamada: braço ausente não gasta teto nem produz observação.
     extraction_request = request(PromptTask.MEASUREMENT_EXTRACTION)
     anthropic_extraction: ProviderExecution | None
     openai_extraction: ProviderExecution | None
     try:
         anthropic_extraction = suite.anthropic.execute(extraction_request)
     except ProviderExecutionError as error:
-        if error.code is ProviderFailureCode.BUDGET_EXCEEDED:
+        # Engolir a falha aqui só faz sentido quando existe contraparte para virar âncora.
+        # Sem ela, o erro do único braço vivo propaga já, e o job volta para reentrega.
+        if error.code is ProviderFailureCode.BUDGET_EXCEEDED or openai_arm is None:
             raise
         anthropic_extraction = None
-    try:
-        openai_extraction = suite.openai.execute(extraction_request)
-    except ProviderExecutionError as error:
-        # Sem nenhum sobrevivente não existe leitura observada: reentregar o job é mais
-        # honesto do que devolver um pacote de revisão vazio como se a página não tivesse
-        # cota nenhuma.
-        if error.code is ProviderFailureCode.BUDGET_EXCEEDED or anthropic_extraction is None:
-            raise
+    if openai_arm is None:
         openai_extraction = None
+    else:
+        try:
+            openai_extraction = openai_arm.execute(extraction_request)
+        except ProviderExecutionError as error:
+            # Sem nenhum sobrevivente não existe leitura observada: reentregar o job é mais
+            # honesto do que devolver um pacote de revisão vazio como se a página não
+            # tivesse cota nenhuma.
+            if error.code is ProviderFailureCode.BUDGET_EXCEEDED or anthropic_extraction is None:
+                raise
+            openai_extraction = None
     anchor: ProviderExecution
     counterpart_execution: ProviderExecution | None
     if anthropic_extraction is not None:
@@ -458,8 +494,11 @@ def build_provider_review_snapshot(
         *fallback_notes,
     ]
     if not dual:
-        # Sem contraparte não existe leitura concordante: a nota nomeia quem sobreviveu e
-        # toda leitura nasce ambígua mais abaixo.
+        # Sem contraparte não existe leitura concordante: a nota nomeia quem respondeu e
+        # toda leitura nasce ambígua mais abaixo. Contraparte caída e contraparte desligada
+        # por configuração produzem a MESMA nota de propósito — para a revisão humana, o
+        # que muda o valor da leitura é ter uma testemunha só, não o motivo disso; o motivo
+        # está no log do operador (`provider_arm_unavailable`).
         safety_notes.append(
             "PROVIDER_FALLBACK_SINGLE_EXTRACTOR_ANTHROPIC"
             if anchor.provider is ProviderName.ANTHROPIC
@@ -595,7 +634,7 @@ def build_provider_review_snapshot(
     # notas de segurança em vez de morrer no caminho.
     geometry_execution = _execute_with_fallback(
         suite.anthropic,
-        suite.openai,
+        openai_arm,
         request(PromptTask.GEOMETRY_EXTRACTION),
         safety_notes,
         "PROVIDER_FALLBACK_GEOMETRY_EXTRACTION_OPENAI",

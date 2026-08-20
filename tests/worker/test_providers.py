@@ -18,6 +18,7 @@ from croquito_worker.ocr_eval import run_ocr_corroboration_eval
 from croquito_worker.provider_review import (
     READING_MATCH_MAX_CENTER_DISTANCE,
     ProviderReviewSnapshot,
+    _execute_with_fallback,
     _normalize_ocr_text,
     _reading_confirmed_by_ocr,
     _readings_agree,
@@ -30,6 +31,7 @@ from croquito_worker.providers import (
     HTTP_ERROR_DETAIL_LIMIT,
     IMAGE_TEXT_TASKS,
     OCR_FAILURE_DETAIL_LIMIT,
+    OPENAI_ARM_ENABLED_ENV,
     OPENAI_STRICT_PATTERN_REWRITES,
     PROMPT_SPECS,
     SYNTHETIC_CHAT_PROPOSAL_ID,
@@ -123,24 +125,38 @@ def _request(task: PromptTask) -> ProviderRequest:
     )
 
 
+def _openai_arm(suite: ProviderSuite) -> ProviderAdapter:
+    """O braço OpenAI desta suite, provado presente.
+
+    `ProviderSuite.openai` é opcional desde que o braço passou a ser desligável por
+    configuração (`CROQUITO_OPENAI_ARM_ENABLED=false`). Nos testes que montam a suite com
+    os dois braços, `None` aqui é defeito do próprio teste — a asserção diz isso em vez de
+    espalhar `cast` e transformar um braço ausente em `AttributeError` obscuro.
+    """
+    arm = suite.openai
+    assert arm is not None
+    return arm
+
+
 def test_synthetic_provider_suite_covers_every_mvp_contract() -> None:
     suite = build_synthetic_provider_suite()
+    openai_arm = _openai_arm(suite)
     assert (
-        suite.openai.execute(_request(PromptTask.PAGE_SURVEY)).output.task is PromptTask.PAGE_SURVEY
+        openai_arm.execute(_request(PromptTask.PAGE_SURVEY)).output.task is PromptTask.PAGE_SURVEY
     )
     assert (
-        suite.openai.execute(_request(PromptTask.MEASUREMENT_EXTRACTION)).output.task
+        openai_arm.execute(_request(PromptTask.MEASUREMENT_EXTRACTION)).output.task
         is PromptTask.MEASUREMENT_EXTRACTION
     )
     assert (
-        suite.openai.execute(_request(PromptTask.SEMANTIC_ELEMENTS)).output.task
+        openai_arm.execute(_request(PromptTask.SEMANTIC_ELEMENTS)).output.task
         is PromptTask.SEMANTIC_ELEMENTS
     )
     assert (
         suite.anthropic.execute(_request(PromptTask.DISAGREEMENT_REVIEW)).output.task
         is PromptTask.DISAGREEMENT_REVIEW
     )
-    assert suite.openai.execute(_request(PromptTask.PAGE_SURVEY)).provider is ProviderName.OPENAI
+    assert openai_arm.execute(_request(PromptTask.PAGE_SURVEY)).provider is ProviderName.OPENAI
     assert (
         suite.anthropic.execute(_request(PromptTask.PAGE_SURVEY)).provider is ProviderName.ANTHROPIC
     )
@@ -188,7 +204,7 @@ def test_retry_wrapper_retries_transport_failure_without_changing_request() -> N
             self.calls += 1
             if self.calls == 1:
                 raise ProviderExecutionError(ProviderFailureCode.RATE_LIMITED)
-            return build_synthetic_provider_suite().openai.execute(request)
+            return _openai_arm(build_synthetic_provider_suite()).execute(request)
 
     flaky = FlakyAdapter()
     execution = RetryingProviderAdapter(flaky, sleep=lambda _seconds: None).execute(
@@ -201,7 +217,7 @@ def test_retry_wrapper_retries_transport_failure_without_changing_request() -> N
 
 def test_budgeted_adapter_blocks_call_before_provider_execution() -> None:
     adapter = BudgetedProviderAdapter(
-        build_synthetic_provider_suite().openai,
+        _openai_arm(build_synthetic_provider_suite()),
         budget=CostBudget(limit_usd=Decimal("0.10")),
         estimated_cost_usd=Decimal("0.11"),
     )
@@ -646,7 +662,7 @@ def test_budget_exceeded_never_calls_the_reserve_arm(tmp_path: Path) -> None:
     base = _fallback_suite(
         anthropic_failures={PromptTask.PAGE_SURVEY: ProviderFailureCode.BUDGET_EXCEEDED}
     )
-    reserve = _CountingAdapter(base.openai)
+    reserve = _CountingAdapter(_openai_arm(base))
     suite = ProviderSuite(openai=reserve, anthropic=base.anthropic)
 
     with pytest.raises(ProviderExecutionError) as error:
@@ -699,6 +715,111 @@ def test_single_arm_extraction_never_proposes_nor_exports(
     assert all(len(reading.provider_lineage) == 1 for reading in snapshot.packet.readings)
     assert snapshot.packet.safety_status == "human_review_required"
     assert all(proposal.export is False for proposal in snapshot.proposals.proposals)
+
+
+def test_disabled_openai_arm_produces_a_single_extractor_packet(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Braço desligado por configuração: pacote completo, uma testemunha só, nada fabricado."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    base = build_synthetic_provider_suite()
+    primary = _CountingAdapter(base.anthropic)
+    suite = replace(base, anthropic=primary, openai=None)
+
+    with caplog.at_level("WARNING", logger="croquito_worker.provider_review"):
+        snapshot = build_provider_review_snapshot(
+            image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+        )
+
+    # Desligado por decisão e caído em produção produzem a MESMA nota; só o log distingue.
+    assert "provider_arm_unavailable arm=openai reason=ARM_NOT_CONFIGURED" in caplog.text
+    assert snapshot.packet.readings
+    assert "PROVIDER_FALLBACK_SINGLE_EXTRACTOR_ANTHROPIC" in snapshot.packet.safety_notes
+    assert all(reading.status is ReadingStatus.AMBIGUOUS for reading in snapshot.packet.readings)
+    assert all(reading.extractor == "anthropic" for reading in snapshot.packet.readings)
+    assert all(len(reading.provider_lineage) == 1 for reading in snapshot.packet.readings)
+    assert snapshot.packet.safety_status == "human_review_required"
+    assert all(proposal.export is False for proposal in snapshot.proposals.proposals)
+    # A contraparte não é chamada nem simulada: cada tarefa roda UMA vez no braço vivo, e a
+    # extração de medida não é repetida nele para fingir um segundo par de olhos.
+    assert primary.calls == [
+        PromptTask.PAGE_SURVEY,
+        PromptTask.MEASUREMENT_EXTRACTION,
+        PromptTask.GEOMETRY_EXTRACTION,
+    ]
+    # Sem troca de braço não há nota de fallback de tarefa, e sem contraparte não há sobra
+    # nem divergência de contagem para relatar.
+    assert not any(
+        note.startswith("PROVIDER_FALLBACK_PAGE_SURVEY")
+        or note.startswith("PROVIDER_FALLBACK_GEOMETRY_EXTRACTION")
+        or note.startswith("PROVIDER_UNMATCHED_COUNTERPART_READINGS")
+        or note.endswith("_PROVIDER_DISAGREEMENT")
+        for note in snapshot.packet.safety_notes
+    )
+    assert "PROVIDER_READING_COUNT_DISAGREEMENT" not in snapshot.packet.safety_notes
+
+
+def test_disabled_openai_arm_propagates_the_primary_extraction_failure(tmp_path: Path) -> None:
+    """Sem contraparte para virar âncora, a falha do braço vivo derruba o job para reentrega."""
+    image_path = tmp_path / "fixture.png"
+    render_synthetic_input(image_path)
+    base = build_synthetic_provider_suite()
+    suite = replace(
+        base,
+        anthropic=replace(
+            cast(FixtureProviderAdapter, base.anthropic),
+            failures={PromptTask.MEASUREMENT_EXTRACTION: ProviderFailureCode.REFUSED},
+        ),
+        openai=None,
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        build_provider_review_snapshot(
+            image_path, dataset_id="synthetic-provider-contract-v1", suite=suite
+        )
+
+    # Erro do provider, não `ProviderContractError`: o job volta para a fila em vez de sair
+    # como defeito de contrato de um braço que ninguém pediu para chamar.
+    assert error.value.code is ProviderFailureCode.REFUSED
+
+
+def test_fallback_without_a_reserve_arm_does_nothing_when_the_primary_answers() -> None:
+    notes: list[str] = []
+
+    execution = _execute_with_fallback(
+        build_synthetic_provider_suite().anthropic,
+        None,
+        _request(PromptTask.PAGE_SURVEY),
+        notes,
+        "PROVIDER_FALLBACK_PAGE_SURVEY_OPENAI",
+    )
+
+    assert execution.output.task is PromptTask.PAGE_SURVEY
+    assert notes == []
+
+
+def test_fallback_without_a_reserve_arm_propagates_the_primary_failure() -> None:
+    primary = FixtureProviderAdapter(
+        provider=ProviderName.ANTHROPIC,
+        model_id="fixture",
+        outputs={},
+        failures={PromptTask.PAGE_SURVEY: ProviderFailureCode.REFUSED},
+    )
+    notes: list[str] = []
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _execute_with_fallback(
+            primary,
+            None,
+            _request(PromptTask.PAGE_SURVEY),
+            notes,
+            "PROVIDER_FALLBACK_PAGE_SURVEY_OPENAI",
+        )
+
+    assert error.value.code is ProviderFailureCode.REFUSED
+    # Nota de fallback só descreve troca de braço; sem reserva não houve troca nenhuma.
+    assert notes == []
 
 
 def test_ocr_corroboration_confirms_matching_readings(tmp_path: Path) -> None:
@@ -2459,6 +2580,10 @@ def _hosted_suite_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CROQUITO_OPENAI_API_KEY", "openai-key")
     monkeypatch.setenv("CROQUITO_ANTHROPIC_API_KEY", "anthropic-key")
     monkeypatch.setenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD", "5")
+    # O interruptor do braço OpenAI sai do ambiente da máquina: quem quiser exercitá-lo
+    # declara na própria função, e nenhum teste do caminho padrão depende do que estiver
+    # exportado no shell de quem roda a suíte.
+    monkeypatch.delenv(OPENAI_ARM_ENABLED_ENV, raising=False)
     # `build_real_provider_suite` também monta o braço `ocr` sempre, via ADC
     # (`google.auth.default`) — sem rede/credencial real em teste, mocka a única chamada
     # de autenticação envolvida na construção da suite.
@@ -2501,7 +2626,8 @@ def test_real_provider_suite_builds_two_direct_arms_without_aws(
 
     suite = build_real_provider_suite()
 
-    openai_adapter = cast(OpenAIProviderAdapter, _budgeted(suite.openai).adapter)
+    openai_arm = _openai_arm(suite)
+    openai_adapter = cast(OpenAIProviderAdapter, _budgeted(openai_arm).adapter)
     anthropic_adapter = cast(AnthropicProviderAdapter, _budgeted(suite.anthropic).adapter)
     assert openai_adapter.api_key == "openai-key"
     assert anthropic_adapter.api_key == "anthropic-key"
@@ -2512,8 +2638,59 @@ def test_real_provider_suite_builds_two_direct_arms_without_aws(
     ocr_arm = suite.ocr
     ocr_adapter = cast(GcpVisionOcrAdapter, _budgeted(ocr_arm).adapter)
     assert isinstance(ocr_adapter.credentials, _FakeGcpCredentials)
-    assert _budgeted(suite.openai).budget is _budgeted(suite.anthropic).budget
-    assert _budgeted(ocr_arm).budget is _budgeted(suite.openai).budget
+    assert _budgeted(openai_arm).budget is _budgeted(suite.anthropic).budget
+    assert _budgeted(ocr_arm).budget is _budgeted(openai_arm).budget
+
+
+def test_real_provider_suite_without_the_openai_arm_needs_no_openai_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Desligar o braço é ato declarado: com a flag em `false`, a chave deixa de ser exigida."""
+    _hosted_suite_env(monkeypatch)
+    monkeypatch.delenv("CROQUITO_OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv(OPENAI_ARM_ENABLED_ENV, "false")
+
+    suite = build_real_provider_suite()
+
+    assert suite.openai is None
+    # Os outros braços não mudam: o desligamento é de um braço, não da suite.
+    anthropic_adapter = cast(AnthropicProviderAdapter, _budgeted(suite.anthropic).adapter)
+    assert anthropic_adapter.api_key == "anthropic-key"
+    assert suite.ocr is not None
+    assert _budgeted(suite.ocr).budget is _budgeted(suite.anthropic).budget
+
+
+def test_openai_arm_flag_ignores_case_and_surrounding_space(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _hosted_suite_env(monkeypatch)
+
+    monkeypatch.setenv(OPENAI_ARM_ENABLED_ENV, " FALSE ")
+    assert build_real_provider_suite().openai is None
+    monkeypatch.setenv(OPENAI_ARM_ENABLED_ENV, "True")
+    assert build_real_provider_suite().openai is not None
+
+
+def test_enabled_openai_arm_still_requires_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ausência de secret nunca desliga o braço sozinha — só a flag desliga."""
+    _hosted_suite_env(monkeypatch)
+    monkeypatch.setenv(OPENAI_ARM_ENABLED_ENV, "true")
+    monkeypatch.delenv("CROQUITO_OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="CROQUITO_OPENAI_API_KEY"):
+        build_real_provider_suite()
+
+
+@pytest.mark.parametrize("value", ["0", "no", "", "sim"])
+def test_invalid_openai_arm_flag_refuses_instead_of_choosing_a_mode(
+    value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Valor estranho recusa: adivinhar aqui decidiria em silêncio quantas testemunhas há."""
+    _hosted_suite_env(monkeypatch)
+    monkeypatch.setenv(OPENAI_ARM_ENABLED_ENV, value)
+
+    with pytest.raises(ValueError, match=OPENAI_ARM_ENABLED_ENV):
+        build_real_provider_suite()
 
 
 def test_real_provider_suite_arms_declare_their_own_lineage(
@@ -2535,7 +2712,7 @@ def test_real_provider_suite_arms_declare_their_own_lineage(
 
         return post
 
-    openai_adapter = cast(OpenAIProviderAdapter, _budgeted(suite.openai).adapter)
+    openai_adapter = cast(OpenAIProviderAdapter, _budgeted(_openai_arm(suite)).adapter)
     anthropic_adapter = cast(AnthropicProviderAdapter, _budgeted(suite.anthropic).adapter)
     request = _request(PromptTask.MEASUREMENT_EXTRACTION)
 
@@ -3469,7 +3646,7 @@ def test_synthetic_suite_serves_both_chat_variants() -> None:
     request = _chat_request()
 
     answer = suite.anthropic.execute(request).output
-    uncertain = suite.openai.execute(request).output
+    uncertain = _openai_arm(suite).execute(request).output
 
     assert isinstance(answer, ReviewChatOutput)
     assert answer.answer_kind == "answer"

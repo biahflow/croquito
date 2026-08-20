@@ -2,7 +2,8 @@
 
 Status: Accepted for MVP  
 Responsável: AI Engineering / Platform  
-Última revisão: 2026-08-19 (suite hospedada sem AWS, F-009/ADR-0035)
+Última revisão: 2026-08-20 (braço OpenAI opcional por configuração,
+`CROQUITO_OPENAI_ARM_ENABLED`)
 
 ## Rotas padrão
 
@@ -14,7 +15,7 @@ Bedrock nem Textract — o caminho AWS nunca rodou no ambiente publicado (GCP,
 | Papel | Provedor/modelo | Execução |
 |---|---|---|
 | Extração — braço primário | Anthropic API direta `claude-opus-5` (`CROQUITO_ANTHROPIC_MODEL`) | page survey, extração de geometria, e um dos dois lados da extração de medida |
-| Extração — braço reserva/contraparte | OpenAI `gpt-5.6-terra` (`CROQUITO_OPENAI_MODEL`) | contraparte da comparação dupla de medida; assume por fallback quando o braço primário falha de forma permanente em survey/geometria |
+| Extração — braço reserva/contraparte (opcional) | OpenAI `gpt-5.6-terra` (`CROQUITO_OPENAI_MODEL`), ligado/desligado por `CROQUITO_OPENAI_ARM_ENABLED` | contraparte da comparação dupla de medida; assume por fallback quando o braço primário falha de forma permanente em survey/geometria |
 | OCR auxiliar | Google Cloud Vision, `document text detection` (`GcpVisionOcrAdapter`, `ProviderName.GCP_VISION`) | corrobora cada leitura de medida extraída; uma chamada por documento, não por leitura |
 
 Model IDs efetivos são resolvidos por configuração validada no startup
@@ -38,6 +39,25 @@ respondeu e toda leitura nasce `AMBIGUOUS` (nunca `PROPOSED`) — sem contrapart
 leitura concordante. Quando os dois braços de extração de medida falham, a exceção do segundo
 (`openai`) propaga e o job falha para reentrega — um pacote vazio seria menos honesto do que
 reentregar.
+
+### Braço OpenAI desligado por configuração
+
+`CROQUITO_OPENAI_ARM_ENABLED=false` tira o braço reserva da suite
+(`ProviderSuite.openai is None`): a contraparte não é chamada, não reserva teto e não aparece
+no lineage. O efeito no pacote é o **mesmo** do braço único por falha — nota
+`PROVIDER_FALLBACK_SINGLE_EXTRACTOR_ANTHROPIC`, toda leitura `AMBIGUOUS`, nenhuma `PROPOSED` —
+e é de propósito: para a revisão humana o que muda o valor da leitura é ter uma testemunha só,
+não o motivo disso. O motivo fica no log do operador
+(`provider_arm_unavailable arm=openai reason=ARM_NOT_CONFIGURED`, uma vez por documento).
+Sem reserva não há fallback de survey/geometria: a falha permanente do primário propaga e o
+job volta para reentrega, sem nota `PROVIDER_FALLBACK_*` — não houve troca de braço para
+registrar.
+
+Desligar é **ato declarado**: a ausência de `CROQUITO_OPENAI_API_KEY` continua recusando a
+construção da suite quando a flag está ligada ou ausente. Valor diferente de `true`/`false`
+(sem diferenciar caixa) também recusa, em vez de escolher um modo. A rodada de HML de
+2026-08-20 está com a flag em `false` por decisão humana, com a chave ainda montada no
+serviço para que religar seja só a flag ([HML](../operations/HML.md)).
 
 ### Caminho de comparação: eval por linha de comando
 
@@ -112,6 +132,9 @@ desambiguação. Não recebe a preferência do sistema.
 - Um único braço de extração de medida sobrevive (o outro falhou de forma permanente): toda
   leitura nasce `AMBIGUOUS`, nunca `PROPOSED`; a nota
   `PROVIDER_FALLBACK_SINGLE_EXTRACTOR_ANTHROPIC`/`_OPENAI` nomeia quem respondeu.
+- Braço OpenAI desligado por configuração (`CROQUITO_OPENAI_ARM_ENABLED=false`): mesmo pacote
+  do caso acima, sem chamada nenhuma à contraparte; o primário falhando propaga direto, porque
+  não há reserva para assumir.
 - OCR (Cloud Vision) indisponível, ausente da suite, ou falha permanente: uma nota única
   `OCR_UNAVAILABLE`, sem nota por leitura; pacote segue normal.
   `OCR_EVIDENCE_MISSING`, documentado numa revisão anterior deste documento, nunca chegou a

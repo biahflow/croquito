@@ -1488,7 +1488,10 @@ class AnthropicProviderAdapter:
     api_key: str
     model_id: str
     timeout_seconds: float = 60.0
-    max_tokens: int = 8192
+    #: Em modelos com thinking sempre ligado (claude-fable-5), o raciocínio interno conta
+    #: DENTRO de max_tokens; 8192 era teto justo de resposta e viraria truncamento. Para os
+    #: demais modelos é só teto — não muda custo, que é cobrado pelo gerado.
+    max_tokens: int = 16384
     raw_store: ProtectedRawResponseStore | None = None
     http_post: HttpPost = _http_post
     endpoint: str = "https://api.anthropic.com/v1/messages"
@@ -1771,6 +1774,15 @@ GCP_VISION_MODEL_ID: Final = "cloud-vision/document-text-detection"
 
 OCR_CALL_COST_ENV: Final = "CROQUITO_AI_ESTIMATED_COST_PER_OCR_CALL_USD"
 DEFAULT_OCR_CALL_COST_USD: Final = "0.0015"
+
+OPENAI_ARM_ENABLED_ENV: Final = "CROQUITO_OPENAI_ARM_ENABLED"
+"""Interruptor explícito do braço OpenAI da suite hospedada; ligado quando ausente.
+
+Desligar é **ato declarado**, nunca inferido: sem esta variável em `false`, a chave
+continua obrigatória e a falta dela recusa a construção da suite. Se a ausência de secret
+desligasse o braço sozinha, uma credencial expirada viraria "modo de braço único" em
+silêncio, e o pacote de revisão sairia com uma testemunha a menos sem ninguém decidir isso.
+"""
 
 
 class _AuthTransportResponse:
@@ -2279,14 +2291,22 @@ class FixtureProviderAdapter:
 class ProviderSuite:
     """Os braços da suite hospedada, nomeados pelo que realmente chamam.
 
-    `openai`/`anthropic` falam com a API direta do fornecedor; nenhum cliente AWS entra
+    `anthropic`/`openai` falam com a API direta do fornecedor; nenhum cliente AWS entra
     aqui. Os adapters Bedrock e Textract continuam existindo para `build_extraction_arm` e
-    para teste, mas não são braço de suite. `ocr` é opcional: `None` significa OCR
-    indisponível (nota `OCR_UNAVAILABLE`, sem derrubar o job), nunca um erro de construção.
+    para teste, mas não são braço de suite.
+
+    `openai` é opcional: `None` significa braço desligado **por configuração**
+    (`CROQUITO_OPENAI_ARM_ENABLED=false`) — a comparação de medida roda em modo de braço
+    único, com a nota `PROVIDER_FALLBACK_SINGLE_EXTRACTOR_ANTHROPIC` no pacote e toda
+    leitura nascendo ambígua, nunca um erro de construção. Ausência de secret continua
+    sendo erro: desligar é ato declarado, não efeito colateral de credencial faltando.
+
+    `ocr` é opcional pelo mesmo desenho: `None` significa OCR indisponível (nota
+    `OCR_UNAVAILABLE`, sem derrubar o job), nunca um erro de construção.
     """
 
-    openai: ProviderAdapter
     anthropic: ProviderAdapter
+    openai: ProviderAdapter | None = None
     ocr: ProviderAdapter | None = None
 
 
@@ -2455,25 +2475,52 @@ def build_embeddings_adapter(*, model_id: str | None = None) -> EmbeddingsAdapte
     )
 
 
+def _openai_arm_enabled() -> bool:
+    """Lê o interruptor do braço OpenAI: ausente é ligado, valor estranho é erro.
+
+    Só `true`/`false` (sem diferenciar caixa) são aceitos. Qualquer outra coisa recusa a
+    construção da suite em vez de escolher um modo: um `"0"`, um `"no"` ou um valor vazio
+    interpretado por conta própria decidiria, em silêncio, quantas testemunhas a revisão
+    humana vai ter.
+    """
+    import os
+
+    raw = os.getenv(OPENAI_ARM_ENABLED_ENV)
+    if raw is None:
+        return True
+    normalized = raw.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError(f"{OPENAI_ARM_ENABLED_ENV} aceita apenas 'true' ou 'false': {raw!r}")
+
+
 def build_real_provider_suite(
     *,
     raw_store: ProtectedRawResponseStore | None = None,
 ) -> ProviderSuite:
     """Build the external suite only after the caller has checked job consent.
 
-    Os dois braços de extração falam a API direta do fornecedor, cada um com a sua
-    própria chave explícita. Nenhum cliente AWS é construído aqui: as credenciais de
-    ambiente do ambiente hospedado pertencem ao object storage, e usá-las implicitamente
-    para Bedrock/Textract chamaria um serviço que ninguém configurou. O braço `ocr` é
-    sempre montado (Cloud Vision via ADC, sem chave nova) e reserva no MESMO `CostBudget`
-    da rodada — não há uma allowlist separada para ele.
+    Os braços de extração falam a API direta do fornecedor, cada um com a sua própria
+    chave explícita. Nenhum cliente AWS é construído aqui: as credenciais de ambiente do
+    ambiente hospedado pertencem ao object storage, e usá-las implicitamente para
+    Bedrock/Textract chamaria um serviço que ninguém configurou. O braço `ocr` é sempre
+    montado (Cloud Vision via ADC, sem chave nova) e reserva no MESMO `CostBudget` da
+    rodada — não há uma allowlist separada para ele.
+
+    O braço `openai` é o único opcional por configuração: com
+    `CROQUITO_OPENAI_ARM_ENABLED=false` ele sai da suite (`openai=None`) e a chave deixa
+    de ser exigida. Com a variável ausente ou `true`, nada muda — inclusive a recusa por
+    chave faltando.
     """
     import os
 
     import google.auth
 
-    api_key = os.getenv("CROQUITO_OPENAI_API_KEY")
-    if not api_key:
+    openai_enabled = _openai_arm_enabled()
+    openai_api_key = os.getenv("CROQUITO_OPENAI_API_KEY", "")
+    if openai_enabled and not openai_api_key:
         raise ValueError("CROQUITO_OPENAI_API_KEY ausente para providers reais")
     anthropic_api_key = os.getenv("CROQUITO_ANTHROPIC_API_KEY")
     if not anthropic_api_key:
@@ -2490,11 +2537,12 @@ def build_real_provider_suite(
     # o seu, exatamente como em `build_extraction_arm`.
     timeout_env = os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS")
     ocr_credentials, _ = google.auth.default(scopes=GCP_VISION_SCOPES)
-    return ProviderSuite(
-        openai=RetryingProviderAdapter(
+    openai_arm: ProviderAdapter | None = None
+    if openai_enabled:
+        openai_arm = RetryingProviderAdapter(
             BudgetedProviderAdapter(
                 OpenAIProviderAdapter(
-                    api_key=api_key,
+                    api_key=openai_api_key,
                     model_id=os.getenv("CROQUITO_OPENAI_MODEL", "gpt-5.6-terra"),
                     timeout_seconds=float(timeout_env or "30"),
                     raw_store=raw_store,
@@ -2502,7 +2550,9 @@ def build_real_provider_suite(
                 budget=budget,
                 estimated_cost_usd=llm_cost,
             )
-        ),
+        )
+    return ProviderSuite(
+        openai=openai_arm,
         anthropic=RetryingProviderAdapter(
             BudgetedProviderAdapter(
                 AnthropicProviderAdapter(

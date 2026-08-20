@@ -2,8 +2,8 @@
 
 Status: Accepted  
 Responsável: Platform / Engineering  
-Última revisão: 2026-08-19 (seção "Providers de IA" — runbook sem allowlist por digest nem
-curl, ativação pela jornada Plataforma, F-012)
+Última revisão: 2026-08-20 (braço OpenAI desligado por configuração na rodada atual,
+`CROQUITO_OPENAI_ARM_ENABLED=false`)
 
 Fonte única do ambiente hospedado. A decisão e as alternativas estão no
 [ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md); o desenho AWS de
@@ -277,8 +277,17 @@ O deploy do worker (`deploy-hml.yml`) já declara, comprometido na esteira:
 |---|---|---|
 | `CROQUITO_REAL_PROVIDERS_ENABLED` | env var, API e worker | kill switch — `false` desliga toda chamada paga sem redeploy de código |
 | `CROQUITO_AI_MAX_ESTIMATED_COST_USD` | env var, worker | teto **por invocação** do worker (`5.00`), não por dia nem por job |
-| `CROQUITO_OPENAI_MODEL` / `CROQUITO_ANTHROPIC_MODEL` | env var, worker | `gpt-5.6-terra` / `claude-opus-5` |
+| `CROQUITO_OPENAI_MODEL` / `CROQUITO_ANTHROPIC_MODEL` | env var, worker | `gpt-5.6-sol` (braço desligado na rodada atual) / `claude-fable-5` (teste de 2026-08-20; reverter = `claude-opus-5`) |
+| `CROQUITO_OPENAI_ARM_ENABLED` | env var, worker | interruptor do braço OpenAI (`true` quando ausente); `false` na rodada atual — só `true`/`false`, valor estranho recusa a suite |
 | `CROQUITO_OPENAI_API_KEY` / `CROQUITO_ANTHROPIC_API_KEY` | secret, worker (`croquito-hml-openai-api-key` / `croquito-hml-anthropic-api-key`) | as duas chaves de provider; casca e IAM em `biahflow/infra`, valor pela esteira (ver abaixo) |
+
+O braço OpenAI está **desligado por decisão humana de 2026-08-20** (pós-V12): a rodada segue
+só com Anthropic + OCR e o pareamento com o segundo braço fica pausado, porque no V12 o
+pareamento espacial casou leituras de caixas de extensões diferentes. O efeito é declarado no
+pacote — extração de medida em braço único, nota `PROVIDER_FALLBACK_SINGLE_EXTRACTOR_ANTHROPIC`
+e toda leitura ambígua ([Model Routing](../ai/MODEL_ROUTING.md)). Religar é trocar a flag para
+`true` no `deploy-hml.yml`: `CROQUITO_OPENAI_API_KEY` continua montada no serviço de propósito,
+para que religar não passe por secret.
 
 O braço `ocr` (Cloud Vision) não usa chave própria: autentica pela conta de serviço de runtime
 do worker, que precisa da API `vision.googleapis.com` habilitada no projeto — é o que o PR de
