@@ -190,13 +190,12 @@ jobs:
       # Religar = trocar esta flag para `true`; a chave `CROQUITO_OPENAI_API_KEY` continua
       # montada em `--set-secrets` de propósito, para que religar não mexa em secret.
       #
-      # `CROQUITO_ANTHROPIC_MODEL=claude-fable-5` (teste humano, 2026-08-20): a fraqueza
-      # observada do braço âncora nas rodadas V7-V12 é variância em desenho denso de mão
-      # (target_hints que somem, recuo do muro omitido), e o Fable é o tier acima do Opus,
-      # mais forte exatamente em visão de imagem densa/degradada. Custa 2× por token
-      # (US$10/50 vs 5/25 por MTok — centavos por prancha neste volume). Reverter = voltar
-      # esta env para claude-opus-5. Exige retenção de dados de 30 dias na conta Anthropic
-      # (retenção zero → 400 em toda chamada).
+      # `CROQUITO_ANTHROPIC_MODEL=claude-opus-5`: o claude-fable-5 foi TESTADO como âncora
+      # no V13 (2026-08-20) e reprovado — 5 de 5 tentativas falharam INVALID_SCHEMA (4 na
+      # extração de medidas com metade das leituras em bbox de altura zero coladas em
+      # y=1.0, 1 no survey), contra 13 rodadas do Opus sem rejeição de schema. O prompt
+      # atual é prescritivo demais para o Fable (comportamento documentado do modelo);
+      # retestar exige rodada própria de prompt, não só a env.
       - name: Publica o worker
         run: |
           set -euo pipefail
@@ -208,7 +207,7 @@ jobs:
             --command croquito-worker-push \
             --memory 2Gi --cpu 2 --timeout 900 --concurrency 4 --no-cpu-throttling \
             --set-secrets CROQUITO_DATABASE_URL=croquito-hml-database-url:latest,AWS_ACCESS_KEY_ID=croquito-hml-storage-hmac-id:latest,AWS_SECRET_ACCESS_KEY=croquito-hml-storage-hmac-secret:latest,CROQUITO_OPENAI_API_KEY=croquito-hml-openai-api-key:latest,CROQUITO_ANTHROPIC_API_KEY=croquito-hml-anthropic-api-key:latest \
-            --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_REAL_PROVIDERS_ENABLED=true,CROQUITO_AI_MAX_ESTIMATED_COST_USD=5.00,CROQUITO_OPENAI_MODEL=gpt-5.6-sol,CROQUITO_OPENAI_ARM_ENABLED=false,CROQUITO_ANTHROPIC_MODEL=claude-fable-5,CROQUITO_PROVIDER_TIMEOUT_SECONDS=240 \
+            --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_REAL_PROVIDERS_ENABLED=true,CROQUITO_AI_MAX_ESTIMATED_COST_USD=5.00,CROQUITO_OPENAI_MODEL=gpt-5.6-sol,CROQUITO_OPENAI_ARM_ENABLED=false,CROQUITO_ANTHROPIC_MODEL=claude-opus-5,CROQUITO_PROVIDER_TIMEOUT_SECONDS=240 \
             --startup-probe httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=3,periodSeconds=5,failureThreshold=12,timeoutSeconds=3 \
             --quiet
 

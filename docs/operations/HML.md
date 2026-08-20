@@ -277,7 +277,7 @@ O deploy do worker (`deploy-hml.yml`) já declara, comprometido na esteira:
 |---|---|---|
 | `CROQUITO_REAL_PROVIDERS_ENABLED` | env var, API e worker | kill switch — `false` desliga toda chamada paga sem redeploy de código |
 | `CROQUITO_AI_MAX_ESTIMATED_COST_USD` | env var, worker | teto **por invocação** do worker (`5.00`), não por dia nem por job |
-| `CROQUITO_OPENAI_MODEL` / `CROQUITO_ANTHROPIC_MODEL` | env var, worker | `gpt-5.6-sol` (braço desligado na rodada atual) / `claude-fable-5` (teste de 2026-08-20; reverter = `claude-opus-5`) |
+| `CROQUITO_OPENAI_MODEL` / `CROQUITO_ANTHROPIC_MODEL` | env var, worker | `gpt-5.6-sol` (braço desligado na rodada atual) / `claude-opus-5` (o `claude-fable-5` foi testado e reprovado no V13 de 2026-08-20 — bbox degenerado em 5/5 tentativas) |
 | `CROQUITO_OPENAI_ARM_ENABLED` | env var, worker | interruptor do braço OpenAI (`true` quando ausente); `false` na rodada atual — só `true`/`false`, valor estranho recusa a suite |
 | `CROQUITO_OPENAI_API_KEY` / `CROQUITO_ANTHROPIC_API_KEY` | secret, worker (`croquito-hml-openai-api-key` / `croquito-hml-anthropic-api-key`) | as duas chaves de provider; casca e IAM em `biahflow/infra`, valor pela esteira (ver abaixo) |
 
