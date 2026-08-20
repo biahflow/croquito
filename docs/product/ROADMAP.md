@@ -47,7 +47,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |
 | F-025 | HIGH | READY_FOR_HUMAN_REVIEW | [Consultor do traçado](../features/F-025-consultor-do-tracado/feature.md) |
 | F-024 | HIGH | READY_FOR_HUMAN_REVIEW | [Leitura com valor não morre por falta de target_hint](../features/F-024-leitura-sem-target-hint/feature.md) |
-| F-023 | A DEFINIR | READY_FOR_SPEC | Survey Quality Score — nota do levantamento com recomendações de campo, agregando sinais existentes (blockers, leituras não aplicadas, corroboração, resíduos); calibrar com V14/V15/V16 (a definir em contrato) |
+| F-023 | HIGH | IN_PROGRESS | [Survey Quality Score](../features/F-023-survey-quality-score/feature.md) |
 | F-028 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
@@ -271,7 +271,14 @@ comparou a arquitetura do produto com uma proposta externa: o sistema já sabe q
 levantamento não sustenta o desenho (blockers, leituras não aplicadas, resíduos,
 corroboração), mas não devolve isso como nota com recomendações de campo ("meça a
 diagonal A–C"). Sequenciada de propósito DEPOIS da V16: o Document AI muda o que é
-"falta de dado", e V14/V15/V16 são as primeiras amostras de calibração.
+"falta de dado", e V14/V15/V16 são as primeiras amostras de calibração. Em
+2026-08-20 (mesma data, sessão posterior) a feature foi especificada e planejada por
+decisão humana: a fatia 1 liga o motor órfão de fechamento de cadeias de cotas
+(`dimension_closure.py`, completo e testado, sem chamadores) ao pipeline, à API e à
+tela — incluindo a declaração humana de cadeia, decisão explícita do usuário — e o
+score agregado com recomendações de campo fica para as fatias seguintes, calibrado com
+V14–V17. Contrato em [F-023](../features/F-023-survey-quality-score/feature.md),
+prioridade `HIGH`.
 
 F-028, F-026 e F-027 nascem em 2026-08-20, por seleção humana, na rodada imediatamente
 posterior ao merge da [F-020](../features/F-020-orcamento-base-web/feature.md): com a
