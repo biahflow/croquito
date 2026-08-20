@@ -290,6 +290,18 @@ descritos em "Quinto marco: medição de obra (M1 a M5 em código)".
   Pendências declaradas ao projetista em vez de adivinhadas: 56,00 da base da faixa
   (trapézio abaixo da tolerância de banda), 12,00 da faixa esquerda e o trio
   1,55/4,2/1,65 do limite do lote ficaram como notas, não restrições.
+- Série de aceitação real do braço de OCR e do funil (Guaxindiba, 2026-08-20, mesma
+  folha em quatro uploads): V14 10 leituras/2 de chão; V15 6/0 (expôs o limite do
+  Cloud Vision em manuscrito); V16 8/0 no pacote MAS 27/13 na extração — o raw-store
+  revelou o funil descartando leitura sem `target_hint`
+  ([F-024](features/F-024-leitura-sem-target-hint/feature.md)); V17, já com Document
+  AI ([ADR-0037](adr/0037-document-ai-como-braco-de-ocr.md), processador em
+  `biahflow/infra` PR #17) e o funil consertado, extraiu 29 leituras (13 de chão,
+  2 `note` do modelo — o sinal da
+  [F-021](features/F-021-nota-pre-classificada/feature.md) em produção). Lição de
+  método: cada rodada expôs um gargalo diferente (eixo, OCR, funil) e nenhum era
+  erro de leitura do modelo — insumo direto da F-023 (Survey Quality Score). O eval
+  comparativo pago Vision×DocAI segue como gate declarado do ADR-0037.
 - Primeira revisão real em nuvem processada de ponta a ponta (Guaxindiba V3,
   2026-08-19) e primeiro ciclo completo de eval-promoção de prompt motivado por
   defeito real, não por rodada de rotina: o muro com recuo 4,80→3,30 veio fragmentado
