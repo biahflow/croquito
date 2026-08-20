@@ -152,7 +152,9 @@ desambiguação. Não recebe a preferência do sistema.
   (schema validado e resultado descartado) até a F-009. O comportamento real, implementado por
   ela, é `READING_{n}_OCR_CONFIRMED` / `READING_{n}_OCR_EVIDENCE_MISSING` por leitura quando o
   OCR roda, e `OCR_UNAVAILABLE` (nota única) quando não roda; nenhuma das duas rebaixa o
-  `status` já calculado da leitura.
+  `status` já calculado da leitura. A partir da F-010 (2026-08-20), a mesma corroboração
+  também chega ao revisor como campo `ocr_corroborated` de cada leitura do pacote — não
+  só na nota posicional/telemetria.
 - `BUDGET_EXCEEDED` em qualquer braço, inclusive OCR: propaga sempre, nunca é absorvido em modo
   degradado — o teto é do job, não do braço.
 - Modelo retorna schema inválido: uma tentativa de repair estritamente estrutural;

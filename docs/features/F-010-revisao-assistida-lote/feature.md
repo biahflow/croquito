@@ -52,7 +52,29 @@ Só `apps/web` + docs — nenhuma mudança de API:
    pré-marcação semeada por versão da revisão, envio, conflito e toast.
 4. FDD: parágrafo do lote na seção da decisão.
 
+## Scope (fatia 2 — ⚠ segunda testemunha, selecionada em 2026-08-20)
+
+Caso fundador: na V17 a extração leu `24,75` onde a folha diz `19,75`; o Document
+AI leu certo e o pacote carregava `READING_9_OCR_EVIDENCE_MISSING` — nota
+posicional, invisível na UI. O erro atravessou solve, aprovação e export, e caiu
+só na conferência visual do DXF.
+
+1. Worker: `DimensionReading.ocr_corroborated: bool | None` (True = OCR viu o
+   mesmo texto na região; False = OCR rodou e não viu; None = braço
+   ausente/falhou). Registro de nascimento da observação — retificação não o
+   reescreve. Notas posicionais intactas.
+2. Web: `ocrWitnessHint` em labels (frase só para False; silêncio para
+   True/None); chip "⚠ sem 2ª testemunha" na linha da lista; frase completa no
+   painel de decisão junto aos demais hints.
+3. Docs: API_CONTRACT (tri-estado e semântica), MODEL_ROUTING (uma frase), FDD.
+
 ## Out of Scope (fatias futuras, explícitas)
+
+- Fatia 3 candidata: sugerir o valor que o OCR leu ("a folha parece dizer
+  19,75") — exige levar as linhas de OCR ao pacote.
+- Rebaixar status por corroboração (calibração de auto-pass; precisa de mais
+  rodadas).
+- Re-corroborar o valor corrigido na retificação.
 
 - Lote de REJEIÇÃO e lote de cotas de chão.
 - Auto-pass calibrado por confiança (o ">90% automático" — depende de dado das

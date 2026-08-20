@@ -605,13 +605,17 @@ def build_provider_review_snapshot(
             # unidade foi só a âncora — o revisor precisa ver o valor com duas testemunhas
             # e a unidade com uma.
             safety_notes.append(f"READING_{position}_UNIT_ABSTENTION")
+        # Calculada uma vez por leitura e usada nas duas saídas (nota posicional e campo
+        # da leitura): None quando o braço não rodou (ausente ou falhou), nunca recalculada
+        # depois — ver `_reading_confirmed_by_ocr` para o critério de match.
+        confirmed = _reading_confirmed_by_ocr(observation, ocr_lines) if ocr_ran else None
         if ocr_ran:
             # Confirmada ou não, a nota é o dado — o status NUNCA é rebaixado por falha de
             # OCR (rotação, normalização): calibrar o status a partir disso é da F-010, não
-            # desta entrega. Ver `_reading_confirmed_by_ocr` para o critério de match.
+            # desta entrega.
             safety_notes.append(
                 f"READING_{position}_OCR_CONFIRMED"
-                if _reading_confirmed_by_ocr(observation, ocr_lines)
+                if confirmed
                 else f"READING_{position}_OCR_EVIDENCE_MISSING"
             )
         readings.append(
@@ -644,6 +648,7 @@ def build_provider_review_snapshot(
                 extractor_version=extractor_version,
                 provider_lineage=lineage,
                 annotation_suggested=annotation_suggested,
+                ocr_corroborated=confirmed,
                 # Sem comparação dupla não existe leitura `proposed`: o que um único braço
                 # entrega é observação sem corroboração, e a revisão precisa ver isso.
                 status=(

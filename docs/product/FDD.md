@@ -178,6 +178,11 @@ não é desfeito enquanto a revisão for a mesma; a revisão seguinte volta a ma
 ainda restou sugerido. Cota de chão nunca entra no lote: ela declara associação e eixo,
 uma a uma.
 
+Quando o braço de OCR rodou e não encontrou o texto de uma leitura na mesma região da
+folha, a linha da lista mostra "⚠ sem 2ª testemunha" e o painel de decisão mostra a
+frase completa (F-010) — a corroboração nunca bloqueia nem rebaixa status, só informa;
+confirmação e ausência do braço de OCR seguem silenciosas para não virar ruído.
+
 #### Corrigir uma decisão já registrada
 
 Leitura decidida deixa de mostrar os botões de decisão e passa a mostrar o registro:

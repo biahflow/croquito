@@ -1247,6 +1247,21 @@ h2 {
   font-size: 10px;
 }
 
+/* Segunda coluna auto do grid vira coluna vertical de duas linhas quando o aviso de
+   OCR aparece; o texto é o indicador, a cor só reforça (nunca o único sinal). */
+.review-row-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.ocr-warning {
+  /* Mesmo vermelho de .status-dot.rejected: reforço, não único indicador — o texto
+     "⚠ sem 2ª testemunha" / a frase completa já carregam o aviso. */
+  color: #b42318;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;

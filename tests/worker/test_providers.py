@@ -1052,6 +1052,10 @@ def test_ocr_corroboration_confirms_matching_readings(tmp_path: Path) -> None:
     assert "OCR_UNAVAILABLE" not in snapshot.packet.safety_notes
     # Confirmação nunca muda status: a leitura 3 segue ambígua por legibilidade, não por OCR.
     assert snapshot.packet.readings[2].status is ReadingStatus.AMBIGUOUS
+    # Campo novo da leitura espelha a nota posicional, calculado uma vez por leitura.
+    assert snapshot.packet.readings[0].ocr_corroborated is True
+    assert snapshot.packet.readings[1].ocr_corroborated is True
+    assert snapshot.packet.readings[2].ocr_corroborated is True
 
 
 def test_ocr_corroboration_flags_reading_without_spatial_evidence(tmp_path: Path) -> None:
@@ -1081,6 +1085,8 @@ def test_ocr_corroboration_flags_reading_without_spatial_evidence(tmp_path: Path
     assert "READING_1_OCR_CONFIRMED" not in snapshot.packet.safety_notes
     # A leitura concordante entre os dois LLMs continua `proposed`: OCR nunca rebaixa status.
     assert snapshot.packet.readings[0].status is ReadingStatus.PROPOSED
+    # Decoy com texto igual em outro canto da folha não confirma: campo espelha a nota.
+    assert snapshot.packet.readings[0].ocr_corroborated is False
 
 
 def test_ocr_corroboration_missing_arm_adds_a_single_note(
@@ -1101,6 +1107,9 @@ def test_ocr_corroboration_missing_arm_adds_a_single_note(
     assert not any(note.endswith("_OCR_CONFIRMED") for note in snapshot.packet.safety_notes)
     assert not any(note.endswith("_OCR_EVIDENCE_MISSING") for note in snapshot.packet.safety_notes)
     assert snapshot.packet.readings
+    # Braço ausente: campo novo silencia em None em vez de False, para não parecer que o
+    # OCR rodou e não confirmou.
+    assert all(reading.ocr_corroborated is None for reading in snapshot.packet.readings)
 
 
 def test_ocr_corroboration_permanent_failure_adds_a_single_note(

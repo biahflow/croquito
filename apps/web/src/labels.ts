@@ -323,6 +323,25 @@ export function suggestedAnnotationHint(reading: Reading): string | null {
   return null;
 }
 
+/**
+ * Aviso de segunda testemunha ausente: o braço de OCR leu a folha e não encontrou o
+ * texto da leitura na mesma região. Caso fundador (24,75 vs 19,75 na V17): o pacote
+ * sabia (`OCR_EVIDENCE_MISSING`) e a nota ficava só na telemetria, invisível na tela.
+ *
+ * Só `false` fala. Confirmação (`true`) e ausência de braço (`null`/indefinido) ficam
+ * em silêncio: um `✓` em toda linha viraria ruído, e o braço nunca rodar não é o mesmo
+ * alerta que o braço ter rodado e discordado.
+ */
+export function ocrWitnessHint(reading: Reading): string | null {
+  if (reading.ocr_corroborated === false) {
+    return (
+      "sem segunda testemunha: o OCR leu a folha e não encontrou este texto — confira " +
+      "o recorte (leitura trocada é o caso clássico: 1↔2, 9↔4)"
+    );
+  }
+  return null;
+}
+
 function capitalise(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }

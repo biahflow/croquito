@@ -58,6 +58,7 @@ import {
   keepApartAxisLabel,
   measurementKindLabel,
   metricEdgeLabel,
+  ocrWitnessHint,
   proposalDisplayName,
   readingLabel,
   readingStatusLabel,
@@ -2972,7 +2973,14 @@ export function CroquiApp({
                             aria-hidden="true"
                           />
                           <span>{readingLabel(reading)}</span>
-                          <small>{readingStatusLabel(reading.status)}</small>
+                          <span className="review-row-status">
+                            <small>{readingStatusLabel(reading.status)}</small>
+                            {reading.ocr_corroborated === false ? (
+                              <small className="ocr-warning">
+                                ⚠ sem 2ª testemunha
+                              </small>
+                            ) : null}
+                          </span>
                         </button>
                       </div>
                     );
@@ -3114,6 +3122,14 @@ export function CroquiApp({
                       {suggestedAnnotationHint(selectedReading) ? (
                         <small className="field-hint">
                           {suggestedAnnotationHint(selectedReading)}
+                        </small>
+                      ) : null}
+                      {/* Segunda testemunha ausente: só fala quando o OCR rodou e não
+                          encontrou o texto (`false`). Confirmação e braço ausente ficam
+                          em silêncio — não é decisão, é aviso para o revisor conferir. */}
+                      {ocrWitnessHint(selectedReading) ? (
+                        <small className="field-hint ocr-warning">
+                          {ocrWitnessHint(selectedReading)}
                         </small>
                       ) : null}
                     </label>

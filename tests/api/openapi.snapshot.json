@@ -1773,6 +1773,17 @@
           "kind": {
             "$ref": "#/components/schemas/MeasurementKind"
           },
+          "ocr_corroborated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ocr Corroborated"
+          },
           "provider_lineage": {
             "items": {
               "$ref": "#/components/schemas/ProviderLineage"

@@ -56,6 +56,11 @@ export type ReviewReading = {
   // cota de elemento. É observação, nunca decisão — quem declara continua sendo o
   // revisor. Opcional porque pacote persistido antes do campo responde sem ele.
   annotation_suggested?: boolean;
+  // Corroboração determinística por OCR, registrada no nascimento da leitura: true = o
+  // OCR leu o mesmo texto na mesma região; false = o OCR rodou e não encontrou; null/
+  // ausente = braço indisponível ou pacote persistido antes do campo. Nunca rebaixa
+  // status; é aviso de segunda testemunha, não decisão.
+  ocr_corroborated?: boolean | null;
   evidence?: {
     coordinate_space: string;
     bbox: EvidenceBox;

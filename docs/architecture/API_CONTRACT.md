@@ -202,6 +202,18 @@ tela pode nascer com a opção de anotação pré-selecionada, e trocar a seleç
 continua valendo mais do que a sugestão. Pacote persistido antes do campo responde sem
 ele, e o cliente trata a ausência como `false`.
 
+Cada leitura também carrega `ocr_corroborated: boolean | null` (F-010, 2026-08-20):
+registro de **nascimento** da corroboração determinística por OCR, nunca recalculado
+numa retificação posterior da leitura. Tri-estado: `true` quando o braço de OCR leu o
+mesmo texto na mesma região da leitura (match textual normalizado **e** interseção
+espacial de bbox); `false` quando o OCR rodou e não encontrou correspondência; `null`
+quando o braço estava ausente, falhou, ou o pacote foi persistido antes do campo
+existir — os dois últimos casos têm o mesmo significado para o revisor: nenhuma segunda
+testemunha foi conferida. A corroboração nunca rebaixa `status`: é aviso, não regra
+determinística de aceite. Caso fundador: a V17 leu `24,75` onde a folha dizia `19,75`
+e o pacote já sabia (`READING_{n}_OCR_EVIDENCE_MISSING` nas notas posicionais), mas o
+sinal não chegava à tela — o campo o expõe à revisão sem exigir leitura de log.
+
 `target_hint` de `packet.readings` é `string | null` (F-024, 2026-08-20): é dica de
 leitura para o revisor, não amarração — quem liga a leitura à geometria é a associação
 explícita por proximidade (`association.py`), que nunca lê o hint. Leitura com valor e

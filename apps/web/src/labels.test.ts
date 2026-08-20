@@ -10,6 +10,7 @@ import {
   keepApartAxisLabel,
   measurementKindLabel,
   metricEdgeLabel,
+  ocrWitnessHint,
   precisionLabel,
   proposalBadge,
   proposalDisplayName,
@@ -609,5 +610,38 @@ describe("suggestedAnnotationHint", () => {
         reading({ annotation_suggested: false, raw_text: "muro Vizinho h=3,80" }),
       ),
     ).toBe("sugestão: anotação da folha (o texto declara altura de elemento)");
+  });
+});
+
+describe("ocrWitnessHint", () => {
+  type Reading = Review["packet"]["readings"][number];
+
+  function reading(overrides: Partial<Reading> = {}): Reading {
+    return {
+      id: "rd_0000000000000001",
+      raw_text: "25,90",
+      kind: "width",
+      status: "proposed",
+      ...overrides,
+    };
+  }
+
+  it("warns about a missing second witness when the OCR ran and found nothing", () => {
+    expect(ocrWitnessHint(reading({ ocr_corroborated: false }))).toBe(
+      "sem segunda testemunha: o OCR leu a folha e não encontrou este texto — confira " +
+        "o recorte (leitura trocada é o caso clássico: 1↔2, 9↔4)",
+    );
+  });
+
+  it("says nothing when the OCR confirmed the reading", () => {
+    expect(ocrWitnessHint(reading({ ocr_corroborated: true }))).toBeNull();
+  });
+
+  it("says nothing when the arm did not run", () => {
+    expect(ocrWitnessHint(reading({ ocr_corroborated: null }))).toBeNull();
+  });
+
+  it("says nothing for a packet persisted before the field existed", () => {
+    expect(ocrWitnessHint(reading())).toBeNull();
   });
 });

@@ -37,8 +37,28 @@ tasks:
     risk: arquivo grande vivo; reestruturação de linha com acessibilidade
     relative_effort: M
 
+  - id: T2
+    role: builder
+    goal: corroboração do OCR vira campo da leitura e aviso visível na revisão
+    scope: services/worker/src/croquito_worker/review.py,
+           services/worker/src/croquito_worker/provider_review.py,
+           tests/worker/test_providers.py, tests/api/openapi.snapshot.json (regen),
+           apps/web/src/api.ts, apps/web/src/labels.ts, apps/web/src/labels.test.ts,
+           apps/web/src/CroquiApp.tsx, apps/web/src/styles.css (se preciso),
+           docs/architecture/API_CONTRACT.md, docs/ai/MODEL_ROUTING.md,
+           docs/product/FDD.md
+    out_of_scope: rebaixar status, lote (T1), retificação, tracing, valuation/**
+    expected_areas: services/worker, tests, apps/web, docs
+    acceptance_criteria: ver tasks/T2-testemunha-ocr.md
+    depends_on: [T1]
+    validation: make check + make test + vitest + provider-contract-demo
+    required_capabilities: READ, WRITE, VALIDATE
+    risk: baixo; molde repetido (annotation_suggested); atenção ao cálculo único
+          da corroboração e às notas posicionais intactas
+    relative_effort: S
+
 parallel_groups: [[T1]]
-critical_path: T1
+critical_path: T1 → T2
 integration_strategy: única task
 human_gates: plano aprovado; aceitação real na revisão da V17
 planning_findings: nenhum

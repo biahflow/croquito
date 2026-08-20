@@ -129,6 +129,11 @@ class DimensionReading(ReviewModel):
     # persistidos antigos em ReviewPacket.model_validate(record.packet_json) — nenhum
     # outro campo muda.
     annotation_suggested: bool = False
+    # Registro de NASCIMENTO da corroboração por OCR, não recálculo vivo: True = o OCR
+    # leu o mesmo texto na mesma região; False = o OCR rodou e não encontrou; None =
+    # braço ausente/falhou (mesmo tratamento) ou pacote persistido antigo sem o campo.
+    # Uma retificação posterior da leitura não reescreve este valor.
+    ocr_corroborated: bool | None = None
     status: ReadingStatus
     decision: HumanDecision | None = None
 
