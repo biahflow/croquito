@@ -1488,10 +1488,13 @@ class AnthropicProviderAdapter:
     api_key: str
     model_id: str
     timeout_seconds: float = 60.0
-    #: Em modelos com thinking sempre ligado (claude-fable-5), o raciocínio interno conta
-    #: DENTRO de max_tokens; 8192 era teto justo de resposta e viraria truncamento. Para os
-    #: demais modelos é só teto — não muda custo, que é cobrado pelo gerado.
-    max_tokens: int = 16384
+    #: 8192 é deliberado e MEDIDO, não é só teto: no claude-opus-5 o thinking adaptativo é
+    #: ligado por padrão e consome deste mesmo limite. Com 8192 o modelo pensa curto e
+    #: entregou 13 rodadas de HML sem rejeição de schema; dobrado para 16384 (V14,
+    #: 2026-08-20, para acomodar o claude-fable-5), o MESMO Opus reprovou INVALID_SCHEMA
+    #: em survey e geometria em tentativas seguidas — thinking longo degradou a saída.
+    #: Não aumente para servir outro modelo sem eval própria.
+    max_tokens: int = 8192
     raw_store: ProtectedRawResponseStore | None = None
     http_post: HttpPost = _http_post
     endpoint: str = "https://api.anthropic.com/v1/messages"
