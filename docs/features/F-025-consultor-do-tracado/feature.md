@@ -2,7 +2,11 @@
 
 ## Status
 
-`READY_FOR_BUILD`
+`READY_FOR_HUMAN_REVIEW`
+
+> T1 e T2 integradas e revisadas na branch `f-025-consultor-tracado` em
+> 2026-08-20 ([evidência](evidence.md)); pendem o merge e a aceitação real na
+> prancha do Guaxindiba.
 
 > F-025 nasceu no Roadmap em 2026-08-20, na primeira exportação real (V17 do
 > Guaxindiba): o aceite travou em "0 exatos, 11 não aplicadas" por três causas
