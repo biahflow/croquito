@@ -58,6 +58,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0036](0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md) | Autorização de IA contratual, sem allowlist documental por digest | Proposed |
 | [0037](0037-document-ai-como-braco-de-ocr.md) | Document AI como braço de OCR da suite hospedada | Proposed |
 | [0038](0038-bdi-como-conceito-de-pre-licitacao.md) | BDI como conceito de pré-licitação | Accepted |
+| [0039](0039-sinapi-sicro-como-origens-de-preco.md) | SINAPI e SICRO como origens de preço da pré-licitação | Accepted |
 
 ## Processo
 
