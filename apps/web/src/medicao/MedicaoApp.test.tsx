@@ -1,11 +1,16 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { User } from "oidc-client-ts";
-import type { OverlayResponse } from "./api";
+import type { ApprovalState, OverlayResponse } from "./api";
 import {
+  AtoDeAprovacao,
   BannerRodadaMudou,
   MedicaoApp,
   OverlayDoTakeoff,
+  PainelSemAcesso,
+  ProgressoExportacao,
+  RegistroDaAprovacao,
+  TelaAuditoriaReprovada,
 } from "./MedicaoApp";
 import { AVISO_DOSSIE_GERADO, AVISO_DOSSIE_PREVIA } from "./labels";
 
@@ -159,6 +164,217 @@ describe("OverlayDoTakeoff", () => {
 
     expect(html).toContain("sem desenho publicado");
     expect(html).not.toContain("<img");
+  });
+});
+
+const APROVACAO_PENDENTE: ApprovalState = {
+  approved: false,
+  approved_by: null,
+  approved_at: null,
+  approved_digest: null,
+  current_digest: "4f2a".padEnd(64, "0"),
+  stale: false,
+};
+
+const APROVACAO_REGISTRADA: ApprovalState = {
+  approved: true,
+  approved_by: "orcamentista-de-teste",
+  approved_at: "2026-08-20T14:32:00+00:00",
+  approved_digest: "4f2a".padEnd(64, "0"),
+  current_digest: "4f2a".padEnd(64, "0"),
+  stale: false,
+};
+
+/** Houve ato humano E a medição mudou depois dele: os dois campos valem ao mesmo tempo. */
+const APROVACAO_CADUCA: ApprovalState = {
+  ...APROVACAO_REGISTRADA,
+  current_digest: "a9c1".padEnd(64, "0"),
+  stale: true,
+};
+
+function ato(overrides: { confirmando?: boolean; gravando?: boolean } = {}): string {
+  return renderToStaticMarkup(
+    <AtoDeAprovacao
+      titulo="Aprovar a medição 3 de PRACA SINTETICA OESTE"
+      identidade="orcamentista-de-teste"
+      papel="orcamentista"
+      contentDigest={APROVACAO_PENDENTE.current_digest}
+      confirmando={overrides.confirmando ?? false}
+      gravando={overrides.gravando ?? false}
+      onAprovar={() => {}}
+      onConfirmar={() => {}}
+      onCancelar={() => {}}
+    />,
+  );
+}
+
+/**
+ * O ato nominal em DOIS atos explícitos (decisão humana de 2026-08-20). O que este bloco
+ * de teste protege é o desenho aprovado: a consequência antes do botão, a identidade
+ * mostrada e nunca digitável, e um segundo passo que REPETE a consequência em vez de
+ * perguntar "tem certeza?".
+ */
+describe("AtoDeAprovacao", () => {
+  it("no repouso, diz a consequência por extenso ANTES do botão", () => {
+    const html = ato();
+
+    expect(html).toContain("Ato nominal · VAL-05");
+    expect(html).toContain("Antes de aprovar, o que aprovar faz:");
+    expect(html).toContain("Publica o seu nome.");
+    expect(html).toContain("Libera a exportação.");
+    expect(html).toContain("Vale só para esta medição");
+    // A consequência vem antes do botão no próprio documento, não só na intenção.
+    expect(html.indexOf("Publica o seu nome.")).toBeLessThan(
+      html.indexOf("Aprovar esta medição"),
+    );
+    // O primeiro clique ainda não aprova: o segundo ato só aparece depois dele.
+    expect(html).not.toContain("Confirmar aprovação nominal");
+  });
+
+  /**
+   * Não existe campo de nome do aprovador nesta tela: o servidor lê a identidade do token
+   * e recusa qualquer nome que venha do cliente. Um campo aqui prometeria um efeito que
+   * ele não tem.
+   */
+  it("mostra a identidade da sessão e não oferece nenhum campo digitável", () => {
+    const html = ato();
+
+    expect(html).toContain("Você aprova como");
+    expect(html).toContain("orcamentista-de-teste");
+    expect(html).toContain("Papel orcamentista");
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("<textarea");
+  });
+
+  it("o segundo ato repete a consequência e é o único que confirma", () => {
+    const html = ato({ confirmando: true });
+
+    expect(html).toContain("Confirmar a aprovação nominal?");
+    expect(html).toContain("fica registrado como quem aprovou");
+    expect(html).toContain("a exportação do boletim fica liberada");
+    expect(html).toContain("Confirmar aprovação nominal");
+    expect(html).toContain("Cancelar");
+    // O primeiro botão sai de cena: um clique só nunca aprova.
+    expect(html).not.toContain("Aprovar esta medição");
+    expect(html).not.toContain("tem certeza");
+  });
+
+  it("enquanto grava, os dois botões ficam indisponíveis", () => {
+    const html = ato({ confirmando: true, gravando: true });
+
+    expect(html).toContain("Aprovando…");
+    expect(html.match(/disabled/g)).toHaveLength(2);
+    expect(html).toContain("chave de idempotência");
+  });
+});
+
+/**
+ * O registro é o que a jornada mostra depois do ato: quem, quando e sobre qual conteúdo. O
+ * digest é o vínculo que faz a aprovação caducar sozinha — e a aprovação caduca é o estado
+ * em que `approved` e `stale` valem ao mesmo tempo.
+ */
+describe("RegistroDaAprovacao", () => {
+  it("medição nunca aprovada não inventa registro nenhum", () => {
+    const html = renderToStaticMarkup(
+      <RegistroDaAprovacao approval={APROVACAO_PENDENTE} papel="orcamentista" />,
+    );
+
+    expect(html).toBe("");
+  });
+
+  it("aprovada mostra quem, quando e o conteúdo assinado", () => {
+    const html = renderToStaticMarkup(
+      <RegistroDaAprovacao approval={APROVACAO_REGISTRADA} papel="orcamentista" />,
+    );
+
+    expect(html).toContain("Aprovada");
+    expect(html).toContain("orcamentista-de-teste");
+    expect(html).toContain("20/08/2026");
+    expect(html).toContain("igual ao da medição atual");
+    expect(html).not.toContain("registro-caduca");
+    expect(html).not.toContain("APPROVAL_CONTENT_MISMATCH");
+  });
+
+  it("caduca mostra a palavra, os dois digests e o código — e nenhuma saída por fora", () => {
+    const html = renderToStaticMarkup(
+      <RegistroDaAprovacao approval={APROVACAO_CADUCA} papel="orcamentista" />,
+    );
+
+    // A marca do estado é a PALAVRA; o tracejado é redundância dela.
+    expect(html).toContain("Aprovação caduca");
+    expect(html).toContain("registro-caduca");
+    expect(html).toContain("Conteúdo aprovado");
+    expect(html).toContain("Conteúdo atual");
+    expect(html).toContain("4f2a00000000");
+    expect(html).toContain("a9c100000000");
+    expect(html).toContain("APPROVAL_CONTENT_MISMATCH");
+    // O registro velho não é apagado — foi um ato humano que aconteceu.
+    expect(html).toContain("orcamentista-de-teste");
+    expect(html).not.toContain("mesmo assim");
+    expect(html).not.toContain("igual ao da medição atual");
+  });
+});
+
+/**
+ * Quatro passos escritos, nunca uma barra: três deles acontecem antes de existir arquivo
+ * publicado, e barra sugeriria que o arquivo já está quase pronto.
+ */
+describe("ProgressoExportacao", () => {
+  it("em voo, declara que nada foi publicado e não finge saber o passo", () => {
+    const html = renderToStaticMarkup(<ProgressoExportacao estado="em-voo" />);
+
+    expect(html).toContain("Montar a planilha no modelo da prefeitura");
+    expect(html).toContain("Reabrir e reconferir célula a célula");
+    expect(html).toContain("Publicar");
+    expect(html).toContain("Nada foi publicado até a resposta chegar");
+    expect(html).not.toContain("feito");
+  });
+
+  it("reprovado diz onde parou: gravou, reconferiu e não publicou", () => {
+    const html = renderToStaticMarkup(<ProgressoExportacao estado="reprovado" />);
+
+    expect(html).toContain("reprovado");
+    expect(html).toContain("não iniciado");
+  });
+});
+
+/**
+ * Auditoria reprovada é TELA, não rodapé: nada foi publicado, e dizê-lo por extenso é o
+ * que separa "falhou" de "publicou algo que ninguém conferiu".
+ */
+describe("TelaAuditoriaReprovada", () => {
+  it("diz que nada foi publicado, lista os códigos e traduz cada um", () => {
+    const html = renderToStaticMarkup(
+      <TelaAuditoriaReprovada findings={["CELL_VALUE_MISMATCH"]} onDismiss={() => {}} />,
+    );
+
+    expect(html).toContain("nada foi publicado");
+    expect(html).toContain("CELL_VALUE_MISMATCH");
+    expect(html).toContain("um centavo de diferença basta para não publicar");
+    expect(html).toContain('role="alert"');
+    // O valor esperado e o encontrado não voltam do servidor: eles são dinheiro do cliente.
+    expect(html).toContain("não voltam do servidor");
+    expect(html).not.toContain("R$");
+  });
+
+  it("sem achado declarado, não fabrica tabela nenhuma", () => {
+    const html = renderToStaticMarkup(<TelaAuditoriaReprovada findings={[]} />);
+
+    expect(html).toContain("nada foi publicado");
+    expect(html).not.toContain("<table");
+  });
+});
+
+/** O `403` é tela, e a mensagem não nomeia papel — a decisão de copy não foi tomada. */
+describe("PainelSemAcesso", () => {
+  it("explica a falta de autorização sem nomear papel nenhum", () => {
+    const html = renderToStaticMarkup(<PainelSemAcesso />);
+
+    expect(html).toContain("Sem acesso a esta rodada");
+    expect(html).toContain("não tem autorização");
+    expect(html).toContain('role="alert"');
+    expect(html).not.toContain("orcamentista");
+    expect(html).not.toContain("orçamentista");
   });
 });
 

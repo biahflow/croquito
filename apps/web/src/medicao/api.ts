@@ -161,6 +161,43 @@ export type RoundStatePlate = {
   page_count: number | null;
 };
 
+/**
+ * Aprovação nominal da medição (VAL-05), como o servidor a DERIVA na leitura.
+ *
+ * Dois campos precisam ser lidos JUNTOS, e é por isso que eles vêm no mesmo bloco.
+ * `approved` diz que houve ato de aprovação (a decisão `confirm`); `stale` diz que o
+ * conteúdo mudou depois dele. Na aprovação **caduca** os dois valem ao mesmo tempo — houve
+ * assinatura, e ela não cobre mais o que está na tela —, então uma tela que lesse só
+ * `approved` ofereceria uma exportação que a rota já vai recusar com
+ * `APPROVAL_CONTENT_MISMATCH`.
+ *
+ * `stale` nunca é gravado: ele é a relação entre `approved_digest` (o conteúdo que foi
+ * assinado) e `current_digest` (o que está gravado agora), calculada na leitura. Os dois
+ * digests viajam para a tela poder mostrá-los lado a lado, como o desenho aprovado pede.
+ */
+export type ApprovalState = {
+  approved: boolean;
+  /** Subject do JWT de quem aprovou; identidade nunca vem do cliente. */
+  approved_by: string | null;
+  approved_at: string | null;
+  approved_digest: string | null;
+  current_digest: string | null;
+  stale: boolean;
+};
+
+/**
+ * Etapa `bulletin` do estado da rodada. `workbook_present` é a planilha publicada — só
+ * existe depois de a auditoria de round-trip aprovar o arquivo, e o digest é o dos BYTES
+ * dela, não o da medição.
+ */
+export type RoundStateBulletin = {
+  present: boolean;
+  valuation_sha256: string | null;
+  workbook_present: boolean;
+  workbook_sha256: string | null;
+  approval: ApprovalState;
+};
+
 export type RoundState = {
   round_id: string;
   version: number;
@@ -188,7 +225,7 @@ export type RoundState = {
   extraction: RoundStateExtraction;
   takeoff: RoundStateTakeoff;
   codes: RoundStateCodes;
-  bulletin: { present: boolean; valuation_sha256: string | null };
+  bulletin: RoundStateBulletin;
   dossier: { present: boolean; dossier_sha256: string | null };
   created_at: string;
   updated_at: string;
@@ -317,6 +354,17 @@ export type BulletinResponse = {
   valuation_sha256: string;
   /** Total da medição; é propriedade do domínio, recomputada no servidor. */
   total_amount: string;
+  /** Aprovação nominal e sua caducidade; ler `approved` e `stale` juntos. */
+  approval: ApprovalState;
+  workbook_present: boolean;
+  /** Digest dos BYTES do `.xlsx` publicado; `null` enquanto não houver planilha. */
+  workbook_sha256: string | null;
+  /**
+   * URL assinada de curta duração da planilha, montada na LEITURA e ausente na resposta
+   * das mutações: ela é credencial e não pertence a nenhum artefato durável (o registro de
+   * idempotência guarda a resposta do `POST`). Vai direto no `href` e nunca em log.
+   */
+  workbook_url?: string | null;
 };
 
 export type DossierResponse = {
@@ -663,6 +711,51 @@ export function getBulletin(
   roundId: string,
 ): Promise<BulletinResponse> {
   return apiJson<BulletinResponse>(roundPath(roundId, "/bulletin"), accessToken);
+}
+
+/**
+ * Aprovação nominal da medição da cabeça (VAL-05).
+ *
+ * O corpo é SÓ a guarda de concorrência. Quem aprova é o subject do JWT e o instante é o
+ * relógio do servidor: não existe campo de nome do aprovador nesta jornada, e o servidor
+ * recusa (`422`) qualquer corpo que traga `reviewer_id`, `reviewer_role`, `decided_at` ou
+ * `decision_id`. A tela MOSTRA a identidade da sessão; ela nunca a digita nem a envia.
+ *
+ * Aprovar de novo é o caminho normal da aprovação caduca, não um erro: cada chamada é uma
+ * revisão nova da cadeia append-only, e o histórico guarda as duas assinaturas.
+ */
+export function postApprove(
+  accessToken: string,
+  roundId: string,
+  baseVersion: number,
+): Promise<BulletinResponse> {
+  return post<BulletinResponse>(
+    roundPath(roundId, "/approve"),
+    accessToken,
+    versionBody(baseVersion),
+  );
+}
+
+/**
+ * Publica o `.xlsx` do boletim depois dos dois portões do servidor.
+ *
+ * Não há nada a escolher aqui — nem formato, nem layout, nem "exportar assim mesmo": a
+ * medição é a da cabeça, o layout é o da prefeitura e a aprovação válida é precondição.
+ * Sem ela a rota recusa com `VALUATION_EXPORT_BLOCKED`; auditoria de round-trip reprovada
+ * é `VALUATION_WORKBOOK_AUDIT_FAILED` e **não publica nada**.
+ *
+ * A resposta não traz `workbook_url`: a URL assinada só sai na leitura (`getBulletin`).
+ */
+export function postBulletinExport(
+  accessToken: string,
+  roundId: string,
+  baseVersion: number,
+): Promise<BulletinResponse> {
+  return post<BulletinResponse>(
+    roundPath(roundId, "/bulletin/export"),
+    accessToken,
+    versionBody(baseVersion),
+  );
 }
 
 /** Dossiê do aditivo: espelho de `postCalcBuild`, dos mesmos dois artefatos-base. */

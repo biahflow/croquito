@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { RoundState, RoundStateExtraction } from "./api";
+import type { ApprovalState, RoundState, RoundStateExtraction } from "./api";
 import { derivarEtapas, etapaStatusLabel, type EtapaId } from "./etapas";
+
+/** Medição montada e nunca aprovada — o estado em que a etapa nova nasce. */
+const SEM_APROVACAO: ApprovalState = {
+  approved: false,
+  approved_by: null,
+  approved_at: null,
+  approved_digest: null,
+  current_digest: "e".repeat(64),
+  stale: false,
+};
 
 /**
  * O estado abaixo é a FORMA que `GET /v1/valuation-rounds/{round_id}` devolve
@@ -69,7 +79,14 @@ function estado(overrides: {
       pending: 0,
       ...overrides.codes,
     },
-    bulletin: { present: false, valuation_sha256: null, ...overrides.bulletin },
+    bulletin: {
+      present: false,
+      valuation_sha256: null,
+      workbook_present: false,
+      workbook_sha256: null,
+      approval: SEM_APROVACAO,
+      ...overrides.bulletin,
+    },
     dossier: { present: false, dossier_sha256: null },
     created_at: "2026-08-17T11:00:00+00:00",
     updated_at: "2026-08-17T12:00:00+00:00",
@@ -93,8 +110,10 @@ describe("derivarEtapas", () => {
       "revisao",
       "codigos",
       "boletim",
+      "aprovacao",
     ]);
     expect(jornada.etapas.map((etapa) => etapa.status)).toEqual([
+      "blocked",
       "blocked",
       "blocked",
       "blocked",
@@ -283,7 +302,54 @@ describe("derivarEtapas", () => {
     expect(porId(state, "boletim").status).toBe("available");
   });
 
-  it("medição gravada conclui a jornada e a etapa ativa é a última alcançável", () => {
+  it("medição gravada conclui o boletim e abre a etapa de aprovação", () => {
+    const state = medicaoMontada();
+    const jornada = derivarEtapas(state);
+
+    expect(jornada.etapas.map((etapa) => etapa.status)).toEqual([
+      "done",
+      "done",
+      "done",
+      "done",
+      "available",
+    ]);
+    expect(jornada.etapaAtiva).toBe("aprovacao");
+    // A etapa Boletim não antecipa mais o estado da aprovação: quem o declara é a etapa
+    // que tem o bloco de aprovação do servidor.
+    expect(porId(state, "boletim").summary).toBe("Medição gravada nesta rodada.");
+    expect(porId(state, "boletim").summary).not.toContain("aprovação");
+  });
+});
+
+/** Medição montada, com a etapa de aprovação já alcançável. */
+function medicaoMontada(approval: Partial<ApprovalState> = {}, workbook = false): RoundState {
+  return estado({
+    takeoff: {
+      review_status: "complete",
+      pending: 0,
+      proposed: 0,
+      ambiguous: 0,
+      confirmed: 6,
+      rejected: 1,
+    },
+    codes: { pending: 0, confirmed: 6, rejected: 0, assignments_present: true },
+    bulletin: {
+      present: true,
+      valuation_sha256: "b".repeat(64),
+      workbook_present: workbook,
+      workbook_sha256: workbook ? "f".repeat(64) : null,
+      approval: { ...SEM_APROVACAO, ...approval },
+    },
+  });
+}
+
+/**
+ * A etapa nova (F-025). Ela espelha o bloco de aprovação do servidor e nada mais: os três
+ * estados que importam são "aguardando o ato", "caduca" e "publicada", e a diferença entre
+ * os dois primeiros só existe lendo `approved` e `stale` JUNTOS.
+ */
+describe("derivarEtapas — aprovação e exportação", () => {
+  it("sem medição montada, a etapa fica bloqueada com o motivo escrito", () => {
     const state = estado({
       takeoff: {
         review_status: "complete",
@@ -294,18 +360,115 @@ describe("derivarEtapas", () => {
         rejected: 1,
       },
       codes: { pending: 0, confirmed: 6, rejected: 0, assignments_present: true },
-      bulletin: { present: true, valuation_sha256: "b".repeat(64) },
     });
+
+    expect(porId(state, "aprovacao").status).toBe("blocked");
+    expect(porId(state, "aprovacao").summary).toBe(
+      "Nada a aprovar: a medição ainda não foi montada.",
+    );
+    expect(porId(state, "aprovacao").blockedReason).toBe(
+      "aguarda a medição ser montada na etapa Boletim",
+    );
+    expect(derivarEtapas(state).etapaAtiva).toBe("boletim");
+  });
+
+  it("bloqueio de etapa anterior é herdado, e não reescrito", () => {
+    const state = estado({
+      takeoff: { pending: 2, proposed: 1, ambiguous: 1, confirmed: 4, rejected: 1 },
+    });
+
+    expect(porId(state, "aprovacao").status).toBe("blocked");
+    expect(porId(state, "aprovacao").blockedReason).toBe(
+      porId(state, "boletim").blockedReason,
+    );
+  });
+
+  it("medição montada e não aprovada pede o ato, sem declarar a etapa concluída", () => {
+    const state = medicaoMontada();
+
+    expect(porId(state, "aprovacao").status).toBe("available");
+    expect(porId(state, "aprovacao").summary).toBe(
+      "Medição montada, aguardando aprovação nominal.",
+    );
+  });
+
+  /**
+   * Aprovar é metade do fechamento: a etapa continua "em aberto" enquanto não houver
+   * arquivo publicado, porque a jornada não declara pronto o que ainda não entregou o
+   * boletim.
+   */
+  it("aprovada e sem planilha continua em aberto", () => {
+    const state = medicaoMontada({
+      approved: true,
+      approved_by: "orcamentista-de-teste",
+      approved_at: "2026-08-20T14:32:00+00:00",
+      approved_digest: "e".repeat(64),
+    });
+
+    expect(porId(state, "aprovacao").status).toBe("available");
+    expect(porId(state, "aprovacao").summary).toBe(
+      "Medição aprovada; o boletim ainda não foi exportado.",
+    );
+  });
+
+  it("aprovada com planilha publicada conclui a etapa", () => {
+    const state = medicaoMontada(
+      {
+        approved: true,
+        approved_by: "orcamentista-de-teste",
+        approved_at: "2026-08-20T14:32:00+00:00",
+        approved_digest: "e".repeat(64),
+      },
+      true,
+    );
     const jornada = derivarEtapas(state);
 
-    expect(jornada.etapas.map((etapa) => etapa.status)).toEqual([
-      "done",
-      "done",
-      "done",
-      "done",
+    expect(porId(state, "aprovacao").status).toBe("done");
+    expect(porId(state, "aprovacao").summary).toBe(
+      "Medição aprovada e boletim publicado nesta rodada.",
+    );
+    expect(jornada.etapas.every((etapa) => etapa.status === "done")).toBe(true);
+    expect(jornada.etapaAtiva).toBe("aprovacao");
+  });
+
+  /**
+   * O estado CADUCO é o que só se lê com os dois campos: `approved` continua `true` — houve
+   * ato humano — e `stale` diz que ele não cobre mais o conteúdo atual. Ler só `approved`
+   * declararia a etapa concluída sobre uma medição que a exportação vai recusar.
+   */
+  it("aprovação caduca não é 'aprovada' nem 'nunca aprovada', mesmo com planilha antiga", () => {
+    const state = medicaoMontada(
+      {
+        approved: true,
+        approved_by: "orcamentista-de-teste",
+        approved_at: "2026-08-20T14:32:00+00:00",
+        approved_digest: "e".repeat(64),
+        current_digest: "a9c1".padEnd(64, "0"),
+        stale: true,
+      },
+      true,
+    );
+
+    expect(state.bulletin.approval.approved).toBe(true);
+    expect(porId(state, "aprovacao").status).toBe("available");
+    expect(porId(state, "aprovacao").summary).toBe(
+      "Aprovação caduca: a medição mudou depois de aprovada; aprove a medição atual.",
+    );
+    expect(derivarEtapas(state).etapaAtiva).toBe("aprovacao");
+  });
+});
+
+describe("títulos das etapas", () => {
+  it("a etapa nova entra depois de Boletim, com o título do desenho aprovado", () => {
+    const jornada = derivarEtapas(medicaoMontada());
+
+    expect(jornada.etapas.map((etapa) => etapa.title)).toEqual([
+      "Prancha",
+      "Revisão do takeoff",
+      "Códigos",
+      "Boletim",
+      "Aprovação e exportação",
     ]);
-    expect(jornada.etapaAtiva).toBe("boletim");
-    expect(porId(state, "boletim").summary).toContain("sem aprovação");
   });
 });
 

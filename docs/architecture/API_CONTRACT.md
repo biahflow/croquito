@@ -796,10 +796,61 @@ versão divergente. Não aprova nada: aprovação nominal é ato próprio e não
 rota. Confirmação de código pendente devolve `422 DOMAIN_VALIDATION_FAILED` com
 `CALC_ASSIGNMENT_MISSING`.
 
+Se a rodada já tinha uma aprovação, ela é **levada adiante** — e preservar não é aprovar. A
+aprovação carregada continua amarrada ao digest do conteúdo anterior, então a medição
+recém-montada nasce com a **aprovação caduca**: `GET .../bulletin` devolve `stale: true` com
+`approved_by`/`approved_at` preenchidos e os dois digests divergentes, e
+`POST .../bulletin/export` recusa com `APPROVAL_CONTENT_MISMATCH` até um ato novo de
+aprovação. Descartá-la apagaria em silêncio o fato de que alguém assinou.
+
 ### `GET /v1/valuation-rounds/{round_id}/bulletin`
 
 Retorna o boletim com totais **recomputados** na leitura, nunca lidos como estavam gravados.
 Boletim ainda não construído devolve `409 ROUND_STAGE_NOT_READY`.
+
+Acompanha o bloco `approval` (`approved`, `approved_by`, `approved_at`, `approved_digest`,
+`current_digest`, `stale`), o estado da planilha publicada (`workbook_present`,
+`workbook_sha256`) e `workbook_url` — URL assinada de curta duração, montada na leitura e
+nunca persistida. `stale: true` é a **aprovação caduca**: houve aprovação, mas o conteúdo
+mudou depois dela, e a exportação vai recusar até um ato novo.
+
+### `POST /v1/valuation-rounds/{round_id}/approve`
+
+Entrada: **só** `base_version`. A identidade do aprovador **não viaja no corpo** — quem
+aprova é o `sub` do JWT, e o instante é o relógio do servidor. Um corpo com `reviewer_id`
+(ou qualquer outro campo) é recusado com `422`.
+
+Aprova nominalmente a medição da cabeça e amarra o ato ao `content_digest()` da medição, que
+exclui a própria aprovação do cálculo. Exige `Idempotency-Key` e `base_version`, com
+`409 REVISION_CONFLICT` para versão divergente, e avança `version` — aprovar é ato humano
+deliberado. Boletim ainda não construído devolve `409 ROUND_STAGE_NOT_READY`; boletim que não
+revalida devolve `422`.
+
+### `POST /v1/valuation-rounds/{round_id}/bulletin/export`
+
+Entrada: **só** `base_version`. Não há o que escolher na exportação: a medição é a da cabeça
+e o layout é o da prefeitura.
+
+Publica o `.xlsx` do boletim atrás de dois portões, nesta ordem. Primeiro o portão do
+**domínio** (`Valuation.ensure_exportable`): medição sem aprovação, com aprovação de recusa
+ou com aprovação que não confere com o conteúdo atual devolve `422 DOMAIN_VALIDATION_FAILED`
+com `details.code = VALUATION_EXPORT_BLOCKED` e a lista de violações em `details.errors`
+(`VALUATION_NOT_APPROVED`, `VALUATION_APPROVAL_REJECTED`, `APPROVAL_CONTENT_MISMATCH`).
+Depois o portão da **auditoria**: a planilha é escrita, reaberta e reconferida contra a
+medição e o catálogo instalado, e um laudo divergente devolve `500
+VALUATION_WORKBOOK_AUDIT_FAILED` — só com os códigos dos achados, nunca com valor medido — e
+**não publica nada**.
+
+O `.xlsx` é endereçado pelo digest da medição, de modo que uma exportação nova nunca
+sobrescreve a planilha que uma revisão anterior ainda referencia. A exportação não altera a
+medição: a revisão nova carrega o mesmo boletim e acrescenta só a referência e o digest do
+arquivo. A resposta do `POST` **não** traz `workbook_url`; a URL assinada sai apenas no `GET`.
+
+Limite declarado: a cadeia de `/v1` não importa consolidado contratual, então os códigos de
+saldo e contrato do portão (`BALANCE_EXCEEDED`, `CODE_NOT_IN_CONTRACT`,
+`LINE_PRICE_NOT_IN_CONTRACT` e afins) não têm fato que os alimente nesta rota — a conferência
+de preço contra o catálogo instalado é feita pelo auditor (`CATALOG_PRICE_MISMATCH`), e a
+aprovação continua valendo integralmente.
 
 ### `POST /v1/valuation-rounds/{round_id}/amendment-dossier`
 

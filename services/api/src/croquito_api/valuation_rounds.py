@@ -27,11 +27,15 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import os
+import tempfile
 import threading
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, Protocol
 
@@ -46,10 +50,19 @@ from croquito_valuation.assignment import (
     CodeAssignmentSet,
     CodeSuggestionSet,
 )
+from croquito_valuation.canonical import AuditReport, audit_workbook
 from croquito_valuation.catalog import default_domain_synonyms, default_legend_noise
+from croquito_valuation.contract import ContractLine, ContractWorkbook
 from croquito_valuation.errors import ValuationValidationError
-from croquito_valuation.models import PriceCatalog
+from croquito_valuation.models import (
+    PriceCatalog,
+    ReviewerDecision,
+    Valuation,
+    ValuationApproval,
+)
 from croquito_valuation.takeoff import TakeoffPacket
+from croquito_valuation.template import WorkbookTemplate
+from croquito_valuation.workbook_writer import write_valuation_workbook
 from croquito_worker.valuation.catalog_search import (
     SEMANTIC_UNAVAILABLE_MESSAGE,
     SemanticArm,
@@ -84,6 +97,17 @@ CATALOG_REQUIRED: Final = "CATALOG_REQUIRED"
 CATALOG_QUERY_EMPTY: Final = "CATALOG_QUERY_EMPTY"
 TAKEOFF_REVIEW_INCOMPLETE: Final = "TAKEOFF_REVIEW_INCOMPLETE"
 SUGGESTIONS_ALREADY_REFINED: Final = "SUGGESTIONS_ALREADY_REFINED"
+VALUATION_WORKBOOK_AUDIT_FAILED: Final = "VALUATION_WORKBOOK_AUDIT_FAILED"
+
+BULLETIN_WORKBOOK_REF: Final = "bulletin_workbook"
+"""Chave do `.xlsx` publicado, em `artifact_refs_json`. Nunca uma URL assinada."""
+
+BULLETIN_WORKBOOK_DIGEST: Final = "bulletin_workbook_sha256"
+"""Digest dos BYTES da planilha publicada, em `artifact_digests_json`."""
+
+BULLETIN_WORKBOOK_CONTENT_TYPE: Final = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
 
 STAGE_CREATED: Final = "created"
 STAGE_PLATE: Final = "plate"
@@ -179,6 +203,29 @@ def catalog_required(reason: str, details: Mapping[str, object] | None = None) -
     e o conteúdo que deixou de validar — nunca "a rodada não tem catálogo".
     """
     return RoundRefusal(409, CATALOG_REQUIRED, reason, details)
+
+
+def bulletin_workbook_audit_failed(audit: AuditReport) -> RoundRefusal:
+    """Auditoria de round-trip reprovada: nada é publicado e a recusa é estável.
+
+    Só os CÓDIGOS dos achados viajam. `AuditFinding` carrega `expected`/`found`, que são
+    preço, quantidade e total da obra do cliente — devolvê-los numa mensagem de erro
+    publicaria justamente o conteúdo que a planilha existe para entregar por URL assinada.
+
+    É `500` pelo mesmo motivo do gêmeo do orçamento-base
+    (`estimate_rounds.workbook_audit_failed`): a planilha é render determinístico da medição
+    que o próprio servidor acabou de reler e revalidar, e a única leitura honesta de um
+    arquivo que não confere consigo mesmo é que o servidor falhou em produzi-lo.
+    """
+    return RoundRefusal(
+        500,
+        VALUATION_WORKBOOK_AUDIT_FAILED,
+        "a planilha do boletim não confere com a medição aprovada; nada foi publicado",
+        {
+            "finding_codes": sorted({finding.code for finding in audit.findings}),
+            "finding_count": len(audit.findings),
+        },
+    )
 
 
 def require_reviewed_packet(packet: TakeoffPacket) -> None:
@@ -686,6 +733,286 @@ def load_catalog(
     )
 
 
+# --- aprovação nominal e planilha publicada -----------------------------------------------
+
+
+APPROVAL_ACTION: Final = "confirm"
+"""A única decisão que a rota de aprovação escreve.
+
+O domínio aceita `reject` em `ReviewerDecision`, e a recusa registrada da medição continua
+sem existir no produto: o Design Approval Package da F-025 não a desenha porque ninguém
+decidiu o que ela destrava na tela. Nada é desenhado como "reservado", e nada é escrito
+aqui como reservado."""
+
+
+def _approval_decision_id(*, reviewer_id: str, decided_at: datetime, valuation_digest: str) -> str:
+    """Id determinístico do ato, no molde de `_decision_id` do takeoff (prefixo `vd_`).
+
+    Deriva do que o ato É — quem decidiu, quando, sobre qual conteúdo —, e não de um
+    contador ou de um relógio próprio: dois processos que registrassem o mesmo ato
+    produziriam o mesmo id, e um id que muda sem o ato mudar não identifica nada.
+    """
+    canonical = json.dumps(
+        {
+            "action": APPROVAL_ACTION,
+            "reviewer_id": reviewer_id,
+            "reviewer_role": REVIEWER_ROLE,
+            "decided_at": decided_at.isoformat(),
+            "valuation_digest": valuation_digest,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"vd_{hashlib.sha256(canonical.encode()).hexdigest()[:16]}"
+
+
+def approve_valuation(valuation: Valuation, *, reviewer_id: str, decided_at: datetime) -> Valuation:
+    """A MESMA medição com a aprovação nominal embutida, amarrada por digest ao conteúdo.
+
+    O vínculo é o `content_digest()` do próprio domínio, que exclui `approval` do cálculo
+    (`models.py`): aprovar não muda o conteúdo aprovado, e por isso o digest gravado
+    continua conferindo com o da medição depois do ato. Qualquer ato POSTERIOR que reescreva
+    a medição faz os dois divergirem, e é o portão de exportação — nunca esta função — que
+    lê essa divergência como `APPROVAL_CONTENT_MISMATCH`.
+
+    Identidade e instante são do SERVIDOR: `reviewer_id` é o subject do JWT e `decided_at` é
+    o relógio do processo. Nenhum dos dois viaja no corpo (critério 3 da F-025), e por isso
+    esta função os recebe por parâmetro nomeado em vez de aceitar uma decisão pronta.
+
+    A cópia não revalida a medição de propósito: quem entra aqui já foi revalidado pela
+    leitura (`Valuation.model_validate`), o único campo que muda é `approval`, e nenhuma
+    invariante de boletim ou memória de cálculo depende dele.
+    """
+    valuation_digest = valuation.content_digest()
+    approval = ValuationApproval(
+        decision=ReviewerDecision(
+            decision_id=_approval_decision_id(
+                reviewer_id=reviewer_id,
+                decided_at=decided_at,
+                valuation_digest=valuation_digest,
+            ),
+            action=APPROVAL_ACTION,
+            reviewer_id=reviewer_id,
+            reviewer_role=REVIEWER_ROLE,
+            decided_at=decided_at,
+        ),
+        valuation_digest=valuation_digest,
+    )
+    return valuation.model_copy(update={"approval": approval})
+
+
+def approval_state(valuation: Valuation | None) -> dict[str, Any]:
+    """O bloco de aprovação que a tela lê, com a caducidade DERIVADA na leitura.
+
+    `stale` nunca é gravado, pela mesma razão do `takeoff_overlay_state`: ele é a relação
+    entre dois digests que só existe no instante da leitura. Aprovação caduca é o estado que
+    o desenho aprovado da F-025 mostra por extenso — os dois digests lado a lado e uma única
+    saída, aprovar de novo —, e escondê-lo faria a tela oferecer uma exportação que a rota já
+    sabe que vai recusar com `APPROVAL_CONTENT_MISMATCH`.
+
+    `approved` é `True` só para a decisão `confirm`. Uma decisão de recusa (que só o CLI
+    escreve) mantém quem decidiu e quando visíveis e `approved` falso: o portão do domínio a
+    recusa com `VALUATION_APPROVAL_REJECTED`, e a leitura não pode chamar de aprovada uma
+    medição que a exportação recusa.
+
+    Medição ilegível chega aqui como `None` e sai como não aprovada — a tela prefere duvidar
+    a afirmar, e nenhuma exportação nasce de um artefato que não valida.
+    """
+    approval = None if valuation is None else valuation.approval
+    if valuation is None or approval is None:
+        return {
+            "approved": False,
+            "approved_by": None,
+            "approved_at": None,
+            "approved_digest": None,
+            "current_digest": None if valuation is None else valuation.content_digest(),
+            "stale": False,
+        }
+    current_digest = valuation.content_digest()
+    return {
+        "approved": approval.decision.action == APPROVAL_ACTION,
+        "approved_by": approval.decision.reviewer_id,
+        "approved_at": approval.decision.decided_at.isoformat(),
+        "approved_digest": approval.valuation_digest,
+        "current_digest": current_digest,
+        "stale": approval.valuation_digest != current_digest,
+    }
+
+
+def readable_valuation(revision: ValuationRoundRevisionRecord | None) -> Valuation | None:
+    """A medição gravada, ou `None` quando ela não existe **ou não valida mais**.
+
+    Espelha `suggestions_of`: o estado por etapa não pode derrubar a tela inteira por causa
+    de um artefato que deixou de validar, e quem SERVE o boletim (`GET .../bulletin`) não
+    passa por aqui — lá, artefato ilegível é `422`, porque a tela não renderiza medição que
+    o domínio não valida.
+    """
+    if revision is None or revision.valuation_json is None:
+        return None
+    try:
+        return Valuation.model_validate(dict(revision.valuation_json))
+    except (ValuationValidationError, ValidationError):
+        return None
+
+
+def carry_approval_forward(valuation: Valuation, previous: Valuation | None) -> Valuation:
+    """Leva a aprovação anterior adiante na medição recém-montada. Preservar NÃO é aprovar.
+
+    A aprovação carregada continua apontando para o digest ANTIGO, e a medição nova tem outro
+    conteúdo — ela nasce, portanto, CADUCA por construção, e o portão de exportação a recusa
+    com `APPROVAL_CONTENT_MISMATCH`. Em momento algum ela autoriza o conteúdo novo: o que ela
+    faz é manter visível que uma aprovação existiu e deixou de cobrir o que está na tela.
+
+    Descartá-la seria perder essa informação em silêncio. O orçamentista que recalculasse
+    depois de aprovar veria "não aprovada", como se ninguém nunca tivesse assinado, e a tela
+    não teria como oferecer a única saída correta — aprovar de novo, ciente de que o conteúdo
+    mudou. É o estado de aprovação caduca do desenho aprovado da F-025.
+
+    Nada disso é decisão do DOMÍNIO: `build_worksite_valuation` continua montando medição sem
+    aprovação nenhuma, que é o certo para uma função que só sabe calcular. Quem tem a
+    revisão anterior em mãos, e portanto pode responder "houve aprovação antes?", é a rota.
+
+    Medição anterior ilegível chega aqui como `None` e nada é carregado: uma aprovação que
+    não se consegue reler não é uma aprovação que se possa afirmar que existiu.
+    """
+    if previous is None or previous.approval is None:
+        return valuation
+    return valuation.model_copy(update={"approval": previous.approval})
+
+
+GATE_CONTRACT_GROUP_LABEL: Final = "MEDICAO CORRENTE"
+GATE_CONTRACT_SOURCE_LABEL: Final = (
+    "medição corrente: a rodada de /v1 não importa consolidado contratual"
+)
+
+
+def bulletin_export_contract(valuation: Valuation) -> ContractWorkbook:
+    """O consolidado que a rodada de `/v1` TEM para oferecer ao portão de exportação.
+
+    `Valuation.ensure_exportable()` exige um `ContractWorkbook` porque o saldo contratual
+    mora nele, e não na medição. A cadeia de `/v1` não importa consolidado nenhum: ela
+    instala um catálogo de preços na criação da rodada e monta o boletim com ele
+    (`POST .../calc`, `calc_plan=None`). Não existe rota, coluna nem artefato de onde tirar
+    contratado, acumulado e saldo — e inventar esses números para "passar" no portão seria
+    exatamente a fraude que o portão existe para impedir.
+
+    Então este consolidado declara só o que a rodada sabe: os códigos que a medição
+    corrente mede, pelo preço e pela unidade que a própria medição registrou, com saldo igual
+    ao que está sendo medido e os períodos anteriores ao dela. A consequência é declarada, e
+    não escondida:
+
+    - `PERIOD_NOT_SEQUENTIAL`, `BALANCE_EXCEEDED`, `CODE_NOT_IN_CONTRACT`,
+      `CODE_AMBIGUOUS_IN_CONTRACT`, `LINE_PRICE_NOT_IN_CONTRACT` e
+      `LINE_UNIT_NOT_IN_CONTRACT` **não podem disparar** por aqui. A rodada não tem o fato
+      que os alimentaria, e um código que nunca dispara é honesto quando está escrito; o
+      perigoso é o que finge conferir.
+    - o que continua valendo integralmente é a APROVAÇÃO — `VALUATION_NOT_APPROVED`,
+      `VALUATION_APPROVAL_REJECTED` e `APPROVAL_CONTENT_MISMATCH` —, que é o que a F-025
+      transforma em recusa de rota (VAL-05).
+    - a conferência entre o boletim e o catálogo instalado não se perde: ela acontece no
+      AUDITOR, que compara cada preço impresso com `catalog.entry_for(code)` e reprova com
+      `CATALOG_PRICE_MISMATCH`/`CATALOG_CODE_MISSING` — e auditoria reprovada não publica.
+
+    Este objeto é insumo do portão e de mais nada: ele nunca é persistido, nunca vai para a
+    planilha (que é escrita com `contract=None`, porque a rodada não tem PLANILHA GERAL nem
+    RE-RA a imprimir) e nunca volta ao cliente. `source_sha256` é o digest do conteúdo da
+    própria medição, para que a origem do consolidado seja legível a quem o encontrar.
+
+    Trazer saldo de verdade para `/v1` é importar o consolidado contratual — trabalho de
+    marco próprio, com rota, coluna e ADR, e não de um parâmetro montado dentro de uma rota.
+    """
+    measured: dict[str, Decimal] = {}
+    priced: dict[str, tuple[str, Decimal, str]] = {}
+    for bulletin in valuation.bulletins:
+        for line in bulletin.lines:
+            measured[line.code] = measured.get(line.code, Decimal("0.00")) + line.quantity
+            priced.setdefault(line.code, (line.unit, line.unit_price, line.description))
+    lines: list[ContractLine] = []
+    for index, code in enumerate(sorted(measured), start=1):
+        unit, unit_price, description = priced[code]
+        quantity = measured[code]
+        lines.append(
+            ContractLine(
+                group_label=GATE_CONTRACT_GROUP_LABEL,
+                item_number=str(index),
+                code=code,
+                description=description,
+                unit=unit,
+                unit_price=unit_price,
+                contract_quantity=quantity,
+                amended_quantity=quantity,
+                periods=[],
+                accumulated_quantity=Decimal("0.00"),
+                accumulated_amount=Decimal("0.00"),
+                balance_quantity=quantity,
+            )
+        )
+    return ContractWorkbook(
+        source_label=GATE_CONTRACT_SOURCE_LABEL,
+        source_sha256=valuation.content_digest(),
+        period_numbers=list(range(1, valuation.period_number)),
+        lines=lines,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedBulletinWorkbook:
+    """A planilha do boletim já auditada, ainda em memória: bytes e o laudo que a aprovou."""
+
+    body: bytes
+    audit: AuditReport
+
+
+def render_valuation_workbook(
+    valuation: Valuation,
+    catalog: PriceCatalog,
+    template: WorkbookTemplate,
+    contract: ContractWorkbook | None = None,
+) -> RenderedBulletinWorkbook:
+    """Grava a pasta num arquivo temporário, reabre, audita e só então devolve os bytes.
+
+    Mesmo desenho fail-closed de `run_export_valuation` no worker e de
+    `estimate_rounds.render_estimate_workbook`: o arquivo nasce em nome pendente — aqui, num
+    diretório temporário que morre com a chamada — e a auditoria de round-trip é quem decide
+    se ele existe para alguém. Nada chega ao object store antes disso, e auditoria reprovada
+    não publica.
+
+    A API não importa o CLI: o gate é replicado com as funções do pacote `valuation`, porque
+    o comando de fila e a rota são processos diferentes e um importar o outro faria a
+    fronteira de `services/` depender do CLI.
+
+    `contract` acompanha a assinatura do escritor e do auditor e é `None` na rodada de `/v1`,
+    que não tem consolidado a imprimir; ver `bulletin_export_contract`.
+    """
+    with tempfile.TemporaryDirectory(prefix="croquito-bulletin-") as directory:
+        path = Path(directory) / "boletim.xlsx"
+        write_valuation_workbook(valuation, catalog, template, path, contract)
+        audit = audit_workbook(path, valuation, catalog, template, contract)
+        if audit.status != "ok":
+            raise bulletin_workbook_audit_failed(audit)
+        return RenderedBulletinWorkbook(body=path.read_bytes(), audit=audit)
+
+
+def bulletin_workbook_key(*, tenant_id: str, round_id: str, valuation_sha256: str) -> str:
+    """Chave do `.xlsx` sob o prefixo do tenant, endereçada pelo digest da medição.
+
+    Endereçar pelo conteúdo — e não por um nome fixo — é o que impede uma exportação nova de
+    sobrescrever a planilha que a revisão anterior ainda referencia: cada revisão aponta para
+    o boletim que ela publicou, e uma URL assinada emitida antes continua servindo exatamente
+    o que foi auditado quando foi emitida.
+    """
+    return f"tenants/{tenant_id}/valuation-rounds/{round_id}/bulletin/{valuation_sha256}.xlsx"
+
+
+def bulletin_workbook_ref(revision: ValuationRoundRevisionRecord | None) -> str | None:
+    """Chave do `.xlsx` publicado gravada na revisão, ou `None` quando não há planilha."""
+    if revision is None:
+        return None
+    key = (revision.artifact_refs_json or {}).get(BULLETIN_WORKBOOK_REF)
+    return key if isinstance(key, str) and key else None
+
+
 def _artifact_digests(revision: ValuationRoundRevisionRecord | None) -> dict[str, str]:
     """Digest por artefato presente na revisão — o que a tela usa para ver o que mudou."""
     if revision is None:
@@ -715,6 +1042,11 @@ def round_state_payload(
     A etapa entra por PRESENÇA e digest; revalidar boletim ou dossiê é papel de quem os
     serve. Uma medição ilegível não pode derrubar a tela inteira antes de o orçamentista
     sequer chegar nela — a mesma regra que o servidor de medição já segue.
+
+    O bloco de aprovação é a única coisa aqui que precisa LER a medição, porque o vínculo da
+    aprovação é um digest do conteúdo e não uma coluna. A leitura é a tolerante
+    (`readable_valuation`): artefato que não valida sai como não aprovado, e não derruba o
+    estado da rodada.
 
     O braço semântico da busca não aparece aqui: no `/v1` ele depende do entitlement
     contratual do tenant (decisão de 2026-08-17), e entitlement é dado da requisição
@@ -789,6 +1121,9 @@ def round_state_payload(
         "bulletin": {
             "present": "valuation_json" in digests,
             "valuation_sha256": digests.get("valuation_json"),
+            "workbook_present": bulletin_workbook_ref(revision) is not None,
+            "workbook_sha256": digests.get(BULLETIN_WORKBOOK_DIGEST),
+            "approval": approval_state(readable_valuation(revision)),
         },
         "dossier": {
             "present": "amendment_dossier_json" in digests,

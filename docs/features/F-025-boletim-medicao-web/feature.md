@@ -2,7 +2,11 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_HUMAN_REVIEW`
+
+> Implementação integrada em 2026-08-20 na branch `f-025-boletim-web` (T1–T3,
+> [plan.md](plan.md), um `PLAN_DEVIATION` registrado), revisada e com evidência em
+> [evidence.md](evidence.md). Pendem o merge (represado) e os gates listados ao final.
 
 > Selecionada por decisão humana de 2026-08-20, na rodada pós-F-020. É a dívida que a
 > própria F-020 declarou em Out of Scope: "aprovação nominal e exportação `.xlsx` do

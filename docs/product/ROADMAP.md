@@ -48,7 +48,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-025 | A DEFINIR | READY_FOR_SPEC | Consultor do traçado — cada "não aplicada" com causa e conserto de um clique (forma freeform, associação no vizinho errado, cotas em conflito no mesmo vão); diagnóstico determinístico dos dados do solver, sem IA (a definir em contrato) |
 | F-024 | HIGH | READY_FOR_HUMAN_REVIEW | [Leitura com valor não morre por falta de target_hint](../features/F-024-leitura-sem-target-hint/feature.md) |
 | F-023 | A DEFINIR | READY_FOR_SPEC | Survey Quality Score — nota do levantamento com recomendações de campo, agregando sinais existentes (blockers, leituras não aplicadas, corroboração, resíduos); calibrar com V14/V15/V16 (a definir em contrato) |
-| F-025 | HIGH | READY_FOR_PLANNING | [Aprovação nominal e boletim da medição pela web](../features/F-025-boletim-medicao-web/feature.md) |
+| F-025 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-025-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_SPEC | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
 

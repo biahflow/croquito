@@ -8,7 +8,10 @@ import {
   getRoundState,
   getTakeoff,
   getTakeoffOverlay,
+  getBulletin,
   listRounds,
+  postApprove,
+  postBulletinExport,
   postCalcBuild,
   postCodeDecision,
   postDossierBuild,
@@ -228,6 +231,122 @@ describe("mutações da rodada", () => {
       `${BASE}/v1/valuation-rounds/${ROUND}/plate/extractions`,
     );
     expect(corpoDaChamada(1)).toEqual({ base_version: 3 });
+  });
+});
+
+describe("aprovação nominal e exportação do boletim", () => {
+  /**
+   * O ato nominal (VAL-05) manda SÓ a versão-base. Identidade e carimbo são do servidor: o
+   * nome que a medição publica é o do subject do JWT, e um campo de "nome do aprovador" no
+   * corpo faria do ato nominal um campo de texto — o servidor recusaria (`extra="forbid"`),
+   * e o cliente não tenta.
+   */
+  it("aprovar e exportar mandam apenas base_version, com chave de idempotência", async () => {
+    await postApprove(TOKEN, ROUND, 14);
+    await postBulletinExport(TOKEN, ROUND, 15);
+
+    expect(chamadas.map((call) => call.url)).toEqual([
+      `${BASE}/v1/valuation-rounds/${ROUND}/approve`,
+      `${BASE}/v1/valuation-rounds/${ROUND}/bulletin/export`,
+    ]);
+    expect(corpoDaChamada(0)).toEqual({ base_version: 14 });
+    expect(corpoDaChamada(1)).toEqual({ base_version: 15 });
+    for (const indice of [0, 1]) {
+      expect(chamadas[indice].init?.method).toBe("POST");
+      expect(headersDaChamada(indice)["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/i);
+      for (const proibido of [
+        "reviewer_id",
+        "reviewer_role",
+        "decided_at",
+        "decision_id",
+      ]) {
+        expect(Object.keys(corpoDaChamada(indice))).not.toContain(proibido);
+      }
+    }
+  });
+
+  /**
+   * A URL assinada da planilha só existe na LEITURA: ela é credencial de curta vida, e a
+   * resposta do `POST` é o que o registro de idempotência guarda no banco.
+   */
+  it("a leitura do boletim traz a aprovação, a planilha e a URL assinada", async () => {
+    stub(() =>
+      ok({
+        round_id: ROUND,
+        version: 16,
+        valuation: {},
+        valuation_sha256: "a".repeat(64),
+        total_amount: "91996.44",
+        workbook_present: true,
+        workbook_sha256: "f".repeat(64),
+        workbook_url: "https://armazenamento.example/boletim.xlsx?assinatura=x",
+        approval: {
+          approved: true,
+          approved_by: "orcamentista-de-teste",
+          approved_at: "2026-08-20T14:32:00+00:00",
+          approved_digest: "e".repeat(64),
+          current_digest: "e".repeat(64),
+          stale: false,
+        },
+      }),
+    );
+
+    const boletim = await getBulletin(TOKEN, ROUND);
+
+    expect(chamadas).toHaveLength(1);
+    expect(headersDaChamada()).not.toHaveProperty("Idempotency-Key");
+    expect(boletim.approval.approved).toBe(true);
+    expect(boletim.approval.stale).toBe(false);
+    expect(boletim.workbook_url).toContain("assinatura=x");
+  });
+
+  /**
+   * A aprovação CADUCA é o estado que só existe lendo os dois campos: houve ato humano
+   * (`approved`) e ele não cobre mais o conteúdo atual (`stale`), com os dois digests
+   * divergentes para a tela mostrar lado a lado.
+   */
+  it("a aprovação caduca chega com approved e stale verdadeiros ao mesmo tempo", async () => {
+    stub(() =>
+      ok({
+        round_id: ROUND,
+        version: 17,
+        valuation: {},
+        valuation_sha256: "a".repeat(64),
+        total_amount: "91996.44",
+        workbook_present: false,
+        workbook_sha256: null,
+        approval: {
+          approved: true,
+          approved_by: "orcamentista-de-teste",
+          approved_at: "2026-08-20T14:32:00+00:00",
+          approved_digest: "e".repeat(64),
+          current_digest: "d".repeat(64),
+          stale: true,
+        },
+      }),
+    );
+
+    const boletim = await getBulletin(TOKEN, ROUND);
+
+    expect(boletim.approval.approved).toBe(true);
+    expect(boletim.approval.stale).toBe(true);
+    expect(boletim.approval.approved_digest).not.toBe(boletim.approval.current_digest);
+  });
+
+  it("a recusa do portão traz a lista de violações do domínio", async () => {
+    stub(() =>
+      problema(422, "DOMAIN_VALIDATION_FAILED", "medição possui violações abertas", {
+        code: "VALUATION_EXPORT_BLOCKED",
+        errors: ["VALUATION_NOT_APPROVED"],
+      }),
+    );
+
+    const erro = (await postBulletinExport(TOKEN, ROUND, 18).catch(
+      (error: unknown) => error,
+    )) as ApiError;
+
+    expect(medicaoErrorCode(erro)).toBe("VALUATION_EXPORT_BLOCKED");
+    expect(erro.details.errors).toEqual(["VALUATION_NOT_APPROVED"]);
   });
 });
 

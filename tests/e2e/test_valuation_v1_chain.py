@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, cast
@@ -36,7 +37,7 @@ from fastapi.testclient import TestClient
 from croquito_api.config import ApiSettings
 from croquito_api.database import Database
 from croquito_api.main import create_app
-from croquito_valuation.models import PriceCatalog, PriceCatalogEntry
+from croquito_valuation.models import PriceCatalog, PriceCatalogEntry, Valuation
 from croquito_valuation.rounding import money_trunc
 from croquito_valuation.takeoff import TakeoffPacket
 from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
@@ -198,11 +199,35 @@ def stack(
     return TestClient(app), storage, queue, database_url
 
 
-def test_valuation_round_full_chain_through_v1_api(
+@dataclass(frozen=True, slots=True)
+class _ChainThroughCalc:
+    """Estado da rodada logo depois do boletim construído e servido (fim do step 9).
+
+    Devolvido por `_build_round_through_calc` para as duas continuações que partem do
+    MESMO boletim construído pela MESMA cadeia real: o final feliz original (dossiê +
+    estado final) e a aprovação/exportação da F-025 (T3).
+    """
+
+    client: TestClient
+    storage: FakeObjectStore
+    round_id: str
+    version: int
+    final_packet: TakeoffPacket
+    final_takeoff: dict[str, Any]
+
+
+def _build_round_through_calc(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     stack: tuple[TestClient, FakeObjectStore, FakeQueue, str],
-) -> None:
+) -> _ChainThroughCalc:
+    """Cadeia real até o boletim construído e servido pela rota (steps 0-9 do e2e).
+
+    Extraído de `test_valuation_round_full_chain_through_v1_api` (F-025 T3) para ser
+    reusado pela aprovação/exportação nominal: as duas cenas partem do MESMO boletim
+    construído pela MESMA cadeia real — presign, extração via worker, decisões de
+    takeoff e de código, `/calc` — e nenhuma delas escreve o artefato direto no banco.
+    """
     client, storage, queue, database_url = stack
 
     # 0. Prancha sintética gerada agora, e o adapter fixture amarrado a ela: nenhuma
@@ -436,6 +461,28 @@ def test_valuation_round_full_chain_through_v1_api(
     assert bulletin["total_amount"] == calc_body["total_amount"]
     assert bulletin["valuation_sha256"] == calc_body["valuation_sha256"]
 
+    return _ChainThroughCalc(
+        client=client,
+        storage=storage,
+        round_id=round_id,
+        version=version,
+        final_packet=final_packet,
+        final_takeoff=final_takeoff,
+    )
+
+
+def test_valuation_round_full_chain_through_v1_api(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stack: tuple[TestClient, FakeObjectStore, FakeQueue, str],
+) -> None:
+    chain = _build_round_through_calc(tmp_path, monkeypatch, stack)
+    client = chain.client
+    round_id = chain.round_id
+    version = chain.version
+    final_packet = chain.final_packet
+    final_takeoff = chain.final_takeoff
+
     # 10. `POST .../amendment-dossier` → `GET .../amendment-dossier`: o item rejeitado
     # aparece, sem nenhum campo de preço.
     dossier = client.post(
@@ -480,3 +527,181 @@ def test_valuation_round_full_chain_through_v1_api(
     summary = next(item for item in listing["items"] if item["round_id"] == round_id)
     assert summary["stage"] == "amendment_dossier"
     assert summary["extraction_status"] == "done"
+
+
+# --- F-025 T3: aprovação nominal + export do boletim pelas rotas /v1, sem CLI -------------
+
+
+def _assert_route_workbook_matches_cli(
+    route_workbook: bytes,
+    *,
+    valuation: Valuation,
+    catalog: PriceCatalog,
+    tmp_path: Path,
+) -> None:
+    """Reabre o `.xlsx` publicado pela rota e o compara, por CANONICALIZAÇÃO, com o que o
+    caminho de exportação do CLI produziria para a MESMA `Valuation` aprovada e o MESMO
+    catálogo (critério 6 da F-025: a rota fecha a cadeia sem o CLI, e o boletim que ela
+    publica não é um produto paralelo).
+
+    Import das funções do worker/domínio **só aqui dentro**, porque só este teste de
+    paridade precisa do caminho de exportação alternativo — o resto da cadeia não passa
+    pelo CLI.
+
+    `croquito_worker.valuation.cli.run_export_valuation` (a função que a rota do CLI usa)
+    foi lida como referência do desenho fail-closed (grava em nome pendente, audita,
+    só então publica), mas sua assinatura exige um `ContractWorkbook` **não opcional** —
+    e a rota publica o boletim de `/v1` com `contract=None`, porque a rodada não importa
+    consolidado contratual (`bulletin_export_contract`, `valuation_rounds.py`). Passar
+    QUALQUER `ContractWorkbook` — mesmo vazio — faria `plan_workbook` acrescentar a aba
+    PLANILHA GERAL (e a de RE-RA, se houver aditivo), e os dois `.xlsx` deixariam de ser
+    logicamente idênticos por um motivo estrutural, não um detalhe de valor.
+
+    A comparação, então, chama diretamente as DUAS funções que `run_export_valuation`
+    embrulha — `write_valuation_workbook` e `audit_workbook` — com `contract=None`: são
+    as MESMAS funções de produção que tanto o comando `export-valuation` do CLI quanto
+    `render_valuation_workbook` da rota (F-025 T1) chamam por baixo, então a paridade
+    provada aqui é a paridade real da produção, não uma reimplementação do teste.
+    """
+    from croquito_valuation.canonical import audit_workbook, canonicalize_workbook
+    from croquito_valuation.template import default_template
+    from croquito_valuation.workbook_writer import write_valuation_workbook
+
+    template = default_template()
+
+    route_path = tmp_path / "rota-boletim.xlsx"
+    route_path.write_bytes(route_workbook)
+
+    cli_path = tmp_path / "cli-boletim.xlsx"
+    write_valuation_workbook(valuation, catalog, template, cli_path, None)
+    cli_audit = audit_workbook(cli_path, valuation, catalog, template, None)
+    assert cli_audit.status == "ok", cli_audit.findings
+
+    assert canonicalize_workbook(route_path, template) == canonicalize_workbook(cli_path, template)
+
+
+def test_aprovacao_e_exportacao_do_boletim_fecham_por_v1_sem_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stack: tuple[TestClient, FakeObjectStore, FakeQueue, str],
+) -> None:
+    """Critérios 5 e 6 da F-025: aprovação nominal + export do boletim fecham pela rota
+    `/v1`, sem CLI, e o `.xlsx` publicado é logicamente idêntico ao que a MESMA medição
+    aprovada produziria pelo caminho de exportação do CLI (F-025 T3).
+
+    Parte do MESMO boletim de `test_valuation_round_full_chain_through_v1_api`
+    (`_build_round_through_calc`); esta cena prova só o que aquele teste não cobre:
+
+    1. exportar antes de aprovar é recusado pelo PORTÃO DO DOMÍNIO
+       (`VALUATION_EXPORT_BLOCKED`/`VALUATION_NOT_APPROVED`), e nada é publicado;
+    2. `POST .../approve` carimba a identidade do subject do token e amarra o ato ao
+       digest do conteúdo — o `GET` da rodada expõe `approved`/`approved_by`/`stale`;
+    3. `POST .../bulletin/export` publica um `.xlsx` auditado, reabrível, e logicamente
+       idêntico ao que o caminho de exportação do CLI produziria (paridade, ver
+       `_assert_route_workbook_matches_cli`);
+    4. recalcular (`/calc` de novo) deixa a aprovação anterior CADUCA — o `GET` expõe
+       `stale: true` mesmo sem nenhuma decisão nova, porque `Valuation.id` é gerado de
+       novo a cada `/calc` — e a exportação recusa com `APPROVAL_CONTENT_MISMATCH` até um
+       ato de aprovação novo, que destrava a exportação de novo.
+    """
+    chain = _build_round_through_calc(tmp_path, monkeypatch, stack)
+    client = chain.client
+    storage = chain.storage
+    round_id = chain.round_id
+    version = chain.version
+
+    # 1. Exportar ANTES de aprovar: recusa do portão do domínio, e nada é publicado.
+    objects_before = set(storage.objects)
+    blocked = client.post(
+        f"/v1/valuation-rounds/{round_id}/bulletin/export",
+        headers=_headers("exportar-sem-aprovar"),
+        json={"base_version": version},
+    )
+    assert blocked.status_code == 422, blocked.text
+    blocked_detail = blocked.json()["detail"]
+    assert blocked_detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert blocked_detail["details"]["code"] == "VALUATION_EXPORT_BLOCKED"
+    assert "VALUATION_NOT_APPROVED" in blocked_detail["details"]["errors"]
+    assert set(storage.objects) == objects_before
+
+    # 2. `POST .../approve`: aprovação embutida, identidade do JWT, digest amarrado ao
+    # conteúdo aprovado — o GET da rodada expõe o bloco de aprovação.
+    approved = client.post(
+        f"/v1/valuation-rounds/{round_id}/approve",
+        headers=_headers("aprovar-v1-e2e"),
+        json={"base_version": version},
+    )
+    assert approved.status_code == 200, approved.text
+    version = approved.json()["version"]
+
+    round_after_approval = client.get(f"/v1/valuation-rounds/{round_id}", headers=_headers()).json()
+    approval_after_approval = round_after_approval["bulletin"]["approval"]
+    assert approval_after_approval["approved"] is True
+    assert approval_after_approval["approved_by"] == SUBJECT
+    assert approval_after_approval["stale"] is False
+
+    # 3. `POST .../bulletin/export`: publicado; reabre o `.xlsx` do fake store e compara
+    # com o caminho do CLI sobre a MESMA `Valuation`/catálogo/template.
+    exported = client.post(
+        f"/v1/valuation-rounds/{round_id}/bulletin/export",
+        headers=_headers("exportar-v1-e2e"),
+        json={"base_version": version},
+    )
+    assert exported.status_code == 200, exported.text
+    version = exported.json()["version"]
+    valuation_sha256 = exported.json()["valuation_sha256"]
+
+    bulletin_after_export = client.get(
+        f"/v1/valuation-rounds/{round_id}/bulletin", headers=_headers()
+    ).json()
+    assert bulletin_after_export["workbook_url"] is not None
+
+    route_workbook_key = (
+        f"tenants/{TENANT}/valuation-rounds/{round_id}/bulletin/{valuation_sha256}.xlsx"
+    )
+    _assert_route_workbook_matches_cli(
+        storage.body(route_workbook_key),
+        valuation=Valuation.model_validate(bulletin_after_export["valuation"]),
+        catalog=PriceCatalog.model_validate_json(_catalog_bytes()),
+        tmp_path=tmp_path,
+    )
+
+    # 4. Recalcular deixa a aprovação caduca: o GET expõe `stale: true`, a exportação
+    # recusa com `APPROVAL_CONTENT_MISMATCH`, e aprovar de novo destrava a exportação.
+    recalculated = client.post(
+        f"/v1/valuation-rounds/{round_id}/calc",
+        headers=_headers("recalcular-v1-e2e"),
+        json={"base_version": version},
+    )
+    assert recalculated.status_code == 200, recalculated.text
+    version = recalculated.json()["version"]
+
+    round_after_recalc = client.get(f"/v1/valuation-rounds/{round_id}", headers=_headers()).json()
+    assert round_after_recalc["bulletin"]["approval"]["stale"] is True
+
+    refused = client.post(
+        f"/v1/valuation-rounds/{round_id}/bulletin/export",
+        headers=_headers("exportar-caduca-v1-e2e"),
+        json={"base_version": version},
+    )
+    assert refused.status_code == 422, refused.text
+    refused_detail = refused.json()["detail"]
+    assert refused_detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert refused_detail["details"]["code"] == "VALUATION_EXPORT_BLOCKED"
+    assert "APPROVAL_CONTENT_MISMATCH" in refused_detail["details"]["errors"]
+
+    reapproved = client.post(
+        f"/v1/valuation-rounds/{round_id}/approve",
+        headers=_headers("aprovar-de-novo-v1-e2e"),
+        json={"base_version": version},
+    )
+    assert reapproved.status_code == 200, reapproved.text
+    version = reapproved.json()["version"]
+
+    exported_again = client.post(
+        f"/v1/valuation-rounds/{round_id}/bulletin/export",
+        headers=_headers("exportar-liberada-v1-e2e"),
+        json={"base_version": version},
+    )
+    assert exported_again.status_code == 200, exported_again.text
+    assert exported_again.json()["workbook_present"] is True

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assignmentStatusLabel,
+  AVISO_EXPORTACAO_FAIL_CLOSED,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
   AVISO_MEDICAO,
   DESCRICAO_CALCULO_SHORTLIST,
@@ -8,11 +9,15 @@ import {
   extractionFailureMessage,
   extractionStatusLabel,
   itemStatusLabel,
+  MENSAGEM_APROVACAO_CADUCA,
+  MENSAGEM_AUDITORIA_REPROVADA,
   MENSAGEM_RODADA_MUDOU,
+  MENSAGEM_SEM_ACESSO,
   recipeLabel,
   stageLabel,
   unitLabel,
   unitMismatchHint,
+  violationDetailLine,
 } from "./labels";
 
 describe("itemStatusLabel", () => {
@@ -119,6 +124,95 @@ describe("errorMessage", () => {
       "CONTRACT_SEMANTICS_DIVERGENT: histórico não fecha",
     );
     expect(errorMessage("ERRO_SEM_DETALHE")).toBe("ERRO_SEM_DETALHE");
+  });
+});
+
+describe("recusas da aprovação e do portão de exportação", () => {
+  /**
+   * Os códigos são do domínio (`Valuation.export_errors` e `audit_workbook`): a tela não
+   * inventa nenhum, e cada um precisa de frase própria — mostrar o código cru mandaria a
+   * orçamentista procurar o significado fora do produto.
+   */
+  it("todo código do portão tem frase própria, sem repetir o código", () => {
+    for (const code of [
+      "VALUATION_EXPORT_BLOCKED",
+      "VALUATION_NOT_APPROVED",
+      "VALUATION_APPROVAL_REJECTED",
+      "APPROVAL_CONTENT_MISMATCH",
+      "PERIOD_NOT_SEQUENTIAL",
+      "BALANCE_EXCEEDED",
+      "LINE_PRICE_NOT_IN_CONTRACT",
+      "LINE_UNIT_NOT_IN_CONTRACT",
+      "VALUATION_WORKBOOK_AUDIT_FAILED",
+      "CELL_VALUE_MISMATCH",
+      "CATALOG_PRICE_MISMATCH",
+    ]) {
+      const message = errorMessage(code);
+
+      expect(message).not.toContain(code);
+      expect(message.length).toBeGreaterThan(20);
+    }
+  });
+
+  it("a medição sem aprovação manda aprovar, e a caduca manda aprovar de novo", () => {
+    expect(errorMessage("VALUATION_NOT_APPROVED")).toContain("depois de aprovar");
+    expect(errorMessage("APPROVAL_CONTENT_MISMATCH")).toContain(
+      "aprove a medição atual",
+    );
+    // Nenhuma frase oferece publicar mesmo assim: essa saída não existe.
+    expect(errorMessage("VALUATION_NOT_APPROVED")).not.toContain("mesmo assim");
+    expect(errorMessage("APPROVAL_CONTENT_MISMATCH")).not.toContain("mesmo assim");
+  });
+
+  it("a auditoria reprovada diz que nada foi publicado", () => {
+    expect(errorMessage("VALUATION_WORKBOOK_AUDIT_FAILED")).toContain(
+      "nada foi publicado",
+    );
+    expect(MENSAGEM_AUDITORIA_REPROVADA).toContain("nada foi publicado");
+    expect(MENSAGEM_AUDITORIA_REPROVADA).toContain("descartado");
+  });
+});
+
+describe("violationDetailLine", () => {
+  it("nomeia as partes que o domínio escreve depois do código", () => {
+    expect(violationDetailLine("PERIOD_NOT_SEQUENTIAL", ["3", "4"])).toBe(
+      "PERIOD_NOT_SEQUENTIAL · esperado 3 · recebido 4",
+    );
+    expect(
+      violationDetailLine("CODE_NOT_IN_CONTRACT", ["praca", "04", "09.001.0100-A"]),
+    ).toBe("CODE_NOT_IN_CONTRACT · obra praca · item 04 · código 09.001.0100-A");
+  });
+
+  it("código sem parte é só o código, e parte sem rótulo aparece como veio", () => {
+    expect(violationDetailLine("VALUATION_NOT_APPROVED", [])).toBe(
+      "VALUATION_NOT_APPROVED",
+    );
+    expect(violationDetailLine("CODIGO_NOVO_DO_DOMINIO", ["x", "y"])).toBe(
+      "CODIGO_NOVO_DO_DOMINIO · x · y",
+    );
+  });
+});
+
+describe("avisos da aprovação e da exportação", () => {
+  it("a aprovação caduca diz que nada foi exportado e que a saída é aprovar de novo", () => {
+    expect(MENSAGEM_APROVACAO_CADUCA).toContain("não vale mais");
+    expect(MENSAGEM_APROVACAO_CADUCA).toContain("aprovada de novo");
+    expect(MENSAGEM_APROVACAO_CADUCA).not.toContain("mesmo assim");
+  });
+
+  it("o aviso da exportação declara o portão antes do clique", () => {
+    expect(AVISO_EXPORTACAO_FAIL_CLOSED).toContain("reconferido");
+    expect(AVISO_EXPORTACAO_FAIL_CLOSED).toContain("nada é publicado");
+  });
+
+  /**
+   * Qual papel a mensagem deve citar é decisão de autorização ainda aberta no pacote de
+   * design aprovado: nomear um papel aqui afirmaria uma decisão que ninguém tomou.
+   */
+  it("o 403 da etapa não nomeia papel nenhum", () => {
+    expect(MENSAGEM_SEM_ACESSO).toContain("não tem autorização");
+    expect(MENSAGEM_SEM_ACESSO).not.toContain("orçamentista");
+    expect(MENSAGEM_SEM_ACESSO).not.toContain("papel");
   });
 });
 

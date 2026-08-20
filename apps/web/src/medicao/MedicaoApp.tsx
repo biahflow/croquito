@@ -24,6 +24,8 @@ import {
   getTakeoff,
   getTakeoffOverlay,
   listRounds,
+  postApprove,
+  postBulletinExport,
   postCalcBuild,
   postCodeDecision,
   postDossierBuild,
@@ -32,6 +34,7 @@ import {
   searchCatalog,
   uploadCatalog,
   uploadPlateFile,
+  type ApprovalState,
   type BulletinResponse,
   type CatalogSearchResponse,
   type CodesResponse,
@@ -47,7 +50,15 @@ import {
 import { signOut } from "../auth";
 import { BUSCA_DEBOUNCE_MS, consultaIncremental, resumoDaBusca } from "./busca";
 import { derivarEtapas, etapaStatusLabel, type Etapa, type EtapaId } from "./etapas";
-import { describeError, isAbortError, recusaDeMutacao } from "./errors";
+import {
+  describeError,
+  exportBlockedViolations,
+  isAbortError,
+  isForbidden,
+  recusaDeMutacao,
+  workbookAuditFindings,
+  type ExportViolation,
+} from "./errors";
 import { classifyExecucao } from "./execucao";
 import { overlayFreshness } from "./images";
 import { extractInclusoes, type Inclusao } from "./inclusoes";
@@ -64,19 +75,26 @@ import {
   AVISO_ADITIVO,
   AVISO_DOSSIE_GERADO,
   AVISO_DOSSIE_PREVIA,
+  AVISO_EXPORTACAO_FAIL_CLOSED,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
   AVISO_MEDICAO,
   AVISO_QUANTIDADE_AMBIGUA,
   DESCRICAO_CALCULO_SHORTLIST,
   DICA_QUANTIDADE,
+  errorMessage,
   extractionFailureMessage,
   extractionStatusLabel,
   itemStatusLabel,
+  MENSAGEM_APROVACAO_CADUCA,
+  MENSAGEM_AUDITORIA_REPROVADA,
+  MENSAGEM_MEDICAO_APROVADA,
   MENSAGEM_RODADA_MUDOU,
+  MENSAGEM_SEM_ACESSO,
   recipeLabel,
   stageLabel,
   unitLabel,
   unitMismatchHint,
+  violationDetailLine,
 } from "./labels";
 import { codeSearchTerm, worksiteKeyError } from "./requests";
 import { itemAnchor } from "./takeoff";
@@ -466,6 +484,364 @@ export function BannerRodadaMudou({ onReload }: { onReload?: () => void }) {
 }
 
 /**
+ * `403` da rota, como TELA e **sem nomear papel**.
+ *
+ * Qual papel a mensagem deve citar é decisão de copy e de autorização ainda aberta no
+ * pacote de design aprovado da F-025: um texto que nomeasse um papel afirmaria uma decisão
+ * que ninguém tomou. Quem autoriza continua sendo o backend — a etapa é montada pelo
+ * estado da rodada, e quem chega sem autorização lê o motivo em vez de achar tela vazia.
+ */
+export function PainelSemAcesso() {
+  return (
+    <section className="painel" aria-label="Sem acesso a esta rodada">
+      <div className="painel-cabecalho">
+        <h2>Sem acesso a esta rodada</h2>
+      </div>
+      <p role="alert">{MENSAGEM_SEM_ACESSO}</p>
+      <p className="dica">
+        Vale para ler e para aprovar: quem não pode ler a rodada também não exerce o ato de
+        aprovação nela.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * O ato nominal de aprovação (VAL-05), em DOIS atos explícitos.
+ *
+ * Três decisões do desenho aprovado vivem aqui e não podem ser "simplificadas":
+ *
+ * - **a consequência vem antes do botão, e por extenso** — três frases fixas: publica o
+ *   nome de quem aprova, libera a exportação, vale só para este conteúdo exato;
+ * - **a identidade é mostrada, nunca digitável** — não existe campo de nome do aprovador
+ *   nesta tela, porque o servidor lê a identidade do token e recusa qualquer nome que
+ *   venha do cliente; um campo aqui prometeria um efeito que ele não tem;
+ * - **confirmar exige um segundo ato**, e o segundo passo REPETE a consequência em vez de
+ *   perguntar "tem certeza?" — decisão humana de 2026-08-20, mantida.
+ *
+ * Enquanto grava, os dois botões ficam indisponíveis: repetir o clique não criaria
+ * aprovação nova (a mutação leva chave de idempotência), mas a tela também não pode
+ * sugerir que criaria.
+ */
+export function AtoDeAprovacao({
+  titulo,
+  identidade,
+  papel,
+  contentDigest,
+  confirmando,
+  gravando,
+  onAprovar,
+  onConfirmar,
+  onCancelar,
+}: {
+  titulo: string;
+  identidade: string;
+  papel: string;
+  /** Digest do CONTEÚDO que será assinado (`current_digest`), não o do documento gravado. */
+  contentDigest: string | null;
+  confirmando: boolean;
+  gravando: boolean;
+  onAprovar: () => void;
+  onConfirmar: () => void;
+  onCancelar: () => void;
+}) {
+  const digestCurto = shortDigest(contentDigest);
+  return (
+    <div className="ato">
+      <span className="ato-etiqueta">Ato nominal · VAL-05</span>
+      <h3>{titulo}</h3>
+      {confirmando ? null : (
+        <>
+          <p>Antes de aprovar, o que aprovar faz:</p>
+          <ul className="ato-consequencia">
+            <li>
+              <strong>Publica o seu nome.</strong> A aprovação fica registrada como sua,
+              com data e hora, e acompanha o boletim exportado.
+            </li>
+            <li>
+              <strong>Libera a exportação.</strong> Sem aprovação nominal válida, a rota de
+              exportação recusa — não é convenção, é recusa do servidor.
+            </li>
+            <li>
+              <strong>
+                Vale só para esta medição, exatamente como ela está agora
+              </strong>{" "}
+              (
+              <span className="mono" title={contentDigest ?? undefined}>
+                sha256 {digestCurto}
+              </span>
+              ). Qualquer mudança depois disso derruba a aprovação e exige aprovar de novo.
+            </li>
+          </ul>
+        </>
+      )}
+      <div className="ato-identidade">
+        <b>Você aprova como</b>
+        <span className="mono">{identidade}</span>
+        <p className="campo-dica">
+          Papel {papel} · identidade da sessão. Não existe campo de nome nesta tela: quem
+          aprova é quem entrou, e o servidor lê a identidade do token e recusa qualquer nome
+          que venha do cliente.
+        </p>
+      </div>
+      {confirmando ? (
+        <div className="ato-confirmacao">
+          <p>
+            <strong>Confirmar a aprovação nominal?</strong> O nome{" "}
+            <span className="mono">{identidade}</span> fica registrado como quem aprovou
+            esta medição, no conteúdo{" "}
+            <span className="mono" title={contentDigest ?? undefined}>
+              sha256 {digestCurto}
+            </span>
+            , e a exportação do boletim fica liberada.
+          </p>
+          <div className="acoes-linha">
+            <button
+              type="button"
+              className="botao-primario"
+              onClick={onConfirmar}
+              disabled={gravando}
+            >
+              {gravando ? "Aprovando…" : "Confirmar aprovação nominal"}
+            </button>
+            <button
+              type="button"
+              className="botao-secundario"
+              onClick={onCancelar}
+              disabled={gravando}
+            >
+              Cancelar
+            </button>
+          </div>
+          {gravando ? (
+            <p className="dica" role="status">
+              Enquanto grava, os dois botões ficam indisponíveis: repetir o clique não cria
+              aprovação nova, porque o ato vai com chave de idempotência.
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <div className="acoes-linha">
+          <button
+            type="button"
+            className="botao-primario"
+            onClick={onAprovar}
+            disabled={gravando}
+          >
+            Aprovar esta medição
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Registro da aprovação: quem, quando e sobre qual conteúdo — e o estado CADUCO.
+ *
+ * `approved` e `stale` são lidos juntos, porque na aprovação caduca os dois valem ao mesmo
+ * tempo. O registro velho não é apagado: ele fica visível, marcado como caduco, porque foi
+ * um ato humano que aconteceu — e é essa diferença entre "caduca" e "nunca aprovada" que
+ * dá à tela a única saída correta, aprovar de novo. O digest não é enfeite de auditoria: é
+ * o vínculo que faz a aprovação caducar sozinha, e por isso os dois aparecem lado a lado.
+ *
+ * A marca do estado é a PALAVRA na etiqueta; o tracejado âmbar é redundância dela.
+ */
+export function RegistroDaAprovacao({
+  approval,
+  papel,
+}: {
+  approval: ApprovalState;
+  papel: string;
+}) {
+  if (approval.approved_by === null && !approval.approved) {
+    return null;
+  }
+  const etiqueta = !approval.approved
+    ? "Decisão registrada sem aprovação"
+    : approval.stale
+      ? "Aprovação caduca"
+      : "Aprovada";
+  return (
+    <div className={`registro ${approval.stale ? "registro-caduca" : ""}`}>
+      <span className="registro-etiqueta">{etiqueta}</span>
+      <dl>
+        <dt>Quem aprovou</dt>
+        <dd>
+          <span className="mono">{approval.approved_by ?? "não declarado"}</span> · papel{" "}
+          {papel}
+        </dd>
+        <dt>Quando</dt>
+        <dd>
+          {approval.approved_at === null
+            ? "não declarado"
+            : formatTimestamp(approval.approved_at)}
+        </dd>
+        {approval.stale ? null : (
+          <>
+            <dt>Conteúdo aprovado</dt>
+            <dd>
+              <span className="mono" title={approval.approved_digest ?? undefined}>
+                sha256 {shortDigest(approval.approved_digest)}
+              </span>{" "}
+              — igual ao da medição atual
+            </dd>
+          </>
+        )}
+      </dl>
+      {approval.stale ? (
+        <>
+          <div className="digest-par">
+            <div>
+              <b>Conteúdo aprovado</b>
+              <span className="mono" title={approval.approved_digest ?? undefined}>
+                sha256 {shortDigest(approval.approved_digest)}
+              </span>
+              <p className="campo-dica">o que foi assinado no ato registrado acima</p>
+            </div>
+            <div>
+              <b>Conteúdo atual</b>
+              <span className="mono" title={approval.current_digest ?? undefined}>
+                sha256 {shortDigest(approval.current_digest)}
+              </span>
+              <p className="campo-aviso">
+                diferente do aprovado — a medição mudou depois da aprovação
+              </p>
+            </div>
+          </div>
+          <p className="digest">APPROVAL_CONTENT_MISMATCH</p>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** Os quatro passos do portão de exportação, na ordem em que o servidor os executa. */
+const PASSOS_DA_EXPORTACAO = [
+  "Montar a planilha no modelo da prefeitura",
+  "Gravar o arquivo",
+  "Reabrir e reconferir célula a célula",
+  "Publicar",
+];
+
+/**
+ * Estado de cada passo, pelo que a tela REALMENTE sabe.
+ *
+ * Os quatro passos correm dentro de uma chamada só: enquanto ela está em voo, o cliente
+ * não observa em qual deles o servidor está, e fingir uma progressão seria inventar
+ * estado. O que se sabe com certeza é o DESFECHO — publicado significa os quatro feitos;
+ * auditoria reprovada significa que o arquivo foi montado e gravado, que a reconferência
+ * recusou e que a publicação não chegou a acontecer.
+ */
+function estadosDosPassos(
+  estado: "em-voo" | "publicado" | "reprovado",
+): string[] {
+  if (estado === "publicado") {
+    return ["feito", "feito", "feito", "feito"];
+  }
+  if (estado === "reprovado") {
+    return ["feito", "feito", "reprovado", "não iniciado"];
+  }
+  return ["no servidor", "no servidor", "no servidor", "no servidor"];
+}
+
+/**
+ * Progresso da exportação como LISTA ESCRITA de quatro passos, nunca como barra.
+ *
+ * Três dos quatro passos acontecem antes de existir arquivo publicado; uma barra sugeriria
+ * que o arquivo já está quase pronto quando ele ainda pode ser descartado no passo três.
+ */
+export function ProgressoExportacao({
+  estado,
+}: {
+  estado: "em-voo" | "publicado" | "reprovado";
+}) {
+  const estados = estadosDosPassos(estado);
+  return (
+    <>
+      <ol className="progresso">
+        {PASSOS_DA_EXPORTACAO.map((passo, index) => (
+          <li key={passo}>
+            {passo} — <span className="passo-estado">{estados[index]}</span>
+          </li>
+        ))}
+      </ol>
+      {estado === "em-voo" ? (
+        <p className="dica" role="status">
+          Os quatro passos correm no servidor, numa chamada só. Nada foi publicado até a
+          resposta chegar; se a reconferência do passo 3 falhar, o arquivo do passo 2 é
+          descartado.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Auditoria da planilha reprovada, como TELA e não rodapé.
+ *
+ * O arquivo é gravado, reaberto e reconferido antes de qualquer publicação: quando a
+ * conferência falha, nada vai ao object store e nenhuma revisão nasce. Dizer isso por
+ * extenso é o que separa "falhou" de "publicou algo que ninguém conferiu".
+ *
+ * Só os CÓDIGOS dos achados aparecem. O desenho aprovado mostra também a célula divergente
+ * com valor esperado e encontrado, e esses dois campos **não viajam**: eles são o preço, a
+ * quantidade e o total da obra do cliente, e a rota não os devolve numa mensagem de erro.
+ * A tela declara essa ausência em vez de deixar uma coluna vazia parecendo defeito.
+ */
+export function TelaAuditoriaReprovada({
+  findings,
+  onDismiss,
+}: {
+  findings: readonly string[];
+  onDismiss?: () => void;
+}) {
+  return (
+    <section className="painel" aria-label="Auditoria do boletim reprovada">
+      <div className="painel-cabecalho">
+        <h2>A auditoria reprovou a planilha — nada foi publicado</h2>
+      </div>
+      <p className="banner-erro" role="alert">
+        {MENSAGEM_AUDITORIA_REPROVADA}
+      </p>
+      <ProgressoExportacao estado="reprovado" />
+      {findings.length === 0 ? null : (
+        <table className="tabela">
+          <caption>Divergências encontradas na reconferência</caption>
+          <thead>
+            <tr>
+              <th scope="col">Código do achado</th>
+              <th scope="col">O que ele diz</th>
+            </tr>
+          </thead>
+          <tbody>
+            {findings.map((code) => (
+              <tr key={code}>
+                <td className="mono">{code}</td>
+                <td>{errorMessage(code)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="dica">
+        O valor esperado e o encontrado de cada célula não voltam do servidor: eles são
+        preço, quantidade e total da obra, e não viajam em mensagem de erro. Um centavo de
+        diferença basta para não publicar — o portão é o mesmo do CLI e o mesmo do
+        orçamento-base.
+      </p>
+      {onDismiss === undefined ? null : (
+        <div className="acoes-linha">
+          <button type="button" className="botao-secundario" onClick={onDismiss}>
+            Voltar à etapa de aprovação
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
  * Jornada de medição sobre a API `/v1` autenticada (ADR-0028).
  *
  * A sessão é da casca, não desta jornada: quem lê o OIDC, consome o authorization code
@@ -529,6 +905,19 @@ export function MedicaoApp({
 
   // Prancha (upload e leitura automática).
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+
+  // Aprovação e exportação. `confirmandoAprovacao` é o SEGUNDO ato explícito: ele não é
+  // preferência guardada, é o estado de um gesto que ainda não terminou, e por isso morre
+  // com o componente. Os três desfechos abaixo têm tela ou bloco próprio em vez de virarem
+  // mais um alerta: `403` sem nomear papel, portão do domínio com a lista de violações e
+  // auditoria reprovada com "nada foi publicado" por extenso.
+  const [confirmandoAprovacao, setConfirmandoAprovacao] = useState(false);
+  const [exportando, setExportando] = useState(false);
+  const [semAcesso, setSemAcesso] = useState(false);
+  const [violacoesDeExportacao, setViolacoesDeExportacao] = useState<
+    ExportViolation[] | null
+  >(null);
+  const [auditoriaReprovada, setAuditoriaReprovada] = useState<string[] | null>(null);
 
   // Revisão do takeoff.
   const [selectedItemId, setSelectedItemId] = useState("");
@@ -708,6 +1097,10 @@ export function MedicaoApp({
     setSelectedPendingId("");
     setAlertMessage(null);
     setRevisionConflict(false);
+    setConfirmandoAprovacao(false);
+    setSemAcesso(false);
+    setViolacoesDeExportacao(null);
+    setAuditoriaReprovada(null);
     setRodada(proxima);
     onOpenRound?.(proxima);
   };
@@ -1311,7 +1704,14 @@ export function MedicaoApp({
       const response = await postCalcBuild(token, rodada, version);
       aplicarVersao(response.version);
       setBulletin(response);
-      setToast("Boletim e memória gravados na rodada, sem aprovação.");
+      // O toast diz o estado REAL, não uma antecipação: montar a medição de novo leva a
+      // aprovação anterior adiante já caduca (o digest assinado é o do conteúdo antigo), e
+      // chamar isso de "sem aprovação" apagaria o fato de que alguém assinou.
+      setToast(
+        response.approval.stale
+          ? "Boletim e memória regravados na rodada; a aprovação anterior caducou — aprove a medição atual."
+          : "Boletim e memória gravados na rodada, aguardando aprovação nominal.",
+      );
       await atualizarEstado();
     } catch (error) {
       // O conflito tem banner próprio, com o botão de recarregar e o formulário
@@ -1323,6 +1723,108 @@ export function MedicaoApp({
         setAlertMessage(recusa.mensagem);
       }
     } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /** Desfechos da etapa de aprovação que não podem sobreviver ao próximo ato. */
+  const limparDesfechosDaAprovacao = () => {
+    setSemAcesso(false);
+    setViolacoesDeExportacao(null);
+    setAuditoriaReprovada(null);
+  };
+
+  /**
+   * O ato nominal (VAL-05). O corpo é só `base_version`: quem aprova é o subject do JWT e o
+   * instante é o relógio do servidor — a tela mostra a identidade da sessão e nunca a envia.
+   *
+   * Aprovar de novo é o caminho normal da aprovação caduca, não um erro: o histórico da
+   * rodada guarda as duas assinaturas, que é o que um registro de aprovação existe para
+   * fazer.
+   */
+  const aprovarMedicao = async () => {
+    const token = tokenDaSessao();
+    if (token === null || version === null) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    limparDesfechosDaAprovacao();
+    try {
+      const response = await postApprove(token, rodada, version);
+      aplicarVersao(response.version);
+      setBulletin(response);
+      setConfirmandoAprovacao(false);
+      setRevisionConflict(false);
+      setToast(MENSAGEM_MEDICAO_APROVADA);
+      await atualizarEstado();
+    } catch (error) {
+      if (isForbidden(error)) {
+        setSemAcesso(true);
+        return;
+      }
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Publica o `.xlsx` do boletim. A tela não decide nada aqui: ela pede, e os dois portões
+   * do servidor — o do domínio e o da auditoria de round-trip — decidem se existe arquivo.
+   *
+   * Cada desfecho tem forma própria porque eles não significam a mesma coisa: violação do
+   * portão é lista de motivos abertos (o servidor recusa por todos de uma vez), auditoria
+   * reprovada é tela com "nada foi publicado" por extenso, e `409` é o banner da rodada.
+   *
+   * A releitura depois do sucesso não é zelo: a URL assinada da planilha **só** existe na
+   * leitura, e sem ela a tela teria arquivo publicado e nenhum caminho para baixá-lo.
+   */
+  const exportarBoletim = async () => {
+    const token = tokenDaSessao();
+    if (token === null || version === null) {
+      return;
+    }
+    setSubmitting(true);
+    setExportando(true);
+    setAlertMessage(null);
+    limparDesfechosDaAprovacao();
+    try {
+      const response = await postBulletinExport(token, rodada, version);
+      aplicarVersao(response.version);
+      setBulletin(
+        (await leituraObservacional(() => getBulletin(token, rodada))) ?? response,
+      );
+      setRevisionConflict(false);
+      setToast(
+        "Boletim publicado: a auditoria reabriu o arquivo e o reconferiu antes de publicar.",
+      );
+      await atualizarEstado();
+    } catch (error) {
+      if (isForbidden(error)) {
+        setSemAcesso(true);
+        return;
+      }
+      const violacoes = exportBlockedViolations(error);
+      if (violacoes.length > 0) {
+        setViolacoesDeExportacao(violacoes);
+        return;
+      }
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else if (recusa.auditoria) {
+        setAuditoriaReprovada(workbookAuditFindings(error));
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setExportando(false);
       setSubmitting(false);
     }
   };
@@ -1361,6 +1863,25 @@ export function MedicaoApp({
 
   const boletimEtapa = jornada.etapas.find((etapa) => etapa.id === "boletim") ?? null;
   const dossieDisponivel = boletimEtapa !== null && boletimEtapa.status !== "blocked";
+
+  // Identidade da sessão como a tela a MOSTRA no ato nominal. Ela não é campo e não entra
+  // no corpo da mutação: quem carimba é o servidor, lendo o subject do token.
+  const identidadeDaSessao =
+    session === null
+      ? ""
+      : (session.profile.preferred_username ?? session.profile.sub);
+  // O bloco de aprovação vem do documento já lido e, na falta dele, do estado da rodada:
+  // as duas leituras são do servidor e derivam a caducidade do mesmo par de digests.
+  const aprovacao: ApprovalState | null =
+    bulletin?.approval ?? state?.bulletin.approval ?? null;
+  // `approved` e `stale` juntos, sempre: na aprovação caduca os dois valem, e ler só o
+  // primeiro ofereceria uma exportação que a rota já sabe que vai recusar.
+  const aprovacaoValida =
+    aprovacao !== null && aprovacao.approved && !aprovacao.stale;
+  const nomeDoBoletimXlsx =
+    state === null
+      ? "boletim.xlsx"
+      : `boletim-${state.worksite_key}-medicao-${state.period_number}.xlsx`;
 
   const shortlist =
     selectedPending === null
@@ -2790,6 +3311,188 @@ export function MedicaoApp({
               </>
             )}
           </section>
+        ) : null}
+
+        {etapaVisivel === "aprovacao" ? (
+          semAcesso ? (
+            <PainelSemAcesso />
+          ) : auditoriaReprovada !== null ? (
+            <TelaAuditoriaReprovada
+              findings={auditoriaReprovada}
+              onDismiss={() => setAuditoriaReprovada(null)}
+            />
+          ) : (
+            <section className="painel" aria-label="Aprovação e exportação">
+              <h2>Aprovação e exportação</h2>
+              <p className="aviso-fixo aviso-inline">{AVISO_MEDICAO}</p>
+              {bulletin === null || aprovacao === null ? (
+                <p>
+                  A medição desta rodada ainda não foi lida. Monte o boletim na etapa
+                  “Boletim”: aprovar decide sobre a medição que existe, e não há o que
+                  decidir antes dela.
+                </p>
+              ) : (
+                <>
+                  <p>
+                    Medição {bulletin.valuation.period_number} ·{" "}
+                    {bulletin.valuation.reference_label} · conteúdo{" "}
+                    <span
+                      className="digest"
+                      title={aprovacao.current_digest ?? undefined}
+                    >
+                      sha256 {shortDigest(aprovacao.current_digest)}
+                    </span>{" "}
+                    · total <strong>{formatMoneyText(bulletin.total_amount)}</strong>
+                  </p>
+                  <p className="dica">
+                    Esta é a medição montada na etapa “Boletim”, sem nenhuma alteração —
+                    aprovar não edita medição, decide sobre a que existe. Para conferir
+                    linha a linha, volte à etapa “Boletim”. O digest acima é o do CONTEÚDO
+                    medido, que é o que a aprovação amarra.
+                  </p>
+                  <div className="acoes-linha">
+                    <button
+                      type="button"
+                      className="botao-secundario"
+                      onClick={() => setOpenStep("boletim")}
+                    >
+                      Ver o boletim atual
+                    </button>
+                  </div>
+
+                  {aprovacao.stale ? (
+                    <p className="banner-erro" role="alert">
+                      {MENSAGEM_APROVACAO_CADUCA}
+                    </p>
+                  ) : null}
+
+                  <RegistroDaAprovacao
+                    approval={aprovacao}
+                    papel={state?.reviewer_role ?? "não declarado"}
+                  />
+
+                  {violacoesDeExportacao === null ? null : (
+                    <section
+                      className="violacoes"
+                      aria-label="Motivos abertos do portão de exportação"
+                    >
+                      <h3>O portão de exportação recusou — nada foi publicado</h3>
+                      {violacoesDeExportacao.map((violacao) => (
+                        <div key={violationDetailLine(violacao.code, violacao.parts)}>
+                          <p className="banner-erro" role="alert">
+                            {errorMessage(violacao.code)}
+                          </p>
+                          <p className="digest">
+                            {violationDetailLine(violacao.code, violacao.parts)}
+                          </p>
+                        </div>
+                      ))}
+                    </section>
+                  )}
+
+                  {aprovacaoValida ? null : (
+                    <AtoDeAprovacao
+                      titulo={`Aprovar a medição ${bulletin.valuation.period_number}${
+                        state === null ? "" : ` de ${state.worksite_name}`
+                      }`}
+                      identidade={identidadeDaSessao}
+                      papel={state?.reviewer_role ?? "não declarado"}
+                      contentDigest={aprovacao.current_digest}
+                      confirmando={confirmandoAprovacao}
+                      gravando={submitting}
+                      onAprovar={() => setConfirmandoAprovacao(true)}
+                      onConfirmar={() => void aprovarMedicao()}
+                      onCancelar={() => setConfirmandoAprovacao(false)}
+                    />
+                  )}
+
+                  {aprovacaoValida ? (
+                    <section className="exportacao" aria-label="Exportação do boletim">
+                      <h3>Boletim exportado</h3>
+                      {bulletin.workbook_present ? (
+                        <>
+                          <div className="acoes-linha">
+                            {bulletin.workbook_url ? (
+                              <a
+                                className="botao-primario"
+                                href={bulletin.workbook_url}
+                                download={nomeDoBoletimXlsx}
+                              >
+                                Baixar boletim (.xlsx)
+                              </a>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="botao-secundario"
+                              onClick={() => void exportarBoletim()}
+                              disabled={submitting || version === null}
+                            >
+                              {exportando ? "Exportando…" : "Gerar de novo"}
+                            </button>
+                          </div>
+                          <p
+                            className="digest"
+                            title={bulletin.workbook_sha256 ?? undefined}
+                          >
+                            {nomeDoBoletimXlsx} · sha256{" "}
+                            {shortDigest(bulletin.workbook_sha256)}
+                          </p>
+                          <p className="dica">
+                            Aprovado por{" "}
+                            <span className="mono">
+                              {aprovacao.approved_by ?? "não declarado"}
+                            </span>
+                            {aprovacao.approved_at === null
+                              ? ""
+                              : ` em ${formatTimestamp(aprovacao.approved_at)}`}
+                            , sobre o conteúdo{" "}
+                            <span
+                              className="mono"
+                              title={aprovacao.approved_digest ?? undefined}
+                            >
+                              sha256 {shortDigest(aprovacao.approved_digest)}
+                            </span>{" "}
+                            — o mesmo que está neste arquivo. Gerado pela rota, sem CLI. O
+                            link de download expira e não aparece em registro nenhum.
+                          </p>
+                          {bulletin.workbook_url ? null : (
+                            <p className="dica">
+                              O link de download não veio nesta leitura; recarregue o estado
+                              atual para pedir uma URL assinada nova.
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <p>Nenhum arquivo publicado nesta rodada.</p>
+                          <div className="acoes-linha">
+                            <button
+                              type="button"
+                              className="botao-primario"
+                              onClick={() => void exportarBoletim()}
+                              disabled={submitting || version === null}
+                            >
+                              {exportando
+                                ? "Exportando…"
+                                : "Gerar e publicar o boletim (.xlsx)"}
+                            </button>
+                          </div>
+                        </>
+                      )}
+                      {exportando ? <ProgressoExportacao estado="em-voo" /> : null}
+                      <p className="dica">{AVISO_EXPORTACAO_FAIL_CLOSED}</p>
+                    </section>
+                  ) : (
+                    <p className="dica">
+                      Exportar é o passo depois de aprovar: sem aprovação nominal válida o
+                      botão de gerar o boletim não aparece aqui, e a rota recusaria de
+                      qualquer forma. A defesa é do servidor; esta tela só a espelha.
+                    </p>
+                  )}
+                </>
+              )}
+            </section>
+          )
         ) : null}
       </main>
     </div>

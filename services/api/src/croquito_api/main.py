@@ -64,6 +64,9 @@ from croquito_api.database import (
 from croquito_api.pubsub_queue import PubSubProcessingQueue, QueuePublishError
 from croquito_api.storage import ArtifactStore
 from croquito_api.valuation_rounds import (
+    BULLETIN_WORKBOOK_CONTENT_TYPE,
+    BULLETIN_WORKBOOK_DIGEST,
+    BULLETIN_WORKBOOK_REF,
     CATALOG_MAX_BYTES,
     STAGE_BULLETIN,
     STAGE_DOSSIER,
@@ -71,13 +74,21 @@ from croquito_api.valuation_rounds import (
     CatalogCache,
     RoundRefusal,
     append_revision,
+    approval_state,
+    approve_valuation,
     assignments_of,
+    bulletin_export_contract,
+    bulletin_workbook_key,
+    bulletin_workbook_ref,
+    carry_approval_forward,
     compute_round_suggestions,
     current_stage,
     document_digest,
     head_revision,
     load_catalog,
     load_round,
+    readable_valuation,
+    render_valuation_workbook,
     require_assignments,
     require_base_version,
     require_document,
@@ -862,6 +873,34 @@ class BuildAmendmentDossierRequest(ApiModel):
 
     Como no boletim, `base_version` é mudança pretendida: `/dossier/build` reconstrói sem
     guarda, e em `/v1` a reconstrução é ato humano que avança a versão da rodada.
+    """
+
+    base_version: int = Field(ge=1)
+
+
+class ApproveValuationRequest(ApiModel):
+    """Aprovação nominal da medição: o corpo é SÓ a guarda de concorrência (F-025).
+
+    Nenhum campo de identidade existe aqui, e a ausência é o desenho. `reviewer_id`,
+    `reviewer_role`, `decided_at` e `decision_id` são carimbo do servidor — o nome que a
+    medição publica é o do subject do JWT, e um campo de "nome do aprovador" no corpo faria
+    do ato nominal um campo de texto. Quem recusa qualquer um deles é o `extra="forbid"` do
+    `ApiModel`, não uma lista negra.
+
+    A observação (`note` do `ReviewerDecision`) também não entra: o que ela significaria numa
+    aprovação — ressalva? condição? — é decisão de produto que ninguém tomou, e um campo
+    livre gravado junto de um ato nominal pareceria ter efeito jurídico sem tê-lo.
+    """
+
+    base_version: int = Field(ge=1)
+
+
+class ExportBulletinRequest(ApiModel):
+    """Exportação do boletim: espelho de `ApproveValuationRequest`.
+
+    Não há nada a escolher na exportação — nem formato, nem layout, nem "exportar assim
+    mesmo". A medição publicada é a da cabeça da rodada, o layout é o da prefeitura
+    (`default_template()`) e a aprovação válida é precondição, não opção.
     """
 
     base_version: int = Field(ge=1)
@@ -5323,7 +5362,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         }
 
     def _bulletin_payload(
-        record: ValuationRoundRecord, *, document: Mapping[str, Any], valuation: Valuation
+        record: ValuationRoundRecord,
+        revision: ValuationRoundRevisionRecord | None,
+        *,
+        document: Mapping[str, Any],
+        valuation: Valuation,
     ) -> dict[str, Any]:
         """Boletim como a tela o recebe, com o digest do que está GRAVADO na revisão.
 
@@ -5332,13 +5375,27 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         aproximado do centavo que o `TRUNC(x,2)` do domínio acabou de fixar. O digest é o do
         documento guardado — não o desta resposta —, para ser idêntico ao que o estado da
         rodada publica.
+
+        O bloco de aprovação é derivado da medição REVALIDADA que a rota já tem em mãos, e
+        não relido da revisão: as duas leituras responderiam a mesma coisa no caminho feliz,
+        e usar a que a rota acabou de validar é o que faz a resposta do ato de aprovar já
+        sair com a aprovação que ele mesmo escreveu.
+
+        A URL assinada da planilha **não** entra aqui, pelo mesmo motivo de
+        `_estimate_payload`: esta forma é a que o registro de idempotência guarda no banco, e
+        gravar URL assinada seria persistir credencial de leitura fora de um cofre. Ela sai
+        só no `GET`, montada na hora.
         """
+        digests = {} if revision is None else dict(revision.artifact_digests_json or {})
         return {
             "round_id": record.id,
             "version": record.version,
             "valuation": valuation.model_dump(mode="json"),
             "valuation_sha256": document_digest(document),
             "total_amount": str(valuation.total_amount),
+            "workbook_present": bulletin_workbook_ref(revision) is not None,
+            "workbook_sha256": digests.get(BULLETIN_WORKBOOK_DIGEST),
+            "approval": approval_state(valuation),
         }
 
     def _dossier_payload(
@@ -6270,6 +6327,16 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         Esta rota **não aprova nada**: aprovação nominal da medição é ato próprio, com
         portão de saldo e contrato, e não pertence à construção do boletim.
 
+        O que ela faz, quando a cabeça já trazia uma aprovação, é LEVÁ-LA ADIANTE — e
+        preservar não é aprovar. A aprovação carregada continua amarrada ao digest do
+        conteúdo ANTIGO, então a medição recém-montada nasce com a aprovação caduca: a
+        exportação recusa com `APPROVAL_CONTENT_MISMATCH` até um ato novo, e a tela mostra os
+        dois digests lado a lado em vez de fingir que ninguém nunca assinou. Descartá-la aqui
+        apagaria em silêncio o fato de que uma aprovação existiu. Quem responde "houve
+        aprovação antes?" é a rota, que tem a revisão em mãos, e não o domínio:
+        `build_worksite_valuation` continua montando medição sem aprovação nenhuma. Ver
+        `carry_approval_forward`.
+
         Duas recusas se parecem e não são a mesma coisa. Conjunto de códigos ainda
         inexistente é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem, o orçamentista tem
         o que fazer para sair dela. Conjunto existente com item confirmado sem decisão é
@@ -6311,16 +6378,19 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             contract_label=record.contract_label,
             calc_plan=None,
         )
+        # Preservar não é aprovar: a aprovação anterior segue adiante já caduca, apontando
+        # para o digest do conteúdo que ela cobria.
+        valuation = carry_approval_forward(valuation, readable_valuation(revision))
 
         document = valuation.model_dump(mode="json")
-        append_revision(
+        new_revision = append_revision(
             session,
             round_record=record,
             created_by=principal.subject,
             changes={"valuation_json": document},
         )
         record.updated_at = datetime.now(UTC)
-        response = _bulletin_payload(record, document=document, valuation=valuation)
+        response = _bulletin_payload(record, new_revision, document=document, valuation=valuation)
         _store_idempotent_response(
             session,
             principal=principal,
@@ -6354,6 +6424,10 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         Boletim ainda não construído é `409 ROUND_STAGE_NOT_READY`; boletim que não passa na
         revalidação é `422`, nunca um `200` com número que ninguém conferiu.
+
+        A URL assinada da planilha é montada AQUI, na leitura, e só quando há planilha
+        publicada — ela é credencial de leitura de curta vida e não pertence a nenhum
+        artefato durável.
         """
         _require_valuation_reviewer(principal)
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
@@ -6364,9 +6438,221 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             stage=STAGE_BULLETIN,
             detail="a rodada ainda não tem boletim construído",
         )
-        return _bulletin_payload(
-            record, document=document, valuation=_revalidated_bulletin(document)
+        payload = _bulletin_payload(
+            record, revision, document=document, valuation=_revalidated_bulletin(document)
         )
+        workbook_url = signed_artifact_url(
+            application.state.artifact_store,
+            object_key=bulletin_workbook_ref(revision),
+            tenant_id=principal.tenant_id,
+        )
+        return {**payload, "workbook_url": workbook_url}
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/approve",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def approve_valuation_round(
+        round_id: UUID,
+        payload: ApproveValuationRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Aprova nominalmente a medição da cabeça, amarrando o ato ao digest do conteúdo.
+
+        Este é o ato que o portão de exportação cobra. Ele não recalcula, não confere preço e
+        não decide nada sobre o boletim: ele registra QUEM assumiu a medição como está, QUANDO
+        e SOBRE QUAL conteúdo — e é essa terceira parte que impede a assinatura de sobreviver
+        a uma mudança do que foi assinado.
+
+        A identidade é do JWT e só dele (critério 3 da F-025). O corpo carrega apenas
+        `base_version`, e `ApproveValuationRequest` documenta por que não existe campo de
+        nome nem de observação. A revisão nova AVANÇA `version`, porque aprovar é ato humano
+        deliberado e a próxima decisão do orçamentista tem de partir do que ele viu aprovado.
+
+        Boletim ainda não construído é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem;
+        boletim que não revalida é `422`, pela mesma razão do `GET`: ninguém aprova um
+        artefato que o domínio recusa.
+
+        Aprovar de novo é o caminho normal da aprovação caduca do desenho aprovado, e não um
+        erro: o ato é idempotente por conteúdo (mesmo revisor, mesmo digest e mesmo instante
+        produzem o mesmo `decision_id`), mas cada chamada é uma revisão nova da cadeia
+        append-only — o histórico guarda as duas assinaturas, que é o que um registro de
+        aprovação existe para fazer.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.approve:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        document = require_document(
+            revision,
+            "valuation_json",
+            stage=STAGE_BULLETIN,
+            detail="a rodada ainda não tem boletim construído",
+        )
+        approved = approve_valuation(
+            _revalidated_bulletin(document),
+            reviewer_id=principal.subject,
+            decided_at=datetime.now(UTC),
+        )
+
+        approved_document = approved.model_dump(mode="json")
+        new_revision = append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"valuation_json": approved_document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _bulletin_payload(
+            record, new_revision, document=approved_document, valuation=approved
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_APPROVED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/bulletin/export",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def export_valuation_bulletin(
+        round_id: UUID,
+        payload: ExportBulletinRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Publica o `.xlsx` do boletim: portão do domínio, auditoria e só então object store.
+
+        A ordem é o portão, igual à do orçamento-base (ADR-0038). Primeiro
+        `Valuation.ensure_exportable`, que é a regra do DOMÍNIO e não uma cópia dela aqui:
+        medição sem aprovação, com aprovação de recusa ou com aprovação que não confere com o
+        conteúdo atual sai como `422 DOMAIN_VALIDATION_FAILED` com
+        `details.code = VALUATION_EXPORT_BLOCKED` e a lista de violações em `details.errors`.
+        Depois a planilha é escrita num arquivo temporário, reaberta e reconferida contra a
+        medição e o catálogo instalado — e só um laudo aprovado deixa os bytes subirem e a
+        revisão nascer. Auditoria reprovada é `500` e não publica nada.
+
+        O consolidado que o portão recebe é o `bulletin_export_contract` da rodada, cuja
+        limitação está declarada por extenso lá: a cadeia de `/v1` não importa consolidado
+        contratual, então os códigos de saldo e contrato não têm fato que os alimente, a
+        conferência de preço fica com o auditor (`CATALOG_PRICE_MISMATCH`) e a aprovação
+        continua valendo integralmente. Nenhum número é inventado para o portão passar.
+
+        A exportação NÃO altera a medição: a revisão nova carrega o mesmo `valuation_json` da
+        cabeça e acrescenta só a referência e o digest do `.xlsx`. `version` avança porque
+        publicar é ato humano deliberado, no mesmo desenho do `build_estimate`.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.bulletin-export:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        document = require_document(
+            revision,
+            "valuation_json",
+            stage=STAGE_BULLETIN,
+            detail="a rodada ainda não tem boletim construído",
+        )
+        valuation = _revalidated_bulletin(document)
+        # Portão do domínio ANTES de qualquer render: nada é escrito, nem em disco temporário,
+        # para uma medição que não pode ser publicada.
+        valuation.ensure_exportable(bulletin_export_contract(valuation))
+
+        catalog = _round_catalog(record)
+        # Portão fail-closed: grava, reabre e audita ANTES de qualquer publicação.
+        rendered = render_valuation_workbook(valuation, catalog, default_template())
+        object_key = bulletin_workbook_key(
+            tenant_id=principal.tenant_id,
+            round_id=record.id,
+            valuation_sha256=document_digest(document),
+        )
+        # O objeto sobe ANTES do commit, pelo mesmo motivo do orçamento-base: uma revisão que
+        # citasse um objeto ainda ausente seria um estado que nenhuma leitura consegue servir.
+        # O contrário — objeto no store sem revisão que o cite — é inerte, porque a chave é
+        # derivada do conteúdo e nada o alcança sem a revisão.
+        application.state.artifact_store.write_object(
+            object_key=object_key,
+            body=rendered.body,
+            content_type=BULLETIN_WORKBOOK_CONTENT_TYPE,
+        )
+        head_refs = {} if revision is None else dict(revision.artifact_refs_json or {})
+        head_digests = {} if revision is None else dict(revision.artifact_digests_json or {})
+        new_revision = append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={
+                "artifact_refs_json": {**head_refs, BULLETIN_WORKBOOK_REF: object_key},
+                "artifact_digests_json": {
+                    **head_digests,
+                    BULLETIN_WORKBOOK_DIGEST: rendered.audit.workbook_sha256,
+                },
+            },
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _bulletin_payload(record, new_revision, document=document, valuation=valuation)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="BULLETIN_EXPORTED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _commit_valuation_revision(session)
+        return response
 
     @application.post(
         "/v1/valuation-rounds/{round_id}/amendment-dossier",
