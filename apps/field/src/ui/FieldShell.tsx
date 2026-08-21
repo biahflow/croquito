@@ -28,6 +28,7 @@ function emptySurvey(id: string): Survey {
     measurements: [],
     photo_anchors: [],
     elements: [],
+    observations: [],
     created_at: now,
     updated_at: now,
   };

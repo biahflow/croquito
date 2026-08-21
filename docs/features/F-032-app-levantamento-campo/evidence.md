@@ -58,6 +58,44 @@ preservada — Builder implementador-sonnet, tarefa
   TypeScript de `apps/field`, invisível a ruff/mypy/pytest/check_docs; os perfis do
   app novo foram reexecutados sobre o código corrigido).
 
+## Execução — T2 (Builder: implementador-sonnet, harness Claude Code)
+
+Plano "MVP local, fatias 1–3" ([plan.md](plan.md)), tarefa
+[T2](tasks/T2-motor-dominio-validacao.md). `PRIMARY_EXECUTION_EVIDENCE`: BUILD REPORT
+completo entregue em 2026-08-21, `Status: BUILD_COMPLETE`; resumo com atribuição
+preservada:
+
+- Files changed: `src/domain/types.ts` (justification, ObservationNote,
+  CommandResult, par do ângulo, âncora ponto-ou-elemento), `src/domain/commands.ts`
+  (9 comandos puros), `src/domain/validation.ts` (validateSurvey/summarize/
+  canConclude), `commands.test.ts` (28) + `validation.test.ts` (20); dois ajustes de
+  typecheck fora do escopo nuclear (literal `observations: []` em FieldShell e num
+  helper de teste), previstos pelo contrato.
+- Validation executed: field:test 58, field:check, make check, make test completos —
+  verdes; grep de pureza sem retorno. Skipped: none. Capabilities: none faltando.
+- Assumptions declaradas: INVALID_MM reaproveitado para value_mm; EMPTY_TEXT para
+  textos vazios; "todos os pontos referenciados devem existir"; level/drop com ≥1
+  ponto; OPEN_PERIMETER dispara em grafo vazio; primeira medida do par alimenta o
+  triângulo (divergência é responsabilidade exclusiva de MEASUREMENT_DIVERGENCE).
+- Remaining risks declarados: PhotoAnchor.point_id agora opcional (T3 ciente); pilha
+  de undo vive fora do Survey (orquestração de T3/T5); hasCycle sem verificação de
+  desempenho a 2.000 elementos.
+
+### Revisão T2 (modelo principal, linha a linha)
+
+- `REVIEW_FINDINGS` → corrigido antes do commit:
+  - **CODE_FINDING (HIGH)**: `closePerimeter` não checava se as duas pontas abertas
+    já estavam ligadas entre si — no grafo "anel fechado + segmento solto A–B", fechar
+    duplicaria A–B, violando a regra de `addSegment` e quebrando a premissa de grafo
+    simples do `hasCycle`. Correção: guard `segmentExistsForPair` com
+    `PERIMETER_AMBIGUOUS` e mensagem própria; teste de regressão novo.
+- Assumptions do Builder revisadas e aceitas; observação registrada (não bloqueante):
+  `DANGLING_REFERENCE` não cobre `observations` (fora da tabela do contrato) e
+  `closePerimeter` com 0 pontas abertas responde `PERIMETER_AMBIGUOUS` genérico — a
+  UI de T3 pode especializar a copy.
+- Validação final pós-correção: field:test **59 passed**, field:check verde,
+  `make check` e `make test` completos verdes (EXIT=0).
+
 ## Desvios de plano
 
 - Renumeração F-031→F-032 / ADR-0042→ADR-0043 antes do congelamento do plano

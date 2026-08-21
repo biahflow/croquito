@@ -60,19 +60,46 @@ export interface Measurement {
   kind: MeasurementKind;
   from_point_id?: SurveyPointId;
   to_point_id?: SurveyPointId;
+  /** Segundo segmento de uma medida `angle`, referenciado pelo seu par de pontos — o
+   * primeiro segmento é `from_point_id`/`to_point_id`. Só usado quando `kind === "angle"`;
+   * T2 acrescenta este par porque a regra de vínculo do comando `addMeasurement`
+   * ("angle exige dois segmentos referenciáveis por par de pontos") não é representável
+   * só com o par existente (ver commands.ts). */
+  second_from_point_id?: SurveyPointId;
+  second_to_point_id?: SurveyPointId;
   element_id?: ElementObjectId;
   /** Instrumento usado (ex.: "trena", "laser", "estimado"). */
   instrument: string;
   status: MeasurementStatus;
+  /** Motivo registrado quando uma divergência ou pendência é mantida em vez de
+   * sobrescrita silenciosamente (prancha 4b/5b do Design Approval Package). */
+  justification?: string;
   created_at: string;
 }
 
-/** Âncora de uma foto a um ponto do levantamento — carrega só a referência local ao
- * arquivo, nunca a foto em si (o domínio não carrega blobs). */
+/** Âncora de uma foto a um ponto OU elemento do levantamento — carrega só a referência
+ * local ao arquivo, nunca a foto em si (o domínio não carrega blobs).
+ *
+ * `point_id` era obrigatório no scaffold da fatia 0; T2 o torna opcional e acrescenta
+ * `element_id` porque o comando `addPhotoAnchor` exige "ponto OU elemento existente"
+ * (`ANCHOR_UNLINKED`) — sem os dois campos opcionais, ancorar a um elemento seria
+ * impossível. Nenhum outro arquivo do workspace construía `PhotoAnchor` fora de
+ * `src/domain`, então a mudança não exige ajuste em `src/ui`/`src/storage`. */
 export interface PhotoAnchor {
   id: PhotoAnchorId;
-  point_id: SurveyPointId;
+  point_id?: SurveyPointId;
+  element_id?: ElementObjectId;
   local_media_ref: string;
+  created_at: string;
+}
+
+/** Anotação de campo em texto — "voz fora do MVP" (Feature Contract): o item de menu
+ * "Observação (texto ou voz)" cita voz, mas o MVP só grava texto. */
+export interface ObservationNote {
+  id: string;
+  text: string;
+  point_id?: SurveyPointId;
+  element_id?: ElementObjectId;
   created_at: string;
 }
 
@@ -94,6 +121,16 @@ export interface Survey {
   measurements: Measurement[];
   photo_anchors: PhotoAnchor[];
   elements: ElementObject[];
+  observations: ObservationNote[];
   created_at: string;
   updated_at: string;
 }
+
+/**
+ * Resultado de um comando de domínio. Erro estruturado com código estável em
+ * SCREAMING_SNAKE (mesmo padrão de `croquito_core.errors`, sem parsing de string) —
+ * mensagens sempre em português.
+ */
+export type CommandResult =
+  | { ok: true; survey: Survey; operation: { type: string; payload: Record<string, unknown> } }
+  | { ok: false; error: { code: string; message: string } };
