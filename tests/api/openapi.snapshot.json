@@ -24,7 +24,7 @@
         "additionalProperties": false,
         "properties": {
           "measurement": {
-            "$ref": "#/components/schemas/Measurement-Input"
+            "$ref": "#/components/schemas/croquito_core__models__Measurement-Input"
           },
           "op": {
             "const": "add_measurement",
@@ -351,6 +351,60 @@
           "end_angle"
         ],
         "title": "ArcGeometry",
+        "type": "object"
+      },
+      "ArrivalContext": {
+        "additionalProperties": false,
+        "description": "Espelho de `ArrivalContext` (prancha 2). `access_media_ref` carrega a referência\nde mídia resolvida (sha256/mime_type/byte_size), não o `MediaRecord.id` local —\nmesma razão de `MediaAnchor.media_ref`.",
+        "properties": {
+          "access_media_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MediaRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "arrived_at": {
+            "format": "date-time",
+            "title": "Arrived At",
+            "type": "string"
+          },
+          "gps": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GpsFix"
+              },
+              {
+                "const": "unavailable",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gps"
+          },
+          "instrument": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Instrument",
+            "type": "string"
+          },
+          "reference_note": {
+            "maxLength": 2000,
+            "title": "Reference Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instrument",
+          "reference_note",
+          "arrived_at"
+        ],
+        "title": "ArrivalContext",
         "type": "object"
       },
       "AssociatePlateRequest": {
@@ -1074,6 +1128,22 @@
           "action"
         ],
         "title": "CodeAssignmentDecisionRequest",
+        "type": "object"
+      },
+      "CompleteSurveyRequest": {
+        "additionalProperties": false,
+        "description": "Conclusão do levantamento sob a mesma guarda otimista das revisões de leitura.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "CompleteSurveyRequest",
         "type": "object"
       },
       "Constraint": {
@@ -2029,7 +2099,7 @@
             "type": "string"
           },
           "kind": {
-            "$ref": "#/components/schemas/MeasurementKind"
+            "$ref": "#/components/schemas/croquito_core__models__MeasurementKind"
           },
           "ocr_corroborated": {
             "anyOf": [
@@ -2106,6 +2176,42 @@
           "status"
         ],
         "title": "DimensionReading",
+        "type": "object"
+      },
+      "ElementObject": {
+        "additionalProperties": false,
+        "description": "Espelho de `ElementObject`.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "point_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Point Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "created_at"
+        ],
+        "title": "ElementObject",
         "type": "object"
       },
       "Entity": {
@@ -2615,6 +2721,32 @@
         "title": "ExportBulletinRequest",
         "type": "object"
       },
+      "GpsFix": {
+        "additionalProperties": false,
+        "description": "Espelho de `GpsFix` — referência geográfica, nunca medição.",
+        "properties": {
+          "accuracy_m": {
+            "minimum": 0.0,
+            "title": "Accuracy M",
+            "type": "number"
+          },
+          "lat": {
+            "title": "Lat",
+            "type": "number"
+          },
+          "lng": {
+            "title": "Lng",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lng",
+          "accuracy_m"
+        ],
+        "title": "GpsFix",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2984,169 +3116,102 @@
         "title": "MeResponse",
         "type": "object"
       },
-      "Measurement-Input": {
-        "additionalProperties": false,
-        "properties": {
-          "confirmed": {
-            "default": false,
-            "title": "Confirmed",
-            "type": "boolean"
-          },
-          "entity_id": {
-            "format": "uuid",
-            "title": "Entity Id",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/MeasurementKind"
-          },
-          "provenance": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Provenance"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "raw_text": {
-            "anyOf": [
-              {
-                "maxLength": 100,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Raw Text"
-          },
-          "unit": {
-            "$ref": "#/components/schemas/UnitCode"
-          },
-          "value_si": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value Si"
-          },
-          "written_decimals": {
-            "default": 2,
-            "maximum": 8.0,
-            "minimum": 0.0,
-            "title": "Written Decimals",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "entity_id",
-          "kind",
-          "unit"
-        ],
-        "title": "Measurement",
-        "type": "object"
-      },
-      "Measurement-Output": {
-        "additionalProperties": false,
-        "properties": {
-          "confirmed": {
-            "default": false,
-            "title": "Confirmed",
-            "type": "boolean"
-          },
-          "entity_id": {
-            "format": "uuid",
-            "title": "Entity Id",
-            "type": "string"
-          },
-          "id": {
-            "format": "uuid",
-            "title": "Id",
-            "type": "string"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/MeasurementKind"
-          },
-          "provenance": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Provenance"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "raw_text": {
-            "anyOf": [
-              {
-                "maxLength": 100,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Raw Text"
-          },
-          "unit": {
-            "$ref": "#/components/schemas/UnitCode"
-          },
-          "value_si": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value Si"
-          },
-          "written_decimals": {
-            "default": 2,
-            "maximum": 8.0,
-            "minimum": 0.0,
-            "title": "Written Decimals",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "entity_id",
-          "kind",
-          "unit"
-        ],
-        "title": "Measurement",
-        "type": "object"
-      },
-      "MeasurementKind": {
+      "MeasurementStatus": {
+        "description": "Espelho de `MeasurementStatus`.",
         "enum": [
-          "length",
-          "width",
-          "height",
-          "radius",
-          "diameter",
-          "angle",
-          "area"
+          "draft",
+          "confirmed"
         ],
-        "title": "MeasurementKind",
+        "title": "MeasurementStatus",
         "type": "string"
+      },
+      "MediaAnchor": {
+        "additionalProperties": false,
+        "description": "Âncora de uma foto OU áudio a um ponto, elemento ou nota do levantamento — envelope\núnico para os dois tipos de mídia (`local_media_ref`/áudio de T12), sempre resolvido\npara `media_ref` (sha256/mime_type/byte_size) pelo mapeamento de\n`apps/field/src/sync/contract.ts`, nunca a referência local (`MediaRecord.id`), que só\ntem sentido dentro do dispositivo de origem.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "element_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Id"
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "media_ref": {
+            "$ref": "#/components/schemas/MediaRef"
+          },
+          "note_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Id"
+          },
+          "point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Id"
+          }
+        },
+        "required": [
+          "id",
+          "media_ref",
+          "created_at"
+        ],
+        "title": "MediaAnchor",
+        "type": "object"
+      },
+      "MediaRef": {
+        "additionalProperties": false,
+        "description": "Referência a um arquivo de mídia local — nunca o blob (`apps/field/AGENTS.md`:\n\"o domínio não carrega blobs\"). `sha256`/`mime_type`/`byte_size` espelham\n`MediaRecord` (`apps/field/src/storage/SurveyRepository.ts`), sem o campo `blob`.",
+        "properties": {
+          "byte_size": {
+            "minimum": 0.0,
+            "title": "Byte Size",
+            "type": "integer"
+          },
+          "mime_type": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha256",
+          "mime_type",
+          "byte_size"
+        ],
+        "title": "MediaRef",
+        "type": "object"
       },
       "MetaResponse": {
         "additionalProperties": false,
@@ -3170,6 +3235,67 @@
           "scene_schema_version"
         ],
         "title": "MetaResponse",
+        "type": "object"
+      },
+      "ObservationNote": {
+        "additionalProperties": false,
+        "description": "Espelho de `ObservationNote`. `audio_media_ref` é aditivo: o domínio de hoje só\ngrava texto (\"voz fora do MVP\", Feature Contract); o campo existe aqui como\npreparação para T12 e viaja sempre `None` até essa tarefa existir.",
+        "properties": {
+          "audio_media_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MediaRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "element_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Id"
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Id"
+          },
+          "text": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "created_at"
+        ],
+        "title": "ObservationNote",
         "type": "object"
       },
       "PixelBox": {
@@ -3433,6 +3559,85 @@
         ],
         "title": "Precision",
         "type": "string"
+      },
+      "PresignSurveyMediaRequest": {
+        "additionalProperties": false,
+        "description": "Pedido de URL assinada para uma foto ou áudio JÁ referenciado no pacote (prancha 6a).\n\n`mime_type` é fechado no contrato porque é ele que decide o processamento posterior:\nimagem vai para a análise visual, áudio para a transcrição. Um tipo fora da lista não\né \"mídia desconhecida\", é comando que ninguém sabe cumprir.",
+        "properties": {
+          "byte_size": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000000.0,
+            "title": "Byte Size",
+            "type": "integer"
+          },
+          "mime_type": {
+            "enum": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "audio/webm",
+              "audio/mp4"
+            ],
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha256",
+          "mime_type",
+          "byte_size"
+        ],
+        "title": "PresignSurveyMediaRequest",
+        "type": "object"
+      },
+      "PresignSurveyMediaResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
+          },
+          "media_id": {
+            "format": "uuid",
+            "title": "Media Id",
+            "type": "string"
+          },
+          "object_key": {
+            "title": "Object Key",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id",
+          "sha256",
+          "object_key",
+          "url",
+          "headers",
+          "expires_at"
+        ],
+        "title": "PresignSurveyMediaResponse",
+        "type": "object"
       },
       "PresignUploadRequest": {
         "additionalProperties": false,
@@ -3950,7 +4155,7 @@
           "kind": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/MeasurementKind"
+                "$ref": "#/components/schemas/croquito_core__models__MeasurementKind"
               },
               {
                 "type": "null"
@@ -4377,7 +4582,7 @@
           "kind": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/MeasurementKind"
+                "$ref": "#/components/schemas/croquito_core__models__MeasurementKind"
               },
               {
                 "type": "null"
@@ -4704,7 +4909,7 @@
           },
           "measurements": {
             "items": {
-              "$ref": "#/components/schemas/Measurement-Output"
+              "$ref": "#/components/schemas/croquito_core__models__Measurement-Output"
             },
             "title": "Measurements",
             "type": "array"
@@ -4727,6 +4932,40 @@
           "entities"
         ],
         "title": "SceneRevision",
+        "type": "object"
+      },
+      "Segment": {
+        "additionalProperties": false,
+        "description": "Espelho de `Segment` — ligação observada entre dois pontos, sem medida\nconfirmada.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "from_point_id": {
+            "minLength": 1,
+            "title": "From Point Id",
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "to_point_id": {
+            "minLength": 1,
+            "title": "To Point Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "from_point_id",
+          "to_point_id",
+          "created_at"
+        ],
+        "title": "Segment",
         "type": "object"
       },
       "SetAiProcessingEntitlementRequest": {
@@ -4840,6 +5079,362 @@
         ],
         "title": "SubmitReviewDecisionsRequest",
         "type": "object"
+      },
+      "SubmitSurveyOperationsRequest": {
+        "additionalProperties": false,
+        "description": "Um lote do outbox do aparelho mais o pacote consolidado que ele produz.\n\n`survey` é validado pelo contrato canônico (`croquito_core.field.SurveyPacket`, T7) e\nnão por um espelho escrito à mão aqui: a API não republica a forma do levantamento.\nO que ela guarda em `snapshot_json` é este pacote SEM `operations` — o histórico tem\ntabela própria, e mantê-lo nos dois lugares faria as duas fontes divergirem na\nprimeira retransmissão.\n\n`device_id` viaja no topo, e não só dentro de cada operação, porque a contiguidade de\n`seq` é POR APARELHO: um lote precisa dizer de quem ele é antes de ser conferido.",
+        "properties": {
+          "device_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Device Id",
+            "type": "string"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/SurveyOperation"
+            },
+            "maxItems": 2000,
+            "title": "Operations",
+            "type": "array"
+          },
+          "survey": {
+            "$ref": "#/components/schemas/SurveyPacket"
+          }
+        },
+        "required": [
+          "device_id",
+          "survey"
+        ],
+        "title": "SubmitSurveyOperationsRequest",
+        "type": "object"
+      },
+      "SurveyMediaState": {
+        "additionalProperties": false,
+        "description": "Estado de uma mídia do levantamento. Sem `object_key` e sem URL: a tela precisa\nsaber se a foto chegou, não onde ela está guardada.",
+        "properties": {
+          "mime_type": {
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha256",
+          "mime_type",
+          "status"
+        ],
+        "title": "SurveyMediaState",
+        "type": "object"
+      },
+      "SurveyOperation": {
+        "additionalProperties": false,
+        "description": "Espelho de `SurveyOperation` (`apps/field/src/outbox/types.ts`) — histórico do\noutbox, sem `status`: reconhecimento (`ack`) é estado local do app, nunca viaja no\npacote.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "device_id": {
+            "minLength": 1,
+            "title": "Device Id",
+            "type": "string"
+          },
+          "operation_id": {
+            "minLength": 1,
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "survey_id": {
+            "minLength": 1,
+            "title": "Survey Id",
+            "type": "string"
+          },
+          "type": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "device_id",
+          "survey_id",
+          "seq",
+          "type",
+          "created_at"
+        ],
+        "title": "SurveyOperation",
+        "type": "object"
+      },
+      "SurveyOperationsAckResponse": {
+        "additionalProperties": false,
+        "description": "O reconhecimento que o app usa para limpar o outbox e reavaliar o que falta enviar.",
+        "properties": {
+          "acked_operation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Acked Operation Ids",
+            "type": "array"
+          },
+          "last_seq_by_device": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Last Seq By Device",
+            "type": "object"
+          },
+          "survey_id": {
+            "title": "Survey Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "survey_id",
+          "acked_operation_ids",
+          "version",
+          "last_seq_by_device"
+        ],
+        "title": "SurveyOperationsAckResponse",
+        "type": "object"
+      },
+      "SurveyPacket": {
+        "additionalProperties": false,
+        "description": "Pacote de levantamento de campo — o `Survey` inteiro pronto para sincronização\n(T9). Sem `tenant_id`: tenant vem sempre do JWT no momento do envio.\n\n`status`/`waivers` viajam sempre resolvidos (equivalente a `surveyStatus`/\n`surveyWaivers` do domínio, nunca o campo bruto opcional pré-T5); `order_id` e\n`arrival_context` continuam opcionais porque o próprio domínio os declara assim\n(levantamento legado sem ordem de origem; chegada ainda não registrada).",
+        "properties": {
+          "arrival_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArrivalContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "device_id": {
+            "minLength": 1,
+            "title": "Device Id",
+            "type": "string"
+          },
+          "elements": {
+            "items": {
+              "$ref": "#/components/schemas/ElementObject"
+            },
+            "title": "Elements",
+            "type": "array"
+          },
+          "gps_fixes": {
+            "items": {
+              "$ref": "#/components/schemas/GpsFix"
+            },
+            "title": "Gps Fixes",
+            "type": "array"
+          },
+          "measurements": {
+            "items": {
+              "$ref": "#/components/schemas/croquito_core__field__Measurement"
+            },
+            "title": "Measurements",
+            "type": "array"
+          },
+          "media_anchors": {
+            "items": {
+              "$ref": "#/components/schemas/MediaAnchor"
+            },
+            "title": "Media Anchors",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/ObservationNote"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/SurveyOperation"
+            },
+            "title": "Operations",
+            "type": "array"
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/SurveyPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/Segment"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SurveyStatus"
+          },
+          "survey_id": {
+            "minLength": 1,
+            "title": "Survey Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "waivers": {
+            "items": {
+              "$ref": "#/components/schemas/Waiver"
+            },
+            "title": "Waivers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "survey_id",
+          "name",
+          "device_id",
+          "created_at",
+          "updated_at",
+          "status"
+        ],
+        "title": "SurveyPacket",
+        "type": "object"
+      },
+      "SurveyPoint": {
+        "additionalProperties": false,
+        "description": "Espelho de `SurveyPoint`.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "x_mm": {
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "title": "X Mm",
+            "type": "integer"
+          },
+          "y_mm": {
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "title": "Y Mm",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "x_mm",
+          "y_mm",
+          "created_at"
+        ],
+        "title": "SurveyPoint",
+        "type": "object"
+      },
+      "SurveyStateResponse": {
+        "additionalProperties": false,
+        "description": "O levantamento como o servidor o conhece — a mesma forma que a tela de conflito lê.",
+        "properties": {
+          "last_seq_by_device": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Last Seq By Device",
+            "type": "object"
+          },
+          "media": {
+            "items": {
+              "$ref": "#/components/schemas/SurveyMediaState"
+            },
+            "title": "Media",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "survey": {
+            "$ref": "#/components/schemas/SurveyPacket"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "survey",
+          "version",
+          "status",
+          "last_seq_by_device",
+          "media"
+        ],
+        "title": "SurveyStateResponse",
+        "type": "object"
+      },
+      "SurveyStatus": {
+        "description": "Espelho de `SurveyStatus` (T5).",
+        "enum": [
+          "collecting",
+          "concluded"
+        ],
+        "title": "SurveyStatus",
+        "type": "string"
       },
       "TakeoffDecisionRequest": {
         "additionalProperties": false,
@@ -5861,6 +6456,339 @@
         ],
         "title": "VisionProposalSet",
         "type": "object"
+      },
+      "Waiver": {
+        "additionalProperties": false,
+        "description": "Espelho de `Waiver` (prancha 5b) — justificativa de pendência não crítica mantida\nna conclusão.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "finding_code": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Finding Code",
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "justification": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Justification",
+            "type": "string"
+          },
+          "ref_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Ref Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "finding_code",
+          "ref_key",
+          "justification",
+          "created_at"
+        ],
+        "title": "Waiver",
+        "type": "object"
+      },
+      "croquito_core__field__Measurement": {
+        "additionalProperties": false,
+        "description": "Espelho de `Measurement`. `value_mm` nunca é negativo — diferente de\n`x_mm`/`y_mm`, que são coordenadas relativas a uma origem local e podem ser\nnegativas.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "element_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Id"
+          },
+          "from_point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Point Id"
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "instrument": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Instrument",
+            "type": "string"
+          },
+          "justification": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Justification"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/croquito_core__field__MeasurementKind"
+          },
+          "second_from_point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second From Point Id"
+          },
+          "second_to_point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second To Point Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MeasurementStatus"
+          },
+          "to_point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Point Id"
+          },
+          "value_mm": {
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Value Mm",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "value_mm",
+          "kind",
+          "instrument",
+          "status",
+          "created_at"
+        ],
+        "title": "Measurement",
+        "type": "object"
+      },
+      "croquito_core__field__MeasurementKind": {
+        "description": "Espelho de `MeasurementKind` (`apps/field/src/domain/types.ts`).",
+        "enum": [
+          "length",
+          "diagonal",
+          "width",
+          "radius",
+          "level",
+          "drop",
+          "height",
+          "angle"
+        ],
+        "title": "MeasurementKind",
+        "type": "string"
+      },
+      "croquito_core__models__Measurement-Input": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "default": false,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "entity_id": {
+            "format": "uuid",
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/croquito_core__models__MeasurementKind"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Provenance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "raw_text": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Text"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/UnitCode"
+          },
+          "value_si": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Si"
+          },
+          "written_decimals": {
+            "default": 2,
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "title": "Written Decimals",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entity_id",
+          "kind",
+          "unit"
+        ],
+        "title": "Measurement",
+        "type": "object"
+      },
+      "croquito_core__models__Measurement-Output": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "default": false,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "entity_id": {
+            "format": "uuid",
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/croquito_core__models__MeasurementKind"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Provenance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "raw_text": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Text"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/UnitCode"
+          },
+          "value_si": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Si"
+          },
+          "written_decimals": {
+            "default": 2,
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "title": "Written Decimals",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entity_id",
+          "kind",
+          "unit"
+        ],
+        "title": "Measurement",
+        "type": "object"
+      },
+      "croquito_core__models__MeasurementKind": {
+        "enum": [
+          "length",
+          "width",
+          "height",
+          "radius",
+          "diameter",
+          "angle",
+          "area"
+        ],
+        "title": "MeasurementKind",
+        "type": "string"
       }
     },
     "securitySchemes": {
@@ -8916,6 +9844,344 @@
         "summary": "Scene Schema",
         "tags": [
           "meta"
+        ]
+      }
+    },
+    "/v1/surveys/{survey_id}": {
+      "get": {
+        "description": "O levantamento como o servidor o conhece: pacote, versão, sequências e mídia.\n\nLê também com papel de revisão: o escritório consulta o que veio do campo antes de\ntransformá-lo em observação do pipeline, mas nunca escreve por aqui.",
+        "operationId": "get_survey_v1_surveys__survey_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "maxLength": 36,
+              "minLength": 1,
+              "title": "Survey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Survey",
+        "tags": [
+          "surveys"
+        ]
+      }
+    },
+    "/v1/surveys/{survey_id}/complete": {
+      "post": {
+        "description": "Fecha o levantamento e enfileira a exportação para o pipeline.\n\nTrês precondições, nesta ordem, porque cada uma responde a uma pergunta diferente:\no levantamento ainda está aberto; o aparelho está falando da versão que ele leu; e\ntoda mídia que o pacote referencia já chegou íntegra. Concluir com foto pendente\npublicaria um levantamento cuja evidência ainda está no aparelho.",
+        "operationId": "complete_survey_v1_surveys__survey_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "maxLength": 36,
+              "minLength": 1,
+              "title": "Survey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteSurveyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Complete Survey",
+        "tags": [
+          "surveys"
+        ]
+      }
+    },
+    "/v1/surveys/{survey_id}/media/presign": {
+      "post": {
+        "description": "Assina o envio de uma mídia JÁ referenciada no pacote (prancha 6a).\n\nMetadado antes da mídia é a ordem que sustenta a tela de progresso e o portão: uma\nfoto cujo digest não está ancorado em nada seria um blob órfão no bucket do tenant,\nsem ponto do levantamento que a explique. Por isso o digest não referenciado é\n`409 SURVEY_MEDIA_NOT_REFERENCED`, e não um upload aceito \"por precaução\".",
+        "operationId": "presign_survey_media_v1_surveys__survey_id__media_presign_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "maxLength": 36,
+              "minLength": 1,
+              "title": "Survey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignSurveyMediaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignSurveyMediaResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Presign Survey Media",
+        "tags": [
+          "surveys"
+        ]
+      }
+    },
+    "/v1/surveys/{survey_id}/media/{sha256}/confirm": {
+      "post": {
+        "description": "Confere o objeto enviado e publica o processamento da mídia — uma vez só.\n\nA conferência é a mesma da criação de job: tamanho contra o declarado e, no perfil\nde storage que assina checksum, o digest do próprio objeto. No perfil GCS o digest\ncontinua sendo verificado pelo worker, que relê os bytes — a integridade não é\ndispensada, é adiada, e o adiamento é registrado em auditoria.\n\nA publicação acontece na TRANSIÇÃO `PRESIGNED → CONFIRMED`. Confirmar de novo devolve\no estado sem republicar; se a fila recusar, a mídia volta a `PRESIGNED` para que\nrepetir o comando seja seguro e continue produzindo exatamente uma mensagem.",
+        "operationId": "confirm_survey_media_v1_surveys__survey_id__media__sha256__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "maxLength": 36,
+              "minLength": 1,
+              "title": "Survey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sha256",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-f0-9]{64}$",
+              "title": "Sha256",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Confirm Survey Media",
+        "tags": [
+          "surveys"
+        ]
+      }
+    },
+    "/v1/surveys/{survey_id}/operations": {
+      "post": {
+        "description": "Recebe um lote do outbox do aparelho e consolida o pacote do levantamento.\n\nA rota é a porta de entrada da sincronização (ADR-0043) e trabalha sob três regras\nque não são detalhe de implementação:\n\n1. O levantamento nasce aqui, na primeira chamada, com o id que o aparelho gerou\n   offline — não existe rota de criação separada, porque em campo o levantamento já\n   existe antes de haver rede.\n2. Operação já gravada é reconhecida de novo sem regravar e sem falhar: o aparelho\n   reenvia por desenho, e um reenvio não pode ser erro.\n3. Buraco ou regressão de `seq` é CONFLITO, não erro de contrato: o servidor devolve\n   o estado dele e deixa a pessoa decidir na tela 6b. Ele não escolhe versão\n   vencedora, não funde estados e não apaga nada.",
+        "operationId": "submit_survey_operations_v1_surveys__survey_id__operations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "maxLength": 36,
+              "minLength": 1,
+              "title": "Survey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitSurveyOperationsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurveyOperationsAckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Submit Survey Operations",
+        "tags": [
+          "surveys"
         ]
       }
     },

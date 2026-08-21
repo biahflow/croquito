@@ -11,8 +11,10 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
+    PrimaryKeyConstraint,
     String,
     Text,
     UniqueConstraint,
@@ -664,6 +666,132 @@ class EstimateRoundRevisionRecord(Base):
     nunca URL assinada."""
     artifact_digests_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class SurveyRecord(Base):
+    """Levantamento de campo sincronizado pela PWA do técnico (F-032, ADR-0043).
+
+    A raiz guarda o ÚLTIMO pacote consolidado (``snapshot_json``) e o contador que o
+    aplicativo usa como guarda otimista; o histórico do outbox vive em
+    ``survey_operation_records``, e nenhuma linha dele é editada ou apagada — resolver
+    conflito é operação nova, não sobrescrita.
+
+    ``snapshot_json`` é o ``SurveyPacket`` (``croquito_core.field``) SEM ``operations``:
+    o histórico já tem tabela própria e duplicá-lo aqui faria duas fontes divergirem na
+    primeira retransmissão. O conteúdo é trabalho de campo do cliente — coordenadas,
+    medidas, notas — e **nunca** é copiado para log de aplicação.
+
+    A chave primária é ``(tenant_id, id)``, e não ``id`` sozinho, porque ``id`` é gerado
+    NO APARELHO: uma chave global faria o identificador de um tenant recusar o de outro, e
+    o app já persistiu id que não é UUID (``survey-local``, do scaffold da fatia 0), onde a
+    colisão entre tenants deixa de ser hipótese remota. Isolamento de tenant é invariante
+    do banco, não consequência de sorte no gerador de id.
+    """
+
+    __tablename__ = "survey_records"
+    __table_args__ = (PrimaryKeyConstraint("tenant_id", "id", name="pk_survey_records"),)
+
+    id: Mapped[str] = mapped_column(String(36))
+    """Id gerado pelo aparelho (``crypto.randomUUID``), não pelo servidor: o levantamento
+    nasce offline e precisa de identidade antes de existir rede."""
+    tenant_id: Mapped[str] = mapped_column(String(128))
+    """Sem ``index=True``: a chave primária já começa por ele, e um índice extra na mesma
+    coluna líder custaria escrita sem servir a nenhuma leitura que a PK não sirva."""
+    name: Mapped[str] = mapped_column(String(200))
+    order_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    """Ordem de levantamento que originou o survey; ausente no dado legado do app."""
+    status: Mapped[str] = mapped_column(String(16), default="OPEN")
+    """``OPEN`` | ``COMPLETED``. Concluído não aceita operação nova (conflito 6b)."""
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    """Só lote válido de operações o incrementa; é a ``base_version`` da conclusão."""
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class SurveyOperationRecord(Base):
+    """Uma operação do outbox do aparelho, gravada uma única vez.
+
+    A chave primária é ``(tenant_id, operation_id)``: reenvio do mesmo lote é fato normal
+    numa rede de campo, e a unicidade natural do ``operation_id`` é o que torna o
+    reconhecimento idempotente sem inventar uma chave de deduplicação paralela — mas ele
+    também nasce no aparelho, então a unicidade vale DENTRO do tenant, que é como o ack já
+    é consultado.
+
+    ``(tenant_id, survey_id, device_id, seq)`` é único porque a ordem por aparelho é o
+    contrato de sincronização: dois lotes concorrentes disputam a mesma posição e o
+    perdedor recebe conflito, nunca uma gravação fora de ordem. O ``tenant_id`` entra na
+    chave pela mesma razão que entra na PK — sem ele, dois tenants com o mesmo
+    ``survey_id`` disputariam a mesma posição de sequência.
+    """
+
+    __tablename__ = "survey_operation_records"
+    __table_args__ = (
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_survey_operation_records"),
+        ForeignKeyConstraint(
+            ["tenant_id", "survey_id"],
+            ["survey_records.tenant_id", "survey_records.id"],
+            name="fk_survey_operation_records_survey",
+        ),
+        UniqueConstraint(
+            "tenant_id", "survey_id", "device_id", "seq", name="uq_survey_operation_seq"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64))
+    tenant_id: Mapped[str] = mapped_column(String(128))
+    """Sem ``index=True``: a PK já começa por ele (ver ``SurveyRecord.tenant_id``)."""
+    survey_id: Mapped[str] = mapped_column(String(36), index=True)
+    device_id: Mapped[str] = mapped_column(String(128))
+    seq: Mapped[int] = mapped_column(Integer)
+    type: Mapped[str] = mapped_column(String(100))
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class SurveyMediaRecord(Base):
+    """Uma foto ou áudio do levantamento: metadado e digest aqui, bytes no object store.
+
+    A regra da prancha 6a — metadado antes da mídia — vive na rota: o digest precisa
+    estar referenciado no pacote consolidado antes de ganhar URL assinada. ``object_key``
+    é derivado de tenant, survey e digest, e por isso é único; ``(tenant_id, survey_id,
+    sha256)`` também, porque a mesma mídia ancorada duas vezes é um arquivo só.
+
+    Aqui o ``id`` continua SIMPLES: ele é gerado pelo servidor (UUIDv7), não pelo
+    aparelho, e por isso não carrega o problema de colisão que fez a raiz e as operações
+    ganharem chave composta.
+    """
+
+    __tablename__ = "survey_media_records"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "survey_id"],
+            ["survey_records.tenant_id", "survey_records.id"],
+            name="fk_survey_media_records_survey",
+        ),
+        UniqueConstraint("tenant_id", "survey_id", "sha256", name="uq_survey_media_digest"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    survey_id: Mapped[str] = mapped_column(String(36), index=True)
+    sha256: Mapped[str] = mapped_column(String(64))
+    mime_type: Mapped[str] = mapped_column(String(100))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    object_key: Mapped[str] = mapped_column(String(512), unique=True)
+    status: Mapped[str] = mapped_column(String(16), default="PRESIGNED")
+    """``PRESIGNED`` | ``CONFIRMED``. A transição é o que publica o comando de análise."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

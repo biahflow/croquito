@@ -173,3 +173,39 @@ class PubSubProcessingQueue:
                 "tenant_id": tenant_id,
             }
         )
+
+    def enqueue_survey_photo_analysis(
+        self, *, survey_id: str, media_id: str, tenant_id: str
+    ) -> None:
+        """Análise da foto de campo; o corpo é o mesmo do SQS, byte a byte."""
+        self._publish(
+            {
+                "command": "analyze_survey_photo",
+                "survey_id": survey_id,
+                "media_id": media_id,
+                "tenant_id": tenant_id,
+            }
+        )
+
+    def enqueue_survey_transcription(
+        self, *, survey_id: str, media_id: str, tenant_id: str
+    ) -> None:
+        """Transcrição do áudio de campo; o corpo é o mesmo do SQS, byte a byte."""
+        self._publish(
+            {
+                "command": "transcribe_survey_audio",
+                "survey_id": survey_id,
+                "media_id": media_id,
+                "tenant_id": tenant_id,
+            }
+        )
+
+    def enqueue_survey_export(self, *, survey_id: str, tenant_id: str) -> None:
+        """Exportação do levantamento concluído; o corpo é o mesmo do SQS, byte a byte."""
+        self._publish(
+            {
+                "command": "export_survey",
+                "survey_id": survey_id,
+                "tenant_id": tenant_id,
+            }
+        )

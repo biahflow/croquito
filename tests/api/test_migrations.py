@@ -344,7 +344,10 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
     ordenam por `(tenant_id, created_at, id)`, e é esse índice que sustenta as duas.
 
     O conjunto de tabelas pós-baseline CRESCE a cada migração que cria tabela nova — a
-    `0002` acrescentou as da medição, a `0003` as do orçamento-base. Não há constante
+    `0002` acrescentou as da medição, a `0003` as do orçamento-base, a `0007` as do
+    levantamento de campo (que não têm índice composto de listagem: não há listagem com
+    cursor opaco de `/v1/surveys`, e um índice sem consulta que o use seria custo de
+    escrita sem leitura correspondente). Não há constante
     central para esse conjunto (`BASELINE_TABLES`, em `bootstrap.py`, descreve só a
     `0001`, de propósito: ver o comentário ao lado dela); a lista abaixo é literal e
     precisa crescer junto com cada migração pós-baseline futura que criar tabela nova —
@@ -363,6 +366,9 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
             "valuation_round_revisions",
             "estimate_rounds",
             "estimate_round_revisions",
+            "survey_records",
+            "survey_operation_records",
+            "survey_media_records",
         }
         for table, index_name in (
             ("valuation_rounds", "ix_valuation_rounds_tenant_created"),

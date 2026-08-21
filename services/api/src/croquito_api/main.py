@@ -18,7 +18,7 @@ from uuid import UUID
 import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import (
@@ -55,6 +55,9 @@ from croquito_api.database import (
     ReviewDecisionRecord,
     ReviewRevisionRecord,
     RevisionRecord,
+    SurveyMediaRecord,
+    SurveyOperationRecord,
+    SurveyRecord,
     TenantAiProcessingEntitlementRecord,
     TraceSolveRecord,
     UploadRecord,
@@ -104,6 +107,7 @@ from croquito_api.valuation_rounds import (
     takeoff_overlay_state,
 )
 from croquito_core.errors import DomainValidationError
+from croquito_core.field import SurveyOperation, SurveyPacket, SurveyStatus
 from croquito_core.ids import new_uuid7
 from croquito_core.models import (
     SCENE_SCHEMA_VERSION,
@@ -1186,6 +1190,123 @@ class ValuationDocumentResponse(RootModel[dict[str, Any]]):
     """
 
 
+#: Papel do técnico de campo: quem coleta é quem sincroniza. Toda mutação de `/v1/surveys`
+#: o exige; o escritório LÊ o levantamento com os papéis de revisão que já existem.
+FIELD_TECHNICIAN_ROLE: Final = "field_technician"
+
+#: Papéis do escritório que podem ler um levantamento sincronizado. São os mesmos de
+#: `_reviewer_role`, e por um motivo: quem revisa cota é quem consulta o que veio do campo.
+SURVEY_OFFICE_ROLES: Final[tuple[str, ...]] = ("engineer", "architect", "domain_reviewer")
+
+#: Tipos de mídia que o levantamento assina, e o comando de fila que a confirmação de cada
+#: um publica. Um tipo novo aqui é decisão de contrato (e de custo de processamento), não
+#: conveniência de rota — mesma disciplina de `UPLOAD_CONTENT_TYPES`.
+SURVEY_MEDIA_COMMANDS: Final[Mapping[str, str]] = {
+    "image/jpeg": "photo",
+    "image/png": "photo",
+    "image/webp": "photo",
+    "audio/webm": "audio",
+    "audio/mp4": "audio",
+}
+
+#: O id do levantamento é gerado pelo aparelho, offline, antes de existir rede; o limite
+#: apenas casa com a coluna e recusa um id que não caberia nela.
+SURVEY_ID_MAX_LENGTH: Final = 36
+SURVEY_DEVICE_ID_MAX_LENGTH: Final = 128
+SURVEY_OPERATION_ID_MAX_LENGTH: Final = 64
+SURVEY_ORDER_REF_MAX_LENGTH: Final = 200
+
+#: Teto de operações por lote. Não é regra de negócio: é a guarda contra um corpo sem
+#: limite, e o app divide o outbox em lotes bem menores que isto.
+SURVEY_OPERATIONS_BATCH_LIMIT: Final = 2000
+
+
+class SubmitSurveyOperationsRequest(ApiModel):
+    """Um lote do outbox do aparelho mais o pacote consolidado que ele produz.
+
+    `survey` é validado pelo contrato canônico (`croquito_core.field.SurveyPacket`, T7) e
+    não por um espelho escrito à mão aqui: a API não republica a forma do levantamento.
+    O que ela guarda em `snapshot_json` é este pacote SEM `operations` — o histórico tem
+    tabela própria, e mantê-lo nos dois lugares faria as duas fontes divergirem na
+    primeira retransmissão.
+
+    `device_id` viaja no topo, e não só dentro de cada operação, porque a contiguidade de
+    `seq` é POR APARELHO: um lote precisa dizer de quem ele é antes de ser conferido.
+    """
+
+    device_id: str = Field(min_length=1, max_length=SURVEY_DEVICE_ID_MAX_LENGTH)
+    survey: SurveyPacket
+    operations: list[SurveyOperation] = Field(
+        default_factory=list, max_length=SURVEY_OPERATIONS_BATCH_LIMIT
+    )
+
+
+class SurveyOperationsAckResponse(ApiModel):
+    """O reconhecimento que o app usa para limpar o outbox e reavaliar o que falta enviar."""
+
+    survey_id: str
+    acked_operation_ids: list[str]
+    version: int
+    last_seq_by_device: dict[str, int]
+
+
+class SurveyMediaState(ApiModel):
+    """Estado de uma mídia do levantamento. Sem `object_key` e sem URL: a tela precisa
+    saber se a foto chegou, não onde ela está guardada."""
+
+    sha256: str
+    mime_type: str
+    status: str
+
+
+class SurveyStateResponse(ApiModel):
+    """O levantamento como o servidor o conhece — a mesma forma que a tela de conflito lê."""
+
+    survey: SurveyPacket
+    version: int
+    status: str
+    last_seq_by_device: dict[str, int]
+    media: list[SurveyMediaState]
+
+
+class PresignSurveyMediaRequest(ApiModel):
+    """Pedido de URL assinada para uma foto ou áudio JÁ referenciado no pacote (prancha 6a).
+
+    `mime_type` é fechado no contrato porque é ele que decide o processamento posterior:
+    imagem vai para a análise visual, áudio para a transcrição. Um tipo fora da lista não
+    é "mídia desconhecida", é comando que ninguém sabe cumprir.
+    """
+
+    sha256: str = Field(pattern=SHA256_HEX_PATTERN)
+    mime_type: Literal["image/jpeg", "image/png", "image/webp", "audio/webm", "audio/mp4"]
+    byte_size: int = Field(gt=0, le=100_000_000)
+
+
+class PresignSurveyMediaResponse(ApiModel):
+    media_id: UUID
+    sha256: str
+    object_key: str
+    url: str
+    headers: dict[str, str]
+    expires_at: datetime
+
+
+class CompleteSurveyRequest(ApiModel):
+    """Conclusão do levantamento sob a mesma guarda otimista das revisões de leitura."""
+
+    base_version: int = Field(ge=1)
+
+
+#: O id do levantamento não é `UUID` no caminho de propósito: ele nasce no aparelho e o
+#: app já persistiu levantamento com id que não é UUID (dado legado do scaffold da fatia
+#: 0). Recusá-lo aqui apagaria trabalho de campo que existe.
+SurveyIdPath = Annotated[str, Path(min_length=1, max_length=SURVEY_ID_MAX_LENGTH)]
+
+#: O digest é o identificador da mídia no caminho; a forma é conferida antes de virar chave
+#: de objeto, para que nada vindo do cliente componha um `object_key`.
+SurveyDigestPath = Annotated[str, Path(pattern=SHA256_HEX_PATTERN)]
+
+
 class ProcessingQueue:
     """Adaptador pequeno para SQS; sem fila configurada, falha fechado."""
 
@@ -1351,6 +1472,63 @@ class ProcessingQueue:
                     "command": "answer_chat_turn",
                     "chat_turn_id": chat_turn_id,
                     "job_id": job_id,
+                    "tenant_id": tenant_id,
+                }
+            ),
+        )
+
+    def enqueue_survey_photo_analysis(
+        self, *, survey_id: str, media_id: str, tenant_id: str
+    ) -> None:
+        """Publica a análise da foto de campo; nenhum modelo é chamado no request path.
+
+        O envelope carrega o id opaco da linha de mídia, e não o digest nem a chave do
+        objeto: quem consome resolve os dois pelo banco, e uma mensagem de fila não
+        precisa saber nomear arquivo de cliente. Sem `job_id`, como todo comando que não
+        pertence à cadeia do croqui.
+        """
+        if self.queue_url is None:
+            return
+        self.client.send_message(
+            QueueUrl=self.queue_url,
+            MessageBody=json.dumps(
+                {
+                    "command": "analyze_survey_photo",
+                    "survey_id": survey_id,
+                    "media_id": media_id,
+                    "tenant_id": tenant_id,
+                }
+            ),
+        )
+
+    def enqueue_survey_transcription(
+        self, *, survey_id: str, media_id: str, tenant_id: str
+    ) -> None:
+        """Publica a transcrição do áudio de campo; mesmo envelope da análise de foto."""
+        if self.queue_url is None:
+            return
+        self.client.send_message(
+            QueueUrl=self.queue_url,
+            MessageBody=json.dumps(
+                {
+                    "command": "transcribe_survey_audio",
+                    "survey_id": survey_id,
+                    "media_id": media_id,
+                    "tenant_id": tenant_id,
+                }
+            ),
+        )
+
+    def enqueue_survey_export(self, *, survey_id: str, tenant_id: str) -> None:
+        """Publica a exportação do levantamento concluído; o pacote nasce fora do request."""
+        if self.queue_url is None:
+            return
+        self.client.send_message(
+            QueueUrl=self.queue_url,
+            MessageBody=json.dumps(
+                {
+                    "command": "export_survey",
+                    "survey_id": survey_id,
                     "tenant_id": tenant_id,
                 }
             ),
@@ -1617,6 +1795,183 @@ def _require_valuation_reviewer(principal: Principal) -> str:
             f"Papel {VALUATION_REVIEWER_ROLE} é obrigatório nas rotas de medição.",
         )
     return VALUATION_REVIEWER_ROLE
+
+
+def _require_field_technician(principal: Principal) -> None:
+    """Papel `field_technician`, exigido em toda MUTAÇÃO de `/v1/surveys`.
+
+    Coletar é ato de quem esteve no local: o escritório lê o levantamento (ver
+    `_require_survey_reader`), mas não escreve nele. Como em `_require_valuation_reviewer`,
+    a checagem vem antes de qualquer lookup — quem não tem o papel não descobre, pela
+    diferença entre `403` e `404`, se um levantamento existe.
+    """
+    if not principal.has_role(FIELD_TECHNICIAN_ROLE):
+        raise _problem(
+            "FORBIDDEN",
+            status.HTTP_403_FORBIDDEN,
+            f"Papel {FIELD_TECHNICIAN_ROLE} é obrigatório para sincronizar levantamento.",
+        )
+
+
+def _require_survey_reader(principal: Principal) -> None:
+    """Leitura do levantamento: o técnico que coletou ou o profissional que vai revisar."""
+    if principal.has_role(FIELD_TECHNICIAN_ROLE):
+        return
+    if any(principal.has_role(role) for role in SURVEY_OFFICE_ROLES):
+        return
+    raise _problem(
+        "FORBIDDEN",
+        status.HTTP_403_FORBIDDEN,
+        "Papel de campo ou de revisão é obrigatório para ler um levantamento.",
+    )
+
+
+def _load_survey(session: Session, *, survey_id: str, tenant_id: str) -> SurveyRecord:
+    """O levantamento do tenant, ou `404`. De outro tenant é indistinguível de inexistente."""
+    record = session.scalar(
+        select(SurveyRecord).where(
+            SurveyRecord.id == survey_id, SurveyRecord.tenant_id == tenant_id
+        )
+    )
+    if record is None:
+        raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Levantamento não encontrado.")
+    return record
+
+
+def _last_seq_by_device(session: Session, *, survey_id: str, tenant_id: str) -> dict[str, int]:
+    """O último `seq` gravado por aparelho — a régua da contiguidade e o que o app compara.
+
+    Sai ordenado por `device_id` para que duas respostas iguais sejam iguais também byte a
+    byte: esta estrutura entra no registro de idempotência e no detalhe do conflito.
+    """
+    rows = session.execute(
+        select(SurveyOperationRecord.device_id, func.max(SurveyOperationRecord.seq))
+        .where(
+            SurveyOperationRecord.survey_id == survey_id,
+            SurveyOperationRecord.tenant_id == tenant_id,
+        )
+        .group_by(SurveyOperationRecord.device_id)
+    ).all()
+    return dict(sorted((str(device_id), int(last_seq)) for device_id, last_seq in rows))
+
+
+def _survey_media_digests(packet: SurveyPacket) -> set[str]:
+    """Todo `sha256` que o pacote consolidado referencia, em qualquer das três âncoras.
+
+    São três porque o pacote tem três lugares onde mídia é citada: a âncora de foto/áudio
+    (`media_anchors`), o áudio de uma observação (`observations[].audio_media_ref`) e a
+    foto de acesso da chegada (`arrival_context.access_media_ref`, prancha 2). Deixar
+    qualquer uma de fora faria a regra da prancha 6a recusar uma mídia legítima.
+    """
+    digests = {anchor.media_ref.sha256 for anchor in packet.media_anchors}
+    digests.update(
+        note.audio_media_ref.sha256 for note in packet.observations if note.audio_media_ref
+    )
+    if packet.arrival_context is not None and packet.arrival_context.access_media_ref is not None:
+        digests.add(packet.arrival_context.access_media_ref.sha256)
+    return digests
+
+
+def _survey_media_rows(
+    session: Session, *, survey_id: str, tenant_id: str
+) -> list[SurveyMediaRecord]:
+    return list(
+        session.scalars(
+            select(SurveyMediaRecord)
+            .where(
+                SurveyMediaRecord.survey_id == survey_id,
+                SurveyMediaRecord.tenant_id == tenant_id,
+            )
+            .order_by(SurveyMediaRecord.sha256)
+        )
+    )
+
+
+def _survey_state(session: Session, record: SurveyRecord) -> SurveyStateResponse:
+    """O estado que a leitura, a confirmação de mídia e a conclusão devolvem, sempre igual."""
+    return SurveyStateResponse(
+        survey=SurveyPacket.model_validate(record.snapshot_json),
+        version=record.version,
+        status=record.status,
+        last_seq_by_device=_last_seq_by_device(
+            session, survey_id=record.id, tenant_id=record.tenant_id
+        ),
+        media=[
+            SurveyMediaState(sha256=media.sha256, mime_type=media.mime_type, status=media.status)
+            for media in _survey_media_rows(
+                session, survey_id=record.id, tenant_id=record.tenant_id
+            )
+        ],
+    )
+
+
+def _survey_conflict(session: Session, *, record: SurveyRecord, detail: str) -> HTTPException:
+    """O `409 SURVEY_CONFLICT` da prancha 6b, com o que a tela precisa para decidir.
+
+    O detalhe carrega o estado do servidor inteiro de propósito: quem resolve o conflito é
+    a pessoa, no aparelho, comparando o que ela tem com o que o servidor tem. O servidor
+    não escolhe versão vencedora e não apaga nada — a resolução volta como operação normal
+    do outbox (`type: "conflict_resolution"`), com justificativa no payload.
+    """
+    return _problem(
+        "SURVEY_CONFLICT",
+        status.HTTP_409_CONFLICT,
+        detail,
+        {
+            "server_version": record.version,
+            "last_seq_by_device": _last_seq_by_device(
+                session, survey_id=record.id, tenant_id=record.tenant_id
+            ),
+            "server_snapshot": record.snapshot_json,
+        },
+    )
+
+
+def _survey_race_conflict(session: Session) -> HTTPException:
+    """Corrida de escrita entre dois lotes: a guarda relacional arbitra, e quem perde relê.
+
+    Diferente do conflito de sequência, este não devolve o estado do servidor: a transação
+    vencedora pode nem ter commitado ainda, e anexar um estado que já vai mudar seria pior
+    do que mandar o app reler.
+    """
+    session.rollback()
+    return _problem(
+        "SURVEY_CONFLICT",
+        status.HTTP_409_CONFLICT,
+        "Uma sincronização concorrente ocupou esta posição da sequência; releia o estado.",
+    )
+
+
+def _validate_survey_batch(survey_id: str, payload: SubmitSurveyOperationsRequest) -> None:
+    """Recusa lote incoerente ANTES de tocar o banco; a mensagem nunca ecoa o conteúdo.
+
+    São recusas de forma, não de sequência: pacote de outro levantamento, operação de
+    outro levantamento ou de outro aparelho, e identificadores maiores do que as colunas
+    que os guardam. Gap e regressão de `seq` são outra coisa — são conflito (`409`), e não
+    erro de contrato.
+    """
+    problems: list[str] = []
+    if payload.survey.survey_id != survey_id:
+        problems.append("o pacote não é deste levantamento")
+    if payload.survey.order_id is not None and (
+        len(payload.survey.order_id) > SURVEY_ORDER_REF_MAX_LENGTH
+    ):
+        problems.append("a ordem de origem excede o tamanho aceito")
+    if any(operation.survey_id != survey_id for operation in payload.operations):
+        problems.append("há operação de outro levantamento no lote")
+    if any(operation.device_id != payload.device_id for operation in payload.operations):
+        problems.append("há operação de outro aparelho no lote")
+    if any(
+        len(operation.operation_id) > SURVEY_OPERATION_ID_MAX_LENGTH
+        for operation in payload.operations
+    ):
+        problems.append("há operação com identificador maior que o aceito")
+    if problems:
+        raise _problem(
+            "SURVEY_PACKET_INVALID",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "; ".join(problems) + ".",
+        )
 
 
 def _round_refusal_problem(refusal: RoundRefusal) -> HTTPException:
@@ -8639,6 +8994,510 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             tenant_id=principal.tenant_id,
         )
         return {**payload, "workbook_url": workbook_url}
+
+    @application.post(
+        "/v1/surveys/{survey_id}/operations",
+        response_model=SurveyOperationsAckResponse,
+        tags=["surveys"],
+    )
+    async def submit_survey_operations(
+        survey_id: SurveyIdPath,
+        payload: SubmitSurveyOperationsRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> SurveyOperationsAckResponse:
+        """Recebe um lote do outbox do aparelho e consolida o pacote do levantamento.
+
+        A rota é a porta de entrada da sincronização (ADR-0043) e trabalha sob três regras
+        que não são detalhe de implementação:
+
+        1. O levantamento nasce aqui, na primeira chamada, com o id que o aparelho gerou
+           offline — não existe rota de criação separada, porque em campo o levantamento já
+           existe antes de haver rede.
+        2. Operação já gravada é reconhecida de novo sem regravar e sem falhar: o aparelho
+           reenvia por desenho, e um reenvio não pode ser erro.
+        3. Buraco ou regressão de `seq` é CONFLITO, não erro de contrato: o servidor devolve
+           o estado dele e deixa a pessoa decidir na tela 6b. Ele não escolhe versão
+           vencedora, não funde estados e não apaga nada.
+        """
+        _require_field_technician(principal)
+        _validate_survey_batch(survey_id, payload)
+        operation = f"surveys.operations:{survey_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return SurveyOperationsAckResponse.model_validate(existing)
+
+        now = datetime.now(UTC)
+        # O histórico não é copiado para o snapshot: `survey_operation_records` é a fonte
+        # dele, e mantê-lo nos dois lugares faria as duas divergirem no primeiro reenvio.
+        snapshot = payload.survey.model_copy(update={"operations": []}).model_dump(mode="json")
+        record = session.scalar(
+            select(SurveyRecord).where(
+                SurveyRecord.id == survey_id,
+                SurveyRecord.tenant_id == principal.tenant_id,
+            )
+        )
+        created = record is None
+        if record is None:
+            record = SurveyRecord(
+                id=survey_id,
+                tenant_id=principal.tenant_id,
+                name=payload.survey.name,
+                order_ref=payload.survey.order_id,
+                status="OPEN",
+                version=1,
+                snapshot_json=snapshot,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(record)
+            # A raiz precisa existir antes das operações: sem relacionamento declarado o ORM
+            # não ordena os dois mappers, e o PostgreSQL cobra a chave estrangeira.
+            try:
+                session.flush()
+            except IntegrityError as error:
+                raise _survey_race_conflict(session) from error
+        elif record.status != "OPEN":
+            raise _survey_conflict(
+                session,
+                record=record,
+                detail="Levantamento concluído não aceita operação nova.",
+            )
+
+        stored_ids = set(
+            session.scalars(
+                select(SurveyOperationRecord.id).where(
+                    SurveyOperationRecord.survey_id == survey_id,
+                    SurveyOperationRecord.tenant_id == principal.tenant_id,
+                )
+            )
+        )
+        pending = sorted(
+            (
+                operation_command
+                for operation_command in payload.operations
+                if operation_command.operation_id not in stored_ids
+            ),
+            key=lambda operation_command: operation_command.seq,
+        )
+        if pending:
+            last_seq = _last_seq_by_device(
+                session, survey_id=survey_id, tenant_id=principal.tenant_id
+            )
+            expected = last_seq.get(payload.device_id, 0) + 1
+            if any(
+                operation_command.seq != expected + offset
+                for offset, operation_command in enumerate(pending)
+            ):
+                raise _survey_conflict(
+                    session,
+                    record=record,
+                    detail=(
+                        "A sequência do aparelho não continua de onde o servidor parou; "
+                        "resolva o conflito no aparelho e reenvie."
+                    ),
+                )
+            for operation_command in pending:
+                session.add(
+                    SurveyOperationRecord(
+                        id=operation_command.operation_id,
+                        tenant_id=principal.tenant_id,
+                        survey_id=survey_id,
+                        device_id=operation_command.device_id,
+                        seq=operation_command.seq,
+                        type=operation_command.type,
+                        payload_json=operation_command.payload,
+                        # O instante é o do aparelho, que é quando o ato de campo aconteceu;
+                        # a hora de chegada fica no evento de auditoria.
+                        created_at=operation_command.created_at,
+                    )
+                )
+            record.snapshot_json = snapshot
+            record.name = payload.survey.name
+            record.order_ref = payload.survey.order_id
+            record.updated_at = now
+            if not created:
+                # Na criação a versão 1 já É o estado deste lote; incrementá-la faria o
+                # primeiro `base_version` do aparelho nascer errado.
+                record.version += 1
+            try:
+                session.flush()
+            except IntegrityError as error:
+                raise _survey_race_conflict(session) from error
+
+        response = SurveyOperationsAckResponse(
+            survey_id=survey_id,
+            acked_operation_ids=[
+                operation_command.operation_id for operation_command in payload.operations
+            ],
+            version=record.version,
+            last_seq_by_device=_last_seq_by_device(
+                session, survey_id=survey_id, tenant_id=principal.tenant_id
+            ),
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        if created:
+            _record_audit(
+                session,
+                principal=principal,
+                action="SURVEY_CREATED",
+                resource_type="survey",
+                resource_id=survey_id,
+                request_id=request.state.request_id,
+            )
+        if pending:
+            _record_audit(
+                session,
+                principal=principal,
+                action="SURVEY_OPERATIONS_RECORDED",
+                resource_type="survey",
+                resource_id=survey_id,
+                request_id=request.state.request_id,
+            )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/surveys/{survey_id}", response_model=SurveyStateResponse, tags=["surveys"]
+    )
+    async def get_survey(
+        survey_id: SurveyIdPath,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> SurveyStateResponse:
+        """O levantamento como o servidor o conhece: pacote, versão, sequências e mídia.
+
+        Lê também com papel de revisão: o escritório consulta o que veio do campo antes de
+        transformá-lo em observação do pipeline, mas nunca escreve por aqui.
+        """
+        _require_survey_reader(principal)
+        record = _load_survey(session, survey_id=survey_id, tenant_id=principal.tenant_id)
+        return _survey_state(session, record)
+
+    @application.post(
+        "/v1/surveys/{survey_id}/media/presign",
+        response_model=PresignSurveyMediaResponse,
+        tags=["surveys"],
+    )
+    async def presign_survey_media(
+        survey_id: SurveyIdPath,
+        payload: PresignSurveyMediaRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> PresignSurveyMediaResponse:
+        """Assina o envio de uma mídia JÁ referenciada no pacote (prancha 6a).
+
+        Metadado antes da mídia é a ordem que sustenta a tela de progresso e o portão: uma
+        foto cujo digest não está ancorado em nada seria um blob órfão no bucket do tenant,
+        sem ponto do levantamento que a explique. Por isso o digest não referenciado é
+        `409 SURVEY_MEDIA_NOT_REFERENCED`, e não um upload aceito "por precaução".
+        """
+        _require_field_technician(principal)
+        record = _load_survey(session, survey_id=survey_id, tenant_id=principal.tenant_id)
+        operation = f"surveys.media-presign:{survey_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return PresignSurveyMediaResponse.model_validate(existing)
+
+        if payload.sha256 not in _survey_media_digests(
+            SurveyPacket.model_validate(record.snapshot_json)
+        ):
+            raise _problem(
+                "SURVEY_MEDIA_NOT_REFERENCED",
+                status.HTTP_409_CONFLICT,
+                "A mídia não está referenciada no levantamento; sincronize a âncora antes.",
+            )
+
+        object_key = f"tenants/{principal.tenant_id}/surveys/{survey_id}/media/{payload.sha256}"
+        media = session.scalar(
+            select(SurveyMediaRecord).where(
+                SurveyMediaRecord.survey_id == survey_id,
+                SurveyMediaRecord.tenant_id == principal.tenant_id,
+                SurveyMediaRecord.sha256 == payload.sha256,
+            )
+        )
+        if media is None:
+            media = SurveyMediaRecord(
+                id=str(new_uuid7()),
+                tenant_id=principal.tenant_id,
+                survey_id=survey_id,
+                sha256=payload.sha256,
+                mime_type=payload.mime_type,
+                byte_size=payload.byte_size,
+                object_key=object_key,
+                status="PRESIGNED",
+            )
+            session.add(media)
+            session.flush()
+        elif media.status == "PRESIGNED":
+            # Reassinar antes de confirmar é retomada de envio interrompido, caso normal em
+            # campo. Mídia já CONFIRMADA não é rebaixada: isso republicaria o comando de
+            # processamento na próxima confirmação.
+            media.mime_type = payload.mime_type
+            media.byte_size = payload.byte_size
+
+        checksum_sha256 = base64.b64encode(bytes.fromhex(payload.sha256)).decode("ascii")
+        artifact_store: ArtifactStore = application.state.artifact_store
+        url = artifact_store.presign_upload(
+            object_key=media.object_key,
+            checksum_sha256=checksum_sha256,
+            content_type=payload.mime_type,
+        )
+        headers: dict[str, str] = {"Content-Type": payload.mime_type}
+        if runtime_settings.storage_flavor == "s3":
+            # O header entra na assinatura só no S3; enviá-lo ao GCS faria o PUT falhar.
+            headers["x-amz-checksum-sha256"] = checksum_sha256
+        response = PresignSurveyMediaResponse(
+            media_id=UUID(media.id),
+            sha256=media.sha256,
+            object_key=media.object_key,
+            url=url,
+            headers=headers,
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="SURVEY_MEDIA_PRESIGNED",
+            resource_type="survey_media",
+            resource_id=media.id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/surveys/{survey_id}/media/{sha256}/confirm",
+        response_model=SurveyStateResponse,
+        tags=["surveys"],
+    )
+    async def confirm_survey_media(
+        survey_id: SurveyIdPath,
+        sha256: SurveyDigestPath,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> SurveyStateResponse:
+        """Confere o objeto enviado e publica o processamento da mídia — uma vez só.
+
+        A conferência é a mesma da criação de job: tamanho contra o declarado e, no perfil
+        de storage que assina checksum, o digest do próprio objeto. No perfil GCS o digest
+        continua sendo verificado pelo worker, que relê os bytes — a integridade não é
+        dispensada, é adiada, e o adiamento é registrado em auditoria.
+
+        A publicação acontece na TRANSIÇÃO `PRESIGNED → CONFIRMED`. Confirmar de novo devolve
+        o estado sem republicar; se a fila recusar, a mídia volta a `PRESIGNED` para que
+        repetir o comando seja seguro e continue produzindo exatamente uma mensagem.
+        """
+        _require_field_technician(principal)
+        record = _load_survey(session, survey_id=survey_id, tenant_id=principal.tenant_id)
+        media = session.scalar(
+            select(SurveyMediaRecord).where(
+                SurveyMediaRecord.survey_id == survey_id,
+                SurveyMediaRecord.tenant_id == principal.tenant_id,
+                SurveyMediaRecord.sha256 == sha256,
+            )
+        )
+        if media is None:
+            raise _problem(
+                "NOT_FOUND", status.HTTP_404_NOT_FOUND, "Mídia do levantamento não encontrada."
+            )
+        if media.status == "CONFIRMED":
+            return _survey_state(session, record)
+
+        expected_checksum = base64.b64encode(bytes.fromhex(media.sha256)).decode("ascii")
+        uploaded_object = application.state.artifact_store.head_upload(object_key=media.object_key)
+        checksum_deferred = runtime_settings.storage_flavor == "gcs"
+        if (
+            uploaded_object is None
+            or uploaded_object.content_length != media.byte_size
+            or (not checksum_deferred and uploaded_object.checksum_sha256 != expected_checksum)
+        ):
+            raise _problem(
+                "SURVEY_MEDIA_DIGEST_MISMATCH",
+                status.HTTP_409_CONFLICT,
+                "Mídia ausente, incompleta ou com integridade divergente do declarado.",
+            )
+
+        media.status = "CONFIRMED"
+        _record_audit(
+            session,
+            principal=principal,
+            action="SURVEY_MEDIA_CONFIRMED",
+            resource_type="survey_media",
+            resource_id=media.id,
+            request_id=request.state.request_id,
+        )
+        if checksum_deferred:
+            _record_audit(
+                session,
+                principal=principal,
+                action="SURVEY_MEDIA_CHECKSUM_DEFERRED_TO_WORKER",
+                resource_type="survey_media",
+                resource_id=media.id,
+                request_id=request.state.request_id,
+            )
+        session.commit()
+
+        queue: QueueAdapter = application.state.queue
+        try:
+            if SURVEY_MEDIA_COMMANDS[media.mime_type] == "photo":
+                queue.enqueue_survey_photo_analysis(
+                    survey_id=survey_id, media_id=media.id, tenant_id=principal.tenant_id
+                )
+            else:
+                queue.enqueue_survey_transcription(
+                    survey_id=survey_id, media_id=media.id, tenant_id=principal.tenant_id
+                )
+        except QUEUE_TRANSPORT_ERRORS as error:
+            media.status = "PRESIGNED"
+            session.commit()
+            raise _problem(
+                "PROCESSING_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Mídia recebida; repita o mesmo comando para publicar o processamento.",
+            ) from error
+        return _survey_state(session, record)
+
+    @application.post(
+        "/v1/surveys/{survey_id}/complete",
+        response_model=SurveyStateResponse,
+        tags=["surveys"],
+    )
+    async def complete_survey(
+        survey_id: SurveyIdPath,
+        payload: CompleteSurveyRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> SurveyStateResponse:
+        """Fecha o levantamento e enfileira a exportação para o pipeline.
+
+        Três precondições, nesta ordem, porque cada uma responde a uma pergunta diferente:
+        o levantamento ainda está aberto; o aparelho está falando da versão que ele leu; e
+        toda mídia que o pacote referencia já chegou íntegra. Concluir com foto pendente
+        publicaria um levantamento cuja evidência ainda está no aparelho.
+        """
+        _require_field_technician(principal)
+        record = _load_survey(session, survey_id=survey_id, tenant_id=principal.tenant_id)
+        operation = f"surveys.complete:{survey_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        queue: QueueAdapter = application.state.queue
+        if existing is not None:
+            # Repetir o mesmo comando reenfileira, como em `POST /v1/jobs`: a intenção já é
+            # durável, e uma mensagem perdida no transporte precisa de caminho de volta.
+            try:
+                queue.enqueue_survey_export(survey_id=survey_id, tenant_id=principal.tenant_id)
+            except QUEUE_TRANSPORT_ERRORS as error:
+                raise _problem(
+                    "PROCESSING_UNAVAILABLE",
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Não foi possível publicar a exportação; repita o mesmo comando.",
+                ) from error
+            return SurveyStateResponse.model_validate(existing)
+
+        if record.status != "OPEN":
+            raise _survey_conflict(session, record=record, detail="Levantamento já foi concluído.")
+        if record.version != payload.base_version:
+            raise _survey_conflict(
+                session,
+                record=record,
+                detail="Existe uma sincronização mais recente do levantamento.",
+            )
+
+        packet = SurveyPacket.model_validate(record.snapshot_json)
+        if packet.status is not SurveyStatus.CONCLUDED:
+            raise _problem(
+                "SURVEY_NOT_CONCLUDED",
+                status.HTTP_409_CONFLICT,
+                "O pacote sincronizado ainda não declara a conclusão do levantamento.",
+            )
+        confirmed = {
+            media.sha256
+            for media in _survey_media_rows(
+                session, survey_id=survey_id, tenant_id=principal.tenant_id
+            )
+            if media.status == "CONFIRMED"
+        }
+        pending_media = sorted(_survey_media_digests(packet) - confirmed)
+        if pending_media:
+            raise _problem(
+                "SURVEY_MEDIA_PENDING",
+                status.HTTP_409_CONFLICT,
+                "Há mídia referenciada que ainda não chegou ao servidor.",
+                {"pending_sha256": pending_media},
+            )
+
+        record.status = "COMPLETED"
+        record.updated_at = datetime.now(UTC)
+        response = _survey_state(session, record)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="SURVEY_COMPLETED",
+            resource_type="survey",
+            resource_id=survey_id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        try:
+            queue.enqueue_survey_export(survey_id=survey_id, tenant_id=principal.tenant_id)
+        except QUEUE_TRANSPORT_ERRORS as error:
+            raise _problem(
+                "PROCESSING_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Levantamento concluído; repita o mesmo comando para publicar a exportação.",
+            ) from error
+        return response
 
     return application
 

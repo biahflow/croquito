@@ -41,6 +41,17 @@ COMMANDS: list[tuple[str, dict[str, str]]] = [
         "enqueue_valuation_plate_extraction",
         {"round_id": "round-1", "extraction_id": "extraction-1", "tenant_id": "tenant-a"},
     ),
+    (
+        # O levantamento de campo também não tem `job_id`: ele entra no pipeline como
+        # observação, por trabalho posterior, e não como filho de um job existente.
+        "enqueue_survey_photo_analysis",
+        {"survey_id": "survey-1", "media_id": "media-1", "tenant_id": "tenant-a"},
+    ),
+    (
+        "enqueue_survey_transcription",
+        {"survey_id": "survey-1", "media_id": "media-2", "tenant_id": "tenant-a"},
+    ),
+    ("enqueue_survey_export", {"survey_id": "survey-1", "tenant_id": "tenant-a"}),
 ]
 
 
@@ -86,6 +97,9 @@ def test_pubsub_publishes_the_same_bodies_as_sqs(
         "solve_trace_scene",
         "answer_chat_turn",
         "extract_valuation_plate",
+        "analyze_survey_photo",
+        "transcribe_survey_audio",
+        "export_survey",
     ]
     assert {topic for topic, _data in publisher.published} == {TOPIC}
 

@@ -2,7 +2,8 @@
 
 Status: Accepted for MVP  
 Responsável: Backend / Frontend  
-Última revisão: 2026-08-18
+Última revisão: 2026-08-21 (superfície `/v1/surveys`: sincronização do levantamento de
+campo — F-032, ADR-0043)
 
 Base path: `/v1`  
 Autenticação: JWT bearer OIDC  
@@ -1165,6 +1166,87 @@ de conferido o prefixo do tenant. Orçamento ainda não montado devolve
 Com teto declarado, ganha também `target`/`consumed`/`remaining`/`over` (ADR-0040), a
 mesma forma do estado da rodada.
 
+## Levantamento de campo
+
+Superfície de sincronização da PWA offline-first do técnico
+([ADR-0043](../adr/0043-app-de-campo-pwa-offline-first.md), F-032). O
+levantamento nasce no aparelho, sem rede, e chega aqui como **observação**: nada dele vira
+geometria sem passar pelos portões do scene graph, por trabalho posterior no worker.
+
+Toda MUTAÇÃO exige o papel `field_technician`; a leitura aceita também os papéis de
+revisão (`engineer`, `architect`, `domain_reviewer`), porque o escritório consulta o que
+veio do campo mas não escreve nele. `tenant_id` vem sempre do JWT.
+
+O `survey_id` é gerado pelo aparelho antes de existir rede, e por isso não é UUID
+obrigatório no caminho — é o identificador que o app já persistiu localmente.
+
+### `POST /v1/surveys/{survey_id}/operations`
+
+Entrada: `device_id`, `survey` (o `SurveyPacket` consolidado) e `operations` (o lote do
+outbox). Exige `Idempotency-Key`.  
+Saída: `acked_operation_ids`, `version` e `last_seq_by_device`.
+
+Cria o levantamento na primeira chamada — não há rota de criação separada. O lote precisa
+ser contíguo por `(device_id, seq)`, começando do último `seq` gravado daquele aparelho
+mais um; operação cujo `operation_id` já está gravado é reconhecida de novo sem regravar e
+sem falhar, porque reenviar é o comportamento normal do outbox. Lote válido grava as
+operações, substitui o pacote consolidado e incrementa `version` (na criação, a versão `1`
+já é o estado do primeiro lote).
+
+Buraco ou regressão de `seq`, levantamento já concluído e corrida de escrita respondem
+`409 SURVEY_CONFLICT`. Nos dois primeiros casos o corpo carrega, em `details`,
+`server_version`, `last_seq_by_device` e `server_snapshot`: é com isso que o aparelho
+monta a tela de conflito. O servidor não escolhe versão vencedora, não funde estados e não
+apaga nada — resolver o conflito é uma operação normal do outbox (`type:
+"conflict_resolution"`, com a justificativa no payload).
+
+Pacote de outro levantamento, operação de outro levantamento ou de outro aparelho no lote
+respondem `422 SURVEY_PACKET_INVALID`. A mensagem nunca ecoa conteúdo recusado.
+
+### `GET /v1/surveys/{survey_id}`
+
+Saída: `survey` (o pacote consolidado), `version`, `status` (`OPEN` | `COMPLETED`),
+`last_seq_by_device` e `media` (`sha256`, `mime_type`, `status`). Levantamento de outro
+tenant é `404`, nunca `403`. A lista de mídia não devolve chave de objeto nem URL.
+
+### `POST /v1/surveys/{survey_id}/media/presign`
+
+Entrada: `sha256`, `mime_type`, `byte_size`. Exige `Idempotency-Key`.  
+Saída: `media_id`, `sha256`, `object_key`, `url`, headers obrigatórios e `expires_at` —
+a mesma forma de `POST /v1/uploads/presign`, inclusive quanto ao header de checksum, que
+só existe no perfil de storage que o assina.
+
+`mime_type` aceita `image/jpeg`, `image/png`, `image/webp`, `audio/webm` e `audio/mp4`, e
+só eles: é o tipo que decide o processamento posterior. **Metadado antes da mídia**: o
+`sha256` precisa já estar referenciado no pacote consolidado (âncora de mídia, áudio de
+observação ou foto de acesso da chegada); digest não referenciado responde
+`409 SURVEY_MEDIA_NOT_REFERENCED`, para que não exista blob órfão no bucket do tenant.
+
+### `POST /v1/surveys/{survey_id}/media/{sha256}/confirm`
+
+Sem corpo. Confere tamanho e, no perfil de storage que assina checksum, o digest do objeto
+gravado; divergência responde `409 SURVEY_MEDIA_DIGEST_MISMATCH`. No perfil sem checksum
+assinado o digest continua verificado pelo worker e o adiamento é registrado em auditoria,
+como na criação de job.
+
+A mídia passa a `CONFIRMED` e a confirmação publica o processamento fora do request path —
+imagem para a análise visual, áudio para a transcrição. A publicação acontece **na
+transição**: confirmar de novo devolve o estado sem republicar. Fila indisponível responde
+`503 PROCESSING_UNAVAILABLE` e a mídia volta a pendente, de modo que repetir o comando
+continue produzindo exatamente uma mensagem.
+
+### `POST /v1/surveys/{survey_id}/complete`
+
+Entrada: `base_version`. Exige `Idempotency-Key`.  
+Saída: o mesmo estado de `GET /v1/surveys/{survey_id}`, já com `status=COMPLETED`.
+
+Três precondições: o levantamento ainda está aberto e a versão confere
+(`409 SURVEY_CONFLICT`), o pacote sincronizado declara a conclusão
+(`409 SURVEY_NOT_CONCLUDED`) e toda mídia referenciada já chegou íntegra
+(`409 SURVEY_MEDIA_PENDING`, com os digests pendentes em `details`). Concluir enfileira a
+exportação do levantamento; repetir o comando com a mesma `Idempotency-Key` reenfileira
+sem fechar de novo, como em `POST /v1/jobs`.
+
 ## Exports
 
 O pacote CAD é sempre construído fora do request path, por comando idempotente no
@@ -1223,7 +1305,9 @@ nem em auditoria. Artefato de outro tenant retorna `404`.
 `IDEMPOTENCY_KEY_REUSED`,
 `ROUND_STAGE_NOT_READY`, `ROUND_PLATE_ALREADY_PRESENT`, `EXTRACTION_IN_PROGRESS`,
 `SUGGESTIONS_ALREADY_REFINED`, `TAKEOFF_REVIEW_INCOMPLETE`, `CATALOG_QUERY_EMPTY`,
-`CATALOG_REQUIRED`.
+`CATALOG_REQUIRED`,
+`SURVEY_CONFLICT`, `SURVEY_PACKET_INVALID`, `SURVEY_MEDIA_NOT_REFERENCED`,
+`SURVEY_MEDIA_DIGEST_MISMATCH`, `SURVEY_MEDIA_PENDING`, `SURVEY_NOT_CONCLUDED`.
 
 Os códigos de invariante de `packages/valuation` (`TAKEOFF_*`, `CALC_*`, `ASSIGNMENT_*`,
 `AMENDMENT_DOSSIER_*`, `CATALOG_*`) não são códigos de API: viajam em `details` do
