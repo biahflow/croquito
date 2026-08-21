@@ -174,7 +174,8 @@ Consolidado por tarefa conforme cada BUILD REPORT chega; a evidência do MVP loc
 
 ## Decisões humanas pendentes
 
-- DAP rev.2 (voz, aviso de qualidade, estado de transcrição) antes de T12/T15.
+- ~~DAP rev.2 antes de T12/T15~~ — aprovada por Daniel Campos em 2026-08-21
+  (com os ajustes de marca e endereço; T17 criada).
 - Papel `field_technician` + path do app no realm Keycloak (teste real).
 - Fornecedor de speech-to-text antes de T13 (envio de áudio a serviço externo).
 - Decisão de merge/push da branch (inalterada).

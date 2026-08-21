@@ -192,10 +192,10 @@ Da feature completa (verificáveis nas fatias futuras, herdando os NFRs abaixo):
    esteira de deploy).
 4. Declaração de início do piloto híbrido e, depois, da promoção do app a fonte
    oficial do levantamento.
-5. **Revisão 2 do Design Approval Package** para as superfícies novas da fatia de
-   sincronização (gravação de voz, aviso de qualidade de foto, estado de transcrição
-   no painel de sync) — obrigatória **antes** das tarefas de UI correspondentes
-   (T12/T15 do [plan-sync.md](plan-sync.md)); a rev.1 não as cobre.
+5. ~~Revisão 2 do Design Approval Package~~ — **satisfeito**: aprovada por ato
+   humano de Daniel Campos em 2026-08-21 (prancha 7 + ajustes de marca na barra e
+   endereço na chegada; registro em [mock/README.md](mock/README.md)), liberando
+   T12/T15/T17 do [plan-sync.md](plan-sync.md).
 6. Criação do papel `field_technician` e autorização do path do app no realm
    Keycloak (necessário para teste real; testes automatizados usam test tokens).
 7. Escolha e autorização do fornecedor de speech-to-text (envio de áudio de cliente

@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 2  
-Status: revisão 1 Aprovada (2026-08-21); revisão 2 **Aguardando aprovação**  
+Status: revisões 1 e 2 Aprovadas (2026-08-21)  
 Date: 2026-08-21  
 Produced by: agente (Claude Code)
 
@@ -23,14 +23,14 @@ Produced by: agente (Claude Code)
 Aprovar esta revisão não aprova a seguinte. Pacote materialmente alterado é revisão
 nova e precisa de registro próprio.
 
-## Registro de aprovação — revisão 2 (pendente)
+## Registro de aprovação — revisão 2
 
 | Campo | Valor |
 | --- | --- |
 | O que se pede aprovar | a prancha 7 (3 telas): 7a gravação de nota de voz offline ancorada; 7b aviso não bloqueante de qualidade de foto calculado no aparelho; 7c painel de sincronização com categorias de áudio, estado de transcrição e nota sobre análise de fotos no servidor — MAIS dois ajustes pedidos pelo usuário em 2026-08-21: (a) a marca do croquito (quadrado de traço verde do wordmark) acompanha o nome na barra de TODAS as telas (toque aditivo nas pranchas 1–6 aprovadas); (b) a chegada (prancha 2) mostra local/endereço vindos da ordem em vez de coordenadas — as coordenadas continuam guardadas como dado, nunca exibidas |
 | Motivação | escopo reaberto por decisão humana de 2026-08-21 (itens 8–9 do [Feature Contract](../feature.md)); tarefas T12/T15 do [plan-sync.md](../plan-sync.md) só iniciam a parte de UI após esta aprovação |
-| Aprovado por | — (pendente) |
-| Data | — |
+| Aprovado por | Daniel Campos ("Aprovado", em sessão, após os dois ajustes) |
+| Data | 2026-08-21 |
 | Explicitamente **não** coberto | fornecedor de IA (gate próprio); comportamento de transcrição/análise (Feature Contract e tarefas); câmera aberta; limiares de nitidez/exposição (implementação); copy final |
 
 As pranchas 1–6 permanecem aprovadas pela revisão 1; a revisão 2 é aditiva (nenhuma
