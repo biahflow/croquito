@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval ocr-eval solver-eval extraction-eval extraction-eval-degrau valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
+.PHONY: setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval ocr-eval solver-eval transcription-eval extraction-eval extraction-eval-degrau valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
 
 setup:
 	uv sync --all-groups
@@ -94,6 +94,16 @@ ocr-eval:
 
 solver-eval:
 	uv run croquito-demo solver-eval --output output/solver-eval
+
+# Eval comparativa dos braços de transcrição de voz (F-032 T13). Offline e determinística
+# como as demais: corpus sintético, adapters gravados, nenhuma chave e nenhuma rede — o que
+# ela prova é que as métricas (fidelidade de medida falada, WER/CER, container) discriminam.
+# A RODADA PAGA que promove primário/reserva é ato humano separado, com clipes reais gravados
+# fora do repositório e aprovação de custo:
+#   uv run croquito-demo transcription-eval --output output/transcription-eval \
+#     --corpus <caminho>/corpus.json --live
+transcription-eval:
+	uv run croquito-demo transcription-eval --output output/transcription-eval
 
 valuation-demo:
 	uv run croquito-valuation demo --output output/valuation-demo

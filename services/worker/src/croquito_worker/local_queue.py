@@ -85,6 +85,17 @@ from croquito_worker.survey_photo_analysis import (
     run_provider_pass,
     survey_analysis_object_key,
 )
+from croquito_worker.survey_transcription import (
+    SurveyAudioMedia,
+    SurveyTranscriptionError,
+    TranscriptionPassResult,
+    audio_media,
+    build_transcript_document,
+    locate_note,
+    run_transcription_pass,
+    survey_transcript_object_key,
+    transcript_counts,
+)
 from croquito_worker.tracing import (
     TRACER_VERSION,
     AppliedSpanReport,
@@ -773,6 +784,16 @@ class LocalQueueWorker:
             if not isinstance(survey_id, str) or not isinstance(media_id, str):
                 raise UnroutableMessageError("Mensagem de análise de foto inválida")
             return self._handle_survey_photo_analysis(
+                survey_id=survey_id, media_id=media_id, tenant_id=tenant_id
+            )
+        if command == "transcribe_survey_audio":
+            # Mesmo motivo dos dois comandos acima para vir antes da guarda de `job_id`: a
+            # nota de voz pertence a um levantamento, e levantamento não tem job.
+            survey_id = body.get("survey_id")
+            media_id = body.get("media_id")
+            if not isinstance(survey_id, str) or not isinstance(media_id, str):
+                raise UnroutableMessageError("Mensagem de transcrição de áudio inválida")
+            return self._handle_survey_transcription(
                 survey_id=survey_id, media_id=media_id, tenant_id=tenant_id
             )
         job_id = body.get("job_id")
@@ -2452,6 +2473,176 @@ class LocalQueueWorker:
                 "media_id": media_id,
                 "provider_pass": provider.outcome.value,
                 "provider_failure_code": provider.failure_code,
+                **counts,
+                "bytes": written_bytes,
+                "duration_ms": duration_ms,
+            },
+        )
+        return 1
+
+    # -- Levantamento de campo: transcrição da nota de voz (F-032, T13) -----------------
+
+    def _survey_audio_bytes(self, media: SurveyAudioMedia) -> bytes:
+        """Lê os bytes do áudio; objeto ausente é recusa nomeada, não falha de transporte.
+
+        Mesma distinção de `_survey_photo_bytes`, pelo mesmo motivo: falha de transporte deve
+        reentregar (o storage pode voltar), enquanto objeto que não existe reentregaria para
+        sempre — o `confirm` gravou o metadado antes de o upload chegar, e a retomada é
+        reprocessar depois que o áudio subir, não insistir agora.
+        """
+        try:
+            body = self.s3_client.get_object(
+                Bucket=self.settings.artifact_bucket, Key=media.object_key
+            )["Body"]
+        except ClientError as error:
+            code = str(error.response.get("Error", {}).get("Code", ""))
+            if code in {"NoSuchKey", "NotFound", "404"}:
+                raise SurveyTranscriptionError(
+                    "SURVEY_AUDIO_BYTES_MISSING", "mídia confirmada sem bytes no storage"
+                ) from error
+            raise
+        return cast(bytes, body.read())
+
+    def _survey_transcription_pass(
+        self,
+        *,
+        tenant_id: str,
+        survey_id: str,
+        entitlement_id: str | None,
+        audio_bytes: bytes,
+        mime_type: str,
+    ) -> TranscriptionPassResult:
+        """Decide se a transcrição acontece e, quando acontece, a executa.
+
+        Dois portões antes de qualquer byte sair da máquina, na ordem em que custam menos —
+        os MESMOS da análise de foto (T14), e pelas mesmas razões:
+
+        1. **caminho pago habilitado** — suíte injetada (fixture de teste/demo) ou
+           `CROQUITO_REAL_PROVIDERS_ENABLED`. Sem isso nada é construído e o passe é
+           `skipped_disabled`;
+        2. **entitlement contratual ATIVO do tenant**. A suíte injetada **não** dispensa este
+           portão: a evidência aqui é a voz de um técnico numa praça de cliente, que é dado
+           pessoal, e este é o único portão contratual que existe para ela.
+
+        Consentimento por job (`ai_processing_consents`) não tem correspondente aqui: a tabela
+        é chaveada por `job_id` e levantamento não tem job. O snapshot imutável de
+        consentimento por levantamento é fatia futura da F-032.
+
+        O terceiro caso — braço de transcrição não configurado — também é `skipped_disabled`,
+        e é decidido dentro de `run_transcription_pass`: sem chave do fornecedor não há
+        transcrição, e isso é o default do repositório, não uma falha.
+        """
+        if self.provider_suite is None and not self.settings.real_providers_enabled:
+            return TranscriptionPassResult(outcome=ProviderPass.SKIPPED_DISABLED)
+        if entitlement_id is None:
+            return TranscriptionPassResult(outcome=ProviderPass.SKIPPED_NO_ENTITLEMENT)
+        suite = self.provider_suite
+        if suite is None:
+            suite = build_real_provider_suite(
+                raw_store=S3ProtectedRawResponseStore(
+                    client=self.s3_client,
+                    bucket=self.settings.artifact_bucket,
+                    tenant_id=tenant_id,
+                    scope="surveys",
+                    scope_id=survey_id,
+                    sse=self.settings.storage_sse_enabled,
+                )
+            )
+        return run_transcription_pass(
+            suite.transcription,
+            suite.transcription_fallback,
+            audio_bytes=audio_bytes,
+            mime_type=mime_type,
+        )
+
+    def _handle_survey_transcription(self, *, survey_id: str, media_id: str, tenant_id: str) -> int:
+        """Transcreve uma nota de voz confirmada e publica o rascunho no object store.
+
+        Nada é mutado: `survey_records` e `survey_media_records` são lidos e o resultado sai
+        num objeto próprio, em chave estável derivada do digest do áudio. O texto é RASCUNHO —
+        `status: "draft"`, nenhuma medida, nenhuma confirmação —, e o áudio original continua
+        sendo a evidência.
+
+        Uma falha do provider não derruba o handler: ela é registrada em `provider_pass`, e
+        reprocessar a mensagem é o caminho de retomada quando a falha foi transitória.
+        """
+        started = time.monotonic()
+        with self.engine.connect() as connection:
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT id, sha256, mime_type, byte_size, object_key, status "
+                        "FROM survey_media_records WHERE id = :media_id "
+                        "AND survey_id = :survey_id AND tenant_id = :tenant_id"
+                    ),
+                    {"media_id": media_id, "survey_id": survey_id, "tenant_id": tenant_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            snapshot = connection.execute(
+                text(
+                    "SELECT snapshot_json FROM survey_records "
+                    "WHERE id = :survey_id AND tenant_id = :tenant_id"
+                ),
+                {"survey_id": survey_id, "tenant_id": tenant_id},
+            ).scalar_one_or_none()
+            # Entitlement do TENANT, na MESMA conexão da mídia: a autorização contratual é
+            # dado do banco, administrado pelo `platform_operator`, e a flag de ambiente só
+            # diz se o caminho pago existe — ela não autoriza tenant nenhum.
+            entitlement_id = connection.execute(
+                text(
+                    "SELECT id FROM tenant_ai_processing_entitlements "
+                    "WHERE tenant_id = :tenant_id AND status = 'ACTIVE'"
+                ),
+                {"tenant_id": tenant_id},
+            ).scalar_one_or_none()
+        media = audio_media(row)
+        note_id, notes = locate_note(_json_column(snapshot), sha256=media.sha256)
+        audio_bytes = self._survey_audio_bytes(media)
+        provider = self._survey_transcription_pass(
+            tenant_id=tenant_id,
+            survey_id=survey_id,
+            entitlement_id=None if entitlement_id is None else str(entitlement_id),
+            audio_bytes=audio_bytes,
+            mime_type=media.mime_type,
+        )
+        document = build_transcript_document(
+            tenant_id=tenant_id,
+            survey_id=survey_id,
+            media=media,
+            note_id=note_id,
+            provider=provider,
+            notes=notes,
+        )
+        written_bytes = self._put_survey_json(
+            object_key=survey_transcript_object_key(
+                tenant_id=tenant_id, survey_id=survey_id, sha256=media.sha256
+            ),
+            document=document,
+        )
+        counts = transcript_counts(document)
+        duration_ms = int((time.monotonic() - started) * 1000)
+        # Ids opacos, desfecho do passe pago, contagens e duração. NUNCA o texto transcrito,
+        # nenhum trecho dele, o digest do áudio ou a chave assinada de qualquer objeto.
+        logger.info(
+            "survey_transcription_completed survey_id=%s media_id=%s provider_pass=%s "
+            "note_linked=%s characters=%d notes=%d bytes=%d duration_ms=%d",
+            survey_id,
+            media_id,
+            provider.outcome.value,
+            note_id is not None,
+            counts["characters"],
+            counts["notes"],
+            written_bytes,
+            duration_ms,
+            extra={
+                "stage": "SURVEY_TRANSCRIPTION",
+                "survey_id": survey_id,
+                "media_id": media_id,
+                "provider_pass": provider.outcome.value,
+                "provider_failure_code": provider.failure_code,
+                "note_linked": note_id is not None,
                 **counts,
                 "bytes": written_bytes,
                 "duration_ms": duration_ms,

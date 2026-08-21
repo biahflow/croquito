@@ -271,6 +271,36 @@ Consolidado por tarefa conforme cada BUILD REPORT chega; a evidência do MVP loc
 - Validação: field 261; `make check` e `make test` completos EXIT 0 (nenhuma
   reprovação da T13 paralela a reportar).
 
+### T13 — transcrição de áudio (`transcribe_survey_audio`) + eval comparativa
+
+- Executor: `implementador-opus`. BUILD REPORT: `BUILD_COMPLETE`.
+- Entrega: `survey_transcription.py` (handler com os dois portões da T14;
+  artefato `transcripts/{sha256}.json` schema `survey-transcript/1`, `status`
+  SEMPRE `draft`, nota dona localizada no snapshot); adapters Groq + OpenAI de
+  transcrição atrás de UMA interface (`ProviderName.GROQ`,
+  `PromptTask.AUDIO_TRANSCRIPTION`, multipart, transporte injetado); roteamento
+  por env (`CROQUITO_TRANSCRIPTION_PRIMARY=groq` default
+  `whisper-large-v3-turbo`, `FALLBACK=none`); harness `make transcription-eval`
+  (`transcription_eval.py` + subcomando CLI) com corpus sintético
+  webm×mp4 e braços gravados — métricas na ordem de peso decidida pelo usuário:
+  fidelidade de medidas ESCRITAS (string preservando precisão; "12,40"≠"12,4")
+  → WER/CER pt-BR → por container; gate offline prova que as métricas
+  discriminam (`passed=true`, `pending_paid_round=true`). 50 testes novos
+  (worker 22+11+17); zero chamadas de rede em toda a entrega (contadas).
+  `MODEL_ROUTING.md` (rota + protocolo PENDENTE DE RODADA PAGA) e
+  `AI_VENDOR_RISK.md` (entrada Groq com termos a pinar) atualizados.
+- Desvios conscientes ACEITOS: `duration_s` no transcript (metadado, não
+  conteúdo); **fallback desligado por default** — ligar o segundo fornecedor
+  pago por conta própria decidiria o que a eval existe para medir (promover é
+  uma env); `ProviderPass` importado da T14 (vocabulário único, sem cópia);
+  aviso extra `TRANSCRIPT_SNAPSHOT_UNREADABLE`.
+- Validação: `pytest tests/worker` exit 0; `make check` exit 0 (mypy strict 213
+  arquivos); `make test` exit 0 — **pytest 1931 passed/13 skipped**, web 853,
+  field 261; `make transcription-eval` exit 0.
+- Pendências humanas registradas: conta/chave Groq + termos pinados; 10-15
+  clipes reais com verdade escrita; aprovação da rodada paga; promoção de
+  primário/reserva pós-eval.
+
 ## PLAN_DEVIATION
 
 (nenhum até o momento)

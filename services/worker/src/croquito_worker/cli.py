@@ -35,6 +35,22 @@ def main() -> int:
         help="executa a eval sintética determinística de corroboração de OCR",
     )
     ocr_eval_command.add_argument("--output", type=Path, required=True)
+    transcription_eval_command = subcommands.add_parser(
+        "transcription-eval",
+        help="compara os braços de transcrição de voz (offline por padrão; --live é pago)",
+    )
+    transcription_eval_command.add_argument("--output", type=Path, required=True)
+    transcription_eval_command.add_argument(
+        "--corpus",
+        type=Path,
+        default=None,
+        help="manifesto de clipes gravados fora do repositório (obrigatório com --live)",
+    )
+    transcription_eval_command.add_argument(
+        "--live",
+        action="store_true",
+        help="RODADA PAGA: chama os fornecedores reais; exige chaves, teto e aprovação humana",
+    )
     review_artifacts_command = subcommands.add_parser(
         "review-artifacts",
         help="valida um review packet e gera overlay ligado à imagem",
@@ -715,6 +731,57 @@ def main() -> int:
             )
         )
         return 0 if ocr_report.passed else 1
+    if args.command == "transcription-eval":
+        from croquito_worker.transcription_eval import (
+            SYNTHETIC_CORPUS_ID,
+            build_live_arms,
+            load_corpus,
+            run_transcription_eval,
+        )
+
+        if args.live and args.corpus is None:
+            # A rodada paga sem corpus declarado não tem verdade contra a qual medir — seria
+            # gastar dinheiro para produzir texto que ninguém pode conferir.
+            print(
+                json.dumps(
+                    {"refused": "LIVE_REQUIRES_CORPUS"},
+                    ensure_ascii=False,
+                )
+            )
+            return 2
+        speech_eval_corpus = None if args.corpus is None else load_corpus(args.corpus)
+        speech_eval_arms = build_live_arms() if args.live else None
+        speech_eval_report, speech_eval_path = run_transcription_eval(
+            args.output,
+            corpus=speech_eval_corpus,
+            arms=speech_eval_arms,
+            mode="paid" if args.live else "offline-fake",
+            corpus_id=(SYNTHETIC_CORPUS_ID if args.corpus is None else args.corpus.stem),
+        )
+        print(
+            json.dumps(
+                {
+                    "passed": speech_eval_report.passed,
+                    "mode": speech_eval_report.mode,
+                    "clips": speech_eval_report.clip_count,
+                    "leader": speech_eval_report.leader,
+                    "pending_paid_round": speech_eval_report.pending_paid_round,
+                    "arms": [
+                        {
+                            "arm_id": arm.arm_id,
+                            "measure_recall": arm.measure_recall,
+                            "wer": arm.wer,
+                            "cer": arm.cer,
+                        }
+                        for arm in speech_eval_report.arms
+                    ],
+                    "gate_findings": speech_eval_report.gate_findings,
+                    "report": str(speech_eval_path),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0 if speech_eval_report.passed else 1
     if args.command == "review-artifacts":
         from croquito_worker.review import load_review_packet, write_review_artifacts
 

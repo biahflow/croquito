@@ -2,8 +2,9 @@
 
 Status: Accepted for MVP  
 Responsável: AI Engineering / Platform  
-Última revisão: 2026-08-21 (tarefa `field-photo-reading` — leitura do que está escrito em
-foto de levantamento de campo, F-032 T14 — acrescentada às rotas padrão)
+Última revisão: 2026-08-21 (tarefa `audio-transcription` — transcrição da nota de voz de
+campo, F-032 T13 — acrescentada às rotas padrão, com primário × reserva **pendentes de
+rodada paga**; na mesma data entrou `field-photo-reading`, F-032 T14)
 
 ## Rotas padrão
 
@@ -18,6 +19,7 @@ Bedrock nem Textract — o caminho AWS nunca rodou no ambiente publicado (GCP,
 | Extração — braço reserva/contraparte (opcional) | OpenAI `gpt-5.6-terra` (`CROQUITO_OPENAI_MODEL`), ligado/desligado por `CROQUITO_OPENAI_ARM_ENABLED` | contraparte da comparação dupla de medida; assume por fallback quando o braço primário falha de forma permanente em survey/geometria |
 | OCR auxiliar | Google Cloud Vision, `document text detection` (`GcpVisionOcrAdapter`, `ProviderName.GCP_VISION`) por padrão; Google Document AI (`GcpDocumentAiOcrAdapter`, `ProviderName.GCP_DOCUMENT_AI`) quando `CROQUITO_DOCAI_PROCESSOR` está definido — escalada nomeada em [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md) | corrobora cada leitura de medida extraída; uma chamada por documento, não por leitura |
 | Leitura de foto de campo (`field-photo-reading`, F-032) — mesmos braços de visão | primário Anthropic `claude-opus-5`; reserva OpenAI `gpt-5.6-terra` quando o braço está ligado | uma chamada por foto confirmada, depois do passe offline de qualidade; transcreve só o que está ESCRITO na foto (placa, anotação, visor), sem coordenada e sem medida derivada |
+| Transcrição de nota de voz (`audio-transcription`, F-032) — braço próprio, fornecedor próprio | primário **provisório** Groq `whisper-large-v3-turbo` (`CROQUITO_GROQ_TRANSCRIPTION_MODEL`), escolhido por `CROQUITO_TRANSCRIPTION_PRIMARY` (default `groq`); reserva DESLIGADO por default (`CROQUITO_TRANSCRIPTION_FALLBACK`, default `none`; aceita `openai`, que usa `CROQUITO_OPENAI_TRANSCRIPTION_MODEL`, default `whisper-1`) | uma chamada por nota de voz confirmada; produz RASCUNHO (`status: "draft"`) num artefato próprio, sem medida estruturada e sem confirmar nada |
 
 A tarefa `field-photo-reading` nasce em `field-photo-reading@1.0.0` e é a única com template em
 português — o que se pede é transcrição literal do que está escrito em português na praça, e
@@ -32,6 +34,72 @@ TENANT — levantamento não tem `job_id`, então não há consentimento por job
 falha da chamada não derruba o comando: o artefato de análise é publicado com o passe offline e
 com `provider_pass` dizendo o que aconteceu (`skipped_disabled`, `skipped_no_entitlement`,
 `failed_transient`, `failed_permanent`).
+
+### Transcrição de voz: fornecedor decidido, roteamento pendente de eval
+
+A tarefa `audio-transcription` nasce em `audio-transcription@1.0.0` e é a **única cujo template
+não é enviado ao fornecedor**. As duas APIs de fala aceitam um parâmetro `prompt` que ENVIESA a
+decodificação — é a forma documentada de sugerir vocabulário ao modelo —, e numa nota que dita
+medida sugerir vocabulário é escolher o número por quem falou. O campo vai vazio; o template
+versiona a POLÍTICA aplicada pelo adapter (idioma pedido `pt`, `temperature=0`, sem viés, sem
+tradução) e continua sendo a identidade dessa política no lineage.
+
+O **fornecedor** foi decidido por ato humano em 2026-08-21: Groq (hospeda Whisper, aceita
+`webm/opus` e `mp4/aac` sem transcodificação, API compatível com o formato OpenAI). O que
+**não** foi decidido é qual braço é primário e qual é reserva: isso sai da eval comparativa
+descrita abaixo. Até ela acontecer, o default é `whisper-large-v3-turbo` por custo/latência,
+declaradamente **provisório**, e o reserva nasce desligado — ligar um segundo fornecedor pago
+por conta própria decidiria o resultado antes de medi-lo. Reserva igual ao primário é recusado
+na construção da suite (seria fallback reexecutando a mesma falha, cobrando de novo).
+
+Variáveis desta rota, todas com prefixo `CROQUITO_`:
+
+| Variável | Default | Efeito |
+|---|---|---|
+| `CROQUITO_GROQ_API_KEY` | ausente | Sem ela o braço Groq **não existe** e o passe é `skipped_disabled`. Ausência de chave aqui é braço desligado, não erro de construção — ao contrário dos braços de extração, onde a leitura da prancha é o produto; aqui a transcrição é auxiliar e o áudio continua sendo a evidência. |
+| `CROQUITO_GROQ_TRANSCRIPTION_MODEL` | `whisper-large-v3-turbo` | Modelo do braço Groq (o outro candidato é `whisper-large-v3`). |
+| `CROQUITO_OPENAI_TRANSCRIPTION_MODEL` | `whisper-1` | Modelo do braço OpenAI de transcrição; usa a `CROQUITO_OPENAI_API_KEY` já existente. |
+| `CROQUITO_TRANSCRIPTION_PRIMARY` | `groq` | `groq`, `openai` ou `none`. Valor diferente recusa a construção da suite em vez de escolher um modo. |
+| `CROQUITO_TRANSCRIPTION_FALLBACK` | `none` | Idem, e não pode repetir o primário. |
+| `CROQUITO_AI_ESTIMATED_COST_PER_TRANSCRIPTION_CALL_USD` | `0.01` | Reserva pessimista por nota de voz, no MESMO `CostBudget` da rodada. |
+
+A operação segue as mesmas regras da leitura de foto: portão de entitlement contratual do
+TENANT (levantamento não tem `job_id`, então não há consentimento por job a consultar; a suíte
+injetada **não** dispensa o portão), `BUDGET_EXCEEDED` nunca aciona o reserva, troca de braço
+nunca é silenciosa (nota `PROVIDER_FALLBACK_AUDIO_TRANSCRIPTION_<FORNECEDOR>` no artefato) e a
+falha da chamada não derruba o comando — o artefato de transcrição é publicado com
+`provider_pass` em `skipped_disabled` | `skipped_no_entitlement` | `failed_transient` |
+`failed_permanent`, e reprocessar é o caminho de retomada. A resposta bruta (que contém o texto
+e os segmentos com timestamp) só existe no raw-store protegido, sob o prefixo do levantamento.
+
+### Protocolo da eval que promove primário e reserva (PENDENTE DE RODADA PAGA)
+
+Instrumento: `make transcription-eval` (offline) e `croquito-demo transcription-eval --corpus
+<manifesto> --live` (pago). Eixos comparados, decididos com o usuário na mesma data:
+`Groq·whisper-large-v3`, `Groq·whisper-large-v3-turbo` e `OpenAI·transcrição`.
+
+Métricas, **nesta ordem de peso** (um braço com WER menor e fidelidade de medida pior não
+lidera):
+
+1. `measure_recall` / `measure_precision` — fidelidade de números e medidas faladas, com a
+   PRECISÃO ESCRITA preservada (`12,40` ≠ `12,4`, contado à parte em
+   `written_precision_mismatches`); separador decimal de teclado diferente (`12.40`) não é erro;
+2. `wer` / `cer` em pt-BR, normalizados (caixa, pontuação, espaços; acento preservado);
+3. quebra por container: `webm/opus` (Android) × `mp4/aac` (iPhone).
+
+O modo offline roda no CI com corpus sintético e adapters GRAVADOS: ele não mede fornecedor
+nenhum — o gate exige que o braço exato pontue perfeito e que cada erro injetado seja detectado
+pela métrica correspondente, porque uma métrica que não discrimina não serviria para escolher
+fornecedor. A **rodada paga** é ato humano separado: exige chaves, teto de gasto aprovado e 10
+a 15 clipes gravados pelo usuário em Android e iPhone com a verdade escrita à mão (fora do
+repositório — gravação de gente não é fixture versionada). O relatório carrega só métricas,
+nunca transcrição nem verdade de referência.
+
+Promoção: o resultado da rodada paga atualiza a linha de `audio-transcription` na tabela de
+rotas padrão e o default de `CROQUITO_TRANSCRIPTION_PRIMARY`/`_FALLBACK`, pelo mesmo protocolo
+das evals registradas mais abaixo neste documento (uma execução por eixo, sem repetir chamada
+atrás de resultado melhor). Enquanto esta seção disser PENDENTE, o roteamento em vigor é
+provisório e nenhuma decisão de fornecedor além da escolha da Groq foi tomada com dado medido.
 
 Model IDs efetivos são resolvidos por configuração validada no startup
 (`CROQUITO_ANTHROPIC_MODEL`, `CROQUITO_OPENAI_MODEL`) e gravados em cada `ProviderReading`/nota
