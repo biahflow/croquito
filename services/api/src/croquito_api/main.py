@@ -50,6 +50,7 @@ from croquito_api.database import (
     ExportArtifactRecord,
     IdempotencyRecord,
     JobRecord,
+    JobStageEventRecord,
     ProjectRecord,
     ProposalDecisionRecord,
     ReviewDecisionRecord,
@@ -3044,6 +3045,19 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session.flush()
         session.add(job)
         session.flush()
+        session.add(
+            JobStageEventRecord(
+                id=str(new_uuid7()),
+                tenant_id=principal.tenant_id,
+                job_id=str(job_id),
+                from_stage=None,
+                to_stage=job.stage,
+                from_status=None,
+                to_status=job.status,
+                source="api",
+                created_at=now,
+            )
+        )
         if entitlement is not None:
             session.add(
                 AiProcessingAuthorizationRecord(

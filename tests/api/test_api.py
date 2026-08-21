@@ -25,6 +25,7 @@ from croquito_api.database import (
     ExportArtifactRecord,
     IdempotencyRecord,
     JobRecord,
+    JobStageEventRecord,
     ProjectRecord,
     ProposalDecisionRecord,
     ReviewDecisionRecord,
@@ -410,6 +411,39 @@ def test_upload_and_job_are_tenant_scoped(tmp_path: Path, monkeypatch) -> None: 
     assert client.get(f"/v1/jobs/{job_id}", headers=_headers("tenant-a")).status_code == 200
     assert client.get(f"/v1/jobs/{job_id}", headers=_headers("tenant-b")).status_code == 404
     assert create.headers["X-Request-ID"]
+
+
+def test_job_creation_records_the_initial_stage_event(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """F-031 T1: a API grava o evento inicial de `job_stage_events` na criação do job.
+
+    `from_stage`/`from_status` são `None` porque nada existia antes; `source="api"`
+    distingue este evento das transições que o worker grava depois.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    client = _client(tmp_path)
+    upload = _presign_and_put(client, filename="evento-inicial.pdf")
+
+    create = client.post(
+        "/v1/jobs",
+        headers=_headers("tenant-a"),
+        json={"upload_id": upload["upload_id"], "project_name": "Evento inicial"},
+    )
+
+    assert create.status_code == 201
+    job_id = create.json()["job_id"]
+    database = cast(Any, client.app).state.database
+    with database.sessions() as session:
+        events = session.query(JobStageEventRecord).filter_by(job_id=job_id).all()
+        assert len(events) == 1
+        event = events[0]
+        assert event.tenant_id == "tenant-a"
+        assert event.from_stage is None
+        assert event.from_status is None
+        assert event.to_stage == create.json()["stage"]
+        assert event.to_status == create.json()["status"]
+        assert event.source == "api"
+        assert event.failure_code is None
 
 
 def test_presign_assina_o_catalogo_json_da_rodada_de_medicao(tmp_path: Path) -> None:

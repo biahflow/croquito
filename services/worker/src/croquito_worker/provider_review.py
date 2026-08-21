@@ -106,6 +106,9 @@ def _lineage(execution: ProviderExecution) -> ProviderLineage:
         input_digest=execution.input_digest,
         latency_ms=execution.latency_ms,
         raw_response_ref=execution.raw_response_ref,
+        input_tokens=execution.usage.input_tokens,
+        output_tokens=execution.usage.output_tokens,
+        estimated_cost_usd=execution.usage.estimated_cost_usd,
     )
 
 

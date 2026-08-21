@@ -3815,10 +3815,34 @@
         "additionalProperties": false,
         "description": "Metadata needed to reproduce a provider observation without retaining its payload.",
         "properties": {
+          "estimated_cost_usd": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Cost Usd"
+          },
           "input_digest": {
             "pattern": "^[a-f0-9]{64}$",
             "title": "Input Digest",
             "type": "string"
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
           },
           "latency_ms": {
             "minimum": 0.0,
@@ -3830,6 +3854,18 @@
             "minLength": 1,
             "title": "Model Id",
             "type": "string"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
           },
           "prompt_hash": {
             "pattern": "^[a-f0-9]{64}$",

@@ -24,7 +24,7 @@ import fitz
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import ValidationError
-from sqlalchemy import create_engine, text
+from sqlalchemy import DateTime, bindparam, create_engine, text
 from sqlalchemy.engine import Connection, RowMapping
 from sqlalchemy.exc import IntegrityError
 
@@ -641,8 +641,76 @@ class LocalQueueWorker:
     def s3_client(self, value: Any) -> None:
         self._object_client = value
 
+    def _current_job_stage(
+        self, connection: Connection, *, job_id: str, tenant_id: str
+    ) -> tuple[str, str] | None:
+        """Lê `(stage, status)` do job na MESMA conexão, para servir de `from_*` do evento.
+
+        Precisa ser chamado antes do `UPDATE` que muda o job, na mesma transação: depois
+        do `UPDATE` o valor anterior já foi sobrescrito.
+        """
+        row = connection.execute(
+            text("SELECT stage, status FROM jobs WHERE id = :job_id AND tenant_id = :tenant_id"),
+            {"job_id": job_id, "tenant_id": tenant_id},
+        ).one_or_none()
+        if row is None:
+            return None
+        return row[0], row[1]
+
+    def _record_stage_event(
+        self,
+        connection: Connection,
+        *,
+        tenant_id: str,
+        job_id: str,
+        from_stage: str | None,
+        from_status: str | None,
+        to_stage: str,
+        to_status: str,
+        failure_code: str | None = None,
+        source: str = "worker",
+    ) -> None:
+        """Grava uma linha append-only de `job_stage_events`, na MESMA transação do caller.
+
+        O caller é responsável por chamar isto só depois de confirmar (via `rowcount` ou
+        equivalente) que o `UPDATE`/`INSERT` do job realmente aconteceu — inserir aqui para
+        um job que não existe violaria a FK em banco que a exige (ADR-0029).
+
+        `created_at` é passado como parâmetro Python (`datetime.now(UTC)`), não como
+        `CURRENT_TIMESTAMP` do SQL, e com o TIPO da coluna anotado explicitamente no bind
+        (`bindparam(..., type_=DateTime(timezone=True))`): sem essa anotação, um bind de
+        `text()` pula o `bind_processor` do dialeto e vai cru para o driver — no SQLite, o
+        adapter default do `sqlite3` grava o offset (`+00:00`) e o valor sai tz-aware na
+        leitura, enquanto o MESMO INSERT feito pelo ORM (`main.py`, evento da API) usa o
+        `bind_processor` do `DATETIME` do dialeto SQLite, que SEMPRE descarta o offset — a
+        mesma tabela ficaria com dois formatos divergentes conforme a origem, não conforme
+        a coluna. Anotar o tipo força os dois caminhos a passarem pelo MESMO
+        `bind_processor`, no SQLite e no Postgres, igual ao que o ORM já faz.
+        """
+        connection.execute(
+            text(
+                "INSERT INTO job_stage_events (id, tenant_id, job_id, from_stage, "
+                "from_status, to_stage, to_status, source, failure_code, created_at) "
+                "VALUES (:id, :tenant_id, :job_id, :from_stage, :from_status, :to_stage, "
+                ":to_status, :source, :failure_code, :created_at)"
+            ).bindparams(bindparam("created_at", type_=DateTime(timezone=True))),
+            {
+                "id": str(new_uuid7()),
+                "tenant_id": tenant_id,
+                "job_id": job_id,
+                "from_stage": from_stage,
+                "from_status": from_status,
+                "to_stage": to_stage,
+                "to_status": to_status,
+                "source": source,
+                "failure_code": failure_code,
+                "created_at": datetime.now(UTC),
+            },
+        )
+
     def _mark_failed(self, *, job_id: str, tenant_id: str, failure_code: str) -> None:
         with self.engine.begin() as connection:
+            current = self._current_job_stage(connection, job_id=job_id, tenant_id=tenant_id)
             result = connection.execute(
                 text(
                     "UPDATE jobs SET status = 'FAILED', stage = 'VALIDATING', "
@@ -651,8 +719,18 @@ class LocalQueueWorker:
                 ),
                 {"job_id": job_id, "tenant_id": tenant_id, "failure_code": failure_code},
             )
-        if result.rowcount != 1:
-            raise ValueError("Job não encontrado ou tenant divergente")
+            if result.rowcount != 1:
+                raise ValueError("Job não encontrado ou tenant divergente")
+            self._record_stage_event(
+                connection,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                from_stage=current[0] if current is not None else None,
+                from_status=current[1] if current is not None else None,
+                to_stage="VALIDATING",
+                to_status="FAILED",
+                failure_code=failure_code,
+            )
 
     def _mark_invalid_upload(self, *, job_id: str, tenant_id: str) -> None:
         self._mark_failed(job_id=job_id, tenant_id=tenant_id, failure_code="INVALID_UPLOAD")
@@ -876,6 +954,7 @@ class LocalQueueWorker:
             )
 
         with self.engine.begin() as connection:
+            current = self._current_job_stage(connection, job_id=job_id, tenant_id=tenant_id)
             if review_snapshot is not None:
                 # Redelivery of an already ingested job never replaces recorded evidence.
                 with suppress(ReviewAlreadyExistsError):
@@ -913,8 +992,17 @@ class LocalQueueWorker:
                     "page_count": validated_upload.page_count,
                 },
             )
-        if result.rowcount != 1:
-            raise ValueError("Job não encontrado ou tenant divergente")
+            if result.rowcount != 1:
+                raise ValueError("Job não encontrado ou tenant divergente")
+            self._record_stage_event(
+                connection,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                from_stage=current[0] if current is not None else None,
+                from_status=current[1] if current is not None else None,
+                to_stage="PREVIEWING",
+                to_status="REVIEW_REQUIRED",
+            )
         return 1
 
     def _finish_export(
@@ -935,6 +1023,7 @@ class LocalQueueWorker:
             "CAST(:audit AS JSONB)" if self.engine.dialect.name == "postgresql" else "json(:audit)"
         )
         with self.engine.begin() as connection:
+            current = self._current_job_stage(connection, job_id=job_id, tenant_id=tenant_id)
             connection.execute(
                 text(
                     "UPDATE export_artifacts SET status = :status, "
@@ -955,13 +1044,24 @@ class LocalQueueWorker:
                     **({"audit": json.dumps(audit_json)} if audit_json is not None else {}),
                 },
             )
-            connection.execute(
+            result = connection.execute(
                 text(
                     "UPDATE jobs SET status = :job_status, updated_at = CURRENT_TIMESTAMP "
                     "WHERE id = :job_id AND tenant_id = :tenant_id"
                 ),
                 {"job_id": job_id, "tenant_id": tenant_id, "job_status": job_status},
             )
+            if result.rowcount == 1 and current is not None:
+                self._record_stage_event(
+                    connection,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    from_stage=current[0],
+                    from_status=current[1],
+                    to_stage=current[0],
+                    to_status=job_status,
+                    failure_code=failure_code,
+                )
 
     def _handle_export(self, *, export_id: str, job_id: str, tenant_id: str) -> int:
         """Builds, audits and publishes the CAD package exactly once per approved revision."""

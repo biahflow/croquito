@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
@@ -88,6 +89,11 @@ class TranscriptionArtifact(BaseModel):
     input_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     latency_ms: int = Field(ge=0)
     raw_response_ref: str | None = None
+    # Opcionais (F-031 T1), mesma proveniência que `ProviderLineage` já expõe: artefato
+    # antigo sem estes campos continua válido, e `merge_readings_into_packet` os repassa.
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_usd: Decimal | None = Field(default=None, ge=0)
     output: MeasurementExtractionOutput
 
 
@@ -150,6 +156,9 @@ def run_transcription(
         input_digest=execution.input_digest,
         latency_ms=execution.latency_ms,
         raw_response_ref=execution.raw_response_ref,
+        input_tokens=execution.usage.input_tokens,
+        output_tokens=execution.usage.output_tokens,
+        estimated_cost_usd=execution.usage.estimated_cost_usd,
         output=execution.output,
     )
     report = TranscriptionReport(
@@ -359,6 +368,9 @@ def merge_readings_into_packet(
         input_digest=artifact.input_digest,
         latency_ms=artifact.latency_ms,
         raw_response_ref=artifact.raw_response_ref,
+        input_tokens=artifact.input_tokens,
+        output_tokens=artifact.output_tokens,
+        estimated_cost_usd=artifact.estimated_cost_usd,
     )
     extractor = artifact.provider
     extractor_version = f"{artifact.model_id}+{artifact.prompt_version}"

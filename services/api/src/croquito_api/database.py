@@ -81,6 +81,36 @@ class JobRecord(Base):
     )
 
 
+class JobStageEventRecord(Base):
+    """Append-only history of every `jobs.stage`/`status` transition (F-031 T1).
+
+    `jobs.stage`/`status` são sobrescritos por `UPDATE`, e sem esta tabela o cycle time
+    por etapa é irreconstruível: uma vez sobrescrito, o valor anterior desaparece. Cada
+    linha aqui é gravada na MESMA transação do `UPDATE`/`INSERT` que muda o job —
+    `from_stage`/`from_status` vêm de uma leitura do job feita antes da mudança, na mesma
+    conexão, nunca de suposição; ver `services/worker/src/croquito_worker/local_queue.py`.
+
+    `source` distingue o evento inicial gravado pela API na criação do job (`"api"`,
+    `from_stage`/`from_status` sempre `None`) das transições que o worker grava a cada
+    `UPDATE jobs SET status/stage` (`"worker"`).
+    """
+
+    __tablename__ = "job_stage_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), index=True)
+    from_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_stage: Mapped[str] = mapped_column(String(32))
+    from_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(32))
+    source: Mapped[str] = mapped_column(String(16))
+    failure_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 class TenantAiProcessingEntitlementRecord(Base):
     """Contractual authorization managed by the platform for one tenant."""
 
