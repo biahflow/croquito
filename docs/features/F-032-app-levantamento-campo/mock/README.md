@@ -27,7 +27,7 @@ nova e precisa de registro próprio.
 
 | Campo | Valor |
 | --- | --- |
-| O que se pede aprovar | a prancha 7 (3 telas): 7a gravação de nota de voz offline ancorada; 7b aviso não bloqueante de qualidade de foto calculado no aparelho; 7c painel de sincronização com categorias de áudio, estado de transcrição e nota sobre análise de fotos no servidor |
+| O que se pede aprovar | a prancha 7 (3 telas): 7a gravação de nota de voz offline ancorada; 7b aviso não bloqueante de qualidade de foto calculado no aparelho; 7c painel de sincronização com categorias de áudio, estado de transcrição e nota sobre análise de fotos no servidor — MAIS dois ajustes pedidos pelo usuário em 2026-08-21: (a) a marca do croquito (quadrado de traço verde do wordmark) acompanha o nome na barra de TODAS as telas (toque aditivo nas pranchas 1–6 aprovadas); (b) a chegada (prancha 2) mostra local/endereço vindos da ordem em vez de coordenadas — as coordenadas continuam guardadas como dado, nunca exibidas |
 | Motivação | escopo reaberto por decisão humana de 2026-08-21 (itens 8–9 do [Feature Contract](../feature.md)); tarefas T12/T15 do [plan-sync.md](../plan-sync.md) só iniciam a parte de UI após esta aprovação |
 | Aprovado por | — (pendente) |
 | Data | — |

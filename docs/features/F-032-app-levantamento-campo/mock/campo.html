@@ -89,8 +89,15 @@
     display: flex; align-items: center; gap: var(--s-3);
     padding: var(--s-3) var(--s-4); min-height: 52px;
   }
-  .appbar .brand { font-weight: 600; letter-spacing: .01em; }
+  .appbar .brand { font-weight: 600; letter-spacing: .01em; display: inline-flex; align-items: center; gap: 8px; }
   .appbar .brand small { color: var(--dark-ink-soft); font-weight: 400; }
+  /* A marca do croquito (o quadrado de traço verde do wordmark,
+     apps/web/src/assets/croquito-logo*.svg) acompanha o nome em toda tela —
+     ajuste pedido pelo usuário em 2026-08-21 (revisão 2). */
+  .appbar .brand::before {
+    content: ""; width: 12px; height: 12px; flex-shrink: 0;
+    background: var(--dark); border: 3px solid var(--accent);
+  }
   .appbar .spacer { flex: 1; }
   .pill {
     border-radius: var(--r-pill); padding: 4px 10px; font-size: var(--fs-label);
@@ -312,8 +319,9 @@
             <div class="input">Canto do muro da escola, lado norte</div>
           </div>
           <div class="check ok"><span class="state"></span><div class="txt">
-            <b>Localização registrada</b>
-            <small>GPS −22,821, −43,024 (±8 m) · serve para achar a obra, não para medir</small>
+            <b>Local confirmado — Praça de Guaxindiba</b>
+            <small>Rua Alfredo Backer, s/n · São Gonçalo — a ~8 m do endereço da ordem ·
+            a localização serve para achar a obra, não para medir</small>
           </div></div>
           <div class="check warn"><span class="state"></span><div class="txt">
             <b>Foto do acesso principal — pendente</b>

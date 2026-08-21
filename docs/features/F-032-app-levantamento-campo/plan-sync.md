@@ -213,5 +213,12 @@ nomeados; nenhum requisito dos itens 7–10 do Feature Contract sem dono.
 
 ## PLAN_DEVIATION
 
-(nenhum até o momento; a relinearização da migração 0007×F-029 será registrada aqui
-quando a integração com a main acontecer)
+- 2026-08-21 — Ajustes da DAP rev.2 pedidos pelo usuário (marca do croquito na
+  barra de todas as telas; chegada mostra local/endereço da ordem em vez de
+  coordenadas): aplicados no caderno de mocks e registrados como tarefa pequena
+  nova **T17** (aplicar os dois ajustes no app real — `AppBar`, `ArrivalScreen`,
+  e trocar o ícone PWA placeholder de `apps/field/public/icon.svg` pela marca),
+  a executar na onda da rev.2 junto de T12/T15. Impacto: nenhum nas tarefas já
+  entregues; o plano ganha uma tarefa XS sem dependências além da aprovação da
+  rev.2.
+- (prevista) Relinearização da migração 0007×F-029 na integração com a main.
