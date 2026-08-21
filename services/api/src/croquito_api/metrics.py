@@ -318,11 +318,30 @@ def _human_document(session: Session, job: JobRecord) -> dict[str, Any]:
         "rejected": counts["reject"],
         "correction_rate": _rate(corrected, decisions_total),
         "rectifications": rectifications,
-        # Touch time real é a T4 desta feature; até ela existir, `null` diz "não medido" —
-        # que é a verdade. Derivar duração de `created_at` de decisões consecutivas seria
-        # medir o intervalo entre envios, não o tempo que a pessoa passou na tela.
-        "interaction_ms_total": None,
+        "interaction_ms_total": _interaction_ms_total(session, job),
     }
+
+
+def _interaction_ms_total(session: Session, job: JobRecord) -> int | None:
+    """Soma do touch time autorrelatado pelas revisões do job; `None` quando nada foi medido.
+
+    `SUM` sobre coluna nullable devolve `NULL` quando NENHUMA linha mediu, e é exatamente
+    essa distinção que se quer publicar: "nenhuma revisão trouxe cronômetro" não é o mesmo
+    que "a pessoa passou zero milissegundo na tela". Revisão de cliente antigo — ou de
+    envio cujo valor foi descartado por absurdo — simplesmente não entra na soma, e o que
+    sobra continua sendo a medida honesta do que se mediu.
+
+    O número é AUTORRELATO da tela, não observação do servidor: ele mede sessão de
+    revisão, e derivá-lo do intervalo entre `created_at` de revisões consecutivas mediria
+    o tempo entre envios, incluindo o café e a noite de sono no meio.
+    """
+    total = session.scalar(
+        select(func.sum(ReviewRevisionRecord.interaction_ms)).where(
+            ReviewRevisionRecord.job_id == job.id,
+            ReviewRevisionRecord.tenant_id == job.tenant_id,
+        )
+    )
+    return None if total is None else int(total)
 
 
 def _job_ai_cost(session: Session, job: JobRecord) -> _AiCost:

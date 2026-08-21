@@ -56,7 +56,9 @@ Notas:
   `action` carrega o código estável existente. Granularizar em tipos próprios
   é evolução `.v2+`, guiada pelo consumo real do portal.
 - Campos com `?` são opcionais; ausência significa "não medido", nunca zero.
-- `interaction_ms` só existe após a T4 e é observacional (autorrelato da tela).
+- `interaction_ms` é observacional (autorrelato do cronômetro da tela de revisão, com a
+  aba em segundo plano descontada). Ausente quando não houve medição — cliente antigo,
+  ou valor implausível descartado pela API —, nunca `0`.
 
 ## Transporte
 

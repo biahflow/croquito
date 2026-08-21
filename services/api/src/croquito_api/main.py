@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     RootModel,
@@ -468,6 +469,45 @@ class CreateRevisionRequest(ApiModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+#: Teto do touch time aceito num envio: 24 horas em milissegundos. Acima disso não é
+#: sessão de revisão nenhuma — é aba esquecida aberta, relógio do cliente saltando ou
+#: soma de um cronômetro que ninguém zerou.
+MAX_INTERACTION_MS: Final = 24 * 60 * 60 * 1000
+
+#: Campos de TELEMETRIA do payload: descritos no contrato, fora da identidade do comando.
+#: São excluídos do `_request_hash` por duas razões que apontam para o mesmo lado: um
+#: replay legítimo (mesma `Idempotency-Key`, cronômetro necessariamente diferente) não
+#: pode virar `IDEMPOTENCY_KEY_REUSED`, e o hash gravado ANTES deste campo existir
+#: precisa continuar batendo com o de um envio idêntico feito depois.
+TELEMETRY_PAYLOAD_FIELDS: Final[frozenset[str]] = frozenset({"interaction_ms"})
+
+
+def _observational_interaction_ms(value: object) -> int | None:
+    """Lê o touch time autorrelatado; o que não for plausível vira `None`, nunca 422.
+
+    Isto é telemetria, não dado de negócio: o ato humano — a decisão, a correção — não
+    pode ser recusado porque o cronômetro da tela veio negativo, veio como texto ou veio
+    com um número que não descreve sessão de trabalho nenhuma. Recusar aqui inverteria a
+    prioridade e faria a medição do processo atrapalhar o processo.
+
+    `bool` cai fora de propósito, ainda que seja subclasse de `int`: um `true` no campo
+    significaria "1 ms de revisão", que é uma medida inventada a partir de um engano.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        measured = value
+    elif isinstance(value, float) and math.isfinite(value):
+        measured = int(value)
+    else:
+        return None
+    return measured if 0 <= measured <= MAX_INTERACTION_MS else None
+
+
+#: Touch time do envio, em milissegundos, medido pela tela que o produziu.
+InteractionMs = Annotated[int | None, BeforeValidator(_observational_interaction_ms)]
+
+
 class ReviewDecisionCommand(ApiModel):
     reading_id: str = Field(pattern=r"^rd_[a-f0-9]{16}$")
     action: Literal["confirm", "correct", "reject"]
@@ -487,6 +527,9 @@ class ReviewDecisionCommand(ApiModel):
 class SubmitReviewDecisionsRequest(ApiModel):
     base_version: int = Field(ge=1)
     decisions: list[ReviewDecisionCommand] = Field(min_length=1, max_length=50)
+    # Observacional e opcional: ausente diz "não medido" (cliente antigo, aba fechada
+    # antes do envio), nunca "zero". Ver `_observational_interaction_ms`.
+    interaction_ms: InteractionMs = None
 
 
 class RectifyReadingCommand(ApiModel):
@@ -517,6 +560,7 @@ class RectifyReadingCommand(ApiModel):
 class RectifyReviewDecisionsRequest(ApiModel):
     base_version: int = Field(ge=1)
     rectifications: list[RectifyReadingCommand] = Field(min_length=1, max_length=50)
+    interaction_ms: InteractionMs = None
 
 
 class ReviewChainCommand(ApiModel):
@@ -1510,8 +1554,20 @@ def _safe_filename(filename: str, content_type: str) -> str:
     return normalized or f"documento{extension}"
 
 
-def _request_hash(payload: BaseModel) -> str:
-    encoded = json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+def _request_hash(payload: BaseModel, *, exclude: frozenset[str] | None = None) -> str:
+    """Impressão digital do COMANDO, para casar replay com a resposta já gravada.
+
+    `exclude` existe para os campos de telemetria (`TELEMETRY_PAYLOAD_FIELDS`): o touch
+    time descreve como o comando foi produzido, não o que ele manda fazer. Deixá-lo no
+    hash faria um replay legítimo — a mesma `Idempotency-Key` com o cronômetro em outro
+    valor — responder `IDEMPOTENCY_KEY_REUSED`, e faria o hash de um envio idêntico
+    deixar de bater com o que foi gravado antes de o campo existir.
+    """
+    encoded = json.dumps(
+        payload.model_dump(mode="json", exclude=set(exclude or frozenset())),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -1663,6 +1719,16 @@ def _record_audit(
             metadata_json={"request_id": request_id},
         )
     )
+
+
+def _optional_interaction_ms(interaction_ms: int | None) -> dict[str, int]:
+    """Trecho de payload com o touch time, ou VAZIO quando ninguém mediu.
+
+    O contrato de eventos marca `interaction_ms` como opcional, e opcional ali quer dizer
+    ausente: publicar a chave com `null` diria ao consumidor que a medição existe e vale
+    nada. Chave ausente é a única forma de dizer "não medido" sem inventar um número.
+    """
+    return {} if interaction_ms is None else {"interaction_ms": interaction_ms}
 
 
 def _record_domain_event(
@@ -3440,7 +3506,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         if job is None:
             raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
-        request_hash = _request_hash(payload)
+        request_hash = _request_hash(payload, exclude=TELEMETRY_PAYLOAD_FIELDS)
         operation = f"review.decisions:{job_id}"
         existing = _idempotent_response(
             session,
@@ -3552,6 +3618,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             solver_blockers_json=resolved.blockers,
             required_blocker_codes_json=current.required_blocker_codes_json,
             required_criteria_texts_json=current.required_criteria_texts_json,
+            # Touch time DESTE envio, e não o acumulado da folha: a revisão é a unidade
+            # do ato, e somar o acumulado a cada lote contaria o mesmo tempo de novo.
+            interaction_ms=payload.interaction_ms,
             created_by=principal.subject,
         )
         if scene is not None:
@@ -3629,6 +3698,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 "confirmed": sum(1 for item in payload.decisions if item.action == "confirm"),
                 "corrected": sum(1 for item in payload.decisions if item.action == "correct"),
                 "rejected": sum(1 for item in payload.decisions if item.action == "reject"),
+                **_optional_interaction_ms(payload.interaction_ms),
             },
         )
         session.commit()
@@ -3661,7 +3731,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         if job is None:
             raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
-        request_hash = _request_hash(payload)
+        request_hash = _request_hash(payload, exclude=TELEMETRY_PAYLOAD_FIELDS)
         operation = f"review.rectifications:{job_id}"
         existing = _idempotent_response(
             session,
@@ -3836,6 +3906,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             solver_blockers_json=resolved.blockers,
             required_blocker_codes_json=current.required_blocker_codes_json,
             required_criteria_texts_json=current.required_criteria_texts_json,
+            # O touch time é do envio que criou ESTA revisão; o da revisão corrigida
+            # ficou na revisão dela, e não é herdado nem somado aqui.
+            interaction_ms=payload.interaction_ms,
             created_by=principal.subject,
         )
         if scene is not None:
@@ -3908,6 +3981,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             payload={
                 "review_version": next_review.version,
                 "rectifications_total": len(payload.rectifications),
+                **_optional_interaction_ms(payload.interaction_ms),
             },
         )
         session.commit()

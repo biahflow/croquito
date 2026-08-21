@@ -4259,3 +4259,206 @@ def test_create_app_called_repeatedly_does_not_duplicate_json_log_handlers(
     root = logging.getLogger()
     json_handlers = [h for h in root.handlers if isinstance(h.formatter, JsonLogFormatter)]
     assert len(json_handlers) == 1
+
+
+# --- F-031 T4: touch time autorrelatado pela tela ------------------------------------
+
+
+def _review_interaction_ms(client: TestClient, job_id: str) -> list[int | None]:
+    """Touch time gravado por revisão de leitura, na ordem das versões."""
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions() as session:
+        return list(
+            session.scalars(
+                select(ReviewRevisionRecord.interaction_ms)
+                .where(ReviewRevisionRecord.job_id == job_id)
+                .order_by(ReviewRevisionRecord.version)
+            )
+        )
+
+
+def _decisions_payload(base_version: int, reading_id: str, **batch: Any) -> dict[str, Any]:
+    return {
+        "base_version": base_version,
+        "decisions": [
+            {
+                "reading_id": reading_id,
+                "action": "confirm",
+                "justification": "Evidência sintética revisada.",
+                "association_proposal_id": f"vp_{reading_id[3:]}",
+            }
+        ],
+        **batch,
+    }
+
+
+def test_touch_time_do_lote_e_persistido_publicado_e_somado_nas_metricas(
+    tmp_path: Path,
+) -> None:
+    """O cronômetro da tela chega inteiro aos três lugares que o consomem.
+
+    A soma é sobre as revisões, e não sobre as decisões: dois envios de 4200 ms e 1800 ms
+    valem 6000 ms de sessão de revisão, independentemente de quantas leituras cada um
+    carregou.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+
+    primeiro = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-1"},
+        json=_decisions_payload(1, "rd_1111111111111111", interaction_ms=4_200),
+    )
+    segundo = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-2"},
+        json=_decisions_payload(2, "rd_2222222222222222", interaction_ms=1_800),
+    )
+
+    assert primeiro.status_code == 200
+    assert segundo.status_code == 200
+    assert _review_interaction_ms(client, job_id) == [None, 4_200, 1_800]
+
+    eventos = _domain_events(client, event_type="croquito.review.decisions_recorded.v1")
+    assert [evento.payload_json["interaction_ms"] for evento in eventos] == [4_200, 1_800]
+
+    assert _metrics(client, job_id)["human"]["interaction_ms_total"] == 6_000
+
+
+def test_touch_time_ausente_negativo_ou_absurdo_nunca_invalida_a_mutacao(
+    tmp_path: Path,
+) -> None:
+    """Telemetria não recusa ato humano: o que não é medida plausível vira ausência.
+
+    A chave do evento SOME em vez de sair `null`: o contrato marca `interaction_ms` como
+    opcional, e publicar `null` diria ao consumidor que a medição existe e vale nada.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client, extra_reading=True))
+
+    ausente = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-ausente"},
+        json=_decisions_payload(1, "rd_1111111111111111"),
+    )
+    negativo = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-negativo"},
+        json=_decisions_payload(2, "rd_2222222222222222", interaction_ms=-5),
+    )
+    # Uma semana num cronômetro de sessão de revisão é aba esquecida aberta, não trabalho.
+    absurdo = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-absurdo"},
+        json=_decisions_payload(3, "rd_4444444444444444", interaction_ms=7 * 24 * 3_600_000),
+    )
+    # Nem tipo errado: o cliente que mandar texto perde a telemetria, não a decisão.
+    texto = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-texto"},
+        json=_decisions_payload(4, "rd_3333333333333333", interaction_ms="quatro minutos"),
+    )
+
+    assert [ausente.status_code, negativo.status_code, absurdo.status_code, texto.status_code] == [
+        200,
+        200,
+        200,
+        200,
+    ]
+    assert _review_interaction_ms(client, job_id) == [None, None, None, None, None]
+    eventos = _domain_events(client, event_type="croquito.review.decisions_recorded.v1")
+    assert all("interaction_ms" not in evento.payload_json for evento in eventos)
+    assert _metrics(client, job_id)["human"]["interaction_ms_total"] is None
+
+
+def test_replay_idempotente_ignora_o_cronometro_e_preserva_o_valor_gravado(
+    tmp_path: Path,
+) -> None:
+    """O touch time não faz parte da identidade do comando.
+
+    Um replay legítimo repete a `Idempotency-Key` com o cronômetro necessariamente noutro
+    valor; se ele entrasse no hash da request, o repique responderia
+    `IDEMPOTENCY_KEY_REUSED` e a tela mostraria conflito onde só houve rede instável. O
+    que ficou gravado é o do envio que venceu — o replay não reescreve nada.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+    key = {**_headers("tenant-a"), "Idempotency-Key": "touch-replay"}
+
+    primeiro = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers=key,
+        json=_decisions_payload(1, "rd_1111111111111111", interaction_ms=4_200),
+    )
+    replay = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers=key,
+        json=_decisions_payload(1, "rd_1111111111111111", interaction_ms=9_100),
+    )
+
+    assert primeiro.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["review_id"] == primeiro.json()["review_id"]
+    assert _review_interaction_ms(client, job_id) == [None, 4_200]
+
+
+def test_replay_de_resposta_gravada_antes_do_campo_continua_valendo(tmp_path: Path) -> None:
+    """Compatibilidade para trás do registro de idempotência já gravado.
+
+    A linha antiga guarda o hash de um corpo que NÃO tinha `interaction_ms`. Se o campo
+    entrasse no hash, o mesmo comando repetido por um cliente novo deixaria de casar com
+    ela e a mutação seria refeita — duas revisões para um ato só, que é exatamente o que a
+    idempotência existe para impedir.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+    corpo = _decisions_payload(1, "rd_1111111111111111")
+    key = {**_headers("tenant-a"), "Idempotency-Key": "touch-legado"}
+
+    gravado = client.post(f"/v1/jobs/{job_id}/review/decisions", headers=key, json=corpo)
+    com_campo = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers=key,
+        json={**corpo, "interaction_ms": 4_200},
+    )
+
+    assert gravado.status_code == 200
+    assert com_campo.status_code == 200
+    assert com_campo.json()["review_id"] == gravado.json()["review_id"]
+    assert _review_interaction_ms(client, job_id) == [None, None]
+
+
+def test_touch_time_da_correcao_declarada_e_gravado_na_revisao_que_a_recebeu(
+    tmp_path: Path,
+) -> None:
+    """A correção mede o próprio ato; o tempo da decisão corrigida fica onde estava."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    assert _confirm_width_with_the_wrong_reading(client, job_id).status_code == 200
+    previous_decision_id = _current_decision_id(client, job_id, "rd_1111111111111111")
+
+    rectified = client.post(
+        f"/v1/jobs/{job_id}/review/rectifications",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-rectify"},
+        json={
+            **_rectification_payload(
+                2,
+                rectifies_decision_id=previous_decision_id,
+                raw_text="25,90",
+                value_si="25.90",
+                unit="m",
+                kind="width",
+            ),
+            "interaction_ms": 3_000,
+        },
+    )
+
+    assert rectified.status_code == 200
+    assert _review_interaction_ms(client, str(job_id)) == [None, None, 3_000]
+    evento = _domain_events(client, event_type="croquito.review.rectifications_recorded.v1")[0]
+    assert evento.payload_json == {
+        "review_version": rectified.json()["version"],
+        "rectifications_total": 1,
+        "interaction_ms": 3_000,
+    }
+    assert _metrics(client, str(job_id))["human"]["interaction_ms_total"] == 3_000

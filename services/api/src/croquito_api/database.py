@@ -259,6 +259,14 @@ class ReviewRevisionRecord(Base):
     scene_revision_id: Mapped[str | None] = mapped_column(
         ForeignKey("scene_revisions.id"), nullable=True
     )
+    interaction_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Touch time AUTORRELATADO pela tela que produziu esta revisão (F-031 T4).
+
+    Telemetria observacional, nunca dado de negócio: `NULL` quer dizer "não medido" —
+    cliente antigo, aba fechada antes do envio, valor absurdo descartado no payload — e
+    jamais "zero". Nada de geometria, decisão ou aprovação depende deste número, e ele
+    não entra em nenhum portão; some da conta e a conta continua declarada.
+    """
     created_by: Mapped[str] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

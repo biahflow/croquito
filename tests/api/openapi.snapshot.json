@@ -4366,6 +4366,17 @@
             "title": "Base Version",
             "type": "integer"
           },
+          "interaction_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interaction Ms"
+          },
           "rectifications": {
             "items": {
               "$ref": "#/components/schemas/RectifyReadingCommand"
@@ -5183,6 +5194,17 @@
             "minItems": 1,
             "title": "Decisions",
             "type": "array"
+          },
+          "interaction_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interaction Ms"
           }
         },
         "required": [

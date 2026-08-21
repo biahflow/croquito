@@ -272,7 +272,8 @@ Entrada:
       "justification": "Conferido na evidência protegida.",
       "association_proposal_id": "vp_..."
     }
-  ]
+  ],
+  "interaction_ms": 4200
 }
 ```
 
@@ -295,6 +296,19 @@ Quando a configuração do job exigir a família retangular, somente leituras
 confirmadas **e** associações explícitas chegam ao solver. A cena resultante é
 uma `SceneRevision` nova, métrica e não aprovada; blockers críticos pendentes do
 caso continuam nela e impedem aprovação, exportação e DXF.
+
+`interaction_ms` é opcional e **observacional**: o tempo de interação humana que a tela
+cronometrou até este envio, em milissegundos, pausado enquanto a aba esteve em segundo
+plano. Vale para este comando e para o de retificação. Ele é telemetria, não dado de
+negócio, e por isso a validação é leve e **nunca recusa a mutação**: ausente, negativo,
+acima de 24 h ou de tipo inesperado, o campo é descartado para `null` e o ato humano
+entra igual. Ele fica gravado na revisão de leitura que o envio criou, soma em
+`human.interaction_ms_total` do read-model de métricas e viaja como campo opcional dos
+eventos `review.decisions_recorded.v1` e `review.rectifications_recorded.v1` — ausente
+quando não houve medição, nunca `0`. Cliente que não o envia continua funcionando sem
+mudança nenhuma, e ele fica **fora** da impressão digital da `Idempotency-Key`: um replay
+do mesmo comando com o cronômetro noutro valor devolve a resposta gravada, e não
+`IDEMPOTENCY_KEY_REUSED`.
 
 ### `POST /v1/jobs/{job_id}/review/rectifications`
 
@@ -325,7 +339,10 @@ As ações são `confirm` e `reject` — não existe `correct`: o que muda em re
 registro anterior viaja nos mesmos campos da decisão. `rectifies_decision_id` cita
 nominalmente a decisão vigente da leitura e `justification` é obrigatória. Revisor,
 papel e horário vêm do JWT e do relógio do servidor. Exige papel profissional elegível,
-`Idempotency-Key` e de 1 a 50 correções (a tela envia uma por vez).
+`Idempotency-Key` e de 1 a 50 correções (a tela envia uma por vez). O corpo aceita o
+mesmo `interaction_ms` opcional e observacional descrito no comando de decisão — a
+medida é do ato que está sendo registrado, e a da decisão corrigida continua na revisão
+em que aconteceu.
 
 A **associação é sempre redeclarada**: valem as mesmas regras do comando de decisão —
 confirmar exige `association_proposal_id` pertencente à leitura ou a declaração
@@ -1220,8 +1237,10 @@ Métricas de um job, em quatro blocos:
   exatamente `confirmed + corrected + rejected`; a retificação declarada
   (`POST .../review/rectifications`) é contada à parte em `rectifications`, porque
   corrige o registro de uma pessoa e não a proposta da máquina. `correction_rate` é
-  `corrected/decisions_total`, `null` sem decisões. `interaction_ms_total` é `null`
-  enquanto o touch time real não é medido pela tela.
+  `corrected/decisions_total`, `null` sem decisões. `interaction_ms_total` soma o
+  `interaction_ms` autorrelatado pelas revisões de leitura do job e é `null` quando
+  NENHUMA delas trouxe medida — cliente antigo, aba fechada antes do envio ou valor
+  descartado por implausível. `null` diz "não medido", nunca "zero milissegundo na tela".
 - `automation`: `auto_association_rate` e `review_rate`, ambos `null` — campos
   reservados da auto-associação por confiança, publicados antes dela para que o
   consumidor não precise mudar de forma quando ela aterrissar.
