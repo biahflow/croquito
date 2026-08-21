@@ -108,14 +108,14 @@ papel; `GET` aceita também os papéis de revisão existentes (`engineer`,
 4. `POST /v1/surveys/{survey_id}/media/{sha256}/confirm` — `head_upload` confere
    `byte_size` e, no flavor `s3`, o checksum (GCS: `checksum_deferred`, como no
    `create_job`); divergência → 409 `SURVEY_MEDIA_DIGEST_MISMATCH`. Marca
-   `CONFIRMED` e enfileira: mime de imagem → `survey-photo-analysis`; mime de
-   áudio → `survey-transcribe` (handlers chegam em T13/T14; aqui só publica,
+   `CONFIRMED` e enfileira: mime de imagem → `analyze_survey_photo`; mime de
+   áudio → `transcribe_survey_audio` (handlers chegam em T13/T14; aqui só publica,
    padrão `enqueue_*` novo em `pubsub_queue.py`). Idempotente (confirmar duas
    vezes não duplica mensagem: só enfileira na transição PRESIGNED→CONFIRMED).
 5. `POST /v1/surveys/{survey_id}/complete` — corpo `{base_version}`; exige toda
    mídia referenciada `CONFIRMED` (senão 409 `SURVEY_MEDIA_PENDING`), snapshot com
    status de conclusão presente; `base_version` divergente → 409
-   `SURVEY_CONFLICT`. Marca `COMPLETED` e enfileira `survey-export` (handler em
+   `SURVEY_CONFLICT`. Marca `COMPLETED` e enfileira `export_survey` (handler em
    T11). Idempotente via `Idempotency-Key`.
 
 ### Auditoria e logs
@@ -130,7 +130,7 @@ Cobrir no mínimo: criação idempotente + ack de lote; reenvio do mesmo lote (m
 `Idempotency-Key` e mesmos `operation_id`s) sem duplicar; gap de seq → 409 com
 `last_seq_by_device`; presign recusado para sha256 não referenciado (6a); confirm
 com digest divergente → 409; confirm idempotente publica UMA mensagem; complete com
-mídia pendente → 409; complete feliz publica `survey-export` (assert em
+mídia pendente → 409; complete feliz publica `export_survey` (assert em
 `FakeQueue.commands()`); papel errado → 403; tenant errado → 404; GET com papel de
 revisão funciona. Snapshot OpenAPI regenerado (`make openapi-snapshot`) e commitado.
 

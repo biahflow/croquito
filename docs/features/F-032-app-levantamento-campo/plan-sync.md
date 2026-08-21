@@ -97,7 +97,7 @@ tasks:
     relative_effort: M
   - id: T11
     role: builder
-    goal: Handler survey-export no worker — SurveyPacket consolidado vira observações
+    goal: Handler export_survey no worker — SurveyPacket consolidado vira observações
       (approximate/unresolved com Provenance, mm→m em Decimal), sujeito aos portões
       do scene graph; nada vira exact
     scope: services/worker/src/croquito_worker/{local_queue.py (dispatch),
@@ -124,7 +124,7 @@ tasks:
     relative_effort: M
   - id: T13
     role: builder
-    goal: Transcrição no worker (command survey-transcribe) — provider de
+    goal: Transcrição no worker (command transcribe_survey_audio) — provider de
       speech-to-text atrás de entitlement/budget/lineage; texto vira rascunho ligado
       à nota de áudio, nunca auto-confirmado
     scope: services/worker/src/croquito_worker/{providers.py (adapter novo),
@@ -139,7 +139,7 @@ tasks:
     relative_effort: M
   - id: T14
     role: builder
-    goal: IA/CV pós-sync sobre fotos (command survey-photo-analysis) — caminho CV
+    goal: IA/CV pós-sync sobre fotos (command analyze_survey_photo) — caminho CV
       offline gera candidatos unresolved/export=false; leitura por provider de visão
       existente extrai texto/medidas visíveis como leituras a revisar, com lineage
     scope: services/worker/src/croquito_worker/{survey_photo_analysis.py (novo),
