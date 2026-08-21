@@ -5,8 +5,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import math
 import re
+import time
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -125,6 +127,7 @@ from croquito_core.events import (
     build_domain_event,
 )
 from croquito_core.ids import new_uuid7
+from croquito_core.logging_config import configure_logging
 from croquito_core.models import (
     SCENE_SCHEMA_VERSION,
     Entity,
@@ -2756,7 +2759,11 @@ def _require_idempotency(
     return idempotency_key
 
 
+_REQUEST_LOGGER = logging.getLogger("croquito_api.request")
+
+
 def create_app(settings: ApiSettings | None = None, database: Database | None = None) -> FastAPI:
+    configure_logging()
     runtime_settings = settings or ApiSettings.from_environment()
     runtime_database = database or Database(runtime_settings.database_url)
     application = FastAPI(
@@ -2796,8 +2803,28 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
     async def request_correlation(request: Request, call_next: Any) -> Any:
         request_id = request.headers.get("X-Request-ID") or str(new_uuid7())
         request.state.request_id = request_id
+        started_at = time.monotonic()
         response = await call_next(request)
+        duration_ms = (time.monotonic() - started_at) * 1000
         response.headers["X-Request-ID"] = request_id
+        # A rota é o TEMPLATE (`/v1/jobs/{job_id}/...`), nunca o path cru: o path resolvido
+        # carrega UUID de job/tenant e viraria conteúdo em log. Sem rota casada (404 antes do
+        # roteamento, ex. método inválido), não há `request.scope["route"]` — registramos um
+        # rótulo fixo em vez do path.
+        route = request.scope.get("route")
+        route_path = route.path if route is not None else "unmatched"
+        log_level = logging.WARNING if response.status_code >= 500 else logging.INFO
+        _REQUEST_LOGGER.log(
+            log_level,
+            "request_completed",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "route": route_path,
+                "status_code": response.status_code,
+                "duration_ms": round(duration_ms, 3),
+            },
+        )
         return response
 
     @application.exception_handler(StarletteHTTPException)

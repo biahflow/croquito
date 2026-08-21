@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import closing, suppress
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ from croquito_core.events import (
     build_domain_event,
 )
 from croquito_core.ids import new_uuid7
+from croquito_core.logging_config import configure_logging
 from croquito_core.models import SceneRevision
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.takeoff import TakeoffPacket
@@ -894,7 +896,49 @@ class LocalQueueWorker:
         Contrato com o chamador: retorno normal significa ack (o transporte pode
         descartar a mensagem); exceção significa reentrega. Nenhum handler apaga
         mensagem — a semântica do transporte mora aqui e em `run_once`.
+
+        Envolve `_dispatch_command` só para medir e logar o desfecho (comando, job,
+        duração, status); a reentrega continua decidida pela exceção propagar intocada.
         """
+        command = body.get("command", "process_upload")
+        job_id = body.get("job_id")
+        started = time.monotonic()
+        try:
+            result = self._dispatch_command(body)
+        except Exception as exc:
+            duration_ms = (time.monotonic() - started) * 1000
+            error_code_value = getattr(exc, "code", None)
+            # `code` costuma ser um StrEnum (ex. `ProviderFailureCode`); `str()` nele
+            # devolve só o valor ("TIMEOUT"), nunca "ProviderFailureCode.TIMEOUT" — sem
+            # `.value` explícito não há ambiguidade de tipo com o `None` do fallback.
+            error_code = (
+                str(error_code_value) if error_code_value is not None else type(exc).__name__
+            )
+            logger.error(
+                "worker_command_failed",
+                extra={
+                    "command": command,
+                    "job_id": job_id if isinstance(job_id, str) else None,
+                    "status": "error",
+                    "duration_ms": round(duration_ms, 3),
+                    "error_code": error_code,
+                },
+            )
+            raise
+        duration_ms = (time.monotonic() - started) * 1000
+        logger.info(
+            "worker_command_completed",
+            extra={
+                "command": command,
+                "job_id": job_id if isinstance(job_id, str) else None,
+                "status": "ok",
+                "duration_ms": round(duration_ms, 3),
+            },
+        )
+        return result
+
+    def _dispatch_command(self, body: Mapping[str, Any]) -> int:
+        """Corpo original de `dispatch`: roteia pelo `command` sem instrumentação."""
         # Messages published before the command field are always ingestion work.
         command = body.get("command", "process_upload")
         tenant_id = body.get("tenant_id")
@@ -2433,6 +2477,7 @@ class LocalQueueWorker:
 
 def run_local_worker_once(*, provider_suite: ProviderSuite | None = None) -> int:
     """Consome uma mensagem local; a suíte só existe quando o chamador a injeta."""
+    configure_logging()
     return LocalQueueWorker(
         LocalWorkerSettings.from_environment(), provider_suite=provider_suite
     ).run_once()

@@ -333,6 +333,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    from croquito_core.logging_config import configure_logging
+
+    configure_logging()
+
     if args.command == "seed-review":
         from croquito_worker.criteria import ScopeCriterionError, parse_criterion_declaration
         from croquito_worker.local_queue import LocalWorkerSettings

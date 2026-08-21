@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -29,6 +30,7 @@ from croquito_worker.local_queue import (
     LocalQueueWorker,
     LocalWorkerSettings,
     S3ProtectedRawResponseStore,
+    UnroutableMessageError,
     ValidatedUpload,
     _validate_pdf_stream,
 )
@@ -1111,3 +1113,101 @@ def test_chamada_de_provider_concluida_vira_evento_de_custo_sem_conteudo(
         assert isinstance(payload["latency_ms"], int)
     # A âncora da extração é o braço primário; o evento nomeia quem realmente respondeu.
     assert "anthropic" in {evento.payload_json["provider"] for evento in eventos}
+
+
+def test_dispatch_logs_command_completion_with_status_ok_and_duration(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """F-031 T5: comando despachado com sucesso loga `command`/`job_id`/`status`/
+    `duration_ms` — usa o caminho de reentrega (job já ingerido) porque não precisa
+    de storage nem provider para completar com `status: "ok"`."""
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'worker.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    expires_at = datetime.now(UTC) + timedelta(days=7)
+    job_id = "00000000-0000-7000-8000-000000000002"
+    with database.sessions.begin() as session:
+        session.add(
+            ProjectRecord(
+                id="project-log",
+                tenant_id="tenant-a",
+                name="Projeto",
+                default_unit="m",
+                created_by="reviewer",
+                expires_at=expires_at,
+            )
+        )
+        session.add(
+            UploadRecord(
+                id="upload-log",
+                tenant_id="tenant-a",
+                object_key="tenants/tenant-a/uploads/upload-log/entrada.pdf",
+                filename="entrada.pdf",
+                content_type="application/pdf",
+                size_bytes=10,
+                sha256="a" * 64,
+            )
+        )
+        session.flush()
+        session.add(
+            JobRecord(
+                id=job_id,
+                tenant_id="tenant-a",
+                project_id="project-log",
+                upload_id="upload-log",
+                status="REVIEW_REQUIRED",  # já ingerido: dispatch encerra sem tocar storage
+                stage="PREVIEWING",
+                expires_at=expires_at,
+            )
+        )
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+        )
+    )
+
+    with caplog.at_level(logging.INFO, logger="croquito_worker.local_queue"):
+        result = worker.dispatch(
+            {"command": "process_upload", "job_id": job_id, "tenant_id": "tenant-a"}
+        )
+
+    assert result == 1
+    records = [r for r in caplog.records if r.name == "croquito_worker.local_queue"]
+    assert len(records) == 1
+    record = records[0]
+    assert record.command == "process_upload"  # type: ignore[attr-defined]
+    assert record.job_id == job_id  # type: ignore[attr-defined]
+    assert record.status == "ok"  # type: ignore[attr-defined]
+    assert isinstance(record.duration_ms, float)  # type: ignore[attr-defined]
+
+
+def test_dispatch_logs_error_status_and_code_then_still_reraises(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Comando que falha loga `status: "error"` com `error_code` estável e a exceção
+    continua propagando — a semântica de reentrega da fila não pode mudar."""
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'worker.db'}"
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+        )
+    )
+
+    with (
+        caplog.at_level(logging.INFO, logger="croquito_worker.local_queue"),
+        pytest.raises(UnroutableMessageError),
+    ):
+        worker.dispatch({"command": "process_upload", "tenant_id": "tenant-a"})  # sem job_id
+
+    records = [r for r in caplog.records if r.name == "croquito_worker.local_queue"]
+    assert len(records) == 1
+    record = records[0]
+    assert record.status == "error"  # type: ignore[attr-defined]
+    assert record.error_code == "UnroutableMessageError"  # type: ignore[attr-defined]
+    assert isinstance(record.duration_ms, float)  # type: ignore[attr-defined]

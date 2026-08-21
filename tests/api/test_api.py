@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import logging
 import math
 import re
 from datetime import UTC, datetime, timedelta
@@ -4220,3 +4221,41 @@ def test_resumo_conta_rodadas_de_medicao_sem_duplicar_o_lineage_carregado_adiant
         "output_tokens": 900,
         "estimated_cost_usd": "0.4200",
     }
+
+
+def test_request_correlation_logs_the_route_template_never_the_raw_path_with_the_id(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """F-031 T5: log de request usa a rota template — o UUID nunca aparece no valor
+    logado, `duration_ms` é numérico e `request_id` é o mesmo devolvido no header."""
+    client = _client(tmp_path)
+    job_id = str(new_uuid7())
+
+    with caplog.at_level(logging.INFO, logger="croquito_api.request"):
+        response = client.get(f"/v1/jobs/{job_id}", headers=_headers("tenant-a"))
+
+    assert response.status_code == 404
+    records = [r for r in caplog.records if r.name == "croquito_api.request"]
+    assert len(records) == 1
+    record = records[0]
+    assert record.route == "/v1/jobs/{job_id}"  # type: ignore[attr-defined]
+    assert job_id not in record.route  # type: ignore[attr-defined]
+    assert record.method == "GET"  # type: ignore[attr-defined]
+    assert record.status_code == 404  # type: ignore[attr-defined]
+    assert isinstance(record.duration_ms, float)  # type: ignore[attr-defined]
+    assert record.request_id == response.headers["X-Request-ID"]  # type: ignore[attr-defined]
+
+
+def test_create_app_called_repeatedly_does_not_duplicate_json_log_handlers(
+    tmp_path: Path,
+) -> None:
+    """`create_app()` chama `configure_logging()`; a suíte instancia vários apps no
+    mesmo processo, e isso nunca pode duplicar o handler do root logger."""
+    from croquito_core.logging_config import JsonLogFormatter
+
+    _client(tmp_path)
+    _client(tmp_path)
+
+    root = logging.getLogger()
+    json_handlers = [h for h in root.handlers if isinstance(h.formatter, JsonLogFormatter)]
+    assert len(json_handlers) == 1
