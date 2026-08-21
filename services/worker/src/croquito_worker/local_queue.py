@@ -12,7 +12,8 @@ import json
 import logging
 import os
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -29,6 +30,7 @@ from sqlalchemy.engine import Connection, RowMapping
 from sqlalchemy.exc import IntegrityError
 
 from croquito_core.errors import DomainValidationError
+from croquito_core.field import SurveyPacket
 from croquito_core.ids import new_uuid7
 from croquito_core.models import SceneRevision
 from croquito_valuation.errors import ValuationValidationError
@@ -60,6 +62,15 @@ from croquito_worker.review_store import (
     ReviewAlreadyExistsError,
     insert_review_revision_v1,
     json_expression,
+)
+from croquito_worker.survey_export import (
+    SURVEY_COMPLETED,
+    SurveyExportError,
+    build_survey_export,
+    index_origin_operations,
+    media_objects,
+    survey_attachments_object_key,
+    survey_scene_object_key,
 )
 from croquito_worker.tracing import (
     TRACER_VERSION,
@@ -724,6 +735,15 @@ class LocalQueueWorker:
                 tenant_id=tenant_id,
                 packet_sha256=packet_sha256,
             )
+        if command == "export_survey":
+            # Levantamento de campo também não tem `job_id` e nunca terá nesta fatia: o
+            # pacote sincronizado vira OBSERVAÇÃO no object store, sem `JobRecord` nem
+            # revisão (F-032 T11). Por isso o roteamento vem antes da guarda de `job_id`,
+            # como o das rodadas acima.
+            survey_id = body.get("survey_id")
+            if not isinstance(survey_id, str):
+                raise UnroutableMessageError("Mensagem de levantamento inválida")
+            return self._handle_survey_export(survey_id=survey_id, tenant_id=tenant_id)
         job_id = body.get("job_id")
         if not isinstance(job_id, str):
             raise UnroutableMessageError("Mensagem de processamento inválida")
@@ -2114,6 +2134,134 @@ class LocalQueueWorker:
             digests={
                 TAKEOFF_OVERLAY_DIGEST: hashlib.sha256(overlay_bytes).hexdigest(),
                 TAKEOFF_OVERLAY_PACKET_DIGEST: packet_sha256,
+            },
+        )
+        return 1
+
+    # -- Levantamento de campo: pacote sincronizado → observações (F-032) ---------------
+
+    def _put_survey_json(self, *, object_key: str, document: dict[str, Any]) -> int:
+        """Grava um artefato JSON do levantamento sob o prefixo privado do tenant."""
+        payload = json.dumps(document, ensure_ascii=False).encode("utf-8")
+        self.s3_client.put_object(
+            Bucket=self.settings.artifact_bucket,
+            Key=object_key,
+            Body=payload,
+            ContentType="application/json",
+            **({"ServerSideEncryption": "AES256"} if self.settings.storage_sse_enabled else {}),
+        )
+        return len(payload)
+
+    def _survey_operation_payloads(
+        self, rows: Sequence[RowMapping]
+    ) -> Iterator[tuple[str, Mapping[str, Any]]]:
+        for row in rows:
+            payload = _json_column(row["payload_json"])
+            yield str(row["id"]), payload if isinstance(payload, Mapping) else {}
+
+    def _handle_survey_export(self, *, survey_id: str, tenant_id: str) -> int:
+        """Converte o levantamento concluído em observações e as publica no object store.
+
+        Duas precondições antes de qualquer trabalho — levantamento concluído e mídia
+        citada já confirmada — são defesa em profundidade: a rota `complete` só publica
+        depois de checar as duas, e o worker não confia em quem publicou a mensagem.
+
+        Nenhum `JobRecord`/`RevisionRecord` é criado e nenhuma linha é escrita: a cena e o
+        índice de anexos são artefatos de observação, gravados em CHAVE ESTÁVEL, de modo
+        que reprocessar a mesma mensagem sobrescreva os mesmos dois objetos em vez de
+        acumular versões. A integração dessas observações na jornada do escritório é fatia
+        futura (F-032 `plan-sync.md`).
+        """
+        started = time.monotonic()
+        with self.engine.connect() as connection:
+            parameters = {"survey_id": survey_id, "tenant_id": tenant_id}
+            record = (
+                connection.execute(
+                    text(
+                        "SELECT status, snapshot_json FROM survey_records "
+                        "WHERE id = :survey_id AND tenant_id = :tenant_id"
+                    ),
+                    parameters,
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if record is None:
+                raise SurveyExportError("SURVEY_NOT_FOUND", "levantamento inexistente neste tenant")
+            if str(record["status"]) != SURVEY_COMPLETED:
+                raise SurveyExportError(
+                    "SURVEY_NOT_COMPLETED", "levantamento ainda não foi concluído"
+                )
+            media_rows = (
+                connection.execute(
+                    text(
+                        "SELECT sha256, mime_type, byte_size, object_key, status "
+                        "FROM survey_media_records "
+                        "WHERE survey_id = :survey_id AND tenant_id = :tenant_id"
+                    ),
+                    parameters,
+                )
+                .mappings()
+                .all()
+            )
+            operation_rows = (
+                connection.execute(
+                    text(
+                        "SELECT id, payload_json FROM survey_operation_records "
+                        "WHERE survey_id = :survey_id AND tenant_id = :tenant_id ORDER BY seq"
+                    ),
+                    parameters,
+                )
+                .mappings()
+                .all()
+            )
+        try:
+            packet = SurveyPacket.model_validate(_json_column(record["snapshot_json"]))
+        except ValidationError as error:
+            # Snapshot fora do contrato é defeito de gravação, não silêncio: a exportação
+            # para com código estável e o levantamento continua íntegro no banco.
+            raise SurveyExportError(
+                "SURVEY_SNAPSHOT_INVALID", "o pacote consolidado não satisfaz o contrato"
+            ) from error
+        artifacts = build_survey_export(
+            packet,
+            tenant_id=tenant_id,
+            survey_id=survey_id,
+            media=media_objects(media_rows),
+            origin_operations=index_origin_operations(
+                self._survey_operation_payloads(operation_rows)
+            ),
+        )
+        scene_bytes = self._put_survey_json(
+            object_key=survey_scene_object_key(tenant_id=tenant_id, survey_id=survey_id),
+            document=artifacts.scene.model_dump(mode="json"),
+        )
+        attachments_bytes = self._put_survey_json(
+            object_key=survey_attachments_object_key(tenant_id=tenant_id, survey_id=survey_id),
+            document=artifacts.attachments,
+        )
+        counts = artifacts.counts()
+        written_bytes = scene_bytes + attachments_bytes
+        duration_ms = int((time.monotonic() - started) * 1000)
+        # Só identificadores opacos, contagens e duração: coordenada, nome, nota e texto de
+        # campo nunca entram em log de aplicação.
+        logger.info(
+            "survey_export_completed survey_id=%s entities=%d measurements=%d issues=%d "
+            "media=%d notes=%d bytes=%d duration_ms=%d",
+            survey_id,
+            counts["entities"],
+            counts["measurements"],
+            counts["issues"],
+            counts["media"],
+            counts["notes"],
+            written_bytes,
+            duration_ms,
+            extra={
+                "stage": "SURVEY_EXPORT",
+                "survey_id": survey_id,
+                **counts,
+                "bytes": written_bytes,
+                "duration_ms": duration_ms,
             },
         )
         return 1

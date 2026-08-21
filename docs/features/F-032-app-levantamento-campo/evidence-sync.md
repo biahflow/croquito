@@ -69,6 +69,68 @@ Consolidado por tarefa conforme cada BUILD REPORT chega; a evidência do MVP loc
   em modo local). Ato humano pendente: client `croquito-field` + papel
   `field_technician` no realm.
 
+### T8 — backend `/v1/surveys` (tabelas, migração, rotas)
+
+- Executor: `implementador-opus`. BUILD REPORT: `BUILD_COMPLETE` (rodada inicial +
+  rodada de correção da revisão).
+- Entrega: 5 rotas (`operations` em lote idempotente com conflito 6b carregando
+  `server_snapshot`/`last_seq_by_device`; `GET` de estado; `media/presign` com a
+  regra 6a "metadados antes da mídia"; `media/{sha256}/confirm` com digest
+  (GCS adiado ao worker, auditado) publicando exatamente uma mensagem por
+  transição com caminho de volta (fila recusou → volta a PRESIGNED + 503);
+  `complete` com `base_version` + mídia toda confirmada → `export_survey`);
+  migração `0007_survey_field_sync` aditiva; papel `field_technician` (403 antes
+  de lookup) + papéis de leitura do escritório; códigos novos `SURVEY_CONFLICT`,
+  `SURVEY_MEDIA_NOT_REFERENCED`, `SURVEY_MEDIA_DIGEST_MISMATCH`,
+  `SURVEY_MEDIA_PENDING`, `SURVEY_NOT_CONCLUDED`, `SURVEY_PACKET_INVALID`;
+  comandos de fila `export_survey` / `transcribe_survey_audio` /
+  `analyze_survey_photo`; 25+ testes novos em `tests/api/test_surveys.py`;
+  `API_CONTRACT.md` e snapshot OpenAPI atualizados (portão de rota documentada).
+- Revisão linha a linha (modelo principal) exigiu rodada de correção, aplicada
+  pelo mesmo builder: (1) comandos de fila renomeados para a convenção do repo
+  (verbo snake_case — o Task Contract tinha ditado kebab-case, erro do
+  planejador); (2) chaves com id gerado no cliente escopadas por tenant — PK
+  composta `(tenant_id, id)` em `survey_records`/`survey_operation_records`, FKs e
+  uniques compostas — fechando o vazamento de existência/ocupação de UUID entre
+  tenants que o próprio builder havia reportado; a migração 0007 (nunca aplicada)
+  foi editada em vez de criar 0008. O builder ainda corrigiu uma falha da
+  instrução de revisão (unique de seq sem tenant reabriria o defeito) — aceito.
+- Validação: `pytest tests/api` 316 passed/11 skipped; `make check` e `make test`
+  EXIT 0; testes de migração executados contra PostgreSQL 17 real (12 passed,
+  incluindo gate de drift e proibição de DDL destrutivo).
+- Riscos remanescentes declarados: mensagem de fila pode se perder entre commit e
+  publish (sem tabela de outbox no servidor; retry do cliente cobre o `complete`,
+  o `confirm` devolve cedo ao ver CONFIRMED — aceito e documentado); colisão de
+  numeração com a 0007 da F-029 fica para a integração (PLAN_DEVIATION prevista).
+
+### T11 — handler `export_survey` no worker (pacote → observações)
+
+- Executor: `implementador-opus`. BUILD REPORT: `BUILD_COMPLETE`.
+- Entrega: `services/worker/src/croquito_worker/survey_export.py` (mapeamento puro
+  e determinístico → `SceneRevision` de campo + `attachments.json`; chaves
+  estáveis `tenants/{t}/surveys/{s}/export/{scene,attachments}.json`), roteamento
+  `export_survey` no dispatch do `local_queue.py`, 16 testes novos. Fail-closed
+  provado: artefato gravado dá `['SCENE_NOT_APPROVED']` em `export_errors()`;
+  contrafactual com approved/export forçados dá
+  `APPROXIMATION_NOT_ACCEPTED`/`UNRESOLVED_ENTITY`; medida confirmada divergente
+  da geometria dá `MEASUREMENT_MISMATCH`.
+- Desvios conscientes ACEITOS na revisão (todos são invariantes do pipeline
+  aplicadas, não lacunas): (1) `APPROXIMATION_NOT_ACCEPTED` não aparece no
+  artefato como gravado porque `export_errors()` pula entidade `export=False` — o
+  Task Contract errou; a intenção é provada por contrafactual em teste;
+  (2) elemento não vira polyline (ordem de ligação não declarada = topologia
+  inventada — viaja em anexo); (3) `angle`/`height`/`level`/`drop` não ganham
+  unidade/semântica inventada — viram Issue INFO + entrada em
+  `measurements_without_scene_entry` no anexo; (4) medida sem segmento observado
+  não é amarrada por proximidade. Decisões de domínio registradas para a fatia de
+  integração no escritório consumir.
+- Validação: `pytest tests/worker` 936 passed/1 skipped (baseline 920);
+  `tests/worker+api+e2e` 1261 passed; `make check` e `make test` exit 0
+  (pytest 1849; web 853; field 204 — já com a T9 em andamento na árvore).
+- Riscos declarados: `attachments.json` carrega texto de cliente no bucket do
+  tenant (conferir política de ciclo de vida do prefixo `export/` na operação);
+  artefatos ainda sem consumidor no escritório (fatia futura, relação F-030).
+
 ## PLAN_DEVIATION
 
 (nenhum até o momento)
