@@ -5,7 +5,7 @@
  */
 
 export { createSyncApi, type FetchLike, type SyncApi, type SyncFailure } from "./apiClient";
-export { API_BASE_URL, API_BASE_URL_ENV, normalizeApiBaseUrl } from "./config";
+export { API_BASE_URL, API_BASE_URL_ENV, DEV_TEST_TOKEN, normalizeApiBaseUrl } from "./config";
 export type { MediaIndex, MediaMeta, SurveyPacketShape } from "./contract";
 export { isSurveyPacketShape, MissingMediaError, toSurveyPacket } from "./contract";
 export {

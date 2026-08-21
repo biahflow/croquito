@@ -45,6 +45,7 @@ import { captureAudio } from "../voice/media";
 import type { RecordedAudio } from "../voice/recorder";
 import {
   API_BASE_URL,
+  DEV_TEST_TOKEN,
   createSyncApi,
   createSyncEngine,
   initialSyncState,
@@ -173,8 +174,18 @@ export function FieldApp({ repository }: FieldAppProps) {
    * Motor de sincronização (T9), instância única por montagem. Sem
    * `VITE_CROQUITO_API_BASE_URL` a API é `null`: o motor opera em modo local, nenhuma
    * chamada de rede sai do app e a coleta é exatamente a de antes desta tarefa. O token
-   * vem da T10 (`getFreshAccessToken`), que devolve estado — nunca exceção.
+   * vem da T10 (`getFreshAccessToken`), que devolve estado — nunca exceção; com
+   * `VITE_CROQUITO_TEST_TOKEN` (só dev, espelho do CROQUITO_ALLOW_TEST_TOKENS da API) o
+   * provedor devolve o token fixo da rodada local em aparelho real.
    */
+  function devTestToken(): typeof getFreshAccessToken {
+    const token = DEV_TEST_TOKEN;
+    if (token === null) {
+      return getFreshAccessToken;
+    }
+    return () => Promise.resolve({ ok: true, token });
+  }
+
   const syncEngine = useMemo(
     () =>
       createSyncEngine({
@@ -184,7 +195,10 @@ export function FieldApp({ repository }: FieldAppProps) {
             ? null
             : createSyncApi(API_BASE_URL, (input, init) => fetch(input, init)),
         deviceId: getOrCreateDeviceId(),
-        getFreshAccessToken,
+        // Rodada local em aparelho real: com `VITE_CROQUITO_TEST_TOKEN` declarado (só
+        // dev, espelho do CROQUITO_ALLOW_TEST_TOKENS da API), o envio usa o token fixo;
+        // sem a env, caminho normal da T10.
+        getFreshAccessToken: devTestToken(),
         onState: setSyncState,
       }),
     [repository],

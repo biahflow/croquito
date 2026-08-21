@@ -27,3 +27,14 @@ export function normalizeApiBaseUrl(value: unknown): string | null {
 export const API_BASE_URL: string | null = normalizeApiBaseUrl(
   import.meta.env.VITE_CROQUITO_API_BASE_URL,
 );
+
+/**
+ * Token de teste para rodada local em aparelho real — espelho do
+ * `CROQUITO_ALLOW_TEST_TOKENS` da API (formato `test:{tenant}:{subject}:{papéis}`):
+ * quando presente, o envio usa este token FIXO em vez do OIDC. Estritamente uma
+ * comodidade de DESENVOLVIMENTO, como a flag correspondente do backend — a env nunca é
+ * declarada em build hospedado, e ausente nada muda (`null` → caminho normal da T10).
+ */
+export const DEV_TEST_TOKEN: string | null = normalizeApiBaseUrl(
+  import.meta.env.VITE_CROQUITO_TEST_TOKEN,
+);

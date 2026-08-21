@@ -52,7 +52,31 @@ const RAUL_CAMPELO_CHECKLIST: ChecklistItem[] = [
   item("foto-acesso", "Foto do acesso principal"),
 ];
 
+const CAJU_LANCHES_CHECKLIST: ChecklistItem[] = [
+  item("perimetro", "Perímetro da praça"),
+  item("calcada", "Calçada perimetral"),
+  item("meio-fio", "Meio-fio"),
+  item("bancos", "Bancos"),
+  item("iluminacao", "Postes de iluminação"),
+  item("arvores", "Árvores existentes"),
+  item("piso", "Piso / grama"),
+  item("foto-acesso", "Foto do acesso principal"),
+];
+
 export const ORDERS: Order[] = [
+  {
+    // Ordem pedida pelo usuário na rodada de teste em aparelho real (2026-08-21) —
+    // praça real por nome/endereço, dados de levantamento continuam nascendo no campo.
+    id: "order-caju-lanches",
+    name: "Praça do Caju Lanches",
+    short_name: "Caju Lanches",
+    location: "Tauá, Ilha do Governador — Rio de Janeiro",
+    scope_label: "levantamento completo",
+    checklist: CAJU_LANCHES_CHECKLIST,
+    address: "Rua Capanema, s/n",
+    // Coordenada ilustrativa (região do Tauá) — referência para o "a ~X m", nunca medição.
+    address_location: { lat: -22.7995, lng: -43.1948 },
+  },
   {
     id: "order-guaxindiba",
     name: "Praça de Guaxindiba",
