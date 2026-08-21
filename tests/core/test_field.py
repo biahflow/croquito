@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from croquito_core.field import (
     SURVEY_SCHEMA_VERSION,
     Measurement,
+    ObservationNote,
     MeasurementKind,
     MeasurementStatus,
     MediaAnchor,
@@ -229,3 +230,29 @@ def test_survey_packet_aceita_operacao_do_mesmo_survey() -> None:
 def test_segment_exige_ids_nao_vazios() -> None:
     with pytest.raises(ValidationError):
         Segment(id="", from_point_id="p1", to_point_id="p2", created_at=NOW)
+
+
+def _media_ref() -> MediaRef:
+    return MediaRef(sha256="a" * 64, mime_type="audio/webm", byte_size=1024)
+
+
+def test_observacao_so_de_voz_e_valida() -> None:
+    """Prancha 7a (DAP rev.2, aprovada): nota só-áudio viaja com texto vazio."""
+    nota = ObservationNote(id="o1", text="", audio_media_ref=_media_ref(), created_at=NOW)
+
+    assert nota.text == ""
+    assert nota.audio_media_ref is not None
+
+
+def test_observacao_vazia_sem_texto_e_sem_audio_e_recusada() -> None:
+    """Mesma regra EMPTY_TEXT do domínio do app: nota sem nada não registra nada."""
+    with pytest.raises(ValidationError):
+        ObservationNote(id="o1", text="   ", created_at=NOW)
+
+
+def test_observacao_com_texto_e_audio_e_valida() -> None:
+    nota = ObservationNote(
+        id="o1", text="degrau solto na escada", audio_media_ref=_media_ref(), created_at=NOW
+    )
+
+    assert nota.text and nota.audio_media_ref is not None

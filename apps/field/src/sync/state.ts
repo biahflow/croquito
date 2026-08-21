@@ -13,9 +13,10 @@ import type { SurveyPacketShape } from "./contract";
  * a ordem em que o painel lista: metadados sempre primeiro (é a regra que o servidor
  * cobra — mídia sem âncora sincronizada é recusada), mídia depois.
  *
- * `audio` existe hoje sempre com total 0: o domínio ainda não grava áudio (voz é T12) e o
- * painel esconde categoria vazia. Está declarada porque o contrato do pacote (T7) já
- * carrega `audio_media_ref`, e a categoria da 6a é a mesma.
+ * `audio` passou a contar arquivos com as notas de voz (T12): cada `ObservationNote` com
+ * `audio_media_ref` é um item desta categoria. Total 0 — e categoria escondida do painel —
+ * enquanto o levantamento não tiver nenhuma nota de voz. O estado de TRANSCRIÇÃO (prancha
+ * 7c) é T13; aqui o áudio só sobe.
  */
 export const SYNC_CATEGORIES = ["metadata", "anchored_photo", "access_photo", "audio"] as const;
 

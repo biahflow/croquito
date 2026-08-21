@@ -93,13 +93,21 @@ export interface PhotoAnchor {
   created_at: string;
 }
 
-/** Anotação de campo em texto — "voz fora do MVP" (Feature Contract): o item de menu
- * "Observação (texto ou voz)" cita voz, mas o MVP só grava texto. */
+/** Anotação de campo — texto digitado, nota de voz, ou os dois (T12, prancha 7a da DAP
+ * rev.2; o escopo de voz foi reaberto por decisão humana de 2026-08-21).
+ *
+ * `audio_media_ref` é aditivo e guarda o `MediaRecord.id` do áudio já gravado via
+ * `SurveyRepository.saveMedia` — mesma convenção de `PhotoAnchor.local_media_ref` e de
+ * `ArrivalContext.access_media_ref`: o domínio carrega a referência em texto, nunca o
+ * blob (ele não é serializável em JSON puro). Uma nota só de voz nasce com `text` vazio;
+ * é a transcrição, feita no servidor depois do envio (T13), que devolve o rascunho de
+ * texto para conferência — o áudio original nunca é substituído. */
 export interface ObservationNote {
   id: string;
   text: string;
   point_id?: SurveyPointId;
   element_id?: ElementObjectId;
+  audio_media_ref?: string;
   created_at: string;
 }
 

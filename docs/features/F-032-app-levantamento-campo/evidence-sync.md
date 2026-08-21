@@ -168,6 +168,38 @@ Consolidado por tarefa conforme cada BUILD REPORT chega; a evidência do MVP loc
   (cenário exige perda de dados do servidor) não reoferece essas operações —
   LOW, o fluxo de conflito reaparece e `accept_server` resolve.
 
+### T12 — nota de voz offline no app (prancha 7a)
+
+- Executor: `implementador-opus`. BUILD REPORT: `BUILD_COMPLETE` + rodada de
+  correção de contrato concluída pelo modelo principal (ver abaixo).
+- Entrega: `apps/field/src/voice/` (recorder com matriz de codecs
+  webm/opus→mp4/aac por `isTypeSupported`, mime REAL no `MediaRecord` — nunca
+  `;codecs=`, nunca transcodifica; cancelar não grava nada; erros estruturados),
+  `VoiceNoteScreen` (7a: abre gravando, âncora escrita, Parar/Cancelar, banner
+  do destino da transcrição), domínio aditivo (`ObservationNote.audio_media_ref`;
+  nota texto OU voz, vazia continua `EMPTY_TEXT`), áudio na categoria `audio` do
+  SyncEngine (por último, ordem 6a) e resolvido no `toSurveyPacket`. Field: 236
+  testes (era 210).
+- **BLOCKER de integração achado pelo builder e resolvido na revisão**: o
+  contrato canônico da T7 exigia `text` com `min_length=1` (escrito quando voz
+  estava fora do MVP) — nota só-de-voz derrubaria o lote inteiro com 422. O
+  builder PAROU corretamente (escopo proibia `packages/core`); a rodada de
+  correção travou por permissão no harness do subagente e foi aplicada pelo
+  modelo principal, dentro do escopo aprovado pela DAP rev.2: `ObservationNote`
+  aceita `text` vazio COM `audio_media_ref` (validador espelha `EMPTY_TEXT`),
+  contratos regenerados (`make contracts`), snapshot OpenAPI atualizado, 3
+  testes novos em `tests/core/test_field.py`, dívida declarada removida do
+  `contract.ts`.
+- Decisões dentro da 7a aceitas: âncora em ponto quando houver (espelho da
+  foto), no levantamento quando não houver — escrito na tela; tela abre já
+  gravando (a prancha não tem botão iniciar); sem player nesta fatia (a 7a não
+  o mostra — registrado como reserva).
+- Validação: field 236 verdes; `tests/core` e `tests/api` completos verdes após
+  a correção; `make check`/`make test` completos ficam para o fechamento da
+  onda (T14 em execução paralela no worker). Riscos declarados: MediaRecorder
+  real não exercitável em vitest — matriz de codecs precisa da passada em
+  aparelho no piloto.
+
 ## PLAN_DEVIATION
 
 (nenhum até o momento)

@@ -419,6 +419,51 @@ describe("addObservation", () => {
 
     expect(result.error.code).toBe("EMPTY_TEXT");
   });
+
+  it("aceita nota só de voz — texto vazio com áudio é válido (T12)", () => {
+    const result = mustOk(
+      addObservation(emptySurvey(), { id: "o1", text: "", audio_media_ref: "media-audio" }, NOW),
+    );
+
+    expect(result.survey.observations).toEqual([
+      {
+        id: "o1",
+        text: "",
+        point_id: undefined,
+        element_id: undefined,
+        audio_media_ref: "media-audio",
+        created_at: NOW,
+      },
+    ]);
+    expect(result.operation.type).toBe("observation.add");
+  });
+
+  it("aceita nota com texto E áudio, ancorada num ponto", () => {
+    const survey = emptySurvey();
+    survey.points = [{ id: "p1", x_mm: 0, y_mm: 0, created_at: NOW }];
+
+    const result = mustOk(
+      addObservation(
+        survey,
+        { id: "o1", text: "Piso afundado", point_id: "p1", audio_media_ref: "media-audio" },
+        NOW,
+      ),
+    );
+
+    expect(result.survey.observations[0]).toMatchObject({
+      text: "Piso afundado",
+      point_id: "p1",
+      audio_media_ref: "media-audio",
+    });
+  });
+
+  it("rejeita nota vazia — sem texto e sem áudio — com EMPTY_TEXT", () => {
+    const result = mustFail(
+      addObservation(emptySurvey(), { id: "o1", text: "  ", audio_media_ref: "" }, NOW),
+    );
+
+    expect(result.error.code).toBe("EMPTY_TEXT");
+  });
 });
 
 describe("justifyMeasurement", () => {

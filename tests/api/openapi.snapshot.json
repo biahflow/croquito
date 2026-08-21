@@ -3239,7 +3239,7 @@
       },
       "ObservationNote": {
         "additionalProperties": false,
-        "description": "Espelho de `ObservationNote`. `audio_media_ref` é aditivo: o domínio de hoje só\ngrava texto (\"voz fora do MVP\", Feature Contract); o campo existe aqui como\npreparação para T12 e viaja sempre `None` até essa tarefa existir.",
+        "description": "Espelho de `ObservationNote`. Desde a T12 (prancha 7a da DAP rev.2, aprovada) a\nnota pode ser texto, voz (`audio_media_ref`) ou os dois; o que continua inválido é a\nnota VAZIA — sem texto e sem áudio ela não registra nada, mesma regra `EMPTY_TEXT`\ndo domínio do app (`apps/field/src/domain/commands.ts`).",
         "properties": {
           "audio_media_ref": {
             "anyOf": [
@@ -3285,7 +3285,6 @@
           },
           "text": {
             "maxLength": 5000,
-            "minLength": 1,
             "title": "Text",
             "type": "string"
           }

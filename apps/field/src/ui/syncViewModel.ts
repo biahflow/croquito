@@ -95,7 +95,7 @@ function categoryTone(entry: SyncCategoryState): SyncRowTone {
 
 /**
  * As linhas da prancha 6a, na ordem declarada de envio. Categoria sem nada a enviar não
- * aparece — é o caso dos áudios até a T12 existir.
+ * aparece — é o caso dos áudios num levantamento sem nenhuma nota de voz (T12).
  */
 export function buildCategoryViews(state: SyncState): SyncCategoryView[] {
   return state.categories

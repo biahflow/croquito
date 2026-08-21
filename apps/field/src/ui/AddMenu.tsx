@@ -3,6 +3,7 @@ export interface AddMenuProps {
   onConnectPoints: () => void;
   onAddPhotoAnchor: () => void;
   onAddObservation: () => void;
+  onAddVoiceNote: () => void;
   onClosePerimeter: () => void;
   onConclude: () => void;
   onCancel: () => void;
@@ -20,6 +21,10 @@ export interface AddMenuProps {
  * pacote aprovado explicitamente deixa fora ("captura e revisão de foto (câmera
  * aberta)" — Design Approval Package, "Explicitamente não aprovado").
  *
+ * "Observação por voz" (T12) usa a mesma lista: o item de menu da prancha 3b sempre citou
+ * "Observação (texto ou voz)", e a voz ganhou entrada própria em vez de um seletor dentro
+ * da tela de texto — uma escolha por gesto é a regra desta prancha.
+ *
  * "Concluir levantamento" (T5) entra aqui, não na bottombar da prancha 3a: é a opção
  * menos invasiva ao pacote aprovado — 3a permanece com os três comandos exatos da
  * revisão 1, e este menu já é uma lista extensível (mesmo padrão de "Fechar perímetro",
@@ -30,6 +35,7 @@ export function AddMenu({
   onConnectPoints,
   onAddPhotoAnchor,
   onAddObservation,
+  onAddVoiceNote,
   onClosePerimeter,
   onConclude,
   onCancel,
@@ -77,6 +83,14 @@ export function AddMenu({
           disabled={busy}
         >
           ✎&nbsp;&nbsp;Observação (texto)
+        </button>
+        <button
+          type="button"
+          className="btn btn-block btn-menu"
+          onClick={onAddVoiceNote}
+          disabled={busy}
+        >
+          🎤&nbsp;&nbsp;Observação por voz
         </button>
         <button
           type="button"

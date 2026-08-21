@@ -313,21 +313,33 @@ export interface AddObservationArgs {
   text: string;
   point_id?: SurveyPointId;
   element_id?: ElementObjectId;
+  /** `MediaRecord.id` do áudio já gravado via `saveMedia` antes deste comando (T12) —
+   * nunca o blob. Ver `ObservationNote.audio_media_ref` em `types.ts`. */
+  audio_media_ref?: string;
 }
 
+/**
+ * Registra uma observação de campo. Desde T12 a nota pode ser texto, voz, ou as duas
+ * coisas: o que continua inválido é a nota VAZIA — sem texto e sem áudio, ela não
+ * registraria nada. O código de erro segue `EMPTY_TEXT` (já é um código estável consumido
+ * pela tela); só a regra e a mensagem passaram a citar o áudio.
+ */
 export function addObservation(
   survey: Survey,
   args: AddObservationArgs,
   nowIso: string,
 ): CommandResult {
-  if (args.text.trim().length === 0) {
-    return fail("EMPTY_TEXT", "O texto da observação não pode ficar vazio.");
+  const hasText = args.text.trim().length > 0;
+  const hasAudio = args.audio_media_ref !== undefined && args.audio_media_ref.length > 0;
+  if (!hasText && !hasAudio) {
+    return fail("EMPTY_TEXT", "A observação precisa de texto digitado ou de uma nota de voz.");
   }
   const observation: ObservationNote = {
     id: args.id,
     text: args.text,
     point_id: args.point_id,
     element_id: args.element_id,
+    audio_media_ref: args.audio_media_ref,
     created_at: nowIso,
   };
   const next: Survey = { ...survey, observations: [...survey.observations, observation] };

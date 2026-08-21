@@ -9,6 +9,7 @@ const LATER = "2026-08-21T12:05:00.000Z";
 
 const PHOTO_SHA256 = "a".repeat(64);
 const ACCESS_PHOTO_SHA256 = "b".repeat(64);
+const AUDIO_SHA256 = "c".repeat(64);
 
 function representativeSurvey(): Survey {
   return {
@@ -99,6 +100,7 @@ function representativeMediaIndex(): MediaIndex {
   return new Map([
     ["media-photo", { sha256: PHOTO_SHA256, mime_type: "image/jpeg", byte_size: 204800 }],
     ["media-access", { sha256: ACCESS_PHOTO_SHA256, mime_type: "image/jpeg", byte_size: 102400 }],
+    ["media-audio", { sha256: AUDIO_SHA256, mime_type: "audio/webm", byte_size: 48000 }],
   ]);
 }
 
@@ -145,7 +147,7 @@ describe("toSurveyPacket", () => {
     });
     expect(packet.arrival_context?.gps).toEqual({ lat: -22.9, lng: -43.2, accuracy_m: 5 });
 
-    // observação sem áudio: campo preparado, sempre undefined nesta fatia.
+    // observação sem áudio: campo continua ausente.
     expect(packet.observations?.[0]?.audio_media_ref).toBeUndefined();
 
     // waiver de conclusão preservado.
@@ -181,6 +183,59 @@ describe("toSurveyPacket", () => {
       },
     ]);
     expect((packet.operations as { status?: unknown }[])[0]?.status).toBeUndefined();
+  });
+
+  it("resolve o áudio da nota de voz por identidade de conteúdo (T12)", () => {
+    const survey = representativeSurvey();
+    survey.observations = [
+      // Nota só de voz: o texto nasce vazio e a transcrição (T13) o preenche depois.
+      { id: "obs-voz", text: "", point_id: "p1", audio_media_ref: "media-audio", created_at: NOW },
+      // Nota com texto E voz.
+      {
+        id: "obs-mista",
+        text: "Piso afundado junto ao poste",
+        audio_media_ref: "media-audio",
+        created_at: LATER,
+      },
+    ];
+
+    const packet = toSurveyPacket(survey, representativeOperations(), representativeMediaIndex());
+
+    const audioRef = { sha256: AUDIO_SHA256, mime_type: "audio/webm", byte_size: 48000 };
+    expect(packet.observations).toEqual([
+      {
+        id: "obs-voz",
+        text: "",
+        point_id: "p1",
+        element_id: undefined,
+        audio_media_ref: audioRef,
+        created_at: NOW,
+      },
+      {
+        id: "obs-mista",
+        text: "Piso afundado junto ao poste",
+        point_id: undefined,
+        element_id: undefined,
+        audio_media_ref: audioRef,
+        created_at: LATER,
+      },
+    ]);
+    // A referência local (`MediaRecord.id`) nunca viaja.
+    expect(JSON.stringify(packet)).not.toContain("media-audio");
+    expect(isSurveyPacketShape(packet)).toBe(true);
+  });
+
+  it("lança MissingMediaError quando o áudio da nota não está no índice", () => {
+    const survey = representativeSurvey();
+    survey.photo_anchors = [];
+    delete survey.context;
+    survey.observations = [
+      { id: "obs-voz", text: "", audio_media_ref: "media-ausente", created_at: NOW },
+    ];
+
+    expect(() => toSurveyPacket(survey, representativeOperations(), new Map())).toThrow(
+      MissingMediaError,
+    );
   });
 
   it("lê status/waivers retrocompatíveis quando o survey é legado (pré-T5)", () => {

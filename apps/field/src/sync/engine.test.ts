@@ -30,6 +30,8 @@ const BASE_URL = "https://api.croquito.test";
 const TOKEN = "token-de-teste";
 const PHOTO_SHA256 = "a".repeat(64);
 const PHOTO_BYTES = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+const AUDIO_SHA256 = "c".repeat(64);
+const AUDIO_BYTES = new Uint8Array([9, 8, 7, 6]);
 
 interface RecordedCall {
   url: string;
@@ -131,6 +133,19 @@ function photoMedia(): MediaRecord {
     id: "media-photo",
     sha256: PHOTO_SHA256,
     mime_type: "image/jpeg",
+    byte_size: blob.size,
+    blob,
+    created_at: NOW,
+  };
+}
+
+/** Nota de voz gravada no aparelho (T12): mesmo `MediaRecord` das fotos, outro mime. */
+function audioMedia(): MediaRecord {
+  const blob = new Blob([AUDIO_BYTES], { type: "audio/webm" });
+  return {
+    id: "media-audio",
+    sha256: AUDIO_SHA256,
+    mime_type: "audio/webm",
     byte_size: blob.size,
     blob,
     created_at: NOW,
@@ -376,6 +391,97 @@ describe("createSyncEngine", () => {
     expect(put?.headers.Authorization).toBeUndefined();
     const photos = state.categories.find((entry) => entry.category === "anchored_photo");
     expect(photos).toMatchObject({ total: 1, sent: 1, failed: 0, status: "sent" });
+  });
+
+  it("a nota de voz sobe na categoria audio, depois das fotos (T12, prancha 6a)", async () => {
+    const survey = surveyFixture({
+      photo_anchors: [
+        { id: "ph1", point_id: "p1", local_media_ref: "media-photo", created_at: NOW },
+      ],
+      observations: [
+        {
+          id: "obs-voz",
+          text: "",
+          point_id: "p1",
+          audio_media_ref: "media-audio",
+          created_at: NOW,
+        },
+      ],
+    });
+    await seed(survey, [operationFixture(1)], photoMedia());
+    await repository.saveMedia(audioMedia());
+    const presigned: unknown[] = [];
+    const { engine, calls } = harness(
+      (call) => {
+        if (call.url.endsWith("/operations")) {
+          return jsonResponse(200, ackBody(["op-1"], 1, 1));
+        }
+        if (call.url.endsWith("/media/presign")) {
+          const body = call.body as { sha256: string; mime_type: string };
+          presigned.push(body);
+          return jsonResponse(200, {
+            media_id: "11111111-1111-1111-1111-111111111111",
+            sha256: body.sha256,
+            object_key: `tenants/t/surveys/${SURVEY_ID}/media/${body.sha256}`,
+            url: `https://storage.croquito.test/assinada/${body.sha256}`,
+            headers: { "Content-Type": body.mime_type },
+            expires_at: NOW,
+          });
+        }
+        if (call.url.endsWith("/confirm")) {
+          return jsonResponse(200, stateBody(1));
+        }
+        if (call.method === "PUT") {
+          return new Response(null, { status: 200 });
+        }
+        return jsonResponse(200, stateBody(1));
+      },
+      { repository },
+    );
+
+    const state = await engine.syncSurvey(SURVEY_ID);
+
+    expect(state.phase).toBe("done");
+    // Ordem declarada da prancha 6a: metadados, foto, áudio. O mime assinado é o contêiner
+    // REAL gravado no aparelho.
+    expect(presigned).toEqual([
+      { sha256: PHOTO_SHA256, mime_type: "image/jpeg", byte_size: PHOTO_BYTES.length },
+      { sha256: AUDIO_SHA256, mime_type: "audio/webm", byte_size: AUDIO_BYTES.length },
+    ]);
+    expect(state.categories.find((entry) => entry.category === "audio")).toMatchObject({
+      total: 1,
+      sent: 1,
+      failed: 0,
+      status: "sent",
+    });
+    // O pacote enviado carrega o áudio por digest, nunca a referência local do aparelho.
+    const submit = calls.find((call) => call.url.endsWith("/operations"));
+    const body = submit?.body as {
+      survey: { observations: { audio_media_ref: unknown }[] };
+    };
+    expect(body.survey.observations[0]?.audio_media_ref).toEqual({
+      sha256: AUDIO_SHA256,
+      mime_type: "audio/webm",
+      byte_size: AUDIO_BYTES.length,
+    });
+  });
+
+  it("levantamento sem nota de voz mantém a categoria audio em zero", async () => {
+    await seed(surveyFixture(), [operationFixture(1)]);
+    const { engine } = harness(
+      (call) =>
+        call.url.endsWith("/operations")
+          ? jsonResponse(200, ackBody(["op-1"], 1, 1))
+          : jsonResponse(200, stateBody(1)),
+      { repository },
+    );
+
+    const state = await engine.syncSurvey(SURVEY_ID);
+
+    expect(state.categories.find((entry) => entry.category === "audio")).toMatchObject({
+      total: 0,
+      sent: 0,
+    });
   });
 
   it("duas âncoras da mesma foto sobem uma vez, e o pacote resolve as duas", async () => {

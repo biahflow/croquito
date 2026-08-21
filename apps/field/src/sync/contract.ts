@@ -37,8 +37,8 @@ export type MediaMeta = Pick<MediaRecord, "sha256" | "mime_type" | "byte_size">;
 /**
  * Índice de mídia local já resolvido, chaveado por `MediaRecord.id`. Quem chama
  * `toSurveyPacket` monta este índice com `SurveyRepository.getMedia` para cada
- * `local_media_ref`/`access_media_ref` referenciado pelo survey — este módulo nunca lê
- * storage diretamente.
+ * `local_media_ref`/`access_media_ref`/`audio_media_ref` referenciado pelo survey — este
+ * módulo nunca lê storage diretamente.
  */
 export type MediaIndex = ReadonlyMap<string, MediaMeta>;
 
@@ -112,23 +112,33 @@ function toPacketMediaAnchor(
     media_ref: resolveMediaRef(anchor.local_media_ref, mediaIndex),
     point_id: anchor.point_id,
     element_id: anchor.element_id,
-    // Domínio de hoje só ancora foto a ponto/elemento (`PhotoAnchor`); vínculo a nota é
-    // preparação do contrato para o envelope de áudio de T12.
+    // Domínio só ancora foto a ponto/elemento (`PhotoAnchor`). O áudio de T12 NÃO passa
+    // por aqui: ele viaja em `observations[].audio_media_ref`, que é o vínculo que a nota
+    // já tem — duplicá-lo como âncora criaria duas verdades sobre o mesmo arquivo.
     note_id: undefined,
     created_at: anchor.created_at,
   };
 }
 
-function toPacketObservation(note: ObservationNote): SurveyPacket.ObservationNote {
+/**
+ * Observação com o áudio (T12) resolvido por identidade de conteúdo, igual a foto: o
+ * `MediaRecord.id` local nunca viaja, só sha256/mime/tamanho.
+ *
+ * Nota só-de-voz viaja com `text: ""` e é aceita pelo contrato canônico desde a rodada
+ * de correção da T12 (`croquito_core.field.ObservationNote` exige texto não-vazio OU
+ * `audio_media_ref` — a mesma regra `EMPTY_TEXT` do domínio); o mapeamento manda o texto
+ * como ele é.
+ */
+function toPacketObservation(
+  note: ObservationNote,
+  mediaIndex: MediaIndex,
+): SurveyPacket.ObservationNote {
   return {
     id: note.id,
     text: note.text,
     point_id: note.point_id,
     element_id: note.element_id,
-    // `ObservationNote` do domínio ainda não grava áudio ("voz fora do MVP", Feature
-    // Contract) — o campo do contrato existe como preparação para T12 e viaja sempre
-    // `undefined` até essa tarefa existir.
-    audio_media_ref: undefined,
+    audio_media_ref: resolveOptionalMediaRef(note.audio_media_ref, mediaIndex),
     created_at: note.created_at,
   };
 }
@@ -216,7 +226,7 @@ export function toSurveyPacket(
     measurements: survey.measurements.map(toPacketMeasurement),
     media_anchors: survey.photo_anchors.map((anchor) => toPacketMediaAnchor(anchor, mediaIndex)),
     elements: survey.elements.map(toPacketElement),
-    observations: survey.observations.map(toPacketObservation),
+    observations: survey.observations.map((note) => toPacketObservation(note, mediaIndex)),
     gps_fixes: [],
     arrival_context:
       survey.context === undefined

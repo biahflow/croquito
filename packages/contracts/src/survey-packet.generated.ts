@@ -184,9 +184,10 @@ export interface MediaAnchor {
   point_id?: PointId;
 }
 /**
- * Espelho de `ObservationNote`. `audio_media_ref` é aditivo: o domínio de hoje só
- * grava texto ("voz fora do MVP", Feature Contract); o campo existe aqui como
- * preparação para T12 e viaja sempre `None` até essa tarefa existir.
+ * Espelho de `ObservationNote`. Desde a T12 (prancha 7a da DAP rev.2, aprovada) a
+ * nota pode ser texto, voz (`audio_media_ref`) ou os dois; o que continua inválido é a
+ * nota VAZIA — sem texto e sem áudio ela não registra nada, mesma regra `EMPTY_TEXT`
+ * do domínio do app (`apps/field/src/domain/commands.ts`).
  */
 export interface ObservationNote {
   audio_media_ref?: MediaRef | null;

@@ -41,6 +41,8 @@ import {
 import type { Order, OrderId } from "../orders/types";
 import { buildMediaRecord, captureFile } from "../photos/media";
 import type { SurveyRepository } from "../storage/SurveyRepository";
+import { captureAudio } from "../voice/media";
+import type { RecordedAudio } from "../voice/recorder";
 import {
   API_BASE_URL,
   createSyncApi,
@@ -62,6 +64,7 @@ import { OrdersScreen } from "./OrdersScreen";
 import { PhotoAnchorScreen } from "./PhotoAnchorScreen";
 import { SyncScreen } from "./SyncScreen";
 import { TextEntryScreen } from "./TextEntryScreen";
+import { VoiceNoteScreen } from "./VoiceNoteScreen";
 import {
   DEFAULT_TOLERANCE_MM,
   buildDivergenceView,
@@ -93,6 +96,8 @@ type Mode =
   | { kind: "pick-pair" }
   | { kind: "pick-photo-point" }
   | { kind: "photo-anchor"; point_id: SurveyPointId }
+  | { kind: "pick-voice-point" }
+  | { kind: "voice-note"; point_id?: SurveyPointId }
   | { kind: "measure"; segment_id: string }
   | { kind: "divergence"; segment_id: string; measurement_id: string }
   | { kind: "justify"; segment_id: string; measurement_id: string }
@@ -728,6 +733,74 @@ export function FieldApp({ repository }: FieldAppProps) {
     [apply, backToCollect],
   );
 
+  /**
+   * Abre a nota de voz (T12, prancha 7a). Com pontos no desenho, a âncora é escolhida como
+   * na foto — tocando um ponto antes de gravar. Sem nenhum ponto marcado ainda, gravar não
+   * pode ficar bloqueado: a nota nasce ancorada ao levantamento como um todo, e a tela diz
+   * isso por escrito em vez de fingir uma âncora que não existe.
+   */
+  const handleAddVoiceNote = useCallback(() => {
+    setNotice(null);
+    setSelectedPointId(null);
+    setMode(
+      (surveyRef.current?.points.length ?? 0) > 0
+        ? { kind: "pick-voice-point" }
+        : { kind: "voice-note" },
+    );
+  }, []);
+
+  const handleVoiceAnchorPointTap = useCallback((pointId: SurveyPointId) => {
+    setNotice(null);
+    setMode({ kind: "voice-note", point_id: pointId });
+  }, []);
+
+  /**
+   * Confirma a nota de voz: grava o áudio primeiro (`saveMedia`), depois a nota via comando
+   * (`addObservation` → `apply` → `applyCommand`) — mesma ordem "blob primeiro, referência
+   * depois" da foto ancorada. O texto nasce vazio: a nota É o áudio, e a transcrição (T13)
+   * é quem devolve rascunho de texto, no servidor, depois do envio.
+   */
+  const handleConfirmVoiceNote = useCallback(
+    (pointId: SurveyPointId | undefined, recorded: RecordedAudio) => {
+      void (async () => {
+        setBusy(true);
+        try {
+          const captured = await captureAudio(recorded);
+          const record = buildMediaRecord({
+            id: crypto.randomUUID(),
+            sha256: captured.sha256,
+            mime_type: captured.mime_type,
+            byte_size: captured.byte_size,
+            blob: captured.blob,
+            created_at: new Date().toISOString(),
+          });
+          await repository.saveMedia(record);
+          const next = await apply((current) =>
+            addObservation(
+              current,
+              {
+                id: crypto.randomUUID(),
+                text: "",
+                point_id: pointId,
+                audio_media_ref: record.id,
+              },
+              new Date().toISOString(),
+            ),
+          );
+          if (next !== null) {
+            backToCollect({
+              tone: "ok",
+              text: "Nota de voz guardada neste aparelho. Ela sobe junto com as fotos.",
+            });
+          }
+        } finally {
+          setBusy(false);
+        }
+      })();
+    },
+    [apply, backToCollect, repository],
+  );
+
   /** Toque num crítico de segmento na prancha 5: volta à coleta com o segmento já
    * selecionado (Task Contract T5, Especificação §1) — não pula direto para medir, quem
    * decide o próximo passo é o técnico, tocando "Medir" como em qualquer segmento. */
@@ -894,7 +967,9 @@ export function FieldApp({ repository }: FieldAppProps) {
           }
         : mode.kind === "pick-photo-point"
           ? { tone: "info", text: "Toque num ponto do desenho para ancorar a foto." }
-          : null;
+          : mode.kind === "pick-voice-point"
+            ? { tone: "info", text: "Toque num ponto do desenho para ancorar a nota de voz." }
+            : null;
 
   const renderCollect = () => (
     <CollectScreen
@@ -904,7 +979,10 @@ export function FieldApp({ repository }: FieldAppProps) {
       onCancelNotice={
         isConcluded
           ? null
-          : mode.kind === "pick-point" || mode.kind === "pick-pair" || mode.kind === "pick-photo-point"
+          : mode.kind === "pick-point" ||
+              mode.kind === "pick-pair" ||
+              mode.kind === "pick-photo-point" ||
+              mode.kind === "pick-voice-point"
             ? () => backToCollect()
             : notice !== null
               ? () => setNotice(null)
@@ -921,7 +999,9 @@ export function FieldApp({ repository }: FieldAppProps) {
             ? handlePointTap
             : mode.kind === "pick-photo-point"
               ? handlePhotoAnchorPointTap
-              : null
+              : mode.kind === "pick-voice-point"
+                ? handleVoiceAnchorPointTap
+                : null
       }
       onSegmentTap={isConcluded ? null : mode.kind === "collect" ? handleSegmentTap : null}
       canUndo={!isConcluded && history.length > 0}
@@ -974,6 +1054,7 @@ export function FieldApp({ repository }: FieldAppProps) {
               setMode({ kind: "pick-photo-point" });
             }}
             onAddObservation={() => setMode({ kind: "observation" })}
+            onAddVoiceNote={handleAddVoiceNote}
             onClosePerimeter={handleClosePerimeter}
             onConclude={() => {
               setNotice(null);
@@ -994,6 +1075,22 @@ export function FieldApp({ repository }: FieldAppProps) {
             notice={notice}
             busy={busy}
             onConfirm={(file) => handleConfirmPhotoAnchor(pointId, file)}
+            onCancel={() => backToCollect()}
+          />
+        );
+      }
+      case "voice-note": {
+        const pointId = mode.point_id;
+        return (
+          <VoiceNoteScreen
+            anchorLabel={
+              pointId === undefined
+                ? "levantamento (nenhum ponto marcado ainda)"
+                : `ponto ${pointLabelById.get(pointId) ?? "?"}`
+            }
+            notice={notice}
+            busy={busy}
+            onConfirm={(recorded) => handleConfirmVoiceNote(pointId, recorded)}
             onCancel={() => backToCollect()}
           />
         );

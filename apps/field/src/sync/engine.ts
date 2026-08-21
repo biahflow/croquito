@@ -142,6 +142,14 @@ async function planMedia(
   if (survey.context?.access_media_ref !== undefined) {
     references.push({ category: "access_photo", media_id: survey.context.access_media_ref });
   }
+  // Áudio das notas de voz (T12) por último: é a ordem da prancha 6a e a ordem em que o
+  // painel lista. Mesma regra das fotos — a mídia sobe por identidade de conteúdo, e o
+  // digest só é aceito pelo servidor depois que a nota que o referencia sincronizou.
+  for (const note of survey.observations) {
+    if (note.audio_media_ref !== undefined) {
+      references.push({ category: "audio", media_id: note.audio_media_ref });
+    }
+  }
   for (const reference of references) {
     const media = await repository.getMedia(reference.media_id);
     if (media === undefined) {
@@ -433,7 +441,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
       } catch (error) {
         const message =
           error instanceof MissingMediaError
-            ? "Uma foto referenciada pelo levantamento não está mais neste aparelho; o pacote não pode ser montado."
+            ? "Um arquivo referenciado pelo levantamento (foto ou áudio) não está mais neste aparelho; o pacote não pode ser montado."
             : "O levantamento não pôde ser empacotado para envio.";
         return patch({
           phase: "error",
@@ -651,7 +659,7 @@ export function createSyncEngine(deps: SyncEngineDeps): SyncEngine {
       noteCategoryFailure(
         job.category,
         failure.kind === "problem" && failure.code === SURVEY_MEDIA_NOT_REFERENCED
-          ? "o servidor ainda não conhece a âncora desta foto; ela sobe na próxima sincronização."
+          ? "o servidor ainda não conhece a âncora deste arquivo; ele sobe na próxima sincronização."
           : failureMessage(failure),
       );
       return false;

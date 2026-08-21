@@ -128,16 +128,24 @@ class MediaAnchor(ContractModel):
 
 
 class ObservationNote(ContractModel):
-    """Espelho de `ObservationNote`. `audio_media_ref` é aditivo: o domínio de hoje só
-    grava texto ("voz fora do MVP", Feature Contract); o campo existe aqui como
-    preparação para T12 e viaja sempre `None` até essa tarefa existir."""
+    """Espelho de `ObservationNote`. Desde a T12 (prancha 7a da DAP rev.2, aprovada) a
+    nota pode ser texto, voz (`audio_media_ref`) ou os dois; o que continua inválido é a
+    nota VAZIA — sem texto e sem áudio ela não registra nada, mesma regra `EMPTY_TEXT`
+    do domínio do app (`apps/field/src/domain/commands.ts`)."""
 
     id: str = Field(min_length=1)
-    text: str = Field(min_length=1, max_length=5000)
+    text: str = Field(max_length=5000)
     point_id: str | None = None
     element_id: str | None = None
     audio_media_ref: MediaRef | None = None
     created_at: datetime
+
+    @model_validator(mode="after")
+    def validate_text_or_audio(self) -> ObservationNote:
+        """Nota só-de-voz viaja com `text: ""`; nota sem texto E sem áudio é recusada."""
+        if self.text.strip() == "" and self.audio_media_ref is None:
+            raise ValueError("observação precisa de texto não-vazio ou de nota de voz")
+        return self
 
 
 class ElementObject(ContractModel):
