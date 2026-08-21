@@ -139,6 +139,15 @@ preservada:
   field:check verde, `make check` e `make test` completos verdes (pytest 1785, web
   853, field 94).
 
+## Decisões humanas registradas (2026-08-21, pós-onda 1)
+
+- As três adições de composição da T3 (tela de digitação de texto com primitivas
+  aprovadas; escapes "Cancelar" nos modos sem saída; rótulo de cota girado ao longo do
+  segmento) foram declaradas **não materiais** por ato humano de Daniel Campos — o
+  [DAP revisão 1](mock/README.md) segue válido, sem revisão 2.
+- Onda 2 do plano (T4 ordens+chegada, T5 conclusão, T6 fotos) **autorizada** pelo
+  mesmo ato; contratos derivados em tasks/.
+
 ## Desvios de plano
 
 - Renumeração F-031→F-032 / ADR-0042→ADR-0043 antes do congelamento do plano
