@@ -41,6 +41,34 @@ Consolidado por tarefa conforme cada BUILD REPORT chega; a evidência do MVP loc
   `gps_fixes` sempre vazio (provisão de contrato aceita; o GPS real viaja em
   `arrival_context`). Nenhum achado HIGH.
 
+### T10 — login OIDC no app com tolerância offline
+
+- Executor: `implementador-sonnet`. BUILD REPORT: `BUILD_COMPLETE`.
+- Entrega: `apps/field/src/auth/` (máquina de estados pura `signed_out | active |
+  expired_offline | reauth_required`; `oidcClient.ts` com fábrica testável
+  `createAuthClient`, sessão em `localStorage` — diferença deliberada e documentada
+  de `apps/web` —, `getFreshAccessToken()` devolvendo estado tipado
+  `AUTH_REAUTH_REQUIRED`, nunca exceção); `silent-renew.html` próprio (lição do
+  incidente de 2026-08-19 preservada); indicador de identidade no `AppBar` com
+  estado sempre escrito; aviso não bloqueante de papel `field_technician` ausente.
+  26 testes novos (10 da máquina + 16 do cliente com UserManager fake); suíte do
+  field em 161 testes verdes.
+- Desvios conscientes aceitos na revisão: fábrica `createAuthClient` (necessária ao
+  teste sem rede); `vite-env.d.ts` novo (tipos de env — primeiro uso de env no
+  app); implementou o indicador no shell conforme o texto do contrato, mais
+  restrito que a tela cheia da prancha 6c (divergência documentada); recomputação
+  do estado a cada 60s (necessária para a 6c ser verdadeira com o app aberto).
+- Reprovações de `make check`/`make test` vistas pelo builder eram o trabalho NÃO
+  commitado da T8 em paralelo no mesmo worktree (ruff/openapi de
+  `services/api/**`) — fora do escopo da T10, corretamente reportadas em vez de
+  "consertadas"; portões completos serão re-rodados no fechamento da onda 2.
+- Revisão linha a linha (modelo principal): nenhum achado bloqueante; risco
+  registrado pelo builder (decode de JWT sem verificação de assinatura, só
+  exibição) documentado no próprio código.
+- Envs novas: `VITE_OIDC_AUTHORITY`, `VITE_OIDC_CLIENT_ID` (sem elas o app opera
+  em modo local). Ato humano pendente: client `croquito-field` + papel
+  `field_technician` no realm.
+
 ## PLAN_DEVIATION
 
 (nenhum até o momento)

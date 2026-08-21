@@ -172,6 +172,36 @@
     font-weight: 500;
   }
 
+  /* ---------- indicador de identidade (prancha 6c, T10) ---------- */
+  .identity-pill {
+    background: transparent;
+    border-color: var(--color-dark-line-strong);
+    color: var(--color-dark-ink);
+    font-weight: 500;
+  }
+
+  /* Mesma inversão de legibilidade da pílula Offline (fundo claro sobre a barra escura):
+     estado vencido é o único que precisa saltar aos olhos ao sol, não só no hover do
+     título. O texto do estado (`.identity-status`) garante que a informação não dependa
+     só desta cor (regra 5 do Design System). */
+  .identity-pill-warn {
+    background: var(--color-state-warn-soft);
+    border-color: var(--color-state-warn-line);
+    color: var(--color-state-warn);
+  }
+
+  .identity-status {
+    font-weight: 500;
+  }
+
+  /* Ação da barra ("Entrar"/"Entrar novamente"): mesmo `.btn-primary`, só mais estreita —
+     a barra não tem a largura de um botão de rodapé, mas o alvo mínimo (`--touch`)
+     continua o mesmo. */
+  .identity-action {
+    padding: 0 var(--s-3);
+    font-size: var(--text-label);
+  }
+
   /* ---------- blocos comuns ---------- */
   .screen {
     flex: 1;

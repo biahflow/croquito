@@ -35,6 +35,19 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    rollupOptions: {
+      // Dois HTMLs, um build (mesmo padrão de `apps/web/vite.config.ts`): o segundo
+      // entry é a página mínima do callback de renovação silenciosa do OIDC (Task
+      // Contract T10) — sem ela o iframe oculto carregaria o app inteiro e nunca
+      // responderia ao pai (incidente de 2026-08-19 documentado em
+      // `apps/web/src/auth.ts`).
+      input: {
+        main: "index.html",
+        "silent-renew": "silent-renew.html",
+      },
+    },
+  },
   server: {
     port: 5174,
     strictPort: true,

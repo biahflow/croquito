@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  completeSignInRedirect,
+  isOidcConfigured,
+  readIdentity,
+  readIdentityState,
+  signIn,
+  type Identity,
+  type IdentityState,
+} from "../auth";
+import {
   addMeasurement,
   addObservation,
   addPhotoAnchor,
@@ -33,7 +42,7 @@ import { buildMediaRecord, captureFile } from "../photos/media";
 import type { SurveyRepository } from "../storage/SurveyRepository";
 import { AddMenu } from "./AddMenu";
 import { ArrivalScreen } from "./ArrivalScreen";
-import { AppBar } from "./AppBar";
+import { AppBar, type IdentityBarProps } from "./AppBar";
 import { CollectScreen } from "./CollectScreen";
 import { ConcludeScreen } from "./ConcludeScreen";
 import { getOrCreateDeviceId } from "./device";
@@ -200,6 +209,71 @@ export function FieldApp({ repository }: FieldAppProps) {
       window.removeEventListener("offline", handleOffline);
     };
   }, []);
+
+  /** Identidade do técnico (Task Contract T10, prancha 6c). `null`/`"signed_out"` em
+   * ambiente sem `VITE_OIDC_*` — o app opera em modo local, como antes desta tarefa. */
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [identityState, setIdentityState] = useState<IdentityState>("signed_out");
+
+  // Processa o retorno do Keycloak (se houver `?code&state` na URL) uma única vez ao
+  // montar, depois carrega a sessão armazenada tal como está — inclusive vencida: a
+  // T10 nunca trata expiração como logout (ver `auth/oidcClient.ts`).
+  useEffect(() => {
+    if (!isOidcConfigured()) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      await completeSignInRedirect();
+      const loadedIdentity = await readIdentity();
+      if (!cancelled) {
+        setIdentity(loadedIdentity);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Recomputa o estado de identidade quando a rede muda de mão (offline ↔ online é o
+  // que distingue `expired_offline` de `reauth_required`, prancha 6c) e periodicamente,
+  // para um token que vence com o app já aberto virar visível sem exigir reload.
+  useEffect(() => {
+    if (!isOidcConfigured()) {
+      return;
+    }
+    let cancelled = false;
+    const refresh = () => {
+      void readIdentityState(isOnline).then((state) => {
+        if (!cancelled) {
+          setIdentityState(state);
+        }
+      });
+    };
+    refresh();
+    const intervalId = window.setInterval(refresh, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [isOnline]);
+
+  const handleIdentityAction = useCallback(() => {
+    void signIn();
+  }, []);
+
+  /** Vista para a barra (Task Contract T10, §3): `null` some com o indicador inteiro em
+   * ambiente sem OIDC configurado — nada muda do comportamento anterior a esta tarefa. */
+  const identityBar: IdentityBarProps | null = isOidcConfigured()
+    ? {
+        state: identityState,
+        displayName: identity?.name ?? identity?.subject ?? null,
+        // Aviso só informativo (Task Contract T10, §4): quem autoriza de verdade é o
+        // backend a cada chamada; o app nunca bloqueia a coleta por papel ausente aqui.
+        missingRole: identity !== null && !identity.roles.includes("field_technician"),
+        onAction: handleIdentityAction,
+      }
+    : null;
 
   const findings = useMemo(
     () =>
@@ -669,7 +743,7 @@ export function FieldApp({ repository }: FieldAppProps) {
   if (screen.kind === "loading") {
     return (
       <div className="flex h-dvh flex-col">
-        <AppBar title={APP_BRAND} pendingCount={0} isOnline={isOnline} />
+        <AppBar title={APP_BRAND} pendingCount={0} isOnline={isOnline} identity={identityBar} />
         <div className="screen">
           <div className="content">
             <p className="sub">Abrindo o levantamento guardado neste aparelho…</p>
@@ -682,7 +756,7 @@ export function FieldApp({ repository }: FieldAppProps) {
   if (screen.kind === "orders") {
     return (
       <div className="flex h-dvh flex-col">
-        <AppBar title={APP_BRAND} pendingCount={0} isOnline={isOnline} />
+        <AppBar title={APP_BRAND} pendingCount={0} isOnline={isOnline} identity={identityBar} />
         <OrdersScreen
           orders={ORDERS}
           stateByOrderId={orderStates}
@@ -698,7 +772,7 @@ export function FieldApp({ repository }: FieldAppProps) {
   if (screen.kind === "arrival") {
     return (
       <div className="flex h-dvh flex-col">
-        <AppBar title={currentOrder?.short_name ?? APP_BRAND} pendingCount={0} isOnline={isOnline} />
+        <AppBar title={currentOrder?.short_name ?? APP_BRAND} pendingCount={0} isOnline={isOnline} identity={identityBar} />
         <ArrivalScreen
           notice={notice}
           onConfirm={handleRecordArrival}
@@ -715,7 +789,7 @@ export function FieldApp({ repository }: FieldAppProps) {
   if (survey === null) {
     return (
       <div className="flex h-dvh flex-col">
-        <AppBar title={currentOrder?.short_name ?? APP_BRAND} pendingCount={0} isOnline={isOnline} />
+        <AppBar title={currentOrder?.short_name ?? APP_BRAND} pendingCount={0} isOnline={isOnline} identity={identityBar} />
         <div className="screen">
           <div className="content">
             <p className="sub">Abrindo o levantamento guardado neste aparelho…</p>
@@ -958,7 +1032,7 @@ export function FieldApp({ repository }: FieldAppProps) {
 
   return (
     <div className="flex h-dvh flex-col">
-      <AppBar title={survey.name} pendingCount={pendingCount} isOnline={isOnline} />
+      <AppBar title={survey.name} pendingCount={pendingCount} isOnline={isOnline} identity={identityBar} />
       {renderScreen()}
     </div>
   );
