@@ -61,5 +61,14 @@
     "title": "Croquito Estimate",
     "schema": "schemas/estimate.schema.json",
     "typescript": "src/estimate.generated.ts"
+  },
+  {
+    "module": "croquito_core.field",
+    "model": "SurveyPacket",
+    "version_attr": "SURVEY_SCHEMA_VERSION",
+    "id": "https://schemas.croquito.local/field/survey-packet/{version}.json",
+    "title": "Croquito Survey Packet",
+    "schema": "schemas/survey-packet.schema.json",
+    "typescript": "src/survey-packet.generated.ts"
   }
 ]
