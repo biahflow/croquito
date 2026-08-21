@@ -2,15 +2,18 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`PLANNING`
 
-MVP local completo em 2026-08-21: fatia 0 (T1 scaffold) e o plano "MVP local, fatias
+Fatia em planejamento/execução: sincronização ampliada. MVP local completo em 2026-08-21: fatia 0 (T1 scaffold) e o plano "MVP local, fatias
 1–3" (T2 motor, T3 coleta/medida, T4 ordens/chegada, T5 conclusão, T6 fotos)
 executados, revisados linha a linha e commitados na branch
 `f-032-app-levantamento-campo`, com portões completos verdes — evidência consolidada
-em [evidence.md](evidence.md). Pendem os atos humanos: decisão de merge/push (dispara
-a esteira `deploy-hml`) e, depois, o plano próprio da fatia de sincronização
-(`/v1/surveys`, prancha 6), que devolve a feature a `PLANNING`.
+em [evidence.md](evidence.md). Em 2026-08-21 (mesma data, sessão posterior) o usuário
+autorizou a fatia de sincronização com escopo ampliado — plano próprio em
+[plan-sync.md](plan-sync.md) — e **reabriu itens antes fora de escopo** (decisão
+humana registrada abaixo): entrada por voz, IA/CV sobre as fotos coletadas e iOS na
+matriz do piloto. A decisão de merge/push (dispara a esteira `deploy-hml`) segue
+pendente e independente desta fatia.
 
 ## Priority
 
@@ -64,19 +67,31 @@ Feature completa (fatiada; cada fatia com plano próprio):
 6. Fotos ancoradas a ponto/segmento/área/objeto, com hash SHA-256 do original.
 7. Sincronização por outbox idempotente contra a `croquito_api` (rotas `/v1/surveys`,
    presign GCS para mídia) e export do pacote estruturado para o motor.
+8. **Entrada por voz** (reaberta em 2026-08-21): nota de áudio gravada offline,
+   armazenada como mídia com SHA-256 (mesma tabela das fotos), sincronizada como
+   mídia e transcrita no servidor por provider pago atrás do entitlement — o texto
+   vira nota **em rascunho**, confirmação sempre humana.
+9. **IA/CV sobre as fotos coletadas** (reaberta em 2026-08-21), três frentes:
+   propostas CV pós-sync no worker (candidatos `unresolved`, `export=false`);
+   leitura por provider de visão pago (texto/medidas visíveis, placas, anotações a
+   mão → leituras a revisar, atrás do entitlement); checagem de qualidade
+   **no aparelho** (nitidez/exposição, aviso não bloqueante para refazer, sem rede).
+10. Identidade do técnico: login OIDC no app (papel `field_technician`), com
+    tolerância a expiração offline — coleta continua, reautenticação só ao enviar.
 
 ## Out of Scope
 
 - Empacotamento Capacitor/SQLite (a interface `SurveyRepository` já nasce preparada
   para essa troca; a decisão de empacotar é gate futuro).
 - Integração Bluetooth com trena laser, LiDAR, AR.
-- Entrada por voz.
-- IA/visão computacional sobre as fotos coletadas (correlata à F-030 — fotos na
-  jornada de revisão — que segue feature separada).
 - Substituição oficial do papel: o MVP opera em piloto híbrido; declarar o app fonte
   oficial é decisão humana posterior, com matriz de aparelhos homologada.
-- Qualquer mudança em `services/**` nesta fatia 0 (as rotas `/v1/surveys` são fatia
-  futura, planejada pelo ciclo normal).
+- Fotos na jornada de revisão do escritório (F-030 segue feature separada; aqui a
+  análise é sobre fotos **de campo** no pipeline do survey).
+
+Removidos do Out of Scope por decisão humana de 2026-08-21 (registro da mudança):
+entrada por voz (→ item 8), IA/CV sobre fotos (→ item 9) e a restrição
+Android-only do piloto (iOS entra na matriz — ver Constraints).
 
 ## Acceptance Criteria
 
@@ -113,8 +128,11 @@ Da feature completa (verificáveis nas fatias futuras, herdando os NFRs abaixo):
   aparelhos homologados; resposta ao toque ≤100ms; alvos de toque ≥48×48px; alto
   contraste para sol; WCAG 2.2 AA como referência; 2.000 elementos de geometria sem
   degradação crítica; nunca apagar dado local antes de ack do servidor.
-- **Piloto Android-first** com matriz de aparelhos homologada (não "todos os
-  celulares"); GPS é referência geográfica, nunca medição.
+- **Piloto Android + iOS** com matriz de aparelhos homologada (não "todos os
+  celulares"; decisão de 2026-08-21 — "qualquer recurso que pudermos usar no aparelho
+  do técnico, vamos usar"; iOS exige instalação Add-to-Home-Screen +
+  `navigator.storage.persist()` como pré-requisito de piloto, e codecs de áudio
+  divergem: webm/opus × mp4/aac); GPS é referência geográfica, nunca medição.
 - Stack e fronteiras conforme [ADR-0043](../../adr/0043-app-de-campo-pwa-offline-first.md)
   (Proposed): monorepo `apps/field`, backend por extensão da `croquito_api`, GCP
   (GCS + Pub/Sub) — sem serviço novo, sem PostGIS.
@@ -136,9 +154,18 @@ Da feature completa (verificáveis nas fatias futuras, herdando os NFRs abaixo):
 
 - Origem da "ordem de levantamento": quem a cria e onde (relação com a Relação de
   Praças do fluxo comercial) — a definir no design da fatia 2.
-- Formato exato do pacote exportado (espelho do `ReviewPacket`/`TakeoffPacket` ou
-  contrato novo) — decisão da fatia de sincronização, junto com as rotas.
-- Matriz de aparelhos do piloto (modelos Android reais dos técnicos).
+- ~~Formato exato do pacote exportado~~ — **resolvido em 2026-08-21** na fatia de
+  sincronização: contrato **novo** `SurveyPacket` (Pydantic em
+  `croquito_core`, gerado por `make contracts`), não espelho do
+  `ReviewPacket`/`TakeoffPacket` (aqueles são pacotes de revisão humana; este é o
+  levantamento estruturado). Ver [plan-sync.md](plan-sync.md).
+- Vínculo survey↔project/job no export (job novo de campo vs. anexar a existente) —
+  decisão do spec de T11; vira arbitragem humana se configurar decisão de
+  arquitetura.
+- Fornecedor de speech-to-text para a transcrição (Cloud Speech-to-Text, já dentro
+  do GCP, vs. OpenAI) — gate humano: envio de áudio de cliente a serviço externo
+  exige aprovação explícita.
+- Matriz de aparelhos do piloto (modelos Android e iOS reais dos técnicos).
 - Se tablet+caneta entra no piloto ou só celular.
 
 ## Risks
@@ -165,6 +192,15 @@ Da feature completa (verificáveis nas fatias futuras, herdando os NFRs abaixo):
    esteira de deploy).
 4. Declaração de início do piloto híbrido e, depois, da promoção do app a fonte
    oficial do levantamento.
+5. **Revisão 2 do Design Approval Package** para as superfícies novas da fatia de
+   sincronização (gravação de voz, aviso de qualidade de foto, estado de transcrição
+   no painel de sync) — obrigatória **antes** das tarefas de UI correspondentes
+   (T12/T15 do [plan-sync.md](plan-sync.md)); a rev.1 não as cobre.
+6. Criação do papel `field_technician` e autorização do path do app no realm
+   Keycloak (necessário para teste real; testes automatizados usam test tokens).
+7. Escolha e autorização do fornecedor de speech-to-text (envio de áudio de cliente
+   a serviço externo — aprovação explícita da política vigente); chamadas pagas em
+   massa (transcrição/visão em lote) seguem exigindo aprovação por rodada.
 
 ## References
 

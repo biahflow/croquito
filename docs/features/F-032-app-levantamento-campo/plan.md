@@ -172,3 +172,9 @@ planning_findings: nenhuma decisão de arquitetura pendente (ADR-0043 cobre); sy
 (T2→{T3∥T4}→T5; T3→T6), critérios/validação com comandos reais, paralelismo sem
 sobreposição de arquivos (T3 = ui/outbox, T4 = orders/navegação — toque comum em
 `src/ui` na navegação é sequenciado pela ordem de ondas), gates nomeados.
+
+---
+
+O terceiro plano da feature — fatia de sincronização ampliada (`/v1/surveys`, mídia,
+conflito, login, export, voz e IA/CV; T7–T16) — vive em [plan-sync.md](plan-sync.md),
+autorizado pelo usuário em 2026-08-21.
