@@ -2,7 +2,9 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-20 (F-021 e F-022 abertas com contrato — nota pré-classificada na
+Última revisão: 2026-08-21 (F-032 aberta com contrato — app de levantamento de campo
+PWA offline-first, ADR-0043 `Proposed`, fatia 0 em execução em branch própria; antes:
+F-021 e F-022 abertas com contrato — nota pré-classificada na
 decisão e Document AI no braço de OCR, nascidas da segunda revisão real do Guaxindiba,
 ADR-0037 `Proposed`; antes: F-012 documentada com ADR-0036 `Proposed`; inventário
 F-013..F-017 aberto; F-018/F-019 abertas; F-020 aberta com contrato)
@@ -51,6 +53,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-028 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
+| F-032 | HIGH | IN_PROGRESS | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -302,6 +305,24 @@ nova, `READY_FOR_PLANNING`.
 modo teto (`EstimateTarget` reservado): verba da demanda declarada na rodada e consumo
 contra o teto na montagem; especificada em detalhe por último na rodada, com dois gates
 antes do planejamento (ADR-0040 da semântica do teto e Design Approval Package).
+
+[F-032](../features/F-032-app-levantamento-campo/feature.md) — app de levantamento de
+campo — nasce em 2026-08-21, por seleção humana: o levantamento hoje nasce em papel e
+todo o pipeline existe para interpretá-lo; a F-032 ataca a ambiguidade na origem, com
+coleta estruturada offline-first (PWA em `apps/field`) em que toda medida nasce
+vinculada (valor, pontos, elemento, instrumento, evidência) e a validação geométrica
+roda ainda no local. O pacote coletado entra no pipeline como observações, sob os
+portões do scene graph. Arquitetura no
+[ADR-0043](../adr/0043-app-de-campo-pwa-offline-first.md) (`Proposed`); é
+`INTERFACE_CHANGE` e exigirá Design Approval Package antes do planejamento das fatias
+de superfície; a fatia 0 (scaffold técnico, sem telas finais) foi autorizada por plano
+aprovado pelo usuário na mesma data e executa em branch/worktree própria
+(`f-032-app-levantamento-campo`), sem tocar a homologação. O ID salta de F-028 para
+F-032 nesta tabela porque F-029, F-030 e F-031 foram reivindicados por sessões
+paralelas ainda não integradas à main (F-029/F-030 no checkout de trabalho;
+F-031 — eventos de valor — na branch `feat/f-031-value-events`); relação direta com a
+futura F-030: o app de campo produz as fotos já ancoradas à geometria que aquela
+jornada consumirá.
 
 ## Agora — MVP privado
 
