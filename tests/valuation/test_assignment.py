@@ -1186,6 +1186,135 @@ def test_refinement_refuses_a_note_that_does_not_fit_the_candidate() -> None:
     assert raised.value.code == "REFINEMENT_NOTE_TOO_LONG"
 
 
+# --------------------------------------------------------------------------------------
+# transmitted_window — o refino opina sobre o prefixo que foi enviado, não sobre a cauda
+# --------------------------------------------------------------------------------------
+
+
+_WINDOW = 10
+
+
+def _long_shortlist_set() -> CodeSuggestionSet:
+    """Shortlist de 15 candidatos: o tamanho que a via léxica publica desde 2026-08-21."""
+    item = _confirmed_item(label="ALAMBRADO GALVANIZADO", unit="m")
+    catalog = _catalog(
+        [
+            _catalog_entry(
+                code=f"CE0410{index:04d}(/)",
+                description=f"ALAMBRADO GALVANIZADO TIPO {index}",
+            )
+            for index in range(1, 21)
+        ]
+    )
+    suggestions = suggest_codes(_packet([item]), catalog)
+    assert len(suggestions.suggestions[0].candidates) == 15
+    return suggestions
+
+
+def test_refinement_reorders_only_the_transmitted_prefix_and_leaves_the_tail_in_place() -> None:
+    """A cabeça vem reordenada do provider; a cauda fica onde e como a via léxica a deixou."""
+    lexical = _long_shortlist_set()
+    item_id = lexical.suggestions[0].item_id
+    shortlist = _codes(lexical)
+    head, tail = shortlist[:_WINDOW], shortlist[_WINDOW:]
+
+    refined = apply_refinement(
+        lexical,
+        {item_id: list(reversed(head))},
+        {item_id: "cabeça reordenada pelo refino"},
+        None,
+        _REFINEMENT,
+        transmitted_window=_WINDOW,
+    )
+
+    assert _codes(refined) == [*reversed(head), *tail]
+    assert _codes(refined)[_WINDOW:] == tail
+    # Nenhum código entrou e nenhum saiu: o conjunto publicado é exatamente o mesmo.
+    assert sorted(_codes(refined)) == sorted(shortlist)
+    assert refined.suggestions[0].candidates[0].refinement_note == "cabeça reordenada pelo refino"
+
+
+def test_refinement_refuses_a_subset_that_is_not_the_transmitted_prefix() -> None:
+    """Não basta ser subconjunto do tamanho certo: tem de ser o prefixo que foi enviado.
+
+    Aceitar qualquer subconjunto deixaria o provider escolher sobre o que opinar, e a
+    resposta não teria como ser conferida contra o que nós mandamos.
+    """
+    lexical = _long_shortlist_set()
+    item_id = lexical.suggestions[0].item_id
+    shortlist = _codes(lexical)
+    # Mesmo tamanho da janela, mas trocando um candidato da cabeça por um da cauda.
+    not_the_prefix = [*shortlist[: _WINDOW - 1], shortlist[-1]]
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_refinement(
+            lexical, {item_id: not_the_prefix}, None, None, _REFINEMENT, transmitted_window=_WINDOW
+        )
+
+    assert raised.value.code == "REFINEMENT_CODES_MISMATCH"
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda head: [*head[:-1], "AD04050050(/)"], id="codigo-novo"),
+        pytest.param(lambda head: head[:-1], id="codigo-faltando"),
+        pytest.param(lambda head: [*head, head[0]], id="codigo-repetido"),
+    ],
+)
+def test_the_window_does_not_soften_the_refusal_of_a_tampered_order(
+    mutate: object,
+) -> None:
+    """Com janela ou sem ela, código novo, a menos ou repetido continua recusando."""
+    lexical = _long_shortlist_set()
+    item_id = lexical.suggestions[0].item_id
+    head = _codes(lexical)[:_WINDOW]
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_refinement(
+            lexical,
+            {item_id: mutate(head)},  # type: ignore[operator]
+            None,
+            None,
+            _REFINEMENT,
+            transmitted_window=_WINDOW,
+        )
+
+    assert raised.value.code == "REFINEMENT_CODES_MISMATCH"
+
+
+def test_a_shortlist_shorter_than_the_window_still_demands_an_exact_permutation() -> None:
+    """Shortlist menor que a janela foi transmitida inteira: não há cauda para poupar.
+
+    É o caso de sempre (3 candidatos) rodando sob a janela nova — inverter os três passa,
+    devolver dois recusa. Sem esta amarra, um provider poderia encolher a shortlist
+    fingindo que o resto não tinha sido enviado.
+    """
+    lexical = _shortlist_set()
+    item_id = lexical.suggestions[0].item_id
+    codes = _codes(lexical)
+
+    refined = apply_refinement(
+        lexical, {item_id: list(reversed(codes))}, None, None, _REFINEMENT, transmitted_window=15
+    )
+    assert _codes(refined) == list(reversed(codes))
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_refinement(
+            lexical, {item_id: codes[:2]}, None, None, _REFINEMENT, transmitted_window=15
+        )
+    assert raised.value.code == "REFINEMENT_CODES_MISMATCH"
+
+
+def test_a_window_that_transmits_nothing_is_refused() -> None:
+    lexical = _long_shortlist_set()
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_refinement(lexical, {}, None, None, _REFINEMENT, transmitted_window=0)
+
+    assert raised.value.code == "REFINEMENT_WINDOW_INVALID"
+
+
 def test_a_refined_set_without_lineage_is_refused() -> None:
     lexical = _shortlist_set()
     payload = {**lexical.model_dump(), "suggester_version": SCO_REFINED_SUGGESTER_VERSION}
@@ -1432,6 +1561,73 @@ def test_the_cascade_shortlist_keeps_the_declared_order_and_declares_each_source
     assert suggestions.contract_sha256 is None
     # Pré-licitação não tem contrato: nenhum candidato é marcado como contratado.
     assert all(candidate.in_contract is False for candidate in candidates)
+
+
+def test_the_cascade_cuts_at_the_default_per_source_and_keeps_the_blocks_whole() -> None:
+    """O corte de `max_candidates_per_item` vale POR fonte, e o bloco de cada uma é inteiro.
+
+    Com 18 candidatos elegíveis em cada catálogo, o padrão de 15 publica 30: os 15
+    primeiros do SCO e depois os 15 primeiros da EMOP. Nenhum corte global e nenhuma
+    intercalação — a ordem das fontes é decisão de quem monta o orçamento, e desempatá-la
+    por similaridade de texto a desfaria (ver `suggest_codes_over_cascade`).
+
+    O teste usa o DEFAULT de propósito, para que subir ou baixar o número sem pensar na
+    cascata quebre aqui; a mesma regra com tamanho explícito está em
+    `test_the_cascade_cut_follows_the_configured_size`.
+    """
+    packet = _packet()
+    sco = _catalog(
+        [
+            _catalog_entry(
+                code=f"CE0410{index:04d}(/)",
+                description=f"ALAMBRADO GALVANIZADO TIPO {index}",
+            )
+            for index in range(1, 19)
+        ]
+    )
+    emop = _emop_catalog(
+        [
+            _emop_entry(code=f"EMOP.CE.{index:03d}", description=f"ALAMBRADO EMOP TIPO {index}")
+            for index in range(1, 19)
+        ]
+    )
+
+    candidates = suggest_codes_over_cascade(packet, [sco, emop]).suggestions[0].candidates
+
+    assert len(candidates) == 30
+    assert [candidate.catalog_origin for candidate in candidates] == (
+        [PriceOrigin.SCO] * 15 + [PriceOrigin.EMOP] * 15
+    )
+    assert [candidate.catalog_sha256 for candidate in candidates] == (
+        [sco.source_sha256] * 15 + [emop.source_sha256] * 15
+    )
+
+
+def test_the_cascade_cut_follows_the_configured_size() -> None:
+    """O corte por fonte é o da configuração, não um número fixo em código."""
+    packet = _packet()
+    entries = [
+        _catalog_entry(
+            code=f"CE0410{index:04d}(/)", description=f"ALAMBRADO GALVANIZADO TIPO {index}"
+        )
+        for index in range(1, 7)
+    ]
+
+    candidates = (
+        suggest_codes_over_cascade(
+            packet,
+            [_catalog(entries), _emop_catalog()],
+            config=SuggestionConfig(max_candidates_per_item=2),
+        )
+        .suggestions[0]
+        .candidates
+    )
+
+    assert [candidate.catalog_origin for candidate in candidates] == [
+        PriceOrigin.SCO,
+        PriceOrigin.SCO,
+        PriceOrigin.EMOP,
+    ]
 
 
 def test_an_item_without_a_candidate_in_any_source_stays_unmatched_in_the_cascade() -> None:

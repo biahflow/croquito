@@ -6,6 +6,7 @@ import pytest
 
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.sco import (
+    canonical_sco_code,
     is_contract_code,
     is_family_row_code,
     is_sco_code,
@@ -109,6 +110,44 @@ def test_subgroup_header_does_not_swallow_a_complete_item_code() -> None:
     assert parse_subgroup_header("AD04050050(/)") is None
     assert parse_subgroup_header("AD0405005(/)") is None
     assert parse_intermediate_header("AD04050050(/)") is None
+
+
+def test_subgroup_header_does_not_swallow_the_published_form_of_an_item_code() -> None:
+    """Regressão: `.0050 (/)` já foi lido como nome de subgrupo.
+
+    O catálogo publicado escreve o item com separadores. Com o ponto aceito no início do
+    nome, `AD 04.05.0050 (/)` virava o subgrupo `AD0405` chamado `.0050 (/)` — o item
+    sumia do catálogo sem uma única recusa. Nenhum nível de cabeçalho pode reconhecê-lo.
+    """
+    assert parse_subgroup_header("AD 04.05.0050 (/)") is None
+    assert parse_subgroup_header("AD 04.05.0050(/)") is None
+    assert parse_intermediate_header("AD 04.05.0050 (/)") is None
+
+
+def test_canonical_sco_code_accepts_the_canonical_and_the_published_forms() -> None:
+    assert canonical_sco_code("AD04050050(/)") == "AD04050050(/)"
+    assert canonical_sco_code("AD 04.05.0050 (/)") == "AD04050050(/)"
+    assert canonical_sco_code("AD04.05.0050(/)") == "AD04050050(/)"
+    assert canonical_sco_code("CE 02.10.0015 (A)") == "CE02100015(A)"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "AD 04.05 PISO INTERTRAVADO",
+        "AD 04 SERVICOS DE PAVIMENTACAO",
+        "AD PAVIMENTACAO SINTETICA",
+        "Nota: as marcas indicadas servem apenas para definir o padrao",
+        "AD 04.05.050 (/)",
+        "AD 04.05.0050 (1)",
+        "AD 04.05.0050",
+        "ad 04.05.0050 (/)",
+        "AD 0405.0050 (/)",
+        "",
+    ],
+)
+def test_canonical_sco_code_refuses_what_is_not_an_item_code(text: str) -> None:
+    assert canonical_sco_code(text) is None
 
 
 def test_subgroup_and_intermediate_headers_do_not_overlap() -> None:

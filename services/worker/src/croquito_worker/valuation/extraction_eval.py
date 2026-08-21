@@ -143,6 +143,9 @@ class ArmReport(BaseModel):
     prompt_version: str
     refinement_model_id: str
     refinement_prompt_version: str
+    refinement_calls: int = Field(ge=1)
+    """Quantas chamadas pagas o refino custou: ele fatia os itens em lotes que caibam no
+    `text_payload` do provider, então uma prancha grande paga mais de uma."""
     item_count: int = Field(ge=0)
     proposed_count: int = Field(ge=0)
     ambiguous_count: int = Field(ge=0)
@@ -604,14 +607,15 @@ def _run_arm(
     lexical_top1, lexical_top3 = _sco_hit_rates(
         lexical, labels_by_item, DEMO_EXPECTED_CODE_BY_LABEL
     )
-    executions = (legend_execution, refinement.execution)
+    executions = (legend_execution, *refinement.executions)
     report = ArmReport(
         name=arm.name,
         provider=legend_execution.provider.value,
         model_id=legend_execution.model_id,
         prompt_version=legend_execution.prompt.prompt_version,
-        refinement_model_id=refinement.execution.model_id,
-        refinement_prompt_version=refinement.execution.prompt.prompt_version,
+        refinement_model_id=refinement.executions[0].model_id,
+        refinement_prompt_version=refinement.executions[0].prompt.prompt_version,
+        refinement_calls=refinement.call_count,
         item_count=len(packet.items),
         proposed_count=sum(1 for item in packet.items if item.status is TakeoffItemStatus.PROPOSED),
         ambiguous_count=sum(
@@ -625,7 +629,7 @@ def _run_arm(
         lexical_sco_top3=lexical_top3,
         suggester_version=refinement.suggestions.suggester_version,
         legend_latency_ms=legend_execution.latency_ms,
-        refinement_latency_ms=refinement.execution.latency_ms,
+        refinement_latency_ms=sum(execution.latency_ms for execution in refinement.executions),
         estimated_cost_usd=_cost_total(executions),
         input_tokens=_usage_total(executions, "input_tokens"),
         output_tokens=_usage_total(executions, "output_tokens"),
@@ -682,7 +686,7 @@ def run_valuation_extraction_eval(
     # Métricas do matcher léxico determinístico (M7 Fase 1), sobre a parte sintética —
     # independentes de qual braço pago rodou: usam sempre o primeiro braço (o fixture,
     # offline, quando `--arm` não foi passado) e um top-20 calculado à parte do que
-    # `_run_arm` publica (que fica em 3 candidatos, o padrão de `SuggestionConfig`).
+    # `_run_arm` publica (que fica no padrão de `SuggestionConfig`, 5 candidatos).
     matcher_labels_by_item = {
         item.id: row.label
         for item in first.reviewed.items

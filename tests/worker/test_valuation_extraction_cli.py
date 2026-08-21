@@ -18,12 +18,13 @@ from pathlib import Path
 import pytest
 
 from croquito_valuation.assignment import (
+    SCO_LEXICAL_IDF_SUGGESTER_VERSION,
+    SCO_REFINED_LEXICAL_IDF_SUGGESTER_VERSION,
     SCO_REFINED_SUGGESTER_VERSION,
-    SCO_SUGGESTER_VERSION,
+    CodeSuggestion,
     CodeSuggestionSet,
-    suggest_codes,
 )
-from croquito_valuation.catalog import default_domain_synonyms
+from croquito_valuation.catalog import default_domain_synonyms, default_legend_noise
 from croquito_valuation.contract import ContractWorkbook
 from croquito_valuation.models import PriceCatalog
 from croquito_valuation.takeoff import TakeoffItemStatus, load_takeoff_packet
@@ -52,7 +53,10 @@ from croquito_worker.valuation.cli import (
     main,
 )
 from croquito_worker.valuation.extraction_eval import REPORT_FILENAME
+from croquito_worker.valuation.legend_extraction import LEGEND_EXTRACTION_SAFETY_NOTES
 from croquito_worker.valuation.plate import PLATE_IMAGE_FILENAME
+from croquito_worker.valuation.sco_matching import build_hybrid_code_suggestions
+from croquito_worker.valuation.sco_suggestion import TRANSMITTED_CANDIDATE_WINDOW
 from croquito_worker.valuation.synthetic import build_synthetic_previous_mapao
 
 ALLOWLIST = "CROQUITO_AI_EXTRACTION_ALLOWED_DIGESTS"
@@ -61,6 +65,9 @@ PROVIDER_KEYS = ("CROQUITO_ANTHROPIC_API_KEY", "CROQUITO_OPENAI_API_KEY")
 
 _REAL_ARM = "sonnet=anthropic:claude-sonnet-5"
 _FIXTURE_ARM = "fabricado=fixture:qualquer-modelo"
+_RESERVE_ARM = "luna=openai:gpt-5.6-luna"
+_RESERVE_MODEL_ID = "fixture-legend-reserva-v1"
+_RESERVE_NOTE = "PROVIDER_FALLBACK_LEGEND_EXTRACTION_OPENAI"
 _PLATE_ID = "prancha-cliente-de-teste"
 
 _FIXTURE_MODEL_ID = "fixture-rerank-v1"
@@ -123,28 +130,42 @@ def _suggest_argv(workspace: Workspace, output_dir: Path, *, refine_arm: str | N
 
 
 def _lexical_suggestions(workspace: Workspace) -> CodeSuggestionSet:
-    """A shortlist que a via determinística produz, calculada fora da CLI.
+    """A shortlist que a via determinística produz sem índice, calculada fora da CLI.
 
     `run_suggest_codes` carrega sinônimos de `synonyms.json` do diretório de saída se
     existir, senão o seed empacotado (`load_round_synonyms`); os testes deste arquivo usam
     um `--output` novo a cada rodada, sem `synonyms.json`, então a referência aqui precisa
     do mesmo seed para não divergir do que a CLI de fato publica (Fase 1 do M7).
+
+    Desde 2026-08-21 a via sem índice é o braço léxico por cobertura ponderada, não a Dice:
+    o oráculo reproduz a chamada do comando inteira, com `noise=default_legend_noise()`
+    junto — sem ele a shortlist divergiria em silêncio.
     """
-    return suggest_codes(
+    return build_hybrid_code_suggestions(
         load_takeoff_packet(workspace.packet_path),
         PriceCatalog.model_validate_json(workspace.catalog_path.read_text(encoding="utf-8")),
         ContractWorkbook.model_validate_json(workspace.contract_path.read_text(encoding="utf-8")),
         synonyms=default_domain_synonyms(),
+        noise=default_legend_noise(),
     )
 
 
+def _window(suggestion: CodeSuggestion) -> list[str]:
+    """Os candidatos de um item que o refino de fato recebe — a cauda não é transmitida."""
+    return [c.code for c in suggestion.candidates[:TRANSMITTED_CANDIDATE_WINDOW]]
+
+
 def _reversed_refinement(suggestions: CodeSuggestionSet) -> ScoRefinementOutput:
-    """Permutação válida e visível: cada shortlist devolvida ao contrário, com justificativa."""
+    """Permutação válida e visível: a JANELA de cada item devolvida ao contrário.
+
+    Inverter a shortlist inteira deixou de ser resposta possível quando a shortlist passou
+    a ter 15 candidatos: `ranked_codes` aceita no máximo 10, e é isso que o estágio envia.
+    """
     return ScoRefinementOutput(
         items=[
             ScoItemRefinementOutput(
                 item_id=suggestion.item_id,
-                ranked_codes=[c.code for c in reversed(suggestion.candidates)],
+                ranked_codes=list(reversed(_window(suggestion))),
                 rationale="fixture de teste: shortlist invertida",
                 flags=["ordem-invertida"],
             )
@@ -202,7 +223,7 @@ def test_suggest_codes_without_the_flag_publishes_the_lexical_shortlist(
     assert main(_suggest_argv(workspace, output_dir, refine_arm=None)) == 0
 
     payload = _stdout(capsys)
-    assert payload["suggester_version"] == SCO_SUGGESTER_VERSION
+    assert payload["suggester_version"] == SCO_LEXICAL_IDF_SUGGESTER_VERSION
     assert "refinement" not in payload
     published = CodeSuggestionSet.model_validate_json(
         (output_dir / CODE_SUGGESTIONS_FILENAME).read_text(encoding="utf-8")
@@ -231,13 +252,16 @@ def test_suggest_codes_with_a_refine_arm_publishes_the_reordered_shortlist(
     published = CodeSuggestionSet.model_validate_json(
         (output_dir / CODE_SUGGESTIONS_FILENAME).read_text(encoding="utf-8")
     )
-    assert published.suggester_version == SCO_REFINED_SUGGESTER_VERSION
+    assert published.suggester_version == SCO_REFINED_LEXICAL_IDF_SUGGESTER_VERSION
     assert published.refinement is not None
     assert published.refinement.model_id == _FIXTURE_MODEL_ID
     assert published.refinement.prompt_version == "sco-refinement@1.0.2"
-    # A ordem publicada é a pedida pelo refino, e a shortlist continua sendo a mesma.
+    # A ordem publicada é a pedida pelo refino na JANELA, a cauda fica onde a via léxica a
+    # pôs, e o conjunto de códigos publicado continua sendo exatamente o mesmo.
     for before, after in zip(lexical.suggestions, published.suggestions, strict=True):
-        assert [c.code for c in after.candidates] == [c.code for c in reversed(before.candidates)]
+        tail = [c.code for c in before.candidates[TRANSMITTED_CANDIDATE_WINDOW:]]
+        assert [c.code for c in after.candidates] == [*reversed(_window(before)), *tail]
+        assert sorted(c.code for c in after.candidates) == sorted(c.code for c in before.candidates)
         assert after.candidates[0].refinement_note == (
             "fixture de teste: shortlist invertida | flags: ordem-invertida"
         )
@@ -253,7 +277,14 @@ def test_suggest_codes_with_a_refine_arm_publishes_the_reordered_shortlist(
         "output_tokens",
         "latency_ms",
         "input_digest",
+        "calls",
     }
+    # O refino fatia os itens em lotes que caibam no payload: quem lê o relatório precisa
+    # saber quantas chamadas pagas a prancha custou, não só que "houve refino".
+    calls = refinement["calls"]
+    assert isinstance(calls, int)
+    assert calls >= 1
+    assert refinement["input_digest"] == published.refinement.input_digest
 
 
 def test_suggest_codes_refuses_a_fixture_provider_as_refine_arm(
@@ -360,6 +391,35 @@ def _legend_adapter() -> FixtureProviderAdapter:
     )
 
 
+def _legend_reserve_adapter() -> FixtureProviderAdapter:
+    """Reserva num provider DIFERENTE do escolhido: é o que torna a nota verificável."""
+    return FixtureProviderAdapter(
+        provider=ProviderName.OPENAI,
+        model_id=_RESERVE_MODEL_ID,
+        outputs={PromptTask.LEGEND_EXTRACTION: _legend_output()},
+    )
+
+
+def _patch_legend_arms(
+    monkeypatch: pytest.MonkeyPatch, arms: dict[str, tuple[str, ProviderAdapter]]
+) -> None:
+    """Fábrica de braço por spec: o `--arm` e o `--reserve-arm` viram adapters diferentes.
+
+    Spec fora do mapa cai na fábrica REAL, e é assim que a recusa de braço de reserva mal
+    escrito continua sendo exercida pelo código de produção em vez de pelo dublê.
+    """
+    original = valuation_cli._build_paid_arm
+
+    def _factory(arm_spec: str) -> tuple[str, str, ProviderAdapter]:
+        found = arms.get(arm_spec)
+        if found is None:
+            return original(arm_spec)
+        model_id, adapter = found
+        return arm_spec.partition("=")[0], model_id, adapter
+
+    monkeypatch.setattr(valuation_cli, "_build_legend_arm", _factory)
+
+
 def _manifest(path: Path, *, source_digest: str, page_digest: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -369,7 +429,14 @@ def _manifest(path: Path, *, source_digest: str, page_digest: str) -> Path:
     return path
 
 
-def _extract_argv(workspace: Workspace, manifest: Path, output_dir: Path, *, arm: str) -> list[str]:
+def _extract_argv(
+    workspace: Workspace,
+    manifest: Path,
+    output_dir: Path,
+    *,
+    arm: str,
+    reserve_arm: str | None = None,
+) -> list[str]:
     return [
         "extract-legend-real",
         "--image",
@@ -378,6 +445,7 @@ def _extract_argv(workspace: Workspace, manifest: Path, output_dir: Path, *, arm
         str(manifest),
         "--arm",
         arm,
+        *(() if reserve_arm is None else ("--reserve-arm", reserve_arm)),
         "--plate-id",
         _PLATE_ID,
         "--page-number",
@@ -424,6 +492,114 @@ def test_extract_legend_real_publishes_a_packet_bound_to_the_authorised_document
         TakeoffItemStatus.AMBIGUOUS,
     ]
     assert (output_dir / TAKEOFF_OVERLAY_FILENAME).is_file()
+
+
+def test_extract_legend_real_without_a_reserve_arm_publishes_the_usual_safety_notes(
+    workspace: Workspace,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sem `--reserve-arm` o pacote é o de sempre: três notas, nenhuma de degradação."""
+    image_digest = hashlib.sha256(workspace.image_path.read_bytes()).hexdigest()
+    document_digest = "d" * 64
+    manifest = _manifest(
+        tmp_path / "manifest.json", source_digest=document_digest, page_digest=image_digest
+    )
+    monkeypatch.setenv(ALLOWLIST, document_digest)
+    _patch_arm(monkeypatch, "_build_legend_arm", _legend_adapter(), "fixture-legend-v1")
+    output_dir = tmp_path / "sem-reserva"
+
+    assert main(_extract_argv(workspace, manifest, output_dir, arm=_REAL_ARM)) == 0
+
+    packet = load_takeoff_packet(output_dir / TAKEOFF_PACKET_FILENAME)
+    assert packet.safety_notes == list(LEGEND_EXTRACTION_SAFETY_NOTES)
+
+
+def test_extract_legend_real_degrades_to_the_reserve_arm_and_names_who_answered(
+    workspace: Workspace,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    image_digest = hashlib.sha256(workspace.image_path.read_bytes()).hexdigest()
+    document_digest = "d" * 64
+    manifest = _manifest(
+        tmp_path / "manifest.json", source_digest=document_digest, page_digest=image_digest
+    )
+    monkeypatch.setenv(ALLOWLIST, document_digest)
+    _patch_legend_arms(
+        monkeypatch,
+        {
+            _REAL_ARM: ("fixture-legend-v1", _FailingAdapter(ProviderFailureCode.UNAVAILABLE)),
+            _RESERVE_ARM: (_RESERVE_MODEL_ID, _legend_reserve_adapter()),
+        },
+    )
+    output_dir = tmp_path / "com-reserva"
+
+    exit_code = main(
+        _extract_argv(workspace, manifest, output_dir, arm=_REAL_ARM, reserve_arm=_RESERVE_ARM)
+    )
+
+    assert exit_code == 0
+    packet = load_takeoff_packet(output_dir / TAKEOFF_PACKET_FILENAME)
+    assert packet.safety_notes == [*LEGEND_EXTRACTION_SAFETY_NOTES, _RESERVE_NOTE]
+    # O braço que respondeu assina o pacote e o lineage; o `--arm` escolhido não.
+    assert all(item.extractor == f"openai:{_RESERVE_MODEL_ID}" for item in packet.items)
+    payload = _stdout(capsys)
+    extraction = payload["extraction"]
+    assert isinstance(extraction, dict)
+    assert extraction["provider"] == "openai"
+    assert extraction["model_id"] == _RESERVE_MODEL_ID
+    assert (output_dir / TAKEOFF_OVERLAY_FILENAME).is_file()
+
+
+def test_extract_legend_real_refuses_a_malformed_reserve_arm_before_calling_anyone(
+    workspace: Workspace,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Reserva mal escrita recusa o comando: ignorá-la prometeria degradação inexistente."""
+    image_digest = hashlib.sha256(workspace.image_path.read_bytes()).hexdigest()
+    manifest = _manifest(
+        tmp_path / "manifest.json", source_digest="d" * 64, page_digest=image_digest
+    )
+    monkeypatch.setenv(ALLOWLIST, "d" * 64)
+    primary = _FailingAdapter(ProviderFailureCode.TIMEOUT)
+    _patch_legend_arms(monkeypatch, {_REAL_ARM: ("fixture-legend-v1", primary)})
+    output_dir = tmp_path / "reserva-invalida"
+
+    exit_code = main(
+        _extract_argv(workspace, manifest, output_dir, arm=_REAL_ARM, reserve_arm="lixo")
+    )
+
+    assert exit_code == 2
+    assert _stdout(capsys)["refused"] == "REFINE_ARM_INVALID"
+    assert _is_empty(output_dir)
+
+
+def test_extract_legend_real_refuses_a_fixture_reserve_arm(
+    workspace: Workspace,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Observação fabricada não vira artefato publicado — nem pela porta da reserva."""
+    image_digest = hashlib.sha256(workspace.image_path.read_bytes()).hexdigest()
+    manifest = _manifest(
+        tmp_path / "manifest.json", source_digest="d" * 64, page_digest=image_digest
+    )
+    monkeypatch.setenv(ALLOWLIST, "d" * 64)
+    _patch_legend_arms(monkeypatch, {_REAL_ARM: ("fixture-legend-v1", _legend_adapter())})
+    output_dir = tmp_path / "reserva-fixture"
+
+    exit_code = main(
+        _extract_argv(workspace, manifest, output_dir, arm=_REAL_ARM, reserve_arm=_FIXTURE_ARM)
+    )
+
+    assert exit_code == 2
+    assert _stdout(capsys)["refused"] == "REFINE_ARM_FIXTURE_FORBIDDEN"
+    assert _is_empty(output_dir)
 
 
 def test_extract_legend_real_refuses_a_page_outside_the_manifest(

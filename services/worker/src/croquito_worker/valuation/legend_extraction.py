@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -45,6 +46,7 @@ from croquito_worker.providers import (
     ProviderExecution,
     ProviderExecutionError,
     ProviderFailureCode,
+    ProviderName,
     ProviderRequest,
     build_request,
 )
@@ -70,6 +72,19 @@ LEGEND_EXTRACTION_SAFETY_NOTES: Final[tuple[str, ...]] = (
     "Linha ilegível, unidade desconhecida ou quantidade não interpretável nasce ambígua "
     "e sem quantidade.",
 )
+"""As três notas que TODO pacote de legenda carrega, na ordem em que são escritas.
+
+Elas são a parte fixa: notas de degradação entram DEPOIS delas
+(`takeoff_packet_from_legend(extra_safety_notes=...)`), para que um pacote sem degradação
+continue byte a byte o que sempre foi."""
+
+LEGEND_FALLBACK_NOTE_PREFIX: Final = "PROVIDER_FALLBACK_LEGEND_EXTRACTION_"
+"""Prefixo da nota que declara que quem respondeu não foi o braço escolhido.
+
+Mesma família das notas do caminho do croqui (`PROVIDER_FALLBACK_PAGE_SURVEY_*`,
+`PROVIDER_FALLBACK_GEOMETRY_EXTRACTION_*`): a revisão humana lê a nota e sabe que a
+procedência do pacote é outra. Sem ela, o orçamentista leria o takeoff como se o braço
+homologado tivesse lido a prancha."""
 
 _KNOWN_UNITS: Final[frozenset[str]] = frozenset(UNIT_ALIASES.values())
 
@@ -221,6 +236,7 @@ def takeoff_packet_from_legend(
     image_height: int,
     extractor: str,
     extractor_version: str,
+    extra_safety_notes: Sequence[str] = (),
 ) -> TakeoffPacket:
     """Traduz a transcrição do provider em pacote de takeoff, sem rede e sem provider.
 
@@ -228,6 +244,11 @@ def takeoff_packet_from_legend(
     pt-BR, unidade reconhecida pelo catálogo e legibilidade `clear`. Qualquer dúvida em
     qualquer um dos quatro produz `AMBIGUOUS` **sem quantidade**. `CONFIRMED` não é
     alcançável por este caminho: confirmar é ato do orçamentista.
+
+    `extra_safety_notes` são as notas que a CHAMADA descobriu e o mapeamento não teria como
+    saber — hoje, a degradação para o braço de reserva. Elas entram **depois** das três
+    fixas: quem não degradou continua com exatamente a lista de sempre, e quem degradou
+    não perde nenhuma advertência por causa disso.
     """
     if not output.rows:
         raise ValuationValidationError(
@@ -255,7 +276,7 @@ def takeoff_packet_from_legend(
         image_sha256=image_sha256,
         source_pdf_sha256=source_pdf_sha256,
         items=items,
-        safety_notes=list(LEGEND_EXTRACTION_SAFETY_NOTES),
+        safety_notes=[*LEGEND_EXTRACTION_SAFETY_NOTES, *extra_safety_notes],
     )
 
 
@@ -279,6 +300,50 @@ def build_legend_request(source: Path) -> tuple[ProviderRequest, int, int]:
     return request, width, height
 
 
+def legend_fallback_note(provider: ProviderName) -> str:
+    """Nota que nomeia o provider que REALMENTE respondeu quando o escolhido falhou."""
+    return f"{LEGEND_FALLBACK_NOTE_PREFIX}{provider.value.upper()}"
+
+
+def execute_legend_request(
+    request: ProviderRequest,
+    adapter: ProviderAdapter,
+    reserve: ProviderAdapter | None,
+) -> tuple[ProviderExecution, tuple[str, ...]]:
+    """Executa no braço escolhido e só degrada para o reserva depois de falha permanente.
+
+    Cópia deliberada da semântica de `provider_review._execute_with_fallback` — a cadeia do
+    croqui já degradou assim, e uma segunda regra para a mesma pergunta ("quando vale a
+    pena tentar o outro braço?") seria a chance de as duas jornadas divergirem em silêncio.
+    Mora aqui, e não no `round_extraction`, porque este módulo é o dono do contrato da
+    extração de legenda (pedido, notas de segurança, mapeamento observação→takeoff) e é
+    dele que o `round_extraction` compõe o caminho do upload: um helper do lado de lá
+    deixaria o caminho do CLI sem degradação.
+
+    Devolve também as notas extras do pacote — vazio quando ninguém degradou. A degradação
+    nunca é silenciosa: quem responde no lugar do braço escolhido é outra procedência, e
+    esconder a troca faria a revisão ler o pacote como se o braço homologado tivesse lido.
+
+    Duas recusas de degradar, ambas herdadas do croqui:
+
+    - `BUDGET_EXCEEDED` não descreve o braço, e sim o teto compartilhado do job: a chamada
+      de reserva consumiria o mesmo teto sem chance nenhuma de sucesso;
+    - `reserve=None` é a reserva desligada por configuração (o padrão). A falha do primário
+      propaga exatamente como propagava antes de existir reserva, e **nenhuma** nota é
+      criada — não houve troca de braço para registrar.
+
+    Falha transitória não chega aqui: quem esgota retentativa é o `RetryingProviderAdapter`
+    dentro de cada braço, e o que este helper recebe já é a exceção final.
+    """
+    try:
+        return adapter.execute(request), ()
+    except ProviderExecutionError as error:
+        if error.code is ProviderFailureCode.BUDGET_EXCEEDED or reserve is None:
+            raise
+        execution = reserve.execute(request)
+        return execution, (legend_fallback_note(execution.provider),)
+
+
 def run_legend_extraction(
     image_path: Path,
     manifest_path: Path,
@@ -286,6 +351,7 @@ def run_legend_extraction(
     *,
     plate_id: str,
     page_number: int,
+    reserve: ProviderAdapter | None = None,
 ) -> LegendExtractionResult:
     """Autoriza a página, envia a prancha ao provider e devolve o pacote proposto e registrado.
 
@@ -300,13 +366,17 @@ def run_legend_extraction(
     O pacote aqui nunca tem item decidido (acabou de nascer), então o registro nunca é
     recusado por decisão; sem faixa de texto nenhuma detectada (caso degenerado), ele
     devolve o pacote como veio, com todo item em `unmatched_item_ids`.
+
+    `reserve` é o braço de degradação, desligado por padrão (`None`): sem ele, a falha do
+    primário propaga como sempre propagou. Com ele, quem responde no lugar do braço
+    escolhido fica nomeado numa nota de segurança do pacote.
     """
     source = image_path.resolve(strict=True)
     image_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
     source_sha256 = authorize_page(manifest_path, image_sha256)
 
     request, width, height = build_legend_request(source)
-    execution = adapter.execute(request)
+    execution, fallback_notes = execute_legend_request(request, adapter, reserve)
     output = execution.output
     if not isinstance(output, LegendExtractionOutput):  # pragma: no cover - contrato do adapter
         raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
@@ -321,6 +391,7 @@ def run_legend_extraction(
         image_height=height,
         extractor=extractor_label(execution.provider.value, execution.model_id),
         extractor_version=execution.prompt.prompt_version,
+        extra_safety_notes=fallback_notes,
     )
     registered_packet, registration = register_legend_bboxes(source, packet)
     return LegendExtractionResult(

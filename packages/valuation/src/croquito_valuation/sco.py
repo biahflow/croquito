@@ -2,7 +2,13 @@
 
 Amostra de referência: `AD04050050(/)` — duas letras de família, oito dígitos fatiados
 em 2/2/4 (`AD 04 05 0050`) e uma variante entre parênteses (`/` para o item base, letra
-maiúscula para as variantes `(A)`, `(B)`).
+maiúscula para as variantes `(A)`, `(B)`). Essa é a forma **canônica**: a única que este
+contexto armazena, valida (`SCO_CODE_PATTERN`) e compara.
+
+O catálogo publicado pela CGM-Rio, porém, escreve o mesmo código com separadores
+(`AD 04.05.0050 (/)`). Essa forma é aceita apenas na **fronteira de leitura**, por
+`canonical_sco_code`, que devolve o código canônico; nada além do leitor de planilha
+conhece a forma publicada.
 
 A classificação do item aparece em três níveis, e o catálogo publicado pode escrevê-los
 como texto com nome junto do código, em colunas próprias:
@@ -36,13 +42,21 @@ declarado ali precisa, além de casar o texto, ter a forma deste superset — qu
 isso é o leitor do consolidado (`workbook_reader.py`, chamando `is_contract_code`), não o
 modelo.
 """
+SCO_PUBLISHED_CODE_PATTERN: Final = r"^([A-Z]{2})\s*(\d{2})\.(\d{2})\.(\d{4})\s*\((/|[A-Z])\)$"
+"""Forma com separadores em que o catálogo publicado escreve o código do item.
+
+`AD 04.05.0050 (/)` é o mesmo item que `AD04050050(/)`; os espaços depois da família e
+antes do parêntese são opcionais. Este padrão existe só para a leitura de planilha
+canonizar o que lê — ele nunca substitui `SCO_CODE_PATTERN` no armazenamento.
+"""
 SCO_FAMILY_ROW_PATTERN: Final = r"^[A-Z]{2}$"
 SCO_SUBGROUP_ROW_PATTERN: Final = r"^[A-Z]{2}\d{4}$"
 SCO_FAMILY_HEADER_PATTERN: Final = r"^([A-Z]{2})\s+(\S.*)$"
 SCO_INTERMEDIATE_HEADER_PATTERN: Final = r"^([A-Z]{2})\s*(\d{2})\s+(\S.*)$"
-SCO_SUBGROUP_HEADER_PATTERN: Final = r"^([A-Z]{2})\s*(\d{2})[.\s]*(\d{2})\s*([^\d\s].*)$"
+SCO_SUBGROUP_HEADER_PATTERN: Final = r"^([A-Z]{2})\s*(\d{2})[.\s]*(\d{2})\s*([^\d\s.].*)$"
 
 _SCO_CODE_RE: Final = re.compile(SCO_CODE_PATTERN)
+_SCO_PUBLISHED_CODE_RE: Final = re.compile(SCO_PUBLISHED_CODE_PATTERN)
 _CONTRACT_CODE_RE: Final = re.compile(CONTRACT_CODE_PATTERN)
 _SCO_FAMILY_ROW_RE: Final = re.compile(SCO_FAMILY_ROW_PATTERN)
 _SCO_SUBGROUP_ROW_RE: Final = re.compile(SCO_SUBGROUP_ROW_PATTERN)
@@ -95,6 +109,23 @@ def is_sco_code(value: str) -> bool:
     return _SCO_CODE_RE.fullmatch(value) is not None
 
 
+def canonical_sco_code(text: str) -> str | None:
+    """Código canônico do item quando `text` é um código SCO; `None` quando não é.
+
+    Aceita as duas formas em que o item aparece — a canônica (`AD04050050(/)`) e a
+    publicada com separadores (`AD 04.05.0050 (/)`) — e devolve sempre a canônica, que é
+    a única armazenável. Não levanta exceção: é o teste que o leitor de planilha usa para
+    decidir se a linha é um item antes de tentar lê-la como cabeçalho.
+    """
+    if _SCO_CODE_RE.fullmatch(text):
+        return text
+    match = _SCO_PUBLISHED_CODE_RE.fullmatch(text)
+    if match is None:
+        return None
+    family, subgroup, group, item, variant = match.groups()
+    return f"{family}{subgroup}{group}{item}({variant})"
+
+
 def is_contract_code(value: str) -> bool:
     """`True` quando o texto tem a estrutura de um código contratual: SCO completo ou nu.
 
@@ -144,8 +175,10 @@ def parse_subgroup_header(text: str) -> tuple[str, str] | None:
 
     Aceita as duas formas publicadas — com separadores (`AD 04.05 Piso intertravado`) e
     colada (`AD0410Meio-fio`). O nome precisa começar por caractere que não seja dígito,
-    o que impede um código de item (`AD04050050(/)`) de ser lido como subgrupo. O código
-    devolvido tem o mesmo formato de `ScoCodeParts.subgroup_row_code`.
+    espaço nem ponto: é isso que impede um código de item de ser lido como subgrupo tanto
+    na forma canônica (`AD04050050(/)`) quanto na publicada (`AD 04.05.0050 (/)`), cujo
+    resto (`.0050 (/)`) seria lido como nome se o ponto fosse aceito. O código devolvido
+    tem o mesmo formato de `ScoCodeParts.subgroup_row_code`.
     """
     match = _SCO_SUBGROUP_HEADER_RE.fullmatch(text)
     if match is None:

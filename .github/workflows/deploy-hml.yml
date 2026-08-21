@@ -175,6 +175,23 @@ jobs:
       # chamada legítima e lenta termine, em vez de morrer aos 30s e queimar as três
       # tentativas sem nunca ter chance.
       #
+      # `CROQUITO_PROVIDER_RETRY_DEADLINE_SECONDS=120` (2026-08-21): o retry passou a ser
+      # limitado por PRAZO DE PAREDE em vez de contagem de tentativas, com default 300s no
+      # código. 300 aqui seria demais: com `CROQUITO_PROVIDER_TIMEOUT_SECONDS=240`, o prazo
+      # de 300 comporta DUAS tentativas penduradas (480s) por braço, e a cadeia
+      # primário + reserva passaria dos 600s de `ack_deadline_seconds` da subscription
+      # (`biahflow/infra`, envs/hml/croquito/main.tf) — não do `--timeout 900` daqui.
+      #
+      # O ack é o teto que importa, e por um motivo específico: ele é MENOR que o timeout
+      # do serviço. Estourá-lo faz o Pub/Sub reentregar enquanto a invocação original ainda
+      # roda; o claim atômico do worker descarta a reentrega (ack sem trabalho), e se a
+      # original morrer depois disso a mensagem já foi confirmada e a linha fica em RUNNING
+      # sem ninguém para retomar. Não há recuperação de RUNNING preso.
+      #
+      # Com 120: uma pendurada gasta a tentativa única de 240s e vai direto para a reserva
+      # (240s), somando 480s — cabe nos 600s. Um 429, que volta em ~1s, ainda cabe dezenas
+      # de tentativas dentro dos 120s, que é justamente o caso em que insistir funciona.
+      #
       # `CROQUITO_OPENAI_MODEL=gpt-5.6-sol` (decisão humana, 2026-08-19, pós-V10): o
       # gpt-5.6-terra reprovou o contrato duas rodadas seguidas por defeitos de naturezas
       # diferentes — expressão composta em campo decimal no V9, bbox degenerado {1,1,1,1}
@@ -216,7 +233,7 @@ jobs:
             --command croquito-worker-push \
             --memory 2Gi --cpu 2 --timeout 900 --concurrency 4 --no-cpu-throttling \
             --set-secrets CROQUITO_DATABASE_URL=croquito-hml-database-url:latest,AWS_ACCESS_KEY_ID=croquito-hml-storage-hmac-id:latest,AWS_SECRET_ACCESS_KEY=croquito-hml-storage-hmac-secret:latest,CROQUITO_OPENAI_API_KEY=croquito-hml-openai-api-key:latest,CROQUITO_ANTHROPIC_API_KEY=croquito-hml-anthropic-api-key:latest \
-            --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_REAL_PROVIDERS_ENABLED=true,CROQUITO_AI_MAX_ESTIMATED_COST_USD=5.00,CROQUITO_OPENAI_MODEL=gpt-5.6-sol,CROQUITO_OPENAI_ARM_ENABLED=false,CROQUITO_ANTHROPIC_MODEL=claude-opus-5,CROQUITO_PROVIDER_TIMEOUT_SECONDS=240,CROQUITO_DOCAI_PROCESSOR=projects/biahflow-hml/locations/us/processors/a3d553818d4099b9 \
+            --set-env-vars CROQUITO_STORAGE_SSE=false,CROQUITO_AWS_ENDPOINT_URL=https://storage.googleapis.com,AWS_REGION=us-east1,CROQUITO_ARTIFACT_BUCKET=croquito-hml-artifacts,CROQUITO_REAL_PROVIDERS_ENABLED=true,CROQUITO_AI_MAX_ESTIMATED_COST_USD=5.00,CROQUITO_OPENAI_MODEL=gpt-5.6-sol,CROQUITO_OPENAI_ARM_ENABLED=false,CROQUITO_ANTHROPIC_MODEL=claude-opus-5,CROQUITO_PROVIDER_TIMEOUT_SECONDS=240,CROQUITO_PROVIDER_RETRY_DEADLINE_SECONDS=120,CROQUITO_DOCAI_PROCESSOR=projects/biahflow-hml/locations/us/processors/a3d553818d4099b9 \
             --startup-probe httpGet.path=/healthz,httpGet.port=8080,initialDelaySeconds=3,periodSeconds=5,failureThreshold=12,timeoutSeconds=3 \
             --quiet
 

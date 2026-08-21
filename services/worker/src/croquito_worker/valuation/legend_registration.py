@@ -235,6 +235,21 @@ RULING_SEARCH_MIN_MARGIN_PX: Final = 300
 o último item (poucos itens, ou proposta pouco espalhada), quando a margem proporcional
 sozinha seria curta demais pra alcançar a linha verdadeira."""
 
+RULING_SEARCH_MARGIN_HEIGHT_RATIO: Final = 0.15
+"""Terceiro termo da margem de busca: fração da ALTURA DA PÁGINA.
+
+O desvio do VLM é proporcional à página, não absoluto — ele responde em coordenada
+normalizada, então o mesmo erro relativo vira mais pixels quanto maior for o render. Os
+outros dois termos são absolutos ou dependem do vão proposto, e por isso ficaram curtos
+na primeira prancha real de alta resolução (Campo do Toca, 9362x6623 a 200 DPI): o
+deslizamento foi de 822px (12,4% da altura) contra uma margem de 560px, e as SETE
+primeiras linhas da legenda — todas as de piso — caíram fora da janela. Sem enxergá-las,
+o registro não tinha como casar 15 itens e desistiu (`method="none"`, 15 sem par).
+
+15% cobre esse caso com folga e continua parando antes da tabela alheia de y~5300 que o
+`RULING_SEARCH_MARGIN_RATIO` cita como armadilha real. Na prancha sintética (1750x1225)
+o termo vale 184px, abaixo do piso de 300 — ou seja, este termo não muda nada lá."""
+
 RULING_MIN_WIDTH_RATIO: Final = 0.6
 """Fração mínima da largura da coluna com tinta numa linha Y para ela contar como régua
 (borda horizontal de célula da tabela) — bem mais exigente que o limiar de faixa de
@@ -1047,6 +1062,7 @@ def register_legend_bboxes(
     search_margin = max(
         round(RULING_SEARCH_MARGIN_RATIO * (proposed_bottom - proposed_top)),
         RULING_SEARCH_MIN_MARGIN_PX,
+        round(RULING_SEARCH_MARGIN_HEIGHT_RATIO * height),
     )
     search_top = max(0, proposed_top - search_margin)
     search_bottom = min(height, proposed_bottom + search_margin)

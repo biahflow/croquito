@@ -21,6 +21,8 @@ export type Provider1 = string;
 export type SuggesterVersion =
   | "lexical-sco-suggester-v1"
   | "lexical-sco-suggester-v1+llm-rerank-v1"
+  | "lexical-idf-sco-suggester-v1"
+  | "lexical-idf-sco-suggester-v1+llm-rerank-v1"
   | "lexical-cascade-sco-suggester-v1"
   | "hybrid-sco-suggester-v1"
   | "hybrid-sco-suggester-v1+llm-rerank-v1"
@@ -76,6 +78,11 @@ export type UnmatchedItemIds = string[];
  * continua válido ao ser relido, e `validate_semantic_lineage` reconhece as duas versões
  * como híbridas pelo prefixo de família `SCO_HYBRID_SUGGESTER_FAMILY`, não pela versão
  * corrente — só a produção NOVA escreve `v2`.
+ *
+ * `lexical-idf-sco-suggester-v1` é a fusão SEM a perna semântica (nenhum embedding
+ * participou, `semantic` ausente) e é o que a degradação publica desde 2026-08-21;
+ * `lexical-sco-suggester-v1` continua no `Literal` porque artefato de rodada anterior
+ * — e a via Dice, que segue viva na cascata do orçamento-base — carrega essa versão.
  *
  * Com `lexical-cascade-sco-suggester-v1` (orçamento-base, `suggest_codes_over_cascade`) o
  * conjunto abrange mais de um catálogo: `catalog_sha256` do cabeçalho é o do catálogo

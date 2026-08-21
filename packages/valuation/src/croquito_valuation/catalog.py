@@ -11,7 +11,14 @@ O template escolhe onde a hierarquia está escrita (`CatalogLayout.hierarchy_col
 - **em colunas próprias**: família e nível intermediário têm coluna cada um, com o nome
   junto do código, e o cabeçalho de subgrupo fica na coluna de código. Nesse modo a
   linha de família carrega texto sem valor nas demais colunas e é consumida inteira,
-  e cada item é conferido contra o subgrupo corrente antes de virar entrada.
+  e cada item é conferido contra o subgrupo corrente antes de virar entrada. O arquivo
+  publicado também escreve, aqui e ali, o nível intermediário na coluna de código; ele é
+  aceito ali com a mesma conferência de hierarquia da coluna própria.
+
+O código do item é canonizado na leitura (`canonical_sco_code`): o catálogo publicado o
+escreve com separadores (`AD 04.05.0050 (/)`) e a entrada guarda sempre a forma canônica
+(`AD04050050(/)`). Reconhecer as duas formas é o que separa item de cabeçalho — um código
+publicado lido como outra coisa some do catálogo em silêncio.
 """
 
 from __future__ import annotations
@@ -35,8 +42,8 @@ from pydantic import Field, field_validator
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.models import PriceCatalog, PriceCatalogEntry, ValuationContractModel
 from croquito_valuation.sco import (
+    canonical_sco_code,
     is_family_row_code,
-    is_sco_code,
     is_subgroup_row_code,
     parse_family_header,
     parse_intermediate_header,
@@ -188,7 +195,8 @@ def _read_in_column_entries(worksheet: Any, layout: CatalogLayout) -> list[Price
         raw_price = cells[price_index]
         if not code and not description and raw_price is None:
             continue
-        if not is_sco_code(code) and _is_declared_note(layout, (code, description)):
+        item_code = canonical_sco_code(code)
+        if item_code is None and _is_declared_note(layout, (code, description)):
             continue
         if is_family_row_code(code):
             if not description:
@@ -201,20 +209,20 @@ def _read_in_column_entries(worksheet: Any, layout: CatalogLayout) -> list[Price
                 _row_error(layout.sheet_name, row_number, "subgrupo sem descrição", code=code)
             subgroup_code, subgroup_name = code, description
             continue
-        if not is_sco_code(code):
+        if item_code is None:
             _row_error(layout.sheet_name, row_number, "código fora do formato SCO", code=code)
         if not description:
-            _row_error(layout.sheet_name, row_number, "item sem descrição", code=code)
+            _row_error(layout.sheet_name, row_number, "item sem descrição", code=item_code)
         if not family_code or not subgroup_code:
             _row_error(
-                layout.sheet_name, row_number, "item antes de família ou subgrupo", code=code
+                layout.sheet_name, row_number, "item antes de família ou subgrupo", code=item_code
             )
         if layout.is_unpriced(raw_price):
             continue
-        unit_price = _item_unit_price(layout.sheet_name, row_number, code, raw_unit, raw_price)
+        unit_price = _item_unit_price(layout.sheet_name, row_number, item_code, raw_unit, raw_price)
         entries.append(
             PriceCatalogEntry(
-                code=code,
+                code=item_code,
                 description=description,
                 unit=normalize_unit(raw_unit),
                 unit_price=unit_price,
@@ -280,9 +288,8 @@ def _read_columnar_entries(
             and raw_price is None
         ):
             continue
-        if not is_sco_code(code) and _is_declared_note(
-            layout, (family_text, intermediate_text, code)
-        ):
+        item_code = canonical_sco_code(code)
+        if item_code is None and _is_declared_note(layout, (family_text, intermediate_text, code)):
             continue
         if family_text:
             # A linha de família traz texto sem valor nas outras colunas: consome a linha
@@ -319,27 +326,32 @@ def _read_columnar_entries(
             intermediate_code = intermediate_header[0]
             subgroup_code, subgroup_name = "", ""
             continue
-        if is_sco_code(code):
+        if item_code is not None:
             if not description:
-                _row_error(layout.sheet_name, row_number, "item sem descrição", code=code)
+                _row_error(layout.sheet_name, row_number, "item sem descrição", code=item_code)
             if not family_code or not subgroup_code:
                 _row_error(
-                    layout.sheet_name, row_number, "item antes de família ou subgrupo", code=code
+                    layout.sheet_name,
+                    row_number,
+                    "item antes de família ou subgrupo",
+                    code=item_code,
                 )
-            if parse_sco_code(code).subgroup_row_code != subgroup_code:
+            if parse_sco_code(item_code).subgroup_row_code != subgroup_code:
                 _row_error(
                     layout.sheet_name,
                     row_number,
                     "item fora do subgrupo corrente",
-                    code=code,
+                    code=item_code,
                     subgroup=subgroup_code,
                 )
             if layout.is_unpriced(raw_price):
                 continue
-            unit_price = _item_unit_price(layout.sheet_name, row_number, code, raw_unit, raw_price)
+            unit_price = _item_unit_price(
+                layout.sheet_name, row_number, item_code, raw_unit, raw_price
+            )
             entries.append(
                 PriceCatalogEntry(
-                    code=code,
+                    code=item_code,
                     description=description,
                     unit=normalize_unit(raw_unit),
                     unit_price=unit_price,
@@ -368,6 +380,22 @@ def _read_columnar_entries(
                     intermediate=intermediate_code,
                 )
             subgroup_code, subgroup_name = header_code, header_name
+            continue
+        # O arquivo publicado às vezes escreve o nível intermediário na coluna de código
+        # em vez da coluna própria. É o mesmo cabeçalho, com a mesma conferência de
+        # hierarquia: pertencer à família corrente e zerar o subgrupo aberto.
+        intermediate_in_code = parse_intermediate_header(code)
+        if intermediate_in_code is not None:
+            if not family_code or intermediate_in_code[0][:2] != family_code:
+                _row_error(
+                    layout.sheet_name,
+                    row_number,
+                    "subgrupo intermediário fora da família corrente",
+                    code=intermediate_in_code[0],
+                    family=family_code,
+                )
+            intermediate_code = intermediate_in_code[0]
+            subgroup_code, subgroup_name = "", ""
             continue
         _row_error(layout.sheet_name, row_number, "código fora do formato SCO", code=code)
     return entries

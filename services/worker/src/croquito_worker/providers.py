@@ -38,6 +38,8 @@ class ProviderName(StrEnum):
     ANTHROPIC = "anthropic"
     BEDROCK_ANTHROPIC = "bedrock_anthropic"
     TEXTRACT = "textract"
+    GEMINI = "gemini"
+    MISTRAL = "mistral"
     GCP_VISION = "gcp_vision"
     GCP_DOCUMENT_AI = "gcp_document_ai"
 
@@ -684,9 +686,25 @@ class ProviderFailureCode(StrEnum):
 
 
 class ProviderExecutionError(RuntimeError):
-    def __init__(self, code: ProviderFailureCode) -> None:
+    """Falha de uma chamada de provider, com a única informação que só o transporte tem.
+
+    `reached_provider` responde "a chamada chegou a sair da máquina?", e existe porque a
+    reserva de orçamento é feita ANTES de cada tentativa (ver `BudgetedProviderAdapter`):
+    tentativa que morreu no TLS, no DNS ou na conexão recusada não gastou centavo nenhum
+    do fornecedor, e manter a reserva dela consumiria o teto da rodada — foi o que o
+    runbook da Toca registrou, com a falha de CA do Python do `uv` virando `TIMEOUT` e
+    comendo teto sem uma única chamada paga.
+
+    Quem sabe disso é o transporte, não o código de falha: `TIMEOUT` cobre tanto o
+    "não saiu" quanto o "saiu e não voltou", e inferir por heurística sobre
+    `ProviderFailureCode` erraria justamente no caso caro. Por isso o default é `True`,
+    fail-closed: só quem PROVA que nada saiu declara o contrário.
+    """
+
+    def __init__(self, code: ProviderFailureCode, *, reached_provider: bool = True) -> None:
         super().__init__(code.value)
         self.code = code
+        self.reached_provider = reached_provider
 
 
 BEDROCK_PERMANENT_ERRORS: Final = frozenset(
@@ -740,7 +758,8 @@ def _log_retries_exhausted(*, task: str, code: ProviderFailureCode, attempts: in
     reasoning levava mais que o timeout configurado, as três tentativas estouravam em
     `TIMEOUT` e a exceção subia sem nada escrito. `attempts` distingue os dois desfechos que
     chegam aqui: `1` é falha permanente na primeira tentativa (nunca houve retentativa),
-    `max_attempts` é esgotamento de falha transitória.
+    qualquer valor maior é esgotamento de falha transitória — por prazo de parede ou pelo
+    teto de segurança de tentativas (ver `RetryingProviderAdapter`).
 
     Este adapter embrulha qualquer outro e não conhece o nome do provider; tarefa e código de
     falha são o que ele pode afirmar, e bastam para o operador cruzar com o log do braço.
@@ -754,9 +773,110 @@ def _log_retries_exhausted(*, task: str, code: ProviderFailureCode, attempts: in
     )
 
 
+PROVIDER_RETRY_DEADLINE_ENV: Final = "CROQUITO_PROVIDER_RETRY_DEADLINE_SECONDS"
+DEFAULT_PROVIDER_RETRY_DEADLINE_SECONDS: Final = 300.0
+"""Prazo de parede default de uma cadeia de retentativas: cinco minutos por braço.
+
+Cinco minutos cobrem a janela típica de um 429 e de um 5xx curto, e ainda cabem folgados
+no timeout da fila; passar disso é indisponibilidade que o operador precisa ver como
+falha, não como espera.
+"""
+
+
+def _retry_deadline_seconds() -> float:
+    """Lê o prazo do ambiente; valor estranho recusa em vez de escolher um comportamento.
+
+    Mesma disciplina de `_openai_arm_enabled`: um `"abc"` ou um `"-1"` interpretado por
+    conta própria decidiria, em silêncio, por quanto tempo a rodada insiste num fornecedor
+    caído.
+    """
+    import os
+
+    raw = os.getenv(PROVIDER_RETRY_DEADLINE_ENV, "").strip()
+    if not raw:
+        return DEFAULT_PROVIDER_RETRY_DEADLINE_SECONDS
+    try:
+        value = float(raw)
+    except ValueError as error:
+        raise ValueError(f"{PROVIDER_RETRY_DEADLINE_ENV} deve ser um número de segundos") from error
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{PROVIDER_RETRY_DEADLINE_ENV} deve ser um número positivo de segundos")
+    return value
+
+
+TIMEOUT_BACKOFF_BASE_SECONDS: Final = 0.25
+TIMEOUT_BACKOFF_CAP_SECONDS: Final = 2.0
+"""Escada de espera para `TIMEOUT`: 250 ms, 500 ms, 1 s, 2 s, 2 s…
+
+Quando a falha é pendurada, quem domina o relógio é o timeout por tentativa — 60 s no
+braço Anthropic. Esperar segundos ANTES de gastar mais um minuto pendurado não muda nada
+além de encurtar o número de tentativas que cabem no prazo, por isso a escada continua em
+milissegundos e satura cedo.
+"""
+
+THROTTLE_BACKOFF_BASE_SECONDS: Final = 5.0
+THROTTLE_BACKOFF_CAP_SECONDS: Final = 60.0
+"""Escada de espera para `RATE_LIMITED`/`UNAVAILABLE`: 5 s, 10 s, 20 s, 40 s, 60 s, 60 s…
+
+Aqui a falha volta em ~1 s, então quem manda no relógio é a espera. A escada antiga
+(250 ms → 500 ms) queimava as três tentativas em 1,8 s contra um 429 do Gemini: limite de
+taxa nenhum abre nessa janela. Somada até o prazo default, esta escada dá ~7 tentativas
+espalhadas por cinco minutos.
+"""
+
+BACKOFF_JITTER_FRACTION: Final = 0.25
+"""Fatia da espera sorteada, só na escada de segundos.
+
+Vários braços do mesmo job levam 429 no mesmo instante e, sem jitter, voltariam juntos —
+reconstruindo o pico que os limitou. A fração é pequena de propósito: dispersa a rajada
+sem afrouxar a espera.
+"""
+
+
+def _default_jitter() -> float:
+    """Sorteio real do jitter, em `[0, 1)`.
+
+    O `random` fica confinado nesta função e é substituível pelo seam `jitter` de
+    `RetryingProviderAdapter`: nenhum teste deste repositório depende de sorteio, e o
+    módulo não passa a ter aleatoriedade difusa por causa de uma espera.
+    """
+    import random
+
+    # Dispersão de rajada, nunca uso criptográfico.
+    return random.random()
+
+
+RETRY_ATTEMPT_CEILING: Final = 12
+"""Teto de segurança de tentativas, para o caso degenerado de falha instantânea em laço.
+
+O prazo sozinho não basta: um adapter que falha em microssegundos sem nunca tocar a rede
+(credencial que não renova, por exemplo) gastaria o prazo inteiro sob a escada, e o
+`sleep` injetado nos testes torna esse laço instantâneo. 12 é folgado para a escada de
+segundos — que satura o prazo default em ~7 tentativas — e nunca é o limite que decide
+numa cadeia real.
+"""
+
+
 @dataclass(frozen=True)
 class RetryingProviderAdapter:
-    """Retries only transport failures; it never retries to seek a different reading."""
+    """Retries only transport failures; it never retries to seek a different reading.
+
+    A insistência é limitada por PRAZO DE PAREDE, não por contagem de tentativas. Contar
+    tentativas dá tempos incomparáveis conforme a falha: cinco tentativas são ~5 min numa
+    pendurada, porque cada uma custa o timeout inteiro do braço, e ~40 s num 429, porque a
+    recusa volta em ~1 s. Um prazo só descreve os dois casos com o comportamento certo, e
+    é o número que o operador realmente tem em mente ("quanto tempo este braço pode
+    insistir antes de eu chamar de indisponível").
+
+    A espera também depende do tipo de falha, porque as duas famílias têm relógios
+    diferentes — ver `TIMEOUT_BACKOFF_BASE_SECONDS` e `THROTTLE_BACKOFF_BASE_SECONDS`.
+
+    `REFUSED`, `INVALID_SCHEMA` e `BUDGET_EXCEEDED` continuam fora de `RETRYABLE` e falham
+    na primeira tentativa: retentar recusa não busca disponibilidade, busca outra leitura.
+
+    Relógio, espera e sorteio são seams injetáveis (`now`, `sleep`, `jitter`) — a suíte
+    deste repositório é determinística e nenhum teste dorme de verdade nem sorteia.
+    """
 
     RETRYABLE: ClassVar[frozenset[ProviderFailureCode]] = frozenset(
         {
@@ -767,21 +887,39 @@ class RetryingProviderAdapter:
     )
 
     adapter: ProviderAdapter
-    max_attempts: int = 3
+    deadline_seconds: float = field(default_factory=_retry_deadline_seconds)
+    attempt_ceiling: int = RETRY_ATTEMPT_CEILING
     sleep: Callable[[float], None] = time.sleep
+    now: Callable[[], float] = time.monotonic
+    jitter: Callable[[], float] = _default_jitter
+
+    def backoff_seconds(self, code: ProviderFailureCode, attempt: int) -> float:
+        """Espera antes da tentativa `attempt + 1`, na escada da família da falha."""
+        doubling = float(2 ** (attempt - 1))
+        if code is ProviderFailureCode.TIMEOUT:
+            return min(TIMEOUT_BACKOFF_BASE_SECONDS * doubling, TIMEOUT_BACKOFF_CAP_SECONDS)
+        base = min(THROTTLE_BACKOFF_BASE_SECONDS * doubling, THROTTLE_BACKOFF_CAP_SECONDS)
+        return base * (1.0 + BACKOFF_JITTER_FRACTION * self.jitter())
 
     def execute(self, request: ProviderRequest) -> ProviderExecution:
-        for attempt in range(1, self.max_attempts + 1):
+        started = self.now()
+        attempt = 0
+        while True:
+            attempt += 1
             try:
                 return self.adapter.execute(request)
             except ProviderExecutionError as error:
-                if error.code not in self.RETRYABLE or attempt == self.max_attempts:
+                give_up = error.code not in self.RETRYABLE or attempt >= self.attempt_ceiling
+                delay = 0.0 if give_up else self.backoff_seconds(error.code, attempt)
+                if not give_up:
+                    remaining = self.deadline_seconds - (self.now() - started)
+                    give_up = remaining <= 0.0 or delay > remaining
+                if give_up:
                     _log_retries_exhausted(
                         task=request.task.value, code=error.code, attempts=attempt
                     )
                     raise
-                self.sleep(0.25 * (2 ** (attempt - 1)))
-        raise AssertionError("unreachable")
+                self.sleep(delay)
 
 
 @dataclass
@@ -796,16 +934,49 @@ class CostBudget:
             raise ProviderExecutionError(ProviderFailureCode.BUDGET_EXCEEDED)
         self.spent_usd += estimated_cost_usd
 
+    def release(self, estimated_cost_usd: Decimal) -> None:
+        """Devolve uma reserva que a falha provou não ter virado gasto.
+
+        A reserva continua acontecendo ANTES da chamada — é ela que barra o estouro antes
+        de o dinheiro sair, e inverter para "reservar depois" perderia o portão. Devolver
+        é o complemento: a tentativa que nunca alcançou o fornecedor não pode consumir o
+        teto que o braço de reserva ainda vai precisar.
+
+        Nunca devolve mais do que foi reservado: um `release` maior que o gasto acumulado
+        criaria teto do nada, e um teto inflado é exatamente o que o `CostBudget` existe
+        para impedir.
+        """
+        if estimated_cost_usd <= 0:
+            return
+        self.spent_usd = max(Decimal("0"), self.spent_usd - estimated_cost_usd)
+
 
 @dataclass(frozen=True)
 class BudgetedProviderAdapter:
+    """Reserva pessimista antes da chamada, com devolução quando nada saiu da máquina.
+
+    Sem a devolução, a escada longa de `RetryingProviderAdapter` matava o próprio
+    fallback: com reserva default de 0,75 e ~5 tentativas, o braço primário consumia 3,75
+    de um teto de 5,00 e a chamada do braço de reserva era recusada com `BUDGET_EXCEEDED`
+    — que, por desenho, nunca aciona fallback. Ou seja, esperar mais no primário custava a
+    testemunha seguinte, mesmo quando nenhuma das tentativas tinha gastado um centavo.
+
+    Quem decide se houve gasto é o transporte, via `ProviderExecutionError.reached_provider`,
+    e a decisão é conservadora: só devolve quem PROVA que a chamada não saiu.
+    """
+
     adapter: ProviderAdapter
     budget: CostBudget
     estimated_cost_usd: Decimal
 
     def execute(self, request: ProviderRequest) -> ProviderExecution:
         self.budget.reserve(self.estimated_cost_usd)
-        execution = self.adapter.execute(request)
+        try:
+            execution = self.adapter.execute(request)
+        except ProviderExecutionError as error:
+            if not error.reached_provider:
+                self.budget.release(self.estimated_cost_usd)
+            raise
         return execution.model_copy(
             update={
                 "usage": execution.usage.model_copy(
@@ -1006,6 +1177,24 @@ def _http_error_body(error: HTTPError) -> dict[str, object]:
 def _http_post(
     url: str, headers: dict[str, str], body: bytes, timeout: float
 ) -> tuple[int, dict[str, object]]:
+    """Único ponto do módulo que sabe se a chamada chegou a sair da máquina.
+
+    As três saídas são falhas de natureza diferente para o orçamento (ver
+    `ProviderExecutionError.reached_provider`):
+
+    - `HTTPError` é resposta: o fornecedor recebeu, processou e recusou. Gastou.
+    - `URLError` não-temporal é transporte que nem abriu — TLS que não valida, DNS que não
+      resolve, conexão recusada. PROVA que nada saiu, e a reserva volta. É este o caso do
+      runbook da Toca: a falha de CA do Python do `uv` virava `TIMEOUT` e comia o teto da
+      rodada sem uma única chamada paga.
+    - Qualquer coisa temporal é ambígua e trata-se como GASTO. Timeout de LEITURA significa
+      que o pedido saiu e o fornecedor pode ter processado e cobrado sem a resposta chegar.
+      Distinguir conexão de leitura por `urllib` não é confiável — `TimeoutError` é um
+      `OSError`, e `do_open` embrulha em `URLError` o que morre no envio enquanto deixa
+      passar cru o que morre na leitura, um detalhe de implementação que não sustenta uma
+      decisão de dinheiro. Então: `TimeoutError` cru E `URLError` com `reason` temporal
+      erram para o lado do teto, o fail-closed que o resto do módulo pratica.
+    """
     request = Request(url, data=body, headers=headers, method="POST")
     try:
         with urlopen(request, timeout=timeout) as response:  # nosec B310: URL is fixed by adapter
@@ -1014,8 +1203,13 @@ def _http_post(
             return int(response.status), decoded if isinstance(decoded, dict) else {}
     except HTTPError as error:
         return error.code, _http_error_body(error)
-    except (URLError, TimeoutError) as error:
+    except TimeoutError as error:
         raise ProviderExecutionError(ProviderFailureCode.TIMEOUT) from error
+    except URLError as error:
+        raise ProviderExecutionError(
+            ProviderFailureCode.TIMEOUT,
+            reached_provider=isinstance(error.reason, TimeoutError),
+        ) from error
 
 
 def _require_text_payload(request: ProviderRequest) -> str:
@@ -1616,6 +1810,446 @@ class AnthropicProviderAdapter:
         )
 
 
+GEMINI_ENDPOINT_TEMPLATE: Final = (
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+)
+"""URL do `generateContent`. Aqui o modelo mora na ROTA, não no corpo, ao contrário dos outros."""
+
+
+MISTRAL_ENDPOINT: Final = "https://api.mistral.ai/v1/chat/completions"
+"""Chat completions da Mistral, compatível em forma com o dialeto antigo da OpenAI."""
+
+
+GEMINI_SCHEMA_KEYWORDS: Final = frozenset(
+    {"description", "enum", "required", "minItems", "maxItems", "minimum", "maximum", "nullable"}
+)
+"""Palavras que atravessam intactas para o `responseSchema` do Gemini.
+
+O `responseSchema` não é JSON Schema: é o `Schema` do OpenAPI 3.0 recortado, e o que ele
+não conhece recusa a chamada inteira. `type`, `pattern`, `properties`, `items` e as uniões
+têm tratamento próprio em `_gemini_schema_node`; tudo que não estiver aqui nem lá — `title`,
+`default`, `additionalProperties`, `exclusiveMinimum`, `minLength`/`maxLength`,
+`discriminator`, `$defs`/`$ref` — sai do schema ENVIADO. Nada disso afrouxa contrato: a
+fronteira de validação continua sendo o modelo Pydantic original aplicado sobre a resposta,
+exatamente como em `_openai_strict_schema`.
+"""
+
+
+GEMINI_TYPE_NAMES: Final[dict[str, str]] = {
+    "string": "STRING",
+    "number": "NUMBER",
+    "integer": "INTEGER",
+    "boolean": "BOOLEAN",
+    "array": "ARRAY",
+    "object": "OBJECT",
+}
+"""`type` do Gemini é o enum `Type` do proto, cujos nomes são MAIÚSCULOS.
+
+O JSON do Pydantic escreve minúsculo. Mandar o nome documentado é a forma que não depende
+da leniência do parser do fornecedor.
+"""
+
+
+GEMINI_COMPLETE_FINISH_REASONS: Final = frozenset({"STOP", "FINISH_REASON_UNSPECIFIED"})
+"""Únicos desfechos que descrevem geração inteira; qualquer outro é recusa ou corte."""
+
+
+def _gemini_type(value: object) -> object:
+    return GEMINI_TYPE_NAMES.get(value, value) if isinstance(value, str) else value
+
+
+def _gemini_branches(
+    branches: object, definitions: dict[str, Any], chain: tuple[str, ...]
+) -> tuple[list[dict[str, Any]], bool]:
+    """Ramos de uma união, sem o ramo nulo — que no dialeto do Gemini é `nullable`, não tipo."""
+    kept: list[dict[str, Any]] = []
+    nullable = False
+    for branch in branches if isinstance(branches, list) else []:
+        if not isinstance(branch, dict):
+            continue
+        if branch.get("type") == "null":
+            nullable = True
+            continue
+        kept.append(_gemini_schema_node(branch, definitions, chain))
+    return kept, nullable
+
+
+def _gemini_schema_node(
+    node: dict[str, Any], definitions: dict[str, Any], chain: tuple[str, ...]
+) -> dict[str, Any]:
+    """Traduz um nó do JSON Schema do Pydantic para o dialeto do `responseSchema`.
+
+    Puramente sintático e sem mutar a entrada, no molde de `_openai_strict_schema`:
+
+    - `$ref` é RESOLVIDO no lugar (o dialeto não tem `$defs` nem referência), com as chaves
+      irmãs do ponto de uso — tipicamente `description` — sobrepostas ao alvo;
+    - `const` vira `enum` de um item e `oneOf` vira `anyOf` (os ramos do Pydantic são
+      mutuamente exclusivos por construção, então o conjunto aceito é o mesmo);
+    - o ramo `{"type": "null"}` de um opcional sai da união e vira `nullable: true`; união
+      que sobra com um ramo só é achatada, para não mandar `anyOf` de um elemento;
+    - tupla (`prefixItems`) vira lista do mesmo tipo presa por `minItems`/`maxItems`;
+    - `type` sobe para o nome do enum do proto (ver `GEMINI_TYPE_NAMES`);
+    - `pattern` com lookaround segue a mesma política do braço OpenAI — reescrito quando
+      conhecido, removido quando não (ver `OPENAI_STRICT_PATTERN_REWRITES`). A tabela é de
+      regex comum, não de nada específico da OpenAI.
+
+    O que ela NÃO faz é afrouxar o contrato: a resposta continua validada pelo modelo
+    Pydantic original. `chain` existe para que um `$ref` recursivo — que hoje não existe em
+    nenhuma saída e que a inlining não saberia representar — falhe alto em vez de estourar a
+    pilha em silêncio.
+    """
+    ref = node.get("$ref")
+    if isinstance(ref, str):
+        name = ref.rsplit("/", 1)[-1]
+        if name in chain:
+            raise ValueError(f"$ref recursivo no schema de saída: {ref}")
+        target = definitions.get(name)
+        if not isinstance(target, dict):
+            raise ValueError(f"$ref sem definição no schema de saída: {ref}")
+        resolved = _gemini_schema_node(target, definitions, (*chain, name))
+        siblings = _gemini_schema_node(
+            {key: value for key, value in node.items() if key != "$ref"}, definitions, chain
+        )
+        return {**resolved, **siblings}
+
+    strict: dict[str, Any] = {}
+    flattened: dict[str, Any] = {}
+    for key, value in node.items():
+        if key in {"anyOf", "oneOf"}:
+            kept, nullable = _gemini_branches(value, definitions, chain)
+            if nullable:
+                strict["nullable"] = True
+            if len(kept) == 1:
+                flattened = kept[0]
+            elif kept:
+                strict["anyOf"] = kept
+        elif key == "const":
+            strict["enum"] = [value]
+        elif key == "properties" and isinstance(value, dict):
+            strict["properties"] = {
+                name: _gemini_schema_node(sub, definitions, chain)
+                for name, sub in value.items()
+                if isinstance(sub, dict)
+            }
+        elif key == "items" and isinstance(value, dict):
+            strict["items"] = _gemini_schema_node(value, definitions, chain)
+        elif key == "pattern" and isinstance(value, str):
+            if not _has_regex_lookaround(value):
+                strict["pattern"] = value
+            elif (rewritten := OPENAI_STRICT_PATTERN_REWRITES.get(value)) is not None:
+                strict["pattern"] = rewritten
+        elif key == "type":
+            strict["type"] = _gemini_type(value)
+        elif key in GEMINI_SCHEMA_KEYWORDS:
+            strict[key] = list(value) if isinstance(value, list) else value
+
+    prefix_items = node.get("prefixItems")
+    if isinstance(prefix_items, list) and prefix_items:
+        branches = [
+            _gemini_schema_node(item, definitions, chain)
+            for item in prefix_items
+            if isinstance(item, dict)
+        ]
+        unique = [branch for index, branch in enumerate(branches) if branch not in branches[:index]]
+        if unique:
+            strict["items"] = unique[0] if len(unique) == 1 else {"anyOf": unique}
+            strict.setdefault("minItems", len(prefix_items))
+            strict.setdefault("maxItems", len(prefix_items))
+    return {**flattened, **strict} if flattened else strict
+
+
+def _gemini_response_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Ponto de entrada da tradução: resolve `$defs` para dentro e devolve o schema enviado."""
+    definitions = schema.get("$defs")
+    return _gemini_schema_node(schema, definitions if isinstance(definitions, dict) else {}, ())
+
+
+def _gemini_refused(response: dict[str, object]) -> bool:
+    """Diz se um corpo 200 do Gemini declara recusa ou geração cortada.
+
+    São duas portas distintas e as duas precisam ser lidas: `promptFeedback.blockReason`
+    barra a ENTRADA (e a resposta chega sem candidato nenhum), enquanto `finishReason`
+    diferente de `STOP` descreve a SAÍDA — filtro de segurança, recitação ou `MAX_TOKENS`.
+    Nenhuma das duas melhora com retentativa, e `REFUSED` está fora de
+    `RetryingProviderAdapter.RETRYABLE`; aceitar um `MAX_TOKENS` seria tratar geração
+    cortada como observação completa.
+    """
+    feedback = response.get("promptFeedback")
+    if isinstance(feedback, dict) and feedback.get("blockReason"):
+        return True
+    candidates = response.get("candidates")
+    return any(
+        isinstance(candidate, dict)
+        and candidate.get("finishReason") is not None
+        and candidate.get("finishReason") not in GEMINI_COMPLETE_FINISH_REASONS
+        for candidate in (candidates if isinstance(candidates, list) else [])
+    )
+
+
+def _gemini_output_text(response: dict[str, object]) -> str:
+    """Texto JSON do único candidato, concatenado na ordem; vazio quando não há exatamente um.
+
+    Nenhum candidato é recusa disfarçada e mais de um significa contrato não respeitado —
+    escolher entre eles seria inventar consenso, a mesma regra do adapter Anthropic com
+    `tool_use`. A concatenação existe porque `parts` é lista: ler só a primeira devolveria a
+    metade inicial de uma resposta longa como se fosse JSON quebrado.
+    """
+    candidates = response.get("candidates")
+    items = [
+        candidate
+        for candidate in (candidates if isinstance(candidates, list) else [])
+        if isinstance(candidate, dict)
+    ]
+    if len(items) != 1:
+        return ""
+    content = items[0].get("content")
+    parts = content.get("parts") if isinstance(content, dict) else None
+    return "".join(
+        part["text"]
+        for part in (parts if isinstance(parts, list) else [])
+        if isinstance(part, dict) and isinstance(part.get("text"), str)
+    )
+
+
+@dataclass(frozen=True)
+class GeminiProviderAdapter:
+    """Gemini `generateContent`, por HTTP direto — braço de EVAL por linha de comando.
+
+    Não entra na suite hospedada, que o
+    [ADR-0035](../../../../docs/adr/0035-suite-hospedada-openai-anthropic-direto.md) fixa em
+    três braços; existe para `build_extraction_arm` comparar quem lê melhor a
+    legenda de uma prancha real. Mesmas fronteiras dos irmãos: `urllib` injetável, schema
+    estruturado no pedido, validação Pydantic na volta, raw-store e lineage por leitura.
+    """
+
+    api_key: str
+    model_id: str
+    timeout_seconds: float = 60.0
+    raw_store: ProtectedRawResponseStore | None = None
+    http_post: HttpPost = _http_post
+    endpoint_template: str = GEMINI_ENDPOINT_TEMPLATE
+
+    @property
+    def endpoint(self) -> str:
+        return self.endpoint_template.format(model=self.model_id)
+
+    def execute(self, request: ProviderRequest) -> ProviderExecution:
+        # Ordem fixa [instrução, texto, imagem]; ver o adapter da OpenAI.
+        evidence: list[dict[str, object]] = []
+        if _carries_text(request):
+            evidence.append({"text": _require_text_payload(request)})
+        if _carries_image(request):
+            image_bytes = _require_image_bytes(request)
+            evidence.append(
+                {
+                    "inline_data": {
+                        # Declarar PNG num JPEG é 400 na hora, e a transmissão troca de
+                        # formato quando a folha aperta; ver `_image_media_type`.
+                        "mime_type": _image_media_type(image_bytes),
+                        "data": b64encode(image_bytes).decode("ascii"),
+                    }
+                }
+            )
+        body = {
+            "contents": [
+                {"role": "user", "parts": [{"text": _prompt_template(request.task)}, *evidence]}
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                # O schema do Pydantic não é aceito como está; ver `_gemini_response_schema`.
+                # O modelo Pydantic ORIGINAL continua validando a resposta.
+                "responseSchema": _gemini_response_schema(
+                    _output_model(request.task).model_json_schema()
+                ),
+            },
+        }
+        started = time.monotonic()
+        status, response = self.http_post(
+            self.endpoint,
+            {"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+            json.dumps(body, separators=(",", ":")).encode(),
+            self.timeout_seconds,
+        )
+        if not 200 <= status < 300:
+            raise ProviderExecutionError(
+                _http_failure(
+                    provider=ProviderName.GEMINI,
+                    task=request.task.value,
+                    status=status,
+                    started=started,
+                    detail=_http_error_detail(response),
+                )
+            )
+        if _gemini_refused(response):
+            raise ProviderExecutionError(ProviderFailureCode.REFUSED)
+        output_text = _gemini_output_text(response)
+        if not output_text:
+            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+        try:
+            payload = json.loads(output_text)
+        except json.JSONDecodeError as error:
+            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA) from error
+        # A tradução apagou a opcionalidade em `nullable`, então o modelo devolve `null` onde
+        # o contrato original diria "ausente"; o avesso é o mesmo do braço OpenAI.
+        output = _parse_output(request.task, _without_explicit_nulls(payload))
+        raw_ref = None
+        if self.raw_store is not None:
+            raw_ref = self.raw_store.persist(
+                provider=ProviderName.GEMINI,
+                input_digest=request.image_sha256,
+                payload=json.dumps(response, separators=(",", ":")).encode(),
+            )
+        usage = response.get("usageMetadata")
+        usage_data = usage if isinstance(usage, dict) else {}
+        return ProviderExecution(
+            provider=ProviderName.GEMINI,
+            # `modelVersion` nomeia o snapshot que respondeu de fato; sem ele a eval
+            # compararia o apelido que pedimos, não o modelo que leu a folha.
+            model_id=str(response.get("modelVersion") or self.model_id),
+            prompt=request.prompt,
+            input_digest=request.image_sha256,
+            latency_ms=round((time.monotonic() - started) * 1000),
+            usage=ProviderUsage(
+                input_tokens=(
+                    usage_data.get("promptTokenCount")
+                    if isinstance(usage_data.get("promptTokenCount"), int)
+                    else None
+                ),
+                output_tokens=(
+                    usage_data.get("candidatesTokenCount")
+                    if isinstance(usage_data.get("candidatesTokenCount"), int)
+                    else None
+                ),
+            ),
+            raw_response_ref=raw_ref,
+            output=output,
+        )
+
+
+@dataclass(frozen=True)
+class MistralProviderAdapter:
+    """Mistral chat completions — braço de EVAL por linha de comando, como o do Gemini.
+
+    A forma do pedido é a do dialeto de chat da OpenAI, mas o schema NÃO passa por
+    `_openai_strict_schema`: o modo estruturado da Mistral aceita o JSON Schema que o
+    Pydantic emite (com `additionalProperties: false`, que `ProviderContractModel` já
+    produz por `extra="forbid"`). Traduzir sem necessidade só afastaria o schema enviado do
+    schema que valida a volta.
+    """
+
+    api_key: str
+    model_id: str
+    timeout_seconds: float = 60.0
+    raw_store: ProtectedRawResponseStore | None = None
+    http_post: HttpPost = _http_post
+    endpoint: str = MISTRAL_ENDPOINT
+
+    def execute(self, request: ProviderRequest) -> ProviderExecution:
+        # Ordem fixa [instrução, texto, imagem]; ver o adapter da OpenAI.
+        evidence: list[dict[str, object]] = []
+        if _carries_text(request):
+            evidence.append({"type": "text", "text": _require_text_payload(request)})
+        if _carries_image(request):
+            image_bytes = _require_image_bytes(request)
+            evidence.append(
+                {
+                    "type": "image_url",
+                    "image_url": f"data:{_image_media_type(image_bytes)};base64,"
+                    + b64encode(image_bytes).decode("ascii"),
+                }
+            )
+        body = {
+            "model": self.model_id,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": _prompt_template(request.task)},
+                        *evidence,
+                    ],
+                }
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": request.task.value.replace("-", "_"),
+                    "schema": _output_model(request.task).model_json_schema(),
+                    "strict": True,
+                },
+            },
+        }
+        started = time.monotonic()
+        status, response = self.http_post(
+            self.endpoint,
+            {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            json.dumps(body, separators=(",", ":")).encode(),
+            self.timeout_seconds,
+        )
+        if not 200 <= status < 300:
+            raise ProviderExecutionError(
+                _http_failure(
+                    provider=ProviderName.MISTRAL,
+                    task=request.task.value,
+                    status=status,
+                    started=started,
+                    detail=_http_error_detail(response),
+                )
+            )
+        choices = response.get("choices")
+        items = [
+            choice
+            for choice in (choices if isinstance(choices, list) else [])
+            if isinstance(choice, dict)
+        ]
+        # `length`/`model_length` é geração cortada, `error` e `content_filter` são recusa;
+        # nenhum melhora com retentativa e `REFUSED` está fora de `RetryingProviderAdapter`.
+        if any(choice.get("finish_reason") not in {None, "stop"} for choice in items):
+            raise ProviderExecutionError(ProviderFailureCode.REFUSED)
+        # Exatamente uma escolha, pela mesma razão do adapter Anthropic: nenhuma é recusa
+        # disfarçada, várias significam contrato quebrado, e escolher inventaria consenso.
+        if len(items) != 1:
+            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+        message = items[0].get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, str) or not content:
+            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError as error:
+            raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA) from error
+        output = _parse_output(request.task, payload)
+        raw_ref = None
+        if self.raw_store is not None:
+            raw_ref = self.raw_store.persist(
+                provider=ProviderName.MISTRAL,
+                input_digest=request.image_sha256,
+                payload=json.dumps(response, separators=(",", ":")).encode(),
+            )
+        usage = response.get("usage")
+        usage_data = usage if isinstance(usage, dict) else {}
+        return ProviderExecution(
+            provider=ProviderName.MISTRAL,
+            model_id=str(response.get("model") or self.model_id),
+            prompt=request.prompt,
+            input_digest=request.image_sha256,
+            latency_ms=round((time.monotonic() - started) * 1000),
+            usage=ProviderUsage(
+                input_tokens=(
+                    usage_data.get("prompt_tokens")
+                    if isinstance(usage_data.get("prompt_tokens"), int)
+                    else None
+                ),
+                output_tokens=(
+                    usage_data.get("completion_tokens")
+                    if isinstance(usage_data.get("completion_tokens"), int)
+                    else None
+                ),
+            ),
+            raw_response_ref=raw_ref,
+            output=output,
+        )
+
+
 @dataclass(frozen=True)
 class BedrockAnthropicProviderAdapter:
     """Claude through Bedrock Converse using a strict local JSON schema validation boundary."""
@@ -2017,8 +2651,11 @@ class GcpVisionOcrAdapter:
         except ProviderExecutionError as error:
             # Transporte que nem chega a ter status (DNS, egress fechado, timeout): sem esta
             # linha a chamada some sem status E sem log, que é exatamente o buraco de HML.
+            # `reached_provider` atravessa o reembrulho: quem sabe se a chamada saiu é o
+            # transporte, e perder isso aqui faria a reserva ficar de pé sem gasto nenhum.
             raise ProviderExecutionError(
-                _ocr_failure("ocr_transport_failure", error.code, error=error)
+                _ocr_failure("ocr_transport_failure", error.code, error=error),
+                reached_provider=error.reached_provider,
             ) from error
         if not 200 <= status < 300:
             raise ProviderExecutionError(
@@ -2327,8 +2964,10 @@ class GcpDocumentAiOcrAdapter:
         except ProviderExecutionError as error:
             # Transporte que nem chega a ter status (DNS, egress fechado, timeout): sem esta
             # linha a chamada some sem status E sem log, que é exatamente o buraco de HML.
+            # `reached_provider` atravessa o reembrulho; ver o braço Cloud Vision.
             raise ProviderExecutionError(
-                self._failure("ocr_transport_failure", error.code, error=error)
+                self._failure("ocr_transport_failure", error.code, error=error),
+                reached_provider=error.reached_provider,
             ) from error
         if not 200 <= status < 300:
             raise ProviderExecutionError(
@@ -2539,8 +3178,14 @@ class OpenAIEmbeddingsAdapter:
 
 @dataclass(frozen=True)
 class RetryingEmbeddingsAdapter:
-    """Espelho de `RetryingProviderAdapter` para a via de embeddings, com a MESMA política:
-    só falha de transporte é retentada, e nunca para obter um vetor diferente."""
+    """Espelho de `RetryingProviderAdapter` para a via de embeddings: só falha de transporte
+    é retentada, e nunca para obter um vetor diferente.
+
+    A política de ESPERA divergiu de propósito e continua sendo contagem de tentativas com
+    escada de milissegundos. A via de embeddings é chamada síncrona de busca, com um humano
+    esperando na tela: insistir por minutos, como o prazo de parede dos braços de extração
+    faz, transformaria indisponibilidade numa tela travada. Aqui falhar rápido é a resposta
+    certa, e quem chama degrada para busca lexical."""
 
     adapter: EmbeddingsAdapter
     max_attempts: int = 3
@@ -2746,6 +3391,26 @@ def build_extraction_arm(
             api_key=api_key,
             model_id=model_id,
             timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "30")),
+            raw_store=raw_store,
+        )
+    elif provider == "gemini":
+        api_key = os.getenv("CROQUITO_GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("CROQUITO_GEMINI_API_KEY ausente para o eixo Gemini")
+        adapter = GeminiProviderAdapter(
+            api_key=api_key,
+            model_id=model_id,
+            timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "60")),
+            raw_store=raw_store,
+        )
+    elif provider == "mistral":
+        api_key = os.getenv("CROQUITO_MISTRAL_API_KEY")
+        if not api_key:
+            raise ValueError("CROQUITO_MISTRAL_API_KEY ausente para o eixo Mistral")
+        adapter = MistralProviderAdapter(
+            api_key=api_key,
+            model_id=model_id,
+            timeout_seconds=float(os.getenv("CROQUITO_PROVIDER_TIMEOUT_SECONDS", "60")),
             raw_store=raw_store,
         )
     else:

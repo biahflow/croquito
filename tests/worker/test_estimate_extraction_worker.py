@@ -55,7 +55,10 @@ from croquito_worker.providers import (
     ProviderName,
     ProviderRequest,
 )
+from croquito_worker.valuation import round_extraction
+from croquito_worker.valuation.legend_extraction import LEGEND_EXTRACTION_SAFETY_NOTES
 from croquito_worker.valuation.round_extraction import (
+    EXTRACTION_RESERVE_ARM_ENV,
     PLATE_IMAGE_DIGEST,
     PLATE_IMAGE_REF,
     TAKEOFF_OVERLAY_DIGEST,
@@ -73,6 +76,9 @@ PLATE_UPLOAD_KEY = f"tenants/{TENANT_ID}/uploads/upload-prancha/prancha.pdf"
 ESTIMATE_PLATE_KEY = f"tenants/{TENANT_ID}/estimate-rounds/{ROUND_ID}/plate/page-001.png"
 ESTIMATE_OVERLAY_KEY = f"tenants/{TENANT_ID}/estimate-rounds/{ROUND_ID}/takeoff/overlay.png"
 _FIXTURE_MODEL_ID = "fixture-legend-v1"
+_RESERVE_MODEL_ID = "fixture-legend-reserva-v1"
+_RESERVE_ARM_SPEC = "luna=openai:gpt-5.6-luna"
+_RESERVE_NOTE = "PROVIDER_FALLBACK_LEGEND_EXTRACTION_OPENAI"
 _STALE_OVERLAY_DIGEST = "e" * 64
 _PREVIOUS_PACKET_DIGEST = "f" * 64
 
@@ -192,6 +198,17 @@ def _counting_adapter() -> _CountingAdapter:
         inner=FixtureProviderAdapter(
             provider=ProviderName.ANTHROPIC,
             model_id=_FIXTURE_MODEL_ID,
+            outputs={PromptTask.LEGEND_EXTRACTION: _legend_output()},
+        )
+    )
+
+
+def _reserve_adapter() -> _CountingAdapter:
+    """Braço de reserva fixture, num provider DIFERENTE: é o que torna a nota verificável."""
+    return _CountingAdapter(
+        inner=FixtureProviderAdapter(
+            provider=ProviderName.OPENAI,
+            model_id=_RESERVE_MODEL_ID,
             outputs={PromptTask.LEGEND_EXTRACTION: _legend_output()},
         )
     )
@@ -536,6 +553,64 @@ def test_extracao_de_outro_tenant_nao_e_reivindicada(tmp_path: Path) -> None:
 
     assert adapter.calls == []
     assert _estimate_round(database).extraction_status == "queued"
+
+
+# --- braço de reserva (jornada do ORÇAMENTO-BASE) -----------------------------------------
+#
+# Par obrigatório dos testes de reserva de `test_valuation_extraction_worker.py`: o handler
+# de extração é UM só para as duas cadeias, e a variável `CROQUITO_EXTRACTION_RESERVE_ARM`
+# não diz "MEDICAO" justamente porque a reserva tem de valer aqui também. Sem este arquivo
+# provar a mesma degradação na cadeia do orçamento, uma regressão que ligasse a reserva só
+# na medição passaria verde do outro lado.
+
+
+def test_sem_a_env_de_reserva_o_orcamento_nao_monta_reserva_nenhuma(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(EXTRACTION_RESERVE_ARM_ENV, raising=False)
+
+    def _never(arm_spec: str) -> tuple[str, str, Any]:
+        raise AssertionError(f"reserva montada sem a env declarada: {arm_spec}")
+
+    monkeypatch.setattr(round_extraction, "build_extraction_adapter", _never)
+    plate = _plate_pdf()
+    database, database_url = _seed(tmp_path, plate=plate)
+    worker, _storage = _worker(database_url, adapter=_counting_adapter(), stored=plate)
+
+    assert worker.dispatch(_message()) == 1
+
+    assert _estimate_round(database).extraction_status == "done"
+    packet = _estimate_revisions(database)[0].takeoff_packet_json
+    assert packet is not None
+    assert packet["safety_notes"] == list(LEGEND_EXTRACTION_SAFETY_NOTES)
+
+
+def test_a_reserva_atende_o_orcamento_e_o_pacote_publicado_nomeia_quem_leu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(EXTRACTION_RESERVE_ARM_ENV, _RESERVE_ARM_SPEC)
+    reserve = _reserve_adapter()
+
+    def _factory(arm_spec: str) -> tuple[str, str, Any]:
+        assert arm_spec == _RESERVE_ARM_SPEC
+        return "luna", _RESERVE_MODEL_ID, reserve
+
+    monkeypatch.setattr(round_extraction, "build_extraction_adapter", _factory)
+    plate = _plate_pdf()
+    database, database_url = _seed(tmp_path, plate=plate)
+    worker, storage = _worker(database_url, adapter=_FailingAdapter(), stored=plate)
+
+    assert worker.dispatch(_message()) == 1
+
+    assert _estimate_round(database).extraction_status == "done"
+    assert reserve.calls == [PromptTask.LEGEND_EXTRACTION.value]
+    revisions = _estimate_revisions(database)
+    assert len(revisions) == 1
+    packet = revisions[0].takeoff_packet_json
+    assert packet is not None
+    assert packet["safety_notes"] == [*LEGEND_EXTRACTION_SAFETY_NOTES, _RESERVE_NOTE]
+    assert all(item["extractor"] == f"openai:{_RESERVE_MODEL_ID}" for item in packet["items"])
+    assert len(storage.puts) == 2
 
 
 # --- as duas cadeias não se cruzam -------------------------------------------------------

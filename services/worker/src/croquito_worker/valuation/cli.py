@@ -77,6 +77,7 @@ from croquito_valuation.assignment import (
     CodeAssignmentBatch,
     CodeAssignmentSet,
     CodeSuggestionSet,
+    SuggestionRefinement,
     apply_code_assignments,
     apply_code_assignments_over_cascade,
     ensure_price_cascade,
@@ -464,19 +465,22 @@ class TakeoffRegistrationResult:
 class CodeSuggestionResult:
     """Shortlist de códigos e o artefato publicado com ela.
 
-    `execution` só existe quando o refino pago rodou: sem ele o artefato é a shortlist
-    lexical determinística, e é o próprio `suggester_version` do arquivo que conta qual das
-    duas foi publicada.
+    `refinement_executions` só tem entrada quando o refino pago rodou: vazio, o artefato é
+    a shortlist lexical determinística, e é o próprio `suggester_version` do arquivo que
+    conta qual das duas foi publicada. É uma tupla porque o refino fatia os itens em lotes
+    que caibam no payload do provider — uma chamada paga por lote —, e o comando precisa
+    imprimir o custo TOTAL, não o da primeira.
 
     `matching` e `semantic_reason` contam a outra dimensão: se a shortlist foi montada com
     o braço semântico (`hybrid`) ou só com o léxico (`lexical`) e, neste caso, por quê —
     índice ausente, teto de gasto ausente ou `--no-semantic`. Degradação declarada, nunca
-    silenciosa.
+    silenciosa. `lexical` aqui é o braço léxico da MESMA via de fusão, sem a perna paga;
+    a via Dice (`lexical-sco-suggester-v1`) só sobrevive na cascata do orçamento-base.
     """
 
     suggestions: CodeSuggestionSet
     suggestions_path: Path
-    execution: ProviderExecution | None = None
+    refinement_executions: tuple[ProviderExecution, ...] = ()
     matching: str = "lexical"
     semantic_reason: str | None = None
     embedded_queries: int = 0
@@ -1360,6 +1364,11 @@ def load_round_synonyms(round_dir: Path) -> DomainSynonyms:
 
 
 SEMANTIC_DISABLED_BY_FLAG: Final = "braço semântico desligado por --no-semantic"
+"""Motivo da degradação quando o operador dispensa a perna paga.
+
+A mensagem continua exata depois de 2026-08-21: o que a flag desliga é o BRAÇO semântico,
+e a shortlist sai da mesma via de fusão com o braço léxico sozinho
+(`SCO_LEXICAL_IDF_SUGGESTER_VERSION`) — antes ela caía numa via diferente, a Dice."""
 
 SEMANTIC_CASCADE_UNSUPPORTED: Final = (
     "braço semântico não cobre cascata de fontes; o índice de embeddings é de um catálogo só"
@@ -1442,9 +1451,10 @@ def run_suggest_codes(
 
     O braço semântico entra quando as três condições existem: índice do catálogo na rodada
     (`catalog-embeddings.json`), teto de gasto e credencial no ambiente. Faltando qualquer
-    uma, a shortlist é a lexical e o motivo viaja no resultado. Índice que não pertence ao
-    catálogo informado é RECUSA, não degradação: quem rodou o comando apontou para uma
-    rodada com índice velho e precisa saber disso.
+    uma, a MESMA via monta a shortlist sem essa perna (braço léxico por cobertura
+    ponderada) e o motivo viaja no resultado. Índice que não pertence ao catálogo informado
+    é RECUSA, não degradação: quem rodou o comando apontou para uma rodada com índice velho
+    e precisa saber disso.
 
     Com `refine_arm`, a shortlist (lexical ou híbrida) é montada primeiro e depois
     **reordenada** por um provider pago; o que se publica é a versão refinada, e o
@@ -1526,18 +1536,27 @@ def run_suggest_codes(
             embedded_queries = resolved.embedded_count
 
     if suggestions is None:
-        suggestions = build_code_suggestions(packet, catalog, contract, synonyms=synonyms)
-    execution: ProviderExecution | None = None
+        # Degradar é rodar a MESMA via com um braço a menos (`index=None`), não trocar de
+        # algoritmo: `--no-semantic` significa "sem a perna semântica". Ver
+        # `SCO_LEXICAL_IDF_SUGGESTER_VERSION` para a medição que tirou a via Dice daqui.
+        suggestions = build_hybrid_code_suggestions(
+            packet,
+            catalog,
+            contract,
+            synonyms=synonyms,
+            noise=default_legend_noise(),
+        )
+    refinement_executions: tuple[ProviderExecution, ...] = ()
     if refine_arm is not None:
         _name, _model_id, adapter_refine = _build_refine_arm(refine_arm)
         refinement = refine_code_suggestions(packet, suggestions, adapter_refine)
-        suggestions, execution = refinement.suggestions, refinement.execution
+        suggestions, refinement_executions = refinement.suggestions, refinement.executions
     suggestions_path = output_dir / CODE_SUGGESTIONS_FILENAME
     atomic_write_text(suggestions_path, _document(suggestions))
     return CodeSuggestionResult(
         suggestions=suggestions,
         suggestions_path=suggestions_path,
-        execution=execution,
+        refinement_executions=refinement_executions,
         matching=matching,
         semantic_reason=semantic_reason,
         embedded_queries=embedded_queries,
@@ -1553,6 +1572,7 @@ def run_extract_legend_real(
     arm_spec: str,
     plate_id: str,
     page_number: int,
+    reserve_arm_spec: str | None = None,
 ) -> RealLegendExtractionResult:
     """Extrai a legenda de uma prancha real com provider pago e publica o pacote proposto.
 
@@ -1560,14 +1580,23 @@ def run_extract_legend_real(
     chamada → mapeamento → publicação. Nada é gravado antes de a extração inteira ter dado
     certo, e nenhum item nasce confirmado — o pacote sai `review_required` e o overlay sai
     com o banner de revisão obrigatória.
+
+    `reserve_arm_spec` é opcional e passa pelos MESMOS gates do braço escolhido: ele é
+    montado ANTES da chamada, então braço de reserva mal escrito recusa o comando inteiro
+    em vez de virar surpresa no meio da degradação. Sem ele não existe reserva, e a falha
+    do braço escolhido continua sendo a recusa fechada de sempre.
     """
     _name, _model_id, adapter = _build_legend_arm(arm_spec)
+    reserve: ProviderAdapter | None = None
+    if reserve_arm_spec is not None:
+        _reserve_name, _reserve_model_id, reserve = _build_legend_arm(reserve_arm_spec)
     extraction = run_legend_extraction(
         image_path,
         manifest_path,
         adapter,
         plate_id=plate_id,
         page_number=page_number,
+        reserve=reserve,
     )
     packet_path, overlay_path = _publish_takeoff(extraction.packet, image_path, output_dir)
     return RealLegendExtractionResult(
@@ -2364,6 +2393,42 @@ def _execution_payload(execution: ProviderExecution) -> dict[str, object]:
     }
 
 
+def _refinement_payload(
+    executions: Sequence[ProviderExecution], lineage: SuggestionRefinement
+) -> dict[str, object]:
+    """Lineage e custo do ESTÁGIO de refino, somando os lotes que ele precisou pagar.
+
+    `calls` existe para que uma prancha que custou quatro chamadas não seja lida como se
+    tivesse custado uma; tokens, custo e latência são os TOTAIS. `input_digest` é o do
+    payload inteiro, o mesmo que o artefato gravou — com um lote só ele coincide com o
+    `input_digest` da chamada, como sempre coincidiu.
+    """
+    costs = [
+        execution.usage.estimated_cost_usd
+        for execution in executions
+        if execution.usage.estimated_cost_usd is not None
+    ]
+    return {
+        "provider": executions[0].provider.value,
+        "model_id": executions[0].model_id,
+        "prompt_version": executions[0].prompt.prompt_version,
+        "input_digest": lineage.input_digest,
+        "calls": len(executions),
+        "latency_ms": sum(execution.latency_ms for execution in executions),
+        "input_tokens": _usage_total(executions, "input_tokens"),
+        "output_tokens": _usage_total(executions, "output_tokens"),
+        "estimated_cost_usd": str(sum(costs, Decimal(0))) if costs else None,
+    }
+
+
+def _usage_total(executions: Sequence[ProviderExecution], field: str) -> int | None:
+    """Soma um contador de uso entre chamadas; `None` quando nenhuma delas o declarou."""
+    known = [
+        value for execution in executions if (value := getattr(execution.usage, field)) is not None
+    ]
+    return sum(known) if known else None
+
+
 def _embeddings_payload(execution: EmbeddingsExecution | None) -> dict[str, object]:
     """Lineage da via de embeddings; vazio quando o cache respondeu tudo e nada foi pago.
 
@@ -2421,10 +2486,11 @@ def _command_suggest_codes(args: argparse.Namespace) -> int:
             "embedded_queries": result.embedded_queries,
             **_embeddings_payload(result.embeddings_execution),
         }
-    if result.execution is not None:
+    lineage = result.suggestions.refinement
+    if result.refinement_executions and lineage is not None:
         payload["refinement"] = {
             "arm": args.refine_arm,
-            **_execution_payload(result.execution),
+            **_refinement_payload(result.refinement_executions, lineage),
         }
     _print(payload)
     return 0
@@ -2475,6 +2541,7 @@ def _command_extract_legend_real(args: argparse.Namespace) -> int:
             arm_spec=args.arm,
             plate_id=args.plate_id,
             page_number=args.page_number,
+            reserve_arm_spec=args.reserve_arm,
         )
     except (ValuationValidationError, ValidationError) as error:
         _print(_refused_payload(error))
@@ -3099,9 +3166,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-semantic",
         action="store_true",
         help=(
-            "força a shortlist lexical mesmo com índice de embeddings na rodada. Sem a "
-            "flag, o braço semântico entra quando existirem índice, teto de gasto e "
-            "credencial; faltando qualquer um, a shortlist sai lexical com o motivo "
+            "desliga a perna semântica mesmo com índice de embeddings na rodada; a "
+            "shortlist continua sendo montada pela mesma via, só com o braço léxico. Sem "
+            "a flag, o braço semântico entra quando existirem índice, teto de gasto e "
+            "credencial; faltando qualquer um, a shortlist sai léxica com o motivo "
             "declarado no relatório"
         ),
     )
@@ -3240,6 +3308,15 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="NOME=PROVIDER:MODELO",
         help="braço pago da extração, ex.: sonnet=anthropic:claude-sonnet-5",
+    )
+    extract_legend_real.add_argument(
+        "--reserve-arm",
+        default=None,
+        metavar="NOME=PROVIDER:MODELO",
+        help=(
+            "braço de RESERVA, opcional: só é chamado depois de falha permanente do "
+            "--arm, e a degradação vai nomeada numa nota de segurança do pacote"
+        ),
     )
     extract_legend_real.add_argument("--plate-id", required=True)
     extract_legend_real.add_argument("--page-number", type=int, default=1)

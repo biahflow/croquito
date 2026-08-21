@@ -50,6 +50,7 @@ from croquito_worker.providers import (
 from croquito_worker.valuation.legend_extraction import (
     LegendExtractionResult,
     build_legend_request,
+    execute_legend_request,
     extractor_label,
     takeoff_packet_from_legend,
 )
@@ -85,6 +86,19 @@ ambiente abaixo existe para a próxima rodada de eval, não para escolher modelo
 
 EXTRACTION_ARM_ENV: Final = "CROQUITO_MEDICAO_EXTRACTION_ARM"
 AI_BUDGET_ENV: Final = "CROQUITO_AI_MAX_ESTIMATED_COST_USD"
+
+EXTRACTION_RESERVE_ARM_ENV: Final = "CROQUITO_EXTRACTION_RESERVE_ARM"
+"""Braço de RESERVA da extração de legenda, na forma `NOME=PROVIDER:MODELO`.
+
+Vazio por padrão, e vazio significa reserva nenhuma: a falha do braço escolhido propaga
+exatamente como propagava antes de existir degradação neste caminho. Ligar a reserva é
+mudança de IA (`docs/ai/MODEL_ROUTING.md`) e por isso é ato declarado de quem opera, nunca
+um default.
+
+O nome não diz "MEDICAO" porque a legenda quantificada é a MESMA tarefa de prompt nas duas
+jornadas — medição e orçamento-base compartilham handler, adapter e pacote. Uma reserva que
+valesse só para uma delas seria degradação pela metade, e a outra descobriria isso na
+primeira falha do fornecedor."""
 
 PLATE_IMAGE_REF: Final = "plate_image_key"
 TAKEOFF_OVERLAY_REF: Final = "takeoff_overlay_key"
@@ -251,6 +265,19 @@ def extraction_arm_spec() -> str:
     return os.environ.get(EXTRACTION_ARM_ENV, "").strip() or MEDICAO_EXTRACTION_ARM
 
 
+def extraction_reserve_arm_spec() -> str | None:
+    """Braço de reserva configurado, ou `None` quando não há reserva nenhuma.
+
+    Ausente e vazio são a mesma coisa — reserva desligada — e é esse o padrão. O que esta
+    função **não** faz é interpretar um valor estranho: quem valida a forma é
+    `build_extraction_adapter`, e ele recusa (`LOCAL_EXTRACTION_ARM_INVALID`) em vez de
+    ignorar. Mesma disciplina de `providers._openai_arm_enabled`: uma reserva mal escrita
+    e silenciosamente descartada é pior que reserva nenhuma, porque o operador acha que
+    tem degradação e só descobre que não tem no dia em que o fornecedor cai.
+    """
+    return os.environ.get(EXTRACTION_RESERVE_ARM_ENV, "").strip() or None
+
+
 def missing_extraction_envs(arm_spec: str) -> list[str]:
     """Variáveis obrigatórias que faltam para a extração paga poder sequer começar."""
     provider = arm_spec.partition("=")[2].partition(":")[0]
@@ -314,6 +341,37 @@ def build_extraction_adapter(arm_spec: str) -> tuple[str, str, ProviderAdapter]:
     return name, model_id, adapter
 
 
+def build_extraction_reserve_adapter() -> ProviderAdapter | None:
+    """Monta o braço de reserva declarado no ambiente, ou devolve `None` quando não há um.
+
+    Um só lugar constrói a reserva das duas jornadas, pelo mesmo motivo de
+    `LocalQueueWorker._valuation_extraction_adapter` ser único: um segundo ponto de
+    montagem criaria a chance de uma das cadeias degradar sem os gates de teto de gasto e
+    credencial que `build_extraction_adapter` aplica — e sem a recusa de forma inválida.
+
+    Reserva declarada e inconstruível **recusa a extração inteira**, em vez de degradar
+    para "sem reserva": quem escreveu a variável espera degradação, e descobrir no dia da
+    queda que ela nunca existiu é pior que falhar agora. O preço dessa escolha é que uma
+    reserva mal configurada derruba um primário que funcionaria — e é justamente por isso
+    que o erro precisa dizer QUAL braço está errado. `build_extraction_adapter` levanta os
+    mesmos três códigos para os dois papéis, então aqui a recusa é reetiquetada com
+    `role: "reserva"` e o nome da variável; sem isso o operador lê `LOCAL_EXTRACTION_*` e
+    vai depurar o braço primário, que está são.
+    """
+    arm_spec = extraction_reserve_arm_spec()
+    if arm_spec is None:
+        return None
+    try:
+        _name, _model_id, adapter = build_extraction_adapter(arm_spec)
+    except ValuationValidationError as error:
+        raise ValuationValidationError(
+            error.code,
+            error.message,
+            {**error.details, "role": "reserva", "env": EXTRACTION_RESERVE_ARM_ENV},
+        ) from error
+    return adapter
+
+
 def authorize_uploaded_page(manifest_path: Path, page_sha256: str) -> str:
     """Autoriza a página consentida pelo upload e devolve o digest do documento.
 
@@ -332,15 +390,22 @@ def authorize_uploaded_page(manifest_path: Path, page_sha256: str) -> str:
 
 
 def extract_legend_from_upload(
-    workdir: Path, manifest: PdfManifest, adapter: ProviderAdapter
+    workdir: Path,
+    manifest: PdfManifest,
+    adapter: ProviderAdapter,
+    reserve: ProviderAdapter | None = None,
 ) -> LegendExtractionResult:
     """Extrai a legenda da prancha consentida pelo upload.
 
     Compõe as MESMAS peças de `legend_extraction.run_legend_extraction` — pedido,
-    chamada, mapeamento observação→takeoff e registro fino do bbox contra a tinta —
-    trocando **só** o portão de consentimento (`authorize_uploaded_page` no lugar de
-    `authorize_page`). O caminho pago do CLI fica intocado; a parity entre as duas
-    montagens é prendida por teste, para que elas não possam divergir em silêncio.
+    chamada (com a MESMA degradação, `execute_legend_request`), mapeamento
+    observação→takeoff e registro fino do bbox contra a tinta — trocando **só** o portão de
+    consentimento (`authorize_uploaded_page` no lugar de `authorize_page`). O caminho pago
+    do CLI fica intocado; a parity entre as duas montagens é prendida por teste, para que
+    elas não possam divergir em silêncio.
+
+    `reserve` é o braço de degradação, desligado por padrão (`None`) — quem o monta a
+    partir do ambiente é `build_extraction_reserve_adapter`, no chamador.
     """
     page = manifest.pages[PLATE_PAGE_NUMBER - 1]
     image_path = (workdir / page.render_file).resolve(strict=True)
@@ -348,7 +413,7 @@ def extract_legend_from_upload(
     source_sha256 = authorize_uploaded_page(workdir / PLATE_MANIFEST_FILENAME, image_sha256)
 
     request, width, height = build_legend_request(image_path)
-    execution = adapter.execute(request)
+    execution, fallback_notes = execute_legend_request(request, adapter, reserve)
     output = execution.output
     if not isinstance(output, LegendExtractionOutput):  # pragma: no cover - contrato do adapter
         raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
@@ -362,6 +427,7 @@ def extract_legend_from_upload(
         image_height=height,
         extractor=extractor_label(execution.provider.value, execution.model_id),
         extractor_version=execution.prompt.prompt_version,
+        extra_safety_notes=fallback_notes,
     )
     registered, registration = register_legend_bboxes(image_path, packet)
     return LegendExtractionResult(

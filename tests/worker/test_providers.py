@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import socket
 from base64 import b64encode
 from collections.abc import Iterator, Sequence
 from copy import deepcopy
@@ -8,8 +9,9 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+from ssl import SSLCertVerificationError
 from typing import Any, ClassVar, cast
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
@@ -27,6 +29,7 @@ from croquito_worker.provider_review import (
     pair_readings_by_evidence,
 )
 from croquito_worker.providers import (
+    DEFAULT_PROVIDER_RETRY_DEADLINE_SECONDS,
     DOCAI_PROCESSOR_ENV,
     EMBEDDINGS_MAX_BATCH,
     EMBEDDINGS_MODEL,
@@ -38,6 +41,8 @@ from croquito_worker.providers import (
     OPENAI_ARM_ENABLED_ENV,
     OPENAI_STRICT_PATTERN_REWRITES,
     PROMPT_SPECS,
+    PROVIDER_RETRY_DEADLINE_ENV,
+    RETRY_ATTEMPT_CEILING,
     SYNTHETIC_CHAT_PROPOSAL_ID,
     SYNTHETIC_CHAT_READING_ID,
     TEXT_TASKS,
@@ -53,6 +58,7 @@ from croquito_worker.providers import (
     FixtureProviderAdapter,
     GcpDocumentAiOcrAdapter,
     GcpVisionOcrAdapter,
+    GeminiProviderAdapter,
     GeometryElementOutput,
     GeometryExtractionOutput,
     HttpPost,
@@ -60,6 +66,7 @@ from croquito_worker.providers import (
     LegendRowOutput,
     MeasurementExtractionOutput,
     MeasurementReadingOutput,
+    MistralProviderAdapter,
     NormalizedBox,
     NormalizedPoint,
     OcrLineOutput,
@@ -96,6 +103,7 @@ from croquito_worker.providers import (
     _prompt_template,
     _UrllibAuthRequest,
     build_embeddings_adapter,
+    build_extraction_arm,
     build_image_text_request,
     build_real_provider_suite,
     build_request,
@@ -2919,8 +2927,38 @@ def test_payload_rejections_are_not_retried_over_http(status: int) -> None:
     assert attempts == 1
 
 
+class _FakeClock:
+    """Relógio de parede falso: dormir só empurra o ponteiro.
+
+    O retry passou a ser limitado por PRAZO, e sem este seam o teste dependeria do relógio
+    real da máquina de CI — ou, pior, dormiria de verdade os minutos que ele mede.
+    """
+
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+        self.slept: list[float] = []
+
+    def now(self) -> float:
+        return self.elapsed
+
+    def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.elapsed += seconds
+
+
+def _deterministic_retry(
+    adapter: ProviderAdapter, clock: _FakeClock, *, jitter: float = 0.0
+) -> RetryingProviderAdapter:
+    """Retry sob relógio, espera e sorteio falsos — nada de tempo nem aleatoriedade reais."""
+    return RetryingProviderAdapter(adapter, sleep=clock.sleep, now=clock.now, jitter=lambda: jitter)
+
+
 def test_server_errors_stay_retryable_over_http() -> None:
-    """5xx continua transitório: é o fornecedor caído, não o pedido errado."""
+    """5xx continua transitório: é o fornecedor caído, não o pedido errado.
+
+    O que mudou com o prazo de parede é quantas vezes ele insiste: não são mais três
+    tentativas fixas, é o que couber nos cinco minutos default sob a escada de segundos.
+    """
     attempts = 0
 
     def post(
@@ -2930,37 +2968,216 @@ def test_server_errors_stay_retryable_over_http() -> None:
         attempts += 1
         return 500, {}
 
-    adapter = RetryingProviderAdapter(
+    clock = _FakeClock()
+    adapter = _deterministic_retry(
         AnthropicProviderAdapter(api_key="sk-ant-test", model_id="claude-opus-5", http_post=post),
-        sleep=lambda _seconds: None,
+        clock,
     )
 
     with pytest.raises(ProviderExecutionError) as error:
         adapter.execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
 
     assert error.value.code is ProviderFailureCode.UNAVAILABLE
-    assert attempts == 3
+    assert attempts == 8
+    assert clock.slept == [5.0, 10.0, 20.0, 40.0, 60.0, 60.0, 60.0]
+    # Parou porque a próxima espera não cabia no prazo, não porque acabou a contagem.
+    assert clock.elapsed == 255.0
+    assert attempts < RETRY_ATTEMPT_CEILING
 
 
 class _AlwaysFailingAdapter:
-    """Braço que só levanta — o retry é o objeto sob teste, não o adapter."""
+    """Braço que só levanta — o retry é o objeto sob teste, não o adapter.
 
-    def __init__(self, code: ProviderFailureCode) -> None:
+    `cost_seconds` é o tempo que a PRÓPRIA tentativa consome no relógio falso: numa falha
+    pendurada quem gasta o prazo é o timeout do braço, não a espera entre tentativas.
+    """
+
+    def __init__(
+        self,
+        code: ProviderFailureCode,
+        *,
+        clock: _FakeClock | None = None,
+        cost_seconds: float = 0.0,
+    ) -> None:
         self._code = code
+        self._clock = clock
+        self._cost_seconds = cost_seconds
+        self.attempts = 0
 
     def execute(self, _request: ProviderRequest) -> ProviderExecution:
+        self.attempts += 1
+        if self._clock is not None:
+            self._clock.elapsed += self._cost_seconds
         raise ProviderExecutionError(self._code)
+
+
+def test_rate_limiting_waits_in_seconds_and_a_hang_waits_in_milliseconds() -> None:
+    """Duas famílias de falha, dois relógios — e é por isso que a escada é por código.
+
+    Um 429 volta em ~1 s: a escada antiga de 250 ms → 500 ms queimava as três tentativas em
+    1,8 s, e limite de taxa nenhum abre nessa janela. Já numa pendurada quem domina é o
+    timeout do braço (60 s), e esperar segundos antes de gastar mais um minuto só encurta a
+    cadeia sem melhorar nada.
+    """
+    throttle_clock = _FakeClock()
+    with pytest.raises(ProviderExecutionError):
+        _deterministic_retry(
+            _AlwaysFailingAdapter(ProviderFailureCode.RATE_LIMITED), throttle_clock
+        ).execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    hang_clock = _FakeClock()
+    with pytest.raises(ProviderExecutionError):
+        _deterministic_retry(
+            _AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT), hang_clock
+        ).execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert throttle_clock.slept[:4] == [5.0, 10.0, 20.0, 40.0]
+    assert throttle_clock.slept[4:] == [60.0, 60.0, 60.0]  # satura no teto, não cresce sem fim
+    assert hang_clock.slept[:4] == [0.25, 0.5, 1.0, 2.0]
+    assert set(hang_clock.slept[4:]) == {2.0}
+    # A escada de segundos é uma ordem de grandeza acima da de milissegundos, item a item.
+    assert min(throttle_clock.slept) > max(hang_clock.slept) * 2
+
+
+def test_unavailable_shares_the_seconds_ladder_with_rate_limiting() -> None:
+    """5xx é o fornecedor caído: assim como o 429, não abre em 250 ms."""
+    clock = _FakeClock()
+    with pytest.raises(ProviderExecutionError):
+        _deterministic_retry(_AlwaysFailingAdapter(ProviderFailureCode.UNAVAILABLE), clock).execute(
+            _request(PromptTask.MEASUREMENT_EXTRACTION)
+        )
+
+    assert clock.slept[:3] == [5.0, 10.0, 20.0]
+
+
+def test_jitter_enters_the_seconds_ladder_and_only_it() -> None:
+    """Sem jitter, os braços que levam 429 juntos voltam juntos e refazem o pico.
+
+    O sorteio é seam: com `jitter=1.0` a espera é a máxima da faixa, com `0.0` é a nominal,
+    e a suíte nunca depende de aleatoriedade real.
+    """
+    full_jitter = _FakeClock()
+    with pytest.raises(ProviderExecutionError):
+        _deterministic_retry(
+            _AlwaysFailingAdapter(ProviderFailureCode.RATE_LIMITED), full_jitter, jitter=1.0
+        ).execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert full_jitter.slept[:3] == [6.25, 12.5, 25.0]  # 5 s, 10 s e 20 s + 25% de dispersão
+
+    # A escada de milissegundos não é sorteada: 250 ms dispersos não dispersam rajada nenhuma.
+    hang = _FakeClock()
+    with pytest.raises(ProviderExecutionError):
+        _deterministic_retry(
+            _AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT), hang, jitter=1.0
+        ).execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert hang.slept[:3] == [0.25, 0.5, 1.0]
+
+
+def test_a_hung_arm_stops_when_the_wall_clock_deadline_runs_out() -> None:
+    """O prazo é o que encerra a cadeia — e é ele que torna as duas falhas comparáveis.
+
+    Cada tentativa aqui custa os 60 s do timeout do braço Anthropic. Contar tentativas daria
+    tempos incomparáveis: cinco tentativas são cinco minutos nesta pendurada e ~40 s num 429.
+    """
+    clock = _FakeClock()
+    arm = _AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT, clock=clock, cost_seconds=60.0)
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _deterministic_retry(arm, clock).execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.TIMEOUT
+    assert arm.attempts == 5
+    assert clock.elapsed > DEFAULT_PROVIDER_RETRY_DEADLINE_SECONDS
+    # Parou pelo prazo, não pelo teto de segurança de tentativas.
+    assert arm.attempts < RETRY_ATTEMPT_CEILING
+
+
+def test_the_attempt_ceiling_bounds_an_instantly_failing_loop() -> None:
+    """Falha instantânea em laço não pode viver do prazo: o teto de tentativas a corta.
+
+    Sem ele, um braço que falha em microssegundos sem tocar a rede rodaria o prazo inteiro
+    sob a escada — e, com `sleep` injetado nos testes, esse laço seria instantâneo.
+    """
+    clock = _FakeClock()
+    arm = _AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT)
+
+    with pytest.raises(ProviderExecutionError):
+        _deterministic_retry(arm, clock).execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert arm.attempts == RETRY_ATTEMPT_CEILING
+    assert clock.elapsed < DEFAULT_PROVIDER_RETRY_DEADLINE_SECONDS
+
+
+def test_a_shorter_deadline_shortens_the_chain() -> None:
+    """O prazo é UM número e ele governa a cadeia inteira, sem tocar em contagem nenhuma."""
+    clock = _FakeClock()
+    arm = _AlwaysFailingAdapter(ProviderFailureCode.RATE_LIMITED)
+    adapter = RetryingProviderAdapter(
+        arm, deadline_seconds=20.0, sleep=clock.sleep, now=clock.now, jitter=lambda: 0.0
+    )
+
+    with pytest.raises(ProviderExecutionError):
+        adapter.execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    # 5 s + 10 s cabem em 20 s; os 20 s seguintes não, e a cadeia encerra na terceira.
+    assert arm.attempts == 3
+    assert clock.slept == [5.0, 10.0]
+
+
+@pytest.mark.parametrize("code", [ProviderFailureCode.REFUSED, ProviderFailureCode.INVALID_SCHEMA])
+def test_a_permanent_failure_never_reaches_the_second_attempt(
+    code: ProviderFailureCode,
+) -> None:
+    """Retentar recusa não busca disponibilidade, busca outra leitura — e isso é proibido."""
+    clock = _FakeClock()
+    arm = _AlwaysFailingAdapter(code)
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _deterministic_retry(arm, clock).execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is code
+    assert arm.attempts == 1
+    assert clock.slept == []
+    assert code not in RetryingProviderAdapter.RETRYABLE
+
+
+def test_budget_exceeded_never_becomes_a_retry() -> None:
+    """`BUDGET_EXCEEDED` fora de `RETRYABLE` é o que permite existir braço de reserva."""
+    assert ProviderFailureCode.BUDGET_EXCEEDED not in RetryingProviderAdapter.RETRYABLE
+
+
+def test_the_retry_deadline_defaults_to_five_minutes_and_refuses_a_strange_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ausente é o default documentado; valor estranho recusa em vez de escolher um modo."""
+    monkeypatch.delenv(PROVIDER_RETRY_DEADLINE_ENV, raising=False)
+    assert (
+        RetryingProviderAdapter(_AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT)).deadline_seconds
+        == DEFAULT_PROVIDER_RETRY_DEADLINE_SECONDS
+    )
+    assert DEFAULT_PROVIDER_RETRY_DEADLINE_SECONDS == 300.0
+
+    monkeypatch.setenv(PROVIDER_RETRY_DEADLINE_ENV, "45")
+    assert (
+        RetryingProviderAdapter(_AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT)).deadline_seconds
+        == 45.0
+    )
+
+    for strange in ("abc", "-1", "0"):
+        monkeypatch.setenv(PROVIDER_RETRY_DEADLINE_ENV, strange)
+        with pytest.raises(ValueError, match=PROVIDER_RETRY_DEADLINE_ENV):
+            RetryingProviderAdapter(_AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT))
 
 
 def test_exhausted_retries_are_logged(caplog: pytest.LogCaptureFixture) -> None:
     """O terceiro caminho mudo: no V7 o braço OpenAI sumiu de um job inteiro em silêncio.
 
-    O modelo de reasoning não cabia no timeout configurado, as três tentativas estouravam em
+    O modelo de reasoning não cabia no timeout configurado, as tentativas estouravam em
     `TIMEOUT` e a exceção subia sem nada escrito — sem raw, sem status, sem evento.
     """
-    adapter = RetryingProviderAdapter(
-        _AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT), sleep=lambda _seconds: None
-    )
+    clock = _FakeClock()
+    adapter = _deterministic_retry(_AlwaysFailingAdapter(ProviderFailureCode.TIMEOUT), clock)
 
     with (
         caplog.at_level("WARNING", logger="croquito_worker.providers"),
@@ -2973,8 +3190,8 @@ def test_exhausted_retries_are_logged(caplog: pytest.LogCaptureFixture) -> None:
     assert "provider_retries_exhausted" in message
     assert "task=measurement-extraction" in message
     assert "failure_code=TIMEOUT" in message
-    assert "attempts=3" in message
-    assert record.attempts == 3  # type: ignore[attr-defined]
+    assert f"attempts={RETRY_ATTEMPT_CEILING}" in message
+    assert record.attempts == RETRY_ATTEMPT_CEILING  # type: ignore[attr-defined]
     # Nunca evidência: o log do retry é contagem, não conteúdo.
     assert "synthetic-provider-input" not in message
 
@@ -2983,9 +3200,8 @@ def test_a_permanent_failure_is_logged_as_a_single_attempt(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """`attempts=1` é a assinatura de falha permanente: nunca houve retentativa."""
-    adapter = RetryingProviderAdapter(
-        _AlwaysFailingAdapter(ProviderFailureCode.REFUSED), sleep=lambda _seconds: None
-    )
+    clock = _FakeClock()
+    adapter = _deterministic_retry(_AlwaysFailingAdapter(ProviderFailureCode.REFUSED), clock)
 
     with (
         caplog.at_level("WARNING", logger="croquito_worker.providers"),
@@ -3124,6 +3340,173 @@ def test_http_post_survives_an_unreadable_error_body(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("croquito_worker.providers.urlopen", fake_urlopen)
 
     assert _http_post("https://api.openai.com/v1/responses", {}, b"{}", 1.0) == (502, {})
+
+
+@pytest.mark.parametrize(
+    ("raised", "reached_provider"),
+    [
+        (URLError(SSLCertVerificationError("unable to get local issuer certificate")), False),
+        (URLError(ConnectionRefusedError("connection refused")), False),
+        (URLError(socket.gaierror("Name or service not known")), False),
+        (TimeoutError("read timed out"), True),
+        (URLError(TimeoutError("timed out")), True),
+    ],
+    ids=["tls", "conexão-recusada", "dns", "timeout-cru", "timeout-embrulhado"],
+)
+def test_http_post_declares_whether_the_call_left_the_machine(
+    raised: BaseException, reached_provider: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Quem sabe se a chamada saiu é o transporte, e a decisão é assimétrica de propósito.
+
+    TLS, DNS e conexão recusada PROVAM que nada saiu — a reserva de orçamento volta. Tudo
+    que é temporal erra para o lado do teto: timeout de leitura significa que o fornecedor
+    pode ter processado e cobrado sem a resposta chegar, e não há como separar isso de um
+    timeout de conexão com `urllib`.
+    """
+
+    def fake_urlopen(_request: object, timeout: float) -> object:
+        raise raised
+
+    monkeypatch.setattr("croquito_worker.providers.urlopen", fake_urlopen)
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _http_post("https://api.openai.com/v1/responses", {}, b"{}", 1.0)
+
+    assert error.value.code is ProviderFailureCode.TIMEOUT
+    assert error.value.reached_provider is reached_provider
+
+
+def test_a_failure_before_the_network_leaves_the_budget_intact_for_the_fallback() -> None:
+    """A escada longa não pode matar o fallback quando nenhuma tentativa gastou nada.
+
+    É o caso do runbook da Toca: a falha de CA do Python do `uv` virava `TIMEOUT` e cada
+    tentativa mantinha 0,75 reservado. Com ~5 tentativas o primário comia 3,75 de um teto de
+    5,00, e a chamada do braço de reserva era recusada com `BUDGET_EXCEEDED` — que, por
+    desenho, nunca aciona fallback. Sem uma única chamada paga.
+    """
+    budget = CostBudget(limit_usd=Decimal("5.00"))
+    attempts = 0
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        nonlocal attempts
+        attempts += 1
+        raise ProviderExecutionError(ProviderFailureCode.TIMEOUT, reached_provider=False)
+
+    clock = _FakeClock()
+    primary = _deterministic_retry(
+        BudgetedProviderAdapter(
+            OpenAIProviderAdapter(api_key="sk-test", model_id="gpt-5.6-terra", http_post=post),
+            budget=budget,
+            estimated_cost_usd=Decimal("0.75"),
+        ),
+        clock,
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        primary.execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.TIMEOUT
+    assert attempts > 5  # a escada nova insiste bem mais que as três tentativas antigas
+    assert budget.spent_usd == Decimal("0")
+
+    # O que o teste existe para provar: o braço de reserva ainda tem teto para chamar.
+    fallback = BudgetedProviderAdapter(
+        _openai_arm(build_synthetic_provider_suite()),
+        budget=budget,
+        estimated_cost_usd=Decimal("0.75"),
+    )
+    execution = fallback.execute(_request(PromptTask.PAGE_SURVEY))
+    assert execution.usage.estimated_cost_usd == Decimal("0.75")
+    assert budget.spent_usd == Decimal("0.75")
+
+
+def test_a_failure_with_an_http_response_still_consumes_the_budget() -> None:
+    """Resposta é gasto: o fornecedor recebeu, processou e recusou — a reserva fica de pé."""
+    budget = CostBudget(limit_usd=Decimal("5.00"))
+    attempts = 0
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        nonlocal attempts
+        attempts += 1
+        return 500, {}
+
+    clock = _FakeClock()
+    adapter = _deterministic_retry(
+        BudgetedProviderAdapter(
+            OpenAIProviderAdapter(api_key="sk-test", model_id="gpt-5.6-terra", http_post=post),
+            budget=budget,
+            estimated_cost_usd=Decimal("0.75"),
+        ),
+        clock,
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    # Seis tentativas cabem no teto; a sétima reserva estoura e encerra a cadeia.
+    assert attempts == 6
+    assert budget.spent_usd == Decimal("4.50")
+    assert error.value.code is ProviderFailureCode.BUDGET_EXCEEDED
+
+
+def test_an_ambiguous_timeout_consumes_the_budget() -> None:
+    """Na dúvida o teto ganha: leitura que expirou pode ter sido processada e cobrada.
+
+    Amarrado explicitamente para a decisão não virar regressão silenciosa — inverter isto
+    passaria a devolver dinheiro que o fornecedor talvez tenha cobrado.
+    """
+    budget = CostBudget(limit_usd=Decimal("5.00"))
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        raise ProviderExecutionError(ProviderFailureCode.TIMEOUT)
+
+    clock = _FakeClock()
+    adapter = _deterministic_retry(
+        BudgetedProviderAdapter(
+            OpenAIProviderAdapter(api_key="sk-test", model_id="gpt-5.6-terra", http_post=post),
+            budget=budget,
+            estimated_cost_usd=Decimal("0.75"),
+        ),
+        clock,
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.BUDGET_EXCEEDED
+    assert budget.spent_usd == Decimal("4.50")
+
+
+def test_the_budget_never_gives_back_more_than_it_reserved() -> None:
+    """Devolver mais do que se reservou criaria teto do nada — o oposto do que o teto faz."""
+    budget = CostBudget(limit_usd=Decimal("1.00"))
+    budget.reserve(Decimal("0.30"))
+    budget.release(Decimal("0.90"))
+
+    assert budget.spent_usd == Decimal("0")
+
+
+def test_a_transport_failure_in_the_ocr_arm_keeps_its_provenance() -> None:
+    """O reembrulho do braço OCR não pode apagar quem sabe se a chamada saiu."""
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        raise ProviderExecutionError(ProviderFailureCode.TIMEOUT, reached_provider=False)
+
+    adapter = GcpVisionOcrAdapter(credentials=_FakeGcpCredentials(), http_post=post)
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.OCR))
+
+    assert error.value.code is ProviderFailureCode.TIMEOUT
+    assert error.value.reached_provider is False
 
 
 def test_http_status_mapping_keeps_transport_failures_retryable() -> None:
@@ -3491,6 +3874,416 @@ def test_anthropic_adapter_refuses_more_than_one_tool_result() -> None:
     with pytest.raises(ProviderExecutionError) as error:
         adapter.execute(request)
     assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+
+
+def _gemini_response(output_text: str, **overrides: object) -> dict[str, object]:
+    """Forma da resposta do `generateContent`: candidato único, texto em `parts`, uso à parte."""
+    return {
+        "candidates": [
+            {
+                "content": {"role": "model", "parts": [{"text": output_text}]},
+                "finishReason": "STOP",
+            }
+        ],
+        "usageMetadata": {"promptTokenCount": 1500, "candidatesTokenCount": 320},
+        "modelVersion": "gemini-3-pro-preview-11-2026",
+    } | overrides
+
+
+def _gemini_adapter(
+    response: dict[str, object], *, status: int = 200
+) -> tuple[GeminiProviderAdapter, dict[str, object]]:
+    captured: dict[str, object] = {}
+
+    def post(
+        url: str, headers: dict[str, str], body: bytes, timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["body"] = json.loads(body)
+        captured["timeout"] = timeout
+        return status, response
+
+    return (
+        GeminiProviderAdapter(api_key="gemini-test-key", model_id="gemini-3-pro", http_post=post),
+        captured,
+    )
+
+
+def test_gemini_adapter_puts_the_model_in_the_url_and_the_schema_in_the_generation_config() -> None:
+    """No Gemini o modelo mora na ROTA; mandá-lo no corpo, como nos outros, seria 404."""
+    adapter, captured = _gemini_adapter(_gemini_response(json.dumps(_geometry_payload())))
+
+    execution = adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert captured["url"] == (
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro:generateContent"
+    )
+    headers = cast(dict[str, str], captured["headers"])
+    assert headers["x-goog-api-key"] == "gemini-test-key"
+    assert "Authorization" not in headers
+    body = cast(dict[str, Any], captured["body"])
+    config = cast(dict[str, Any], body["generationConfig"])
+    assert config["responseMimeType"] == "application/json"
+    assert config["responseSchema"]["type"] == "OBJECT"
+    parts = cast(list[dict[str, Any]], body["contents"][0]["parts"])
+    assert parts[0]["text"] == _prompt_template(PromptTask.GEOMETRY_EXTRACTION)
+    assert parts[1]["inline_data"]["mime_type"] == "image/png"
+    assert execution.provider is ProviderName.GEMINI
+    # O snapshot que respondeu, não o apelido que pedimos: a eval compara modelos.
+    assert execution.model_id == "gemini-3-pro-preview-11-2026"
+    assert execution.usage.input_tokens == 1500
+    assert execution.usage.output_tokens == 320
+    assert execution.output.task is PromptTask.GEOMETRY_EXTRACTION
+
+
+def test_gemini_adapter_sends_instruction_then_text_then_image_for_an_image_text_task() -> None:
+    """Tarefa de duas evidências manda as duas, na ordem fixa dos outros braços."""
+    adapter, captured = _gemini_adapter(_gemini_response(json.dumps(_chat_payload())))
+
+    adapter.execute(_request_for(PromptTask.REVIEW_CHAT))
+
+    parts = cast(
+        list[dict[str, Any]], cast(dict[str, Any], captured["body"])["contents"][0]["parts"]
+    )
+    assert parts[0]["text"] == _prompt_template(PromptTask.REVIEW_CHAT)
+    assert parts[1]["text"] == "onde está a cota do muro?"
+    assert "inline_data" in parts[2]
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        (401, ProviderFailureCode.REFUSED),
+        (429, ProviderFailureCode.RATE_LIMITED),
+        (503, ProviderFailureCode.UNAVAILABLE),
+    ],
+)
+def test_gemini_adapter_maps_the_http_status_to_the_shared_failure_codes(
+    status: int, code: ProviderFailureCode
+) -> None:
+    adapter, _ = _gemini_adapter({"error": {"message": "sem cota"}}, status=status)
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is code
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"candidates": []},
+        {"candidates": [{"content": {"parts": [{"text": "não é JSON"}]}}]},
+        {"candidates": [{"content": {"parts": []}}]},
+        {"usageMetadata": {"promptTokenCount": 1}},
+    ],
+    ids=["nenhum", "texto-ilegivel", "sem-texto", "sem-candidato"],
+)
+def test_gemini_adapter_refuses_a_200_without_exactly_one_readable_candidate(
+    response: dict[str, object],
+) -> None:
+    """Zero candidatos é recusa disfarçada e texto ilegível é nada; nenhum vira observação."""
+    adapter, _ = _gemini_adapter(response)
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+
+
+def test_gemini_adapter_refuses_two_candidates_even_when_both_are_valid() -> None:
+    """Escolher entre duas respostas boas seria inventar consenso, como no braço Anthropic."""
+    candidate = {"content": {"parts": [{"text": json.dumps(_geometry_payload())}]}}
+    adapter, _ = _gemini_adapter({"candidates": [candidate, deepcopy(candidate)]})
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"promptFeedback": {"blockReason": "SAFETY"}, "candidates": []},
+        {"candidates": [{"content": {"parts": [{"text": "{}"}]}, "finishReason": "SAFETY"}]},
+        {"candidates": [{"content": {"parts": [{"text": "{}"}]}, "finishReason": "MAX_TOKENS"}]},
+    ],
+    ids=["entrada-barrada", "saida-filtrada", "geracao-cortada"],
+)
+def test_gemini_adapter_does_not_retry_an_explicit_refusal(overrides: dict[str, object]) -> None:
+    """Recusa e corte não melhoram com retentativa: `REFUSED` está fora de `RETRYABLE`.
+
+    A retentativa aqui não custaria só tempo — o budget é reservado ANTES de cada tentativa,
+    então insistir num filtro de segurança queimaria teto sem chance nenhuma de sucesso.
+    """
+    attempts = 0
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        nonlocal attempts
+        attempts += 1
+        return 200, _gemini_response("{}", **overrides)
+
+    adapter = RetryingProviderAdapter(
+        GeminiProviderAdapter(api_key="k", model_id="gemini-3-pro", http_post=post),
+        sleep=lambda _: None,
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.REFUSED
+    assert ProviderFailureCode.REFUSED not in RetryingProviderAdapter.RETRYABLE
+    assert attempts == 1
+
+
+@pytest.mark.parametrize("task", list(PromptTask))
+def test_gemini_schema_carries_no_ref_and_leaves_pydantic_as_the_validator(
+    task: PromptTask,
+) -> None:
+    """O `responseSchema` não tem `$defs`/`$ref`, e quem valida a volta continua sendo o Pydantic.
+
+    A tradução é só para o PEDIDO: `_NULLED_PAYLOADS` é a resposta que o dialeto anulável
+    produz, e ela só entra no contrato porque o modelo original ainda a aceita.
+    """
+    adapter, captured = _gemini_adapter(_gemini_response(json.dumps(_NULLED_PAYLOADS[task])))
+
+    execution = adapter.execute(_request_for(task))
+
+    config = cast(dict[str, Any], cast(dict[str, Any], captured["body"])["generationConfig"])
+    serialized = json.dumps(config["responseSchema"])
+    assert "$ref" not in serialized
+    assert "$defs" not in serialized
+    # Lookaround não sobrevive ao dialeto (reescrito quando conhecido, removido quando não).
+    assert "(?!" not in serialized
+    assert execution.output.task is task
+
+
+def test_gemini_adapter_rejects_a_payload_the_looser_sent_schema_would_allow() -> None:
+    """O schema enviado perdeu `maxLength` e afins; o contrato não perdeu nada."""
+    payload = _geometry_payload()
+    cast(list[dict[str, Any]], payload["elements"])[0]["kind"] = "espiral"
+    adapter, _ = _gemini_adapter(_gemini_response(json.dumps(payload)))
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+
+
+def _mistral_response(output_text: str, **overrides: object) -> dict[str, object]:
+    """Forma da resposta do chat completions da Mistral: JSON como string em `message.content`."""
+    return {
+        "model": "pixtral-large-2512",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": output_text},
+            }
+        ],
+        "usage": {"prompt_tokens": 2100, "completion_tokens": 410},
+    } | overrides
+
+
+def _mistral_adapter(
+    response: dict[str, object], *, status: int = 200
+) -> tuple[MistralProviderAdapter, dict[str, object]]:
+    captured: dict[str, object] = {}
+
+    def post(
+        url: str, headers: dict[str, str], body: bytes, timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["body"] = json.loads(body)
+        return status, response
+
+    return (
+        MistralProviderAdapter(
+            api_key="mistral-test-key", model_id="pixtral-large", http_post=post
+        ),
+        captured,
+    )
+
+
+def test_mistral_adapter_sends_the_pydantic_schema_unchanged_in_the_response_format() -> None:
+    """O modo estruturado da Mistral aceita o schema do Pydantic; traduzir seria afastar os dois."""
+    adapter, captured = _mistral_adapter(_mistral_response(json.dumps(_geometry_payload())))
+
+    execution = adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert captured["url"] == "https://api.mistral.ai/v1/chat/completions"
+    headers = cast(dict[str, str], captured["headers"])
+    assert headers["Authorization"] == "Bearer mistral-test-key"
+    body = cast(dict[str, Any], captured["body"])
+    response_format = cast(dict[str, Any], body["response_format"])
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == "geometry_extraction"
+    assert response_format["json_schema"]["strict"] is True
+    assert (
+        response_format["json_schema"]["schema"]
+        == _output_model(PromptTask.GEOMETRY_EXTRACTION).model_json_schema()
+    )
+    content = cast(list[dict[str, Any]], body["messages"][0]["content"])
+    assert content[0]["text"] == _prompt_template(PromptTask.GEOMETRY_EXTRACTION)
+    assert content[1]["image_url"].startswith("data:image/png;base64,")
+    assert execution.provider is ProviderName.MISTRAL
+    assert execution.model_id == "pixtral-large-2512"
+    assert execution.usage.input_tokens == 2100
+    assert execution.usage.output_tokens == 410
+    assert execution.output.task is PromptTask.GEOMETRY_EXTRACTION
+
+
+def test_mistral_adapter_sends_instruction_then_text_then_image_for_an_image_text_task() -> None:
+    adapter, captured = _mistral_adapter(_mistral_response(json.dumps(_chat_payload())))
+
+    adapter.execute(_request_for(PromptTask.REVIEW_CHAT))
+
+    content = cast(
+        list[dict[str, Any]], cast(dict[str, Any], captured["body"])["messages"][0]["content"]
+    )
+    assert content[0]["text"] == _prompt_template(PromptTask.REVIEW_CHAT)
+    assert content[1]["text"] == "onde está a cota do muro?"
+    assert content[2]["type"] == "image_url"
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        (422, ProviderFailureCode.REFUSED),
+        (429, ProviderFailureCode.RATE_LIMITED),
+        (500, ProviderFailureCode.UNAVAILABLE),
+    ],
+)
+def test_mistral_adapter_maps_the_http_status_to_the_shared_failure_codes(
+    status: int, code: ProviderFailureCode
+) -> None:
+    adapter, _ = _mistral_adapter({"error": {"message": "payload recusado"}}, status=status)
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is code
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"choices": []},
+        {"choices": [{"message": {"content": "não é JSON"}}]},
+        {"choices": [{"message": {"content": ""}}]},
+        {"choices": [{"message": {"role": "assistant"}}]},
+        {"usage": {"prompt_tokens": 1}},
+    ],
+    ids=["nenhuma", "texto-ilegivel", "vazio", "sem-conteudo", "sem-escolha"],
+)
+def test_mistral_adapter_refuses_a_200_without_exactly_one_readable_choice(
+    response: dict[str, object],
+) -> None:
+    adapter, _ = _mistral_adapter(response)
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+
+
+def test_mistral_adapter_refuses_two_choices_even_when_both_are_valid() -> None:
+    """Mesma regra do Gemini e do Anthropic: duas respostas boas não elegem uma vencedora."""
+    choice = {"finish_reason": "stop", "message": {"content": json.dumps(_geometry_payload())}}
+    adapter, _ = _mistral_adapter({"choices": [choice, deepcopy(choice)]})
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+
+
+@pytest.mark.parametrize("finish_reason", ["length", "model_length", "error", "content_filter"])
+def test_mistral_adapter_does_not_retry_an_explicit_refusal(finish_reason: str) -> None:
+    """Geração cortada aceita como observação completa seria pior do que falhar."""
+    attempts = 0
+
+    def post(
+        _url: str, _headers: dict[str, str], _body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        nonlocal attempts
+        attempts += 1
+        return 200, _mistral_response(
+            json.dumps(_geometry_payload()),
+            choices=[
+                {
+                    "finish_reason": finish_reason,
+                    "message": {"content": json.dumps(_geometry_payload())},
+                }
+            ],
+        )
+
+    adapter = RetryingProviderAdapter(
+        MistralProviderAdapter(api_key="k", model_id="pixtral-large", http_post=post),
+        sleep=lambda _: None,
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        adapter.execute(_request(PromptTask.GEOMETRY_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.REFUSED
+    assert attempts == 1
+
+
+@pytest.mark.parametrize(
+    ("provider", "variable"),
+    [("gemini", "CROQUITO_GEMINI_API_KEY"), ("mistral", "CROQUITO_MISTRAL_API_KEY")],
+)
+def test_build_extraction_arm_refuses_a_new_axis_without_its_credential(
+    provider: str, variable: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recusa antecipada e NOMEADA: nada chega perto da rede sem a chave do eixo."""
+    monkeypatch.setenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD", "1.00")
+    monkeypatch.delenv(variable, raising=False)
+
+    with pytest.raises(ValueError, match=variable):
+        build_extraction_arm(provider=provider, model_id="modelo-qualquer")
+
+
+@pytest.mark.parametrize(
+    ("provider", "variable", "adapter_type"),
+    [
+        ("gemini", "CROQUITO_GEMINI_API_KEY", GeminiProviderAdapter),
+        ("mistral", "CROQUITO_MISTRAL_API_KEY", MistralProviderAdapter),
+    ],
+)
+def test_build_extraction_arm_wraps_a_new_axis_in_retry_and_budget(
+    provider: str,
+    variable: str,
+    adapter_type: type[GeminiProviderAdapter] | type[MistralProviderAdapter],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Eixo novo entra sob o MESMO teto e a MESMA política de retry dos que já existiam."""
+    monkeypatch.setenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD", "1.00")
+    monkeypatch.setenv(variable, "chave-de-teste")
+
+    arm = build_extraction_arm(provider=provider, model_id="modelo-de-eval")
+
+    assert isinstance(arm, RetryingProviderAdapter)
+    budgeted = arm.adapter
+    assert isinstance(budgeted, BudgetedProviderAdapter)
+    inner = budgeted.adapter
+    assert isinstance(inner, adapter_type)
+    assert inner.model_id == "modelo-de-eval"
+
+
+def test_build_extraction_arm_still_refuses_an_unknown_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD", "1.00")
+
+    with pytest.raises(ValueError, match="provider desconhecido para extração"):
+        build_extraction_arm(provider="cohere", model_id="qualquer")
 
 
 SCO_TEXT_PAYLOAD = (

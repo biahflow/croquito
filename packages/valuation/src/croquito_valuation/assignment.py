@@ -107,6 +107,36 @@ EXISTENTE" caiu de 10/20 para 0/20 itens cujo único mérito era conter "existen
 `tests/valuation/golden/matcher-golden-v1.json`, `note_phase_2_2`). `CodeSuggestionSet`
 aceita v1 E v2 no `Literal` de `suggester_version` — artefato antigo continua carregável."""
 
+SCO_LEXICAL_IDF_SUGGESTER_VERSION: Final = "lexical-idf-sco-suggester-v1"
+"""A mesma via da fusão híbrida com uma perna a menos: só o braço léxico por COBERTURA.
+
+É o que o produto publica quando não há índice de embeddings, teto de gasto, credencial —
+ou quando o operador pediu `--no-semantic`. Nada de semântico participou, então `semantic`
+fica ausente e `matching_of` continua dizendo `lexical`; o que muda em relação a
+`lexical-sco-suggester-v1` é o ALGORITMO que monta a shortlist, e por isso a versão é
+outra.
+
+A diferença medida, e o motivo de ela ter virado o caminho padrão da degradação
+(2026-08-21, catálogo real do SCO-Rio com 4.865 itens, gabarito de
+`tests/valuation/golden/matcher-golden-v1.json`, 8 itens, k=5):
+
+| via | acertos em k=5 |
+|---|---|
+| `lexical-sco-suggester-v1` (Dice, `lexical_similarity`) | 3/8 |
+| `lexical-idf-sco-suggester-v1` (cobertura ponderada) | 8/8 |
+| `hybrid-sco-suggester-v2` (com índice) | 6/8 |
+
+O Dice divide pelo tamanho dos DOIS lados, então descrição de um parágrafo é penalizada
+por ser longa: o código certo de "PISO INTERTRAVADO" (cuja descrição diz "Revestimento
+intertravado…" e nunca escreve "piso") cai para o rank 1807 por Dice e sobe ao topo pela
+cobertura ponderada por IDF. Antes desta rodada o produto servia o Dice na degradação
+enquanto `hybrid_candidates(index=None)` — que já degradava sozinho para a cobertura —
+ficava sem chamador.
+
+A linha do híbrido acima NÃO autoriza mexer na fusão: são 8 amostras de uma prancha contra
+os 12/12 contra 4/12 que calibraram os pesos noutro catálogo (`ADR-0021`). Reponderar é decisão
+humana pendente, não conclusão desta medição."""
+
 LLM_RERANK_SUFFIX: Final = "+llm-rerank-v1"
 """Sufixo que o refino pago acrescenta ao suggester que produziu a shortlist de entrada."""
 
@@ -119,6 +149,15 @@ passou por um provider — e o bloco `refinement` diz por qual."""
 
 SCO_REFINED_HYBRID_SUGGESTER_VERSION: Final = SCO_HYBRID_SUGGESTER_VERSION + LLM_RERANK_SUFFIX
 """A shortlist híbrida depois do refino pago: os dois lineages viajam juntos no artefato."""
+
+SCO_REFINED_LEXICAL_IDF_SUGGESTER_VERSION: Final = (
+    SCO_LEXICAL_IDF_SUGGESTER_VERSION + LLM_RERANK_SUFFIX
+)
+"""A shortlist do braço léxico por cobertura depois do refino pago.
+
+Existe porque o refino é ortogonal ao braço semântico: `suggest-codes --no-semantic
+--refine-arm=...` monta a shortlist sem embedding e a manda reordenar. Sem esta forma no
+`Literal`, `apply_refinement` recusaria a própria saída que o comando produz."""
 
 _ITEM_ID_PATTERN: Final = r"^ti_[a-f0-9]{16}$"
 
@@ -237,6 +276,11 @@ class CodeSuggestionSet(ValuationContractModel):
     como híbridas pelo prefixo de família `SCO_HYBRID_SUGGESTER_FAMILY`, não pela versão
     corrente — só a produção NOVA escreve `v2`.
 
+    `lexical-idf-sco-suggester-v1` é a fusão SEM a perna semântica (nenhum embedding
+    participou, `semantic` ausente) e é o que a degradação publica desde 2026-08-21;
+    `lexical-sco-suggester-v1` continua no `Literal` porque artefato de rodada anterior
+    — e a via Dice, que segue viva na cascata do orçamento-base — carrega essa versão.
+
     Com `lexical-cascade-sco-suggester-v1` (orçamento-base, `suggest_codes_over_cascade`) o
     conjunto abrange mais de um catálogo: `catalog_sha256` do cabeçalho é o do catálogo
     **cabeça** da cascata e a proveniência autoritativa passa a ser a de cada candidato
@@ -253,6 +297,8 @@ class CodeSuggestionSet(ValuationContractModel):
     suggester_version: Literal[
         "lexical-sco-suggester-v1",
         "lexical-sco-suggester-v1+llm-rerank-v1",
+        "lexical-idf-sco-suggester-v1",
+        "lexical-idf-sco-suggester-v1+llm-rerank-v1",
         "lexical-cascade-sco-suggester-v1",
         "hybrid-sco-suggester-v1",
         "hybrid-sco-suggester-v1+llm-rerank-v1",
@@ -337,7 +383,36 @@ class SuggestionConfig:
     entre dois textos com QUALQUER caractere em comum).
     """
 
-    max_candidates_per_item: int = 3
+    max_candidates_per_item: int = 15
+    """Quantos candidatos a shortlist publica por item, POR fonte de preço.
+
+    Subiu de 3 para 15 em 2026-08-21, e o número é medido, não escolhido por gosto. Contra
+    os 12 casos com código esperado do gabarito humano
+    (`tests/valuation/golden/matcher-golden-v1.json`, catálogo real da Toca), o recall da
+    shortlist híbrida por tamanho é:
+
+    | k | 3 | 5 | 10 | 12 | **15** | 20 |
+    |---|---|---|----|----|--------|----|
+    | acertos | 5/12 | 6/12 | 8/12 | 10/12 | **12/12** | 12/12 |
+
+    15 é onde a curva satura. Cortar em 3 escondia o código certo da orçamentista em 7 dos
+    12 casos, e em 5 ainda escondia em 6 — ela teria de ir à busca manual num catálogo de
+    ~5 mil itens em metade dos itens da prancha. O gate de recall do eval não depende deste
+    valor: ele mede em 20 explicitamente (`extraction_eval._MATCHER_RECALL_CANDIDATES`).
+
+    "Por fonte" é o que vale na cascata do orçamento-base (`suggest_codes_over_cascade`):
+    3 catálogos passam a render até 45 candidatos por item, em BLOCOS na ordem da cascata.
+    Não há corte global de propósito — ver a docstring daquela função.
+
+    **Consequência medida no refino pago:** este número deixou de ser o que viaja ao
+    provider. A shortlist inteira não cabia no `text_payload` (20000 caracteres) — numa
+    prancha de 15 itens o payload ia a 335% do teto com k=15 —, então o refino passou a
+    enviar uma JANELA por item (`sco_suggestion.TRANSMITTED_CANDIDATE_WINDOW`, hoje 10, o
+    máximo que o contrato de saída do prompt consegue devolver) e a fatiar os itens em
+    lotes que caibam no payload, uma chamada paga por lote. Mexer neste 15 muda quantos
+    candidatos a orçamentista vê e quanta CAUDA fica fora do alcance do refino; não muda
+    quantos o modelo reordena."""
+
     min_lexical_score: float = 0.03
 
 
@@ -561,16 +636,38 @@ def apply_refinement(
     notes_by_item: Mapping[str, str] | None,
     flags_by_item: Mapping[str, Sequence[str]] | None,
     refinement: SuggestionRefinement,
+    *,
+    transmitted_window: int | None = None,
 ) -> CodeSuggestionSet:
     """Aplica o refino pago sobre a shortlist lexical; nunca muta o conjunto de entrada.
 
     Reordenar e anotar é tudo o que o refino pode fazer. A ordem pedida para um item tem
-    de ser **permutação exata** dos códigos que a via lexical já elegeu para ele: código
+    de ser **permutação exata do que foi ENVIADO** ao provider para aquele item: código
     novo, código a mais ou código a menos recusa com `REFINEMENT_CODES_MISMATCH`, porque
     aceitar qualquer um dos três deixaria o provider substituir a shortlist em vez de
     refiná-la. Item citado que não existe no conjunto recusa com
     `REFINEMENT_UNKNOWN_ITEM`; item do conjunto que o refino não citou mantém a ordem
     lexical intocada, sem nota.
+
+    `transmitted_window` é quantos candidatos de cada item o chamador de fato transmitiu.
+    `None` — o default e o caso de sempre — significa "a shortlist inteira", e aí a
+    exigência continua sendo permutação exata dela. Com um número, o refino ranqueia só o
+    **prefixo** de `min(transmitted_window, len(shortlist))` candidatos e o resultado é
+    `[cabeça reordenada] + [cauda intocada]`. Existe porque o contrato de saída do provider
+    (`ScoItemRefinementOutput.ranked_codes`) e o teto do `text_payload` limitam quantos
+    candidatos cabem numa chamada, enquanto a shortlist publicada para a orçamentista é
+    maior — dois números com trabalhos diferentes.
+
+    Invariantes que a janela **não** afrouxa:
+
+    - nenhum código entra e nenhum sai: o conjunto publicado é exatamente o mesmo, só a
+      ordem da cabeça muda;
+    - tem de ser o PREFIXO, não um subconjunto qualquer. Quem escolhe o que é enviado somos
+      nós; aceitar qualquer subconjunto deixaria o provider escolher sobre o que opinar, e
+      isso não é verificável a partir da resposta;
+    - a CAUDA mantém a ordem relativa que a via léxica deu — ela não foi transmitida, então
+      ninguém opinou sobre ela;
+    - shortlist menor ou igual à janela cai no caso de sempre: permutação exata.
 
     O que atravessa sem alteração: `unmatched_item_ids`, `safety_notes`, os digests da
     prancha/catálogo/contrato, o lineage `semantic` de quem montou a shortlist e todo campo
@@ -588,6 +685,12 @@ def apply_refinement(
             "REFINEMENT_ALREADY_APPLIED",
             "conjunto já refinado não pode ser refinado de novo",
             {"suggester_version": suggestions.suggester_version},
+        )
+    if transmitted_window is not None and transmitted_window < 1:
+        raise ValuationValidationError(
+            "REFINEMENT_WINDOW_INVALID",
+            "janela de refino precisa transmitir ao menos um candidato por item",
+            {"transmitted_window": transmitted_window},
         )
     ranked_by_item = {item_id: list(codes) for item_id, codes in ranked_codes_by_item.items()}
     notes = dict(notes_by_item or {})
@@ -612,12 +715,19 @@ def apply_refinement(
 
         candidates_by_code = {candidate.code: candidate for candidate in suggestion.candidates}
         shortlist = [candidate.code for candidate in suggestion.candidates]
-        if ranked is not None and sorted(ranked) != sorted(shortlist):
+        head_length = (
+            len(shortlist)
+            if transmitted_window is None
+            else min(transmitted_window, len(shortlist))
+        )
+        transmitted, retained = shortlist[:head_length], shortlist[head_length:]
+        if ranked is not None and sorted(ranked) != sorted(transmitted):
             raise ValuationValidationError(
                 "REFINEMENT_CODES_MISMATCH",
-                "ordem refinada deve ser permutação exata da shortlist lexical do item",
+                "ordem refinada deve ser permutação exata dos candidatos transmitidos do item",
                 {
                     "item_id": suggestion.item_id,
+                    "transmitted": sorted(transmitted),
                     "shortlist": sorted(shortlist),
                     "ranked": list(ranked),
                 },
@@ -625,7 +735,7 @@ def apply_refinement(
         ordered = (
             list(suggestion.candidates)
             if ranked is None
-            else [candidates_by_code[code] for code in ranked]
+            else [candidates_by_code[code] for code in (*ranked, *retained)]
         )
         if note is not None:
             if len(note) > _REFINEMENT_NOTE_MAX_LENGTH:

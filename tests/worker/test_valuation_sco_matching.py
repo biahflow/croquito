@@ -12,6 +12,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from pydantic import ValidationError
 
 from croquito_valuation.assignment import (
     SCO_HYBRID_SUGGESTER_VERSION,
+    SCO_LEXICAL_IDF_SUGGESTER_VERSION,
     SCO_SUGGESTER_VERSION,
     CodeSuggestionSet,
     SuggestionConfig,
@@ -37,8 +39,15 @@ from croquito_valuation.catalog import (
     weighted_query_coverage_score,
 )
 from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
-from croquito_valuation.models import PriceCatalog, PriceCatalogEntry
-from croquito_valuation.takeoff import load_takeoff_packet
+from croquito_valuation.models import PriceCatalog, PriceCatalogEntry, ReviewerDecision
+from croquito_valuation.takeoff import (
+    PlateBox,
+    PlateEvidence,
+    TakeoffItem,
+    TakeoffItemStatus,
+    TakeoffPacket,
+    load_takeoff_packet,
+)
 from croquito_valuation.template import default_template
 from croquito_worker.providers import (
     EmbeddingsExecution,
@@ -80,6 +89,7 @@ from croquito_worker.valuation.sco_matching_fixtures import (
     fixture_semantic_index,
     fixture_vector,
 )
+from croquito_worker.valuation.sco_suggestion import build_code_suggestions
 from croquito_worker.valuation.synthetic import (
     SYNTHETIC_CONTRACT_SOURCE_LABEL,
     SYNTHETIC_REFERENCE_MONTH,
@@ -632,6 +642,238 @@ def _write_catalog(directory: Path, catalog: PriceCatalog) -> Path:
     return path
 
 
+# --------------------------------------------------------------------------------------
+# Degradação: a shortlist sem índice é a do braço léxico por cobertura, não a do Dice
+# --------------------------------------------------------------------------------------
+
+_DIVERGENT_LABEL = "PISO INTERTRAVADO"
+_DIVERGENT_CORRECT_CODE = "PV01000010(/)"
+_DIVERGENT_CORRECT_DESCRIPTION = (
+    "Revestimento intertravado em pecas de concreto vibro-prensadas de 35MPa, espessura de "
+    "6cm, inclusive compactacao do subleito, corte de blocos, colchao de areia e "
+    "rejuntamento com areia fina, conforme as normas NBR 9780 e NBR 9781"
+)
+_DIVERGENT_DECOYS = (
+    "Piso cimentado desempenado",
+    "Piso emborrachado sintetico",
+    "Limpeza geral de piso",
+    "Piso lavado com hidrojateamento",
+    "Piso pintado com tinta acrilica",
+    "Recomposicao de piso danificado",
+    "Piso vinilico em manta",
+    "Piso ceramico esmaltado",
+    "Piso de granilite polido",
+    "Piso elevado modular",
+    "Piso tatil de alerta",
+    "Piso tatil direcional",
+    "Enceramento de piso",
+    "Polimento de piso",
+    "Selagem de piso poroso",
+    "Impermeabilizacao de piso",
+    "Rodape de piso em madeira",
+    "Junta de dilatacao de piso",
+)
+"""Catálogo em que as duas vias léxicas DISCORDAM, reproduzindo o caso real medido.
+
+A descrição correta é longa e nunca escreve "piso": o Dice, que divide pelo tamanho dos
+dois lados, a joga para o último lugar, enquanto a cobertura ponderada por IDF a põe em
+primeiro, porque "intertravado" discrimina e "piso" não. No catálogo real do SCO-Rio o
+mesmo caso põe o alvo no rank 1807 por Dice e no topo pelo IDF.
+
+Os chamarizes precisam ser MAIS numerosos que `max_candidates_per_item` (hoje 15): com
+poucos, o corte não morde e o Dice publica o alvo junto com todo o resto, apagando a
+divergência que este teste existe para provar. Se subir o default de novo, esta lista
+cresce junto."""
+
+
+def _divergent_catalog() -> PriceCatalog:
+    entries = [
+        PriceCatalogEntry(
+            code=_DIVERGENT_CORRECT_CODE,
+            description=_DIVERGENT_CORRECT_DESCRIPTION,
+            unit="m2",
+            unit_price=Decimal("120.00"),
+            family_code="PV",
+            family_name="PAVIMENTACAO SINTETICA",
+            subgroup_code="PV0100",
+            subgroup_name="REVESTIMENTOS SINTETICOS",
+        ),
+        *(
+            PriceCatalogEntry(
+                code=f"PV0200{index:04d}(/)",
+                description=description,
+                unit="m2",
+                unit_price=Decimal("30.00"),
+                family_code="PV",
+                family_name="PAVIMENTACAO SINTETICA",
+                subgroup_code="PV0200",
+                subgroup_name="SERVICOS DE PISO SINTETICOS",
+            )
+            for index, description in enumerate(_DIVERGENT_DECOYS, start=1)
+        ),
+    ]
+    return PriceCatalog(
+        source_label="CATALOGO DIVERGENTE SINTETICO",
+        reference_month="2026-01",
+        source_sha256="1" * 64,
+        entries=entries,
+    )
+
+
+def _divergent_packet() -> TakeoffPacket:
+    item = TakeoffItem(
+        id="ti_0000000000000001",
+        evidence=PlateEvidence(
+            plate_id="praca-sintetica-norte-prancha-01",
+            page_number=1,
+            image_sha256="a" * 64,
+            bbox=PlateBox(left=10, top=10, right=110, bottom=60),
+        ),
+        raw_text=f"{_DIVERGENT_LABEL} 120,00 m2",
+        label=_DIVERGENT_LABEL,
+        quantity=Decimal("120.00"),
+        unit="m2",
+        source="legend_extraction",
+        extractor="legend-extractor-sintetico",
+        extractor_version="1.0.0",
+        status=TakeoffItemStatus.CONFIRMED,
+        decision=ReviewerDecision(
+            decision_id="vd_0123456789abcdef",
+            action="confirm",
+            reviewer_id="orcamentista-sintetico",
+            reviewer_role="orcamentista",
+            decided_at=datetime(2026, 2, 1, 12, 0, tzinfo=UTC),
+        ),
+    )
+    return TakeoffPacket(
+        plate_id="praca-sintetica-norte-prancha-01",
+        page_number=1,
+        image_sha256="a" * 64,
+        source_pdf_sha256="b" * 64,
+        items=[item],
+        safety_notes=[
+            "Extração automática da legenda; quantidade não confirmada.",
+            "Decisão do orçamentista obrigatória antes de qualquer boletim.",
+        ],
+    )
+
+
+def test_without_an_index_the_shortlist_is_the_idf_arm_and_not_the_dice_one() -> None:
+    """O defeito que esta rodada fecha: a degradação caía no algoritmo pior.
+
+    As duas vias existem e discordam. A que o produto publica sem índice tem de ser a do
+    braço léxico por cobertura — o mesmo braço da fusão, com uma perna a menos. Se algum
+    dia o caminho voltar a desviar para `build_code_suggestions`, o alvo some da shortlist
+    inteira e este teste acusa.
+    """
+    packet = _divergent_packet()
+    catalog = _divergent_catalog()
+
+    dice = build_code_suggestions(packet, catalog, None)
+    published = build_hybrid_code_suggestions(packet, catalog, None)
+
+    dice_codes = [candidate.code for candidate in dice.suggestions[0].candidates]
+    published_codes = [candidate.code for candidate in published.suggestions[0].candidates]
+
+    # A via Dice não só erra a ordem: com o corte padrão o alvo não aparece de jeito nenhum.
+    assert _DIVERGENT_CORRECT_CODE not in dice_codes
+    assert published_codes[0] == _DIVERGENT_CORRECT_CODE
+    assert published.suggester_version == SCO_LEXICAL_IDF_SUGGESTER_VERSION
+    assert published.semantic is None
+    assert dice.suggester_version == SCO_SUGGESTER_VERSION
+
+
+def test_the_shortlist_without_an_index_declares_that_no_embedding_took_part() -> None:
+    """Sem perna semântica não há lineage de embedding — e a nota de segurança diz isso."""
+    published = build_hybrid_code_suggestions(_divergent_packet(), _divergent_catalog(), None)
+
+    assert published.semantic is None
+    assert any("sem braço semântico" in note for note in published.safety_notes)
+    assert not any("vizinhança semântica" in note for note in published.safety_notes)
+
+
+def test_the_same_call_with_an_index_still_publishes_the_hybrid_lineage(
+    catalog: PriceCatalog, takeoff_dir: Path
+) -> None:
+    """Com índice nada mudou: mesma versão de suggester, mesmo lineage, mesma shortlist."""
+    packet = load_takeoff_packet(takeoff_dir / TAKEOFF_PACKET_FILENAME)
+    index = fixture_semantic_index(catalog)
+    vectors = {
+        normalize_query_text(item.label): fixture_vector(item.label)
+        for item in packet.confirmed_items()
+    }
+
+    hybrid = build_hybrid_code_suggestions(
+        packet, catalog, None, index=index, query_vectors=vectors
+    )
+    lexical = build_hybrid_code_suggestions(packet, catalog, None)
+
+    assert hybrid.suggester_version == SCO_HYBRID_SUGGESTER_VERSION
+    assert hybrid.semantic is not None
+    assert hybrid.semantic.index_sha256 == index.index_sha256
+    assert lexical.semantic is None
+    # As duas vias respondem sobre os mesmos itens; o que muda é quem entra e em que ordem.
+    assert [suggestion.item_id for suggestion in hybrid.suggestions] == [
+        suggestion.item_id for suggestion in lexical.suggestions
+    ]
+
+
+def test_no_semantic_and_no_index_publish_the_same_shortlist(
+    catalog: PriceCatalog,
+    takeoff_dir: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--no-semantic` é a MESMA via sem a perna paga, não outro algoritmo.
+
+    Os dois motivos de degradação são diferentes e continuam declarados; a shortlist
+    publicada, não — ela é byte a byte a mesma.
+    """
+    sem_indice = tmp_path / "sem-indice"
+    com_flag = tmp_path / "com-flag"
+    argv_sem_indice = [
+        "suggest-codes",
+        "--packet",
+        str(takeoff_dir / TAKEOFF_PACKET_FILENAME),
+        "--catalog",
+        str(_write_catalog(sem_indice, catalog)),
+        "--output",
+        str(sem_indice),
+    ]
+    catalog_com_flag = _write_catalog(com_flag, catalog)
+    (com_flag / CATALOG_INDEX_FILENAME).write_text(
+        index_document(fixture_catalog_index(catalog)), encoding="utf-8"
+    )
+    argv_com_flag = [
+        "suggest-codes",
+        "--packet",
+        str(takeoff_dir / TAKEOFF_PACKET_FILENAME),
+        "--catalog",
+        str(catalog_com_flag),
+        "--output",
+        str(com_flag),
+        "--no-semantic",
+    ]
+
+    assert main(argv_sem_indice) == 0
+    payload_sem_indice = _stdout(capsys)
+    assert main(argv_com_flag) == 0
+    payload_com_flag = _stdout(capsys)
+
+    assert payload_sem_indice["semantic_reason"] != payload_com_flag["semantic_reason"]
+    assert payload_com_flag["semantic_reason"] == SEMANTIC_DISABLED_BY_FLAG
+    assert "index-catalog" in str(payload_sem_indice["semantic_reason"])
+    assert payload_sem_indice["matching"] == payload_com_flag["matching"] == "lexical"
+    assert (
+        payload_sem_indice["suggester_version"]
+        == payload_com_flag["suggester_version"]
+        == SCO_LEXICAL_IDF_SUGGESTER_VERSION
+    )
+    assert (sem_indice / CODE_SUGGESTIONS_FILENAME).read_text(encoding="utf-8") == (
+        com_flag / CODE_SUGGESTIONS_FILENAME
+    ).read_text(encoding="utf-8")
+
+
 def test_index_catalog_without_a_spending_cap_refuses_before_any_call(
     catalog: PriceCatalog,
     tmp_path: Path,
@@ -734,6 +976,7 @@ def test_no_semantic_forces_the_lexical_shortlist_even_with_an_index(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """A flag desliga o BRAÇO semântico; a via de montagem da shortlist é a mesma."""
     output_dir = tmp_path / "rodada"
     catalog_path = _write_catalog(output_dir, catalog)
     (output_dir / CATALOG_INDEX_FILENAME).write_text(
@@ -755,7 +998,7 @@ def test_no_semantic_forces_the_lexical_shortlist_even_with_an_index(
     payload = _stdout(capsys)
     assert payload["matching"] == "lexical"
     assert payload["semantic_reason"] == SEMANTIC_DISABLED_BY_FLAG
-    assert payload["suggester_version"] == SCO_SUGGESTER_VERSION
+    assert payload["suggester_version"] == SCO_LEXICAL_IDF_SUGGESTER_VERSION
     assert not (output_dir / QUERY_CACHE_FILENAME).exists()
 
 

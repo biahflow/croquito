@@ -48,6 +48,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from croquito_valuation.assignment import (
     SCO_HYBRID_SUGGESTER_VERSION,
+    SCO_LEXICAL_IDF_SUGGESTER_VERSION,
     CodeCandidate,
     CodeSuggestion,
     CodeSuggestionSet,
@@ -764,11 +765,21 @@ def resolve_query_vectors(
 # Shortlist híbrida de código
 # --------------------------------------------------------------------------------------
 
-_HYBRID_SAFETY_NOTES: Final = (
-    "Shortlist híbrida é observação determinística; nenhum código foi confirmado.",
+_SHARED_SAFETY_NOTES: Final = (
     "Compatibilidade de unidade e presença no contrato não substituem a decisão do orçamentista.",
     "Item sem candidato exige busca manual no catálogo antes da confirmação.",
+)
+
+_HYBRID_SAFETY_NOTES: Final = (
+    "Shortlist híbrida é observação determinística; nenhum código foi confirmado.",
+    *_SHARED_SAFETY_NOTES,
     "A ordem vem da fusão entre cobertura léxica e vizinhança semântica; ela não mede preço.",
+)
+
+_LEXICAL_IDF_SAFETY_NOTES: Final = (
+    "Shortlist léxica é observação determinística; nenhum código foi confirmado.",
+    *_SHARED_SAFETY_NOTES,
+    "A ordem vem da cobertura léxica ponderada por IDF, sem braço semântico; ela não mede preço.",
 )
 
 
@@ -777,20 +788,20 @@ def build_hybrid_code_suggestions(
     catalog: PriceCatalog,
     contract: ContractWorkbook | None,
     *,
-    index: SemanticIndex,
-    query_vectors: Mapping[str, tuple[float, ...]],
+    index: SemanticIndex | None = None,
+    query_vectors: Mapping[str, tuple[float, ...]] | None = None,
     config: SuggestionConfig | None = None,
     synonyms: DomainSynonyms | None = None,
     noise: LegendNoiseList | None = None,
 ) -> CodeSuggestionSet:
-    """Shortlist de código montada por fusão, no mesmo contrato de `suggest_codes`.
+    """Shortlist de código montada por `hybrid_candidates`, no mesmo contrato de `suggest_codes`.
 
-    Duas diferenças declaradas em relação à via lexical, e só elas:
+    Duas diferenças declaradas em relação à via Dice (`suggest_codes`), e só elas:
 
     1. **Quem entra** é decidido pela fusão, não pelo piso de ruído lexical. É essa a
-       entrega do M7 Fase 2: um código que a via lexical deixava no rank 346 entra pelo
-       braço semântico. `min_lexical_score` continua existindo, mas é conceito do braço
-       léxico e não filtra o semântico.
+       entrega do M7 Fase 2: um código que a via Dice deixava no rank 346 entra pelo
+       braço semântico. `min_lexical_score` continua existindo, mas é conceito daquela via
+       e não filtra nada aqui.
     2. **A ordem** usa a posição fundida no lugar do score lexical, mantendo intacta a
        dominância que o domínio já pratica: unidade compatível manda, depois presença no
        contrato, e só então a relevância.
@@ -799,8 +810,17 @@ def build_hybrid_code_suggestions(
     `lexical_similarity` (o mesmo número de sempre, com o mesmo significado), nenhum item
     recebe código, e item sem candidato sai em `unmatched_item_ids`.
 
-    Item cuja consulta não tem vetor recusa a rodada inteira em vez de virar item lexical
-    escondido dentro de um conjunto que se declara híbrido.
+    **Sem índice** (`index=None`) a função é o caminho da DEGRADAÇÃO, não um erro: a fusão
+    roda com um braço só, o léxico por cobertura ponderada, e o conjunto sai declarado como
+    `SCO_LEXICAL_IDF_SUGGESTER_VERSION`, sem bloco `semantic` — nenhum embedding
+    participou. É por isso que a assinatura aceita ausência de índice em vez de exigir um:
+    até 2026-08-21 o produto desviava a degradação para a via Dice, que é medidamente pior
+    (3/8 contra 8/8 em k=5 no catálogo real), enquanto `hybrid_candidates(index=None)` —
+    que já degradava sozinho — ficava sem chamador. `--no-semantic` passa a significar
+    "esta via sem a perna semântica", não "outro algoritmo".
+
+    **Com índice**, item cuja consulta não tem vetor recusa a rodada inteira em vez de
+    virar item lexical escondido dentro de um conjunto que se declara híbrido.
     """
     effective_config = config or SuggestionConfig()
     if effective_config.max_candidates_per_item < 1:
@@ -819,17 +839,21 @@ def build_hybrid_code_suggestions(
     entries_by_code = {entry.code: entry for entry in catalog.entries}
     contract_codes = {line.code for line in contract.lines} if contract is not None else frozenset()
 
+    vectors = query_vectors or {}
+
     suggestions: list[CodeSuggestion] = []
     unmatched_item_ids: list[str] = []
     for item in confirmed_items:
-        key = normalize_query_text(item.label)
-        vector = query_vectors.get(key)
-        if vector is None:
-            raise ValuationValidationError(
-                "SEMANTIC_QUERY_NOT_CACHED",
-                "item de takeoff sem vetor de consulta na shortlist híbrida",
-                {"item_id": item.id, "query": key},
-            )
+        vector: tuple[float, ...] | None = None
+        if index is not None:
+            key = normalize_query_text(item.label)
+            vector = vectors.get(key)
+            if vector is None:
+                raise ValuationValidationError(
+                    "SEMANTIC_QUERY_NOT_CACHED",
+                    "item de takeoff sem vetor de consulta na shortlist híbrida",
+                    {"item_id": item.id, "query": key},
+                )
         fused = hybrid_candidates(
             item.label,
             catalog,
@@ -861,6 +885,11 @@ def build_hybrid_code_suggestions(
                         lexical_score=lexical_similarity(
                             item.label, entry.description, synonyms=synonyms
                         ),
+                        # Mesma proveniência que `suggest_codes` carimba: com um catálogo
+                        # só, o digest continua no cabeçalho e a origem é a dele. Sem isto,
+                        # um catálogo não-SCO servido por esta via recusaria o próprio
+                        # candidato em `validate_code_for_origin`.
+                        catalog_origin=catalog.origin,
                     ),
                 )
             )
@@ -878,14 +907,20 @@ def build_hybrid_code_suggestions(
         image_sha256=packet.image_sha256,
         catalog_sha256=catalog.source_sha256,
         contract_sha256=contract.source_sha256 if contract else None,
-        suggester_version=SCO_HYBRID_SUGGESTER_VERSION,
-        semantic=SuggestionSemantics(
-            provider=index.provider,
-            model_id=index.model_id,
-            dims=index.dims,
-            index_sha256=index.index_sha256,
+        suggester_version=(
+            SCO_HYBRID_SUGGESTER_VERSION if index is not None else SCO_LEXICAL_IDF_SUGGESTER_VERSION
+        ),
+        semantic=(
+            None
+            if index is None
+            else SuggestionSemantics(
+                provider=index.provider,
+                model_id=index.model_id,
+                dims=index.dims,
+                index_sha256=index.index_sha256,
+            )
         ),
         suggestions=suggestions,
         unmatched_item_ids=unmatched_item_ids,
-        safety_notes=list(_HYBRID_SAFETY_NOTES),
+        safety_notes=list(_HYBRID_SAFETY_NOTES if index is not None else _LEXICAL_IDF_SAFETY_NOTES),
     )

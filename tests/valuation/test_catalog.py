@@ -402,3 +402,119 @@ def test_an_unpriced_marker_that_the_template_does_not_declare_still_fails(tmp_p
 
     assert raised.value.code == "ROW_UNPARSEABLE"
     assert raised.value.details["reason"] == "preço ilegível"
+
+
+def test_columnar_catalog_imports_items_written_in_the_published_form(tmp_path: Path) -> None:
+    """O arquivo da CGM-Rio escreve o código com separadores; a entrada sai canônica."""
+    path = write_columnar_rows_workbook(
+        tmp_path / "forma-publicada.xlsx",
+        [
+            *_COLUMNAR_HIERARCHY,
+            ("", "", "AD 04.05.0050 (/)", "PISO INTERTRAVADO SINTETICO 6CM", "M2", "89,30"),
+            ("", "", "AD 04.05.0055 (B)", "PISO INTERTRAVADO SINTETICO 8CM", "M²", "1.625,02"),
+        ],
+    )
+
+    catalog = _read_columnar(path)
+
+    assert [entry.code for entry in catalog.entries] == ["AD04050050(/)", "AD04050055(B)"]
+    entry = catalog.entry_for("AD04050050(/)")
+    assert entry.unit == "m2"
+    assert entry.unit_price == Decimal("89.30")
+    assert entry.subgroup_code == "AD0405"
+
+
+def test_columnar_catalog_imports_the_published_and_the_canonical_forms_side_by_side(
+    tmp_path: Path,
+) -> None:
+    path = write_columnar_rows_workbook(
+        tmp_path / "formas-misturadas.xlsx",
+        [
+            *_COLUMNAR_HIERARCHY,
+            ("", "", "AD 04.05.0050 (/)", "PISO INTERTRAVADO SINTETICO 6CM", "M2", "89,30"),
+            ("", "", "AD04050055(B)", "PISO INTERTRAVADO SINTETICO 8CM", "M2", "1.625,02"),
+        ],
+    )
+
+    catalog = _read_columnar(path)
+
+    assert [entry.code for entry in catalog.entries] == ["AD04050050(/)", "AD04050055(B)"]
+
+
+def test_columnar_intermediate_header_written_in_the_code_column_is_accepted(
+    tmp_path: Path,
+) -> None:
+    """O arquivo publicado escreve o nível intermediário fora da coluna própria."""
+    path = write_columnar_rows_workbook(
+        tmp_path / "intermediario-na-coluna-de-codigo.xlsx",
+        [
+            *_COLUMNAR_HIERARCHY,
+            ("", "", "AD 04.05.0050 (/)", "PISO INTERTRAVADO SINTETICO 6CM", "M2", "89,30"),
+            ("", "", "AD 09 TORRES SINTETICAS", "", "", "NA"),
+            ("", "", "AD 09.10 TORRES DE ACO SINTETICAS", "", "", "NA"),
+            ("", "", "AD 09.10.0020 (/)", "TORRE DE ACO SINTETICA", "UN", "1.200,00"),
+        ],
+    )
+
+    catalog = _read_columnar(path)
+
+    assert [entry.code for entry in catalog.entries] == ["AD04050050(/)", "AD09100020(/)"]
+    entry = catalog.entry_for("AD09100020(/)")
+    assert entry.family_code == "AD"
+    assert entry.subgroup_code == "AD0910"
+
+
+def test_columnar_intermediate_in_the_code_column_outside_the_family_fails(
+    tmp_path: Path,
+) -> None:
+    path = write_columnar_rows_workbook(
+        tmp_path / "intermediario-na-coluna-fora-da-familia.xlsx",
+        [*_COLUMNAR_HIERARCHY, ("", "", "CE 02 MOBILIARIO URBANO", "", "", "NA")],
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        _read_columnar(path)
+
+    assert raised.value.code == "ROW_UNPARSEABLE"
+    assert raised.value.details["reason"] == "subgrupo intermediário fora da família corrente"
+    assert raised.value.details["code"] == "CE02"
+    assert raised.value.details["family"] == "AD"
+
+
+def test_a_declared_note_prefix_never_swallows_an_item_in_the_published_form(
+    tmp_path: Path,
+) -> None:
+    """Nota é o que sobra depois de reconhecer o item — nas duas formas em que ele vem."""
+    path = write_columnar_rows_workbook(
+        tmp_path / "nota-x-item-publicado.xlsx",
+        [
+            *_COLUMNAR_HIERARCHY,
+            ("", "", "AD 04.05.0050 (/)", "PISO INTERTRAVADO SINTETICO 6CM", "M2", "89,30"),
+        ],
+    )
+    template = columnar_catalog_template(note_prefixes=["AD 04.05.0050"])
+
+    catalog = read_price_catalog(path, template, source_label="teste", reference_month="2026-01")
+
+    assert [entry.code for entry in catalog.entries] == ["AD04050050(/)"]
+    assert catalog.entry_for("AD04050050(/)").unit_price == Decimal("89.30")
+
+
+def test_in_column_mode_also_imports_items_written_in_the_published_form(
+    tmp_path: Path,
+) -> None:
+    path = write_catalog_workbook(
+        tmp_path / "na-coluna-publicada.xlsx",
+        (
+            ("AD", "PAVIMENTACAO SINTETICA", "", ""),
+            ("AD0405", "PISO INTERTRAVADO SINTETICO", "", ""),
+            ("AD 04.05.0050 (/)", "PISO INTERTRAVADO SINTETICO 6CM", "M2", "89,30"),
+        ),
+    )
+
+    catalog = read_price_catalog(
+        path, default_template(), source_label="teste", reference_month="2026-01"
+    )
+
+    assert [entry.code for entry in catalog.entries] == ["AD04050050(/)"]
+    assert catalog.entry_for("AD04050050(/)").subgroup_code == "AD0405"

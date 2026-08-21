@@ -45,8 +45,11 @@ from croquito_worker.providers import (
     ProviderName,
     ProviderRequest,
 )
+from croquito_worker.valuation import round_extraction
+from croquito_worker.valuation.legend_extraction import LEGEND_EXTRACTION_SAFETY_NOTES
 from croquito_worker.valuation.round_extraction import (
     AI_BUDGET_ENV,
+    EXTRACTION_RESERVE_ARM_ENV,
     PLATE_IMAGE_DIGEST,
     PLATE_IMAGE_REF,
     TAKEOFF_OVERLAY_DIGEST,
@@ -62,6 +65,9 @@ EXTRACTION_ID = "00000000-0000-7000-8000-000000000902"
 PLATE_KEY = f"tenants/{TENANT_ID}/uploads/upload-prancha/prancha.pdf"
 _FIXTURE_MODEL_ID = "fixture-legend-v1"
 _ANTHROPIC_KEY_ENV = "CROQUITO_ANTHROPIC_API_KEY"
+_RESERVE_MODEL_ID = "fixture-legend-reserva-v1"
+_RESERVE_ARM_SPEC = "luna=openai:gpt-5.6-luna"
+_RESERVE_NOTE = "PROVIDER_FALLBACK_LEGEND_EXTRACTION_OPENAI"
 
 
 def _plate_pdf() -> bytes:
@@ -132,6 +138,33 @@ def _counting_adapter() -> _CountingAdapter:
             outputs={PromptTask.LEGEND_EXTRACTION: _legend_output()},
         )
     )
+
+
+def _reserve_adapter() -> _CountingAdapter:
+    """Braço de reserva fixture, num provider DIFERENTE: é o que torna a nota verificável."""
+    return _CountingAdapter(
+        inner=FixtureProviderAdapter(
+            provider=ProviderName.OPENAI,
+            model_id=_RESERVE_MODEL_ID,
+            outputs={PromptTask.LEGEND_EXTRACTION: _legend_output()},
+        )
+    )
+
+
+def _install_reserve(monkeypatch: pytest.MonkeyPatch, adapter: Any) -> None:
+    """Declara a reserva no ambiente e troca só a FÁBRICA: nada sai da máquina no teste.
+
+    O caminho exercido é o real — a env é lida, a forma do braço é validada e o adapter é
+    montado por `round_extraction.build_extraction_adapter` —, e é essa fábrica que a
+    suíte substitui, exatamente como o braço primário é injetado no worker.
+    """
+    monkeypatch.setenv(EXTRACTION_RESERVE_ARM_ENV, _RESERVE_ARM_SPEC)
+
+    def _factory(arm_spec: str) -> tuple[str, str, Any]:
+        assert arm_spec == _RESERVE_ARM_SPEC
+        return "luna", _RESERVE_MODEL_ID, adapter
+
+    monkeypatch.setattr(round_extraction, "build_extraction_adapter", _factory)
 
 
 def _seed(
@@ -420,6 +453,95 @@ def test_sem_teto_de_gasto_a_extracao_falha_antes_de_qualquer_chamada(
     record = _round(database)
     assert record.extraction_status == "failed"
     assert record.extraction_failure_code == "LOCAL_EXTRACTION_UNAVAILABLE"
+    assert storage.puts == []
+
+
+# --- braço de reserva (jornada da MEDIÇÃO) ------------------------------------------------
+
+
+def test_sem_a_env_de_reserva_o_worker_nao_monta_reserva_nenhuma(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O padrão: a fábrica de braço não é sequer tocada, e o pacote sai com as notas de sempre."""
+    monkeypatch.delenv(EXTRACTION_RESERVE_ARM_ENV, raising=False)
+
+    def _never(arm_spec: str) -> tuple[str, str, Any]:
+        raise AssertionError(f"reserva montada sem a env declarada: {arm_spec}")
+
+    monkeypatch.setattr(round_extraction, "build_extraction_adapter", _never)
+    plate = _plate_pdf()
+    database, database_url = _seed(tmp_path, plate=plate)
+    worker, _storage = _worker(database_url, adapter=_counting_adapter(), stored=plate)
+
+    assert worker.dispatch(_message()) == 1
+
+    assert _round(database).extraction_status == "done"
+    packet = _revisions(database)[0].takeoff_packet_json
+    assert packet is not None
+    assert packet["safety_notes"] == list(LEGEND_EXTRACTION_SAFETY_NOTES)
+
+
+def test_a_reserva_atende_a_medicao_e_o_pacote_publicado_nomeia_quem_leu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reserve = _reserve_adapter()
+    _install_reserve(monkeypatch, reserve)
+    plate = _plate_pdf()
+    database, database_url = _seed(tmp_path, plate=plate)
+    worker, storage = _worker(database_url, adapter=_FailingAdapter(), stored=plate)
+
+    assert worker.dispatch(_message()) == 1
+
+    record = _round(database)
+    assert record.extraction_status == "done"
+    assert reserve.calls == [PromptTask.LEGEND_EXTRACTION.value]
+    packet = _revisions(database)[0].takeoff_packet_json
+    assert packet is not None
+    assert packet["safety_notes"] == [*LEGEND_EXTRACTION_SAFETY_NOTES, _RESERVE_NOTE]
+    assert all(item["extractor"] == f"openai:{_RESERVE_MODEL_ID}" for item in packet["items"])
+    lineage = _revisions(database)[0].extraction_lineage_json
+    assert lineage is not None
+    # O lineage é do braço que REALMENTE respondeu; o `arm` continua nomeando o escolhido.
+    assert lineage["execution"]["provider"] == "openai"
+    assert lineage["execution"]["model_id"] == _RESERVE_MODEL_ID
+    assert len(storage.puts) == 2
+
+
+def test_reserva_mal_declarada_recusa_a_extracao_antes_de_qualquer_chamada(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reserva ignorada em silêncio faria o operador achar que tem degradação e não ter."""
+    monkeypatch.setenv(EXTRACTION_RESERVE_ARM_ENV, "lixo")
+    plate = _plate_pdf()
+    database, database_url = _seed(tmp_path, plate=plate)
+    adapter = _counting_adapter()
+    worker, storage = _worker(database_url, adapter=adapter, stored=plate)
+
+    assert worker.dispatch(_message()) == 1
+
+    record = _round(database)
+    assert record.extraction_status == "failed"
+    assert record.extraction_failure_code == "LOCAL_EXTRACTION_ARM_INVALID"
+    assert adapter.calls == []
+    assert _revisions(database) == []
+    assert storage.puts == []
+
+
+def test_com_os_dois_bracos_no_chao_a_medicao_nao_publica_nada(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reserve = _FailingAdapter(code=ProviderFailureCode.REFUSED)
+    _install_reserve(monkeypatch, reserve)
+    plate = _plate_pdf()
+    database, database_url = _seed(tmp_path, plate=plate)
+    worker, storage = _worker(database_url, adapter=_FailingAdapter(), stored=plate)
+
+    assert worker.dispatch(_message()) == 1
+
+    record = _round(database)
+    assert record.extraction_status == "failed"
+    assert record.extraction_failure_code == "PROVIDER_EXECUTION_FAILED"
+    assert _revisions(database) == []
     assert storage.puts == []
 
 

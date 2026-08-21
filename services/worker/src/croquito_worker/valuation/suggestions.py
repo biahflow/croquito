@@ -1,4 +1,4 @@
-"""Cálculo da shortlist de códigos SCO da rodada: híbrida quando dá, lexical sempre.
+"""Cálculo da shortlist de códigos SCO da rodada: híbrida quando dá, léxica sempre.
 
 O que mora aqui é a DECISÃO de qual shortlist computar e o que dizer quando o braço pago
 não pôde participar. Quem lê os artefatos da rodada, publica o resultado e calcula digest
@@ -10,8 +10,11 @@ Duas regras atravessam o cálculo:
 - **Revisão do takeoff completa é precondição.** Computar sobre um pacote meio revisado
   congelaria uma shortlist sem os itens que ainda vão ser confirmados.
 - **O braço pago nunca quebra a shortlist.** Falta de índice, de teto de gasto ou de
-  credencial — e falha do provider — degradam para a shortlist lexical com o motivo
-  declarado em `notes`, nunca em erro e nunca em silêncio.
+  credencial — e falha do provider — degradam para a MESMA via com um braço a menos (o
+  léxico por cobertura ponderada), com o motivo declarado em `notes`, nunca em erro e
+  nunca em silêncio. Degradar é perder a perna semântica, não trocar de algoritmo: até
+  2026-08-21 este módulo desviava para a via Dice (`build_code_suggestions`), medidamente
+  pior no catálogo real — ver `SCO_LEXICAL_IDF_SUGGESTER_VERSION`.
 """
 
 from __future__ import annotations
@@ -34,7 +37,6 @@ from croquito_worker.valuation.sco_matching import (
     build_hybrid_code_suggestions,
     resolve_query_vectors,
 )
-from croquito_worker.valuation.sco_suggestion import build_code_suggestions
 
 
 def require_reviewed_takeoff(packet: TakeoffPacket) -> None:
@@ -70,7 +72,8 @@ def compute_suggestions(
     léxico com a vizinhança semântica, amortecendo palavras de ESTADO da legenda
     (`default_legend_noise()`, rodada 2.2) — e embutir os rótulos custa uma chamada paga
     pequena, cacheada em `query_cache_path` (rodada). Faltando qualquer um dos três, a
-    shortlist é a lexical e o motivo viaja nas notas.
+    mesma função monta a shortlist sem o braço semântico (`index=None`) e o motivo viaja
+    nas notas: o que a degradação tira é a perna paga, não o algoritmo.
 
     Nada é gravado aqui: publicar o conjunto e calcular o digest é do adaptador. O único
     arquivo tocado é o cache de vetores da rodada, que é insumo da chamada paga e não
@@ -105,5 +108,11 @@ def compute_suggestions(
         except ProviderExecutionError as error:
             notes.append(f"{SEMANTIC_UNAVAILABLE_MESSAGE}: provider {error.code.value}")
     if computed is None:
-        computed = build_code_suggestions(packet, catalog, contract, synonyms=synonyms)
+        computed = build_hybrid_code_suggestions(
+            packet,
+            catalog,
+            contract,
+            synonyms=synonyms,
+            noise=default_legend_noise(),
+        )
     return computed, notes

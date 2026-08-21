@@ -159,6 +159,9 @@ from croquito_worker.valuation.round_extraction import (
     extraction_arm_spec as _extraction_arm_spec,
 )
 from croquito_worker.valuation.round_extraction import (
+    extraction_reserve_arm_spec as _extraction_reserve_arm_spec,
+)
+from croquito_worker.valuation.round_extraction import (
     extraction_unavailable as _extraction_unavailable,
 )
 from croquito_worker.valuation.round_extraction import (
@@ -630,9 +633,34 @@ class _Run:
         matches = [
             candidate
             for candidate in sorted(self.root.glob("*.png"))
-            if candidate != named and file_sha256(candidate) == packet.image_sha256
+            if candidate != named and _digest_of_settled_file(candidate) == packet.image_sha256
         ]
         return matches[0] if len(matches) == 1 else None
+
+
+def _digest_of_settled_file(candidate: Path) -> str | None:
+    """Digest do arquivo, ou `None` quando ele não é um arquivo publicado.
+
+    Duas armadilhas concretas, e as duas já morderam:
+
+    1. **`Path.glob` não é o glob do shell.** O `*` do `pathlib` casa arquivo começado por
+       ponto, e o escritor atômico de overlay (`save_takeoff_overlay`) cria exatamente
+       `.{stem}.xxxxxx.png` antes do `os.replace`. Sem filtrar, a listagem enxerga o
+       temporário de outra thread.
+    2. **O temporário some entre listar e ler.** Mesmo filtrando, qualquer arquivo pode
+       desaparecer nesse intervalo, e um `FileNotFoundError` aqui derrubava a rodada
+       inteira por causa de uma corrida com uma publicação alheia.
+
+    Arquivo que sumiu ou que ainda está sendo escrito nunca é a evidência de um takeoff
+    publicado — a evidência é estável por construção. Devolver `None` é dizer isso, em vez
+    de tratar a corrida como erro de domínio.
+    """
+    if candidate.name.startswith("."):
+        return None
+    try:
+        return file_sha256(candidate)
+    except OSError:
+        return None
 
 
 SEMANTIC_NOT_REQUESTED_MESSAGE: Final = (
@@ -731,8 +759,26 @@ async def _read_upload(file: UploadFile) -> bytes:
     return b"".join(chunks)
 
 
+def _extraction_reserve_adapter() -> ProviderAdapter | None:
+    """Braço de reserva deste servidor, ou `None` — que é o padrão, sem a env declarada.
+
+    Passa pelo MESMO `_build_extraction_adapter` do braço primário de propósito: é o seam
+    que a suíte troca, então a reserva também nunca chama nada externo em teste, e as
+    recusas do braço (forma inválida, `fixture`, teto de gasto ou credencial ausente)
+    valem iguais para ela.
+    """
+    arm_spec = _extraction_reserve_arm_spec()
+    if arm_spec is None:
+        return None
+    _name, _model_id, adapter = _build_extraction_adapter(arm_spec)
+    return adapter
+
+
 def _extract_legend_from_upload(
-    run: _Run, manifest: PdfManifest, adapter: ProviderAdapter
+    run: _Run,
+    manifest: PdfManifest,
+    adapter: ProviderAdapter,
+    reserve: ProviderAdapter | None = None,
 ) -> LegendExtractionResult:
     """Extração da legenda da prancha consentida, no diretório desta rodada.
 
@@ -740,7 +786,7 @@ def _extract_legend_from_upload(
     rodada do servidor. O nome privado continua aqui porque é o seam que a suíte troca:
     nenhuma chamada externa acontece nos testes.
     """
-    return extract_legend_from_upload(run.root, manifest, adapter)
+    return extract_legend_from_upload(run.root, manifest, adapter, reserve)
 
 
 def _publish_extraction(
@@ -822,7 +868,11 @@ def _extraction_failure(error: Exception, *, consented_source_sha256: str) -> _E
 
 
 def _run_extraction(
-    run: _Run, manifest: PdfManifest, adapter: ProviderAdapter, arm_spec: str
+    run: _Run,
+    manifest: PdfManifest,
+    adapter: ProviderAdapter,
+    arm_spec: str,
+    reserve: ProviderAdapter | None = None,
 ) -> None:
     """Corpo da thread de extração: sempre termina com um desfecho declarado.
 
@@ -832,7 +882,7 @@ def _run_extraction(
     """
     consented = manifest.source_sha256
     try:
-        result = _extract_legend_from_upload(run, manifest, adapter)
+        result = _extract_legend_from_upload(run, manifest, adapter, reserve)
         execution = _publish_extraction(
             run,
             result,
@@ -884,6 +934,10 @@ def _trigger_extraction(run: _Run, manifest: PdfManifest) -> ValuationValidation
         return _record_unavailable(run, unavailable, manifest)
     try:
         _name, _model_id, adapter = _build_extraction_adapter(arm_spec)
+        # A reserva é montada ANTES da thread, pelo mesmo motivo do braço primário: uma
+        # reserva mal declarada tem de aparecer como `unavailable` na tela agora, enquanto
+        # o operador ainda pode corrigir a variável, e não no meio de uma degradação.
+        reserve = _extraction_reserve_adapter()
     except ValuationValidationError as error:
         return _record_unavailable(run, error, manifest)
     except Exception as error:
@@ -903,7 +957,7 @@ def _trigger_extraction(run: _Run, manifest: PdfManifest) -> ValuationValidation
         raise _extraction_busy()
     threading.Thread(
         target=_run_extraction,
-        args=(run, manifest, adapter, arm_spec),
+        args=(run, manifest, adapter, arm_spec, reserve),
         name="medicao-extracao",
         daemon=True,
     ).start()

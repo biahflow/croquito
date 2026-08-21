@@ -30,6 +30,7 @@ from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Final
 
 import pymupdf
@@ -39,7 +40,7 @@ from fastapi.testclient import TestClient
 from croquito_valuation.assignment import (
     LLM_RERANK_SUFFIX,
     SCO_HYBRID_SUGGESTER_VERSION,
-    SCO_SUGGESTER_VERSION,
+    SCO_LEXICAL_IDF_SUGGESTER_VERSION,
     CodeSuggestionSet,
     SuggestionRefinement,
 )
@@ -279,7 +280,7 @@ def test_full_flow_from_review_to_bulletin(client: TestClient, root: Path) -> No
     assert suggestions["computed"] is True
     assert (root / CODE_SUGGESTIONS_FILENAME).is_file()
     assert len(suggestions["suggestions"]["suggestions"]) == 6
-    assert suggestions["suggestions"]["suggester_version"] == "lexical-sco-suggester-v1"
+    assert suggestions["suggestions"]["suggester_version"] == SCO_LEXICAL_IDF_SUGGESTER_VERSION
     # Observação, nunca decisão: a shortlist não confirma nada.
     assert client.get("/codes").json()["assignments"] is None
     assert len(client.get("/codes").json()["pending_items"]) == 6
@@ -779,7 +780,7 @@ def test_recompute_never_discards_a_paid_refinement(
     base = CodeSuggestionSet.model_validate(
         reviewed_client.get("/suggestions").json()["suggestions"]
     )
-    assert base.suggester_version == SCO_SUGGESTER_VERSION
+    assert base.suggester_version == SCO_LEXICAL_IDF_SUGGESTER_VERSION
     refined = base.model_copy(
         update={
             "suggester_version": base.suggester_version + LLM_RERANK_SUFFIX,
@@ -2073,7 +2074,7 @@ def test_without_an_index_the_shortlist_stays_lexical_with_the_reason(
     assert payload["semantic_notes"] == [
         "busca semântica indisponível: sem índice",
     ]
-    assert payload["suggestions"]["suggester_version"] == "lexical-sco-suggester-v1"
+    assert payload["suggestions"]["suggester_version"] == SCO_LEXICAL_IDF_SUGGESTER_VERSION
     assert payload["suggestions"]["semantic"] is None
 
 
@@ -2166,3 +2167,29 @@ def test_the_index_cache_revalidates_when_the_file_changes(
 
     assert payload["status"] == "unavailable"
     assert "INDEX_CATALOG_MISMATCH" in payload["message"]
+
+
+def test_o_temporario_da_escrita_atomica_nunca_e_confundido_com_a_evidencia(
+    empty_root: Path,
+) -> None:
+    """`Path.glob` casa dotfile, e o escritor de overlay cria `.{stem}.xxxx.png`.
+
+    Sem a guarda, o temporário de uma publicação em curso entra na listagem: se ele tiver
+    o digest da evidência, `plate_image` acha DOIS candidatos e devolve `None` (a rodada
+    perde o overlay); se ele for renomeado entre listar e ler, o `file_sha256` estoura
+    `FileNotFoundError` e derruba a rodada por causa de uma corrida alheia. Foi assim que
+    este arquivo ficou intermitente.
+    """
+    conteudo = b"\x89PNG evidencia sintetica"
+    digest = hashlib.sha256(conteudo).hexdigest()
+    # A evidência NÃO tem o nome canônico: é o caso da prancha real vinda do ingest
+    # (`page-001.png`), o único que chega a percorrer o `glob`. Com o nome canônico o
+    # código retorna antes e o teste não exercitaria nada.
+    evidencia = empty_root / "page-001.png"
+    evidencia.write_bytes(conteudo)
+    (empty_root / ".takeoff-overlay.abc123.png").write_bytes(conteudo)
+
+    run = local_server._Run(root=empty_root, reviewer_id=REVIEWER)
+    packet = SimpleNamespace(image_sha256=digest)
+
+    assert run.plate_image(packet) == evidencia  # type: ignore[arg-type]

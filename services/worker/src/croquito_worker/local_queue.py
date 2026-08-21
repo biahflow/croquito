@@ -81,6 +81,7 @@ from croquito_worker.valuation.round_extraction import (
     TAKEOFF_OVERLAY_PACKET_DIGEST,
     TAKEOFF_OVERLAY_REF,
     build_extraction_adapter,
+    build_extraction_reserve_adapter,
     document_digest,
     execution_payload,
     extract_legend_from_upload,
@@ -1793,6 +1794,24 @@ class LocalQueueWorker:
         _name, _model_id, adapter = build_extraction_adapter(arm_spec)
         return adapter
 
+    def _valuation_extraction_reserve(self) -> ProviderAdapter | None:
+        """Braço de reserva da extração de legenda, ou `None` — que é o padrão.
+
+        Mesmo seam único das duas cadeias, pelo mesmo motivo do braço primário: a legenda
+        quantificada é a MESMA tarefa na medição e no orçamento-base, e uma reserva montada
+        em dois lugares acabaria valendo só para um deles.
+
+        A montagem acontece ANTES de qualquer byte sair da máquina: braço de reserva mal
+        escrito, sem teto de gasto ou sem credencial recusa a extração inteira aqui, em vez
+        de virar surpresa no meio da degradação — o momento em que uma reserva quebrada não
+        tem mais como ser útil.
+
+        Adapter injetado (fixture de teste/demo) vale para o braço primário e **não** cria
+        reserva: reserva é decisão de configuração do ambiente, e inferir uma a partir da
+        injeção faria a suíte medir uma degradação que ninguém declarou.
+        """
+        return build_extraction_reserve_adapter()
+
     def _put_round_png(self, *, object_key: str, payload: bytes) -> None:
         self.s3_client.put_object(
             Bucket=self.settings.artifact_bucket,
@@ -1939,6 +1958,7 @@ class LocalQueueWorker:
             )
         arm_spec = extraction_arm_spec()
         adapter = self._valuation_extraction_adapter(arm_spec)
+        reserve = self._valuation_extraction_reserve()
 
         with tempfile.TemporaryDirectory() as workspace:
             # O nome do diretório vira `plate_id` do pacote (`round_extraction.dataset_id`),
@@ -1963,7 +1983,7 @@ class LocalQueueWorker:
                     "a prancha armazenada diverge do digest declarado no upload",
                     {"round_id": round_id},
                 )
-            result = extract_legend_from_upload(workdir, manifest, adapter)
+            result = extract_legend_from_upload(workdir, manifest, adapter, reserve)
             image_path = workdir / manifest.pages[PLATE_PAGE_NUMBER - 1].render_file
             # Overlay renderizado ANTES de qualquer publicação, como em `cli._publish_takeoff`:
             # pacote sem overlay não é meio caminho aceitável — é o overlay que mostra ao

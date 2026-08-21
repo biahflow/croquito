@@ -157,11 +157,62 @@ desambiguação. Não recebe a preferência do sistema.
   só na nota posicional/telemetria.
 - `BUDGET_EXCEEDED` em qualquer braço, inclusive OCR: propaga sempre, nunca é absorvido em modo
   degradado — o teto é do job, não do braço.
+- **Extração de legenda (medição E orçamento) com braço de reserva**, desde 2026-08-21:
+  `CROQUITO_EXTRACTION_RESERVE_ARM` (forma `NOME=PROVIDER:MODELO`), **vazia por padrão**.
+  Vazia significa comportamento idêntico ao anterior — falha do primário propaga, sem
+  reserva e sem nota. Configurada, o primário falhando em definitivo cede a vez à reserva
+  e o pacote nasce com a nota `PROVIDER_FALLBACK_LEGEND_EXTRACTION_<PROVIDER>`, nomeando
+  quem de fato respondeu; `BUDGET_EXCEEDED` continua sem acionar reserva.
+
+  As duas jornadas compartilham o handler (`_handle_round_extraction`), então a reserva
+  vale para `extract_valuation_plate` e `extract_estimate_plate` de uma vez. A env
+  existente `CROQUITO_MEDICAO_EXTRACTION_ARM` também governa as duas, apesar do nome — a
+  nova não repete o erro.
+
+  Reserva **declarada e inconstruível** (credencial ausente, forma inválida, provider
+  `fixture`) recusa a extração inteira em vez de degradar para "sem reserva": quem escreveu
+  a variável espera degradação, e descobrir no dia da queda que ela nunca existiu é pior
+  que falhar agora. A recusa carrega `role: "reserva"` e o nome da variável, porque os
+  códigos de erro são os mesmos dos dois papéis e sem isso o operador depura o braço são.
+
+  Braço eleito na eval de 2026-08-21: **`gpt-5.6-luna`** — não por cobertura (9/15 contra
+  14/15 do `gpt-5.6`), e sim por modo de falha: foi o único dos braços OpenAI que não
+  inventou nenhum número. Ligar em qualquer ambiente é mudança de IA e pede eval e rollback.
 - Modelo retorna schema inválido: uma tentativa de repair estritamente estrutural;
   depois tratar como falha.
 - Rate limit (429): retry com backoff e respeito a `Retry-After`. Falha de credencial (401/403):
   `ProviderFailureCode.REFUSED`, sem retentativa — mapeamento comum a todos os adapters REST
   deste arquivo (OpenAI, Anthropic, Cloud Vision).
+
+### Insistência: prazo de parede, não contagem de tentativas
+
+Desde 2026-08-21, `RetryingProviderAdapter` insiste por **prazo**
+(`CROQUITO_PROVIDER_RETRY_DEADLINE_SECONDS`, default 300 s), não por número fixo de
+tentativas. Contar tentativas dava tempos incomparáveis: cinco tentativas são ~5 min numa
+pendurada, porque cada uma custa o timeout inteiro do braço, e ~40 s num 429, porque a
+recusa volta em ~1 s. O prazo descreve os dois casos com um número só.
+
+A espera depende da família da falha, porque os relógios são diferentes:
+
+| falha | escada | jitter |
+|---|---|---|
+| `TIMEOUT` | 250 ms → 500 ms → 1 s → 2 s (satura) | não |
+| `RATE_LIMITED`, `UNAVAILABLE` | 5 s → 10 s → 20 s → 40 s → 60 s (satura) | ±25% |
+
+Medido com relógio injetado, prazo de 300 s: pendurada de 60 s por tentativa dá **5
+tentativas em 303,8 s**; 429 que volta em 1 s dá **8 tentativas em 294,9 s**.
+
+**O prazo decide quando parar de COMEÇAR tentativa, não interrompe a que está em curso** —
+o teto real é o prazo mais a duração de uma tentativa. Com timeout de 60 s isso é ~360 s no
+pior caso; com timeout maior, proporcionalmente mais.
+
+`REFUSED`, `INVALID_SCHEMA` e `BUDGET_EXCEEDED` seguem fora da retentativa: insistir em
+recusa não busca disponibilidade, busca outra leitura.
+
+**Consequência de operação a conferir antes de subir:** o pior caso por job passou a ser
+prazo do primário + prazo do reserva + prazo do OCR ≈ 15 min. O timeout de request do Cloud
+Run e o prazo de ack do Pub/Sub vivem no Terraform de `biahflow/infra` e precisam caber
+nisso, ou o job vira reentrega.
 
 ## Controle de custo
 
@@ -322,6 +373,87 @@ autorizou a rodada e o fluxo em 2026-08-19. Rollback: reverter `PROMPT_VERSIONS`
 `2.0.1` em `providers.py` (schema `2.0.0` não muda, então nenhuma leitura gravada sob o
 candidato fica inválida ao reverter);
 `CROQUITO_REAL_PROVIDERS_ENABLED=false` segue sendo o kill switch do caminho pago.
+
+## Eval comparativa executada (legenda, PRANCHA REAL do Campo do Toca, 2026-08-21)
+
+Primeira eval de extração de legenda sobre **prancha real** (não fixture): o arquivo do
+projetista, 1 página a 200 DPI (9362x6623), 15 itens quantificados na legenda. Autorizada
+pelo usuário com teto de US$ 5,00 para a rodada. O gabarito são os 15 itens **confirmados
+pelo orçamentista** depois da extração — por isso os números abaixo são recall medido, não
+impressão.
+
+Motivação declarada: escolher um **braço de reserva** para quando a Anthropic estiver
+indisponível, não trocar o primário.
+
+| Arm | Modelo | Itens | Quantidades | Inventados | Número errado |
+|---|---|---|---|---|---|
+| sonnet | `claude-sonnet-5` | **15/15** | **15/15** | 0 | — |
+| gpt-5.6 | `gpt-5.6` | 15/15 | 14/15 | 1 | `PISO EM SAIBRO` = 969,70 (certo 98,70) |
+| opus | `claude-opus-5` | 15/15 | 11/15 | 1 | — |
+| luna | `gpt-5.6-luna` | 14/15 | 9/15 | 1 | **nenhum** |
+| terra | `gpt-5.6-terra` | 14/15 | 7/15 | 1 | `PISO INTERTRAVADO` = 69,34 (certo 59,34) |
+| gpt-5.5 | `gpt-5.5` | 15/15 | 5/15 | 1 | `PISO EM SAIBRO` = 99,70 (certo 98,70) |
+| gpt-4o | `gpt-4o` | 0/15 | 0/15 | 5 | — |
+| mistral | `mistral-large-latest` | 0/15 | 0/15 | 8 | — |
+| gemini | `gemini-3.1-pro-preview` | — | — | — | não mediu: `429` de cota |
+
+**Decisão de roteamento: Sonnet permanece o braço da extração de legenda** — 15/15 em
+rótulo, unidade e quantidade, sem um único item inventado. É a segunda confirmação
+independente do roteamento de 2026-08-13, agora sobre insumo real.
+
+**Decisão de reserva: `gpt-5.6-luna`**, e o critério não é cobertura, é o modo de falha.
+O `gpt-5.6` preenche mais (14/15 contra 9/15) mas produziu um erro de **10x**; o `luna`
+deixa a lacuna em branco e não chuta nenhum número. Item sem quantidade nasce ambíguo e
+força o revisor a preencher; número errado chega como proposta plausível e pode passar.
+Num produto cujo portão é a revisão humana, **omitir é seguro e chutar não é**.
+
+`gpt-4o` e `mistral-large-latest` são **reprovados sem reserva**: os dois não leram a
+legenda — fabricaram outra. O Mistral devolveu oito itens bem formatados ("ÁREA DE
+REFERÊNCIA 6.559,66m²", "PRAÇA LINEAR COM ESPAÇO DE CONVIVÊNCIA 1.200,00m²") que não
+existem na prancha; o gpt-4o devolveu cinco no mesmo estilo. Alucinação com número
+plausível é categoricamente pior que leitura incompleta, e nenhum dos dois entra como
+reserva.
+
+O Gemini **não foi medido**, e a causa está fechada: com chave nova, em 2026-08-21,
+`gemini-2.5-flash`, `gemini-2.0-flash` e `gemini-2.5-pro` devolvem `404 — no longer
+available to new users` (o Google aposentou esses modelos para contas novas e a própria
+mensagem redireciona ao `gemini-3.6-flash`), e `gemini-3.6-flash` e
+`gemini-3.1-pro-preview` devolvem `429 — Your prepayment credits are depleted`. A chave
+autentica e o adapter funciona; falta crédito pré-pago no projeto. Fica como eixo em
+aberto, reabrível sem trabalho de código: os dois ramos de `build_extraction_arm` e o
+`GeminiProviderAdapter` já estão no lugar e cobertos por teste offline.
+
+### Achado de custo de leitura, não de modelo
+
+O reassentamento de bbox (`register_legend_bboxes`) falhou nesta prancha e a causa não era
+o modelo: a janela de busca vertical era absoluta (`max(0,5 x vão proposto, 300px)`),
+enquanto o desvio do VLM é **proporcional à página** — 822px aqui, 12,4% da altura. As
+sete primeiras linhas da legenda caíam fora da janela. Corrigido com um terceiro termo
+(`RULING_SEARCH_MARGIN_HEIGHT_RATIO = 0,15` da altura da imagem); depois disso, 15/15
+reassentados a 4px da linha real, com `shift_score` 14,9998 de 15.
+
+### Achado do casamento de código sobre catálogo real
+
+Sobre a tabela SCO-Rio de julho/2026 (4.865 itens), com índice de embeddings construído
+(`text-embedding-3-small`, US$ 0,03 de reserva, ~US$ 0,007 real):
+
+- o braço léxico por Dice puro erra feio (casa "PISO INTERTRAVADO" com *limpeza de pisos
+  vinílicos*, e "BALANÇO DUPLO" com *calço duplo*);
+- o híbrido melhora muito — em 9 itens de gabarito, 7 acertos em 1º lugar contra 3 do
+  léxico;
+- **os dois erros restantes não são de recall, são de corte**: com shortlist de 20,
+  `BP09200350` (piso intertravado) aparece em 4º pelo léxico-IDF e 15º pelo híbrido, e
+  `PJ14050160` (gola de árvore) em 5º e 11º. O produto publica **3**.
+
+`SuggestionConfig.max_candidates_per_item` tem default `3` e o CLI não expõe o tamanho,
+enquanto o gate versionado (`tests/valuation/test_matcher_golden.py`) mede **recall@20**.
+Alinhar os dois é a correção de maior retorno medido nesta rodada. Registrado como achado;
+a mudança em si é decisão humana.
+
+Segundo achado da mesma medição: nesses dois itens o **léxico ponderado por IDF sozinho
+supera o híbrido** (4º contra 15º, 5º contra 11º) — o braço semântico os empurra para
+baixo (ranks 114 e 279), embora ajude em outros ("PISO EM CONCRETO", semântico em 2º).
+A ponderação da fusão merece ser remedida contra gabarito real antes de qualquer ajuste.
 
 ## Embeddings para retrieval de código SCO (M7, 2026-08-13)
 
