@@ -1,4 +1,4 @@
-# Task Contract — F-032 / T13: transcrição de áudio no worker via Groq (Whisper)
+# Task Contract — F-032 / T13: transcrição de áudio no worker (Groq + braço OpenAI, eval comparativa)
 
 - Feature: F-032 — [feature.md](../feature.md)
 - Plano pai: [plan-sync.md](../plan-sync.md) (tarefa T13)
@@ -48,12 +48,29 @@ bruta só no raw-store protegido. Nada muta o survey; nada é auto-confirmado; o
 
 1. Módulo novo `services/worker/src/croquito_worker/survey_transcription.py` +
    registro no dispatch (`transcribe_survey_audio`).
-2. Adapter Groq em `providers.py`: `ProviderName.GROQ`, task de transcrição com
-   saída estrita `{text, language?, duration_s?}`; `language` pedido como
-   `pt`; SEM prompt de conteúdo (é transcrição, não geração). Retry só em falha
-   transitória; budget contabilizado (segundos de áudio/custo estimado);
-   lineage com modelo/versão; resposta bruta no raw-store protegido, NUNCA em
-   log.
+2. Adapters de transcrição atrás de UMA interface comum (decisão do usuário em
+   2026-08-21: primário/fallback serão decididos por **eval comparativa**, não
+   por palpite):
+   - `ProviderName.GROQ` — modelos `whisper-large-v3` e `whisper-large-v3-turbo`
+     (parametrizável); endpoint compatível com formato OpenAI.
+   - Braço OpenAI de transcrição (fornecedor já aprovado no repo) — candidato a
+     fallback, mesma interface.
+   Saída estrita `{text, language?, duration_s?}`; `language` pedido como `pt`;
+   SEM prompt de conteúdo (é transcrição, não geração). Retry só em falha
+   transitória; budget contabilizado; lineage com provedor+modelo; resposta
+   bruta no raw-store protegido, NUNCA em log. O roteamento primário/fallback é
+   CONFIGURAÇÃO (env/routing), com default provisório Groq large-v3-turbo até a
+   eval promover o vencedor.
+2b. Harness de eval comparativa OFFLINE (`make transcription-eval`, padrão dos
+   evals existentes): roda os braços sobre fixtures de áudio com
+   transcrição-verdade e mede, nesta ordem de peso: fidelidade de números e
+   medidas faladas (extração normalizada "12,40" etc.), WER/CER pt-BR, e o par
+   webm/opus × mp4/aac. No CI/offline roda com adapters FAKE (prova o harness e
+   as métricas com áudio sintético/registro de respostas); a RODADA PAGA
+   comparativa é ato humano separado (chaves + fixtures gravadas pelo usuário —
+   10-15 clipes Android/iPhone com verdade escrita — + aprovação de custo),
+   com o resultado promovendo primário/fallback em `docs/ai/MODEL_ROUTING.md`
+   (mesmo protocolo de promoção das evals anteriores).
 3. Gate: mesmo mecanismo de flag global + entitlement/consent por tenant da
    T14. Sem gate → `provider_pass: "skipped_*"`, artefato ainda é gravado com
    os metadados (idempotente; reprocessar quando ligar).
@@ -68,11 +85,13 @@ bruta só no raw-store protegido. Nada muta o survey; nada é auto-confirmado; o
    suportado/bytes ausentes; falha transitória do provider →
    `failed_transient` gravado, handler não explode.
 6. Docs (obrigatório nesta tarefa): `docs/ai/MODEL_ROUTING.md` — linha da task
-   de transcrição (Groq primário, sem fallback nesta fatia; fallback é decisão
-   futura); `docs/security/AI_VENDOR_RISK.md` — entrada da Groq (dado enviado:
-   áudio de campo com possível PII falada; termos de retenção/treinamento
-   pinados na data com a URL da política; mitigação: entitlement por tenant,
-   flag global, budget, raw-store protegido).
+   de transcrição com os braços candidatos (Groq large-v3, Groq large-v3-turbo,
+   OpenAI), o default provisório e o protocolo da eval que promove
+   primário/fallback (marcado como PENDENTE DE RODADA PAGA);
+   `docs/security/AI_VENDOR_RISK.md` — entrada da Groq (dado enviado: áudio de
+   campo com possível PII falada; termos de retenção/treinamento pinados na
+   data com a URL da política; mitigação: entitlement por tenant, flag global,
+   budget, raw-store protegido).
 7. Testes (`tests/worker/test_survey_transcription.py`, padrão T14): adapter
    fake conta chamadas (zero sem entitlement); fluxo feliz com fake → artefato
    completo com note_id e lineage; áudio órfão (sha256 sem nota no snapshot) →

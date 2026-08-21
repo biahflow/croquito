@@ -163,11 +163,16 @@ Da feature completa (verificáveis nas fatias futuras, herdando os NFRs abaixo):
   decisão do spec de T11; vira arbitragem humana se configurar decisão de
   arquitetura.
 - ~~Fornecedor de speech-to-text~~ — **resolvido em 2026-08-21 por decisão humana:
-  Groq** (Whisper large-v3; aceita webm/opus e mp4/aac sem transcodificação; API
-  compatível com o formato OpenAI). Fornecedor novo fora do perímetro GCP —
-  entrada obrigatória em `docs/security/AI_VENDOR_RISK.md` e
-  `docs/ai/MODEL_ROUTING.md` na T13; envio de áudio autorizado pelo usuário
-  nesta decisão; chave/conta Groq é ato do usuário antes de ligar em produção.
+  Groq** (hospedando Whisper large-v3/turbo; aceita webm/opus e mp4/aac sem
+  transcodificação; API compatível com o formato OpenAI), com refinamento na
+  mesma data: **primário × fallback serão decididos por eval comparativa** entre
+  os braços Groq·large-v3, Groq·large-v3-turbo e OpenAI·transcrição (métrica
+  líder: fidelidade de números/medidas faladas em pt-BR; fixtures = clipes
+  gravados pelo usuário em Android e iPhone, explicitamente licenciados).
+  Default provisório: Groq large-v3-turbo. Entrada obrigatória em
+  `docs/security/AI_VENDOR_RISK.md` e `docs/ai/MODEL_ROUTING.md` na T13; envio
+  de áudio autorizado; chave/conta Groq e a rodada paga da eval são atos do
+  usuário.
 - Matriz de aparelhos do piloto (modelos Android e iOS reais dos técnicos).
 - Se tablet+caneta entra no piloto ou só celular.
 
