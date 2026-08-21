@@ -153,9 +153,10 @@ Da feature completa (verificáveis nas fatias futuras, herdando os NFRs abaixo):
 
 1. ~~Aceite do [ADR-0043](../../adr/0043-app-de-campo-pwa-offline-first.md)~~ —
    **satisfeito**: aceito por ato humano de Daniel Campos em 2026-08-21.
-2. **Design Approval Package** da superfície do técnico antes do planejamento das
-   fatias 2+ (a feature é `INTERFACE_CHANGE`); o scaffold da fatia 0 não é a
-   superfície aprovada.
+2. ~~Design Approval Package da superfície do técnico~~ — **satisfeito**:
+   [revisão 1 do pacote](mock/README.md) aprovada por ato humano de Daniel Campos em
+   2026-08-21. Revisão nova do pacote exige aprovação nova; o scaffold da fatia 0
+   continua fora da superfície aprovada.
 3. Decisão de merge da branch `f-032-app-levantamento-campo` (merge na main dispara a
    esteira de deploy).
 4. Declaração de início do piloto híbrido e, depois, da promoção do app a fonte

@@ -66,6 +66,7 @@ preservada — Builder implementador-sonnet, tarefa
 ## Pendências e gates humanos
 
 1. ~~Aceite do ADR-0043~~ — satisfeito por ato humano de Daniel Campos em 2026-08-21.
-2. Design Approval Package antes do planejamento das fatias 2+ (`INTERFACE_CHANGE`).
+2. ~~Design Approval Package~~ — [revisão 1](mock/README.md) aprovada por ato humano
+   de Daniel Campos em 2026-08-21.
 3. Decisão de merge da branch `f-032-app-levantamento-campo` (merge na main dispara a
    esteira `deploy-hml`).

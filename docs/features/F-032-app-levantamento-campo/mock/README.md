@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: Proposto — aguardando aprovação humana  
+Status: Aprovado (2026-08-21)  
 Date: 2026-08-21  
 Produced by: agente (Claude Code)
 
@@ -14,10 +14,10 @@ Produced by: agente (Claude Code)
 
 | Campo | Valor |
 | --- | --- |
-| O que está sendo aprovado | a composição visual da revisão 1: as seis pranchas (13 telas de celular com seus estados) da jornada do técnico — ordens, chegada, coleta, medida vinculada, validação/conclusão e sincronização |
-| Aprovado por | — (pendente) |
-| Data | — (pendente) |
-| Revisão | 1 |
+| O que foi aprovado | a composição visual da revisão 1: as seis pranchas (13 telas de celular com seus estados) da jornada do técnico — ordens, chegada, coleta, medida vinculada, validação/conclusão e sincronização |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-21 |
+| Revisão aprovada | 1 |
 | Explicitamente **não** aprovado | copy final; catálogo completo da biblioteca de elementos; tela de curva/arco em detalhe; captura e revisão de foto (câmera aberta); entrada por voz; tablet e paisagem; iOS; acessibilidade executável (foco, leitor de tela) — requisito de implementação, não de mock |
 
 Aprovar esta revisão não aprova a seguinte. Pacote materialmente alterado é revisão
