@@ -1,7 +1,9 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 
 import type { GpsFix } from "../domain/types";
+import type { Order } from "../orders/types";
 import { evaluateCapturedPhoto } from "../photos/evaluateCapturedPhoto";
+import { describeArrivalLocation } from "./arrivalLocation";
 import type { Notice } from "./notice";
 import { PhotoQualityCard } from "./PhotoQualityCard";
 import {
@@ -69,6 +71,10 @@ export interface ArrivalScreenProps {
    * `recordArrival` (só vai junto quando "Começar a coleta" é tocado). */
   accessPhotoCaptured: boolean;
   onCaptureAccessPhoto: (file: File) => void;
+  /** Ordem ativa (T17, prancha 2 da DAP rev.2) — nome e endereço substituem coordenadas
+   * cruas no check de localização. `null` só no fallback defensivo de uma corrida entre
+   * telas; em uso normal `FieldApp` só monta esta tela com uma ordem carregada. */
+  order: Order | null;
 }
 
 /**
@@ -88,6 +94,13 @@ export interface ArrivalScreenProps {
  * reduzida). Foto "ok" (ou avaliação indisponível) persiste sozinha, sem tela nova (mesmo
  * comportamento de antes: nenhum toque a mais). Só um veredito não-"ok" interrompe com o
  * card de aviso (Refazer descarta sem persistir e reabre a câmera; Manter persiste).
+ *
+ * Local da chegada (Task Contract T17, prancha 2 da DAP rev.2): o check de localização
+ * mostra nome + endereço da ordem (`describeArrivalLocation`) em vez de coordenadas cruas
+ * — sempre confirmado, porque o endereço já é conhecido independente do GPS. O `GpsFix`
+ * continua exatamente como antes (gravado por `recordArrival`, nunca impresso na tela); a
+ * distância aproximada só aparece quando o fix e o ponto de referência da ordem existem
+ * os dois.
  */
 export function ArrivalScreen({
   notice,
@@ -95,11 +108,16 @@ export function ArrivalScreen({
   busy,
   accessPhotoCaptured,
   onCaptureAccessPhoto,
+  order,
 }: ArrivalScreenProps) {
   const [instrument, setInstrument] = useState<(typeof INSTRUMENTS)[number]>(INSTRUMENTS[0]);
   const [referenceNote, setReferenceNote] = useState("");
   const gpsProbe = useGpsProbe();
   const filled = referenceNote.trim().length > 0;
+  const arrivalLocation = describeArrivalLocation(
+    order,
+    typeof gpsProbe === "object" ? gpsProbe.fix : undefined,
+  );
   const [photoGate, dispatchPhotoGate] = useReducer(
     photoQualityGateReducer,
     INITIAL_PHOTO_QUALITY_GATE_STATE,
@@ -179,38 +197,13 @@ export function ArrivalScreen({
             onChange={(event) => setReferenceNote(event.target.value)}
           />
         </div>
-        {gpsProbe === "pending" && (
-          <div className="check check-todo">
-            <span className="check-state" />
-            <div className="check-body">
-              <b className="check-title">Localizando…</b>
-              <small className="check-detail">Aguardando o GPS do aparelho.</small>
-            </div>
+        <div className="check check-ok">
+          <span className="check-state" />
+          <div className="check-body">
+            <b className="check-title">{arrivalLocation.title}</b>
+            <small className="check-detail">{arrivalLocation.detail}</small>
           </div>
-        )}
-        {typeof gpsProbe === "object" && (
-          <div className="check check-ok">
-            <span className="check-state" />
-            <div className="check-body">
-              <b className="check-title">Localização registrada</b>
-              <small className="check-detail">
-                GPS {gpsProbe.fix.lat.toFixed(3)}, {gpsProbe.fix.lng.toFixed(3)} (±
-                {gpsProbe.fix.accuracy_m} m) · serve para achar a obra, não para medir
-              </small>
-            </div>
-          </div>
-        )}
-        {gpsProbe === "unavailable" && (
-          <div className="check check-warn">
-            <span className="check-state" />
-            <div className="check-body">
-              <b className="check-title">Localização não disponível — siga sem ela</b>
-              <small className="check-detail">
-                O GPS não respondeu a tempo ou o acesso foi negado.
-              </small>
-            </div>
-          </div>
-        )}
+        </div>
         <div className={accessPhotoCaptured ? "check check-ok" : "check check-warn"}>
           <span className="check-state" />
           <div className="check-body">

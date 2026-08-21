@@ -23,4 +23,13 @@ export interface Order {
   location: string;
   scope_label: string;
   checklist: ChecklistItem[];
+  /** Endereço legível da ordem (T17, DAP rev.2, prancha 2), exibido na chegada no lugar
+   * de coordenadas — aditivo: ordem sem este campo (fixture legada) mostra só `location`,
+   * nunca quebra. */
+  address?: string;
+  /** Ponto de referência geográfico do endereço, só para o texto aproximado "a ~X m" da
+   * chegada (Haversine local, `ui/arrivalLocation.ts`) — NUNCA geocodificação reversa nem
+   * rede; é dado estático da fixture, referência geográfica, nunca medição (mesma regra
+   * de `GpsFix`). Aditivo: ordem sem este campo simplesmente não mostra a distância. */
+  address_location?: { lat: number; lng: number };
 }

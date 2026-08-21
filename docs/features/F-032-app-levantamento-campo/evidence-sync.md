@@ -254,6 +254,23 @@ Consolidado por tarefa conforme cada BUILD REPORT chega; a evidência do MVP loc
   rodada); artefato sem consumidor no escritório (fatia futura); erro permanente
   não dá ack (mesmo comportamento do export).
 
+### T17 — marca na barra, endereço na chegada, ícone PWA (ajustes da rev.2)
+
+- Executor: `implementador-sonnet`. BUILD REPORT: `BUILD_COMPLETE`.
+- Entrega: marca do croquito (`aria-hidden`) no AppBar de todas as telas;
+  `Order` ganha `address`/`address_location` aditivos (fixture cobre os 3
+  estados: com distância, sem distância calculável, legada sem endereço);
+  `arrivalLocation.ts` puro (Haversine local, NUNCA geocodificação/rede,
+  distância omitida sem os dois pontos, coordenada nunca impressa) substitui os
+  3 estados de GPS da chegada; `icon.svg` + manifest + `theme-color` saem do
+  placeholder azul para a marca real (#0e1116/#00e389). 6 testes novos (field
+  261). `GpsFix`/domínio/outbox intocados.
+- Desvios aceitos: `index.html` theme-color incluído (mesmo placeholder, mesmo
+  motivo); item "ajustar testes de UI" resolvido pelo padrão do repo (lógica de
+  texto extraída para função pura testada — não existe infra de render).
+- Validação: field 261; `make check` e `make test` completos EXIT 0 (nenhuma
+  reprovação da T13 paralela a reportar).
+
 ## PLAN_DEVIATION
 
 (nenhum até o momento)

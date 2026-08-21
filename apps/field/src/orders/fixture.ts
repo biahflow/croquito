@@ -60,6 +60,11 @@ export const ORDERS: Order[] = [
     location: "São Gonçalo",
     scope_label: "levantamento completo",
     checklist: GUAXINDIBA_CHECKLIST,
+    // Endereço e ponto de referência aproximado (T17, prancha 2 da DAP rev.2) — mesmo
+    // texto do mock aprovado; a coordenada é ilustrativa (centro de São Gonçalo), não um
+    // levantamento real do endereço.
+    address: "Rua Alfredo Backer, s/n",
+    address_location: { lat: -22.8267, lng: -43.0537 },
   },
   {
     id: "order-campo-do-toca",
@@ -68,6 +73,9 @@ export const ORDERS: Order[] = [
     location: "Rio de Janeiro",
     scope_label: "academia + calçadas",
     checklist: CAMPO_DO_TOCA_CHECKLIST,
+    // Sem `address_location` de propósito: ordem sintética que exercita o caminho
+    // "endereço conhecido, distância não calculável" (T17).
+    address: "Rua do Campo do Toca, s/n",
   },
   {
     id: "order-raul-campelo",
@@ -76,5 +84,7 @@ export const ORDERS: Order[] = [
     location: "Rio de Janeiro",
     scope_label: "levantamento completo",
     checklist: RAUL_CAMPELO_CHECKLIST,
+    // Sem `address`/`address_location` de propósito: ordem sintética que exercita o
+    // caminho "fixture legada sem endereço" (T17) — mostra só `location`.
   },
 ];

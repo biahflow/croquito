@@ -922,6 +922,7 @@ export function FieldApp({ repository }: FieldAppProps) {
           busy={busy}
           accessPhotoCaptured={accessMediaRef !== null}
           onCaptureAccessPhoto={handleCaptureAccessPhoto}
+          order={currentOrder}
         />
       </div>
     );

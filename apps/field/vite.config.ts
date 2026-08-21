@@ -19,8 +19,10 @@ export default defineConfig({
         description: "Coleta estruturada de levantamento em campo, offline-first.",
         start_url: "/",
         display: "standalone",
-        background_color: "#0f172a",
-        theme_color: "#0f172a",
+        // Grafite da marca (T17, DAP rev.2) — mesmo fundo do `icon.svg` e de
+        // `--color-dark` (apps/field/src/styles.css), substituindo o azul do scaffold.
+        background_color: "#0e1116",
+        theme_color: "#0e1116",
         icons: [
           {
             src: "/icon.svg",

@@ -32,6 +32,12 @@ export interface AppBarProps {
  * Online/Offline de alto contraste, contador de pendências e, desde a T10, o indicador
  * de identidade da prancha 6c — nome/estado do login e a ação "Entrar"/"Entrar
  * novamente" quando aplicável. Nunca é tela nova: cabe na mesma barra de sempre.
+ *
+ * Marca (Task Contract T17, DAP rev.2): o quadrado de traço verde do wordmark
+ * (`apps/web/src/assets/croquito-logo-dark.svg`) acompanha o nome em toda tela, igual à
+ * regra `.appbar .brand::before` do mock aprovado — aqui como elemento real (não
+ * pseudo-elemento) para poder marcar `aria-hidden` explicitamente: é decoração, cor nunca
+ * é o único portador de significado nesta barra (identidade e sync já são texto).
  */
 export function AppBar({ title, pendingCount, onOpenSync, isOnline, identity }: AppBarProps) {
   /** A pílula de pendências é o caminho para o painel da prancha 6 quando há levantamento
@@ -43,7 +49,10 @@ export function AppBar({ title, pendingCount, onOpenSync, isOnline, identity }: 
       : "Sem pendências";
   return (
     <header className="appbar">
-      <span className="appbar-brand">{title}</span>
+      <span className="appbar-brand">
+        <span className="appbar-mark" aria-hidden="true" />
+        {title}
+      </span>
       {identity !== null && (
         <span className={`pill identity-pill${isExpiredState(identity.state) ? " identity-pill-warn" : ""}`}>
           {identity.displayName ?? identityStateLabel(identity.state)}

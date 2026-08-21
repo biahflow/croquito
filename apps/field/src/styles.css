@@ -120,6 +120,20 @@
   .appbar-brand {
     font-weight: 600;
     letter-spacing: 0.01em;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+  }
+
+  /* Marca do croquito (T17, DAP rev.2): quadrado do wordmark, mesma regra visual de
+     `.appbar .brand::before` no mock aprovado (`docs/features/F-032-.../mock/campo.html`)
+     — aqui como elemento real `aria-hidden` em vez de pseudo-elemento (ver AppBar.tsx). */
+  .appbar-mark {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    background: var(--color-dark);
+    border: 3px solid var(--color-accent);
   }
 
   .appbar-spacer {
