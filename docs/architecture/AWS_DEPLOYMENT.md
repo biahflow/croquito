@@ -2,13 +2,18 @@
 
 Status: Accepted for MVP  
 Responsável: Platform / Security  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-21
 
 > **Este documento descreve o desenho-alvo de produção em AWS, que nunca foi aplicado.**
-> A homologação em uso hoje roda em GCP/Cloud Run
-> ([ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md)), descrita em
-> [HML](../operations/HML.md). O ADR-0002 continua valendo como decisão de produção, e a
-> escolha de produção permanece aberta.
+> O que roda hoje é **GCP/Cloud Run**
+> ([ADR-0025](../adr/0025-homologacao-em-gcp-cloud-run.md)), descrito em
+> [HML](../operations/HML.md), e a infraestrutura que efetivamente o provisiona é o
+> Terraform do repositório **`biahflow/infra`** — não o `infra/` deste repositório, que
+> declara apenas recursos AWS nunca aplicados.
+>
+> O ADR-0002 continua valendo como decisão de produção registrada, e a escolha de produção
+> permanece formalmente aberta: aposentá-la em favor do GCP é ato humano por ADR, não
+> edição de documento.
 
 ## Região e processamento
 
