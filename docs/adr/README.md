@@ -60,6 +60,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0038](0038-bdi-como-conceito-de-pre-licitacao.md) | BDI como conceito de pré-licitação | Accepted |
 | [0039](0039-sinapi-sicro-como-origens-de-preco.md) | SINAPI e SICRO como origens de preço da pré-licitação | Accepted |
 | [0040](0040-teto-de-verba-do-orcamento-base.md) | Teto de verba do orçamento-base — declarado, visível, nunca tesoura | Accepted |
+| [0042](0042-eventos-de-dominio-outbox-pubsub.md) | Eventos de domínio por outbox transacional com publicação em Pub/Sub (0041 reservado pela F-029) | Proposed |
 
 ## Processo
 

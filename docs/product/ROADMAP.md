@@ -51,6 +51,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-028 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
+| F-031 | MEDIUM | IN_PROGRESS | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — branch isolada `feat/f-031-value-events`, não integra no MVP |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
