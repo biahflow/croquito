@@ -54,6 +54,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
 | F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
 | F-030 | A DEFINIR | READY_FOR_SPEC | Fotos do levantamento na jornada de revisão (a definir em contrato) |
+| F-033 | HIGH | BLOCKED | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -331,6 +332,19 @@ fornece medida (sem escala) — por isso não entra no score determinístico da 
 `INTERFACE_CHANGE` (upload + storage + retenção + chamada paga) e exigirá Design
 Approval Package antes do planejamento. Ainda sem Feature Contract: esta linha é o
 registro canônico até a especificação, e a prioridade é decisão humana pendente.
+
+F-033 — demanda sob contrato licitado — nasce em 2026-08-21, numa conversa de operação
+em que se mapeou a cadeia real das praças (levantamento → DXF → prancha → orçamento →
+aprovação → empresa executora). O mapa, registrado em
+[Cadeia operacional](CADEIA_OPERACIONAL.md), expôs que o fluxo tem **três** momentos de
+preço e o [ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md) modela
+dois: orçar uma demanda dentro de um contrato guarda-chuva já licitado tem a forma do
+orçamento-base e a regra da obra licitada. Hoje nada impede instalar EMOP/SINAPI na
+cascata dessa demanda — o orçamento é aprovado, e só na medição
+`BULLETIN_PRICE_ORIGIN_FORBIDDEN` recusa o código, sobre serviço já executado. Tem
+Feature Contract e está `BLOCKED` por dois gates humanos: a decisão de arquitetura que
+refina a fronteira do ADR-0027 (`ARCHITECTURE_DECISION_REQUIRED`) e o Design Approval
+Package (`DESIGN_APPROVAL_REQUIRED`), ambos precedendo o planejamento.
 
 ## Agora — MVP privado
 

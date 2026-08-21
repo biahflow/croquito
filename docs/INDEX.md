@@ -13,8 +13,9 @@ Este arquivo é o roteador de contexto para humanos e agentes. Leia
 
 1. [PRD](product/PRD.md)
 2. [FDD](product/FDD.md)
-3. [Acceptance Criteria](product/ACCEPTANCE_CRITERIA.md)
-4. [Glossary](product/GLOSSARY.md)
+3. [Cadeia operacional](product/CADEIA_OPERACIONAL.md)
+4. [Acceptance Criteria](product/ACCEPTANCE_CRITERIA.md)
+5. [Glossary](product/GLOSSARY.md)
 
 ### Implementar front-end
 
