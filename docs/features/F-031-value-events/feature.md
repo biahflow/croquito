@@ -2,13 +2,15 @@
 
 ## Status
 
-`IN_PROGRESS`
+`READY_FOR_HUMAN_REVIEW`
 
-> Especificada em 2026-08-21 (decisão humana na mesma sessão: escopo, broker
-> Pub/Sub e inclusão do logging estruturado). Desenvolvida em worktree/branch
-> isolada (`feat/f-031-value-events`) por decisão do usuário: é melhoria de
-> plataforma, **não entra na main nem no deploy do MVP nesta rodada** — a
-> integração é gate humano posterior.
+> Especificada e executada em 2026-08-21 (decisão humana na mesma sessão:
+> escopo, broker Pub/Sub e inclusão do logging estruturado). Fatia 1 completa
+> na branch isolada `feat/f-031-value-events` — 5 tasks entregues, revisadas
+> linha a linha e commitadas, portões finais verdes ([evidência](evidence.md)).
+> **Não entra na main nem no deploy do MVP nesta rodada** — a integração
+> (rebase pós-F-029, renumeração das migrações 0008-0010, sync de
+> ROADMAP/STATUS) é gate humano posterior.
 >
 > **Desvio consciente do ritual**: `docs/product/ROADMAP.md` e `docs/STATUS.md`
 > não são editados nesta branch — outra sessão está com eles em edição
