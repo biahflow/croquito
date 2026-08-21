@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { DexieSurveyRepository } from "./storage/DexieSurveyRepository";
 import "./styles.css";
-import { FieldShell } from "./ui/FieldShell";
+import { FieldApp } from "./ui/FieldApp";
 
 const root = document.getElementById("root");
 
@@ -15,6 +15,6 @@ const repository = new DexieSurveyRepository();
 
 createRoot(root).render(
   <StrictMode>
-    <FieldShell repository={repository} />
+    <FieldApp repository={repository} />
   </StrictMode>,
 );

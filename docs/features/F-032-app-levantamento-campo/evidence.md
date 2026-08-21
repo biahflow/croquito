@@ -96,6 +96,49 @@ preservada:
 - Validação final pós-correção: field:test **59 passed**, field:check verde,
   `make check` e `make test` completos verdes (EXIT=0).
 
+## Execução — T3 (Builder: implementador-opus, harness Claude Code)
+
+Plano "MVP local, fatias 1–3" ([plan.md](plan.md)), tarefa
+[T3](tasks/T3-telas-coleta-medida.md). `PRIMARY_EXECUTION_EVIDENCE`: BUILD REPORT
+completo entregue em 2026-08-21, `Status: BUILD_COMPLETE`; resumo com atribuição
+preservada:
+
+- Files changed: FieldShell removido; novos `outbox/applyCommand.ts` (+testes),
+  `ui/viewModel.ts` (+28 testes puros), `ui/FieldApp.tsx` (orquestração, pilha de
+  undo fora do Survey), `ui/SurveyCanvas.tsx`, `CollectScreen`, `AddMenu`,
+  `MeasureScreen`, `DivergenceScreen`, `TextEntryScreen`, `AppBar`, `notice.ts`,
+  `device.ts`; `styles.css` com tokens do DAP em `@theme` + primitivas; `main.tsx`.
+- Validation executed: field:test 92, field:check, make check, make test completos,
+  grep sem rede, escopo confirmado; roteiro manual do critério 3 executado em
+  Chromium 390×780 com capturas (pontos→segmentos→fechar→medir→reload persistindo→
+  offline→undo→divergência 4b com justificativa; dump do IndexedDB com seq 1..15
+  contíguos, nada removido). Skipped: none.
+- Assumptions: tolerância 50 mm nomeada até T4; mundo 24×31,5 m; rótulo Sx por ordem
+  de criação; cota exibida = primeira medida confirmada do par.
+- Desvios conscientes declarados (1–3, 7–8: instrument "não informado" até T4;
+  curva/elemento/foto "(em breve)"; copy "texto" sem voz; primitivas em
+  @layer components; SURVEY_ID survey-local) e três adições de composição (4–6:
+  TextEntryScreen com primitivas aprovadas, escapes "Cancelar", rótulo de cota girado
+  ao longo do segmento) levantadas como gate humano de design.
+
+### Revisão T3 (modelo principal, linha a linha)
+
+- `REVIEW_FINDINGS` → corrigido antes do commit:
+  - **CODE_FINDING (HIGH — corrida de toque duplo)**: os alvos de toque do canvas não
+    eram gateados por `busy` e os handlers construíam o comando com o snapshot do
+    momento do toque; dois toques rápidos liam o mesmo estado e o segundo `saveSurvey`
+    sobrescrevia o survey sem o ponto do primeiro — perda de ação confirmada (o NFR
+    central). Correção: `outbox/serialQueue.ts` (fila serial testada) e `apply`
+    refatorado para construir o comando SÓ na vez dele (`build(current)` dentro da
+    fila), nos sete call sites. Verificação ao vivo em Chromium: dois cliques com
+    delay 0 → 2 pontos persistidos, operações `seq [1,2]`, 2 pontos após reload.
+- Observação registrada para a fatia de sync (não bloqueante): `saveSurvey` e
+  `appendOperation` não são atômicos — crash entre os dois deixa survey sem operação;
+  o transporte real deve embrulhar os dois numa transação Dexie.
+- Validação final pós-correção: field:test **94 passed** (92 + 2 da fila),
+  field:check verde, `make check` e `make test` completos verdes (pytest 1785, web
+  853, field 94).
+
 ## Desvios de plano
 
 - Renumeração F-031→F-032 / ADR-0042→ADR-0043 antes do congelamento do plano
