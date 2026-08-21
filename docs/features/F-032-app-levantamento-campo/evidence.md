@@ -173,6 +173,39 @@ completo em 2026-08-21, `Status: BUILD_COMPLETE`; resumo com atribuição preser
 - Validação final pós-correção: field:test **101 passed**, `make check` e `make test`
   completos verdes (pytest 1785, web 853, field 101).
 
+## Execução — T5 (Builder: implementador-sonnet, harness Claude Code)
+
+Tarefa [T5](tasks/T5-conclusao.md). `PRIMARY_EXECUTION_EVIDENCE`: BUILD REPORT
+completo em 2026-08-21, `Status: BUILD_COMPLETE`; resumo com atribuição preservada:
+
+- Files changed: domínio (SurveyStatus/Waiver com leitura retrocompatível via
+  `surveyStatus`/`surveyWaivers`; comandos `waiveFinding` e `concludeSurvey` com dupla
+  checagem CANNOT_CONCLUDE/ALREADY_CONCLUDED, +9 testes), `ConcludeScreen` (prancha
+  5), entrada pelo menu Adicionar (prancha 3a intocada — decisão declarada), prop
+  `readOnly` no CollectScreen, badge "Concluída" derivada em `deriveOrderState`,
+  `handleConclude` recalculando findings dentro da fila serial (estado fresco).
+- Validation executed: field 110, make check/test completos verdes; roteiro do
+  critério 3 como script determinístico sobre applyCommand+Dexie real (inclusive
+  reabertura simulada do banco); gating de UI verificado por leitura de código —
+  lacuna declarada honestamente (sem harness de clique no workspace).
+- Desvios conscientes: toque em `orders/state.ts` fora do escopo literal (justificado:
+  único ponto de derivação de estado, apontado pelo próprio comentário do arquivo);
+  badge `tag-ok` em vez do `tag-warn` do mock (sem sync nesta fatia, texto continua o
+  portador do significado).
+
+### Revisão T5 (modelo principal, linha a linha + fumaça de navegador)
+
+- `REVIEW_PASS` no código (nenhum finding; desvios aceitos como declarados).
+- A lacuna do report (UI não clicada) foi coberta pelo revisor com fumaça em Chromium
+  real contra `field:dev`: baixar ordem → chegada → 3 pontos → ligações → fechar
+  perímetro → conclusão bloqueada "Concluir (3 itens críticos abertos)" → toque no
+  crítico levando ao segmento → 3 medidas de 5,00 m pelo teclado (subtítulo assinado
+  "Trena laser") → warning de foto justificado por texto → Concluir habilitado →
+  volta às ordens com badge "Concluída" → reabertura em somente leitura (Adicionar
+  desabilitado, aviso escrito). Tudo conforme a prancha 5.
+- Validação final: `make check` e `make test` completos verdes (pytest 1785, web 853,
+  field 110).
+
 ## Decisões humanas registradas (2026-08-21, pós-onda 1)
 
 - As três adições de composição da T3 (tela de digitação de texto com primitivas

@@ -57,19 +57,27 @@ export function OrdersScreen({
         )}
         {orders.map((order) => {
           const state = stateByOrderId.get(order.id) ?? "not_downloaded";
-          const downloaded = state === "downloaded";
+          // "Concluída" (T5) é status do survey, nunca um estado próprio da ordem — ver
+          // `orders/state.ts`. Tanto "downloaded" quanto "concluded" já têm o survey
+          // local, então abrem do mesmo jeito (concluído abre em somente leitura).
+          const hasLocalSurvey = state !== "not_downloaded";
+          const concluded = state === "concluded";
           return (
             <div className="card" key={order.id}>
-              <span className={downloaded ? "tag tag-ok" : "tag"}>
-                {downloaded ? "Baixada — abre offline" : "Não baixada"}
+              <span className={hasLocalSurvey ? "tag tag-ok" : "tag"}>
+                {concluded
+                  ? "Concluída"
+                  : hasLocalSurvey
+                    ? "Baixada — abre offline"
+                    : "Não baixada"}
               </span>
               <span className="card-title">{order.name}</span>
               <span className="card-meta">
-                {downloaded
+                {hasLocalSurvey
                   ? `${order.location} · ${order.scope_label} · ${order.checklist.length} itens no checklist`
                   : `Escopo: ${order.scope_label} · ${order.checklist.length} itens no checklist`}
               </span>
-              {downloaded ? (
+              {hasLocalSurvey ? (
                 <button
                   type="button"
                   className="btn btn-dark btn-block"

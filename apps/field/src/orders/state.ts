@@ -2,15 +2,16 @@
  * Estado da ordem — DERIVADO do survey local, nunca duplicado (Task Contract T4,
  * Especificação §2 e Known Risks).
  *
- * "Baixada" existe sse há um survey local cujo id é `survey-<order_id>`; "concluída" é
- * estado de T5 e não é inventado aqui.
+ * "Baixada" existe sse há um survey local cujo id é `survey-<order_id>`; "concluída"
+ * (T5) é `surveyStatus(survey) === "concluded"` — mesmo dado que `ConcludeScreen` usa
+ * para desbloquear o botão, nunca um estado próprio da ordem.
  */
 
-import type { Survey } from "../domain/types";
+import { surveyStatus, type Survey } from "../domain/types";
 import type { RequiredItem } from "../domain/validation";
 import type { Order, OrderId } from "./types";
 
-export type OrderState = "not_downloaded" | "downloaded";
+export type OrderState = "not_downloaded" | "downloaded" | "concluded";
 
 /** Um survey local por ordem (Especificação §6) — o id é determinístico a partir do id
  * da ordem, então nenhum índice extra precisa ser mantido para achar o survey de uma
@@ -20,10 +21,13 @@ export function surveyIdForOrder(orderId: OrderId): string {
 }
 
 /** `survey` é o resultado de `SurveyRepository.getSurvey(surveyIdForOrder(order.id))` —
- * esta função só lê presença/ausência, nunca consulta o repositório por conta própria
- * (mantém a lógica pura e testável sem IndexedDB). */
+ * esta função só lê presença/ausência e status, nunca consulta o repositório por conta
+ * própria (mantém a lógica pura e testável sem IndexedDB). */
 export function deriveOrderState(survey: Survey | undefined): OrderState {
-  return survey === undefined ? "not_downloaded" : "downloaded";
+  if (survey === undefined) {
+    return "not_downloaded";
+  }
+  return surveyStatus(survey) === "concluded" ? "concluded" : "downloaded";
 }
 
 /**

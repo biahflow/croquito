@@ -21,6 +21,9 @@ export interface CollectScreenProps {
   onOpenAddMenu: () => void;
   onMeasure: () => void;
   busy: boolean;
+  /** Survey concluído (T5): coleta vira somente leitura — os três comandos da bottombar
+   * ficam desabilitados. Sem tela nova; o aviso escrito chega pelo próprio `notice`. */
+  readOnly: boolean;
 }
 
 /**
@@ -44,6 +47,7 @@ export function CollectScreen({
   onOpenAddMenu,
   onMeasure,
   busy,
+  readOnly,
 }: CollectScreenProps) {
   const canvasProps: SurveyCanvasProps = {
     survey,
@@ -71,7 +75,12 @@ export function CollectScreen({
         <SurveyCanvas {...canvasProps} />
       </div>
       <div className="bottombar">
-        <button type="button" className="btn" onClick={onUndo} disabled={!canUndo || busy}>
+        <button
+          type="button"
+          className="btn"
+          onClick={onUndo}
+          disabled={!canUndo || busy || readOnly}
+        >
           Desfazer
         </button>
         <button
@@ -79,11 +88,11 @@ export function CollectScreen({
           className="btn btn-primary"
           style={{ flex: 1.6 }}
           onClick={onOpenAddMenu}
-          disabled={busy}
+          disabled={busy || readOnly}
         >
           ＋ Adicionar
         </button>
-        <button type="button" className="btn" onClick={onMeasure} disabled={busy}>
+        <button type="button" className="btn" onClick={onMeasure} disabled={busy || readOnly}>
           Medir
         </button>
       </div>

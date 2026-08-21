@@ -138,6 +138,25 @@ export interface ArrivalContext {
   arrived_at: string;
 }
 
+/** Estado de conclusão do levantamento (T5, prancha 5). `"collecting"` é o padrão — ver
+ * `surveyStatus` para a leitura retrocompatível de survey persistido antes de T5. */
+export type SurveyStatus = "collecting" | "concluded";
+
+export type WaiverId = string;
+
+/** Justificativa registrada para uma pendência não crítica mantida na conclusão (prancha
+ * 5b do Design Approval Package). `ref_key` é o primeiro `ref` do finding, ou o próprio
+ * `finding_code` quando o finding não tem refs — o waiver NÃO valida contra os findings
+ * correntes do survey (eles mudam a cada comando; `UNKNOWN_FINDING_REF` não existe,
+ * Task Contract T5, Scope). */
+export interface Waiver {
+  id: WaiverId;
+  finding_code: string;
+  ref_key: string;
+  justification: string;
+  created_at: string;
+}
+
 /** O levantamento inteiro — a unidade de persistência e sincronização. */
 export interface Survey {
   id: string;
@@ -153,8 +172,29 @@ export interface Survey {
   photo_anchors: PhotoAnchor[];
   elements: ElementObject[];
   observations: ObservationNote[];
+  /** Estado de conclusão (T5) — `undefined` para survey persistido antes de T5, que lê
+   * como `"collecting"` (retrocompatibilidade; ler via `surveyStatus`, nunca o campo
+   * bruto). */
+  status?: SurveyStatus;
+  /** Justificativas de pendências não críticas mantidas na conclusão (T5) — `undefined`
+   * para survey persistido antes de T5, que lê como lista vazia (ler via
+   * `surveyWaivers`, nunca o campo bruto). */
+  waivers?: Waiver[];
   created_at: string;
   updated_at: string;
+}
+
+/** Lê `Survey.status` com retrocompatibilidade: survey persistido antes de T5 não tem o
+ * campo e deve ler como `"collecting"` (Task Contract T5, Known Risks). Único lugar que
+ * conhece esse padrão — comandos e UI leem por aqui, nunca `survey.status` direto. */
+export function surveyStatus(survey: Survey): SurveyStatus {
+  return survey.status ?? "collecting";
+}
+
+/** Lê `Survey.waivers` com retrocompatibilidade: survey persistido antes de T5 lê como
+ * lista vazia (mesma disciplina de `surveyStatus`). */
+export function surveyWaivers(survey: Survey): Waiver[] {
+  return survey.waivers ?? [];
 }
 
 /**

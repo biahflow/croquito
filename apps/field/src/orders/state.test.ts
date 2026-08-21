@@ -36,6 +36,19 @@ describe("deriveOrderState", () => {
   it("é downloaded quando existe survey local para a ordem", () => {
     expect(deriveOrderState(surveyFor("order-guaxindiba"))).toBe("downloaded");
   });
+
+  it("é downloaded (não concluded) quando o survey não tem `status` — retrocompatibilidade", () => {
+    const legacySurvey = surveyFor("order-guaxindiba");
+    expect(legacySurvey.status).toBeUndefined();
+
+    expect(deriveOrderState(legacySurvey)).toBe("downloaded");
+  });
+
+  it("é concluded quando o survey local está com status concluded (T5)", () => {
+    expect(deriveOrderState({ ...surveyFor("order-guaxindiba"), status: "concluded" })).toBe(
+      "concluded",
+    );
+  });
 });
 
 describe("requiredItemsForOrder", () => {

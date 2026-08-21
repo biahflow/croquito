@@ -24,7 +24,11 @@ import type {
   Survey,
   SurveyPoint,
   SurveyPointId,
+  Waiver,
+  WaiverId,
 } from "./types";
+import { surveyStatus, surveyWaivers } from "./types";
+import type { Finding } from "./validation";
 
 function fail(code: string, message: string): CommandResult {
   return { ok: false, error: { code, message } };
@@ -428,6 +432,72 @@ export function recordArrival(
   };
   const next: Survey = { ...survey, context };
   return ok(next, nowIso, "arrival.record", { context });
+}
+
+// ---------------------------------------------------------------------------------
+// waiveFinding
+// ---------------------------------------------------------------------------------
+
+export interface WaiveFindingArgs {
+  id: WaiverId;
+  finding_code: string;
+  ref_key: string;
+  justification: string;
+}
+
+/**
+ * Registra a justificativa de uma pendência não crítica mantida na conclusão (prancha 5b
+ * do Design Approval Package, Task Contract T5). NÃO valida `finding_code`/`ref_key`
+ * contra os findings correntes do survey — eles mudam a cada comando, então o waiver
+ * referencia código+ref por valor, não um finding vivo; por isso não existe
+ * `UNKNOWN_FINDING_REF` (Task Contract T5, Scope).
+ */
+export function waiveFinding(
+  survey: Survey,
+  args: WaiveFindingArgs,
+  nowIso: string,
+): CommandResult {
+  if (args.justification.trim().length === 0) {
+    return fail("EMPTY_TEXT", "O motivo registrado não pode ficar vazio.");
+  }
+  const waiver: Waiver = {
+    id: args.id,
+    finding_code: args.finding_code,
+    ref_key: args.ref_key,
+    justification: args.justification,
+    created_at: nowIso,
+  };
+  const next: Survey = { ...survey, waivers: [...surveyWaivers(survey), waiver] };
+  return ok(next, nowIso, "finding.waive", { waiver });
+}
+
+// ---------------------------------------------------------------------------------
+// concludeSurvey
+// ---------------------------------------------------------------------------------
+
+export interface ConcludeSurveyArgs {
+  /** Findings do motor no momento da conclusão (Task Contract T5, Especificação §2) —
+   * quem chama sempre passa o resultado mais recente de `validateSurvey`; este comando
+   * não recalcula validação. */
+  findings: Finding[];
+}
+
+export function concludeSurvey(
+  survey: Survey,
+  args: ConcludeSurveyArgs,
+  nowIso: string,
+): CommandResult {
+  if (surveyStatus(survey) === "concluded") {
+    return fail("ALREADY_CONCLUDED", "Este levantamento já foi concluído.");
+  }
+  if (args.findings.some((finding) => finding.severity === "critical")) {
+    return fail(
+      "CANNOT_CONCLUDE",
+      "Não é possível concluir com itens críticos abertos — resolva-os antes.",
+    );
+  }
+  const next: Survey = { ...survey, status: "concluded" };
+  return ok(next, nowIso, "survey.conclude", {});
 }
 
 // ---------------------------------------------------------------------------------

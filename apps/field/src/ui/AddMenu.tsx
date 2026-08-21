@@ -3,6 +3,7 @@ export interface AddMenuProps {
   onConnectPoints: () => void;
   onAddObservation: () => void;
   onClosePerimeter: () => void;
+  onConclude: () => void;
   onCancel: () => void;
   busy: boolean;
 }
@@ -14,12 +15,18 @@ export interface AddMenuProps {
  * telas de definição de curva e o catálogo de elementos não fazem parte da revisão 1 do
  * pacote aprovado, e a foto real é fatia própria (T6). Um item que abre uma tela não
  * aprovada seria composição nova, não implementação.
+ *
+ * "Concluir levantamento" (T5) entra aqui, não na bottombar da prancha 3a: é a opção
+ * menos invasiva ao pacote aprovado — 3a permanece com os três comandos exatos da
+ * revisão 1, e este menu já é uma lista extensível (mesmo padrão de "Fechar perímetro",
+ * que também não está nos itens originais da prancha 3b).
  */
 export function AddMenu({
   onAddPoint,
   onConnectPoints,
   onAddObservation,
   onClosePerimeter,
+  onConclude,
   onCancel,
   busy,
 }: AddMenuProps) {
@@ -68,6 +75,14 @@ export function AddMenu({
           disabled={busy}
         >
           Fechar perímetro
+        </button>
+        <button
+          type="button"
+          className="btn btn-dark btn-block"
+          onClick={onConclude}
+          disabled={busy}
+        >
+          Concluir levantamento
         </button>
         <button type="button" className="btn btn-block" onClick={onCancel} disabled={busy}>
           Cancelar

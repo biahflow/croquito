@@ -8,12 +8,15 @@ import {
   addPoint,
   addSegment,
   closePerimeter,
+  concludeSurvey,
   justifyMeasurement,
   recordArrival,
   undoLast,
+  waiveFinding,
   type CommandHistoryEntry,
 } from "./commands";
-import type { Survey } from "./types";
+import type { Finding } from "./validation";
+import { surveyStatus, surveyWaivers, type Survey } from "./types";
 
 const NOW = "2026-08-21T12:00:00.000Z";
 const LATER = "2026-08-21T12:05:00.000Z";
@@ -558,6 +561,116 @@ describe("recordArrival", () => {
     );
 
     expect(result.error.code).toBe("EMPTY_TEXT");
+  });
+});
+
+describe("waiveFinding", () => {
+  it("acrescenta o waiver e emite finding.waive, mesmo sem waivers prévio no survey (retrocompatibilidade)", () => {
+    const survey = emptySurvey();
+    expect(survey.waivers).toBeUndefined();
+
+    const result = mustOk(
+      waiveFinding(
+        survey,
+        {
+          id: "w1",
+          finding_code: "REQUIRED_ITEM_PENDING",
+          ref_key: "foto-acesso",
+          justification: "Acesso lateral interditado por obra da CEDAE",
+        },
+        NOW,
+      ),
+    );
+
+    expect(surveyWaivers(result.survey)).toEqual([
+      {
+        id: "w1",
+        finding_code: "REQUIRED_ITEM_PENDING",
+        ref_key: "foto-acesso",
+        justification: "Acesso lateral interditado por obra da CEDAE",
+        created_at: NOW,
+      },
+    ]);
+    expect(result.operation.type).toBe("finding.waive");
+  });
+
+  it("rejeita justificativa vazia com EMPTY_TEXT", () => {
+    const result = mustFail(
+      waiveFinding(
+        emptySurvey(),
+        { id: "w1", finding_code: "REQUIRED_ITEM_PENDING", ref_key: "foto-acesso", justification: "   " },
+        NOW,
+      ),
+    );
+
+    expect(result.error.code).toBe("EMPTY_TEXT");
+  });
+
+  it("preserva waivers já existentes ao acrescentar um novo", () => {
+    const first = mustOk(
+      waiveFinding(
+        emptySurvey(),
+        { id: "w1", finding_code: "REQUIRED_ITEM_PENDING", ref_key: "foto-acesso", justification: "motivo 1" },
+        NOW,
+      ),
+    );
+
+    const second = mustOk(
+      waiveFinding(
+        first.survey,
+        { id: "w2", finding_code: "ELEMENT_WITHOUT_PHOTO", ref_key: "e1", justification: "motivo 2" },
+        LATER,
+      ),
+    );
+
+    expect(surveyWaivers(second.survey).map((w) => w.id)).toEqual(["w1", "w2"]);
+  });
+});
+
+describe("concludeSurvey", () => {
+  const criticalFinding: Finding = {
+    code: "SEGMENT_WITHOUT_MEASUREMENT",
+    severity: "critical",
+    message: "Segmento sem medida de comprimento confirmada entre os pontos ligados.",
+    refs: ["s1"],
+  };
+  const warningFinding: Finding = {
+    code: "REQUIRED_ITEM_PENDING",
+    severity: "warning",
+    message: "Item obrigatório pendente: Foto do acesso.",
+    refs: ["foto-acesso"],
+  };
+
+  it("conclui quando não há finding crítico e emite survey.conclude", () => {
+    const result = mustOk(concludeSurvey(emptySurvey(), { findings: [warningFinding] }, NOW));
+
+    expect(surveyStatus(result.survey)).toBe("concluded");
+    expect(result.operation.type).toBe("survey.conclude");
+  });
+
+  it("survey persistido sem `status` lê como collecting — não é ALREADY_CONCLUDED", () => {
+    const legacySurvey = emptySurvey();
+    expect(legacySurvey.status).toBeUndefined();
+
+    const result = mustOk(concludeSurvey(legacySurvey, { findings: [] }, NOW));
+
+    expect(result.survey.status).toBe("concluded");
+  });
+
+  it("rejeita com CANNOT_CONCLUDE quando os findings passados têm ao menos um crítico", () => {
+    const result = mustFail(
+      concludeSurvey(emptySurvey(), { findings: [warningFinding, criticalFinding] }, NOW),
+    );
+
+    expect(result.error.code).toBe("CANNOT_CONCLUDE");
+  });
+
+  it("rejeita dupla conclusão com ALREADY_CONCLUDED", () => {
+    const first = mustOk(concludeSurvey(emptySurvey(), { findings: [] }, NOW));
+
+    const second = mustFail(concludeSurvey(first.survey, { findings: [] }, LATER));
+
+    expect(second.error.code).toBe("ALREADY_CONCLUDED");
   });
 });
 

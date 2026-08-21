@@ -6,12 +6,16 @@ import {
   addPoint,
   addSegment,
   closePerimeter,
+  concludeSurvey,
   justifyMeasurement,
   recordArrival,
   undoLast,
+  waiveFinding,
   type CommandHistoryEntry,
 } from "../domain/commands";
 import type { CommandResult, GpsFix, Segment, Survey, SurveyPointId } from "../domain/types";
+import { surveyStatus } from "../domain/types";
+import type { Finding } from "../domain/validation";
 import { validateSurvey } from "../domain/validation";
 import { applyCommand } from "../outbox/applyCommand";
 import { createSerialQueue } from "../outbox/serialQueue";
@@ -29,6 +33,7 @@ import { AddMenu } from "./AddMenu";
 import { ArrivalScreen } from "./ArrivalScreen";
 import { AppBar } from "./AppBar";
 import { CollectScreen } from "./CollectScreen";
+import { ConcludeScreen } from "./ConcludeScreen";
 import { getOrCreateDeviceId } from "./device";
 import { DivergenceScreen } from "./DivergenceScreen";
 import { MeasureScreen } from "./MeasureScreen";
@@ -67,7 +72,9 @@ type Mode =
   | { kind: "measure"; segment_id: string }
   | { kind: "divergence"; segment_id: string; measurement_id: string }
   | { kind: "justify"; segment_id: string; measurement_id: string }
-  | { kind: "observation" };
+  | { kind: "observation" }
+  | { kind: "conclude" }
+  | { kind: "waive-finding"; finding_code: string; ref_key: string };
 
 function createSurveyForOrder(order: Order, nowIso: string): Survey {
   return {
@@ -483,6 +490,88 @@ export function FieldApp({ repository }: FieldAppProps) {
     [apply, backToCollect],
   );
 
+  /** Toque num crítico de segmento na prancha 5: volta à coleta com o segmento já
+   * selecionado (Task Contract T5, Especificação §1) — não pula direto para medir, quem
+   * decide o próximo passo é o técnico, tocando "Medir" como em qualquer segmento. */
+  const handleSegmentFindingTap = useCallback((segmentId: string) => {
+    setSelectedSegmentId(segmentId);
+    setNotice(null);
+    setMode({ kind: "collect" });
+  }, []);
+
+  const handleOpenJustify = useCallback((finding: Finding) => {
+    setNotice(null);
+    setMode({
+      kind: "waive-finding",
+      finding_code: finding.code,
+      ref_key: finding.refs[0] ?? finding.code,
+    });
+  }, []);
+
+  const handleWaive = useCallback(
+    (findingCode: string, refKey: string, text: string) => {
+      void (async () => {
+        const next = await apply((current) =>
+          waiveFinding(
+            current,
+            {
+              id: crypto.randomUUID(),
+              finding_code: findingCode,
+              ref_key: refKey,
+              justification: text,
+            },
+            new Date().toISOString(),
+          ),
+        );
+        if (next !== null) {
+          setMode({ kind: "conclude" });
+          setNotice({
+            tone: "warn",
+            text: "Motivo registrado. A pendência segue na lista, justificada.",
+          });
+        }
+      })();
+    },
+    [apply],
+  );
+
+  /**
+   * Conclui o levantamento (prancha 5): recalcula `findings` sobre o survey mais recente
+   * dentro da própria fila de comandos, em vez de reusar o `findings` memoizado do
+   * render — evita gatear a conclusão num estado que já ficou velho por um comando
+   * anterior ainda em trânsito na fila (Task Contract T5, Especificação §2).
+   */
+  const handleConclude = useCallback(() => {
+    void (async () => {
+      const next = await apply((current) =>
+        concludeSurvey(
+          current,
+          {
+            findings: validateSurvey(current, {
+              toleranceMm: DEFAULT_TOLERANCE_MM,
+              requiredItems:
+                currentOrder === null ? undefined : requiredItemsForOrder(currentOrder),
+            }),
+          },
+          new Date().toISOString(),
+        ),
+      );
+      if (next === null) {
+        return;
+      }
+      // Volta às ordens (prancha 1a) com a ordem "Concluída" — limpar a ordem ativa faz
+      // o reload cair na lista, não reabrir o survey que acabou de ser concluído.
+      clearActiveOrderId();
+      setCurrentOrder(null);
+      setSelectedPointId(null);
+      setSelectedSegmentId(null);
+      setMode({ kind: "collect" });
+      setNotice(null);
+      await refreshOrderStates();
+      setScreen({ kind: "orders" });
+    })();
+  }, [apply, currentOrder, refreshOrderStates]);
+
   if (screen.kind === "loading") {
     return (
       <div className="flex h-dvh flex-col">
@@ -539,6 +628,14 @@ export function FieldApp({ repository }: FieldAppProps) {
   const segmentLabelById = segmentLabels(survey.segments);
   const pointLabelById = pointLabels(survey.points);
   const instrumentLabel = survey.context?.instrument ?? UNDECLARED_INSTRUMENT;
+  // Survey concluído (T5): coleta vira somente leitura, sem tela nova — o aviso escrito
+  // substitui qualquer notice/instrução em curso e os três comandos da bottombar somem
+  // (Task Contract T5, Scope).
+  const isConcluded = surveyStatus(survey) === "concluded";
+  const concludedNotice: Notice = {
+    tone: "info",
+    text: "Levantamento concluído — somente leitura. Os dados ficam guardados neste aparelho.",
+  };
 
   const instruction: Notice | null =
     mode.kind === "pick-point"
@@ -557,21 +654,23 @@ export function FieldApp({ repository }: FieldAppProps) {
     <CollectScreen
       survey={survey}
       findings={findings}
-      notice={notice ?? instruction}
+      notice={isConcluded ? concludedNotice : (notice ?? instruction)}
       onCancelNotice={
-        mode.kind === "pick-point" || mode.kind === "pick-pair"
-          ? () => backToCollect()
-          : notice !== null
-            ? () => setNotice(null)
-            : null
+        isConcluded
+          ? null
+          : mode.kind === "pick-point" || mode.kind === "pick-pair"
+            ? () => backToCollect()
+            : notice !== null
+              ? () => setNotice(null)
+              : null
       }
       cancelNoticeLabel={notice !== null && instruction === null ? "Fechar" : "Cancelar"}
       selectedPointId={selectedPointId}
       selectedSegmentId={selectedSegmentId}
-      onCanvasTap={mode.kind === "pick-point" ? handleCanvasTap : null}
-      onPointTap={mode.kind === "pick-pair" ? handlePointTap : null}
-      onSegmentTap={mode.kind === "collect" ? handleSegmentTap : null}
-      canUndo={history.length > 0}
+      onCanvasTap={isConcluded ? null : mode.kind === "pick-point" ? handleCanvasTap : null}
+      onPointTap={isConcluded ? null : mode.kind === "pick-pair" ? handlePointTap : null}
+      onSegmentTap={isConcluded ? null : mode.kind === "collect" ? handleSegmentTap : null}
+      canUndo={!isConcluded && history.length > 0}
       onUndo={handleUndo}
       onOpenAddMenu={() => {
         setNotice(null);
@@ -579,6 +678,7 @@ export function FieldApp({ repository }: FieldAppProps) {
       }}
       onMeasure={handleMeasureButton}
       busy={busy}
+      readOnly={isConcluded}
     />
   );
 
@@ -617,6 +717,10 @@ export function FieldApp({ repository }: FieldAppProps) {
             }}
             onAddObservation={() => setMode({ kind: "observation" })}
             onClosePerimeter={handleClosePerimeter}
+            onConclude={() => {
+              setNotice(null);
+              setMode({ kind: "conclude" });
+            }}
             onCancel={() => backToCollect()}
             busy={busy}
           />
@@ -689,6 +793,37 @@ export function FieldApp({ repository }: FieldAppProps) {
             busy={busy}
           />
         );
+      case "conclude":
+        return (
+          <ConcludeScreen
+            survey={survey}
+            findings={findings}
+            notice={notice}
+            onSegmentFindingTap={handleSegmentFindingTap}
+            onJustify={handleOpenJustify}
+            onConclude={handleConclude}
+            onCancel={() => backToCollect()}
+            busy={busy}
+          />
+        );
+      case "waive-finding": {
+        const findingCode = mode.finding_code;
+        const refKey = mode.ref_key;
+        return (
+          <TextEntryScreen
+            title="Justificar pendência"
+            description="A pendência segue registrada; o motivo vira dado para o projetista."
+            label="Motivo"
+            placeholder="Ex.: acesso lateral interditado por obra da CEDAE"
+            confirmLabel="Registrar motivo"
+            emptyConfirmLabel="Registrar motivo (escreva o texto)"
+            notice={notice}
+            onConfirm={(text) => handleWaive(findingCode, refKey, text)}
+            onCancel={() => setMode({ kind: "conclude" })}
+            busy={busy}
+          />
+        );
+      }
       default:
         return renderCollect();
     }
