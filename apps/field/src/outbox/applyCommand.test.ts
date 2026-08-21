@@ -45,6 +45,8 @@ function recording(inner: SurveyRepository, calls: string[]): SurveyRepository {
       return inner.listOperations(id);
     },
     acknowledge: (id) => inner.acknowledge(id),
+    saveMedia: (record) => inner.saveMedia(record),
+    getMedia: (id) => inner.getMedia(id),
   };
 }
 

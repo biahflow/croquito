@@ -562,6 +562,35 @@ describe("recordArrival", () => {
 
     expect(result.error.code).toBe("EMPTY_TEXT");
   });
+
+  it("grava access_media_ref da foto do acesso (T6) quando informado", () => {
+    const result = mustOk(
+      recordArrival(
+        emptySurvey(),
+        {
+          instrument: "Trena laser",
+          reference_note: "Canto do muro da escola, lado norte",
+          gps: "unavailable",
+          access_media_ref: "media-1",
+        },
+        NOW,
+      ),
+    );
+
+    expect(result.survey.context?.access_media_ref).toBe("media-1");
+  });
+
+  it("access_media_ref é opcional — GPS e foto do acesso nunca bloqueiam a chegada", () => {
+    const result = mustOk(
+      recordArrival(
+        emptySurvey(),
+        { instrument: "Outro", reference_note: "Poste de luz da esquina", gps: "unavailable" },
+        NOW,
+      ),
+    );
+
+    expect(result.survey.context?.access_media_ref).toBeUndefined();
+  });
 });
 
 describe("waiveFinding", () => {

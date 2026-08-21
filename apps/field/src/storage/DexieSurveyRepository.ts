@@ -2,11 +2,12 @@ import Dexie, { type Table } from "dexie";
 
 import type { Survey } from "../domain/types";
 import type { SurveyOperation } from "../outbox/types";
-import type { SurveyRepository } from "./SurveyRepository";
+import type { MediaRecord, SurveyRepository } from "./SurveyRepository";
 
 class FieldDatabase extends Dexie {
   surveys!: Table<Survey, string>;
   operations!: Table<SurveyOperation, string>;
+  media!: Table<MediaRecord, string>;
 
   constructor(name: string) {
     super(name);
@@ -16,6 +17,13 @@ class FieldDatabase extends Dexie {
       // por survey é pequeno o bastante para filtrar/ordenar em memória (ver
       // getPendingOperations abaixo) em vez de um índice composto.
       operations: "operation_id, survey_id, status",
+    });
+    // T6: tabela `media` nova. Dexie só exige, numa versão nova, o `stores()` das tabelas
+    // que MUDAM — `surveys`/`operations` não aparecem aqui de propósito, e continuam
+    // com o schema (e os dados) da v1 intactos; um banco já aberto na v1 sobe para a v2
+    // sem perder nada (ver DexieSurveyRepository.test.ts, "abre um banco criado na v1").
+    this.version(2).stores({
+      media: "id",
     });
   }
 }
@@ -57,6 +65,14 @@ export class DexieSurveyRepository implements SurveyRepository {
     // update() em chave inexistente devolve 0 sem lançar — reconhecer duas vezes (ou uma
     // operação que já sumiu) não corrompe estado nem apaga histórico.
     await this.db.operations.update(operationId, { status: "acked" });
+  }
+
+  async saveMedia(record: MediaRecord): Promise<void> {
+    await this.db.media.put(record);
+  }
+
+  async getMedia(mediaId: string): Promise<MediaRecord | undefined> {
+    return this.db.media.get(mediaId);
   }
 
   /** Fecha a conexão — usado nos testes para simular "reabrir o app" com uma instância

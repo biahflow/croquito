@@ -130,11 +130,19 @@ export interface GpsFix {
  * lugares. `gps` é `undefined` quando a chegada foi registrada antes de qualquer
  * tentativa de leitura, `"unavailable"` quando a tentativa falhou/foi negada/expirou, e o
  * objeto de coordenadas quando teve sucesso — GPS nunca bloqueia o registro da chegada
- * (Task Contract T4, Known Risks). */
+ * (Task Contract T4, Known Risks).
+ *
+ * `access_media_ref` (T6) referencia o `MediaRecord.id` da foto do acesso principal, já
+ * gravado via `SurveyRepository.saveMedia` antes deste comando ser chamado — igual à
+ * convenção de `PhotoAnchor.local_media_ref`, nunca o blob em si. Reusa `ArrivalContext`
+ * em vez de um comando/campo próprio: decisão do Builder documentada no BUILD REPORT
+ * de T6 (a foto do acesso nasce no mesmo instante da chegada, uma vez por survey, igual
+ * ao resto deste tipo). */
 export interface ArrivalContext {
   instrument: string;
   reference_note: string;
   gps?: GpsFix | "unavailable";
+  access_media_ref?: string;
   arrived_at: string;
 }
 

@@ -1,8 +1,10 @@
+import Dexie from "dexie";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { Survey } from "../domain/types";
 import type { SurveyOperation } from "../outbox/types";
 import { DexieSurveyRepository } from "./DexieSurveyRepository";
+import type { MediaRecord } from "./SurveyRepository";
 
 function makeSurvey(id: string): Survey {
   const now = "2026-08-21T12:00:00.000Z";
@@ -103,5 +105,104 @@ describe("DexieSurveyRepository", () => {
     expect(stillThere).toMatchObject({ operation_id: "op-1", status: "acked" });
 
     repository.close();
+  });
+
+  it("saveMedia/getMedia fazem roundtrip com o sha256 persistido", async () => {
+    const repository = new DexieSurveyRepository(databaseName);
+    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" });
+    const record: MediaRecord = {
+      id: "media-1",
+      sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      mime_type: "image/jpeg",
+      byte_size: 3,
+      blob,
+      created_at: "2026-08-21T12:00:00.000Z",
+    };
+
+    await repository.saveMedia(record);
+    const loaded = await repository.getMedia("media-1");
+
+    expect(loaded).toEqual(record);
+    expect(loaded?.sha256).toBe(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    );
+
+    repository.close();
+  });
+
+  it("getMedia devolve undefined para mídia inexistente", async () => {
+    const repository = new DexieSurveyRepository(databaseName);
+
+    const loaded = await repository.getMedia("nao-existe");
+
+    expect(loaded).toBeUndefined();
+
+    repository.close();
+  });
+
+  it("mídia salva sobrevive a reabrir o banco (mesma garantia de operação pendente)", async () => {
+    const first = new DexieSurveyRepository(databaseName);
+    const blob = new Blob([new Uint8Array([9, 9])], { type: "image/png" });
+    await first.saveMedia({
+      id: "media-2",
+      sha256: "hash-2",
+      mime_type: "image/png",
+      byte_size: 2,
+      blob,
+      created_at: "2026-08-21T12:00:00.000Z",
+    });
+    first.close();
+
+    const reopened = new DexieSurveyRepository(databaseName);
+    const loaded = await reopened.getMedia("media-2");
+
+    expect(loaded?.id).toBe("media-2");
+
+    reopened.close();
+  });
+
+  it("abre um banco criado na v1 (só surveys/operations) sem perder dados — migração para v2", async () => {
+    // Simula um aparelho que já tinha o app antes de T6: só as duas tabelas da v1
+    // existem no IndexedDB. `DexieSurveyRepository` (v2) precisa abrir esse banco sem
+    // apagar o survey nem a operação pendente já gravados.
+    class LegacyFieldDatabase extends Dexie {
+      surveys!: Dexie.Table<Survey, string>;
+      operations!: Dexie.Table<SurveyOperation, string>;
+
+      constructor(name: string) {
+        super(name);
+        this.version(1).stores({
+          surveys: "id",
+          operations: "operation_id, survey_id, status",
+        });
+      }
+    }
+
+    const legacy = new LegacyFieldDatabase(databaseName);
+    await legacy.surveys.put(makeSurvey("survey-legacy"));
+    await legacy.operations.put(makeOperation({ operation_id: "op-legacy", survey_id: "survey-legacy" }));
+    legacy.close();
+
+    const upgraded = new DexieSurveyRepository(databaseName);
+    const survey = await upgraded.getSurvey("survey-legacy");
+    const pending = await upgraded.getPendingOperations("survey-legacy");
+
+    expect(survey?.id).toBe("survey-legacy");
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.operation_id).toBe("op-legacy");
+
+    // A tabela nova funciona no banco migrado.
+    await upgraded.saveMedia({
+      id: "media-after-migration",
+      sha256: "hash-3",
+      mime_type: "image/jpeg",
+      byte_size: 1,
+      blob: new Blob([new Uint8Array([1])]),
+      created_at: "2026-08-21T12:00:00.000Z",
+    });
+    const media = await upgraded.getMedia("media-after-migration");
+    expect(media?.id).toBe("media-after-migration");
+
+    upgraded.close();
   });
 });

@@ -407,6 +407,10 @@ export interface RecordArrivalArgs {
   instrument: string;
   reference_note: string;
   gps?: GpsFix | "unavailable";
+  /** `MediaRecord.id` da foto do acesso principal, já salva via `saveMedia` antes deste
+   * comando (T6) — ver o comentário de `ArrivalContext.access_media_ref` em
+   * `domain/types.ts` para a decisão de reusar este comando em vez de um novo. */
+  access_media_ref?: string;
 }
 
 /**
@@ -414,7 +418,10 @@ export interface RecordArrivalArgs {
  * tarefa por survey, chamada antes de "Começar a coleta".
  *
  * GPS NUNCA bloqueia (Task Contract T4, Known Risks): `args.gps` é opcional e aceita
- * `"unavailable"` sem que este comando rejeite — só a referência física vazia falha.
+ * `"unavailable"` sem que este comando rejeite — só a referência física vazia falha. A
+ * foto do acesso (T6) segue a mesma regra: `args.access_media_ref` é opcional, e sua
+ * ausência não bloqueia a chegada — o item fica pendente no checklist
+ * (`orders/state.ts`, `requiredItemsForOrder`), nunca um erro deste comando.
  */
 export function recordArrival(
   survey: Survey,
@@ -428,6 +435,7 @@ export function recordArrival(
     instrument: args.instrument,
     reference_note: args.reference_note,
     gps: args.gps,
+    access_media_ref: args.access_media_ref,
     arrived_at: nowIso,
   };
   const next: Survey = { ...survey, context };

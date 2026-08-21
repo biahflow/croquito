@@ -206,6 +206,33 @@ completo em 2026-08-21, `Status: BUILD_COMPLETE`; resumo com atribuição preser
 - Validação final: `make check` e `make test` completos verdes (pytest 1785, web 853,
   field 110).
 
+## Execução — T6 (Builder: implementador-sonnet, harness Claude Code)
+
+Tarefa [T6](tasks/T6-fotos-ancoradas.md). `PRIMARY_EXECUTION_EVIDENCE`: BUILD REPORT
+completo em 2026-08-21, `Status: BUILD_COMPLETE`; resumo com atribuição preservada:
+
+- Files changed: `src/photos/{hash,media,quota}.ts` (+testes, vetores NIST no SHA-256),
+  `MediaRecord`+`saveMedia`/`getMedia` na interface e no Dexie (schema v2 com teste de
+  migração v1→v2 sem perda; sem delete, por regra), `PhotoAnchorScreen` (captura via
+  input nativo `capture=environment`, sem preview — galeria registrada como reservado),
+  foto do acesso na chegada satisfazendo o checklist (`requiredItemsForOrder` agora
+  deriva de `access_media_ref` no contexto, via reuso documentado de `recordArrival`),
+  📷 no desenho, banner de quota <50 MB fail-open.
+- Validation executed: field 128 (110+18), make check/test completos, roteiro manual
+  Playwright ao vivo (captura → âncora → 📷 → reload persistindo → checklist
+  satisfeito). Skipped: none.
+- Disciplina verificada: blob gravado ANTES da âncora e a âncora sempre por
+  comando/applyCommand; blob nunca em estado React/log.
+
+### Revisão T6 (modelo principal, linha a linha)
+
+- `REVIEW_PASS` — nenhum finding; observação registrada (não bloqueante): foto do
+  acesso capturada e abandonada antes de "Começar a coleta" deixa um `MediaRecord`
+  órfão (sem referência) — inofensivo no MVP local (nada é apagado por regra) e
+  matéria da fatia de sync.
+- Validação final: `make check` e `make test` completos verdes (pytest 1785, web 853,
+  field 128).
+
 ## Decisões humanas registradas (2026-08-21, pós-onda 1)
 
 - As três adições de composição da T3 (tela de digitação de texto com primitivas

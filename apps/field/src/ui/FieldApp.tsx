@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   addMeasurement,
   addObservation,
+  addPhotoAnchor,
   addPoint,
   addSegment,
   closePerimeter,
@@ -28,6 +29,7 @@ import {
   type OrderState,
 } from "../orders/state";
 import type { Order, OrderId } from "../orders/types";
+import { buildMediaRecord, captureFile } from "../photos/media";
 import type { SurveyRepository } from "../storage/SurveyRepository";
 import { AddMenu } from "./AddMenu";
 import { ArrivalScreen } from "./ArrivalScreen";
@@ -39,6 +41,7 @@ import { DivergenceScreen } from "./DivergenceScreen";
 import { MeasureScreen } from "./MeasureScreen";
 import type { Notice } from "./notice";
 import { OrdersScreen } from "./OrdersScreen";
+import { PhotoAnchorScreen } from "./PhotoAnchorScreen";
 import { TextEntryScreen } from "./TextEntryScreen";
 import {
   DEFAULT_TOLERANCE_MM,
@@ -69,6 +72,8 @@ type Mode =
   | { kind: "add-menu" }
   | { kind: "pick-point" }
   | { kind: "pick-pair" }
+  | { kind: "pick-photo-point" }
+  | { kind: "photo-anchor"; point_id: SurveyPointId }
   | { kind: "measure"; segment_id: string }
   | { kind: "divergence"; segment_id: string; measurement_id: string }
   | { kind: "justify"; segment_id: string; measurement_id: string }
@@ -121,6 +126,10 @@ export function FieldApp({ repository }: FieldAppProps) {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [selectedPointId, setSelectedPointId] = useState<SurveyPointId | null>(null);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  /** `MediaRecord.id` da foto do acesso já capturada nesta chegada (T6) — vive fora do
+   * `Survey` até "Começar a coleta" empacotar em `recordArrival`; `handleOpenOrder`
+   * limpa ao trocar de ordem. */
+  const [accessMediaRef, setAccessMediaRef] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [isOnline, setIsOnline] = useState(() =>
@@ -198,10 +207,11 @@ export function FieldApp({ repository }: FieldAppProps) {
         ? []
         : validateSurvey(survey, {
             toleranceMm: DEFAULT_TOLERANCE_MM,
-            // Task Contract T4, §5: o checklist da ordem entra na validação como
-            // requiredItems (hoje só foto-acesso fica pendente; ver orders/state.ts).
+            // Task Contract T4, §5 (foto-acesso derivada em T6): o checklist da ordem
+            // entra na validação como requiredItems, com `survey` para derivar
+            // foto-acesso a partir de `survey.context?.access_media_ref`.
             requiredItems:
-              currentOrder === null ? undefined : requiredItemsForOrder(currentOrder),
+              currentOrder === null ? undefined : requiredItemsForOrder(currentOrder, survey),
           }),
     [survey, currentOrder],
   );
@@ -297,6 +307,7 @@ export function FieldApp({ repository }: FieldAppProps) {
           setMode({ kind: "collect" });
           setSelectedPointId(null);
           setSelectedSegmentId(null);
+          setAccessMediaRef(null);
           setNotice(null);
           const pending = await repository.getPendingOperations(loaded.id);
           setPendingCount(pending.length);
@@ -320,17 +331,53 @@ export function FieldApp({ repository }: FieldAppProps) {
               instrument: args.instrument,
               reference_note: args.referenceNote,
               gps: args.gps,
+              // T6: a foto do acesso já foi capturada e salva (handleCaptureAccessPhoto)
+              // antes deste botão ser tocado — aqui só a referência viaja no comando.
+              access_media_ref: accessMediaRef ?? undefined,
             },
             new Date().toISOString(),
           ),
         );
         if (next !== null) {
+          setAccessMediaRef(null);
           setNotice(null);
           setScreen({ kind: "survey" });
         }
       })();
     },
-    [apply],
+    [apply, accessMediaRef],
+  );
+
+  /**
+   * Captura a foto do acesso na chegada (T6): grava o blob no repositório ANTES de
+   * qualquer comando (mesma ordem "blob primeiro, âncora depois" do fluxo de foto
+   * ancorada) — só o `MediaRecord.id` resultante fica em estado de React
+   * (`accessMediaRef`), nunca o blob nem seu conteúdo. `recordArrival` (acionado só ao
+   * tocar "Começar a coleta") é quem de fato liga essa referência ao survey via comando.
+   */
+  const handleCaptureAccessPhoto = useCallback(
+    (file: File) => {
+      void (async () => {
+        setBusy(true);
+        try {
+          const captured = await captureFile(file);
+          const record = buildMediaRecord({
+            id: crypto.randomUUID(),
+            sha256: captured.sha256,
+            mime_type: captured.mime_type,
+            byte_size: captured.byte_size,
+            blob: captured.blob,
+            created_at: new Date().toISOString(),
+          });
+          await repository.saveMedia(record);
+          setAccessMediaRef(record.id);
+          setNotice({ tone: "ok", text: "Foto do acesso registrada." });
+        } finally {
+          setBusy(false);
+        }
+      })();
+    },
+    [repository],
   );
 
   const handleCanvasTap = useCallback(
@@ -379,6 +426,53 @@ export function FieldApp({ repository }: FieldAppProps) {
     setNotice(null);
     setMode({ kind: "measure", segment_id: segmentId });
   }, []);
+
+  /** Escolha da âncora do fluxo "Foto ancorada" (T6): toque num ponto EXISTENTE do
+   * desenho (não cria ponto novo, diferente de `handleCanvasTap`) — elemento como âncora
+   * fica para quando existir catálogo (Task Contract T6, Scope). Só abre a tela de
+   * captura; o comando `addPhotoAnchor` só roda na confirmação. */
+  const handlePhotoAnchorPointTap = useCallback((pointId: SurveyPointId) => {
+    setNotice(null);
+    setMode({ kind: "photo-anchor", point_id: pointId });
+  }, []);
+
+  /**
+   * Confirma a foto ancorada (T6): grava o blob primeiro (`saveMedia`), depois a âncora
+   * via comando (`addPhotoAnchor` → `apply` → `applyCommand`) — nunca o inverso, e a
+   * âncora sempre passa pelo comando (nunca é escrita direto no survey).
+   */
+  const handleConfirmPhotoAnchor = useCallback(
+    (pointId: SurveyPointId, file: File) => {
+      void (async () => {
+        setBusy(true);
+        try {
+          const captured = await captureFile(file);
+          const record = buildMediaRecord({
+            id: crypto.randomUUID(),
+            sha256: captured.sha256,
+            mime_type: captured.mime_type,
+            byte_size: captured.byte_size,
+            blob: captured.blob,
+            created_at: new Date().toISOString(),
+          });
+          await repository.saveMedia(record);
+          const next = await apply((current) =>
+            addPhotoAnchor(
+              current,
+              { id: crypto.randomUUID(), local_media_ref: record.id, point_id: pointId },
+              new Date().toISOString(),
+            ),
+          );
+          if (next !== null) {
+            backToCollect({ tone: "ok", text: "Foto ancorada." });
+          }
+        } finally {
+          setBusy(false);
+        }
+      })();
+    },
+    [apply, backToCollect, repository],
+  );
 
   const handleMeasureButton = useCallback(() => {
     if (selectedSegmentId === null) {
@@ -550,7 +644,7 @@ export function FieldApp({ repository }: FieldAppProps) {
             findings: validateSurvey(current, {
               toleranceMm: DEFAULT_TOLERANCE_MM,
               requiredItems:
-                currentOrder === null ? undefined : requiredItemsForOrder(currentOrder),
+                currentOrder === null ? undefined : requiredItemsForOrder(currentOrder, current),
             }),
           },
           new Date().toISOString(),
@@ -605,7 +699,13 @@ export function FieldApp({ repository }: FieldAppProps) {
     return (
       <div className="flex h-dvh flex-col">
         <AppBar title={currentOrder?.short_name ?? APP_BRAND} pendingCount={0} isOnline={isOnline} />
-        <ArrivalScreen notice={notice} onConfirm={handleRecordArrival} busy={busy} />
+        <ArrivalScreen
+          notice={notice}
+          onConfirm={handleRecordArrival}
+          busy={busy}
+          accessPhotoCaptured={accessMediaRef !== null}
+          onCaptureAccessPhoto={handleCaptureAccessPhoto}
+        />
       </div>
     );
   }
@@ -648,7 +748,9 @@ export function FieldApp({ repository }: FieldAppProps) {
                 ? "Toque no primeiro ponto e depois no segundo para ligá-los."
                 : "Ponto inicial escolhido. Toque no segundo ponto para ligar.",
           }
-        : null;
+        : mode.kind === "pick-photo-point"
+          ? { tone: "info", text: "Toque num ponto do desenho para ancorar a foto." }
+          : null;
 
   const renderCollect = () => (
     <CollectScreen
@@ -658,7 +760,7 @@ export function FieldApp({ repository }: FieldAppProps) {
       onCancelNotice={
         isConcluded
           ? null
-          : mode.kind === "pick-point" || mode.kind === "pick-pair"
+          : mode.kind === "pick-point" || mode.kind === "pick-pair" || mode.kind === "pick-photo-point"
             ? () => backToCollect()
             : notice !== null
               ? () => setNotice(null)
@@ -668,7 +770,15 @@ export function FieldApp({ repository }: FieldAppProps) {
       selectedPointId={selectedPointId}
       selectedSegmentId={selectedSegmentId}
       onCanvasTap={isConcluded ? null : mode.kind === "pick-point" ? handleCanvasTap : null}
-      onPointTap={isConcluded ? null : mode.kind === "pick-pair" ? handlePointTap : null}
+      onPointTap={
+        isConcluded
+          ? null
+          : mode.kind === "pick-pair"
+            ? handlePointTap
+            : mode.kind === "pick-photo-point"
+              ? handlePhotoAnchorPointTap
+              : null
+      }
       onSegmentTap={isConcluded ? null : mode.kind === "collect" ? handleSegmentTap : null}
       canUndo={!isConcluded && history.length > 0}
       onUndo={handleUndo}
@@ -715,6 +825,10 @@ export function FieldApp({ repository }: FieldAppProps) {
               setSelectedPointId(null);
               setMode({ kind: "pick-pair" });
             }}
+            onAddPhotoAnchor={() => {
+              setSelectedPointId(null);
+              setMode({ kind: "pick-photo-point" });
+            }}
             onAddObservation={() => setMode({ kind: "observation" })}
             onClosePerimeter={handleClosePerimeter}
             onConclude={() => {
@@ -727,6 +841,19 @@ export function FieldApp({ repository }: FieldAppProps) {
         );
       case "measure":
         return renderMeasure(mode.segment_id);
+      case "photo-anchor": {
+        const pointId = mode.point_id;
+        const label = pointLabelById.get(pointId) ?? "ponto";
+        return (
+          <PhotoAnchorScreen
+            pointLabel={label}
+            notice={notice}
+            busy={busy}
+            onConfirm={(file) => handleConfirmPhotoAnchor(pointId, file)}
+            onCancel={() => backToCollect()}
+          />
+        );
+      }
       case "divergence": {
         const finding = findCriticalDivergence(mode.measurement_id, findings);
         if (finding === null) {

@@ -52,7 +52,7 @@ describe("deriveOrderState", () => {
 });
 
 describe("requiredItemsForOrder", () => {
-  it("mapeia o checklist da ordem com foto-acesso pendente e o resto satisfeito (T4 §5)", () => {
+  it("mapeia o checklist da ordem com foto-acesso pendente (sem survey) e o resto satisfeito (T4 §5)", () => {
     for (const order of ORDERS) {
       const items = requiredItemsForOrder(order);
 
@@ -65,5 +65,32 @@ describe("requiredItemsForOrder", () => {
         }
       }
     }
+  });
+
+  it("foto-acesso pendente quando o survey existe mas ainda não tem access_media_ref (T6)", () => {
+    const order = ORDERS[0]!;
+    const survey = surveyFor(order.id);
+
+    const items = requiredItemsForOrder(order, survey);
+
+    expect(items.find((item) => item.id === "foto-acesso")).toMatchObject({ satisfied: false });
+  });
+
+  it("foto-acesso satisfeito quando o survey tem access_media_ref gravado (T6)", () => {
+    const order = ORDERS[0]!;
+    const survey: Survey = {
+      ...surveyFor(order.id),
+      context: {
+        instrument: "Trena laser",
+        reference_note: "Canto do muro",
+        gps: "unavailable",
+        access_media_ref: "media-1",
+        arrived_at: NOW,
+      },
+    };
+
+    const items = requiredItemsForOrder(order, survey);
+
+    expect(items.find((item) => item.id === "foto-acesso")).toMatchObject({ satisfied: true });
   });
 });

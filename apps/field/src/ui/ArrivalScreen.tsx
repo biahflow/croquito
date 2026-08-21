@@ -58,6 +58,11 @@ export interface ArrivalScreenProps {
   notice: Notice | null;
   onConfirm: (args: { instrument: string; referenceNote: string; gps: GpsFix | "unavailable" }) => void;
   busy: boolean;
+  /** `true` quando a foto do acesso já foi capturada e salva nesta chegada (T6) —
+   * `FieldApp` deriva de um id de mídia local ainda não incluído no comando
+   * `recordArrival` (só vai junto quando "Começar a coleta" é tocado). */
+  accessPhotoCaptured: boolean;
+  onCaptureAccessPhoto: (file: File) => void;
 }
 
 /**
@@ -65,11 +70,20 @@ export interface ArrivalScreenProps {
  * vez por levantamento. Uma tarefa por etapa (instrumento → referência → GPS → foto do
  * acesso), como no pacote aprovado.
  *
- * Foto do acesso (T6) fica fora desta fatia: o item aparece pendente e o botão
- * correspondente, desabilitado com "(em breve)" — igual ao padrão já usado em
- * `MeasureScreen`/`AddMenu` para itens de fatia futura.
+ * Foto do acesso (T6): a captura acontece AQUI (antes de "Começar a coleta"), com
+ * `<input type="file" capture="environment">` nativo — sem tela de câmera própria. O
+ * blob é salvo via `saveMedia` assim que o arquivo é escolhido (`onCaptureAccessPhoto`);
+ * só a referência (`access_media_ref`) viaja com `recordArrival` ao confirmar a chegada
+ * — mesma ordem "blob primeiro, âncora/comando depois" do fluxo de foto ancorada
+ * (`PhotoAnchorScreen`).
  */
-export function ArrivalScreen({ notice, onConfirm, busy }: ArrivalScreenProps) {
+export function ArrivalScreen({
+  notice,
+  onConfirm,
+  busy,
+  accessPhotoCaptured,
+  onCaptureAccessPhoto,
+}: ArrivalScreenProps) {
   const [instrument, setInstrument] = useState<(typeof INSTRUMENTS)[number]>(INSTRUMENTS[0]);
   const [referenceNote, setReferenceNote] = useState("");
   const gpsProbe = useGpsProbe();
@@ -153,16 +167,39 @@ export function ArrivalScreen({ notice, onConfirm, busy }: ArrivalScreenProps) {
             </div>
           </div>
         )}
-        <div className="check check-warn">
+        <div className={accessPhotoCaptured ? "check check-ok" : "check check-warn"}>
           <span className="check-state" />
           <div className="check-body">
-            <b className="check-title">Foto do acesso principal — pendente</b>
+            <b className="check-title">
+              {accessPhotoCaptured
+                ? "Foto do acesso principal — registrada"
+                : "Foto do acesso principal — pendente"}
+            </b>
             <small className="check-detail">Obrigatória no checklist desta ordem</small>
           </div>
         </div>
-        <button type="button" className="btn btn-block" disabled>
-          Tirar foto do acesso (em breve)
-        </button>
+        <label
+          className="btn btn-block"
+          htmlFor="arrival-access-photo"
+          style={busy ? { opacity: 0.6, pointerEvents: "none" } : undefined}
+        >
+          {accessPhotoCaptured ? "Tirar outra foto do acesso" : "Tirar foto do acesso"}
+        </label>
+        <input
+          id="arrival-access-photo"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          style={{ display: "none" }}
+          disabled={busy}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file !== undefined) {
+              onCaptureAccessPhoto(file);
+            }
+          }}
+        />
         <button
           type="button"
           className="btn btn-dark btn-block"

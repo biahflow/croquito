@@ -32,16 +32,21 @@ export function deriveOrderState(survey: Survey | undefined): OrderState {
 
 /**
  * Checklist da ordem no formato que `validateSurvey` consome (Task Contract T4,
- * Especificação §5): só `foto-acesso` é verificável hoje — e permanece pendente até T6
- * entregar a captura; os demais itens contam como satisfeitos, porque a materialização
- * item a item é de fatias futuras e não deve virar regra inventada aqui.
+ * Especificação §5; satisfação de `foto-acesso` refeita em T6, Scope): só `foto-acesso`
+ * é verificável hoje, e agora É derivado — satisfeito quando existe mídia do acesso
+ * gravada para este survey (`survey.context?.access_media_ref`, preenchido por
+ * `recordArrival` quando a foto é capturada na chegada, T6). Sem `survey` (ordem ainda
+ * não baixada/aberta), conta como pendente — mesmo comportamento anterior a T6. Os
+ * demais itens contam como satisfeitos, porque a materialização item a item é de fatias
+ * futuras e não deve virar regra inventada aqui.
  */
-export function requiredItemsForOrder(order: Order): RequiredItem[] {
+export function requiredItemsForOrder(order: Order, survey?: Survey): RequiredItem[] {
   return order.checklist
     .filter((item) => item.required)
     .map((item) => ({
       id: item.id,
       label: item.label,
-      satisfied: item.id !== "foto-acesso",
+      satisfied:
+        item.id === "foto-acesso" ? survey?.context?.access_media_ref !== undefined : true,
     }));
 }

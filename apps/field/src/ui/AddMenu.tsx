@@ -1,6 +1,7 @@
 export interface AddMenuProps {
   onAddPoint: () => void;
   onConnectPoints: () => void;
+  onAddPhotoAnchor: () => void;
   onAddObservation: () => void;
   onClosePerimeter: () => void;
   onConclude: () => void;
@@ -11,10 +12,13 @@ export interface AddMenuProps {
 /**
  * Prancha 3b — menu Adicionar: lista plana de botões de 48 px, uma escolha por gesto.
  *
- * Curva/arco, elemento e foto aparecem desabilitados com o motivo no próprio rótulo: as
- * telas de definição de curva e o catálogo de elementos não fazem parte da revisão 1 do
- * pacote aprovado, e a foto real é fatia própria (T6). Um item que abre uma tela não
- * aprovada seria composição nova, não implementação.
+ * Curva/arco e elemento seguem desabilitados com o motivo no próprio rótulo: as telas de
+ * definição de curva e o catálogo de elementos não fazem parte da revisão 1 do pacote
+ * aprovado. Um item que abre uma tela não aprovada seria composição nova, não
+ * implementação. "Foto ancorada" (T6) já habilita: o fluxo usa `<input type="file"
+ * capture="environment">` nativo do aparelho — nunca uma tela de câmera própria, que o
+ * pacote aprovado explicitamente deixa fora ("captura e revisão de foto (câmera
+ * aberta)" — Design Approval Package, "Explicitamente não aprovado").
  *
  * "Concluir levantamento" (T5) entra aqui, não na bottombar da prancha 3a: é a opção
  * menos invasiva ao pacote aprovado — 3a permanece com os três comandos exatos da
@@ -24,6 +28,7 @@ export interface AddMenuProps {
 export function AddMenu({
   onAddPoint,
   onConnectPoints,
+  onAddPhotoAnchor,
   onAddObservation,
   onClosePerimeter,
   onConclude,
@@ -57,8 +62,13 @@ export function AddMenu({
         <button type="button" className="btn btn-block btn-menu" disabled>
           ▢&nbsp;&nbsp;Elemento (em breve)
         </button>
-        <button type="button" className="btn btn-block btn-menu" disabled>
-          📷&nbsp;&nbsp;Foto ancorada (em breve)
+        <button
+          type="button"
+          className="btn btn-block btn-menu"
+          onClick={onAddPhotoAnchor}
+          disabled={busy}
+        >
+          📷&nbsp;&nbsp;Foto ancorada
         </button>
         <button
           type="button"
