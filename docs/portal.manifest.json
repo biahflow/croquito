@@ -1,0 +1,17 @@
+{
+  "title": "Croquito — documentação do sistema",
+  "published_at": "https://claude.ai/code/artifact/5e751c47-5a05-45f0-b845-dba672e7b5a3",
+  "subtitle": "Os documentos que explicam como o sistema funciona, reunidos numa página só. O conteúdo mora em Markdown versionado; esta página é a vista de leitura, gerada por `make docs`.",
+  "sections": [
+    {
+      "label": "Cadeia operacional",
+      "blurb": "Do levantamento em campo ao pagamento: quem faz cada etapa e que documento sai dela.",
+      "docs": ["docs/product/CADEIA_OPERACIONAL.md"]
+    },
+    {
+      "label": "Arquitetura do sistema",
+      "blurb": "Que processos existem, quem chama quem, por onde o dado passa e onde o sistema recusa.",
+      "docs": ["docs/architecture/FLUXO_DO_SISTEMA.md"]
+    }
+  ]
+}

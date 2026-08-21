@@ -51,6 +51,12 @@ croquito-worker-push = "croquito_worker.push_server:main"
 [dependency-groups]
 dev = [
   "httpx>=0.28,<1",
+  # Renderizador do portal de documentação (`scripts/build_docs_portal.py`): converte os
+  # documentos canônicos em Markdown para o HTML único que se lê fora do repositório.
+  # CommonMark completo, tabelas e HTML inline (os diagramas SVG dos documentos passam
+  # direto). MIT, Python puro, mantido pelo Executable Books. Ferramenta de autoria, nunca
+  # runtime: a imagem instala com `uv sync --no-dev` e não a leva.
+  "markdown-it-py>=3.0,<5",
   "mypy>=1.17,<2",
   "pytest>=8.4,<10",
   "pytest-cov>=6.2,<8",

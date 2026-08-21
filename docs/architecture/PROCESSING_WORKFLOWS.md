@@ -1,8 +1,20 @@
 # Workflows de processamento
 
-Status: Accepted for MVP  
+Status: Conceptual — não implementado  
 Responsável: Backend / Worker / Infra  
-Última revisão: 2026-08-10
+Última revisão: 2026-08-21
+
+> **Este documento descreve um desenho conceitual que nunca foi implementado.** Não há
+> Step Functions, Fargate nem EventBridge no código nem na infraestrutura: as duas *state
+> machines* abaixo não existem como orquestrador. O que roda hoje é um despachante único
+> de fila (`croquito_worker.local_queue.LocalQueueWorker.dispatch`) que chama função
+> Python no mesmo processo do worker, descrito em
+> [Fluxo do sistema](FLUXO_DO_SISTEMA.md).
+>
+> A separação conceitual que ele defende — extração e exportação como etapas distintas,
+> com revisão humana no meio — **essa sim vale e está implementada**, só que por comandos
+> de fila (`process_upload`, `solve_trace_scene`, `export_scene_package`) em vez de
+> máquinas de estado. Leia o documento por esse motivo, não como descrição do que roda.
 
 ## Por que duas state machines
 

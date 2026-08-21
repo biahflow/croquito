@@ -113,6 +113,12 @@ delegação ou paralelismo.
 - Mudança de NFR: atualize NFR, observabilidade e teste correspondente.
 - Mudança de IA: atualize Model Routing, Prompt Contracts e Evaluation Strategy.
 - Mudança operacional: atualize runbook e rollback.
+- Mudança no fluxo do sistema ou na cadeia de trabalho: atualize
+  [Fluxo do sistema](docs/architecture/FLUXO_DO_SISTEMA.md) e
+  [Cadeia operacional](docs/product/CADEIA_OPERACIONAL.md). Os dois são a vista de leitura
+  do sistema inteiro e envelhecem em silêncio se ninguém os tocar: se você acrescentou um
+  processo, um comando de fila, um portão de recusa ou uma etapa da cadeia, ele precisa
+  aparecer lá.
 
 ## Qualidade de implementação
 
@@ -133,6 +139,10 @@ Uma mudança só está concluída quando:
 - Métricas e falhas novas são observáveis.
 - Migração e rollback foram considerados.
 - [docs/STATUS.md](docs/STATUS.md) foi atualizado se o marco mudou.
+- `make docs` foi rodado se algum documento do
+  [manifesto do portal](docs/portal.manifest.json) mudou, e a página publicada foi
+  atualizada **na mesma URL** — o endereço está no campo `published_at` do manifesto, e
+  publicar noutro endereço cria uma segunda página que envelhece sozinha.
 
 A interface padrão de desenvolvimento é `make setup`, `make check`, `make test` e
 `make dev`. Os perfis de validação e seus limites estão no

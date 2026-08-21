@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval ocr-eval solver-eval association-eval association-calibration extraction-eval extraction-eval-degrau valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
+.PHONY: docs setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval ocr-eval solver-eval association-eval association-calibration extraction-eval extraction-eval-degrau valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
 
 setup:
 	uv sync --all-groups
@@ -56,6 +56,13 @@ dev-worker-fixtures:
 contracts:
 	uv run python -m croquito_core.schema_export --output-dir packages/contracts
 	npm run contracts:generate
+
+# Renderiza os documentos que `docs/portal.manifest.json` lista num HTML único e navegável
+# em `output/` (temporário, ignorado pelo Git). A fonte de verdade continua sendo o Markdown
+# versionado em `docs/`; esta página é derivada e nunca se edita à mão. Rode depois de mexer
+# em documento canônico que esteja no manifesto.
+docs:
+	uv run python scripts/build_docs_portal.py
 
 # Regenera o snapshot versionado do OpenAPI (tests/api/openapi.snapshot.json) a partir da
 # própria aplicação, com settings fixos e sintéticos (services/api/src/croquito_api/
