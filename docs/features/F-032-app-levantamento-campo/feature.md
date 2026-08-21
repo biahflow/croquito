@@ -2,11 +2,15 @@
 
 ## Status
 
-`IN_PROGRESS`
+`READY_FOR_HUMAN_REVIEW`
 
-Fatia 0 (scaffold técnico, T1) autorizada por plano aprovado pelo usuário em
-2026-08-21. As fatias com superfície de usuário permanecem bloqueadas pelos gates
-humanos listados abaixo (aceite do ADR-0043 e Design Approval Package).
+MVP local completo em 2026-08-21: fatia 0 (T1 scaffold) e o plano "MVP local, fatias
+1–3" (T2 motor, T3 coleta/medida, T4 ordens/chegada, T5 conclusão, T6 fotos)
+executados, revisados linha a linha e commitados na branch
+`f-032-app-levantamento-campo`, com portões completos verdes — evidência consolidada
+em [evidence.md](evidence.md). Pendem os atos humanos: decisão de merge/push (dispara
+a esteira `deploy-hml`) e, depois, o plano próprio da fatia de sincronização
+(`/v1/surveys`, prancha 6), que devolve a feature a `PLANNING`.
 
 ## Priority
 

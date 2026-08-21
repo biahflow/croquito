@@ -3,7 +3,7 @@
 Status: Active  
 Responsável: Product  
 Última revisão: 2026-08-21 (F-032 aberta com contrato — app de levantamento de campo
-PWA offline-first, ADR-0043 aceito por ato humano na mesma data, fatia 0 executada em branch própria; antes:
+PWA offline-first, ADR-0043 aceito e DAP aprovado por atos humanos na mesma data; MVP local completo T1–T6 em branch própria, READY_FOR_HUMAN_REVIEW; antes:
 F-021 e F-022 abertas com contrato — nota pré-classificada na
 decisão e Document AI no braço de OCR, nascidas da segunda revisão real do Guaxindiba,
 ADR-0037 `Proposed`; antes: F-012 documentada com ADR-0036 `Proposed`; inventário
@@ -53,7 +53,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-028 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
-| F-032 | HIGH | IN_PROGRESS | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
+| F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
