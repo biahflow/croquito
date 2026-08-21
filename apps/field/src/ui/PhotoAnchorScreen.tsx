@@ -1,7 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 
+import { evaluateCapturedPhoto } from "../photos/evaluateCapturedPhoto";
 import { isStorageLow } from "../photos/quota";
 import type { Notice } from "./notice";
+import { PhotoQualityCard } from "./PhotoQualityCard";
+import {
+  INITIAL_PHOTO_QUALITY_GATE_STATE,
+  photoQualityGateReducer,
+} from "./photoQualityGate";
 
 export interface PhotoAnchorScreenProps {
   /** Rótulo do ponto já escolhido como âncora (ex.: "P3") — a escolha acontece ANTES
@@ -23,6 +29,13 @@ export interface PhotoAnchorScreenProps {
  * aparelho — sem tela de câmera própria (fora do pacote aprovado) e sem
  * preview/visualizador da foto (Task Contract T6, Out of Scope): o nome do arquivo
  * confirma a escolha, a imagem em si nunca é exibida nem logada.
+ *
+ * Qualidade de foto (Task Contract T15, prancha 7b): assim que o arquivo é escolhido, a
+ * avaliação roda em segundo plano (`evaluateCapturedPhoto`, resolução reduzida) — o toque
+ * que capturou a foto não espera por ela (NFR ≤100ms). Enquanto isso, a tela mostra
+ * "Avaliando…"; se o veredito não for "ok", o card de aviso substitui o botão
+ * "Confirmar foto" (Refazer descarta e reabre a câmera; Manter segue exatamente o fluxo
+ * de antes, chamando `onConfirm`). Foto "ok" (ou avaliação indisponível) segue direto.
  */
 export function PhotoAnchorScreen({
   pointLabel,
@@ -31,8 +44,10 @@ export function PhotoAnchorScreen({
   onConfirm,
   onCancel,
 }: PhotoAnchorScreenProps) {
-  const [file, setFile] = useState<File | null>(null);
+  const [gate, dispatch] = useReducer(photoQualityGateReducer, INITIAL_PHOTO_QUALITY_GATE_STATE);
   const [lowStorage, setLowStorage] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const file = gate.phase === "empty" ? null : gate.file;
 
   useEffect(() => {
     let cancelled = false;
@@ -45,6 +60,26 @@ export function PhotoAnchorScreen({
       cancelled = true;
     };
   }, []);
+
+  const handleFileSelected = (selected: File) => {
+    dispatch({ type: "file-selected", file: selected });
+    void evaluateCapturedPhoto(selected).then((outcome) => {
+      dispatch({ type: "evaluated", file: selected, outcome });
+    });
+  };
+
+  const handleRedo = () => {
+    dispatch({ type: "reset" });
+    // "reabre a câmera" (Task Contract T15): dispara o mesmo input nativo de novo, em vez
+    // de exigir que o técnico ache o botão "Tirar foto" de novo na tela.
+    inputRef.current?.click();
+  };
+
+  const handleKeep = () => {
+    if (gate.phase === "warn") {
+      onConfirm(gate.file);
+    }
+  };
 
   return (
     <div className="screen">
@@ -64,11 +99,14 @@ export function PhotoAnchorScreen({
             </span>
           </div>
         )}
-        <label className="btn btn-block" htmlFor="photo-anchor-file">
-          {file === null ? "Tirar foto" : `Foto selecionada: ${file.name || "sem nome"}`}
-        </label>
+        {gate.phase !== "warn" && (
+          <label className="btn btn-block" htmlFor="photo-anchor-file">
+            {file === null ? "Tirar foto" : `Foto selecionada: ${file.name || "sem nome"}`}
+          </label>
+        )}
         <input
           id="photo-anchor-file"
+          ref={inputRef}
           type="file"
           accept="image/*"
           capture="environment"
@@ -78,22 +116,37 @@ export function PhotoAnchorScreen({
             const selected = event.target.files?.[0];
             event.target.value = "";
             if (selected !== undefined) {
-              setFile(selected);
+              handleFileSelected(selected);
             }
           }}
         />
-        <button
-          type="button"
-          className="btn btn-primary btn-block"
-          disabled={file === null || busy}
-          onClick={() => {
-            if (file !== null) {
-              onConfirm(file);
-            }
-          }}
-        >
-          {file === null ? "Confirmar (tire uma foto antes)" : "Confirmar foto"}
-        </button>
+        {gate.phase === "checking" && (
+          <div className="banner banner-info" role="status">
+            <span>Avaliando qualidade da foto…</span>
+          </div>
+        )}
+        {gate.phase === "warn" ? (
+          <PhotoQualityCard
+            fileName={gate.file.name || "sem nome"}
+            verdict={gate.verdict}
+            busy={busy}
+            onRedo={handleRedo}
+            onKeep={handleKeep}
+          />
+        ) : (
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            disabled={file === null || busy || gate.phase === "checking"}
+            onClick={() => {
+              if (file !== null) {
+                onConfirm(file);
+              }
+            }}
+          >
+            {file === null ? "Confirmar (tire uma foto antes)" : "Confirmar foto"}
+          </button>
+        )}
         <button type="button" className="btn btn-block" onClick={onCancel} disabled={busy}>
           Cancelar
         </button>

@@ -1,7 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 
 import type { GpsFix } from "../domain/types";
+import { evaluateCapturedPhoto } from "../photos/evaluateCapturedPhoto";
 import type { Notice } from "./notice";
+import { PhotoQualityCard } from "./PhotoQualityCard";
+import {
+  INITIAL_PHOTO_QUALITY_GATE_STATE,
+  photoQualityGateReducer,
+} from "./photoQualityGate";
 
 /** Lista fechada do segmented control (prancha 2) — o texto exato vira o `instrument`
  * gravado por `recordArrival` (mesma convenção de texto livre de `Measurement.instrument`;
@@ -76,6 +82,12 @@ export interface ArrivalScreenProps {
  * só a referência (`access_media_ref`) viaja com `recordArrival` ao confirmar a chegada
  * — mesma ordem "blob primeiro, âncora/comando depois" do fluxo de foto ancorada
  * (`PhotoAnchorScreen`).
+ *
+ * Qualidade de foto (Task Contract T15, prancha 7b): a captura NÃO chama mais
+ * `onCaptureAccessPhoto` direto no `onChange` — primeiro avalia (segundo plano, resolução
+ * reduzida). Foto "ok" (ou avaliação indisponível) persiste sozinha, sem tela nova (mesmo
+ * comportamento de antes: nenhum toque a mais). Só um veredito não-"ok" interrompe com o
+ * card de aviso (Refazer descarta sem persistir e reabre a câmera; Manter persiste).
  */
 export function ArrivalScreen({
   notice,
@@ -88,6 +100,38 @@ export function ArrivalScreen({
   const [referenceNote, setReferenceNote] = useState("");
   const gpsProbe = useGpsProbe();
   const filled = referenceNote.trim().length > 0;
+  const [photoGate, dispatchPhotoGate] = useReducer(
+    photoQualityGateReducer,
+    INITIAL_PHOTO_QUALITY_GATE_STATE,
+  );
+  const accessPhotoInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (photoGate.phase === "clear") {
+      onCaptureAccessPhoto(photoGate.file);
+      dispatchPhotoGate({ type: "reset" });
+    }
+  }, [photoGate, onCaptureAccessPhoto]);
+
+  const handleAccessFileSelected = (selected: File) => {
+    dispatchPhotoGate({ type: "file-selected", file: selected });
+    void evaluateCapturedPhoto(selected).then((outcome) => {
+      dispatchPhotoGate({ type: "evaluated", file: selected, outcome });
+    });
+  };
+
+  const handleAccessPhotoRedo = () => {
+    dispatchPhotoGate({ type: "reset" });
+    // "reabre a câmera" (Task Contract T15): dispara o mesmo input nativo de novo.
+    accessPhotoInputRef.current?.click();
+  };
+
+  const handleAccessPhotoKeep = () => {
+    if (photoGate.phase === "warn") {
+      onCaptureAccessPhoto(photoGate.file);
+      dispatchPhotoGate({ type: "reset" });
+    }
+  };
 
   // O botão nunca espera o GPS (regra: GPS não bloqueia) — sem leitura pronta ainda,
   // grava "unavailable", o mesmo valor de uma leitura que falhou.
@@ -178,15 +222,18 @@ export function ArrivalScreen({
             <small className="check-detail">Obrigatória no checklist desta ordem</small>
           </div>
         </div>
-        <label
-          className="btn btn-block"
-          htmlFor="arrival-access-photo"
-          style={busy ? { opacity: 0.6, pointerEvents: "none" } : undefined}
-        >
-          {accessPhotoCaptured ? "Tirar outra foto do acesso" : "Tirar foto do acesso"}
-        </label>
+        {photoGate.phase !== "warn" && (
+          <label
+            className="btn btn-block"
+            htmlFor="arrival-access-photo"
+            style={busy ? { opacity: 0.6, pointerEvents: "none" } : undefined}
+          >
+            {accessPhotoCaptured ? "Tirar outra foto do acesso" : "Tirar foto do acesso"}
+          </label>
+        )}
         <input
           id="arrival-access-photo"
+          ref={accessPhotoInputRef}
           type="file"
           accept="image/*"
           capture="environment"
@@ -196,10 +243,24 @@ export function ArrivalScreen({
             const file = event.target.files?.[0];
             event.target.value = "";
             if (file !== undefined) {
-              onCaptureAccessPhoto(file);
+              handleAccessFileSelected(file);
             }
           }}
         />
+        {photoGate.phase === "checking" && (
+          <div className="banner banner-info" role="status">
+            <span>Avaliando qualidade da foto do acesso…</span>
+          </div>
+        )}
+        {photoGate.phase === "warn" && (
+          <PhotoQualityCard
+            fileName={photoGate.file.name || "sem nome"}
+            verdict={photoGate.verdict}
+            busy={busy}
+            onRedo={handleAccessPhotoRedo}
+            onKeep={handleAccessPhotoKeep}
+          />
+        )}
         <button
           type="button"
           className="btn btn-dark btn-block"

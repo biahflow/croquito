@@ -200,6 +200,33 @@ Consolidado por tarefa conforme cada BUILD REPORT chega; a evidência do MVP loc
   real não exercitável em vitest — matriz de codecs precisa da passada em
   aparelho no piloto.
 
+### T15 — checagem de qualidade de foto no aparelho (prancha 7b)
+
+- Executor: `implementador-sonnet`. BUILD REPORT: `BUILD_COMPLETE`.
+- Entrega: `photos/quality.ts` (puro: luma Rec.601 → Laplaciano 3×3 → variância;
+  frações estourado/esmagado; veredito `ok|blurry|under|over` com prioridade
+  blurry>over>under e `reasons[]` completo), `decodeReduced.ts` (lado maior
+  ≤512px), `evaluateCapturedPhoto.ts` (falha de decodificação → `available:
+  false`, nunca lança), `photoQualityGate.ts` (máquina pura; avaliação obsoleta
+  descartada; "indisponível" = `clear`, sem fricção — não há evidência para
+  avisar), `PhotoQualityCard` (7b com classes existentes, zero CSS novo),
+  integração nas DUAS capturas (âncora e acesso; no acesso o caminho "ok"
+  auto-persiste sem toque extra, preservando a UX da T4/T6). 19 testes novos
+  (field 255); custo medido ~1ms em 512×384 (Node; folga de 2-3 ordens sobre o
+  orçamento). Limiares nomeados como heurística a calibrar no piloto
+  (BLUR_VARIANCE 1024; luma 250/8; frações 0,35).
+- Achado do builder FORA do escopo dele, corretamente reportado: ruff/mypy
+  reprovavam em `tests/core/test_field.py` — sujeira introduzida pelo MODELO
+  PRINCIPAL na rodada de correção da T12 (import fora de ordem + helper
+  `_media_ref` duplicado, sem rodar lint). Corrigida pelo modelo principal
+  nesta revisão (helper existente reutilizado, import ordenado, ruff format);
+  `pytest tests/core` verde. Lição registrada: edição direta do principal
+  também passa pelos portões estáticos antes de commitar.
+- Validação do builder: field 255 verdes; `make test` completo verde (pytest
+  1876/13 skip, web 853); `make check` passo a passo verde exceto o achado
+  acima (agora corrigido). `make check` oficial completo roda no fechamento da
+  onda (T14 ainda em execução no worker).
+
 ## PLAN_DEVIATION
 
 (nenhum até o momento)

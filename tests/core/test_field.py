@@ -17,11 +17,11 @@ from pydantic import ValidationError
 from croquito_core.field import (
     SURVEY_SCHEMA_VERSION,
     Measurement,
-    ObservationNote,
     MeasurementKind,
     MeasurementStatus,
     MediaAnchor,
     MediaRef,
+    ObservationNote,
     Segment,
     SurveyOperation,
     SurveyPacket,
@@ -230,10 +230,6 @@ def test_survey_packet_aceita_operacao_do_mesmo_survey() -> None:
 def test_segment_exige_ids_nao_vazios() -> None:
     with pytest.raises(ValidationError):
         Segment(id="", from_point_id="p1", to_point_id="p2", created_at=NOW)
-
-
-def _media_ref() -> MediaRef:
-    return MediaRef(sha256="a" * 64, mime_type="audio/webm", byte_size=1024)
 
 
 def test_observacao_so_de_voz_e_valida() -> None:
