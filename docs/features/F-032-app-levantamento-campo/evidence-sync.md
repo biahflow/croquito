@@ -227,6 +227,33 @@ Consolidado por tarefa conforme cada BUILD REPORT chega; a evidência do MVP loc
   acima (agora corrigido). `make check` oficial completo roda no fechamento da
   onda (T14 ainda em execução no worker).
 
+### T14 — IA/CV pós-sync sobre fotos de campo (`analyze_survey_photo`)
+
+- Executor: `implementador-opus`. BUILD REPORT: `BUILD_COMPLETE`.
+- Entrega: `survey_photo_analysis.py` (passe offline sempre — Laplaciano,
+  histograma, resolução, com limiares gravados no próprio artefato para
+  recalibração; passe pago condicional com `PromptTask.FIELD_PHOTO_READING@1.0.0`
+  — transcrever só o VISÍVEL, abster-se do ilegível, prompt em português com
+  razão documentada), handler com dois portões na ordem de custo (flag/suíte →
+  entitlement ATIVO do tenant; suíte injetada NÃO dispensa entitlement — foto é
+  de cliente), artefato `analysis/{sha256}.json` idempotente, raw-store
+  generalizado (`scope`/`scope_id`, chaves antigas idênticas), linha nova no
+  `MODEL_ROUTING.md`. 21 testes novos (worker 960); zero chamadas reais de
+  provider (contadas).
+- Desvios conscientes ACEITOS: quinto estado `provider_pass: failed_permanent` +
+  `provider_failure_code` (BUDGET_EXCEEDED/REFUSED/INVALid_SCHEMA não podem
+  mandar reprocessar — mesma razão do `_handle_upload`); campos aditivos no
+  artefato; portão sem consentimento por levantamento (a tabela de consents é
+  por `job_id` e survey não tem job) — **decisão humana aberta registrada**:
+  criar consentimento por levantamento (schema novo) ou aceitar entitlement por
+  tenant como portão único do campo.
+- Validação: `pytest tests/worker` 960 passed/1 skipped; `make check` exit 0
+  (mypy strict 211 arquivos) e `make test` exit 0 sobre o HEAD com T12/T15 —
+  portões oficiais completos da onda VERDES.
+- Riscos declarados: prompt/limiares sem eval (rodada paga futura, aprovação por
+  rodada); artefato sem consumidor no escritório (fatia futura); erro permanente
+  não dá ack (mesmo comportamento do export).
+
 ## PLAN_DEVIATION
 
 (nenhum até o momento)

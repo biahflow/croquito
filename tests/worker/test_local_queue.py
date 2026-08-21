@@ -613,10 +613,10 @@ def test_object_client_only_sends_checksums_where_the_api_requires_them(
 def test_raw_response_store_honours_the_encryption_flag() -> None:
     storage = FakeObjectStore()
     encrypted = S3ProtectedRawResponseStore(
-        client=storage, bucket="bucket", tenant_id="tenant-a", job_id="job-a"
+        client=storage, bucket="bucket", tenant_id="tenant-a", scope_id="job-a"
     )
     plain = S3ProtectedRawResponseStore(
-        client=storage, bucket="bucket", tenant_id="tenant-a", job_id="job-a", sse=False
+        client=storage, bucket="bucket", tenant_id="tenant-a", scope_id="job-a", sse=False
     )
 
     encrypted.persist(provider=ProviderName.OPENAI, input_digest="a" * 64, payload=b"{}")
@@ -634,7 +634,7 @@ def test_raw_response_store_keeps_the_accepted_key_and_marks_the_rejected_one() 
     """
     storage = FakeObjectStore()
     store = S3ProtectedRawResponseStore(
-        client=storage, bucket="bucket", tenant_id="tenant-a", job_id="job-a"
+        client=storage, bucket="bucket", tenant_id="tenant-a", scope_id="job-a"
     )
     payload = b"{}"
     payload_digest = hashlib.sha256(payload).hexdigest()

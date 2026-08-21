@@ -2,8 +2,8 @@
 
 Status: Accepted for MVP  
 Responsável: AI Engineering / Platform  
-Última revisão: 2026-08-20 (braço `ocr` montável como Document AI por configuração,
-`CROQUITO_DOCAI_PROCESSOR`, [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md))
+Última revisão: 2026-08-21 (tarefa `field-photo-reading` — leitura do que está escrito em
+foto de levantamento de campo, F-032 T14 — acrescentada às rotas padrão)
 
 ## Rotas padrão
 
@@ -17,6 +17,21 @@ Bedrock nem Textract — o caminho AWS nunca rodou no ambiente publicado (GCP,
 | Extração — braço primário | Anthropic API direta `claude-opus-5` (`CROQUITO_ANTHROPIC_MODEL`) | page survey, extração de geometria, e um dos dois lados da extração de medida |
 | Extração — braço reserva/contraparte (opcional) | OpenAI `gpt-5.6-terra` (`CROQUITO_OPENAI_MODEL`), ligado/desligado por `CROQUITO_OPENAI_ARM_ENABLED` | contraparte da comparação dupla de medida; assume por fallback quando o braço primário falha de forma permanente em survey/geometria |
 | OCR auxiliar | Google Cloud Vision, `document text detection` (`GcpVisionOcrAdapter`, `ProviderName.GCP_VISION`) por padrão; Google Document AI (`GcpDocumentAiOcrAdapter`, `ProviderName.GCP_DOCUMENT_AI`) quando `CROQUITO_DOCAI_PROCESSOR` está definido — escalada nomeada em [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md) | corrobora cada leitura de medida extraída; uma chamada por documento, não por leitura |
+| Leitura de foto de campo (`field-photo-reading`, F-032) — mesmos braços de visão | primário Anthropic `claude-opus-5`; reserva OpenAI `gpt-5.6-terra` quando o braço está ligado | uma chamada por foto confirmada, depois do passe offline de qualidade; transcreve só o que está ESCRITO na foto (placa, anotação, visor), sem coordenada e sem medida derivada |
+
+A tarefa `field-photo-reading` nasce em `field-photo-reading@1.0.0` e é a única com template em
+português — o que se pede é transcrição literal do que está escrito em português na praça, e
+instruir em inglês convidaria à tradução, que altera a evidência. **A calibração do prompt e
+dos limiares de qualidade do passe offline é trabalho de eval futura**: nenhuma rodada paga a
+exercitou até esta revisão, e o gate correspondente ainda não existe em
+[Evaluation Strategy](EVALUATION_STRATEGY.md). Ela segue o mesmo fallback declarado das demais
+tarefas de escolha simples (nota `PROVIDER_FALLBACK_FIELD_PHOTO_READING_OPENAI` no artefato de
+análise quando o reserva assume; `BUDGET_EXCEEDED` nunca aciona o reserva) e o mesmo teto de
+gasto. Duas diferenças de operação, ambas deliberadas: o portão é o entitlement contratual do
+TENANT — levantamento não tem `job_id`, então não há consentimento por job a consultar —, e a
+falha da chamada não derruba o comando: o artefato de análise é publicado com o passe offline e
+com `provider_pass` dizendo o que aconteceu (`skipped_disabled`, `skipped_no_entitlement`,
+`failed_transient`, `failed_permanent`).
 
 Model IDs efetivos são resolvidos por configuração validada no startup
 (`CROQUITO_ANTHROPIC_MODEL`, `CROQUITO_OPENAI_MODEL`) e gravados em cada `ProviderReading`/nota

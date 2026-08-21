@@ -2410,6 +2410,19 @@ _NULLED_PAYLOADS: dict[PromptTask, dict[str, object]] = {
         "open_question": None,
         "proposed_acts": None,
     },
+    PromptTask.FIELD_PHOTO_READING: {
+        "readings": [
+            {
+                "raw_text": "PRAÇA MUNICIPAL",
+                "kind_hint": None,
+                "value_hint": None,
+                "unit_hint": None,
+                "target_hint": None,
+                "confidence": "medium",
+            }
+        ],
+        "notes": None,
+    },
 }
 
 
@@ -2524,6 +2537,7 @@ TASKS_WITH_OWN_PROMPT_BRANCH = frozenset(
         PromptTask.LEGEND_EXTRACTION,
         PromptTask.SCO_REFINEMENT,
         PromptTask.REVIEW_CHAT,
+        PromptTask.FIELD_PHOTO_READING,
     }
 )
 """Tarefas cujo template tem ramo e versão próprios; o resto compartilha o texto `@1.1.1`."""
@@ -2569,6 +2583,10 @@ def test_prompt_hashes_of_existing_tasks_are_frozen() -> None:
         "sco-refinement": "sco-refinement@1.0.2",
         # Primeira tarefa imagem+texto: a folha e a pergunta do profissional viajam juntas.
         "review-chat": "review-chat@1.0.1",
+        # Primeira tarefa sobre foto de campo (F-032): nasce depois do rebranding, em 1.0.0,
+        # e é o único template em português — o que se pede é transcrição literal do que
+        # está escrito em português na praça.
+        "field-photo-reading": "field-photo-reading@1.0.0",
     }
 
 

@@ -72,6 +72,19 @@ from croquito_worker.survey_export import (
     survey_attachments_object_key,
     survey_scene_object_key,
 )
+from croquito_worker.survey_photo_analysis import (
+    PhotoQuality,
+    ProviderPass,
+    ProviderPassResult,
+    SurveyPhotoAnalysisError,
+    SurveyPhotoMedia,
+    analysis_counts,
+    analyze_photo_quality,
+    build_photo_analysis_document,
+    photo_media,
+    run_provider_pass,
+    survey_analysis_object_key,
+)
 from croquito_worker.tracing import (
     TRACER_VERSION,
     AppliedSpanReport,
@@ -491,12 +504,20 @@ def _render_provider_preview(page: Any) -> tuple[bytes, float, int, int]:
 
 @dataclass(frozen=True, slots=True)
 class S3ProtectedRawResponseStore(ProtectedRawResponseStore):
-    """Stores raw provider payloads under the job's private seven-day lifecycle prefix."""
+    """Stores raw provider payloads under the private seven-day lifecycle prefix.
+
+    `scope`/`scope_id` nomeiam a que o payload pertence porque nem toda chamada paga é de um
+    job do croqui: a análise de foto de campo (F-032) pertence a um LEVANTAMENTO, que não
+    tem `JobRecord` nenhum. Guardar o `survey_id` num campo chamado `job_id` faria a chave
+    do objeto — e o `ls` do operador — mentir sobre a origem do arquivo.
+    """
 
     client: Any
     bucket: str
     tenant_id: str
-    job_id: str
+    scope_id: str
+    #: Segmento do prefixo: `jobs` (cadeia do croqui) ou `surveys` (levantamento de campo).
+    scope: str = "jobs"
     #: Ver `WorkerArtifactStore.sse`: SSE-S3 explícita, desligável só onde o storage recusa.
     sse: bool = True
 
@@ -517,7 +538,7 @@ class S3ProtectedRawResponseStore(ProtectedRawResponseStore):
         payload_digest = hashlib.sha256(payload).hexdigest()
         rejection = "" if rejected_stage is None else f"rejected/{rejected_stage}/"
         key = (
-            f"tenants/{self.tenant_id}/jobs/{self.job_id}/providers/"
+            f"tenants/{self.tenant_id}/{self.scope}/{self.scope_id}/providers/"
             f"{provider.value}/{rejection}{input_digest}/{payload_digest}.json"
         )
         self.client.put_object(
@@ -744,6 +765,16 @@ class LocalQueueWorker:
             if not isinstance(survey_id, str):
                 raise UnroutableMessageError("Mensagem de levantamento inválida")
             return self._handle_survey_export(survey_id=survey_id, tenant_id=tenant_id)
+        if command == "analyze_survey_photo":
+            # Mesmo motivo do `export_survey` acima para vir antes da guarda de `job_id`: a
+            # foto pertence a um levantamento, e levantamento não tem job.
+            survey_id = body.get("survey_id")
+            media_id = body.get("media_id")
+            if not isinstance(survey_id, str) or not isinstance(media_id, str):
+                raise UnroutableMessageError("Mensagem de análise de foto inválida")
+            return self._handle_survey_photo_analysis(
+                survey_id=survey_id, media_id=media_id, tenant_id=tenant_id
+            )
         job_id = body.get("job_id")
         if not isinstance(job_id, str):
             raise UnroutableMessageError("Mensagem de processamento inválida")
@@ -841,7 +872,7 @@ class LocalQueueWorker:
                     client=self.s3_client,
                     bucket=self.settings.artifact_bucket,
                     tenant_id=tenant_id,
-                    job_id=job_id,
+                    scope_id=job_id,
                     sse=self.settings.storage_sse_enabled,
                 )
             )
@@ -2259,6 +2290,168 @@ class LocalQueueWorker:
             extra={
                 "stage": "SURVEY_EXPORT",
                 "survey_id": survey_id,
+                **counts,
+                "bytes": written_bytes,
+                "duration_ms": duration_ms,
+            },
+        )
+        return 1
+
+    # -- Levantamento de campo: análise da foto (F-032, T14) ---------------------------
+
+    def _survey_photo_bytes(self, media: SurveyPhotoMedia) -> bytes:
+        """Lê os bytes da foto; objeto ausente é recusa nomeada, não falha de transporte.
+
+        A distinção importa para a fila: falha de transporte deve reentregar (o storage pode
+        voltar), enquanto objeto que não existe reentregaria para sempre — o `confirm`
+        gravou o metadado antes de o upload chegar, e a retomada é reprocessar depois que a
+        foto subir, não insistir agora.
+        """
+        try:
+            body = self.s3_client.get_object(
+                Bucket=self.settings.artifact_bucket, Key=media.object_key
+            )["Body"]
+        except ClientError as error:
+            code = str(error.response.get("Error", {}).get("Code", ""))
+            if code in {"NoSuchKey", "NotFound", "404"}:
+                raise SurveyPhotoAnalysisError(
+                    "SURVEY_PHOTO_BYTES_MISSING", "mídia confirmada sem bytes no storage"
+                ) from error
+            raise
+        return cast(bytes, body.read())
+
+    def _survey_photo_provider_pass(
+        self,
+        *,
+        tenant_id: str,
+        survey_id: str,
+        entitlement_id: str | None,
+        image_bytes: bytes,
+        quality: PhotoQuality,
+    ) -> ProviderPassResult:
+        """Decide se o passe pago acontece e, quando acontece, o executa.
+
+        Dois portões antes de qualquer byte sair da máquina, na ordem em que custam menos:
+
+        1. **caminho pago habilitado** — suíte injetada (fixture de teste/demo) ou
+           `CROQUITO_REAL_PROVIDERS_ENABLED`. Sem isso nada é construído e o passe é
+           `skipped_disabled`;
+        2. **entitlement contratual ATIVO do tenant**. Ao contrário da ingestão de PDF, a
+           suíte injetada **não** dispensa este portão: lá o consentimento é por job e a
+           fixture roda sobre documento sintético do próprio repositório; aqui a evidência é
+           foto de cliente e o portão é o único que existe.
+
+        Consentimento por job (`ai_processing_consents`) não tem correspondente aqui: a
+        tabela é chaveada por `job_id` e levantamento não tem job. O snapshot imutável de
+        consentimento por levantamento é fatia futura da F-032 e exigiria schema novo, fora
+        do escopo desta tarefa; o entitlement por tenant é o gate contratual disponível.
+        """
+        if self.provider_suite is None and not self.settings.real_providers_enabled:
+            return ProviderPassResult(outcome=ProviderPass.SKIPPED_DISABLED)
+        if entitlement_id is None:
+            return ProviderPassResult(outcome=ProviderPass.SKIPPED_NO_ENTITLEMENT)
+        suite = self.provider_suite
+        if suite is None:
+            suite = build_real_provider_suite(
+                raw_store=S3ProtectedRawResponseStore(
+                    client=self.s3_client,
+                    bucket=self.settings.artifact_bucket,
+                    tenant_id=tenant_id,
+                    scope="surveys",
+                    scope_id=survey_id,
+                    sse=self.settings.storage_sse_enabled,
+                )
+            )
+        return run_provider_pass(
+            suite.anthropic, suite.openai, image_bytes=image_bytes, quality=quality
+        )
+
+    def _handle_survey_photo_analysis(
+        self, *, survey_id: str, media_id: str, tenant_id: str
+    ) -> int:
+        """Analisa uma foto de campo confirmada e publica o artefato de análise.
+
+        Nada é mutado: `survey_records` e `survey_media_records` são lidos e o resultado sai
+        num objeto próprio, em chave estável derivada do digest da foto. As leituras do passe
+        pago são RASCUNHO — nenhuma vira medida, nenhuma é associada a ponto ou elemento, e
+        confirmação continua sendo ato humano no escritório (F-032 `plan-sync.md`).
+
+        O passe offline é o que sempre acontece; o passe pago é opcional por construção. Uma
+        falha do provider não derruba o handler nem apaga a análise offline: ela é registrada
+        em `provider_pass`, e reprocessar a mensagem é o caminho de retomada quando a falha
+        foi transitória.
+        """
+        started = time.monotonic()
+        with self.engine.connect() as connection:
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT id, sha256, mime_type, byte_size, object_key, status "
+                        "FROM survey_media_records WHERE id = :media_id "
+                        "AND survey_id = :survey_id AND tenant_id = :tenant_id"
+                    ),
+                    {"media_id": media_id, "survey_id": survey_id, "tenant_id": tenant_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            # Entitlement do TENANT, na MESMA conexão da mídia: a autorização contratual é
+            # dado do banco, administrado pelo `platform_operator`, e a flag de ambiente só
+            # diz se o caminho pago existe — ela não autoriza tenant nenhum.
+            entitlement_id = connection.execute(
+                text(
+                    "SELECT id FROM tenant_ai_processing_entitlements "
+                    "WHERE tenant_id = :tenant_id AND status = 'ACTIVE'"
+                ),
+                {"tenant_id": tenant_id},
+            ).scalar_one_or_none()
+        media = photo_media(row)
+        # Uma leitura só do objeto: os dois passes trabalham sobre os MESMOS bytes, e reler
+        # abriria a janela em que o passe pago analisa uma foto diferente da que a qualidade
+        # mediu.
+        image_bytes = self._survey_photo_bytes(media)
+        quality = analyze_photo_quality(image_bytes)
+        provider = self._survey_photo_provider_pass(
+            tenant_id=tenant_id,
+            survey_id=survey_id,
+            entitlement_id=None if entitlement_id is None else str(entitlement_id),
+            image_bytes=image_bytes,
+            quality=quality,
+        )
+        document = build_photo_analysis_document(
+            tenant_id=tenant_id,
+            survey_id=survey_id,
+            media=media,
+            quality=quality,
+            provider=provider,
+        )
+        written_bytes = self._put_survey_json(
+            object_key=survey_analysis_object_key(
+                tenant_id=tenant_id, survey_id=survey_id, sha256=media.sha256
+            ),
+            document=document,
+        )
+        counts = analysis_counts(document)
+        duration_ms = int((time.monotonic() - started) * 1000)
+        # Ids opacos, desfecho do passe pago, contagens e duração. Nunca a imagem, o texto
+        # transcrito, o digest da foto ou a chave assinada de qualquer objeto.
+        logger.info(
+            "survey_photo_analysis_completed survey_id=%s media_id=%s provider_pass=%s "
+            "readings=%d notes=%d findings=%d bytes=%d duration_ms=%d",
+            survey_id,
+            media_id,
+            provider.outcome.value,
+            counts["readings"],
+            counts["notes"],
+            counts["findings"],
+            written_bytes,
+            duration_ms,
+            extra={
+                "stage": "SURVEY_PHOTO_ANALYSIS",
+                "survey_id": survey_id,
+                "media_id": media_id,
+                "provider_pass": provider.outcome.value,
+                "provider_failure_code": provider.failure_code,
                 **counts,
                 "bytes": written_bytes,
                 "duration_ms": duration_ms,
