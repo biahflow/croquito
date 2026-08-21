@@ -44,6 +44,7 @@ from croquito_api.config import ApiSettings
 from croquito_api.database import (
     AuditRecord,
     Database,
+    DomainEventRecord,
     TenantAiProcessingEntitlementRecord,
     ValuationRoundRecord,
     ValuationRoundRevisionRecord,
@@ -3250,3 +3251,49 @@ def test_idempotencia_das_rotas_novas_devolve_a_mesma_resposta(tmp_path: Path) -
     assert exportada.status_code == 200, exportada.text
     assert reexportada.json() == exportada.json()
     assert _round_version(client, round_id) == exportada.json()["version"]
+
+
+def test_acoes_auditadas_da_rodada_viram_evento_com_o_codigo_estavel(tmp_path: Path) -> None:
+    """`valuation.action_recorded.v1` espelha 1:1 a ação já gravada em `audit_events`.
+
+    O catálogo v1 não granulariza essas ações em tipos próprios: quem consome recebe o
+    MESMO código estável que a auditoria interna usa, e criar um tipo por ação antes de
+    haver consumo real publicaria contrato que envelhece sem nunca ter sido lido.
+
+    O `version` acompanha o contador único da cadeia da rodada (ADR-0028 D3), que é o que
+    dá ordem causal ao consumidor — `occurred_at` sozinho não garante.
+    """
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+
+    associated = _associate_plate(client, round_id)
+    assert associated.status_code == 200, associated.text
+
+    with _database(client).sessions() as session:
+        eventos = (
+            session.query(DomainEventRecord)
+            .filter_by(event_type="croquito.valuation.action_recorded.v1")
+            .order_by(DomainEventRecord.created_at, DomainEventRecord.id)
+            .all()
+        )
+        auditados = [
+            record.action
+            for record in session.query(AuditRecord)
+            .filter_by(resource_type="valuation_round")
+            .order_by(AuditRecord.created_at, AuditRecord.id)
+            .all()
+        ]
+        # Rodada não é job: `job_id` fica nulo, e é isso que separa as duas jornadas.
+        assert {evento.job_id for evento in eventos} == {None}
+        assert {evento.tenant_id for evento in eventos} == {_TENANT}
+        assert [evento.payload_json["action"] for evento in eventos] == auditados
+        assert eventos[0].payload_json == {
+            "action": "VALUATION_ROUND_CREATED",
+            "round_id": round_id,
+            "version": 1,
+        }
+        assert eventos[-1].payload_json["action"] == "VALUATION_PLATE_ASSOCIATED"
+        assert eventos[-1].payload_json["round_id"] == round_id
+        # Nome da obra e chave do objeto são dados do cliente e não atravessam.
+        assert set(eventos[-1].payload_json) == {"action", "round_id", "version"}

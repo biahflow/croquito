@@ -93,6 +93,18 @@ class ProviderReviewSnapshot:
     associations: AssociationSet
     proposals: VisionProposalSet
     source_image_bytes: bytes
+    executions: tuple[ProviderExecution, ...] = ()
+    """Toda chamada de provider CONCLUÍDA nesta montagem, na ordem em que retornou.
+
+    Existe para que quem persiste o resultado (`local_queue`) emita um
+    `croquito.ai.call_executed.v1` por chamada, na mesma transação da revisão — este
+    módulo não faz I/O e não conhece banco, então ele registra e não publica.
+
+    Carrega só execuções que retornaram: a chamada que levantou `ProviderExecutionError`
+    não produziu `ProviderExecution` e não vira evento nesta fatia. O `failure_code` do
+    catálogo v1 fica reservado para quando o insumo da falha estiver modelado; hoje ela
+    aparece nas notas de segurança do pacote e no log do operador, não no barramento.
+    """
 
 
 def _lineage(execution: ProviderExecution) -> ProviderLineage:
@@ -386,6 +398,10 @@ def build_provider_review_snapshot(
         # configuração em ruído de log.
         _log_openai_arm_not_configured()
     fallback_notes: list[str] = []
+    # Toda execução concluída é anotada aqui, imediatamente depois de retornar, para que o
+    # caller emita um evento por chamada. Anotar no ponto de retorno (e não no fim) é o que
+    # faz o registro sobreviver aos caminhos que devolvem o snapshot mais cedo.
+    executions: list[ProviderExecution] = []
     survey = _execute_with_fallback(
         suite.anthropic,
         openai_arm,
@@ -393,6 +409,7 @@ def build_provider_review_snapshot(
         fallback_notes,
         "PROVIDER_FALLBACK_PAGE_SURVEY_OPENAI",
     )
+    executions.append(survey)
     if not isinstance(survey.output, PageSurveyOutput) or not survey.output.regions:
         raise ProviderContractError("page survey não retornou região utilizável")
     region_candidates = [
@@ -441,6 +458,7 @@ def build_provider_review_snapshot(
                 ],
             ),
             source_image_bytes=source_image_bytes,
+            executions=tuple(executions),
         )
     # Os dois braços são chamados de propósito: a extração dupla é a comparação. Por isso
     # a captura é individual, e não pelo helper de fallback — um braço caído degrada o
@@ -457,6 +475,8 @@ def build_provider_review_snapshot(
         if error.code is ProviderFailureCode.BUDGET_EXCEEDED or openai_arm is None:
             raise
         anthropic_extraction = None
+    else:
+        executions.append(anthropic_extraction)
     if openai_arm is None:
         openai_extraction = None
     else:
@@ -469,6 +489,8 @@ def build_provider_review_snapshot(
             if error.code is ProviderFailureCode.BUDGET_EXCEEDED or anthropic_extraction is None:
                 raise
             openai_extraction = None
+        else:
+            executions.append(openai_extraction)
     anchor: ProviderExecution
     counterpart_execution: ProviderExecution | None
     if anthropic_extraction is not None:
@@ -557,6 +579,7 @@ def build_provider_review_snapshot(
                 _log_ocr_unavailable(error.code.value)
                 safety_notes.append("OCR_UNAVAILABLE")
             else:
+                executions.append(ocr_execution)
                 if not isinstance(ocr_execution.output, OcrOutput):
                     raise ProviderContractError("OCR não retornou contrato de OCR")
                 ocr_lines = list(ocr_execution.output.lines)
@@ -672,6 +695,7 @@ def build_provider_review_snapshot(
         safety_notes,
         "PROVIDER_FALLBACK_GEOMETRY_EXTRACTION_OPENAI",
     )
+    executions.append(geometry_execution)
     if not isinstance(geometry_execution.output, GeometryExtractionOutput):
         raise ProviderContractError("extração de geometria não retornou contrato de geometria")
     proposals_list = proposals_from_geometry(
@@ -724,4 +748,5 @@ def build_provider_review_snapshot(
         associations=associations,
         proposals=proposals,
         source_image_bytes=source_image_bytes,
+        executions=tuple(executions),
     )

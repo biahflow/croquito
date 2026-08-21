@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any, cast
@@ -17,11 +18,17 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
 
 from croquito_api.config import ApiSettings
 from croquito_api.database import Database
 from croquito_api.main import create_app
+from croquito_core.events import DOMAIN_EVENT_TYPES
 from croquito_worker.criteria import ScopeCriterion
+from croquito_worker.domain_event_publisher import (
+    FileDomainEventPublisher,
+    drain_domain_events,
+)
 from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
 from croquito_worker.review_seed import SeedInputs, seed_review
 from tests.bundles import (
@@ -102,6 +109,69 @@ def stack(tmp_path: Path) -> tuple[TestClient, LocalQueueWorker, FakeObjectStore
     worker.client = queue
     worker.s3_client = storage
     return TestClient(app), worker, storage, queue
+
+
+_ENVELOPE_KEYS = {"event_id", "event_type", "tenant_id", "occurred_at", "job_id", "payload"}
+
+#: Nomes que, se aparecessem num payload, seriam conteúdo — e não fato observável.
+_FORBIDDEN_PAYLOAD_KEYS = frozenset(
+    {
+        "raw_text",
+        "text",
+        "url",
+        "package_url",
+        "signed_url",
+        "token",
+        "authorization",
+        "image",
+        "preview",
+        "body",
+        "scene",
+        "filename",
+        "project_name",
+        "worksite_name",
+        "raw_response_ref",
+    }
+)
+
+
+def _assert_domain_events_contract(database_url: str, destino: Path) -> list[dict[str, Any]]:
+    """Drena a outbox pelo relay e confere TODO envelope emitido pela cadeia real.
+
+    A conferência é sobre o que a jornada inteira realmente publicou, e não sobre um
+    payload montado à mão: um evento novo acrescentado num sítio qualquer do pipeline cai
+    aqui automaticamente, que é o único jeito de esta fronteira não apodrecer.
+    """
+    engine = create_engine(database_url)
+    try:
+        primeiro = drain_domain_events(engine, FileDomainEventPublisher(destino))
+        # Reexecução não republica nada: `published_at` já marcado sai da varredura.
+        segundo = drain_domain_events(engine, FileDomainEventPublisher(destino))
+    finally:
+        engine.dispose()
+    assert primeiro.published > 0
+    assert primeiro.remaining == 0
+    assert (segundo.published, segundo.remaining) == (0, 0)
+
+    envelopes = [json.loads(linha) for linha in destino.read_text(encoding="utf-8").splitlines()]
+    assert len(envelopes) == primeiro.published
+    for envelope in envelopes:
+        assert set(envelope) == _ENVELOPE_KEYS, envelope
+        assert envelope["event_type"] in DOMAIN_EVENT_TYPES
+        assert envelope["tenant_id"] == TENANT
+        # RFC 3339 UTC: o consumidor ordena por entidade com isto.
+        assert datetime.fromisoformat(envelope["occurred_at"]).tzinfo is not None
+        for chave, valor in envelope["payload"].items():
+            assert chave not in _FORBIDDEN_PAYLOAD_KEYS, envelope
+            assert valor is None or isinstance(valor, str | int | float | bool), envelope
+            if isinstance(valor, str):
+                # URL assinada e blob base64 são as duas formas que conteúdo tomaria.
+                assert not valor.startswith(("http://", "https://")), envelope
+                assert len(valor) <= 120, envelope
+    inteiro = json.dumps(envelopes, ensure_ascii=False)
+    for conteudo in (f"{WIDTH_M} m", f"{HEIGHT_M} m", "levantamento.pdf", "Caso sintético"):
+        assert conteudo not in inteiro, conteudo
+    return envelopes
 
 
 def test_authenticated_flow_reaches_an_audited_package(
@@ -331,6 +401,25 @@ def test_authenticated_flow_reaches_an_audited_package(
     assert cast(str, completed.json()["package_url"]).startswith(
         f"https://storage.invalid/tenants/{TENANT}/"
     )
+
+    # 11. F-031 T2: a mesma jornada deixou a outbox pronta; o relay a drena e todo
+    # envelope publicado obedece ao contrato de consumo — inclusive a URL assinada que a
+    # resposta acima carrega e que NENHUM evento pode ter levado junto.
+    envelopes = _assert_domain_events_contract(
+        f"sqlite+pysqlite:///{tmp_path / 'e2e.db'}", tmp_path / "eventos.jsonl"
+    )
+    tipos = {envelope["event_type"] for envelope in envelopes}
+    assert {
+        "croquito.job.created.v1",
+        "croquito.job.stage_changed.v1",
+        "croquito.review.decisions_recorded.v1",
+        "croquito.review.calibration_set.v1",
+        "croquito.review.proposals_decided.v1",
+        "croquito.scene.approved.v1",
+        "croquito.export.completed.v1",
+    } <= tipos
+    # A cadeia inteira é de UM job; os eventos do croqui o nomeiam sem exceção.
+    assert {envelope["job_id"] for envelope in envelopes} == {job_id}
 
 
 def test_a_wrong_decision_is_rectified_and_the_package_still_closes(

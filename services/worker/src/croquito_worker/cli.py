@@ -254,6 +254,30 @@ def main() -> int:
             "nenhum byte sai da máquina"
         ),
     )
+    publish_events_command = subcommands.add_parser(
+        "publish-events",
+        help="drena a outbox de eventos de domínio e publica no sink escolhido",
+    )
+    publish_events_command.add_argument(
+        "--sink",
+        choices=("file", "pubsub"),
+        required=True,
+        help="para onde publicar: arquivo JSONL local ou o tópico Pub/Sub configurado",
+    )
+    publish_events_command.add_argument(
+        "--path",
+        type=Path,
+        help="arquivo JSONL de destino; obrigatório com --sink file",
+    )
+    publish_events_command.add_argument(
+        "--limit",
+        type=int,
+        # Literal, e não `DEFAULT_RELAY_LIMIT`: o parser é montado antes do despacho, e
+        # importar o módulo do publicador aqui em cima tiraria do lazy-import todo comando
+        # deste CLI. O valor espelha `domain_event_publisher.DEFAULT_RELAY_LIMIT`.
+        default=500,
+        help="teto de eventos por execução; a próxima continua de onde esta parou",
+    )
     seed_review_command = subcommands.add_parser(
         "seed-review",
         help="liga um pacote de revisão autorizado a um job existente, sem decidir nada",
@@ -406,6 +430,48 @@ def main() -> int:
         suite = build_synthetic_provider_suite() if args.fixtures else None
         processed = run_local_worker_once(provider_suite=suite)
         print(json.dumps({"processed": processed, "fixtures": bool(args.fixtures)}))
+        return 0
+
+    if args.command == "publish-events":
+        from sqlalchemy import create_engine
+
+        from croquito_worker.domain_event_publisher import (
+            DomainEventPublisher,
+            DomainEventPublishError,
+            FileDomainEventPublisher,
+            PubSubDomainEventPublisher,
+            drain_domain_events,
+        )
+        from croquito_worker.local_queue import LocalWorkerSettings
+
+        # O relay nunca consome a fila de comandos: exigir a URL dela impediria de drenar
+        # a outbox num ambiente que só tem banco.
+        relay_settings = LocalWorkerSettings.from_environment(require_queue=False)
+        publisher: DomainEventPublisher
+        if args.sink == "file":
+            if args.path is None:
+                parser.error("--sink file exige --path: sem destino não há onde publicar")
+            publisher = FileDomainEventPublisher(args.path)
+        else:
+            if not relay_settings.domain_events_topic:
+                print(
+                    "CROQUITO_DOMAIN_EVENTS_TOPIC é obrigatório para o sink pubsub.",
+                    file=sys.stderr,
+                )
+                return 1
+            publisher = PubSubDomainEventPublisher(relay_settings.domain_events_topic)
+        relay_engine = create_engine(relay_settings.database_url)
+        try:
+            relay_result = drain_domain_events(relay_engine, publisher, limit=args.limit)
+        except DomainEventPublishError as publish_error:
+            # Sem `published_at` nos que faltaram: rodar o comando de novo continua dali.
+            print(str(publish_error), file=sys.stderr)
+            return 1
+        finally:
+            relay_engine.dispose()
+        print(
+            json.dumps({"published": relay_result.published, "remaining": relay_result.remaining})
+        )
         return 0
 
     if args.command == "synthetic":

@@ -13,6 +13,7 @@ import pytest
 from botocore.exceptions import BotoCoreError
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm import Session as SaSession
 
 from croquito_api.config import ApiSettings
 from croquito_api.database import (
@@ -22,6 +23,7 @@ from croquito_api.database import (
     ChatSessionRecord,
     ChatTurnRecord,
     Database,
+    DomainEventRecord,
     ExportArtifactRecord,
     IdempotencyRecord,
     JobRecord,
@@ -3642,3 +3644,168 @@ def test_chat_polling_returns_the_answer_and_the_list_stays_lean(tmp_path: Path)
         client.get(f"/v1/jobs/{job_id}/chat-sessions", headers=_headers("tenant-b")).status_code
         == 404
     )
+
+
+def _domain_events(client: TestClient, *, event_type: str) -> list[DomainEventRecord]:
+    """A outbox lida direto do banco: o evento não aparece em resposta nenhuma."""
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions() as session:
+        return (
+            session.query(DomainEventRecord)
+            .filter_by(event_type=event_type)
+            .order_by(DomainEventRecord.created_at, DomainEventRecord.id)
+            .all()
+        )
+
+
+def test_criacao_de_job_publica_o_evento_de_job_criado(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    upload = _presign_and_put(client, idempotency_key="evt-presign")
+
+    created = client.post(
+        "/v1/jobs",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "evt-job"},
+        json={"upload_id": upload["upload_id"], "project_name": "Praça sintética"},
+    )
+
+    assert created.status_code == 201
+    evento = _domain_events(client, event_type="croquito.job.created.v1")[0]
+    assert evento.tenant_id == "tenant-a"
+    assert evento.job_id == created.json()["job_id"]
+    assert evento.payload_json == {
+        "project_id": created.json()["project_id"],
+        "stage": "VALIDATING",
+        "status": "UPLOADED",
+    }
+    # O nome do projeto é dado do cliente e NÃO viaja; só o id opaco.
+    assert "Praça sintética" not in json.dumps(evento.payload_json, ensure_ascii=False)
+    # Nasce pendente: a API grava a outbox e nunca publica do request path (ADR-0042).
+    assert evento.published_at is None
+
+
+def test_decisoes_de_leitura_publicam_as_contagens_do_lote(tmp_path: Path) -> None:
+    """As contagens são do LOTE desta request, e casam com o que foi decidido.
+
+    O consumidor SOMA os eventos para chegar ao acumulado da revisão; reafirmar o total
+    da revisão a cada lote faria a taxa de correção do portal contar duas vezes.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+
+    decided = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "evt-decisions"},
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": "rd_1111111111111111",
+                    "action": "confirm",
+                    "justification": "Evidência sintética revisada.",
+                    "association_proposal_id": "vp_1111111111111111",
+                },
+                {
+                    "reading_id": "rd_2222222222222222",
+                    "action": "correct",
+                    "justification": "Leitura corrigida contra a folha.",
+                    "association_proposal_id": "vp_2222222222222222",
+                    "raw_text": "21,75",
+                    "value_si": "21.75",
+                    "unit": "m",
+                    "kind": "height",
+                    "written_decimals": 2,
+                },
+                {
+                    "reading_id": "rd_3333333333333333",
+                    "action": "reject",
+                    "justification": "Marcação não é cota do desenho.",
+                },
+            ],
+        },
+    )
+
+    assert decided.status_code == 200
+    evento = _domain_events(client, event_type="croquito.review.decisions_recorded.v1")[0]
+    assert evento.job_id == str(job_id)
+    assert evento.payload_json == {
+        "review_version": decided.json()["version"],
+        "decisions_total": 3,
+        "confirmed": 1,
+        "corrected": 1,
+        "rejected": 1,
+    }
+    # Texto de cota é conteúdo e nunca sai: a correção viaja como CONTAGEM, não como valor.
+    assert "21,75" not in json.dumps(evento.payload_json, ensure_ascii=False)
+
+
+def test_evento_e_fato_commitam_juntos_ou_nenhum_dos_dois(tmp_path: Path) -> None:
+    """Falha no `commit` não deixa nem a revisão nem o evento — a outbox é transacional.
+
+    A injeção é no ÚNICO ponto que roda depois do `session.add` do evento: o próprio
+    commit. Falhar antes provaria só que nada foi tentado, e é justamente essa asserção
+    vazia que faria o teste passar com a co-transação quebrada.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    database = cast(Database, cast(Any, client.app).state.database)
+    monkeypatch = pytest.MonkeyPatch()
+
+    def _commit_que_falha(_self: SaSession) -> None:
+        raise RuntimeError("falha injetada no commit da request")
+
+    monkeypatch.setattr(SaSession, "commit", _commit_que_falha)
+    try:
+        with pytest.raises(RuntimeError, match="falha injetada"):
+            _confirm_solver_readings(client, job_id, base_version=1)
+    finally:
+        monkeypatch.undo()
+
+    with database.sessions() as session:
+        # Nem o fato (a revisão de leitura nova) nem o evento sobreviveram.
+        assert session.query(ReviewRevisionRecord).filter_by(job_id=str(job_id)).count() == 1
+        assert session.query(DomainEventRecord).count() == 0
+
+
+def test_declaracao_e_retratacao_de_cadeia_publicam_o_total_vigente(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    assert _confirm_chain_readings(client, job_id).status_code == 200
+
+    declared = _declare_chain(client, job_id, base_version=2, key="evt-chain-declare")
+    assert declared.status_code == 200
+    chain_id = declared.json()["declared_chains"][0]["chain_id"]
+
+    retracted = client.post(
+        f"/v1/jobs/{job_id}/review/chains",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "evt-chain-retract"},
+        json={"base_version": 3, "action": "retract", "chain_id": chain_id},
+    )
+    assert retracted.status_code == 200
+
+    eventos = _domain_events(client, event_type="croquito.review.chains_declared.v1")
+    assert [evento.payload_json["action"] for evento in eventos] == ["declare", "retract"]
+    # O total é o ESTADO depois do ato, e não quantas cadeias o ato mexeu.
+    assert [evento.payload_json["chains_total"] for evento in eventos] == [1, 0]
+
+
+def test_aprovacao_publica_o_papel_profissional_e_nunca_a_pessoa(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    revision_id = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("tenant-a")).json()[
+        "scene"
+    ]["id"]
+
+    approved = client.post(
+        f"/v1/jobs/{job_id}/approve",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "evt-approve"},
+        json=_approval_payload(revision_id, acknowledged_criteria=["ACC_GUA_001"]),
+    )
+
+    assert approved.status_code == 200
+    evento = _domain_events(client, event_type="croquito.scene.approved.v1")[0]
+    assert evento.payload_json == {
+        "scene_revision_id": approved.json()["id"],
+        "approved_by_role": "engineer",
+    }
+    # `reviewer` é o subject do JWT nas fixtures; identidade não atravessa a fronteira.
+    assert "reviewer" not in json.dumps(evento.payload_json)

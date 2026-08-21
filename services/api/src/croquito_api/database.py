@@ -111,6 +111,50 @@ class JobStageEventRecord(Base):
     )
 
 
+class DomainEventRecord(Base):
+    """Outbox transacional dos eventos de domínio publicados para fora (F-031 T2, ADR-0042).
+
+    Cada linha é gravada na MESMA transação do fato que a produziu — o ato humano na API,
+    o `UPDATE` de stage no worker, a chamada de provider concluída. É essa co-transação
+    que faz a garantia dos dois lados: nada é publicado sem ter acontecido (transação
+    abortada leva o evento junto) e nada acontece sem ficar publicável (o commit do fato
+    já deixou o evento durável). Publicar direto do request path perderia as duas.
+
+    `published_at IS NULL` é a fila de trabalho do relay
+    (`croquito-demo publish-events`), e o índice existe por causa dessa varredura. A marca
+    é gravada DEPOIS da publicação: reentrega é o modo de falha aceito (at-least-once, o
+    consumidor deduplica por `event_id`), perda não é.
+
+    `job_id` é `String(36)` SEM chave estrangeira, de propósito e diferente de
+    `JobStageEventRecord`: o outbox é registro de um fato já ocorrido, e não filho do job.
+    Eventos de medição e de orçamento nascem sem job nenhum, e uma FK faria a retenção do
+    job decidir se um fato publicado pode continuar existindo — o histórico externo já
+    consumido não pode depender do ciclo de vida da entidade que o originou.
+
+    `id` É o `event_id` do envelope: um só identificador para a linha e para a mensagem,
+    porque duplicar isso abriria a possibilidade de eles divergirem numa reentrega.
+    """
+
+    __tablename__ = "domain_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    event_type: Mapped[str] = mapped_column(String(80), index=True)
+    job_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    """Só escalares e `None`, conferidos por `croquito_core.events.build_domain_event`.
+
+    Nunca imagem, texto de cota, conteúdo de documento, token ou URL assinada: a mesma
+    política dos logs vale aqui, e a conferência é de FORMA (nada aninhado atravessa)."""
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 class TenantAiProcessingEntitlementRecord(Base):
     """Contractual authorization managed by the platform for one tenant."""
 

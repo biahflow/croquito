@@ -45,6 +45,7 @@ from croquito_api.database import (
     ChatSessionRecord,
     ChatTurnRecord,
     Database,
+    DomainEventRecord,
     EstimateRoundRecord,
     EstimateRoundRevisionRecord,
     ExportArtifactRecord,
@@ -105,6 +106,18 @@ from croquito_api.valuation_rounds import (
     takeoff_overlay_state,
 )
 from croquito_core.errors import DomainValidationError
+from croquito_core.events import (
+    EVENT_ESTIMATE_ACTION_RECORDED,
+    EVENT_JOB_CREATED,
+    EVENT_REVIEW_CALIBRATION_SET,
+    EVENT_REVIEW_CHAINS_DECLARED,
+    EVENT_REVIEW_DECISIONS_RECORDED,
+    EVENT_REVIEW_PROPOSALS_DECIDED,
+    EVENT_REVIEW_RECTIFICATIONS_RECORDED,
+    EVENT_SCENE_APPROVED,
+    EVENT_VALUATION_ACTION_RECORDED,
+    build_domain_event,
+)
 from croquito_core.ids import new_uuid7
 from croquito_core.models import (
     SCENE_SCHEMA_VERSION,
@@ -1563,6 +1576,75 @@ def _record_audit(
             resource_id=resource_id,
             metadata_json={"request_id": request_id},
         )
+    )
+
+
+def _record_domain_event(
+    session: Session,
+    *,
+    principal: Principal,
+    event_type: str,
+    payload: Mapping[str, Any],
+    job_id: UUID | str | None = None,
+) -> None:
+    """Grava um evento de domínio na outbox, na MESMA sessão (e transação) do fato.
+
+    Deliberadamente ao lado de `_record_audit` e nunca depois do `commit`: o `session.add`
+    daqui entra na mesma unidade de trabalho do registro de negócio, então ou os dois
+    commitam ou nenhum. Publicar do request path — direto na fila, depois de responder —
+    publicaria fatos de transação abortada e perderia fatos em falha de broker; é o que o
+    ADR-0042 rejeitou.
+
+    Emitir só nos atos que o catálogo v1 cobre é regra, e não omissão: `build_domain_event`
+    recusa `event_type` fora do catálogo, e um ato auditado sem tipo publicado continua
+    auditado em `audit_events`. O payload passa pela conferência de FORMA do
+    `croquito_core.events` — nada aninhado atravessa, que é como conteúdo viajaria.
+    """
+    occurred_at = datetime.now(UTC)
+    resolved_job_id = str(job_id) if job_id is not None else None
+    envelope = build_domain_event(
+        event_type=event_type,
+        tenant_id=principal.tenant_id,
+        occurred_at=occurred_at,
+        payload=payload,
+        job_id=resolved_job_id,
+    )
+    session.add(
+        DomainEventRecord(
+            id=str(envelope["event_id"]),
+            tenant_id=principal.tenant_id,
+            event_type=event_type,
+            job_id=resolved_job_id,
+            occurred_at=occurred_at,
+            payload_json=envelope["payload"],
+        )
+    )
+
+
+def _record_round_event(
+    session: Session,
+    *,
+    principal: Principal,
+    event_type: str,
+    action: str,
+    record: ValuationRoundRecord | EstimateRoundRecord,
+) -> None:
+    """Espelha em evento a ação já auditada de uma rodada de medição/orçamento.
+
+    O catálogo v1 não granulariza essas ações em tipos próprios de propósito: `action`
+    carrega o MESMO código estável que `audit_events` grava, e criar um tipo por ação é
+    evolução `.v2+`, guiada pelo consumo real do portal — publicar treze tipos que
+    ninguém lê é contrato que envelhece antes de ser usado.
+
+    `version` é o contador ÚNICO da cadeia da rodada (ADR-0028 D3) DEPOIS do ato; é ele
+    que dá ao consumidor a ordem causal dentro da rodada, que `occurred_at` sozinho não
+    garante.
+    """
+    _record_domain_event(
+        session,
+        principal=principal,
+        event_type=event_type,
+        payload={"action": action, "round_id": record.id, "version": record.version},
     )
 
 
@@ -3090,6 +3172,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=str(job_id),
             request_id=request.state.request_id,
         )
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_JOB_CREATED,
+            job_id=job_id,
+            payload={"project_id": str(project_id), "stage": job.stage, "status": job.status},
+        )
         if checksum_deferred:
             _record_audit(
                 session,
@@ -3351,6 +3440,22 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="review_revision",
             resource_id=next_review.id,
             request_id=request.state.request_id,
+        )
+        # Contagens do LOTE desta request, e não do acumulado da revisão: o consumidor
+        # soma os eventos para chegar ao acumulado, e reafirmar o total a cada lote o
+        # faria contar duas vezes.
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_DECISIONS_RECORDED,
+            job_id=job_id,
+            payload={
+                "review_version": next_review.version,
+                "decisions_total": len(payload.decisions),
+                "confirmed": sum(1 for item in payload.decisions if item.action == "confirm"),
+                "corrected": sum(1 for item in payload.decisions if item.action == "correct"),
+                "rejected": sum(1 for item in payload.decisions if item.action == "reject"),
+            },
         )
         session.commit()
         return response
@@ -3621,6 +3726,16 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=next_review.id,
             request_id=request.state.request_id,
         )
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_RECTIFICATIONS_RECORDED,
+            job_id=job_id,
+            payload={
+                "review_version": next_review.version,
+                "rectifications_total": len(payload.rectifications),
+            },
+        )
         session.commit()
         return response
 
@@ -3784,6 +3899,19 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=next_review.id,
             request_id=request.state.request_id,
         )
+        # `chains_total` é o total DECLARADO que sobrou depois do ato (a retração diminui),
+        # e não quantas cadeias este ato mexeu: é o estado que o portal precisa refletir.
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_CHAINS_DECLARED,
+            job_id=job_id,
+            payload={
+                "review_version": next_review.version,
+                "action": payload.action,
+                "chains_total": len(declared_chains),
+            },
+        )
         session.commit()
         return response
 
@@ -3925,6 +4053,15 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="review_revision",
             resource_id=next_review.id,
             request_id=request.state.request_id,
+        )
+        # Só a versão: escala, rotação e âncoras descrevem o desenho do cliente e não têm
+        # o que fazer num barramento externo.
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_CALIBRATION_SET,
+            job_id=job_id,
+            payload={"review_version": next_review.version},
         )
         session.commit()
         return response
@@ -4141,6 +4278,18 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="review_revision",
             resource_id=next_review.id,
             request_id=request.state.request_id,
+        )
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_PROPOSALS_DECIDED,
+            job_id=job_id,
+            payload={
+                "review_version": next_review.version,
+                "proposals_total": 1,
+                "accepted": 1 if payload.action == "accept" else 0,
+                "rejected": 1 if payload.action == "reject" else 0,
+            },
         )
         session.commit()
         return response
@@ -4375,6 +4524,21 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="review_revision",
             resource_id=next_review.id,
             request_id=request.state.request_id,
+        )
+        # `batch` é o que o lote REALMENTE decidiu (proposta já decidida antes não entra),
+        # e não `payload.proposal_ids`: a contagem publicada precisa bater com as linhas de
+        # `proposal_decisions` gravadas logo acima.
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_PROPOSALS_DECIDED,
+            job_id=job_id,
+            payload={
+                "review_version": next_review.version,
+                "proposals_total": len(batch),
+                "accepted": len(batch) if payload.action == "accept" else 0,
+                "rejected": len(batch) if payload.action == "reject" else 0,
+            },
         )
         session.commit()
         return response
@@ -4986,6 +5150,18 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="scene_revision",
             resource_id=str(approved_scene.id),
             request_id=request.state.request_id,
+        )
+        # O PAPEL do aprovador, nunca o subject: quem aprovou é pessoa identificável, e o
+        # barramento externo recebe a qualificação profissional do ato, não a identidade.
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_SCENE_APPROVED,
+            job_id=job_id,
+            payload={
+                "scene_revision_id": str(approved_scene.id),
+                "approved_by_role": reviewer_role,
+            },
         )
         session.commit()
         return approved_scene
@@ -5959,6 +6135,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=str(round_id),
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_ROUND_CREATED",
+            record=record,
+        )
         session.commit()
         return response
 
@@ -6114,6 +6297,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_PLATE_ASSOCIATED",
+            record=record,
+        )
         session.commit()
         return response
 
@@ -6234,6 +6424,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="valuation_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_EXTRACTION_REQUESTED",
+            record=record,
         )
         # O intent é durável ANTES da fila, e nenhuma transação atravessa a publicação.
         session.commit()
@@ -6394,6 +6591,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_TAKEOFF_ITEM_DECIDED",
+            record=record,
+        )
         # A decisão fica durável ANTES da fila, e nenhuma transação atravessa a publicação.
         _commit_valuation_revision(session)
         _enqueue_takeoff_overlay_rerender(
@@ -6546,6 +6750,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="valuation_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_CODE_SUGGESTIONS_RECOMPUTED",
+            record=record,
         )
         _commit_valuation_revision(session)
         return response
@@ -6702,6 +6913,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_ITEM_CODE_DECIDED",
+            record=record,
+        )
         _commit_valuation_revision(session)
         return response
 
@@ -6811,6 +7029,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="valuation_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_CALC_BUILT",
+            record=record,
         )
         _commit_valuation_revision(session)
         return response
@@ -6943,6 +7168,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_APPROVED",
+            record=record,
+        )
         _commit_valuation_revision(session)
         return response
 
@@ -7056,6 +7288,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="BULLETIN_EXPORTED",
+            record=record,
+        )
         _commit_valuation_revision(session)
         return response
 
@@ -7136,6 +7375,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="valuation_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_AMENDMENT_DOSSIER_BUILT",
+            record=record,
         )
         _commit_valuation_revision(session)
         return response
@@ -7482,6 +7728,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=str(round_id),
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_ROUND_CREATED",
+            record=record,
+        )
         session.commit()
         return response
 
@@ -7633,6 +7886,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_TARGET_SET",
+            record=record,
+        )
         session.commit()
         return response
 
@@ -7718,6 +7978,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_CATALOG_INSTALLED",
+            record=record,
+        )
         session.commit()
         return response
 
@@ -7781,6 +8048,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_CASCADE_REORDERED",
+            record=record,
         )
         session.commit()
         return response
@@ -7849,6 +8123,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_CASCADE_SOURCE_REMOVED",
+            record=record,
         )
         session.commit()
         return response
@@ -7919,6 +8200,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_PLATE_ASSOCIATED",
+            record=record,
         )
         session.commit()
         return response
@@ -8041,6 +8329,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_EXTRACTION_REQUESTED",
+            record=record,
         )
         # O intent é durável ANTES da fila, e nenhuma transação atravessa a publicação.
         session.commit()
@@ -8197,6 +8492,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_TAKEOFF_ITEM_DECIDED",
+            record=record,
+        )
         # A decisão fica durável ANTES da fila, e nenhuma transação atravessa a publicação.
         _commit_valuation_revision(session)
         _enqueue_estimate_overlay_rerender(
@@ -8347,6 +8649,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_CODE_SUGGESTIONS_RECOMPUTED",
+            record=record,
+        )
         _commit_valuation_revision(session)
         return response
 
@@ -8489,6 +8798,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_ITEM_CODE_DECIDED",
+            record=record,
+        )
         _commit_valuation_revision(session)
         return response
 
@@ -8612,6 +8928,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_BUILT",
+            record=record,
         )
         _commit_valuation_revision(session)
         return response

@@ -408,3 +408,117 @@ def test_check_chains_refuses_parts_without_a_total(
         )
 
     assert excinfo.value.code == 2
+
+
+def _outbox(tmp_path: Path, *, events: int = 2) -> str:
+    from croquito_api.database import Database, DomainEventRecord
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'cli-outbox.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    with database.sessions.begin() as session:
+        for position in range(events):
+            session.add(
+                DomainEventRecord(
+                    id=f"evt-cli-{position}",
+                    tenant_id="tenant-cli",
+                    event_type="croquito.job.created.v1",
+                    job_id=f"job-{position}",
+                    occurred_at=datetime.now(UTC),
+                    payload_json={
+                        "project_id": f"project-{position}",
+                        "stage": "VALIDATING",
+                        "status": "UPLOADED",
+                    },
+                )
+            )
+    return database_url
+
+
+def test_publish_events_drena_a_outbox_e_a_reexecucao_publica_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O relay é um comando idempotente como os demais do `croquito-demo`.
+
+    Sem `CROQUITO_PROCESSING_QUEUE_URL`: drenar a outbox não consome fila de comandos, e
+    exigir a URL dela impediria de rodar o relay num ambiente que só tem banco.
+    """
+    database_url = _outbox(tmp_path)
+    monkeypatch.setenv("CROQUITO_DATABASE_URL", database_url)
+    monkeypatch.setenv("CROQUITO_AWS_ENDPOINT_URL", "http://localstack")
+    monkeypatch.delenv("CROQUITO_PROCESSING_QUEUE_URL", raising=False)
+    destino = tmp_path / "eventos.jsonl"
+
+    assert _run_main(monkeypatch, ["publish-events", "--sink", "file", "--path", str(destino)]) == 0
+    assert json.loads(capsys.readouterr().out) == {"published": 2, "remaining": 0}
+
+    assert _run_main(monkeypatch, ["publish-events", "--sink", "file", "--path", str(destino)]) == 0
+    assert json.loads(capsys.readouterr().out) == {"published": 0, "remaining": 0}
+    assert len(destino.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_publish_events_com_limite_deixa_o_resto_pendente(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    database_url = _outbox(tmp_path, events=3)
+    monkeypatch.setenv("CROQUITO_DATABASE_URL", database_url)
+    monkeypatch.setenv("CROQUITO_AWS_ENDPOINT_URL", "http://localstack")
+
+    exit_code = _run_main(
+        monkeypatch,
+        ["publish-events", "--sink", "file", "--path", str(tmp_path / "e.jsonl"), "--limit", "1"],
+    )
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == {"published": 1, "remaining": 2}
+
+
+def test_publish_events_sink_arquivo_exige_destino(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CROQUITO_DATABASE_URL", _outbox(tmp_path))
+    monkeypatch.setenv("CROQUITO_AWS_ENDPOINT_URL", "http://localstack")
+
+    with pytest.raises(SystemExit) as error:
+        _run_main(monkeypatch, ["publish-events", "--sink", "file"])
+
+    assert error.value.code == 2
+
+
+def test_publish_events_sink_pubsub_sem_topico_falha_com_mensagem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Tópico ausente recusa ANTES de tentar publicar; falhar em silêncio seria pior."""
+    monkeypatch.setenv("CROQUITO_DATABASE_URL", _outbox(tmp_path))
+    monkeypatch.setenv("CROQUITO_AWS_ENDPOINT_URL", "http://localstack")
+    monkeypatch.delenv("CROQUITO_DOMAIN_EVENTS_TOPIC", raising=False)
+
+    assert _run_main(monkeypatch, ["publish-events", "--sink", "pubsub"]) == 1
+    assert "CROQUITO_DOMAIN_EVENTS_TOPIC" in capsys.readouterr().err
+
+
+def test_publish_events_falha_do_sink_sai_com_um_e_nao_marca_o_pendente(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from croquito_api.database import Database, DomainEventRecord
+    from croquito_worker import domain_event_publisher
+
+    database_url = _outbox(tmp_path, events=1)
+    monkeypatch.setenv("CROQUITO_DATABASE_URL", database_url)
+    monkeypatch.setenv("CROQUITO_AWS_ENDPOINT_URL", "http://localstack")
+
+    def _sink_quebrado(_path: Path) -> object:
+        class _Broken:
+            def publish(self, envelope: object) -> None:
+                raise domain_event_publisher.DomainEventPublishError("destino indisponível")
+
+        return _Broken()
+
+    monkeypatch.setattr(
+        "croquito_worker.domain_event_publisher.FileDomainEventPublisher", _sink_quebrado
+    )
+
+    assert _run_main(monkeypatch, ["publish-events", "--sink", "file", "--path", "x.jsonl"]) == 1
+    assert "destino indisponível" in capsys.readouterr().err
+    with Database(database_url).sessions() as session:
+        assert session.query(DomainEventRecord).one().published_at is None
