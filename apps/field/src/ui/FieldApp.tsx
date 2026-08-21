@@ -7,21 +7,33 @@ import {
   addSegment,
   closePerimeter,
   justifyMeasurement,
+  recordArrival,
   undoLast,
   type CommandHistoryEntry,
 } from "../domain/commands";
-import type { CommandResult, Segment, Survey, SurveyPointId } from "../domain/types";
+import type { CommandResult, GpsFix, Segment, Survey, SurveyPointId } from "../domain/types";
 import { validateSurvey } from "../domain/validation";
 import { applyCommand } from "../outbox/applyCommand";
 import { createSerialQueue } from "../outbox/serialQueue";
+import { clearActiveOrderId, getActiveOrderId, setActiveOrderId } from "../orders/activeOrder";
+import { ORDERS } from "../orders/fixture";
+import {
+  deriveOrderState,
+  requiredItemsForOrder,
+  surveyIdForOrder,
+  type OrderState,
+} from "../orders/state";
+import type { Order, OrderId } from "../orders/types";
 import type { SurveyRepository } from "../storage/SurveyRepository";
 import { AddMenu } from "./AddMenu";
+import { ArrivalScreen } from "./ArrivalScreen";
 import { AppBar } from "./AppBar";
 import { CollectScreen } from "./CollectScreen";
 import { getOrCreateDeviceId } from "./device";
 import { DivergenceScreen } from "./DivergenceScreen";
 import { MeasureScreen } from "./MeasureScreen";
 import type { Notice } from "./notice";
+import { OrdersScreen } from "./OrdersScreen";
 import { TextEntryScreen } from "./TextEntryScreen";
 import {
   DEFAULT_TOLERANCE_MM,
@@ -33,17 +45,19 @@ import {
   type MmPoint,
 } from "./viewModel";
 
-/** Um levantamento local por aparelho nesta fatia; a ordem de serviço que dá nome e
- * escopo ao levantamento chega em T4. */
-const SURVEY_ID = "survey-local";
-const SURVEY_NAME = "Levantamento de campo";
+const APP_BRAND = "croquito campo";
 
 /**
- * Instrumento ainda não declarado. A tela de chegada (prancha 2) é quem registra o
- * instrumento do dia — até ela existir, gravar "trena laser" seria inventar a
- * proveniência de toda medida do levantamento.
+ * Instrumento ainda não declarado. Sobrevive como fallback defensivo (Especificação §6 do
+ * Task Contract T4): na prática, T4 garante que toda coleta passa antes pela chegada
+ * (`recordArrival`), então `survey.context` deveria sempre existir na tela de medir.
  */
 const UNDECLARED_INSTRUMENT = "não informado";
+
+/** Tela raiz do app — a navegação ordens → chegada → coleta do Task Contract T4.
+ * `"loading"` é só o instante entre montar e decidir, a partir da ordem ativa persistida
+ * (`orders/activeOrder.ts`), se reabre direto na chegada/coleta ou cai na lista. */
+type Screen = { kind: "loading" } | { kind: "orders" } | { kind: "arrival" } | { kind: "survey" };
 
 type Mode =
   | { kind: "collect" }
@@ -55,19 +69,22 @@ type Mode =
   | { kind: "justify"; segment_id: string; measurement_id: string }
   | { kind: "observation" };
 
-function createSurvey(id: string): Survey {
-  const now = new Date().toISOString();
+function createSurveyForOrder(order: Order, nowIso: string): Survey {
   return {
-    id,
-    name: SURVEY_NAME,
+    id: surveyIdForOrder(order.id),
+    // Nome curto: é o que a AppBar de chegada/coleta exibe (pranchas 2-5 do Design
+    // Approval Package mostram "Guaxindiba", nunca "Praça de Guaxindiba"). O cartão da
+    // lista (prancha 1) usa `order.name` (nome completo), não este campo.
+    name: order.short_name,
+    order_id: order.id,
     points: [],
     segments: [],
     measurements: [],
     photo_anchors: [],
     elements: [],
     observations: [],
-    created_at: now,
-    updated_at: now,
+    created_at: nowIso,
+    updated_at: nowIso,
   };
 }
 
@@ -76,14 +93,20 @@ export interface FieldAppProps {
 }
 
 /**
- * Orquestra a coleta: motor de `src/domain` → `applyCommand` (persistência) → estado de
- * React. Nenhum caminho desta tela grava direto no repositório nem atualiza o estado
- * antes de a operação estar no outbox.
+ * Orquestra o app: ordens (fixture local) → chegada (`recordArrival`) → coleta (motor de
+ * `src/domain` → `applyCommand` → estado de React). Nenhum caminho desta tela grava
+ * direto no repositório nem atualiza o estado antes de a operação estar no outbox — a
+ * criação do survey ao baixar uma ordem é a única exceção deliberada: não é uma operação
+ * do outbox (não muta um survey existente), é a criação do recurso, mesmo padrão que T3
+ * já usava para o survey único do scaffold.
  *
  * A pilha de undo (`CommandHistoryEntry`) vive aqui, fora do `Survey` — é quem aplica os
  * comandos que guarda o snapshot anterior, por decisão de T2.
  */
 export function FieldApp({ repository }: FieldAppProps) {
+  const [screen, setScreen] = useState<Screen>({ kind: "loading" });
+  const [orderStates, setOrderStates] = useState<Map<OrderId, OrderState>>(new Map());
+  const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
   const [survey, setSurveyState] = useState<Survey | null>(null);
   const surveyRef = useRef<Survey | null>(null);
   const [history, setHistory] = useState<CommandHistoryEntry[]>([]);
@@ -102,24 +125,54 @@ export function FieldApp({ repository }: FieldAppProps) {
     setSurveyState(next);
   }, []);
 
+  const refreshOrderStates = useCallback(async () => {
+    const entries = await Promise.all(
+      ORDERS.map(async (order): Promise<[OrderId, OrderState]> => {
+        const existing = await repository.getSurvey(surveyIdForOrder(order.id));
+        return [order.id, deriveOrderState(existing)];
+      }),
+    );
+    setOrderStates(new Map(entries));
+  }, [repository]);
+
+  // Decide a tela inicial: ordem ativa persistida (reload volta direto à chegada/coleta —
+  // AC3) ou a lista de ordens.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const existing = await repository.getSurvey(SURVEY_ID);
-      const loaded = existing ?? createSurvey(SURVEY_ID);
-      if (existing === undefined) {
-        await repository.saveSurvey(loaded);
+      const activeOrderId = getActiveOrderId();
+      const activeOrder = activeOrderId === null
+        ? undefined
+        : ORDERS.find((order) => order.id === activeOrderId);
+      if (activeOrder !== undefined) {
+        const loaded = await repository.getSurvey(surveyIdForOrder(activeOrder.id));
+        if (loaded !== undefined) {
+          if (cancelled) {
+            return;
+          }
+          setCurrentOrder(activeOrder);
+          commitSurvey(loaded);
+          const pending = await repository.getPendingOperations(loaded.id);
+          if (cancelled) {
+            return;
+          }
+          setPendingCount(pending.length);
+          setScreen(loaded.context === undefined ? { kind: "arrival" } : { kind: "survey" });
+          return;
+        }
+        // Ordem ativa referenciada não existe mais localmente (ex.: banco limpo por
+        // fora) — cai para a lista em vez de travar numa referência morta.
+        clearActiveOrderId();
       }
-      const pending = await repository.getPendingOperations(loaded.id);
+      await refreshOrderStates();
       if (!cancelled) {
-        commitSurvey(loaded);
-        setPendingCount(pending.length);
+        setScreen({ kind: "orders" });
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [repository, commitSurvey]);
+  }, [repository, commitSurvey, refreshOrderStates]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -134,8 +187,16 @@ export function FieldApp({ repository }: FieldAppProps) {
 
   const findings = useMemo(
     () =>
-      survey === null ? [] : validateSurvey(survey, { toleranceMm: DEFAULT_TOLERANCE_MM }),
-    [survey],
+      survey === null
+        ? []
+        : validateSurvey(survey, {
+            toleranceMm: DEFAULT_TOLERANCE_MM,
+            // Task Contract T4, §5: o checklist da ordem entra na validação como
+            // requiredItems (hoje só foto-acesso fica pendente; ver orders/state.ts).
+            requiredItems:
+              currentOrder === null ? undefined : requiredItemsForOrder(currentOrder),
+          }),
+    [survey, currentOrder],
   );
 
   /** Toques em campo chegam mais rápido que a persistência: a fila garante que cada
@@ -195,6 +256,75 @@ export function FieldApp({ repository }: FieldAppProps) {
     setSelectedPointId(null);
     setNotice(next ?? null);
   }, []);
+
+  const handleDownloadOrder = useCallback(
+    (order: Order) => {
+      void (async () => {
+        setBusy(true);
+        try {
+          const existing = await repository.getSurvey(surveyIdForOrder(order.id));
+          if (existing === undefined) {
+            await repository.saveSurvey(createSurveyForOrder(order, new Date().toISOString()));
+          }
+          await refreshOrderStates();
+        } finally {
+          setBusy(false);
+        }
+      })();
+    },
+    [repository, refreshOrderStates],
+  );
+
+  const handleOpenOrder = useCallback(
+    (order: Order) => {
+      void (async () => {
+        setBusy(true);
+        try {
+          const loaded = await repository.getSurvey(surveyIdForOrder(order.id));
+          if (loaded === undefined) {
+            return;
+          }
+          setCurrentOrder(order);
+          commitSurvey(loaded);
+          setHistory([]);
+          setMode({ kind: "collect" });
+          setSelectedPointId(null);
+          setSelectedSegmentId(null);
+          setNotice(null);
+          const pending = await repository.getPendingOperations(loaded.id);
+          setPendingCount(pending.length);
+          setActiveOrderId(order.id);
+          setScreen(loaded.context === undefined ? { kind: "arrival" } : { kind: "survey" });
+        } finally {
+          setBusy(false);
+        }
+      })();
+    },
+    [repository, commitSurvey],
+  );
+
+  const handleRecordArrival = useCallback(
+    (args: { instrument: string; referenceNote: string; gps: GpsFix | "unavailable" }) => {
+      void (async () => {
+        const next = await apply((current) =>
+          recordArrival(
+            current,
+            {
+              instrument: args.instrument,
+              reference_note: args.referenceNote,
+              gps: args.gps,
+            },
+            new Date().toISOString(),
+          ),
+        );
+        if (next !== null) {
+          setNotice(null);
+          setScreen({ kind: "survey" });
+        }
+      })();
+    },
+    [apply],
+  );
 
   const handleCanvasTap = useCallback(
     (point: MmPoint) => {
@@ -291,7 +421,7 @@ export function FieldApp({ repository }: FieldAppProps) {
               kind: "length",
               from_point_id: segment.from_point_id,
               to_point_id: segment.to_point_id,
-              instrument: UNDECLARED_INSTRUMENT,
+              instrument: surveyRef.current?.context?.instrument ?? UNDECLARED_INSTRUMENT,
               status: "confirmed",
             },
             new Date().toISOString(),
@@ -353,10 +483,50 @@ export function FieldApp({ repository }: FieldAppProps) {
     [apply, backToCollect],
   );
 
+  if (screen.kind === "loading") {
+    return (
+      <div className="flex h-dvh flex-col">
+        <AppBar title={APP_BRAND} pendingCount={0} isOnline={isOnline} />
+        <div className="screen">
+          <div className="content">
+            <p className="sub">Abrindo o levantamento guardado neste aparelho…</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (screen.kind === "orders") {
+    return (
+      <div className="flex h-dvh flex-col">
+        <AppBar title={APP_BRAND} pendingCount={0} isOnline={isOnline} />
+        <OrdersScreen
+          orders={ORDERS}
+          stateByOrderId={orderStates}
+          isOnline={isOnline}
+          busy={busy}
+          onDownload={handleDownloadOrder}
+          onOpen={handleOpenOrder}
+        />
+      </div>
+    );
+  }
+
+  if (screen.kind === "arrival") {
+    return (
+      <div className="flex h-dvh flex-col">
+        <AppBar title={currentOrder?.short_name ?? APP_BRAND} pendingCount={0} isOnline={isOnline} />
+        <ArrivalScreen notice={notice} onConfirm={handleRecordArrival} busy={busy} />
+      </div>
+    );
+  }
+
+  // screen.kind === "survey" a partir daqui — a navegação garante `survey` carregado; o
+  // fallback abaixo só cobre a corrida entre `setScreen` e o próximo render.
   if (survey === null) {
     return (
       <div className="flex h-dvh flex-col">
-        <AppBar title={SURVEY_NAME} pendingCount={0} isOnline={isOnline} />
+        <AppBar title={currentOrder?.short_name ?? APP_BRAND} pendingCount={0} isOnline={isOnline} />
         <div className="screen">
           <div className="content">
             <p className="sub">Abrindo o levantamento guardado neste aparelho…</p>
@@ -368,6 +538,7 @@ export function FieldApp({ repository }: FieldAppProps) {
 
   const segmentLabelById = segmentLabels(survey.segments);
   const pointLabelById = pointLabels(survey.points);
+  const instrumentLabel = survey.context?.instrument ?? UNDECLARED_INSTRUMENT;
 
   const instruction: Notice | null =
     mode.kind === "pick-point"
@@ -422,7 +593,7 @@ export function FieldApp({ repository }: FieldAppProps) {
     return (
       <MeasureScreen
         targetLabel={label}
-        subtitle={`Comprimento · do ponto ${from} ao ponto ${to} · instrumento ${UNDECLARED_INSTRUMENT}`}
+        subtitle={`Comprimento · do ponto ${from} ao ponto ${to} · instrumento ${instrumentLabel}`}
         notice={notice}
         onConfirm={(valueMm) => handleConfirmMeasurement(segment, valueMm)}
         onCancel={() => {

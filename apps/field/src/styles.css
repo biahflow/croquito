@@ -422,6 +422,89 @@
     font-weight: 600;
   }
 
+  /* ---------- checklist (prancha 2 e 5) ---------- */
+  .check {
+    display: flex;
+    gap: var(--s-3);
+    align-items: flex-start;
+    padding: var(--s-3);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+  }
+
+  .check-state {
+    flex-shrink: 0;
+    margin-top: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--color-muted);
+  }
+
+  .check-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .check-title {
+    display: block;
+    font-weight: 600;
+  }
+
+  .check-detail {
+    color: var(--color-ink-secondary);
+    font-size: var(--text-label);
+  }
+
+  .check-ok .check-state {
+    background: var(--color-state-ok);
+    border-color: var(--color-state-ok);
+  }
+
+  .check-warn .check-state {
+    background: var(--color-state-warn);
+    border-color: var(--color-state-warn);
+  }
+
+  .check-error .check-state {
+    background: var(--color-state-error);
+    border-color: var(--color-state-error);
+  }
+
+  /* Estado neutro (ex.: GPS ainda sendo lido) — mesma cor de "ainda não levantado". */
+  .check-todo .check-state {
+    background: var(--color-state-todo);
+    border-color: var(--color-state-todo);
+  }
+
+  /* ---------- segmented control (instrumento, prancha 2) ---------- */
+  .seg {
+    display: flex;
+    border: 1px solid var(--color-muted);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .seg-item {
+    flex: 1;
+    min-height: var(--touch);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: inherit;
+    font-weight: 600;
+    color: var(--color-ink-secondary);
+    background: var(--color-surface);
+    border: 0;
+    cursor: pointer;
+  }
+
+  .seg-item-on {
+    background: var(--color-dark);
+    color: var(--color-dark-ink);
+  }
+
   /* ---------- campo de texto ---------- */
   .field {
     display: flex;

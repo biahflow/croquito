@@ -7,9 +7,11 @@
  */
 
 import type {
+  ArrivalContext,
   CommandResult,
   ElementObject,
   ElementObjectId,
+  GpsFix,
   Measurement,
   MeasurementId,
   MeasurementKind,
@@ -391,6 +393,41 @@ export function addPhotoAnchor(
   };
   const next: Survey = { ...survey, photo_anchors: [...survey.photo_anchors, anchor] };
   return ok(next, nowIso, "photo_anchor.add", { anchor });
+}
+
+// ---------------------------------------------------------------------------------
+// recordArrival
+// ---------------------------------------------------------------------------------
+
+export interface RecordArrivalArgs {
+  instrument: string;
+  reference_note: string;
+  gps?: GpsFix | "unavailable";
+}
+
+/**
+ * Registra o contexto da chegada ao local (prancha 2 do Design Approval Package): uma
+ * tarefa por survey, chamada antes de "Começar a coleta".
+ *
+ * GPS NUNCA bloqueia (Task Contract T4, Known Risks): `args.gps` é opcional e aceita
+ * `"unavailable"` sem que este comando rejeite — só a referência física vazia falha.
+ */
+export function recordArrival(
+  survey: Survey,
+  args: RecordArrivalArgs,
+  nowIso: string,
+): CommandResult {
+  if (args.reference_note.trim().length === 0) {
+    return fail("EMPTY_TEXT", "A referência física não pode ficar vazia.");
+  }
+  const context: ArrivalContext = {
+    instrument: args.instrument,
+    reference_note: args.reference_note,
+    gps: args.gps,
+    arrived_at: nowIso,
+  };
+  const next: Survey = { ...survey, context };
+  return ok(next, nowIso, "arrival.record", { context });
 }
 
 // ---------------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import {
   addSegment,
   closePerimeter,
   justifyMeasurement,
+  recordArrival,
   undoLast,
   type CommandHistoryEntry,
 } from "./commands";
@@ -506,6 +507,57 @@ describe("addPhotoAnchor", () => {
     );
 
     expect(result.error.code).toBe("ANCHOR_UNLINKED");
+  });
+});
+
+describe("recordArrival", () => {
+  it("grava instrumento, referência e GPS bem-sucedido, e emite arrival.record", () => {
+    const result = mustOk(
+      recordArrival(
+        emptySurvey(),
+        {
+          instrument: "Trena laser",
+          reference_note: "Canto do muro da escola, lado norte",
+          gps: { lat: -22.821, lng: -43.024, accuracy_m: 8 },
+        },
+        NOW,
+      ),
+    );
+
+    expect(result.survey.context).toEqual({
+      instrument: "Trena laser",
+      reference_note: "Canto do muro da escola, lado norte",
+      gps: { lat: -22.821, lng: -43.024, accuracy_m: 8 },
+      arrived_at: NOW,
+    });
+    expect(result.operation).toEqual({
+      type: "arrival.record",
+      payload: { context: result.survey.context },
+    });
+  });
+
+  it("GPS indisponível não bloqueia a chegada", () => {
+    const result = mustOk(
+      recordArrival(
+        emptySurvey(),
+        { instrument: "Trena comum", reference_note: "Poste de luz da esquina", gps: "unavailable" },
+        NOW,
+      ),
+    );
+
+    expect(result.survey.context?.gps).toBe("unavailable");
+  });
+
+  it("rejeita referência física vazia com EMPTY_TEXT", () => {
+    const result = mustFail(
+      recordArrival(
+        emptySurvey(),
+        { instrument: "Outro", reference_note: "   ", gps: "unavailable" },
+        NOW,
+      ),
+    );
+
+    expect(result.error.code).toBe("EMPTY_TEXT");
   });
 });
 

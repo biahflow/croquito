@@ -112,10 +112,41 @@ export interface ElementObject {
   created_at: string;
 }
 
+/** Leitura de GPS bem-sucedida — referência geográfica, nunca medição (prancha 2 do
+ * Design Approval Package e `apps/field/AGENTS.md`). */
+export interface GpsFix {
+  lat: number;
+  lng: number;
+  accuracy_m: number;
+}
+
+/** Contexto registrado na chegada ao local (prancha 2), uma vez por levantamento — vale
+ * para toda medida do dia.
+ *
+ * `instrument` guarda o rótulo exato escolhido no segmented control de lista fechada
+ * ("Trena laser" | "Trena comum" | "Outro"), como texto livre — mesma convenção de
+ * `Measurement.instrument` (já texto livre neste domínio); a lista fechada é imposta pela
+ * UI (só três botões), não por um enum aqui, para não duplicar a mesma regra em dois
+ * lugares. `gps` é `undefined` quando a chegada foi registrada antes de qualquer
+ * tentativa de leitura, `"unavailable"` quando a tentativa falhou/foi negada/expirou, e o
+ * objeto de coordenadas quando teve sucesso — GPS nunca bloqueia o registro da chegada
+ * (Task Contract T4, Known Risks). */
+export interface ArrivalContext {
+  instrument: string;
+  reference_note: string;
+  gps?: GpsFix | "unavailable";
+  arrived_at: string;
+}
+
 /** O levantamento inteiro — a unidade de persistência e sincronização. */
 export interface Survey {
   id: string;
   name: string;
+  /** Ordem de levantamento que originou este survey (T4) — `undefined` só para dado
+   * legado do scaffold da fatia 0 (`survey-local`), que T4 deixa de criar. */
+  order_id?: string;
+  /** Contexto da chegada ao local (prancha 2), registrado por `recordArrival`. */
+  context?: ArrivalContext;
   points: SurveyPoint[];
   segments: Segment[];
   measurements: Measurement[];

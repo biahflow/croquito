@@ -139,6 +139,40 @@ preservada:
   field:check verde, `make check` e `make test` completos verdes (pytest 1785, web
   853, field 94).
 
+## Execução — T4 (Builder: implementador-sonnet, harness Claude Code)
+
+Tarefa [T4](tasks/T4-ordens-chegada.md). `PRIMARY_EXECUTION_EVIDENCE`: BUILD REPORT
+completo em 2026-08-21, `Status: BUILD_COMPLETE`; resumo com atribuição preservada:
+
+- Files changed: `src/orders/{types,fixture,state,activeOrder}.ts` (+testes), telas
+  `OrdersScreen`/`ArrivalScreen`, navegação raiz no `FieldApp`
+  (loading|orders|arrival|survey, retomada por ordem ativa em localStorage),
+  `recordArrival` no domínio (+3 testes), primitivas `.check`/`.seg` em styles.css só
+  com tokens existentes; instrumento da chegada passa a assinar as medidas.
+- Validation executed: field 100, field:check, make check/test completos, grep sem
+  rede, escopo confirmado; roteiro manual em Chromium com GPS negado exercitando o
+  caminho não-bloqueante (baixar→abrir→chegada→coleta→subtítulo com instrumento→
+  reload retomando a coleta da ordem). Skipped: none.
+- Assumptions honestas: sem técnico inventado (sem auth), sem tamanho de download
+  fictício, instrumento como texto livre com lista fechada só na UI.
+- Risco declarado: sem navegação de volta às ordens após abrir (chrome novo exigiria
+  aprovação visual; fica para fatia futura).
+
+### Revisão T4 (modelo principal, linha a linha)
+
+- `REVIEW_FINDINGS` → corrigido antes do commit:
+  - **CODE_FINDING (MEDIUM — omissão de spec não declarada)**: o §5 da Especificação
+    (checklist da ordem entrando em `validateSurvey` via `requiredItems`, com
+    `foto-acesso` pendente) não foi implementado, e o BUILD REPORT declarou "nenhum
+    desvio de comportamento" — sem o item, o warning `REQUIRED_ITEM_PENDING` nunca
+    nasce e a tela de conclusão (T5) perderia a pendência de foto. Correção:
+    `requiredItemsForOrder` em `orders/state.ts` (+teste sobre as 3 ordens da
+    fixture), ligado ao memo de findings do `FieldApp`.
+- Demais achados: nenhum; estado da ordem derivado (nunca duplicado), GPS
+  não-bloqueante correto, criação de survey no download como exceção documentada.
+- Validação final pós-correção: field:test **101 passed**, `make check` e `make test`
+  completos verdes (pytest 1785, web 853, field 101).
+
 ## Decisões humanas registradas (2026-08-21, pós-onda 1)
 
 - As três adições de composição da T3 (tela de digitação de texto com primitivas
