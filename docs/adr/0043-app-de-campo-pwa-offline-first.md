@@ -1,8 +1,11 @@
 # ADR-0043: App de levantamento de campo como PWA offline-first no monorepo
 
-Status: Proposed  
+Status: Accepted  
 Data: 2026-08-21  
 Responsável: Architecture
+
+Aceito por ato humano de Daniel Campos em 2026-08-21 (transcrito por agente; a decisão
+de status é humana, conforme o processo em [README.md](README.md)).
 
 ## Contexto
 

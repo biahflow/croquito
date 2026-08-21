@@ -60,7 +60,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0038](0038-bdi-como-conceito-de-pre-licitacao.md) | BDI como conceito de pré-licitação | Accepted |
 | [0039](0039-sinapi-sicro-como-origens-de-preco.md) | SINAPI e SICRO como origens de preço da pré-licitação | Accepted |
 | [0040](0040-teto-de-verba-do-orcamento-base.md) | Teto de verba do orçamento-base — declarado, visível, nunca tesoura | Accepted |
-| [0043](0043-app-de-campo-pwa-offline-first.md) | App de levantamento de campo como PWA offline-first no monorepo | Proposed |
+| [0043](0043-app-de-campo-pwa-offline-first.md) | App de levantamento de campo como PWA offline-first no monorepo | Accepted |
 
 Os números 0041 e 0042 estão reservados por sessões paralelas ainda não integradas à
 main (0041 no checkout de trabalho; 0042 na branch `feat/f-031-value-events`); as

@@ -151,8 +151,8 @@ Da feature completa (verificáveis nas fatias futuras, herdando os NFRs abaixo):
 
 ## Human Gates
 
-1. Aceite do [ADR-0043](../../adr/0043-app-de-campo-pwa-offline-first.md) (Proposed)
-   antes de qualquer fatia além do scaffold.
+1. ~~Aceite do [ADR-0043](../../adr/0043-app-de-campo-pwa-offline-first.md)~~ —
+   **satisfeito**: aceito por ato humano de Daniel Campos em 2026-08-21.
 2. **Design Approval Package** da superfície do técnico antes do planejamento das
    fatias 2+ (a feature é `INTERFACE_CHANGE`); o scaffold da fatia 0 não é a
    superfície aprovada.

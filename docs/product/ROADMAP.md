@@ -3,7 +3,7 @@
 Status: Active  
 Responsável: Product  
 Última revisão: 2026-08-21 (F-032 aberta com contrato — app de levantamento de campo
-PWA offline-first, ADR-0043 `Proposed`, fatia 0 em execução em branch própria; antes:
+PWA offline-first, ADR-0043 aceito por ato humano na mesma data, fatia 0 executada em branch própria; antes:
 F-021 e F-022 abertas com contrato — nota pré-classificada na
 decisão e Document AI no braço de OCR, nascidas da segunda revisão real do Guaxindiba,
 ADR-0037 `Proposed`; antes: F-012 documentada com ADR-0036 `Proposed`; inventário
@@ -313,7 +313,7 @@ coleta estruturada offline-first (PWA em `apps/field`) em que toda medida nasce
 vinculada (valor, pontos, elemento, instrumento, evidência) e a validação geométrica
 roda ainda no local. O pacote coletado entra no pipeline como observações, sob os
 portões do scene graph. Arquitetura no
-[ADR-0043](../adr/0043-app-de-campo-pwa-offline-first.md) (`Proposed`); é
+[ADR-0043](../adr/0043-app-de-campo-pwa-offline-first.md) (aceito por ato humano em 2026-08-21); é
 `INTERFACE_CHANGE` e exigirá Design Approval Package antes do planejamento das fatias
 de superfície; a fatia 0 (scaffold técnico, sem telas finais) foi autorizada por plano
 aprovado pelo usuário na mesma data e executa em branch/worktree própria
