@@ -176,7 +176,7 @@ class ValuationExtractionEvalReport(BaseModel):
     léxico determinístico sobre a parte sintética — braço fixture, offline, o mesmo
     gabarito de `DEMO_EXPECTED_CODE_BY_LABEL` — e são independentes de qual braço pago
     rodou; `sco_top1`/`sco_top3`/`lexical_sco_top1`/`lexical_sco_top3` de `ArmReport`
-    continuam medindo o refino pago por braço, cortado em 3 candidatos (o que
+    continuam medindo o refino pago por braço, cortado em 15 candidatos (o que
     `SuggestionConfig` publica por padrão).
 
     `matcher_hybrid_*` (M7 Fase 2) repete as mesmas três medidas pela shortlist HÍBRIDA
@@ -445,7 +445,7 @@ def _sco_hit_rates(
 
 _MATCHER_RECALL_CANDIDATES: Final = 20
 """Profundidade do gate `matcher_recall_at_20` (M7 Fase 1): o mesmo k do golden set
-(`tests/valuation/test_matcher_golden.py`), bem além dos 3 candidatos que
+(`tests/valuation/test_matcher_golden.py`), além dos 15 candidatos que
 `SuggestionConfig` publica por padrão — o gate mede se o matcher léxico PERDE o código
 certo, não se ele o coloca em primeiro."""
 
@@ -686,7 +686,7 @@ def run_valuation_extraction_eval(
     # Métricas do matcher léxico determinístico (M7 Fase 1), sobre a parte sintética —
     # independentes de qual braço pago rodou: usam sempre o primeiro braço (o fixture,
     # offline, quando `--arm` não foi passado) e um top-20 calculado à parte do que
-    # `_run_arm` publica (que fica no padrão de `SuggestionConfig`, 5 candidatos).
+    # `_run_arm` publica (que fica no padrão de `SuggestionConfig`, 15 candidatos).
     matcher_labels_by_item = {
         item.id: row.label
         for item in first.reviewed.items
