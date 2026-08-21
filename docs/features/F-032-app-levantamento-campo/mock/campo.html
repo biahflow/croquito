@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>F-032 — Design Approval Package — croquito campo (revisão 1)</title>
+<title>F-032 — Design Approval Package — croquito campo (revisões 1–2)</title>
 <style>
   /* ============================================================
      Tokens de cor — verbatim de docs/engineering/DESIGN_SYSTEM.md
@@ -189,10 +189,12 @@
 <body>
 
 <div class="cover">
-  <h1>croquito campo — Design Approval Package, revisão 1</h1>
-  <p>F-032 · superfície do técnico em campo (celular, Android-first, offline).
+  <h1>croquito campo — Design Approval Package, revisões 1–2</h1>
+  <p>F-032 · superfície do técnico em campo (celular, Android e iOS, offline).
   A moldura cinza, estas legendas e este fundo são anotação do caderno e não fazem parte
-  da aprovação. O que se aprova é o que está dentro de cada aparelho.</p>
+  da aprovação. O que se aprova é o que está dentro de cada aparelho. As pranchas 1–6
+  são a revisão 1, aprovada em 2026-08-21; a prancha 7 (voz, qualidade de foto e
+  transcrição) é a revisão 2 e aguarda aprovação própria.</p>
 </div>
 
 <!-- ============================================================ 1. ORDENS -->
@@ -631,6 +633,102 @@
       </div></div>
       <figcaption><b>6c — login expirado offline.</b> A expiração nunca bloqueia a coleta
       local — regra de NFR da F-032 escrita na própria tela.</figcaption>
+    </figure>
+
+  </div>
+</section>
+
+<!-- ============================================================ 7. VOZ + IA (REVISÃO 2) -->
+<section class="board" id="s7">
+  <h2>7 · Voz, qualidade de foto e transcrição — revisão 2 (aguarda aprovação)</h2>
+  <p class="note">Escopo reaberto por decisão humana de 2026-08-21: nota de voz gravada
+  offline (mídia como as fotos, transcrita no servidor), aviso de qualidade calculado no
+  aparelho na hora da captura, e o estado de transcrição no painel de sincronização.
+  Nada aqui decide fornecedor de IA nem comportamento — só a superfície.</p>
+  <div class="row">
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="appbar">
+          <span class="brand">Guaxindiba</span>
+          <span class="spacer"></span>
+          <span class="pill queue">3 pendentes</span>
+          <span class="pill offline"><span class="dot"></span>Offline</span>
+        </div>
+        <div class="content">
+          <h3 class="screen-title">Observação por voz</h3>
+          <div class="card">
+            <span class="meta">Ancorada em · P3 — escada de acesso</span>
+            <span class="title">Gravando… 0:12</span>
+            <span class="meta">Toque em Parar quando terminar. O áudio fica neste
+            aparelho e sobe junto com as fotos.</span>
+          </div>
+          <button class="btn dark block">■ Parar gravação</button>
+          <button class="btn block">Cancelar (nada é guardado)</button>
+          <div class="banner info"><span>A transcrição para texto acontece no servidor,
+          depois do envio, e chega como <b>rascunho para conferência</b> — o áudio
+          original nunca é substituído.</span></div>
+        </div>
+      </div></div>
+      <figcaption><b>7a — gravando nota de voz.</b> Offline de ponta a ponta: gravar não
+      exige rede; o destino (âncora) e o que acontece depois estão escritos na tela.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="appbar">
+          <span class="brand">Guaxindiba</span>
+          <span class="spacer"></span>
+          <span class="pill offline"><span class="dot"></span>Offline</span>
+        </div>
+        <div class="content">
+          <h3 class="screen-title">Foto capturada</h3>
+          <div class="card">
+            <span class="meta">Ancorada em · S2 — mureta lateral</span>
+            <span class="title">📷 foto_s2 · 2,1 MB</span>
+            <span class="tag warn">Nitidez baixa — possivelmente tremida</span>
+          </div>
+          <div class="banner warn">Verificação feita neste aparelho, sem internet.
+          Refazer agora evita voltar à praça por foto ilegível — mas a decisão é sua:
+          nada bloqueia.</div>
+          <button class="btn primary block">Refazer a foto</button>
+          <button class="btn block">Manter assim mesmo</button>
+        </div>
+      </div></div>
+      <figcaption><b>7b — aviso de qualidade.</b> Calculado localmente na captura
+      (nitidez/exposição). Aviso escrito e não bloqueante: o técnico decide, e a escolha
+      "manter" não vira erro depois.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="phone"><div class="screen">
+        <div class="appbar">
+          <span class="brand">croquito <small>campo</small></span>
+          <span class="spacer"></span>
+          <span class="pill online"><span class="dot"></span>Online</span>
+        </div>
+        <div class="content">
+          <h3 class="screen-title">Sincronização</h3>
+          <div class="check ok"><span class="state"></span><div class="txt">
+            <b>Geometria e medidas — enviadas</b>
+            <small>37 operações confirmadas pelo servidor às 17:02</small>
+          </div></div>
+          <div class="check ok"><span class="state"></span><div class="txt">
+            <b>Fotos — 12 de 12 enviadas</b>
+            <small>Todas conferidas pelo servidor (digest confere)</small>
+          </div></div>
+          <div class="check warn"><span class="state"></span><div class="txt">
+            <b>Áudios — 2 de 2 enviados · transcrição em processamento</b>
+            <small>O texto chega como rascunho para conferência no escritório;
+            o áudio original permanece</small>
+          </div></div>
+          <div class="banner info">Análise das fotos (leituras sugeridas) acontece no
+          servidor e aparece na revisão do escritório — nada muda no seu levantamento.</div>
+        </div>
+      </div></div>
+      <figcaption><b>7c — transcrição e análise no painel.</b> A prancha 6a ganha as
+      categorias de áudio e o estado de transcrição, sempre escritos; IA nunca altera o
+      levantamento do técnico — produz rascunho e sugestão a revisar.</figcaption>
     </figure>
 
   </div>

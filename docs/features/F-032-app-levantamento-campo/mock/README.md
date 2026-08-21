@@ -1,8 +1,8 @@
 # Design Approval Package — F-032, app de levantamento de campo
 
 Classification: INTERFACE_CHANGE  
-Revision: 1  
-Status: Aprovado (2026-08-21)  
+Revision: 2  
+Status: revisão 1 Aprovada (2026-08-21); revisão 2 **Aguardando aprovação**  
 Date: 2026-08-21  
 Produced by: agente (Claude Code)
 
@@ -23,6 +23,20 @@ Produced by: agente (Claude Code)
 Aprovar esta revisão não aprova a seguinte. Pacote materialmente alterado é revisão
 nova e precisa de registro próprio.
 
+## Registro de aprovação — revisão 2 (pendente)
+
+| Campo | Valor |
+| --- | --- |
+| O que se pede aprovar | a prancha 7 (3 telas): 7a gravação de nota de voz offline ancorada; 7b aviso não bloqueante de qualidade de foto calculado no aparelho; 7c painel de sincronização com categorias de áudio, estado de transcrição e nota sobre análise de fotos no servidor |
+| Motivação | escopo reaberto por decisão humana de 2026-08-21 (itens 8–9 do [Feature Contract](../feature.md)); tarefas T12/T15 do [plan-sync.md](../plan-sync.md) só iniciam a parte de UI após esta aprovação |
+| Aprovado por | — (pendente) |
+| Data | — |
+| Explicitamente **não** coberto | fornecedor de IA (gate próprio); comportamento de transcrição/análise (Feature Contract e tarefas); câmera aberta; limiares de nitidez/exposição (implementação); copy final |
+
+As pranchas 1–6 permanecem aprovadas pela revisão 1; a revisão 2 é aditiva (nenhuma
+prancha aprovada foi alterada — a 7c estende a 6a com categorias novas, desenhada como
+prancha própria justamente para não tocar a aprovada).
+
 ## Artefato
 
 | Arquivo | O que é |
@@ -34,6 +48,7 @@ nova e precisa de registro próprio.
 | [`04-medida.png`](04-medida.png) | Prancha 4 — medida vinculada: teclado próprio e divergência de conferência |
 | [`05-conclusao.png`](05-conclusao.png) | Prancha 5 — validação: conclusão bloqueada por crítico e liberada com justificativa |
 | [`06-sync.png`](06-sync.png) | Prancha 6 — sincronização, conflito e login expirado offline |
+| [`07-voz-ia.png`](07-voz-ia.png) | Prancha 7 (revisão 2) — voz, aviso de qualidade de foto e transcrição no painel |
 
 As imagens fixam o que foi renderizado independentemente de fonte, navegador ou
 plataforma: capturadas de `campo.html` em 2026-08-21, viewport 1500px, escala 2×, com o
@@ -60,10 +75,14 @@ cinza, títulos de seção e legendas são anotação do caderno, fora da aprova
 | Sincronização | conflito campo × escritório com origem/autor/instrumento e decisão explícita | sim (6b) |
 | Transversal | login expirado offline — coleta continua, reautenticação só ao enviar | sim (6c) |
 | Transversal | pílula Offline/Online e contador de pendências em todas as telas | sim (todas) |
+| Observação por voz | gravando offline, âncora declarada, parar/cancelar, destino da transcrição escrito | sim (7a, rev.2) |
+| Qualidade de foto | aviso não bloqueante pós-captura (nitidez baixa), refazer × manter | sim (7b, rev.2) |
+| Sincronização | categorias de áudio + estado de transcrição + nota da análise de fotos | sim (7c, rev.2) |
 | Câmera aberta / revisão da foto | qualquer | **não** — depende de UI nativa do aparelho; desenho próprio em revisão futura |
 | Biblioteca de elementos (catálogo completo, propriedades por tipo) | qualquer | **não** — o menu 3b mostra a entrada; o catálogo é superfície própria de fatia futura |
 | Curva/arco (definição de raio/corda/flecha) | qualquer | **não** — entrada existe no menu; a tela de definição fica para revisão futura |
-| Tablet / paisagem / iOS | qualquer | **não** — piloto é celular Android-first (Feature Contract) |
+| Tablet / paisagem | qualquer | **não** — piloto é celular retrato (Feature Contract) |
+| iOS | qualquer | **sem prancha própria** — iOS entrou na matriz do piloto (decisão de 2026-08-21), mas a superfície é a mesma (PWA retrato); diferenças são de plataforma (instalação, codec), não de desenho |
 | Foco de teclado, ordem de foco, leitor de tela | qualquer | **não** — HTML estático não sustenta a afirmação; requisito de implementação |
 
 ## Proveniência dos valores visuais
