@@ -209,6 +209,50 @@ existe revisão para o job. Ele **nunca** sobrescreve evidência e nunca fabrica
 Os arquivos de entrada ficam em `output/`, que é ignorado pelo Git. Não versione nenhum
 deles.
 
+### Modo automático de associação (experimento local da F-029)
+
+Duas chaves, e as duas precisam estar presentes
+([ADR-0041](../adr/0041-decisao-de-ator-maquina-atras-de-flag-local.md)):
+
+```bash
+export CROQUITO_AUTO_ASSOCIATION_ENABLED=true
+export CROQUITO_AUTO_ASSOCIATION_THRESHOLD=0.7   # corte escolhido por você
+```
+
+Com as duas, a revisão 1 nasce com as cotas cuja confiança de **leitura** e de
+**associação** superam o corte já confirmadas por um ator-máquina
+(`reviewer_id: system:auto-association@<versão do score>`), com a associação explícita
+que o solver exige; o resto continua exigindo uma pessoa. Com a flag ligada e sem o
+corte, o comando recusa com erro de configuração e nada é decidido: o número de corte é
+escolha humana a partir do relatório de calibração, nunca um default do código.
+
+Ausente é **desligado** — o oposto do braço OpenAI, e deliberado: ligar tira a pessoa do
+circuito e precisa ser ato declarado. Ligar em qualquer ambiente hospedado está fora do
+contrato desta feature; a flag não entra em nenhum manifesto de deploy. O `make
+smoke-local` roda com ela desligada, e nesse estado o comportamento é o de sempre.
+
+O corte governa **um** dos dois tiers
+([ADR-0044](../adr/0044-triagem-por-testemunha-anotacao-automatica.md)):
+
+- `auto_tier: "cota"` — cota de planta, com as duas confianças acima do corte e a
+  associação explícita que o solver exige.
+- `auto_tier: "anotacao"` — leitura sem papel de geometria de planta (elevação `h=…`,
+  kind `height`, ou recado da folha marcado pelo provider). Entra confirmada **sem
+  elemento associado**, exatamente como a "anotação da folha" que uma pessoa declara, e
+  por isso não precisa de corte nenhum: sem vínculo, ela não vira restrição de geometria
+  em caminho de solve algum. O candidato mais provável é registrado como observação na
+  justificativa e na auditoria (`probable_proposal_id`) para instruir a fixação do texto
+  no aceite do traçado; leitura sem candidato nenhum entra do mesmo jeito.
+
+Não há segundo threshold para calibrar. Cota de planta (`length`, `width`, `radius`,
+`diameter`, `area`, `angle`) nunca entra pelo tier de anotação — nem a leitura que o
+pedido do solver retangular cita como lado ou círculo do elemento, qualquer que seja o
+kind dela.
+
+Uma auto-decisão é retificável pelo caminho humano de correção declarada, e o pacote
+exportado nomeia cada cota que entrou sem toque humano em `auditoria.json`
+(`auto_decided_readings`), com o tier de cada uma.
+
 ### Smoke fim a fim contra o stack local
 
 ```bash

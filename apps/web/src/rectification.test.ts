@@ -60,6 +60,35 @@ describe("rectificationPrefill", () => {
     expect(prefill.associationValue).toBe(ANNOTATION_OPTION);
   });
 
+  it("trata a anotação AUTOMÁTICA como a declarada por uma pessoa", () => {
+    // ADR-0044 (D1a): a auto-anotação nasce confirmada e sem entrada em
+    // `selected_associations`, que é a mesma forma do ato humano. A correção declarada
+    // não tem associação a pré-preencher — ela abre na opção "anotação da folha", e o
+    // que se corrige é a decisão, não um vínculo que não existe.
+    const prefill = rectificationPrefill(
+      confirmedReading({
+        kind: "height",
+        raw_text: "h=3,80",
+        value_si: "3.80",
+        decision: {
+          decision_id: "hd_cccccccccccccccc",
+          action: "confirm",
+          actor: "system",
+          auto_tier: "anotacao",
+          reviewer_id: "system:auto-association@1.0.0",
+          decided_at: "2026-08-21T12:00:00Z",
+          note: "Anotação automática (corte vigente 0.7, score 1.0.0): …",
+        },
+      }),
+      undefined,
+      ANNOTATION_OPTION,
+    );
+
+    expect(prefill.associationValue).toBe(ANNOTATION_OPTION);
+    expect(prefill.rawText).toBe("h=3,80");
+    expect(prefill.justification).toBe("");
+  });
+
   it("não escolhe nada por uma leitura rejeitada: ela nunca teve elemento associado", () => {
     const prefill = rectificationPrefill(
       confirmedReading({

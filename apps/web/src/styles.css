@@ -1337,8 +1337,17 @@ h2 {
 }
 
 .chain-hint,
-.chain-term-role {
+.chain-term-role,
+.auto-confidence {
   color: var(--ink-secondary);
+}
+
+/* Vista de exceções (F-029): a marca da linha decidida pelo sistema. O destaque é o
+   peso da fonte, não a cor — quem diz o que aconteceu são o ícone e a frase "associada
+   pelo sistema", e os dois continuam dizendo em tela monocromática. */
+.auto-badge {
+  color: var(--ink-secondary);
+  font-weight: 800;
 }
 
 .status-dot {

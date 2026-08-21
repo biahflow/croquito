@@ -42,9 +42,13 @@ WIDTH_PROPOSAL_ID = "vp_1111111111111111"
 HEIGHT_PROPOSAL_ID = "vp_2222222222222222"
 CIRCLE_PROPOSAL_ID = "vp_3333333333333333"
 
+ELEVATION_READING_ID = "rd_4444444444444444"
+ELEVATION_PROPOSAL_ID = "vp_4444444444444444"
+
 WIDTH_M = "25.90"
 HEIGHT_M = "21.75"
 CIRCLE_DIAMETER_M = "6.00"
+ELEVATION_M = "3.80"
 
 
 def _write_json(path: Path, payload: BaseModel) -> Path:
@@ -64,6 +68,8 @@ def _reading(
     hint: str,
     left: int,
     decided: bool,
+    raw_text: str | None = None,
+    ocr_corroborated: bool | None = None,
 ) -> DimensionReading:
     decision = (
         HumanDecision(
@@ -85,7 +91,7 @@ def _reading(
             image_sha256=digest,
             bbox=PixelBox(left=left, top=5, right=left + 20, bottom=15),
         ),
-        raw_text=f"{value} m",
+        raw_text=raw_text or f"{value} m",
         value_si=Decimal(value),
         unit="m",
         kind=kind,
@@ -93,12 +99,22 @@ def _reading(
         target_hint=hint,
         extractor="local-fixture",
         extractor_version="v1",
+        ocr_corroborated=ocr_corroborated,
         status=ReadingStatus.CONFIRMED if decided else ReadingStatus.PROPOSED,
         decision=decision,
     )
 
 
-def build_packet(*, dataset_id: str, digest: str, decided: bool = False) -> ReviewPacket:
+def build_packet(
+    *, dataset_id: str, digest: str, decided: bool = False, elevation: bool = False
+) -> ReviewPacket:
+    """Pacote sintético do bundle. `elevation` acrescenta uma quarta leitura (F-029/T6).
+
+    A elevação (`h=3,80`, kind `height`) é a leitura SEM papel de geometria de planta que
+    o tier de anotação existe para resolver: ela não é citada pelo pedido do solver, e o
+    braço de OCR rodou sem encontrá-la — testemunha única, exatamente o caso das 8
+    elevações da rodada real V4 que motivaram o ADR-0044.
+    """
     return ReviewPacket(
         dataset_id=dataset_id,
         page_number=1,
@@ -134,14 +150,45 @@ def build_packet(*, dataset_id: str, digest: str, decided: bool = False) -> Revi
                 left=40,
                 decided=decided,
             ),
+            *(
+                [
+                    _reading(
+                        ELEVATION_READING_ID,
+                        dataset_id=dataset_id,
+                        digest=digest,
+                        value=ELEVATION_M,
+                        kind="height",
+                        hint="mureta do fundo",
+                        left=60,
+                        decided=decided,
+                        raw_text=f"h={ELEVATION_M.replace('.', ',')}",
+                        ocr_corroborated=False,
+                    )
+                ]
+                if elevation
+                else []
+            ),
         ],
         safety_notes=["Fixture local.", "Revisão humana obrigatória."],
     )
 
 
 def build_associations(
-    *, dataset_id: str, digest: str, drop_circle: bool = False
+    *,
+    dataset_id: str,
+    digest: str,
+    drop_circle: bool = False,
+    elevation: bool = False,
+    association_confidences: dict[str, float] | None = None,
 ) -> AssociationSet:
+    """Candidatos do bundle sintético; `association_confidences` é opt-in por leitura.
+
+    A fixture não passa por `associate_readings` — os candidatos são escritos à mão —, e
+    sem valor explícito cada um fica no default 0.0 do contrato. Esse é o estado histórico
+    do bundle e continua sendo o padrão: só quem testa corte de confiança declara números,
+    e assim nenhum outro teste muda de comportamento por causa deste parâmetro.
+    """
+    confidences = association_confidences or {}
     candidates: list[dict[str, Any]] = [
         {
             "reading_id": WIDTH_READING_ID,
@@ -173,6 +220,22 @@ def build_associations(
     ]
     if drop_circle:
         candidates = candidates[:2]
+    if elevation:
+        candidates.append(
+            {
+                "reading_id": ELEVATION_READING_ID,
+                "proposal_id": ELEVATION_PROPOSAL_ID,
+                "proposal_kind": "line",
+                "relation": "nearest_geometry",
+                "pixel_distance": 1,
+                "proximity_score": 0.9,
+                "visual_quality_score": 0.8,
+            }
+        )
+    for candidate in candidates:
+        confidence = confidences.get(str(candidate["reading_id"]))
+        if confidence is not None:
+            candidate["association_confidence"] = confidence
     return AssociationSet.model_validate(
         {
             "dataset_id": dataset_id,
@@ -185,7 +248,7 @@ def build_associations(
     )
 
 
-def build_proposals(*, dataset_id: str, digest: str) -> VisionProposalSet:
+def build_proposals(*, dataset_id: str, digest: str, elevation: bool = False) -> VisionProposalSet:
     return VisionProposalSet(
         dataset_id=dataset_id,
         page_number=1,
@@ -215,6 +278,23 @@ def build_proposals(*, dataset_id: str, digest: str) -> VisionProposalSet:
                 geometry=PixelCircle(center=PixelPoint(x=15, y=10), radius=4),
                 algorithm="fixture",
                 quality_score=0.9,
+            ),
+            # A mureta que a elevação anota: forma aceita como qualquer outra, e o
+            # pedido do solver retangular não a cita.
+            *(
+                [
+                    VisionProposal(
+                        id=ELEVATION_PROPOSAL_ID,
+                        kind="line",
+                        geometry=PixelLine(
+                            start=PixelPoint(x=30, y=25), end=PixelPoint(x=38, y=25)
+                        ),
+                        algorithm="fixture",
+                        quality_score=0.9,
+                    )
+                ]
+                if elevation
+                else []
             ),
         ],
         safety_notes=["fixture", "pixels", "não exportável"],
@@ -270,6 +350,8 @@ def write_seed_bundle(
     decided: bool = False,
     drop_circle_candidate: bool = False,
     manifest_source_sha256: str | None = None,
+    association_confidences: dict[str, float] | None = None,
+    elevation: bool = False,
 ) -> dict[str, Path]:
     """Writes the six files `seed-review` requires, with every digest bound to disk."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -281,17 +363,23 @@ def write_seed_bundle(
         "image": image_path,
         "packet": _write_json(
             directory / "review-packet.json",
-            build_packet(dataset_id=dataset_id, digest=digest, decided=decided),
+            build_packet(
+                dataset_id=dataset_id, digest=digest, decided=decided, elevation=elevation
+            ),
         ),
         "associations": _write_json(
             directory / "association-candidates.json",
             build_associations(
-                dataset_id=dataset_id, digest=digest, drop_circle=drop_circle_candidate
+                dataset_id=dataset_id,
+                digest=digest,
+                drop_circle=drop_circle_candidate,
+                elevation=elevation,
+                association_confidences=association_confidences,
             ),
         ),
         "proposals": _write_json(
             directory / "vision-proposals.json",
-            build_proposals(dataset_id=dataset_id, digest=digest),
+            build_proposals(dataset_id=dataset_id, digest=digest, elevation=elevation),
         ),
         "manifest": _write_json(
             directory / "manifest.json",

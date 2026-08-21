@@ -18,6 +18,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     event,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -169,6 +170,19 @@ class ReviewRevisionRecord(Base):
     resultado da conferência é recomputado contra o pacote corrente a cada leitura, para
     que a correção de uma leitura participante apareça como cadeia vencida em vez de
     continuar afirmando um fechamento que já não existe.
+    """
+    confidence_shadow_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, server_default=text("'{}'")
+    )
+    """O que TERIA sido auto-decidido em cada threshold da grade — nunca uma decisão.
+
+    Ao contrário de `declared_chains_json`, aqui o RESULTADO é gravado: um shadow vale
+    por ser o que o pipeline teria feito NAQUELE instante, com aquele pacote e aqueles
+    candidatos. Recomputá-lo depois compararia a decisão humana de ontem com o score de
+    hoje, e é justamente essa comparação que a calibração não pode fazer.
+
+    `server_default` (migração `0007`) porque o caminho de escrita do worker lista as
+    colunas uma a uma: sem ele, um INSERT que não conhece esta coluna quebraria.
     """
     calibration_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     proposal_decisions_json: Mapped[list[dict[str, Any]] | None] = mapped_column(

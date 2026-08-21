@@ -140,6 +140,11 @@ from croquito_valuation.takeoff import (
 )
 from croquito_valuation.template import default_template
 from croquito_worker.association import AssociationSet
+from croquito_worker.association_confidence import (
+    CONFIDENCE_REFERENCE_THRESHOLD,
+    confidence_shadow_json,
+    verified_declared_chain,
+)
 from croquito_worker.criteria import (
     FALLBACK_CRITERION_MESSAGE,
     apply_criteria_declarations,
@@ -551,6 +556,30 @@ class DeclaredChainResponse(ApiModel):
     issue: Issue | None = None
 
 
+class ReadingConfidence(ApiModel):
+    """ "Li certo?" por leitura — observação, nunca decisão nem veto de exportação."""
+
+    reading_id: str
+    reading_confidence: float
+
+
+class ShadowChoiceResponse(ApiModel):
+    """A associação que um corte hipotético TERIA escolhido para uma leitura."""
+
+    reading_id: str
+    proposal_id: str
+    reading_confidence: float
+    association_confidence: float
+
+
+class ShadowDecisionResponse(ApiModel):
+    """Um ponto da grade e o que ele teria auto-decidido — nenhuma decisão real."""
+
+    reading_threshold: float
+    association_threshold: float
+    auto_choices: list[ShadowChoiceResponse]
+
+
 class ReviewResponse(ApiModel):
     job_id: UUID
     review_id: UUID
@@ -573,6 +602,19 @@ class ReviewResponse(ApiModel):
     # antes do deploy passaria a responder 500.
     suggested_chains: list[DimensionChain] = Field(default_factory=list)
     declared_chains: list[DeclaredChainResponse] = Field(default_factory=list)
+    # Confiança determinística e shadow log (F-029): tudo OBSERVACIONAL. Nada aqui
+    # decide leitura, associação, blocker, cena ou exportação; a associação que vale
+    # continua sendo a explícita em `selected_associations`, e ela só nasce de ato
+    # humano. As confianças por candidato viajam dentro de `associations`.
+    #
+    # Mesmo motivo de default da F-023: a resposta idempotente gravada ANTES destes
+    # campos existirem é revalidada no replay, e sem default um `Idempotency-Key` de
+    # antes do deploy passaria a responder 500. Revisão gravada antes da coluna
+    # `confidence_shadow_json` responde igual: listas vazias e taxas nulas.
+    reading_confidences: list[ReadingConfidence] = Field(default_factory=list)
+    confidence_shadow: list[ShadowDecisionResponse] = Field(default_factory=list)
+    auto_association_rate: float | None = None
+    review_rate: float | None = None
     scene: SceneRevision | None = None
     preview_urls: dict[str, str] = Field(default_factory=dict)
 
@@ -2239,13 +2281,11 @@ def _declared_chain_responses(
             "declared_by": item["declared_by"],
             "declared_at": item["declared_at"],
         }
-        try:
-            chain = verify_chain(
-                packet,
-                total_id=str(item["total_id"]),
-                part_ids=[str(part_id) for part_id in item["part_ids"]],
-            )
-        except ChainVerificationError:
+        # A reconferência mora junto do score (`association_confidence`) porque os dois
+        # caminhos de escrita de revisão — este e o do worker — precisam dar o mesmo
+        # veredito sobre a mesma declaração.
+        chain = verified_declared_chain(packet, item)
+        if chain is None:
             responses.append(
                 DeclaredChainResponse(
                     **common,
@@ -2268,6 +2308,96 @@ def _declared_chain_responses(
             )
         )
     return responses
+
+
+def _carried_confidence_shadow(current: ReviewRevisionRecord) -> dict[str, Any]:
+    """Shadow da revisão nova quando pacote, candidatos e cadeias viajam verbatim.
+
+    Recomputa em vez de copiar `current.confidence_shadow_json`: a revisão parental pode
+    ser anterior à coluna — copiar propagaria o vazio para sempre. Como o shadow é função
+    pura desses três campos, e os três são idênticos aos da parental, recomputar devolve
+    exatamente o que a parental devolveria.
+
+    Uma diferença é deliberada: o registro do ATO de auto-decisão (`auto_decisions`, F-029)
+    não é recomputável e fica só na revisão 1, a única em que ele pode ter acontecido.
+    Repeti-lo nas revisões seguintes afirmaria um ato novo que ninguém praticou; o que
+    viaja para elas é o efeito — a decisão de ator-máquina gravada no próprio pacote.
+    """
+    return confidence_shadow_json(
+        ReviewPacket.model_validate(current.packet_json),
+        AssociationSet.model_validate(current.associations_json),
+        current.declared_chains_json,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ConfidenceView:
+    """Os campos observacionais de confiança de uma revisão, prontos para a resposta."""
+
+    reading_confidences: list[ReadingConfidence]
+    confidence_shadow: list[ShadowDecisionResponse]
+    auto_association_rate: float | None
+    review_rate: float | None
+
+
+def _confidence_view(shadow: Mapping[str, Any] | None) -> ConfidenceView:
+    """Lê o shadow gravado e publica as taxas OBSERVACIONAIS da revisão corrente.
+
+    As duas taxas são medidas do registro, não decisões, e dependem inteiramente da grade
+    e do ponto de referência (`CONFIDENCE_REFERENCE_THRESHOLD`) — mudar a grade muda os
+    números sem que nada no produto tenha mudado. Denominadores diferentes de propósito:
+
+    - `auto_association_rate` = leituras auto-decidíveis no ponto de referência ÷ leituras
+      que têm ao menos um candidato de associação. Pergunta "das cotas onde havia a quem
+      associar, quantas o corte resolveria sozinho?"; leitura sem candidato nenhum não é
+      falha do score e falsearia o numerador.
+    - `review_rate` = complemento sobre o TOTAL de leituras da revisão. Pergunta "quanto
+      da revisão ainda exige uma pessoa?", e aí a leitura sem candidato conta: ela também
+      é trabalho humano.
+
+    Revisão gravada antes da coluna, ou por um caminho que não a preenche, responde com
+    listas vazias e taxas nulas — ausência de registro, nunca zero medido.
+
+    O `score_version` gravado não é filtrado aqui porque só existe uma versão de pesos: o
+    campo existe desde a primeira linha para que o dia da recalibração encontre o histórico
+    já separável. Quem publicar taxa AGREGADA sobre várias revisões precisa agrupar por
+    ele; esta função descreve uma revisão só, que tem uma versão só.
+    """
+    stored = shadow or {}
+    reading_confidences = [
+        ReadingConfidence.model_validate(item) for item in stored.get("reading_confidences", [])
+    ]
+    confidence_shadow = [
+        ShadowDecisionResponse.model_validate(item) for item in stored.get("decisions", [])
+    ]
+    reference = next(
+        (
+            decision
+            for decision in confidence_shadow
+            if decision.reading_threshold == CONFIDENCE_REFERENCE_THRESHOLD.reading_threshold
+            and decision.association_threshold
+            == CONFIDENCE_REFERENCE_THRESHOLD.association_threshold
+        ),
+        None,
+    )
+    if reference is None:
+        return ConfidenceView(
+            reading_confidences=reading_confidences,
+            confidence_shadow=confidence_shadow,
+            auto_association_rate=None,
+            review_rate=None,
+        )
+    auto_decidable = len(reference.auto_choices)
+    total = int(stored.get("readings_total", 0))
+    with_candidate = int(stored.get("readings_with_candidate", 0))
+    return ConfidenceView(
+        reading_confidences=reading_confidences,
+        confidence_shadow=confidence_shadow,
+        auto_association_rate=(
+            round(auto_decidable / with_candidate, 4) if with_candidate else None
+        ),
+        review_rate=round((total - auto_decidable) / total, 4) if total else None,
+    )
 
 
 def _review_response(
@@ -2311,6 +2441,10 @@ def _review_response(
             for issue in scene.issues
             if issue.severity is IssueSeverity.CRITICAL and issue.status is IssueStatus.OPEN
         )
+    # O shadow é LIDO do que a revisão gravou, nunca recomputado aqui: ele vale por ser o
+    # que o pipeline teria feito no instante daquela revisão. Recompor agora compararia a
+    # decisão humana de ontem com o score de hoje.
+    confidence = _confidence_view(record.confidence_shadow_json)
     return ReviewResponse(
         job_id=UUID(record.job_id),
         review_id=UUID(record.id),
@@ -2337,6 +2471,10 @@ def _review_response(
         ],
         suggested_chains=suggest_chains(packet),
         declared_chains=_declared_chain_responses(packet, record.declared_chains_json),
+        reading_confidences=confidence.reading_confidences,
+        confidence_shadow=confidence.confidence_shadow,
+        auto_association_rate=confidence.auto_association_rate,
+        review_rate=confidence.review_rate,
         scene=scene,
         preview_urls=_preview_urls(
             application,
@@ -3268,6 +3406,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=selected_associations,
             declared_chains_json=current.declared_chains_json,
+            confidence_shadow_json=confidence_shadow_json(
+                reviewed_packet, associations, current.declared_chains_json
+            ),
             calibration_json=resolved.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             evidence_refs_json=current.evidence_refs_json,
@@ -3533,6 +3674,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=selected_associations,
             declared_chains_json=current.declared_chains_json,
+            confidence_shadow_json=confidence_shadow_json(
+                rectified_packet, associations, current.declared_chains_json
+            ),
             calibration_json=resolved.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             # O aceite de traçado é ato histórico da revisão em que aconteceu: viaja
@@ -3730,6 +3874,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=declared_chains,
+            # A cadeia declarada é sinal de confiança de leitura: declarar ou retratar
+            # muda o shadow, então ele é recomputado sobre a lista NOVA.
+            confidence_shadow_json=confidence_shadow_json(
+                packet, AssociationSet.model_validate(current.associations_json), declared_chains
+            ),
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             # Declarar cadeia não decide leitura nem desenha nada: o aceite de traçado, a
@@ -3875,6 +4024,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
+            confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=calibration.model_dump(mode="json"),
             proposal_decisions_json=current.proposal_decisions_json,
             evidence_refs_json=current.evidence_refs_json,
@@ -4064,6 +4214,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
+            confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=decisions,
             evidence_refs_json=current.evidence_refs_json,
@@ -4297,6 +4448,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
+            confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=decisions,
             evidence_refs_json=current.evidence_refs_json,
@@ -4454,6 +4606,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
+            confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             evidence_refs_json=current.evidence_refs_json,
@@ -4582,6 +4735,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
+            confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             evidence_refs_json=current.evidence_refs_json,

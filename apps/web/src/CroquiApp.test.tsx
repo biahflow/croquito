@@ -2,18 +2,32 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { User } from "oidc-client-ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, postReviewChains } from "./api";
-import type { DeclaredChain, DimensionChain } from "./api";
+import type {
+  DeclaredChain,
+  DimensionChain,
+  Review,
+  ReviewReading,
+} from "./api";
 import {
   AppAlert,
+  AutoDecisionBadge,
+  blockerReadingIds,
   ChainCloseHint,
   ChainsSection,
   CroquiApp,
+  DecisionAuthorLine,
+  exceptionCounts,
+  ExceptionsBand,
+  isSystemAnnotation,
+  isSystemDecided,
   JobStatusBand,
   chainDraftIssue,
   EMPTY_CHAIN_DRAFT,
   jobFailureMessage,
   jobPresentationChanged,
+  readingIdsWithCandidate,
   toggleChainTerm,
+  visibleReadings,
 } from "./CroquiApp";
 
 /**
@@ -525,5 +539,526 @@ describe("declaração de cadeia pela rota da revisão", () => {
     );
     expect(html).toContain('role="alert"');
     expect(html).toContain("O total não pode ser também parcela de si mesmo.");
+  });
+});
+
+/**
+ * Vista de exceções (F-029): o que o sistema decidiu sozinho e o que sobrou para gente.
+ *
+ * O ambiente de teste do web é `node` e não monta DOM — o gesto no chip não existe aqui.
+ * O que é coberto são as peças que o decidem: a contagem (`exceptionCounts`), o recorte
+ * da lista (`visibleReadings`), a leitura de blockers (`blockerReadingIds`) e a
+ * renderização estática da faixa, da marca da linha e do registro da decisão.
+ */
+function reading(overrides: Partial<ReviewReading> = {}): ReviewReading {
+  return {
+    id: "rd_0000000000000001",
+    raw_text: "12,49",
+    kind: "width",
+    status: "proposed",
+    ...overrides,
+  };
+}
+
+function systemDecision(
+  overrides: Partial<NonNullable<ReviewReading["decision"]>> = {},
+) {
+  return {
+    decision_id: "hd_00000000000000aa",
+    action: "confirm" as const,
+    actor: "system" as const,
+    reviewer_id: "system:auto-association@1.0.0",
+    decided_at: "2026-08-21T12:00:00Z",
+    note:
+      "Decisão automática de associação (corte 0.9, score 1.0.0): confiança de leitura " +
+      "0.97 e de associação 0.93, ambas acima do corte.",
+    ...overrides,
+  };
+}
+
+const humanDecision = {
+  decision_id: "hd_00000000000000bb",
+  action: "confirm" as const,
+  reviewer_id: "revisor-da-obra",
+  decided_at: "2026-08-21T13:00:00Z",
+};
+
+describe("exceptionCounts", () => {
+  it("separa auto-decidida, pendente com candidato e pendente sem ninguém a associar", () => {
+    const readings = [
+      reading({ id: "rd_auto", status: "confirmed", decision: systemDecision() }),
+      reading({ id: "rd_pendente_com_candidato" }),
+      reading({ id: "rd_pendente_sem_candidato", status: "ambiguous" }),
+      reading({ id: "rd_humana", status: "confirmed", decision: humanDecision }),
+    ];
+
+    expect(
+      exceptionCounts(readings, new Set(["rd_pendente_com_candidato", "rd_auto"])),
+    ).toEqual({ auto: 1, autoNote: 0, review: 1, unresolved: 1 });
+  });
+
+  it("não conta ninguém numa revisão sem modo automático: a tela é a de sempre", () => {
+    const readings = [
+      reading({ id: "rd_humana", status: "confirmed", decision: humanDecision }),
+      reading({ id: "rd_pendente" }),
+    ];
+
+    expect(exceptionCounts(readings, new Set(["rd_pendente"]))).toEqual({
+      auto: 0,
+      autoNote: 0,
+      review: 1,
+      unresolved: 0,
+    });
+  });
+
+  it("lê decisão sem `actor` como humana, que é o default do servidor", () => {
+    const semAtor = reading({
+      id: "rd_antiga",
+      status: "confirmed",
+      decision: { ...humanDecision, reviewer_id: "revisor-antigo" },
+    });
+
+    expect(isSystemDecided(semAtor)).toBe(false);
+    expect(exceptionCounts([semAtor], new Set())).toEqual({
+      auto: 0,
+      autoNote: 0,
+      review: 0,
+      unresolved: 0,
+    });
+  });
+
+  it("uma cota retificada por gente sai da contagem de automáticas", () => {
+    const retificada = reading({
+      id: "rd_auto",
+      status: "confirmed",
+      decision: {
+        ...humanDecision,
+        rectifies_decision_id: "hd_00000000000000aa",
+      },
+    });
+
+    expect(exceptionCounts([retificada], new Set(["rd_auto"])).auto).toBe(0);
+  });
+});
+
+/**
+ * Tier de anotação (ADR-0044): a máquina confirma com uma testemunha só o que não manda
+ * na geometria de planta. A tela lê o tier do que o servidor gravou — ela não reaplica a
+ * regra de elegibilidade, que mora no worker.
+ */
+function annotationDecision(
+  overrides: Partial<NonNullable<ReviewReading["decision"]>> = {},
+) {
+  return systemDecision({
+    decision_id: "hd_00000000000000cc",
+    auto_tier: "anotacao" as const,
+    note:
+      "Anotação automática (corte 0.7, score 1.0.0): confiança de associação 0.9 acima " +
+      "do corte; leitura sem papel de geometria de planta, com confiança de leitura " +
+      "0.45 registrada e não exigida.",
+    ...overrides,
+  });
+}
+
+describe("exceptionCounts por tier", () => {
+  it("conta cota automática e anotação automática em contadores separados", () => {
+    const readings = [
+      reading({ id: "rd_cota", status: "confirmed", decision: systemDecision() }),
+      reading({
+        id: "rd_elevacao",
+        kind: "height",
+        status: "confirmed",
+        decision: annotationDecision(),
+      }),
+      reading({ id: "rd_pendente" }),
+    ];
+
+    expect(
+      exceptionCounts(readings, new Set(["rd_cota", "rd_elevacao", "rd_pendente"])),
+    ).toEqual({ auto: 1, autoNote: 1, review: 1, unresolved: 0 });
+  });
+
+  it("decisão de sistema sem tier declarado conta como cota, o único que existia", () => {
+    const antiga = reading({
+      id: "rd_antiga",
+      status: "confirmed",
+      decision: systemDecision(),
+    });
+
+    expect(isSystemAnnotation(antiga)).toBe(false);
+    expect(exceptionCounts([antiga], new Set(["rd_antiga"])).auto).toBe(1);
+  });
+
+  it("o tier vem do servidor, nunca do kind da leitura", () => {
+    // Uma elevação decidida pelo tier de cota (passou nos dois eixos) continua sendo
+    // cota automática: se a tela re-derivasse a regra pelo `kind`, ela diria outra coisa.
+    const elevacaoPorDuplaTestemunha = reading({
+      id: "rd_elevacao_forte",
+      kind: "height",
+      status: "confirmed",
+      decision: systemDecision({ auto_tier: "cota" }),
+    });
+
+    expect(isSystemAnnotation(elevacaoPorDuplaTestemunha)).toBe(false);
+    expect(
+      exceptionCounts([elevacaoPorDuplaTestemunha], new Set(["rd_elevacao_forte"])),
+    ).toEqual({ auto: 1, autoNote: 0, review: 0, unresolved: 0 });
+  });
+});
+
+describe("visibleReadings", () => {
+  const auto = reading({
+    id: "rd_auto",
+    status: "confirmed",
+    decision: systemDecision(),
+  });
+  const humana = reading({
+    id: "rd_humana",
+    status: "confirmed",
+    decision: humanDecision,
+  });
+  const pendente = reading({ id: "rd_pendente" });
+
+  it("sem filtro, a lista é a inteira e na mesma ordem", () => {
+    expect(visibleReadings([auto, humana, pendente], false, new Set())).toEqual([
+      auto,
+      humana,
+      pendente,
+    ]);
+  });
+
+  it("com filtro, esconde só o que já tem decisão — nunca o pendente", () => {
+    expect(visibleReadings([auto, humana, pendente], true, new Set())).toEqual([
+      pendente,
+    ]);
+  });
+
+  it("nunca esconde a linha citada por um bloqueio, mesmo já decidida", () => {
+    const blockers = blockerReadingIds([
+      "WIDTH_HUMAN_CONFIRMATION_REQUIRED:rd_auto",
+      "NUMERIC_RESIDUAL_EXCEEDS_TOLERANCE",
+    ]);
+
+    expect(blockers).toEqual(new Set(["rd_auto"]));
+    expect(visibleReadings([auto, humana, pendente], true, blockers)).toEqual([
+      auto,
+      pendente,
+    ]);
+  });
+
+  it("com uma cadeia em declaração, as confirmadas continuam marcáveis na lista", () => {
+    // Termo de cadeia é sempre leitura CONFIRMADA (F-023): escondê-la com o filtro
+    // ligado deixaria o revisor sem o que marcar no meio do ato.
+    const emDeclaracao = new Set(["rd_auto", "rd_humana"]);
+
+    expect(
+      visibleReadings([auto, humana, pendente], true, emDeclaracao),
+    ).toEqual([auto, humana, pendente]);
+  });
+});
+
+describe("readingIdsWithCandidate", () => {
+  it("junta os candidatos por leitura, sem repetir a mesma cota", () => {
+    expect(
+      readingIdsWithCandidate([
+        { reading_id: "rd_1" },
+        { reading_id: "rd_1" },
+        { reading_id: "rd_2" },
+      ]),
+    ).toEqual(new Set(["rd_1", "rd_2"]));
+  });
+
+  it("resposta sem candidato nenhum não inventa associação", () => {
+    expect(readingIdsWithCandidate([])).toEqual(new Set());
+  });
+});
+
+describe("ExceptionsBand", () => {
+  function renderBand(
+    props: Partial<Parameters<typeof ExceptionsBand>[0]> = {},
+  ) {
+    return renderToStaticMarkup(
+      <ExceptionsBand
+        counts={{ auto: 4, autoNote: 0, review: 2, unresolved: 1 }}
+        onlyExceptions={false}
+        hiddenCount={0}
+        onChange={() => undefined}
+        {...props}
+      />,
+    );
+  }
+
+  it("mostra os três contadores por extenso e os dois estados do filtro", () => {
+    const html = renderBand();
+
+    expect(html).toContain("⚙ 4 auto-associadas");
+    expect(html).toContain("⚠ 2 precisam de revisão");
+    expect(html).toContain("✗ 1 não resolvida");
+    expect(html).toContain("só exceções");
+    expect(html).toContain(">todas<");
+    // O estado do filtro é anunciável, não só desenhado.
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('aria-label="Exceções da revisão"');
+    // A faixa declara o que a máquina fez e o que ela não fez.
+    expect(html).toContain("continua corrigível por você");
+    expect(html).toContain("Nada aqui aprova cena nem libera exportação.");
+  });
+
+  it("não existe sem auto-decisão: a revisão sem modo automático é a de hoje", () => {
+    expect(
+      renderBand({ counts: { auto: 0, autoNote: 0, review: 5, unresolved: 2 } }),
+    ).toBe("");
+  });
+
+  it("declara as anotações automáticas em contador próprio quando houver", () => {
+    const html = renderBand({
+      counts: { auto: 4, autoNote: 3, review: 2, unresolved: 1 },
+    });
+
+    expect(html).toContain("⚙ 4 auto-associadas");
+    expect(html).toContain("⚙ 3 anotações automáticas");
+    // A faixa explica por que a anotação entrou com uma testemunha só — e diz que ela
+    // não prendeu elemento nenhum, que é o que a mantém fora da geometria.
+    expect(html).toContain("entraram com uma testemunha");
+    expect(html).toContain("sem elemento associado");
+    expect(html).toContain("não medem a planta");
+  });
+
+  it("sem anotação automática, o contador dela não aparece zerado", () => {
+    const html = renderBand();
+
+    expect(html).not.toContain("anotações automáticas");
+    expect(html).not.toContain("anotação automática");
+  });
+
+  it("existe com anotação automática mesmo sem nenhuma cota automática", () => {
+    const html = renderBand({
+      counts: { auto: 0, autoNote: 2, review: 5, unresolved: 0 },
+    });
+
+    expect(html).toContain("⚙ 2 anotações automáticas");
+    expect(html).toContain("⚙ 0 auto-associadas");
+  });
+
+  it("com o filtro ligado, declara quantas linhas saíram e o que continua à vista", () => {
+    const html = renderBand({ onlyExceptions: true, hiddenCount: 4 });
+
+    expect(html).toContain("4 leituras já decididas estão fora da lista.");
+    expect(html).toContain(
+      "Bloqueios, avisos e leituras citadas por um bloqueio continuam à vista.",
+    );
+    expect(html).toContain('aria-live="polite"');
+  });
+
+  it("conta uma linha escondida no singular", () => {
+    const html = renderBand({ onlyExceptions: true, hiddenCount: 1 });
+
+    expect(html).toContain("1 leitura já decidida está fora da lista.");
+  });
+});
+
+describe("AutoDecisionBadge", () => {
+  it("marca a linha com ícone e frase, e mostra a confiança registrada", () => {
+    const html = renderToStaticMarkup(
+      <AutoDecisionBadge
+        reading={reading({ status: "confirmed", decision: systemDecision() })}
+        confidence={0.97}
+      />,
+    );
+
+    // Texto, não só cor: a frase inteira está escrita na linha.
+    expect(html).toContain("associada pelo sistema · score 1.0.0");
+    expect(html).toContain("⚙");
+    expect(html).toContain("confiança 0,97");
+    // O identificador técnico do ator-máquina não vai para a leitura corrida.
+    expect(html).not.toContain("system:auto-association");
+    // A correção continua prometida na própria marca.
+    expect(html).toContain("Corrija-a como qualquer decisão registrada.");
+  });
+
+  it("sem confiança na resposta, a marca continua — o número é que falta", () => {
+    const html = renderToStaticMarkup(
+      <AutoDecisionBadge
+        reading={reading({ status: "confirmed", decision: systemDecision() })}
+      />,
+    );
+
+    expect(html).toContain("associada pelo sistema");
+    // Sem número não há segunda marca: nada de "confiança —" nem de zero inventado.
+    expect(html).not.toContain("auto-confidence");
+    expect(html).not.toMatch(/confiança \d/);
+  });
+
+  it("distingue a anotação automática da cota associada pelo sistema", () => {
+    const html = renderToStaticMarkup(
+      <AutoDecisionBadge
+        reading={reading({
+          kind: "height",
+          status: "confirmed",
+          decision: annotationDecision(),
+        })}
+        confidence={0.45}
+      />,
+    );
+
+    // Palavra diferente, não só tom diferente.
+    expect(html).toContain("anotação automática · score 1.0.0");
+    expect(html).not.toContain("associada pelo sistema");
+    expect(html).toContain("sem elemento associado");
+    expect(html).toContain("não entra na geometria");
+    // A confiança que não foi exigida continua à vista, sem ser escondida.
+    expect(html).toContain("confiança 0,45");
+  });
+
+  it("não marca decisão humana nem leitura pendente", () => {
+    expect(
+      renderToStaticMarkup(
+        <AutoDecisionBadge
+          reading={reading({ status: "confirmed", decision: humanDecision })}
+        />,
+      ),
+    ).toBe("");
+    expect(renderToStaticMarkup(<AutoDecisionBadge reading={reading()} />)).toBe(
+      "",
+    );
+  });
+});
+
+describe("DecisionAuthorLine", () => {
+  it("declara a decisão de máquina como tal, com a versão do score", () => {
+    const html = renderToStaticMarkup(
+      <DecisionAuthorLine
+        reading={reading({ status: "confirmed", decision: systemDecision() })}
+      />,
+    );
+
+    expect(html).toContain("Confirmada <strong>pelo sistema</strong>");
+    expect(html).toContain("sem toque humano");
+    expect(html).toContain("com o score 1.0.0");
+    expect(html).toContain("21/08/2026 às 12:00 UTC");
+    expect(html).toContain("Corrigi-la é ato seu");
+    expect(html).not.toContain("system:auto-association");
+  });
+
+  it("a anotação automática diz por que uma leitura só bastou", () => {
+    const html = renderToStaticMarkup(
+      <DecisionAuthorLine
+        reading={reading({
+          kind: "height",
+          status: "confirmed",
+          decision: annotationDecision(),
+        })}
+      />,
+    );
+
+    expect(html).toContain("Confirmada <strong>pelo sistema</strong>");
+    expect(html).toContain("Como anotação, sem elemento associado");
+    expect(html).toContain("uma leitura só bastou");
+    expect(html).toContain("nada foi preso à geometria");
+    // A dica do elemento provável mora na justificativa registrada, que a tela mostra
+    // logo abaixo — a frase manda o revisor até ela em vez de repetir o identificador.
+    expect(html).toContain("elemento provável");
+    expect(html).toContain("Corrigi-la é ato seu");
+  });
+
+  it("a decisão humana continua escrita como sempre foi", () => {
+    const html = renderToStaticMarkup(
+      <DecisionAuthorLine
+        reading={reading({ status: "confirmed", decision: humanDecision })}
+      />,
+    );
+
+    expect(html).toContain("Decidida por <strong>revisor-da-obra</strong>");
+    expect(html).toContain("21/08/2026 às 13:00 UTC");
+    expect(html).not.toContain("sistema");
+  });
+
+  it("leitura sem decisão não inventa autoria", () => {
+    expect(renderToStaticMarkup(<DecisionAuthorLine reading={reading()} />)).toBe(
+      "",
+    );
+  });
+});
+
+/**
+ * Critério de aceite 1 da T5 (F-029): resposta SEM os campos novos — replay gravado antes
+ * deles, ou revisão com o modo automático desligado — continua produzindo a tela de hoje.
+ *
+ * O objeto é tipado como `Review` de propósito: se algum campo da F-029 deixasse de ser
+ * opcional, este teste pararia de compilar antes de parar de passar.
+ */
+describe("revisão sem os campos de confiança", () => {
+  const antiga: Review = {
+    job_id: "job-1",
+    review_id: "rev-1",
+    version: 3,
+    packet: {
+      readings: [
+        reading({ id: "rd_pendente" }),
+        reading({
+          id: "rd_humana",
+          status: "confirmed",
+          decision: humanDecision,
+        }),
+      ],
+    },
+    associations: {
+      candidates: [
+        {
+          reading_id: "rd_pendente",
+          proposal_id: "vp_0000000000000001",
+          proposal_kind: "line",
+          relation: "nearest_geometry",
+        },
+      ],
+    },
+    proposals: null,
+    selected_associations: {},
+    calibration: null,
+    proposal_decisions: [],
+    issues: [],
+    blockers: [],
+    required_criteria: [],
+    scene: null,
+    preview_urls: {},
+  };
+
+  it("não acende a faixa, não filtra nada e não marca linha nenhuma", () => {
+    const counts = exceptionCounts(
+      antiga.packet.readings,
+      readingIdsWithCandidate(antiga.associations.candidates),
+    );
+
+    expect(counts).toEqual({ auto: 0, autoNote: 0, review: 1, unresolved: 0 });
+    expect(
+      renderToStaticMarkup(
+        <ExceptionsBand
+          counts={counts}
+          onlyExceptions={false}
+          hiddenCount={0}
+          onChange={() => undefined}
+        />,
+      ),
+    ).toBe("");
+    expect(
+      visibleReadings(
+        antiga.packet.readings,
+        false,
+        blockerReadingIds(antiga.blockers),
+      ),
+    ).toEqual(antiga.packet.readings);
+    for (const item of antiga.packet.readings) {
+      expect(renderToStaticMarkup(<AutoDecisionBadge reading={item} />)).toBe("");
+    }
+  });
+
+  it("as confianças ausentes ficam ausentes: nada de zero medido", () => {
+    expect(antiga.reading_confidences).toBeUndefined();
+    expect(antiga.confidence_shadow).toBeUndefined();
+    expect(antiga.auto_association_rate).toBeUndefined();
+    expect(antiga.review_rate).toBeUndefined();
+    // O `?? []` é o mesmo da tela: ausência vira lista vazia, nunca número.
+    expect(antiga.reading_confidences ?? []).toEqual([]);
   });
 });

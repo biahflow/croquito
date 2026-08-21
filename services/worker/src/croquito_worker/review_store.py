@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -11,13 +12,57 @@ from sqlalchemy.engine import Connection, RowMapping
 
 from croquito_core.ids import new_uuid7
 from croquito_worker.association import AssociationSet
-from croquito_worker.rectangle_solver import RectangleSolveRequest
+from croquito_worker.association_confidence import confidence_shadow_json
+from croquito_worker.auto_association import (
+    AutoDecision,
+    apply_auto_association,
+    auto_association_mode,
+)
+from croquito_worker.rectangle_solver import RectangleSolveRequest, solve_rectangle
 from croquito_worker.review import ReviewPacket
 from croquito_worker.vision import VisionProposalSet
 
 
 class ReviewAlreadyExistsError(RuntimeError):
     """The job already carries a review revision; seeding refuses to replace evidence."""
+
+
+def _solver_reading_ids(solver_request: RectangleSolveRequest | None) -> frozenset[str]:
+    """Leituras que o pedido do solver usa como geometria de planta desta revisão.
+
+    O `kind` classifica a leitura; este pedido a DESIGNA. Uma leitura citada aqui vira
+    lado ou círculo do retângulo com precisão exata (`rectangle_solver`), qualquer que
+    seja o `kind` — inclusive `height`, que o pedido aceita como o lado vertical. Ela é
+    cota de planta por construção e o tier de anotação, cujo fundamento é que o erro não
+    alcança geometria, não pode alcançá-la (ADR-0044, D2). O tier de dupla testemunha
+    continua valendo para ela, como sempre valeu.
+    """
+    if solver_request is None:
+        return frozenset()
+    return frozenset(
+        reading_id
+        for reading_id in (
+            solver_request.width_reading_id,
+            solver_request.height_reading_id,
+            solver_request.centre_circle_reading_id,
+        )
+        if reading_id is not None
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SeededReviewRevision:
+    """O que a revisão 1 ficou sendo depois de gravada — o que foi persistido, não o pedido.
+
+    Com o modo automático desligado (o padrão), `packet` e `solver_blockers` são
+    exatamente o que o chamador passou e `auto_decisions` é vazio.
+    """
+
+    review_id: UUID
+    packet: ReviewPacket
+    selected_associations: dict[str, str]
+    solver_blockers: tuple[str, ...]
+    auto_decisions: tuple[AutoDecision, ...]
 
 
 def json_expression(dialect_name: str, name: str) -> str:
@@ -54,8 +99,20 @@ def insert_review_revision_v1(
     required_blocker_codes: list[str],
     required_criteria_texts: dict[str, str],
     created_by: str,
-) -> UUID:
-    """Persists review revision 1 for a job, refusing to overwrite an existing one."""
+) -> SeededReviewRevision:
+    """Persists review revision 1 for a job, refusing to overwrite an existing one.
+
+    É aqui que a revisão 1 nasce com o shadow de confiança computado (F-029): este caminho
+    lista as colunas uma a uma e, antes desta task, deixava `confidence_shadow_json` no
+    default do servidor — a revisão inicial de todo job entrava no banco sem o registro
+    que a calibração precisa, e nenhuma revisão posterior o reconstituía para o instante
+    em que ela nasceu.
+
+    Com a dupla chave do ADR-0041 presente, é também aqui que a decisão de ator-máquina
+    acontece: um único ponto de escrita para os dois caminhos do worker (a extração por
+    provider e a semeadura local), porque duas cópias da regra divergiriam em silêncio
+    justamente onde o toque humano deixa de existir.
+    """
     existing = connection.execute(
         text(
             "SELECT id FROM review_revisions "
@@ -66,19 +123,58 @@ def insert_review_revision_v1(
     if existing is not None:
         raise ReviewAlreadyExistsError(job_id)
 
+    mode = auto_association_mode()
+    outcome = (
+        apply_auto_association(
+            packet,
+            associations,
+            mode=mode,
+            plan_geometry_reading_ids=_solver_reading_ids(solver_request),
+        )
+        if mode is not None
+        else None
+    )
+    stored_packet = outcome.packet if outcome is not None else packet
+    selected_associations = outcome.selected_associations if outcome is not None else {}
+    auto_decisions = outcome.decisions if outcome is not None else ()
+    stored_blockers = tuple(solver_blockers)
+    if auto_decisions and solver_request is not None:
+        # Os blockers gravados descrevem o pacote gravado. Sem isto a revisão diria
+        # "falta confirmação humana" sobre uma leitura que ela mesma já registra como
+        # decidida e associada — e a pessoa não teria como resolver essa contradição:
+        # decidir de novo é `READING_ALREADY_DECIDED`.
+        stored_blockers = tuple(
+            solve_rectangle(
+                stored_packet, solver_request, confirmed_associations=selected_associations
+            ).blockers
+        )
+
+    # O shadow descreve o que ficou GRAVADO, como no caminho da API: ele é computado sobre
+    # o pacote persistido, já com as auto-decisões dentro. As confianças citadas em
+    # `auto_decisions` são outra coisa e não se confundem com estas: são as do INSTANTE do
+    # ato, e é por elas que a auditoria do pacote responde.
+    shadow = confidence_shadow_json(stored_packet, associations, ())
+    if auto_decisions:
+        # A lista nominal fica NO shadow da revisão em que o ato aconteceu: a auditoria do
+        # export cita cada cota que entrou sem toque humano, e o `decision_id` amarra a
+        # citação à decisão gravada no pacote — retificada depois, a citação deixa de
+        # valer sozinha, sem ninguém precisar limpar registro nenhum.
+        shadow["auto_decisions"] = [decision.as_json() for decision in auto_decisions]
+
     dialect = connection.engine.dialect.name
     review_id = new_uuid7()
     parameters: dict[str, Any] = {
         "id": str(review_id),
         "tenant_id": tenant_id,
         "job_id": job_id,
-        "packet": json.dumps(packet.model_dump(mode="json")),
+        "packet": json.dumps(stored_packet.model_dump(mode="json")),
         "associations": json.dumps(associations.model_dump(mode="json")),
         "proposals": json.dumps(proposals.model_dump(mode="json")),
-        "selected_associations": json.dumps({}),
+        "selected_associations": json.dumps(selected_associations),
         "declared_chains": json.dumps([]),
+        "confidence_shadow": json.dumps(shadow),
         "evidence_refs": json.dumps(evidence_refs),
-        "solver_blockers": json.dumps(solver_blockers),
+        "solver_blockers": json.dumps(list(stored_blockers)),
         "required_blockers": json.dumps(required_blocker_codes),
         "required_criteria_texts": json.dumps(required_criteria_texts, ensure_ascii=False),
         "created_by": created_by,
@@ -94,7 +190,8 @@ def insert_review_revision_v1(
             "INSERT INTO review_revisions "
             "(id, tenant_id, job_id, version, parent_review_id, packet_json, "
             "associations_json, proposals_json, selected_associations_json, "
-            "declared_chains_json, calibration_json, proposal_decisions_json, "
+            "declared_chains_json, confidence_shadow_json, "
+            "calibration_json, proposal_decisions_json, "
             "evidence_refs_json, "
             "solver_request_json, solver_blockers_json, required_blocker_codes_json, "
             "required_criteria_texts_json, scene_revision_id, created_by, created_at) "
@@ -104,6 +201,7 @@ def insert_review_revision_v1(
             f"{json_expression(dialect, 'proposals')}, "
             f"{json_expression(dialect, 'selected_associations')}, "
             f"{json_expression(dialect, 'declared_chains')}, "
+            f"{json_expression(dialect, 'confidence_shadow')}, "
             "NULL, NULL, "
             f"{json_expression(dialect, 'evidence_refs')}, "
             f"{solver_request_expression}, "
@@ -114,7 +212,13 @@ def insert_review_revision_v1(
         ),
         parameters,
     )
-    return review_id
+    return SeededReviewRevision(
+        review_id=review_id,
+        packet=stored_packet,
+        selected_associations=selected_associations,
+        solver_blockers=stored_blockers,
+        auto_decisions=auto_decisions,
+    )
 
 
 def insert_next_review_revision(

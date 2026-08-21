@@ -54,6 +54,8 @@ import {
   type ApprovalForm,
 } from "./approval";
 import {
+  autoDecisionProvenanceLabel,
+  autoDecisionScoreVersion,
   calibrationModeLabel,
   chainCorroboratedReadingIds,
   chainStatusLabel,
@@ -61,12 +63,15 @@ import {
   decisionActionLabel,
   derivedAnchorTitle,
   derivedDimensionLabel,
+  exceptionCounterLabel,
+  exceptionFilterLabel,
   formatDecimal,
   keepApartAxisLabel,
   measurementKindLabel,
   metricEdgeLabel,
   ocrWitnessHint,
   proposalDisplayName,
+  readingConfidenceLabel,
   readingLabel,
   readingStatusLabel,
   regionKindLabel,
@@ -790,6 +795,296 @@ export function ChainsSection({
 }
 
 /**
+ * Vista de exceções (F-029): o que o sistema decidiu sozinho e o que ainda espera gente.
+ *
+ * Tudo aqui é LEITURA do que a API respondeu. A tela não aplica corte, não recomputa
+ * confiança, não pré-marca nada e não auto-aprova coisa alguma: quem decidiu está escrito
+ * na própria decisão (`actor`), e o que se lê aqui é o registro desse ato.
+ */
+export type ExceptionCounts = {
+  /** Cotas confirmadas pelo sistema por dupla testemunha, sem toque humano. */
+  auto: number;
+  /**
+   * Anotações confirmadas pelo sistema por testemunha única (ADR-0044): elevação e recado
+   * da folha, que não mandam na geometria de planta. Contam à parte das cotas porque o
+   * que se aceita de um rótulo não é o que se aceita de uma medida.
+   */
+  autoNote: number;
+  /** Cotas sem decisão que têm ao menos um candidato de associação. */
+  review: number;
+  /** Cotas sem decisão e sem candidato nenhum: nem associar o sistema saberia. */
+  unresolved: number;
+};
+
+/**
+ * Decisão de ator-máquina (ADR-0041). Ausência do campo é decisão humana — é o default
+ * do servidor, e uma decisão gravada antes do campo existir continua sendo de gente.
+ */
+export function isSystemDecided(reading: ReviewReading): boolean {
+  return reading.decision?.actor === "system";
+}
+
+/**
+ * Decisão de máquina do tier de anotação (ADR-0044).
+ *
+ * O tier é lido do que o servidor gravou, e nunca re-derivado do `kind` da leitura: a
+ * regra de elegibilidade mora no worker, e uma segunda cópia dela aqui passaria a mentir
+ * no dia em que a de lá mudasse. Decisão de sistema sem tier declarado é do tier de cota,
+ * que é como o servidor já a devolve.
+ */
+export function isSystemAnnotation(reading: ReviewReading): boolean {
+  return (
+    isSystemDecided(reading) && reading.decision?.auto_tier === "anotacao"
+  );
+}
+
+/** Leituras com alguém a quem associar; separa "espera revisão" de "não resolvida". */
+export function readingIdsWithCandidate(
+  candidates: { reading_id: string }[],
+): Set<string> {
+  return new Set(candidates.map((candidate) => candidate.reading_id));
+}
+
+/**
+ * Os três contadores da faixa. Leitura já decidida por uma PESSOA não entra em nenhum
+ * deles: a faixa descreve o que o modo automático fez e o que sobrou para o revisor, não
+ * o total da revisão — esse continua no cabeçalho da lista.
+ */
+export function exceptionCounts(
+  readings: ReviewReading[],
+  withCandidate: Set<string>,
+): ExceptionCounts {
+  const counts: ExceptionCounts = {
+    auto: 0,
+    autoNote: 0,
+    review: 0,
+    unresolved: 0,
+  };
+  for (const reading of readings) {
+    if (isSystemDecided(reading)) {
+      if (isSystemAnnotation(reading)) {
+        counts.autoNote += 1;
+      } else {
+        counts.auto += 1;
+      }
+      continue;
+    }
+    if (reading.decision) {
+      continue;
+    }
+    if (withCandidate.has(reading.id)) {
+      counts.review += 1;
+    } else {
+      counts.unresolved += 1;
+    }
+  }
+  return counts;
+}
+
+/**
+ * Leituras citadas por algum blocker (`CODIGO:rd_…`, ver `reviewBlockerLabel`).
+ *
+ * Elas nunca são escondidas pelo filtro, mesmo já decididas: um bloqueio que cita uma
+ * cota é exatamente o caso em que esconder a linha atrapalharia quem precisa achá-la.
+ */
+export function blockerReadingIds(blockers: string[]): Set<string> {
+  const ids = new Set<string>();
+  for (const blocker of blockers) {
+    const readingId = blocker.split(":")[1];
+    if (readingId) {
+      ids.add(readingId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * O filtro esconde SÓ linha já decidida — por gente ou pelo sistema. Nada pendente sai da
+ * lista, e nem a linha decidida que `keepVisible` protege: "não esconder warning/critical
+ * para limpar a interface" vale aqui como vale no resto da tela.
+ *
+ * `keepVisible` reúne as leituras que o filtro nunca pode tirar da vista: as citadas por
+ * um blocker e, enquanto uma cadeia está sendo declarada, as que podem ser marcadas como
+ * termo dela — a declaração de cadeia (F-023) se faz marcando cotas CONFIRMADAS, e
+ * escondê-las quebraria o ato pela metade.
+ */
+export function visibleReadings(
+  readings: ReviewReading[],
+  onlyExceptions: boolean,
+  keepVisible: Set<string>,
+): ReviewReading[] {
+  if (!onlyExceptions) {
+    return readings;
+  }
+  return readings.filter(
+    (reading) => !reading.decision || keepVisible.has(reading.id),
+  );
+}
+
+/**
+ * A faixa de exceções e o filtro da lista.
+ *
+ * Só existe quando ALGUMA leitura foi decidida pelo sistema: sem modo automático, a
+ * revisão é a de sempre e não ganha faixa, contador nem filtro. Nenhum botão daqui
+ * decide, confirma ou aprova — eles mudam o que está à vista, e só.
+ */
+export function ExceptionsBand({
+  counts,
+  onlyExceptions,
+  hiddenCount,
+  onChange,
+}: {
+  counts: ExceptionCounts;
+  onlyExceptions: boolean;
+  /** Quantas linhas o filtro está tirando da lista neste momento. */
+  hiddenCount: number;
+  onChange: (onlyExceptions: boolean) => void;
+}) {
+  if (counts.auto === 0 && counts.autoNote === 0) {
+    return null;
+  }
+  return (
+    <section className="batch-controls" aria-label="Exceções da revisão">
+      {/* Os números mudam a cada revisão recarregada pelo poll: quem usa leitor de tela
+          precisa ouvir a contagem nova. */}
+      <p className="batch-count" aria-live="polite">
+        {exceptionCounterLabel("auto", counts.auto)} ·{" "}
+        {/* O contador de anotações só aparece quando houve alguma: numa revisão sem
+            elevação nem recado da folha, um "0 anotações automáticas" fixo ensinaria o
+            revisor a ignorar a faixa. */}
+        {counts.autoNote > 0
+          ? `${exceptionCounterLabel("annotation", counts.autoNote)} · `
+          : ""}
+        {exceptionCounterLabel("review", counts.review)} ·{" "}
+        {exceptionCounterLabel("unresolved", counts.unresolved)}
+      </p>
+      <p className="batch-hint">
+        As auto-associadas foram confirmadas pelo sistema por confiança calibrada, e cada
+        uma continua corrigível por você. Nada aqui aprova cena nem libera exportação.
+      </p>
+      {counts.autoNote > 0 ? (
+        <p className="batch-hint">
+          As anotações automáticas (altura, recado da folha) entraram com uma testemunha
+          só e <strong>sem elemento associado</strong>: elas não medem a planta e não
+          entram na geometria. Confira o texto de cada uma; onde ela fica no desenho
+          continua sendo declaração sua, no aceite do traçado.
+        </p>
+      ) : null}
+      <div
+        className="batch-buttons"
+        role="group"
+        aria-label="O que a lista de leituras mostra"
+      >
+        <button
+          type="button"
+          aria-pressed={onlyExceptions}
+          onClick={() => onChange(true)}
+        >
+          {exceptionFilterLabel("only")}
+        </button>
+        <button
+          type="button"
+          aria-pressed={!onlyExceptions}
+          onClick={() => onChange(false)}
+        >
+          {exceptionFilterLabel("all")}
+        </button>
+      </div>
+      {onlyExceptions ? (
+        <p className="batch-hint" aria-live="polite">
+          {hiddenCount === 1
+            ? "1 leitura já decidida está fora da lista."
+            : `${hiddenCount} leituras já decididas estão fora da lista.`}{" "}
+          Bloqueios, avisos e leituras citadas por um bloqueio continuam à vista.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * A marca da linha que o sistema decidiu: ícone + palavra + a versão do score que a
+ * produziu, e a confiança registrada quando a revisão a traz.
+ *
+ * Texto, nunca só cor. A linha continua na lista, continua selecionável e continua
+ * corrigível pelo mesmo caminho de retificação de qualquer decisão registrada.
+ */
+export function AutoDecisionBadge({
+  reading,
+  confidence,
+}: {
+  reading: ReviewReading;
+  /** Confiança de leitura desta revisão; ausente em pacote gravado antes do campo. */
+  confidence?: number;
+}) {
+  const decision = reading.decision;
+  if (!decision || decision.actor !== "system") {
+    return null;
+  }
+  const annotation = decision.auto_tier === "anotacao";
+  return (
+    <>
+      <small
+        className="auto-badge"
+        title={
+          annotation
+            ? "Anotação confirmada pelo sistema, sem elemento associado: ela não mede a planta e não entra na geometria. Você diz onde o texto fica no aceite do traçado, e corrige a decisão como qualquer outra."
+            : "Confirmada pelo sistema por confiança calibrada, sem toque humano. Corrija-a como qualquer decisão registrada."
+        }
+      >
+        ⚙ {autoDecisionProvenanceLabel(decision.reviewer_id, decision.auto_tier)}
+      </small>
+      {confidence === undefined ? null : (
+        <small className="auto-confidence">
+          {readingConfidenceLabel(confidence)}
+        </small>
+      )}
+    </>
+  );
+}
+
+/**
+ * Quem decidiu a leitura selecionada, por extenso, no registro da decisão.
+ *
+ * Decisão de máquina não se apresenta como se fosse de uma pessoa, e o `reviewer_id`
+ * técnico do ator-máquina (`system:auto-association@…`) não vai para a leitura corrida:
+ * o que se lê é o sistema e a versão do score. O caminho de correção é o mesmo de
+ * qualquer decisão registrada, e a frase diz isso.
+ */
+export function DecisionAuthorLine({ reading }: { reading: ReviewReading }) {
+  const decision = reading.decision;
+  if (!decision) {
+    return null;
+  }
+  const rectified = decision.rectifies_decision_id
+    ? " (esta já é uma correção de uma decisão anterior)"
+    : "";
+  if (decision.actor === "system") {
+    const version = autoDecisionScoreVersion(decision.reviewer_id);
+    return (
+      <p className="reading-current">
+        Confirmada <strong>pelo sistema</strong>, sem toque humano
+        {version ? `, com o score ${version}` : ""}, em{" "}
+        {decisionMoment(decision.decided_at)}
+        {rectified}.{" "}
+        {decision.auto_tier === "anotacao"
+          ? "Como anotação, sem elemento associado: ela não mede a planta, então uma leitura só bastou e nada foi preso à geometria — onde o texto fica é declaração sua no aceite do traçado, e a justificativa abaixo traz o elemento provável como dica. "
+          : ""}
+        Corrigi-la é ato seu, pelo mesmo caminho de correção das demais decisões.
+      </p>
+    );
+  }
+  return (
+    <p className="reading-current">
+      {reading.status === "rejected" ? "Rejeitada por " : "Decidida por "}
+      <strong>{decision.reviewer_id}</strong> em{" "}
+      {decisionMoment(decision.decided_at)}
+      {rectified}.
+    </p>
+  );
+}
+
+/**
  * Jornada da revisão do croqui. A sessão OIDC é da casca (`App.tsx`) e chega por prop:
  * `readSession()` consome o authorization code do redirect, que é de uso único, então
  * ela tem um dono só. A casca também é quem decide não montar esta jornada sem sessão.
@@ -1013,6 +1308,53 @@ export function CroquiApp({
   const chainCorroborated = useMemo(
     () => chainCorroboratedReadingIds(review ?? {}),
     [review],
+  );
+  // Vista de exceções (F-029). Tudo derivado da resposta: a tela não recomputa confiança,
+  // não aplica corte e não decide nada — ela conta e mostra o que a API já respondeu.
+  //
+  // O filtro nasce desligado: a lista abre inteira, como sempre abriu, e esconder linha
+  // é gesto do revisor. Ligado por padrão, uma revisão inteira decidida pelo sistema
+  // apareceria vazia sem ninguém ter pedido isso.
+  const [onlyExceptions, setOnlyExceptions] = useState(false);
+  const readingsWithCandidate = useMemo(
+    () => readingIdsWithCandidate(review?.associations.candidates ?? []),
+    [review],
+  );
+  const exceptions = useMemo(
+    () => exceptionCounts(review?.packet.readings ?? [], readingsWithCandidate),
+    [review, readingsWithCandidate],
+  );
+  const readingConfidences = useMemo(
+    () =>
+      new Map(
+        (review?.reading_confidences ?? []).map((item) => [
+          item.reading_id,
+          item.reading_confidence,
+        ]),
+      ),
+    [review],
+  );
+  // O filtro só vale onde a faixa existe: revisão sem auto-decisão nenhuma é a tela de
+  // sempre, e uma preferência guardada de outro job não pode esconder linha nela.
+  const exceptionsOnly = exceptions.auto > 0 && onlyExceptions;
+  // Quem o filtro nunca esconde: leitura citada por um bloqueio e, com a declaração de
+  // cadeia em curso, as confirmadas que podem virar termo dela.
+  const alwaysListedReadings = useMemo(
+    () =>
+      new Set([
+        ...blockerReadingIds(review?.blockers ?? []),
+        ...(chainDraft === null ? [] : chainCandidateIds),
+      ]),
+    [review, chainDraft, chainCandidateIds],
+  );
+  const listedReadings = useMemo(
+    () =>
+      visibleReadings(
+        review?.packet.readings ?? [],
+        exceptionsOnly,
+        alwaysListedReadings,
+      ),
+    [review, exceptionsOnly, alwaysListedReadings],
   );
   const proposals = review?.proposals?.proposals ?? [];
   const proposalById = new Map(
@@ -3432,6 +3774,14 @@ export function CroquiApp({
                   </div>
                   <span className="counter">{review.packet.readings.length}</span>
                 </div>
+                <ExceptionsBand
+                  counts={exceptions}
+                  onlyExceptions={exceptionsOnly}
+                  hiddenCount={
+                    review.packet.readings.length - listedReadings.length
+                  }
+                  onChange={setOnlyExceptions}
+                />
                 {annotationCandidateIds.length > 0 ? (
                   <section
                     className="batch-controls"
@@ -3490,7 +3840,7 @@ export function CroquiApp({
                   </section>
                 ) : null}
                 <div className="review-list">
-                  {review.packet.readings.map((reading) => {
+                  {listedReadings.map((reading) => {
                     const batchable = annotationCandidateIdSet.has(reading.id);
                     // Termo de cadeia só entra em leitura confirmada, e só enquanto a
                     // declaração está em curso. Os dois lotes nunca disputam a mesma
@@ -3568,6 +3918,12 @@ export function CroquiApp({
                                 ⚠ sem 2ª testemunha
                               </small>
                             ) : null}
+                            {/* Proveniência de máquina na própria linha: a cota
+                                auto-decidida não se disfarça de decisão humana. */}
+                            <AutoDecisionBadge
+                              reading={reading}
+                              confidence={readingConfidences.get(reading.id)}
+                            />
                             <ChainCloseHint
                               corroborated={chainCorroborated.has(reading.id)}
                             />
@@ -3584,6 +3940,13 @@ export function CroquiApp({
                     );
                   })}
                 </div>
+                {exceptionsOnly && listedReadings.length === 0 ? (
+                  <p className="batch-hint">
+                    Nenhuma leitura pendente: todas desta revisão já têm decisão
+                    registrada. Volte a "todas" para conferir as auto-associadas
+                    uma a uma.
+                  </p>
+                ) : null}
                 <ChainsSection
                   suggested={review.suggested_chains ?? []}
                   declared={review.declared_chains ?? []}
@@ -3637,17 +4000,7 @@ export function CroquiApp({
                         label={readingLabel(selectedReading)}
                       />
                     </div>
-                    <p className="reading-current">
-                      {selectedReading.status === "rejected"
-                        ? "Rejeitada por "
-                        : "Decidida por "}
-                      <strong>{selectedReading.decision.reviewer_id}</strong> em{" "}
-                      {decisionMoment(selectedReading.decision.decided_at)}
-                      {selectedReading.decision.rectifies_decision_id
-                        ? " (esta já é uma correção de uma decisão anterior)"
-                        : ""}
-                      .
-                    </p>
+                    <DecisionAuthorLine reading={selectedReading} />
                     {selectedReading.decision.note ? (
                       <p className="reading-current">
                         Justificativa registrada:{" "}

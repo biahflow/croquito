@@ -77,6 +77,9 @@ class SeedResult:
     required_criteria: tuple[ScopeCriterion, ...]
     image_sha256: str
     source_image_key: str
+    # Leituras que entraram sem toque humano (F-029, só com a dupla chave do ADR-0041
+    # presente). Vazio é o padrão, e é o que a semeadura sempre produziu.
+    auto_decided_reading_ids: tuple[str, ...] = ()
 
 
 def _load(path: Path) -> Any:
@@ -213,7 +216,7 @@ def seed_review(
 
     with engine.begin() as connection:
         try:
-            review_id = insert_review_revision_v1(
+            seeded = insert_review_revision_v1(
                 connection,
                 tenant_id=inputs.tenant_id,
                 job_id=str(inputs.job_id),
@@ -234,14 +237,18 @@ def seed_review(
         except ReviewAlreadyExistsError as error:
             raise SeedRefusedError("REVIEW_ALREADY_EXISTS") from error
 
+    # Os blockers relatados são os PERSISTIDOS, não os do ensaio: com o modo automático
+    # ligado, a gravação decide leituras e o ensaio acima passa a descrever um estado que
+    # não é o da revisão. Com o modo desligado os dois são o mesmo objeto de conteúdo.
     return SeedResult(
         job_id=inputs.job_id,
-        review_id=review_id,
+        review_id=seeded.review_id,
         review_version=1,
         readings=len(seeded_packet.readings),
         proposals=len(proposals.proposals),
-        blockers=tuple(dry_run.blockers),
+        blockers=seeded.solver_blockers,
         required_criteria=inputs.required_criteria,
         image_sha256=packet.image_sha256,
         source_image_key=source_image_key,
+        auto_decided_reading_ids=tuple(decision.reading_id for decision in seeded.auto_decisions),
     )

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { DimensionChain, Review, VisionProposal } from "./api";
 import {
+  autoDecisionProvenanceLabel,
+  autoDecisionScoreVersion,
   calibrationModeLabel,
   chainCorroboratedReadingIds,
   chainStatusLabel,
@@ -9,6 +11,8 @@ import {
   decisionActionLabel,
   derivedAnchorTitle,
   derivedDimensionLabel,
+  exceptionCounterLabel,
+  exceptionFilterLabel,
   formatDecimal,
   keepApartAxisLabel,
   measurementKindLabel,
@@ -17,6 +21,7 @@ import {
   precisionLabel,
   proposalBadge,
   proposalDisplayName,
+  readingConfidenceLabel,
   readingLabel,
   readingStatusLabel,
   regionKindLabel,
@@ -965,5 +970,89 @@ describe("chainCorroboratedReadingIds", () => {
 
   it("renders nothing from a review replayed without the new fields", () => {
     expect(chainCorroboratedReadingIds({})).toEqual(new Set());
+  });
+});
+
+describe("exceptionCounterLabel", () => {
+  it("writes every counter with its icon and the word spelled out", () => {
+    expect(exceptionCounterLabel("auto", 4)).toBe("⚙ 4 auto-associadas");
+    expect(exceptionCounterLabel("review", 2)).toBe("⚠ 2 precisam de revisão");
+    expect(exceptionCounterLabel("unresolved", 3)).toBe("✗ 3 não resolvidas");
+  });
+
+  it("agrees in number, so a single reading does not read as a plural", () => {
+    expect(exceptionCounterLabel("auto", 1)).toBe("⚙ 1 auto-associada");
+    expect(exceptionCounterLabel("review", 1)).toBe("⚠ 1 precisa de revisão");
+    expect(exceptionCounterLabel("unresolved", 1)).toBe("✗ 1 não resolvida");
+  });
+
+  it("says zero out loud instead of hiding an empty bucket", () => {
+    expect(exceptionCounterLabel("review", 0)).toBe("⚠ 0 precisam de revisão");
+  });
+
+  it("names the annotation tier with its own words, not only its own colour", () => {
+    expect(exceptionCounterLabel("annotation", 3)).toBe(
+      "⚙ 3 anotações automáticas",
+    );
+    expect(exceptionCounterLabel("annotation", 1)).toBe(
+      "⚙ 1 anotação automática",
+    );
+  });
+});
+
+describe("exceptionFilterLabel", () => {
+  it("names the two states of the list filter", () => {
+    expect(exceptionFilterLabel("only")).toBe("só exceções");
+    expect(exceptionFilterLabel("all")).toBe("todas");
+  });
+});
+
+describe("autoDecisionScoreVersion", () => {
+  it("reads the score version stamped in the machine identity", () => {
+    expect(autoDecisionScoreVersion("system:auto-association@1.0.0")).toBe(
+      "1.0.0",
+    );
+  });
+
+  it("returns null for a human reviewer instead of inventing a version", () => {
+    expect(autoDecisionScoreVersion("revisor-da-obra")).toBeNull();
+    expect(autoDecisionScoreVersion("system:auto-association")).toBeNull();
+  });
+});
+
+describe("autoDecisionProvenanceLabel", () => {
+  it("says who associated and with which score, never the raw identifier", () => {
+    expect(
+      autoDecisionProvenanceLabel("system:auto-association@1.0.0"),
+    ).toBe("associada pelo sistema · score 1.0.0");
+  });
+
+  it("still names the author when the identity carries no version", () => {
+    const label = autoDecisionProvenanceLabel("system:auto-association");
+
+    expect(label).toBe("associada pelo sistema");
+    expect(label).not.toContain("system:");
+  });
+
+  it("names the annotation tier apart from the dimension one", () => {
+    expect(
+      autoDecisionProvenanceLabel("system:auto-association@1.0.0", "anotacao"),
+    ).toBe("anotação automática · score 1.0.0");
+    expect(
+      autoDecisionProvenanceLabel("system:auto-association@1.0.0", "cota"),
+    ).toBe("associada pelo sistema · score 1.0.0");
+  });
+
+  it("reads a decision recorded before the tier existed as the dimension tier", () => {
+    expect(
+      autoDecisionProvenanceLabel("system:auto-association@1.0.0", null),
+    ).toBe("associada pelo sistema · score 1.0.0");
+  });
+});
+
+describe("readingConfidenceLabel", () => {
+  it("writes the confidence with a decimal comma, as the sheet is read", () => {
+    expect(readingConfidenceLabel(0.97)).toBe("confiança 0,97");
+    expect(readingConfidenceLabel(1)).toBe("confiança 1,00");
   });
 });

@@ -60,6 +60,8 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0038](0038-bdi-como-conceito-de-pre-licitacao.md) | BDI como conceito de pré-licitação | Accepted |
 | [0039](0039-sinapi-sicro-como-origens-de-preco.md) | SINAPI e SICRO como origens de preço da pré-licitação | Accepted |
 | [0040](0040-teto-de-verba-do-orcamento-base.md) | Teto de verba do orçamento-base — declarado, visível, nunca tesoura | Accepted |
+| [0041](0041-decisao-de-ator-maquina-atras-de-flag-local.md) | Decisão de ator-máquina na revisão, atrás de flag local | Accepted |
+| [0044](0044-triagem-por-testemunha-anotacao-automatica.md) | Triagem por custo do erro: anotação automática (0042/0043 em worktrees paralelos) | Accepted |
 
 ## Processo
 

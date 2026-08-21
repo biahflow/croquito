@@ -34,9 +34,10 @@ from croquito_core.models import SceneRevision
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.takeoff import TakeoffPacket
 from croquito_worker.artifact_store import WorkerArtifactStore
+from croquito_worker.auto_association import auto_association_mode
 from croquito_worker.chat import build_chat_text_payload, chat_unknown_references
 from croquito_worker.criteria import ScopeCriterion
-from croquito_worker.dxf import export_scene_package
+from croquito_worker.dxf import AutoDecidedReadingAudit, export_scene_package
 from croquito_worker.provider_review import (
     ProviderReviewSnapshot,
     build_provider_review_snapshot,
@@ -59,6 +60,7 @@ from croquito_worker.review import ReviewPacket
 from croquito_worker.review_store import (
     ReviewAlreadyExistsError,
     insert_review_revision_v1,
+    json_column,
     json_expression,
 )
 from croquito_worker.tracing import (
@@ -596,6 +598,10 @@ class LocalQueueWorker:
         self.valuation_extraction_adapter = valuation_extraction_adapter
         self._queue_client: Any | None = None
         self._object_client: Any | None = None
+        # Configuração incoerente do modo automático (flag ligada sem corte) recusa aqui,
+        # antes de qualquer mensagem: se só falhasse na gravação da revisão, o consumidor
+        # entraria em ciclo de reentrega por um erro que é de configuração, não de dado.
+        auto_association_mode()
         self.engine = create_engine(settings.database_url)
 
     @property
@@ -963,6 +969,89 @@ class LocalQueueWorker:
                 {"job_id": job_id, "tenant_id": tenant_id, "job_status": job_status},
             )
 
+    def _auto_decided_readings(
+        self, connection: Connection, *, job_id: str, tenant_id: str
+    ) -> list[AutoDecidedReadingAudit]:
+        """A lista nominal das cotas que entraram sem toque humano, para a auditoria do pacote.
+
+        Duas fontes, porque duas coisas diferentes são perguntadas. O registro do ATO está
+        no shadow da revisão 1 — a única revisão em que uma auto-decisão pode nascer, e o
+        único lugar onde as confianças e o corte daquele instante ficam gravados. O que
+        VALE hoje está na revisão corrente: se uma pessoa retificou a auto-decisão, o
+        `decision_id` da leitura mudou, a citação deixa de casar e a cota sai da lista —
+        ela passou a ser trabalho humano, e a auditoria não pode dizer o contrário.
+        """
+        seeded = (
+            connection.execute(
+                text(
+                    "SELECT confidence_shadow_json FROM review_revisions "
+                    "WHERE job_id = :job_id AND tenant_id = :tenant_id AND version = 1"
+                ),
+                {"job_id": job_id, "tenant_id": tenant_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if seeded is None:
+            return []
+        shadow = json_column(seeded["confidence_shadow_json"]) or {}
+        recorded = shadow.get("auto_decisions") or []
+        if not recorded:
+            return []
+        current = (
+            connection.execute(
+                text(
+                    "SELECT packet_json, selected_associations_json FROM review_revisions "
+                    "WHERE job_id = :job_id AND tenant_id = :tenant_id "
+                    "ORDER BY version DESC LIMIT 1"
+                ),
+                {"job_id": job_id, "tenant_id": tenant_id},
+            )
+            .mappings()
+            .one()
+        )
+        packet = ReviewPacket.model_validate(json_column(current["packet_json"]))
+        selected = json_column(current["selected_associations_json"]) or {}
+        readings = {reading.id: reading for reading in packet.readings}
+        audited: list[AutoDecidedReadingAudit] = []
+        for entry in recorded:
+            reading = readings.get(str(entry["reading_id"]))
+            if reading is None or reading.decision is None or reading.value_si is None:
+                continue
+            if reading.decision.actor != "system":
+                continue
+            if reading.decision.decision_id != entry["decision_id"]:
+                continue
+            association_confidence = entry.get("association_confidence")
+            probable_proposal_id = entry.get("probable_proposal_id")
+            audited.append(
+                AutoDecidedReadingAudit(
+                    reading_id=reading.id,
+                    decision_id=reading.decision.decision_id,
+                    raw_text=reading.raw_text,
+                    value_si=str(reading.value_si),
+                    unit=reading.unit.value,
+                    # O vínculo é lido de `selected_associations`, que é onde ele de fato
+                    # vive: a anotação automática não tem entrada lá, e a auditoria diz
+                    # isso em vez de citar como vínculo o elemento que era só provável.
+                    proposal_id=selected.get(reading.id),
+                    reading_confidence=float(entry["reading_confidence"]),
+                    association_confidence=(
+                        None if association_confidence is None else float(association_confidence)
+                    ),
+                    threshold=float(entry["threshold"]),
+                    score_version=str(entry["score_version"]),
+                    # Shadow gravado antes do tier existir só pode ter vindo do tier de
+                    # dupla testemunha — era o único (ADR-0044). O default é a verdade
+                    # sobre aquele registro, não um preenchimento de conveniência.
+                    tier=str(entry.get("tier", "cota")),
+                    probable_proposal_id=(
+                        None if probable_proposal_id is None else str(probable_proposal_id)
+                    ),
+                )
+            )
+        return audited
+
     def _handle_export(self, *, export_id: str, job_id: str, tenant_id: str) -> int:
         """Builds, audits and publishes the CAD package exactly once per approved revision."""
         with self.engine.connect() as connection:
@@ -983,6 +1072,9 @@ class LocalQueueWorker:
                 )
                 .mappings()
                 .one_or_none()
+            )
+            auto_decided = self._auto_decided_readings(
+                connection, job_id=job_id, tenant_id=tenant_id
             )
         if artifact is None:
             raise ValueError("Exportação não encontrada ou tenant divergente")
@@ -1021,7 +1113,10 @@ class LocalQueueWorker:
                     )
                     extra_files.append(approval_path)
                 export = export_scene_package(
-                    scene, output_dir, extra_package_files=extra_files or None
+                    scene,
+                    output_dir,
+                    extra_package_files=extra_files or None,
+                    auto_decided_readings=auto_decided,
                 )
                 package_key = WorkerArtifactStore(
                     client=self.s3_client,

@@ -2,9 +2,10 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-20 (F-021 e F-022 abertas com contrato — nota pré-classificada na
-decisão e Document AI no braço de OCR, nascidas da segunda revisão real do Guaxindiba,
-ADR-0037 `Proposed`; antes: F-012 documentada com ADR-0036 `Proposed`; inventário
+Última revisão: 2026-08-21 (F-029 aberta com contrato — auto-associação de cotas por
+confiança calibrada, experimento local, absorvendo a fatia 2 da F-023; F-030 registrada
+sem contrato — fotos do levantamento na revisão; antes: F-021 e F-022 abertas com
+contrato, ADR-0037 `Proposed`; F-012 documentada com ADR-0036 `Proposed`; inventário
 F-013..F-017 aberto; F-018/F-019 abertas; F-020 aberta com contrato)
 
 ## Uso no ciclo de engenharia
@@ -51,6 +52,8 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-028 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
+| F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
+| F-030 | A DEFINIR | READY_FOR_SPEC | Fotos do levantamento na jornada de revisão (a definir em contrato) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -303,6 +306,32 @@ modo teto (`EstimateTarget` reservado): verba da demanda declarada na rodada e c
 contra o teto na montagem; especificada em detalhe por último na rodada, com dois gates
 antes do planejamento (ADR-0040 da semântica do teto e Design Approval Package).
 
+F-029 — auto-associação de cotas por confiança calibrada — nasce em 2026-08-21, por
+seleção humana, na conversa que comparou o produto com uma proposta externa de
+"Dimension Association Engine": o gargalo humano da revisão é dizer a qual segmento
+cada cota pertence, e hoje 100% das leituras exigem toque duplo (decisão + associação
+explícita). A feature realiza o bullet "melhor associação automática entre cotas e
+segmentos" da seção de generalização controlada, como **experimento local** (stack
+docker-compose, sem HML/GCP): score determinístico com duas confianças distintas
+(`reading_confidence` × `association_confidence`), modo shadow sempre computado,
+métricas `auto_association_rate`/`review_rate` com eval própria, e modo automático de
+leitura + associação atrás de `CROQUITO_AUTO_ASSOCIATION_ENABLED` (default `false`),
+com decisão de ator-máquina a nascer como ADR-0041. Três decisões de escopo do usuário
+na mesma sessão: o modo automático cobre leitura + associação; a fatia 2 da F-023
+(score calibrado com V14–V17) é absorvida por esta feature; a calibração usa
+Guaxindiba real + fixtures sintéticas + PDFs de levantamentos fornecidos pelo usuário.
+Contrato em [F-029](../features/F-029-auto-associacao-confianca/feature.md),
+prioridade `HIGH`.
+
+F-030 — fotos do levantamento na jornada de revisão — nasce na mesma sessão de
+2026-08-21, por seleção humana: o levantamento de campo produz fotos junto do croqui,
+e a jornada de upload/revisão só recebe o PDF. Foto resolve "o que é" (muro ×
+alambrado, portão × detalhe) e corrobora topologia via provider multimodal, mas não
+fornece medida (sem escala) — por isso não entra no score determinístico da F-029. É
+`INTERFACE_CHANGE` (upload + storage + retenção + chamada paga) e exigirá Design
+Approval Package antes do planejamento. Ainda sem Feature Contract: esta linha é o
+registro canônico até a especificação, e a prioridade é decisão humana pendente.
+
 ## Agora — MVP privado
 
 - Golden dataset e eval harness.
@@ -315,7 +344,8 @@ antes do planejamento (ADR-0040 da semântica do teto e Design Approval Package)
 
 - Ampliar regressão com documentos autorizados.
 - Biblioteca versionada de símbolos e blocos.
-- Melhor associação automática entre cotas e segmentos.
+- Melhor associação automática entre cotas e segmentos — selecionado em 2026-08-21
+  como [F-029](../features/F-029-auto-associacao-confianca/feature.md).
 - Curvas e polígonos com constraints adicionais.
 - Projetos persistentes com política contratual de retenção.
 - Métricas de qualidade por categoria de croqui.

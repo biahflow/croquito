@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from datetime import datetime
 from decimal import Decimal
@@ -69,11 +70,43 @@ class RegionCandidate(ReviewModel):
     polygon: list[tuple[float, float]] = Field(min_length=1)
 
 
+SYSTEM_ACTOR_ID_PATTERN = re.compile(r"^system:auto-association@\d+\.\d+\.\d+$")
+"""Identidade do ator-máquina: nome estável do ato + versão do score que o produziu.
+
+O FORMATO é o que o contrato exige, não uma versão específica. Quem cunha a decisão usa
+sempre a versão corrente (`auto_association.system_reviewer_id`); quem lê um pacote
+gravado precisa continuar conseguindo lê-lo depois que os pesos forem recalibrados e a
+versão subir. Amarrar a validação do modelo à constante de hoje transformaria toda
+decisão automática já persistida em registro inválido no dia da recalibração — o oposto
+da rastreabilidade que a versão no identificador existe para dar (ADR-0041, D2).
+"""
+
+
 class HumanDecision(ReviewModel):
+    """A decisão registrada sobre uma leitura — de uma pessoa por padrão, do sistema por exceção.
+
+    O ator é campo discriminador ADITIVO (ADR-0041, D1): decisão gravada antes dele
+    continua válida e é lida como `human`, e nenhum consumidor que ignore o campo muda de
+    comportamento. O nome da classe permanece porque o lugar semântico é o mesmo — "a
+    leitura foi decidida" —; um tipo irmão duplicaria validação de estado, solver, API,
+    retificação e telas.
+    """
+
     decision_id: str = Field(pattern=r"^hd_[a-f0-9]{16}$")
     action: Literal["confirm", "reject"]
+    # Quem decidiu, por natureza. Default `human` preserva todo pacote já persistido.
+    actor: Literal["human", "system"] = "human"
+    # POR QUAL regra a máquina decidiu, quando foi ela (ADR-0044, D3): `cota` é o tier de
+    # dupla testemunha do ADR-0041, `anotacao` é o de leitura sem papel de geometria de
+    # planta. Só existe em decisão de sistema — pessoa decide por julgamento, não por
+    # tier. Ausente numa decisão de sistema gravada antes deste campo é lida como `cota`:
+    # era o único tier que existia quando ela foi tomada, e essa é a verdade sobre ela.
+    auto_tier: Literal["cota", "anotacao"] | None = None
     reviewer_id: str = Field(min_length=1, max_length=120)
-    reviewer_role: Literal["engineer", "architect", "domain_reviewer"]
+    # Papel PROFISSIONAL, derivado do JWT: atributo de pessoa. Obrigatório quando o ator é
+    # humano e proibido quando é o sistema — fabricar um papel para a máquina contaminaria
+    # toda autorização que itera papéis (ADR-0041, D2).
+    reviewer_role: Literal["engineer", "architect", "domain_reviewer"] | None = None
     decided_at: datetime
     note: str | None = Field(default=None, max_length=500)
     # Sucessão declarada: esta decisão substitui a anterior por um ato humano novo, e
@@ -87,6 +120,31 @@ class HumanDecision(ReviewModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("decided_at exige timezone")
         return value
+
+    @model_validator(mode="after")
+    def validate_actor(self) -> HumanDecision:
+        """O que cada ator pode ser e pode fazer (ADR-0041, D2 e D3; ADR-0044, D3)."""
+        if self.actor == "human":
+            if self.reviewer_role is None:
+                raise ValueError("decisão humana exige papel profissional")
+            if self.auto_tier is not None:
+                raise ValueError("decisão humana não tem tier de decisão automática")
+            return self
+        if self.reviewer_role is not None:
+            raise ValueError("decisão de sistema não tem papel profissional")
+        if self.auto_tier is None:
+            # Normaliza na leitura em vez de aceitar o vazio: a decisão de sistema sempre
+            # foi tomada por ALGUMA regra, e quem consome o registro não deveria precisar
+            # saber que houve um dia em que só existia uma.
+            self.auto_tier = "cota"
+        if not SYSTEM_ACTOR_ID_PATTERN.fullmatch(self.reviewer_id):
+            raise ValueError("decisão de sistema exige identidade versionada de ator-máquina")
+        # Rejeitar uma leitura e corrigir uma decisão são julgamentos humanos.
+        if self.action != "confirm":
+            raise ValueError("decisão de sistema só confirma")
+        if self.rectifies_decision_id is not None:
+            raise ValueError("decisão de sistema nunca retifica")
+        return self
 
     @model_validator(mode="after")
     def validate_rectification(self) -> HumanDecision:

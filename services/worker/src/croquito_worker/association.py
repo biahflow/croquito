@@ -10,8 +10,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from croquito_worker.association_confidence import association_confidence as _score_association
 from croquito_worker.io_utils import atomic_write_text
-from croquito_worker.review import DimensionReading, ReviewPacket
+from croquito_worker.review import DimensionReading, PixelBox, ReviewPacket
 from croquito_worker.vision import (
     PixelCircle,
     PixelLine,
@@ -36,6 +37,15 @@ class AssociationCandidate(AssociationModel):
     pixel_distance: float = Field(ge=0)
     proximity_score: float = Field(ge=0, le=1)
     visual_quality_score: float = Field(ge=0, le=1)
+    # Alinhamento entre o eixo dominante do bbox da evidência da leitura e a direção do
+    # segmento candidato (derivada de `PixelLine.start`/`end`). `None` quando o candidato
+    # não tem direção própria (círculo, contorno) — sinal ausente, nunca sinal ruim.
+    orientation_alignment: float | None = Field(default=None, ge=0, le=1)
+    # Confiança determinística de associação (F-029 T1): "sei a qual segmento esta cota
+    # pertence?". Distinta de `reading_confidence` ("li certo?") — nunca se fundem. Default
+    # 0.0 é só o valor de um candidato construído fora de `associate_readings` (ex.:
+    # fixtures de teste existentes) — o pipeline real sempre recalcula o valor real.
+    association_confidence: float = Field(default=0.0, ge=0, le=1)
     precision: Literal["unresolved"] = "unresolved"
     export: Literal[False] = False
 
@@ -106,6 +116,35 @@ def _evidence_center(reading: DimensionReading) -> PixelPoint:
     return PixelPoint(x=(bbox.left + bbox.right) / 2, y=(bbox.top + bbox.bottom) / 2)
 
 
+def _bbox_dominant_axis_vector(bbox: PixelBox) -> PixelPoint:
+    """Vetor unitário do eixo dominante do bbox: o lado mais comprido dá a direção do texto."""
+    width = bbox.right - bbox.left
+    height = bbox.bottom - bbox.top
+    if width >= height:
+        return PixelPoint(x=1.0, y=0.0)
+    return PixelPoint(x=0.0, y=1.0)
+
+
+def _orientation_alignment(reading: DimensionReading, proposal: VisionProposal) -> float | None:
+    """Alinhamento entre o eixo dominante do texto e a direção do segmento candidato.
+
+    Só linhas têm direção própria derivável de `start`/`end`; círculo e contorno voltam
+    `None` — sinal ausente, tratado como neutro por `association_confidence`.
+    """
+    geometry = proposal.geometry
+    if not isinstance(geometry, PixelLine):
+        return None
+    delta_x = geometry.end.x - geometry.start.x
+    delta_y = geometry.end.y - geometry.start.y
+    length = math.hypot(delta_x, delta_y)
+    if length == 0:
+        return None
+    axis = _bbox_dominant_axis_vector(reading.evidence.bbox)
+    # Valor absoluto: orientação não distingue sentido, só direção (0° e 180° são iguais).
+    cosine = abs((delta_x / length) * axis.x + (delta_y / length) * axis.y)
+    return round(min(1.0, max(0.0, cosine)), 4)
+
+
 def associate_readings(
     packet: ReviewPacket,
     proposals: VisionProposalSet,
@@ -143,20 +182,34 @@ def associate_readings(
                     pixel_distance=round(distance, 4),
                     proximity_score=round(proximity, 4),
                     visual_quality_score=proposal.quality_score,
+                    orientation_alignment=_orientation_alignment(reading, proposal),
+                    # Provisório: recalculado abaixo depois do ranking final, quando os
+                    # demais candidatos da mesma leitura (para a margem) já são conhecidos.
+                    association_confidence=0.0,
                 )
             )
         if not eligible:
             unassociated_reading_ids.append(reading.id)
             continue
+        ranked = sorted(
+            eligible,
+            key=lambda candidate: (
+                candidate.pixel_distance,
+                -candidate.visual_quality_score,
+                candidate.proposal_id,
+            ),
+        )[: effective_config.max_candidates_per_reading]
         candidates.extend(
-            sorted(
-                eligible,
-                key=lambda candidate: (
-                    candidate.pixel_distance,
-                    -candidate.visual_quality_score,
-                    candidate.proposal_id,
-                ),
-            )[: effective_config.max_candidates_per_reading]
+            candidate.model_copy(
+                update={
+                    "association_confidence": _score_association(
+                        candidate,
+                        reading,
+                        other_candidates=ranked,
+                    )
+                }
+            )
+            for candidate in ranked
         )
 
     return AssociationSet(

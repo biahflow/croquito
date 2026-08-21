@@ -9,6 +9,7 @@ import math
 import os
 import tempfile
 import zipfile
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -91,6 +92,42 @@ class DxfAuditReport:
     checks: dict[str, bool]
     errors: list[str]
     warnings: list[str]
+
+
+@dataclass(frozen=True)
+class AutoDecidedReadingAudit:
+    """Uma cota que entrou no desenho sem toque humano, nomeada na auditoria do pacote.
+
+    A listagem é nominal de propósito (ADR-0041, D6): quem abrir o pacote precisa saber
+    exatamente quais medidas foram confirmadas por máquina, com que confiança e sob que
+    corte — não um contador agregado. O portão `SceneRevision.export_errors()` não muda:
+    o que muda é quem pode ter autoria de uma decisão, nunca o que uma cena precisa ter
+    para exportar.
+    """
+
+    reading_id: str
+    decision_id: str
+    raw_text: str
+    value_si: str
+    unit: str
+    # O elemento a que a cota ficou VINCULADA. Nulo na anotação automática, que entra
+    # confirmada sem elemento — é a ausência do vínculo que a mantém fora de qualquer
+    # restrição de geometria.
+    proposal_id: str | None
+    reading_confidence: float
+    # Confiança do candidato citado: do vínculo, no tier de cota; do elemento provável,
+    # no de anotação. Nula quando a leitura não tinha candidato nenhum.
+    association_confidence: float | None
+    threshold: float
+    score_version: str
+    # Por qual regra ela entrou (ADR-0044): `cota` exigiu duas testemunhas e vinculou o
+    # elemento; `anotacao` não exigiu corte nem vinculou nada. Quem confere o pacote
+    # precisa distinguir os dois: o que se aceita de um rótulo não é o que se aceita de
+    # uma medida.
+    tier: str = "cota"
+    # Observação do tier de anotação: o elemento que o ranking teria escolhido, para
+    # instruir quem for prender o texto no traçado. Nunca é vínculo.
+    probable_proposal_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -532,8 +569,14 @@ def export_scene_package(
     *,
     package_stem: str = "croquito",
     extra_package_files: list[Path] | None = None,
+    auto_decided_readings: Sequence[AutoDecidedReadingAudit] = (),
 ) -> ExportResult:
-    """Publica um pacote somente depois de reabrir e auditar o DXF temporário."""
+    """Publica um pacote somente depois de reabrir e auditar o DXF temporário.
+
+    `auto_decided_readings` é a lista nominal das cotas que entraram sem toque humano
+    (F-029). A chave só aparece em `auditoria.json` quando existe alguma: com o modo
+    automático desligado — o padrão — o arquivo sai byte a byte como sempre saiu.
+    """
     scene.ensure_exportable()
     output_dir.mkdir(parents=True, exist_ok=True)
     dxf_path = output_dir / "desenho.dxf"
@@ -546,9 +589,14 @@ def export_scene_package(
     document = build_document(scene)
     _save_document_atomic(document, dxf_path)
     reopened_document, report = audit_dxf(dxf_path, scene)
+    audit_payload: dict[str, Any] = asdict(report)
+    if auto_decided_readings:
+        audit_payload["auto_decided_readings"] = [
+            asdict(reading) for reading in auto_decided_readings
+        ]
     _atomic_write_text(
         audit_path,
-        f"{json.dumps(asdict(report), ensure_ascii=False, indent=2, sort_keys=True)}\n",
+        f"{json.dumps(audit_payload, ensure_ascii=False, indent=2, sort_keys=True)}\n",
     )
     if report.status != "approved":
         raise DomainValidationError(report.errors)

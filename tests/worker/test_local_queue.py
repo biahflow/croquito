@@ -19,6 +19,7 @@ from croquito_api.database import (
     TenantAiProcessingEntitlementRecord,
     UploadRecord,
 )
+from croquito_worker.auto_association import AutoAssociationConfigError
 from croquito_worker.local_queue import (
     PREVIEW_BASE_DPI,
     PROVIDER_IMAGE_MAX_BYTES,
@@ -56,6 +57,28 @@ def _storage(*, object_key: str, pdf: bytes) -> FakeObjectStore:
     storage = FakeObjectStore()
     storage.put_direct(object_key=object_key, body=pdf)
     return storage
+
+
+def test_o_worker_recusa_subir_com_o_modo_automatico_mal_configurado(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flag ligada sem corte é erro de configuração e para antes da primeira mensagem.
+
+    Se a recusa só acontecesse na gravação da revisão, o consumidor entraria em ciclo de
+    reentrega por um erro que não é do dado — e cada volta pagaria de novo a ingestão.
+    """
+    monkeypatch.setenv("CROQUITO_AUTO_ASSOCIATION_ENABLED", "true")
+    monkeypatch.delenv("CROQUITO_AUTO_ASSOCIATION_THRESHOLD", raising=False)
+
+    with pytest.raises(AutoAssociationConfigError):
+        LocalQueueWorker(
+            LocalWorkerSettings(
+                database_url=f"sqlite+pysqlite:///{tmp_path / 'worker.db'}",
+                queue_url="http://localstack/queue",
+                aws_region="sa-east-1",
+                aws_endpoint_url="http://localstack",
+            )
+        )
 
 
 def test_local_queue_worker_advances_only_the_queued_tenant(

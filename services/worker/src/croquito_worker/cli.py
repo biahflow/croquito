@@ -35,6 +35,24 @@ def main() -> int:
         help="executa a eval sintética determinística de corroboração de OCR",
     )
     ocr_eval_command.add_argument("--output", type=Path, required=True)
+    association_eval_command = subcommands.add_parser(
+        "association-eval",
+        help=(
+            "executa a eval sintética determinística de associação de cotas (F-029 T3): "
+            "gate de zero auto-associação errada acima do corte"
+        ),
+    )
+    association_eval_command.add_argument("--output", type=Path, required=True)
+    calibration_report_command = subcommands.add_parser(
+        "calibration-report",
+        help=(
+            "replay LOCAL das revisões com decisão humana e shadow gravado (F-029 T3): "
+            "tabela threshold x (auto_rate, erro); nunca roda no CI, nunca decide o corte"
+        ),
+    )
+    calibration_report_command.add_argument(
+        "--output", type=Path, default=Path("output/association-calibration")
+    )
     review_artifacts_command = subcommands.add_parser(
         "review-artifacts",
         help="valida um review packet e gera overlay ligado à imagem",
@@ -339,6 +357,8 @@ def main() -> int:
                     "readings": seed_result.readings,
                     "proposals": seed_result.proposals,
                     "blockers": list(seed_result.blockers),
+                    # Vazio quando o modo automático está desligado, que é o padrão.
+                    "auto_decided_reading_ids": list(seed_result.auto_decided_reading_ids),
                     "required_criteria": [
                         criterion.model_dump(mode="json")
                         for criterion in seed_result.required_criteria
@@ -715,6 +735,64 @@ def main() -> int:
             )
         )
         return 0 if ocr_report.passed else 1
+    if args.command == "association-eval":
+        from croquito_worker.association_eval import run_synthetic_association_eval
+
+        association_eval_report, association_eval_report_path = run_synthetic_association_eval(
+            args.output
+        )
+        print(
+            json.dumps(
+                {
+                    "passed": association_eval_report.passed,
+                    "recall_top1": association_eval_report.recall_top1,
+                    "errors_above_gate": association_eval_report.errors_above_gate,
+                    "eligible_count": association_eval_report.eligible_count,
+                    "reading_count": association_eval_report.reading_count,
+                    "unassociated_as_expected": association_eval_report.unassociated_as_expected,
+                    "score_version": association_eval_report.score_version,
+                    "report": str(association_eval_report_path),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0 if association_eval_report.passed else 1
+    if args.command == "calibration-report":
+        import os
+
+        from croquito_worker.calibration_report import (
+            CalibrationReportError,
+            run_calibration_report,
+        )
+
+        database_url = os.environ.get("CROQUITO_DATABASE_URL")
+        if not database_url:
+            print(json.dumps({"refused": "DATABASE_URL_MISSING"}, ensure_ascii=False))
+            return 2
+        try:
+            calibration_report, calibration_report_path, calibration_table_path = (
+                run_calibration_report(database_url, args.output)
+            )
+        except CalibrationReportError as calibration_error:
+            print(json.dumps({"refused": calibration_error.code}, ensure_ascii=False))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "jobs_considered": calibration_report.jobs_considered,
+                    "revisions_considered": calibration_report.revisions_considered,
+                    "readings_with_truth": calibration_report.readings_with_truth,
+                    "score_versions": [
+                        version_report.score_version
+                        for version_report in calibration_report.score_versions
+                    ],
+                    "report": str(calibration_report_path),
+                    "table": str(calibration_table_path),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
     if args.command == "review-artifacts":
         from croquito_worker.review import load_review_packet, write_review_artifacts
 

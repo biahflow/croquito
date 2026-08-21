@@ -313,7 +313,30 @@ descritos em "Quinto marco: medição de obra (M1 a M5 em código)".
   "Σ fecha". Desencontro de cadeia é WARNING e nunca blocker; nada toca o portão
   de export. Pendem migração no hosted, deploy e aceitação real
   ([F-023](features/F-023-survey-quality-score/feature.md)); o score agregado
-  com recomendações de campo é a fatia 2, calibrada com V14–V17.
+  com recomendações de campo é a fatia 2, calibrada com V14–V17 — em
+  2026-08-21 o score calibrado migrou por decisão humana para a
+  [F-029](features/F-029-auto-associacao-confianca/feature.md)
+  (auto-associação de cotas por confiança calibrada, experimento local), e as
+  recomendações de campo seguem como fatia futura da F-023.
+- F-029 executada por inteiro em 2026-08-21, na mesma sessão que a especificou
+  (T1–T5, cada task revisada linha a linha, portões verdes): duas confianças
+  determinísticas por cota (`reading_confidence` × `association_confidence`,
+  pesos versionados — score `1.0.0`), shadow log persistido em toda revisão
+  (migração 0007) com o que cada ponto de uma grade 6×6 de cortes TERIA
+  auto-decidido, métricas observacionais na resposta de review, eval com gate
+  (`make association-eval`) e relatório local de calibração
+  (`make association-calibration`, verdade = decisão humana vigente medida
+  contra o shadow PRÉ-decisão), e o modo automático do
+  [ADR-0041](adr/0041-decisao-de-ator-maquina-atras-de-flag-local.md)
+  (Accepted): atrás de dupla chave local (`CROQUITO_AUTO_ASSOCIATION_ENABLED`
+  + threshold explícito sem default), decisão de ator-máquina que só
+  confirma, nunca sobrescreve e é retificável pelo caminho declarado; toda
+  cota automática sai nominalmente na auditoria do export, e a tela de
+  revisão ganha a vista de exceções (contadores + filtro que nunca esconde
+  pendência nem bloqueio). Flag desligada = comportamento idêntico ao
+  anterior, coberto por teste. Pendem os atos humanos: rodada local com a
+  flag ligada, calibração com os sete levantamentos reais e a escolha do
+  threshold ([F-029](features/F-029-auto-associacao-confianca/feature.md)).
 - Primeira revisão real em nuvem processada de ponta a ponta (Guaxindiba V3,
   2026-08-19) e primeiro ciclo completo de eval-promoção de prompt motivado por
   defeito real, não por rodada de rotina: o muro com recuo 4,80→3,30 veio fragmentado

@@ -21,12 +21,16 @@ from fastapi.testclient import TestClient
 from croquito_api.config import ApiSettings
 from croquito_api.database import Database
 from croquito_api.main import create_app
+from croquito_worker.association_confidence import CONFIDENCE_SCORE_VERSION
 from croquito_worker.criteria import ScopeCriterion
 from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
 from croquito_worker.review_seed import SeedInputs, seed_review
 from tests.bundles import (
     CIRCLE_PROPOSAL_ID,
     CIRCLE_READING_ID,
+    ELEVATION_M,
+    ELEVATION_PROPOSAL_ID,
+    ELEVATION_READING_ID,
     HEIGHT_M,
     HEIGHT_PROPOSAL_ID,
     HEIGHT_READING_ID,
@@ -524,6 +528,577 @@ def test_a_wrong_decision_is_rectified_and_the_package_still_closes(
     review = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("rectify-review"))
     assert review.json()["version"] == 3
     assert review.json()["packet"]["readings"][0]["decision"]["decision_id"] != wrong_decision_id
+
+
+def test_com_o_modo_automatico_local_so_a_excecao_exige_uma_pessoa(
+    tmp_path: Path,
+    stack: tuple[TestClient, LocalQueueWorker, FakeObjectStore, FakeQueue],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cadeia inteira com a dupla chave do ADR-0041 ligada, como no stack local.
+
+    As cotas acima do corte entram com autoria de máquina; a de associação ambígua segue
+    exigindo gente. O portão não muda: sem aprovação humana da cena não há pacote, e o
+    pacote publicado nomeia cada cota que entrou sem toque humano.
+    """
+    monkeypatch.setenv("CROQUITO_AUTO_ASSOCIATION_ENABLED", "true")
+    monkeypatch.setenv("CROQUITO_AUTO_ASSOCIATION_THRESHOLD", "0.6")
+    client, worker, storage, queue = stack
+    pdf = synthetic_pdf()
+    source_sha256 = hashlib.sha256(pdf).hexdigest()
+
+    presign = client.post(
+        "/v1/uploads/presign",
+        headers=_headers("auto-presign"),
+        json={
+            "filename": "levantamento.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": len(pdf),
+            "sha256": source_sha256,
+        },
+    )
+    storage.put_direct(object_key=presign.json()["object_key"], body=pdf)
+    created = client.post(
+        "/v1/jobs",
+        headers=_headers("auto-job"),
+        json={
+            "upload_id": presign.json()["upload_id"],
+            "project_name": "Auto-associação local",
+            "default_unit": "m",
+        },
+    )
+    assert created.status_code == 201
+    job_id = created.json()["job_id"]
+    assert worker.run_once() == 1
+
+    bundle = write_seed_bundle(
+        tmp_path / "auto-bundle",
+        source_sha256=source_sha256,
+        association_confidences={
+            WIDTH_READING_ID: 0.9,
+            HEIGHT_READING_ID: 0.9,
+            # Ambígua: a cota é legível, mas não se sabe a qual segmento pertence.
+            CIRCLE_READING_ID: 0.4,
+        },
+    )
+    seeded = seed_review(
+        SeedInputs(
+            job_id=UUID(job_id),
+            tenant_id=TENANT,
+            packet_path=bundle["packet"],
+            associations_path=bundle["associations"],
+            proposals_path=bundle["proposals"],
+            rectangle_request_path=bundle["rectangle_request"],
+            manifest_path=bundle["manifest"],
+            image_path=bundle["image"],
+            required_criteria=(),
+            operator_id="tenant-admin-e2e",
+        ),
+        LocalWorkerSettings(
+            database_url=f"sqlite+pysqlite:///{tmp_path / 'e2e.db'}",
+            queue_url="",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            artifact_bucket="croquito-e2e",
+        ),
+        s3_client=storage,
+    )
+    assert set(seeded.auto_decided_reading_ids) == {WIDTH_READING_ID, HEIGHT_READING_ID}
+
+    review = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("auto-read"))
+    assert review.status_code == 200
+    readings = {reading["id"]: reading for reading in review.json()["packet"]["readings"]}
+    assert readings[WIDTH_READING_ID]["decision"]["actor"] == "system"
+    assert readings[HEIGHT_READING_ID]["decision"]["actor"] == "system"
+    assert readings[CIRCLE_READING_ID]["decision"] is None
+    # A revisão só cobra da pessoa o que a máquina não resolveu.
+    assert review.json()["blockers"] == [
+        f"CENTRE_CIRCLE_HUMAN_CONFIRMATION_REQUIRED:{CIRCLE_READING_ID}",
+        f"EXPLICIT_ASSOCIATION_REQUIRED:{CIRCLE_READING_ID}",
+    ]
+
+    solved = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers=_headers("auto-decisions"),
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": CIRCLE_READING_ID,
+                    "action": "confirm",
+                    "justification": "Diâmetro conferido na evidência protegida.",
+                    "association_proposal_id": CIRCLE_PROPOSAL_ID,
+                }
+            ],
+        },
+    )
+    assert solved.status_code == 200
+    assert solved.json()["blockers"] == []
+    scene = solved.json()["scene"]
+    assert scene["version"] == 1
+
+    approved = client.post(
+        f"/v1/jobs/{job_id}/approve",
+        headers=_headers("auto-approve"),
+        json={
+            "revision_id": scene["id"],
+            "accepted_approximations": [],
+            "source_evidence_checked": True,
+            "geometry_checked": True,
+            "limitations_acknowledged": True,
+            "statement": "Cena conferida, inclusive as cotas que entraram automaticamente.",
+        },
+    )
+    assert approved.status_code == 200
+    export = client.post(
+        f"/v1/jobs/{job_id}/exports",
+        headers=_headers("auto-export"),
+        json={"revision_id": approved.json()["id"]},
+    )
+    assert export.status_code == 202
+    export_id = export.json()["export_id"]
+    assert worker.run_once() == 1
+    completed = client.get(
+        f"/v1/jobs/{job_id}/exports/{export_id}", headers=_headers("auto-export-read")
+    )
+    assert completed.json()["status"] == "COMPLETED"
+    assert completed.json()["audit_status"] == "approved"
+    assert queue.commands() == ["process_upload", "export_scene_package"]
+
+    package_key = f"tenants/{TENANT}/jobs/{job_id}/exports/{export_id}/croquito.zip"
+    with zipfile.ZipFile(BytesIO(storage.body(package_key))) as package:
+        audit = json.loads(package.read("auditoria.json"))
+    assert audit["status"] == "approved"
+    automatic = {item["reading_id"]: item for item in audit["auto_decided_readings"]}
+    assert set(automatic) == {WIDTH_READING_ID, HEIGHT_READING_ID}
+    assert automatic[WIDTH_READING_ID]["value_si"] == WIDTH_M
+    assert automatic[WIDTH_READING_ID]["unit"] == "m"
+    assert automatic[WIDTH_READING_ID]["proposal_id"] == WIDTH_PROPOSAL_ID
+    assert automatic[WIDTH_READING_ID]["reading_confidence"] == 0.65
+    assert automatic[WIDTH_READING_ID]["association_confidence"] == 0.9
+    assert automatic[WIDTH_READING_ID]["threshold"] == 0.6
+    assert automatic[WIDTH_READING_ID]["score_version"] == CONFIDENCE_SCORE_VERSION
+    # A cota que a pessoa decidiu não aparece na lista das automáticas.
+    assert CIRCLE_READING_ID not in automatic
+
+
+def test_a_elevacao_entra_como_anotacao_automatica_e_o_pacote_a_nomeia(
+    tmp_path: Path,
+    stack: tuple[TestClient, LocalQueueWorker, FakeObjectStore, FakeQueue],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Os dois tiers na mesma cadeia, até o ZIP (ADR-0044).
+
+    As cotas de planta entram pela dupla testemunha; a elevação `h=3,80`, que o OCR não
+    encontrou, entra pela testemunha única que tem — e o pacote publicado diz, cota a
+    cota, por qual regra cada uma entrou.
+    """
+    monkeypatch.setenv("CROQUITO_AUTO_ASSOCIATION_ENABLED", "true")
+    monkeypatch.setenv("CROQUITO_AUTO_ASSOCIATION_THRESHOLD", "0.6")
+    client, worker, storage, _queue = stack
+    pdf = synthetic_pdf()
+    source_sha256 = hashlib.sha256(pdf).hexdigest()
+
+    presign = client.post(
+        "/v1/uploads/presign",
+        headers=_headers("anotacao-presign"),
+        json={
+            "filename": "levantamento.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": len(pdf),
+            "sha256": source_sha256,
+        },
+    )
+    storage.put_direct(object_key=presign.json()["object_key"], body=pdf)
+    created = client.post(
+        "/v1/jobs",
+        headers=_headers("anotacao-job"),
+        json={
+            "upload_id": presign.json()["upload_id"],
+            "project_name": "Elevação automática",
+            "default_unit": "m",
+        },
+    )
+    job_id = created.json()["job_id"]
+    assert worker.run_once() == 1
+
+    bundle = write_seed_bundle(
+        tmp_path / "anotacao-bundle",
+        source_sha256=source_sha256,
+        elevation=True,
+        association_confidences={
+            WIDTH_READING_ID: 0.9,
+            HEIGHT_READING_ID: 0.9,
+            CIRCLE_READING_ID: 0.4,
+            ELEVATION_READING_ID: 0.9,
+        },
+    )
+    seeded = seed_review(
+        SeedInputs(
+            job_id=UUID(job_id),
+            tenant_id=TENANT,
+            packet_path=bundle["packet"],
+            associations_path=bundle["associations"],
+            proposals_path=bundle["proposals"],
+            rectangle_request_path=bundle["rectangle_request"],
+            manifest_path=bundle["manifest"],
+            image_path=bundle["image"],
+            required_criteria=(),
+            operator_id="tenant-admin-e2e",
+        ),
+        LocalWorkerSettings(
+            database_url=f"sqlite+pysqlite:///{tmp_path / 'e2e.db'}",
+            queue_url="",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            artifact_bucket="croquito-e2e",
+        ),
+        s3_client=storage,
+    )
+    assert set(seeded.auto_decided_reading_ids) == {
+        WIDTH_READING_ID,
+        HEIGHT_READING_ID,
+        ELEVATION_READING_ID,
+    }
+
+    review = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("anotacao-read"))
+    readings = {reading["id"]: reading for reading in review.json()["packet"]["readings"]}
+    assert readings[WIDTH_READING_ID]["decision"]["auto_tier"] == "cota"
+    assert readings[ELEVATION_READING_ID]["decision"]["auto_tier"] == "anotacao"
+    # A anotação automática tem a MESMA forma da anotação declarada por uma pessoa:
+    # confirmada e ausente do mapa de associações. Só o ator e o tier a distinguem.
+    assert readings[ELEVATION_READING_ID]["status"] == "confirmed"
+    assert ELEVATION_READING_ID not in review.json()["selected_associations"]
+    assert review.json()["selected_associations"] == {
+        WIDTH_READING_ID: WIDTH_PROPOSAL_ID,
+        HEIGHT_READING_ID: HEIGHT_PROPOSAL_ID,
+    }
+    # A cota de associação ambígua continua sendo a única a exigir uma pessoa.
+    assert readings[CIRCLE_READING_ID]["decision"] is None
+
+    solved = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers=_headers("anotacao-decisions"),
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": CIRCLE_READING_ID,
+                    "action": "confirm",
+                    "justification": "Diâmetro conferido na evidência protegida.",
+                    "association_proposal_id": CIRCLE_PROPOSAL_ID,
+                }
+            ],
+        },
+    )
+    assert solved.status_code == 200
+    assert solved.json()["blockers"] == []
+    approved = client.post(
+        f"/v1/jobs/{job_id}/approve",
+        headers=_headers("anotacao-approve"),
+        json={
+            "revision_id": solved.json()["scene"]["id"],
+            "accepted_approximations": [],
+            "source_evidence_checked": True,
+            "geometry_checked": True,
+            "limitations_acknowledged": True,
+            "statement": "Cena conferida, com a elevação anotada pelo sistema à vista.",
+        },
+    )
+    assert approved.status_code == 200
+    export = client.post(
+        f"/v1/jobs/{job_id}/exports",
+        headers=_headers("anotacao-export"),
+        json={"revision_id": approved.json()["id"]},
+    )
+    export_id = export.json()["export_id"]
+    assert worker.run_once() == 1
+
+    package_key = f"tenants/{TENANT}/jobs/{job_id}/exports/{export_id}/croquito.zip"
+    with zipfile.ZipFile(BytesIO(storage.body(package_key))) as package:
+        audit = json.loads(package.read("auditoria.json"))
+    tiers = {item["reading_id"]: item["tier"] for item in audit["auto_decided_readings"]}
+    assert tiers == {
+        WIDTH_READING_ID: "cota",
+        HEIGHT_READING_ID: "cota",
+        ELEVATION_READING_ID: "anotacao",
+    }
+    anotacao = next(
+        item
+        for item in audit["auto_decided_readings"]
+        if item["reading_id"] == ELEVATION_READING_ID
+    )
+    assert anotacao["raw_text"] == "h=3,80"
+    assert anotacao["value_si"] == ELEVATION_M
+    # Sem vínculo no pacote publicado, e o elemento provável nomeado como observação.
+    assert anotacao["proposal_id"] is None
+    assert anotacao["probable_proposal_id"] == ELEVATION_PROPOSAL_ID
+    # A confiança de leitura que NÃO foi exigida fica registrada do mesmo jeito.
+    assert anotacao["reading_confidence"] == 0.45
+    assert anotacao["association_confidence"] == 0.9
+    # A cota de planta, essa sim, tem o vínculo gravado.
+    cota = next(
+        item for item in audit["auto_decided_readings"] if item["reading_id"] == WIDTH_READING_ID
+    )
+    assert cota["proposal_id"] == WIDTH_PROPOSAL_ID
+    assert cota["probable_proposal_id"] is None
+
+
+def test_uma_auto_decisao_retificada_sai_da_lista_de_cotas_automaticas(
+    tmp_path: Path,
+    stack: tuple[TestClient, LocalQueueWorker, FakeObjectStore, FakeQueue],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Corrigida por gente, a cota deixa de ser automática — e a auditoria acompanha."""
+    monkeypatch.setenv("CROQUITO_AUTO_ASSOCIATION_ENABLED", "true")
+    monkeypatch.setenv("CROQUITO_AUTO_ASSOCIATION_THRESHOLD", "0.6")
+    client, worker, storage, _queue = stack
+    pdf = synthetic_pdf()
+    source_sha256 = hashlib.sha256(pdf).hexdigest()
+
+    presign = client.post(
+        "/v1/uploads/presign",
+        headers=_headers("auto-rectify-presign"),
+        json={
+            "filename": "levantamento.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": len(pdf),
+            "sha256": source_sha256,
+        },
+    )
+    storage.put_direct(object_key=presign.json()["object_key"], body=pdf)
+    created = client.post(
+        "/v1/jobs",
+        headers=_headers("auto-rectify-job"),
+        json={
+            "upload_id": presign.json()["upload_id"],
+            "project_name": "Correção de auto-decisão",
+            "default_unit": "m",
+        },
+    )
+    job_id = created.json()["job_id"]
+    assert worker.run_once() == 1
+    bundle = write_seed_bundle(
+        tmp_path / "auto-rectify-bundle",
+        source_sha256=source_sha256,
+        association_confidences={
+            WIDTH_READING_ID: 0.9,
+            HEIGHT_READING_ID: 0.9,
+            CIRCLE_READING_ID: 0.9,
+        },
+    )
+    seed_review(
+        SeedInputs(
+            job_id=UUID(job_id),
+            tenant_id=TENANT,
+            packet_path=bundle["packet"],
+            associations_path=bundle["associations"],
+            proposals_path=bundle["proposals"],
+            rectangle_request_path=bundle["rectangle_request"],
+            manifest_path=bundle["manifest"],
+            image_path=bundle["image"],
+            required_criteria=(),
+            operator_id="tenant-admin-e2e",
+        ),
+        LocalWorkerSettings(
+            database_url=f"sqlite+pysqlite:///{tmp_path / 'e2e.db'}",
+            queue_url="",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            artifact_bucket="croquito-e2e",
+        ),
+        s3_client=storage,
+    )
+
+    review = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("auto-rectify-read"))
+    automatic_decision_id = next(
+        reading["decision"]["decision_id"]
+        for reading in review.json()["packet"]["readings"]
+        if reading["id"] == WIDTH_READING_ID
+    )
+    rectified = client.post(
+        f"/v1/jobs/{job_id}/review/rectifications",
+        headers=_headers("auto-rectify-command"),
+        json={
+            "base_version": 1,
+            "rectifications": [
+                {
+                    "reading_id": WIDTH_READING_ID,
+                    "action": "confirm",
+                    "rectifies_decision_id": automatic_decision_id,
+                    "justification": "A automática confirmou 25,90; na folha a largura é 26,10.",
+                    "association_proposal_id": WIDTH_PROPOSAL_ID,
+                    "raw_text": "26,10",
+                    "value_si": "26.10",
+                    "unit": "m",
+                }
+            ],
+        },
+    )
+    assert rectified.status_code == 200
+    corrected = next(
+        reading
+        for reading in rectified.json()["packet"]["readings"]
+        if reading["id"] == WIDTH_READING_ID
+    )
+    assert corrected["decision"]["actor"] == "human"
+    scene = rectified.json()["scene"]
+    assert rectified.json()["blockers"] == []
+
+    approved = client.post(
+        f"/v1/jobs/{job_id}/approve",
+        headers=_headers("auto-rectify-approve"),
+        json={
+            "revision_id": scene["id"],
+            "accepted_approximations": [],
+            "source_evidence_checked": True,
+            "geometry_checked": True,
+            "limitations_acknowledged": True,
+            "statement": "Cena conferida depois da correção humana da cota automática.",
+        },
+    )
+    assert approved.status_code == 200
+    export = client.post(
+        f"/v1/jobs/{job_id}/exports",
+        headers=_headers("auto-rectify-export"),
+        json={"revision_id": approved.json()["id"]},
+    )
+    assert export.status_code == 202
+    export_id = export.json()["export_id"]
+    assert worker.run_once() == 1
+
+    package_key = f"tenants/{TENANT}/jobs/{job_id}/exports/{export_id}/croquito.zip"
+    with zipfile.ZipFile(BytesIO(storage.body(package_key))) as package:
+        audit = json.loads(package.read("auditoria.json"))
+    automatic = {item["reading_id"] for item in audit["auto_decided_readings"]}
+    assert WIDTH_READING_ID not in automatic
+    assert automatic == {HEIGHT_READING_ID, CIRCLE_READING_ID}
+
+
+def test_uma_anotacao_automatica_nunca_vira_restricao_no_tracado(
+    tmp_path: Path,
+    stack: tuple[TestClient, LocalQueueWorker, FakeObjectStore, FakeQueue],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A garantia central da emenda 1a do ADR-0044, medida no solve de verdade.
+
+    O traçado só conhece uma leitura por dois canais: `confirmed_associations`, que vira
+    restrição métrica, e as notas declaradas no aceite, que viram texto preso ao elemento.
+    A anotação automática não entra em nenhum dos dois — ela fica inerte até uma pessoa
+    decidir onde prender o texto. Se um dia ela passar a gravar associação, este teste
+    quebra na hora: a elevação apareceria como vão aplicado no eixo Y.
+    """
+    monkeypatch.setenv("CROQUITO_AUTO_ASSOCIATION_ENABLED", "true")
+    monkeypatch.setenv("CROQUITO_AUTO_ASSOCIATION_THRESHOLD", "0.6")
+    client, worker, storage, _queue = stack
+    pdf = synthetic_pdf()
+    source_sha256 = hashlib.sha256(pdf).hexdigest()
+
+    presign = client.post(
+        "/v1/uploads/presign",
+        headers=_headers("inerte-presign"),
+        json={
+            "filename": "levantamento.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": len(pdf),
+            "sha256": source_sha256,
+        },
+    )
+    storage.put_direct(object_key=presign.json()["object_key"], body=pdf)
+    created = client.post(
+        "/v1/jobs",
+        headers=_headers("inerte-job"),
+        json={
+            "upload_id": presign.json()["upload_id"],
+            "project_name": "Anotação inerte no traçado",
+            "default_unit": "m",
+        },
+    )
+    job_id = created.json()["job_id"]
+    assert worker.run_once() == 1
+    bundle = write_seed_bundle(
+        tmp_path / "inerte-bundle",
+        source_sha256=source_sha256,
+        elevation=True,
+        association_confidences={
+            WIDTH_READING_ID: 0.9,
+            HEIGHT_READING_ID: 0.9,
+            CIRCLE_READING_ID: 0.9,
+            ELEVATION_READING_ID: 0.9,
+        },
+    )
+    seed_review(
+        SeedInputs(
+            job_id=UUID(job_id),
+            tenant_id=TENANT,
+            packet_path=bundle["packet"],
+            associations_path=bundle["associations"],
+            proposals_path=bundle["proposals"],
+            rectangle_request_path=bundle["rectangle_request"],
+            manifest_path=bundle["manifest"],
+            image_path=bundle["image"],
+            required_criteria=(),
+            operator_id="tenant-admin-e2e",
+        ),
+        LocalWorkerSettings(
+            database_url=f"sqlite+pysqlite:///{tmp_path / 'e2e.db'}",
+            queue_url="",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            artifact_bucket="croquito-e2e",
+        ),
+        s3_client=storage,
+    )
+
+    review = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("inerte-read"))
+    assert review.status_code == 200
+    body = review.json()
+    readings = {reading["id"]: reading for reading in body["packet"]["readings"]}
+    assert readings[ELEVATION_READING_ID]["decision"]["auto_tier"] == "anotacao"
+    assert ELEVATION_READING_ID not in body["selected_associations"]
+
+    requested = client.post(
+        f"/v1/jobs/{job_id}/trace-solves",
+        headers=_headers("inerte-accept"),
+        json={
+            # Sem cena ainda: o traçado é a primeira geometria métrica deste job.
+            "base_review_version": body["version"],
+            "proposal_ids": [
+                WIDTH_PROPOSAL_ID,
+                HEIGHT_PROPOSAL_ID,
+                CIRCLE_PROPOSAL_ID,
+                ELEVATION_PROPOSAL_ID,
+            ],
+            "unlabelled_proposal_ids": [CIRCLE_PROPOSAL_ID, ELEVATION_PROPOSAL_ID],
+            "note": "Traçado aceito em lote pelo profissional identificado.",
+            "title": "CAMPO SINTETICO",
+        },
+    )
+    assert requested.status_code == 202
+    assert worker.run_once() == 1
+
+    polled = client.get(
+        f"/v1/jobs/{job_id}/trace-solves/{requested.json()['trace_solve_id']}",
+        headers=_headers("inerte-poll"),
+    )
+    assert polled.status_code == 200
+    solve = polled.json()
+    assert solve["status"] == "COMPLETED"
+    # As cotas de planta viraram vãos; a elevação não virou nada.
+    anchored = {report["reading_id"] for report in solve["applied_spans"]}
+    assert WIDTH_READING_ID in anchored
+    assert ELEVATION_READING_ID not in anchored
+    assert ELEVATION_READING_ID not in solve["unapplied_reading_ids"]
+    assert ELEVATION_READING_ID not in {report["reading_id"] for report in solve["contested_spans"]}
+    assert not [blocker for blocker in solve["blockers"] if ELEVATION_READING_ID in blocker]
+    # E a cena resultante não carrega proveniência da decisão da elevação em entidade
+    # nenhuma: ela não participou de geometria.
+    scene = client.get(f"/v1/jobs/{job_id}/scene", headers=_headers("inerte-scene")).json()
+    elevation_decision_id = readings[ELEVATION_READING_ID]["decision"]["decision_id"]
+    for entity in scene["entities"]:
+        provenance = entity.get("provenance") or {}
+        assert ELEVATION_READING_ID not in provenance.get("source_ids", [])
+        assert elevation_decision_id not in provenance.get("source_ids", [])
 
 
 def test_trace_solve_reaches_a_metric_scene_through_the_queue(

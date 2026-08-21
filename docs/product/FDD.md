@@ -2,7 +2,8 @@
 
 Status: Accepted for MVP  
 Responsável: Product / Design / Engineering  
-Última revisão: 2026-08-20 (seção "Aceite de traçado em lote" — consultor do traçado:
+Última revisão: 2026-08-21 (seção "Revisão" — vista de exceções do modo automático
+local, F-029); antes: 2026-08-20 (seção "Aceite de traçado em lote" — consultor do traçado:
 causa, conserto de um clique, âncoras e re-semeadura do "como desenhado", F-025)
 
 ## Experiência principal
@@ -80,6 +81,32 @@ nenhuma verificação da API. Nada é liberado porque a interface achou que sim.
 
 Quando o servidor faz a jornada andar — o traçado fecha, a aprovação entra —, a etapa
 seguinte abre sozinha; a etapa reaberta por clique deixa de valer nesse momento.
+
+**Vista de exceções (modo automático local, F-029).** Quando o ambiente local está com
+o modo automático ligado (dupla chave do ADR-0041; nenhum ambiente hospedado), leituras
+com confiança calibrada acima do corte chegam à tela já confirmadas pelo sistema, e a
+etapa de decisões ganha uma faixa de contadores — auto-associadas, precisam de revisão,
+não resolvidas — e um filtro de dois estados ("só exceções"/"todas"). O filtro esconde
+apenas linha decidida; pendência, linha citada por bloqueio e aviso crítico nunca somem.
+A linha auto-decidida permanece na lista com marca textual ("associada pelo sistema",
+com a versão do score e a confiança em vírgula decimal) e o mesmo caminho de correção
+declarada das decisões humanas; máquina nunca é apresentada como pessoa. Sem o modo
+ligado, a tela é a de sempre — sem faixa, contador ou filtro.
+
+**Dois tiers, contados e marcados separado (ADR-0044).** A leitura sem papel de geometria
+de planta — elevação (`h=…`) e recado da folha — entra por um tier próprio, com uma
+testemunha só e **sem elemento associado**, exatamente como a anotação da folha que o
+profissional declara: ela não mede a planta, não entra na geometria e o erro possível é
+um texto a conferir, não uma cota errada dentro do desenho. Onde o texto fica continua
+sendo declaração humana, no aceite do traçado; a justificativa registrada traz o elemento
+provável como dica. Quando houver alguma, a faixa ganha o contador "anotações
+automáticas" ao lado das auto-associadas, com a frase que explica por que a segunda
+leitura não foi exigida, e a linha é marcada como "anotação automática" em vez de
+"associada pelo sistema" — palavra diferente, não só tom diferente. Cota de planta nunca
+entra por esse tier, com qualquer confiança. Sem anotação automática na revisão, o
+contador não aparece zerado. As confianças e o shadow
+são observação para calibração: nada na interface decide, pré-marca ou aprova por conta
+deles.
 
 Layout:
 

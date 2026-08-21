@@ -49,6 +49,8 @@ from croquito_core.models import (
     UnitCode,
 )
 from croquito_worker.association import AssociationSet
+from croquito_worker.association_confidence import CONFIDENCE_SCORE_VERSION
+from croquito_worker.auto_association import AutoAssociationMode, apply_auto_association
 from croquito_worker.criteria import FALLBACK_CRITERION_MESSAGE
 from croquito_worker.review import (
     DimensionReading,
@@ -795,6 +797,11 @@ def _seed_review_session(
             "dataset_id": packet.dataset_id,
             "page_number": 1,
             "image_sha256": digest,
+            # `association_confidence` explícito e DIFERENTE por candidato: a fixture não
+            # passa por `associate_readings`, e sem valor cada candidato ficaria no default
+            # 0.0 — o shadow log responderia lista vazia em todo ponto da grade e os testes
+            # de threshold passariam por vacuidade. Os três valores separam os cortes da
+            # grade (0,92 acima de 0,9; 0,78 entre 0,7 e 0,8; 0,55 acima só de 0,5).
             "candidates": [
                 {
                     "reading_id": "rd_1111111111111111",
@@ -804,6 +811,7 @@ def _seed_review_session(
                     "pixel_distance": 1,
                     "proximity_score": 0.9,
                     "visual_quality_score": 0.8,
+                    "association_confidence": 0.92,
                 },
                 {
                     "reading_id": "rd_2222222222222222",
@@ -813,6 +821,7 @@ def _seed_review_session(
                     "pixel_distance": 1,
                     "proximity_score": 0.9,
                     "visual_quality_score": 0.8,
+                    "association_confidence": 0.78,
                 },
                 {
                     "reading_id": "rd_3333333333333333",
@@ -822,6 +831,7 @@ def _seed_review_session(
                     "pixel_distance": 1,
                     "proximity_score": 0.9,
                     "visual_quality_score": 0.8,
+                    "association_confidence": 0.55,
                 },
                 *(
                     [
@@ -2294,6 +2304,547 @@ def test_idempotent_replay_of_a_response_stored_before_the_chain_fields(tmp_path
     assert replayed.status_code == 200
     assert replayed.json()["suggested_chains"] == []
     assert replayed.json()["declared_chains"] == []
+
+
+CONFIDENCE_FIELDS = (
+    "reading_confidences",
+    "confidence_shadow",
+    "auto_association_rate",
+    "review_rate",
+)
+
+
+def _shadow_point(response: dict[str, Any], reading_cut: float, association_cut: float) -> Any:
+    """Um ponto nomeado da grade de shadow, para o teste não depender da ordem dela."""
+    return next(
+        point
+        for point in response["confidence_shadow"]
+        if point["reading_threshold"] == reading_cut
+        and point["association_threshold"] == association_cut
+    )
+
+
+def _reading_confidences(response: dict[str, Any]) -> dict[str, float]:
+    return {
+        item["reading_id"]: item["reading_confidence"] for item in response["reading_confidences"]
+    }
+
+
+def test_review_publishes_the_confidence_shadow_gravado_na_revisao(tmp_path: Path) -> None:
+    """O shadow é observação gravada por revisão: o que CADA corte teria auto-decidido.
+
+    A revisão desta fixture é montada direto no banco, sem passar por nenhum dos dois
+    caminhos de escrita — como uma linha gravada antes de a coluna existir. Ela responde
+    com os campos vazios, nunca com erro: ausência de registro, jamais zero medido. Da
+    primeira revisão escrita pela API em diante o registro existe.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+
+    seeded = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("tenant-a")).json()
+    assert seeded["reading_confidences"] == []
+    assert seeded["confidence_shadow"] == []
+    assert seeded["auto_association_rate"] is None
+    assert seeded["review_rate"] is None
+
+    confirmed = _confirm_chain_readings(client, job_id)
+    assert confirmed.status_code == 200
+    body = confirmed.json()
+
+    confidences = _reading_confidences(body)
+    assert len(confidences) == 7
+    # Participar de uma cadeia que fecha corrobora a leitura; a cota que não entra em
+    # cadeia nenhuma fica no valor neutro do sinal, não abaixo dele.
+    assert confidences["rd_5555555555555555"] == 0.8
+    assert confidences["rd_6666666666666666"] == 0.8
+    assert confidences["rd_8888888888888888"] == 0.65
+    assert confidences["rd_1111111111111111"] == 0.65
+
+    assert len(body["confidence_shadow"]) == 36
+    generous = _shadow_point(body, 0.6, 0.7)
+    assert [
+        (choice["reading_id"], choice["proposal_id"]) for choice in generous["auto_choices"]
+    ] == [
+        ("rd_1111111111111111", "vp_1111111111111111"),
+        ("rd_2222222222222222", "vp_2222222222222222"),
+    ]
+    assert generous["auto_choices"][0]["reading_confidence"] == 0.65
+    assert generous["auto_choices"][0]["association_confidence"] == 0.92
+
+    # Cota confirmada e corroborada por cadeia, mas sem candidato de associação nenhum,
+    # não é auto-decidível em corte algum: não há segmento a que associá-la.
+    assert _shadow_point(body, 0.7, 0.5)["auto_choices"] == []
+    # Ponto de referência das taxas é o mais conservador da grade.
+    assert _shadow_point(body, 0.95, 0.95)["auto_choices"] == []
+    # 0 de 3 cotas com candidato seriam auto-associadas; as 7 seguem exigindo revisão.
+    assert body["auto_association_rate"] == 0.0
+    assert body["review_rate"] == 1.0
+
+
+def test_o_shadow_gravado_carimba_a_versao_do_score(tmp_path: Path) -> None:
+    """Sem o carimbo, shadows de pesos diferentes conviveriam indistinguíveis no banco.
+
+    Os pesos vão ser recalibrados; o relatório de calibração precisa poder separar o que
+    saiu de qual versão em vez de somar tudo em silêncio.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    assert _confirm_chain_readings(client, job_id).status_code == 200
+
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions() as session:
+        stored = (
+            session.query(ReviewRevisionRecord)
+            .filter_by(job_id=str(job_id), version=2)
+            .one()
+            .confidence_shadow_json
+        )
+
+    assert stored["score_version"] == CONFIDENCE_SCORE_VERSION
+    assert stored["readings_total"] == 7
+    assert stored["readings_with_candidate"] == 3
+
+
+def test_uma_cadeia_declarada_que_nao_fecha_baixa_a_confianca_de_quem_so_esta_nela(
+    tmp_path: Path,
+) -> None:
+    """Declaração humana contradita pela aritmética é evidência CONTRA a participante.
+
+    Declarar é afirmar que estas parcelas, e só estas, compõem este total; quando a conta
+    não bate, alguma das leituras está errada. Quem participa só dessa cadeia cai; quem
+    também participa de uma cadeia que fecha continua sustentada por ela — `any(closes)`
+    vence, e é a T1 que decide isso, não a API.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    confirmed = _confirm_chain_readings(client, job_id)
+    assert confirmed.status_code == 200
+    before = _reading_confidences(confirmed.json())
+    # A cadeia sugerida que fecha (25,90 = 12,00 + 13,90) sustenta três leituras; a quarta
+    # não entra em cadeia nenhuma e fica no valor neutro do sinal.
+    assert before["rd_6666666666666666"] == 0.8
+    assert before["rd_8888888888888888"] == 0.65
+
+    declared = _declare_chain(
+        client,
+        job_id,
+        base_version=2,
+        key="confidence-chain-mismatch",
+        part_ids=("rd_6666666666666666", "rd_8888888888888888"),
+    )
+
+    assert declared.status_code == 200
+    assert declared.json()["declared_chains"][0]["status"] == "mismatch"
+    after = _reading_confidences(declared.json())
+    # Só a cadeia contradita explica esta leitura: a confiança cai.
+    assert after["rd_8888888888888888"] == 0.5
+    # Esta participa das duas, e a que fecha continua valendo.
+    assert after["rd_6666666666666666"] == 0.8
+    # A cota fora da declaração não é afetada por ela.
+    assert after["rd_7777777777777777"] == before["rd_7777777777777777"]
+
+
+def test_uma_cadeia_declarada_que_vence_deixa_de_pesar_no_sinal(tmp_path: Path) -> None:
+    """`stale` é conferência impossível, não conferência reprovada: sai do sinal.
+
+    A cadeia perdeu uma participante (retificada depois de declarada) e deixou de ser
+    verificável. Mantê-la penalizando seria acusar a leitura com base numa conta que
+    ninguém consegue mais fazer.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    assert _confirm_chain_readings(client, job_id).status_code == 200
+    declared = _declare_chain(
+        client,
+        job_id,
+        base_version=2,
+        key="confidence-chain-stale",
+        part_ids=("rd_6666666666666666", "rd_8888888888888888"),
+    )
+    assert declared.status_code == 200
+    assert _reading_confidences(declared.json())["rd_8888888888888888"] == 0.5
+
+    previous_decision_id = _current_decision_id(client, job_id, "rd_6666666666666666")
+    rectified = client.post(
+        f"/v1/jobs/{job_id}/review/rectifications",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "confidence-chain-rectify"},
+        json={
+            "base_version": 3,
+            "rectifications": [
+                {
+                    "reading_id": "rd_6666666666666666",
+                    "action": "reject",
+                    "rectifies_decision_id": previous_decision_id,
+                    "justification": "O 12,00 é de outra folha; não vale para este croqui.",
+                }
+            ],
+        },
+    )
+
+    assert rectified.status_code == 200
+    assert rectified.json()["declared_chains"][0]["status"] == "stale"
+    # Sem a cadeia vencida e sem a sugerida (que também perdeu o 12,00), a leitura volta
+    # ao valor neutro do sinal de cadeia em vez de continuar penalizada.
+    assert _reading_confidences(rectified.json())["rd_8888888888888888"] == 0.65
+
+
+def test_o_shadow_nunca_decide_associa_ou_bloqueia(tmp_path: Path) -> None:
+    """O registro diz o que TERIA feito; a revisão continua exigindo o ato humano."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+
+    decided = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "shadow-decides-nothing"},
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": "rd_1111111111111111",
+                    "action": "confirm",
+                    "justification": "Evidência sintética revisada.",
+                    "association_proposal_id": "vp_1111111111111111",
+                }
+            ],
+        },
+    )
+
+    assert decided.status_code == 200
+    body = decided.json()
+    auto = {choice["reading_id"] for choice in _shadow_point(body, 0.6, 0.7)["auto_choices"]}
+    # O corte generoso diria que esta cota também seria auto-associável...
+    assert "rd_2222222222222222" in auto
+    untouched = next(
+        reading for reading in body["packet"]["readings"] if reading["id"] == "rd_2222222222222222"
+    )
+    # ...e ela continua proposta, sem decisão e sem associação explícita.
+    assert untouched["status"] == "proposed"
+    assert untouched["decision"] is None
+    assert body["selected_associations"] == {"rd_1111111111111111": "vp_1111111111111111"}
+    # Confiança não vira pendência de exportação nem issue: o solver continua cobrando
+    # confirmação humana justamente da cota que o corte teria resolvido sozinho.
+    assert "HEIGHT_HUMAN_CONFIRMATION_REQUIRED:rd_2222222222222222" in body["blockers"]
+    assert "ACC_GUA_001" in body["blockers"]
+    assert not [code for code in body["blockers"] if "CONFIDENCE" in code or "SHADOW" in code]
+    # Uma confiança alta também não abre issue: com uma única cota confirmada não há cena
+    # métrica ainda, e o shadow não acrescenta nada a essa lista.
+    assert body["issues"] == []
+
+
+def test_os_campos_de_confianca_sao_identicos_em_duas_leituras_da_mesma_revisao(
+    tmp_path: Path,
+) -> None:
+    """Determinismo fim a fim: a resposta do comando e a leitura seguinte não divergem."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    written = _confirm_chain_readings(client, job_id)
+    assert written.status_code == 200
+
+    first = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("tenant-a")).json()
+    second = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("tenant-a")).json()
+
+    for field in CONFIDENCE_FIELDS:
+        assert first[field] == written.json()[field], field
+        assert second[field] == first[field], field
+
+
+def test_idempotent_replay_of_a_response_stored_before_the_confidence_fields(
+    tmp_path: Path,
+) -> None:
+    """Resposta gravada antes dos campos existirem é revalidada no replay — e não quebra."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    payload = {
+        "base_version": 1,
+        "decisions": [
+            {
+                "reading_id": "rd_1111111111111111",
+                "action": "confirm",
+                "justification": "Conferido no material protegido.",
+                "association_proposal_id": "vp_1111111111111111",
+            }
+        ],
+    }
+    headers = {**_headers("tenant-a"), "Idempotency-Key": "confidence-legacy-replay"}
+    first = client.post(f"/v1/jobs/{job_id}/review/decisions", headers=headers, json=payload)
+    assert first.status_code == 200
+
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions.begin() as session:
+        record = session.query(IdempotencyRecord).filter_by(key="confidence-legacy-replay").one()
+        legacy = dict(record.response_json)
+        for field in CONFIDENCE_FIELDS:
+            legacy.pop(field)
+        record.response_json = legacy
+
+    replayed = client.post(f"/v1/jobs/{job_id}/review/decisions", headers=headers, json=payload)
+
+    assert replayed.status_code == 200
+    assert replayed.json()["reading_confidences"] == []
+    assert replayed.json()["confidence_shadow"] == []
+    assert replayed.json()["auto_association_rate"] is None
+    assert replayed.json()["review_rate"] is None
+
+
+def _seed_auto_decided_review(
+    client: TestClient, job_id: UUID, *, threshold: float = 0.6
+) -> dict[str, str]:
+    """Reescreve a revisão 1 como o worker a gravaria com o modo automático ligado.
+
+    A API nunca cria decisão de ator-máquina — ela vem do worker, nunca de request —, e é
+    por isso que a fixture usa o próprio código do ato em vez de fabricar a decisão à mão:
+    o que a rota precisa aguentar é exatamente o que aquele caminho grava.
+    """
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions.begin() as session:
+        record = session.query(ReviewRevisionRecord).filter_by(job_id=str(job_id), version=1).one()
+        outcome = apply_auto_association(
+            ReviewPacket.model_validate(record.packet_json),
+            AssociationSet.model_validate(record.associations_json),
+            mode=AutoAssociationMode(threshold=threshold),
+        )
+        record.packet_json = outcome.packet.model_dump(mode="json")
+        record.selected_associations_json = outcome.selected_associations
+    return {decision.reading_id: decision.decision_id for decision in outcome.decisions}
+
+
+def test_a_revisao_exibe_o_ator_de_cada_decisao(tmp_path: Path) -> None:
+    """Proveniência atravessa até a resposta: quem lê a revisão vê quem decidiu."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    auto = _seed_auto_decided_review(client, job_id)
+    # A cota de círculo tem associação ambígua na fixture (0,55) e fica de fora do corte.
+    assert set(auto) == {"rd_1111111111111111", "rd_2222222222222222"}
+
+    body = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("tenant-a")).json()
+
+    readings = {reading["id"]: reading for reading in body["packet"]["readings"]}
+    automatic = readings["rd_1111111111111111"]["decision"]
+    assert automatic["actor"] == "system"
+    assert automatic["reviewer_role"] is None
+    assert automatic["reviewer_id"].startswith("system:auto-association@")
+    # Por qual regra a máquina decidiu viaja estruturado, não escondido na justificativa.
+    assert automatic["auto_tier"] == "cota"
+    assert body["selected_associations"]["rd_1111111111111111"] == "vp_1111111111111111"
+    assert readings["rd_3333333333333333"]["decision"] is None
+
+    decided = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "actor-human-decision"},
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": "rd_3333333333333333",
+                    "action": "confirm",
+                    "justification": "Exceção conferida na evidência protegida.",
+                    "association_proposal_id": "vp_3333333333333333",
+                }
+            ],
+        },
+    )
+
+    assert decided.status_code == 200
+    human = next(
+        reading["decision"]
+        for reading in decided.json()["packet"]["readings"]
+        if reading["id"] == "rd_3333333333333333"
+    )
+    assert human["actor"] == "human"
+    assert human["reviewer_role"] == "engineer"
+    # Pessoa decide por julgamento, não por tier: o campo não existe na decisão dela.
+    assert human["auto_tier"] is None
+    # A associação da máquina viaja para a revisão seguinte junto com a da pessoa.
+    assert decided.json()["selected_associations"] == {
+        "rd_1111111111111111": "vp_1111111111111111",
+        "rd_2222222222222222": "vp_2222222222222222",
+        "rd_3333333333333333": "vp_3333333333333333",
+    }
+
+
+def test_a_revisao_exibe_o_tier_de_cada_decisao_automatica(tmp_path: Path) -> None:
+    """Com o corte em 0,7 nenhuma leitura passa nos dois eixos; a elevação passa no dela.
+
+    A fixture não tem braço de OCR, então toda leitura fica em 0,65 de confiança de
+    leitura. A cota de planta de associação altíssima (0,92) continua exceção — é o que a
+    dupla testemunha cobra —, e a altura de associação 0,78 entra pelo tier de anotação.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    auto = _seed_auto_decided_review(client, job_id, threshold=0.7)
+
+    assert set(auto) == {"rd_2222222222222222"}
+
+    body = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("tenant-a")).json()
+
+    readings = {reading["id"]: reading for reading in body["packet"]["readings"]}
+    annotation = readings["rd_2222222222222222"]["decision"]
+    assert annotation["actor"] == "system"
+    assert annotation["auto_tier"] == "anotacao"
+    assert annotation["note"].startswith("Anotação automática")
+    # Cota de planta com associação melhor ainda assim NÃO entrou: o não-vazamento do
+    # ADR-0044 (D2) atravessa até a resposta que o revisor lê.
+    assert readings["rd_1111111111111111"]["decision"] is None
+
+
+def test_a_anotacao_automatica_tem_a_mesma_forma_da_anotacao_declarada_por_gente(
+    tmp_path: Path,
+) -> None:
+    """Mesmo mecanismo, autoria diferente (ADR-0044, D1a).
+
+    A anotação da folha é, neste contrato, a única confirmação SEM elemento associado —
+    a regra recusa com 422 quem tenta associar uma. A anotação automática nasce com essa
+    mesma forma: confirmada e ausente do mapa de associações. O que a distingue do ato
+    humano é o ator e o tier, nunca o mecanismo — e é por isso que ela não vira restrição
+    de geometria em caminho nenhum.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    auto = _seed_auto_decided_review(client, job_id, threshold=0.7)
+    assert set(auto) == {"rd_2222222222222222"}
+
+    declared = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "anotacao-humana"},
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": "rd_3333333333333333",
+                    "action": "confirm",
+                    "justification": "Recado da folha: não mede elemento nenhum.",
+                    "annotation": True,
+                }
+            ],
+        },
+    )
+
+    assert declared.status_code == 200
+    body = declared.json()
+    readings = {reading["id"]: reading for reading in body["packet"]["readings"]}
+    automatic = readings["rd_2222222222222222"]
+    human = readings["rd_3333333333333333"]
+    # Mesma forma: confirmada, e fora do mapa de associações.
+    assert automatic["status"] == human["status"] == "confirmed"
+    assert "rd_2222222222222222" not in body["selected_associations"]
+    assert "rd_3333333333333333" not in body["selected_associations"]
+    assert body["selected_associations"] == {}
+    # Autoria diferente, e só ela.
+    assert automatic["decision"]["actor"] == "system"
+    assert automatic["decision"]["auto_tier"] == "anotacao"
+    assert human["decision"]["actor"] == "human"
+    assert human["decision"]["auto_tier"] is None
+
+
+def test_a_tela_de_correcao_trata_a_anotacao_automatica_como_a_humana(
+    tmp_path: Path,
+) -> None:
+    """Sem associação vigente, a correção não tem associação a pré-preencher.
+
+    A tela lê `selected_associations` para montar a correção declarada; para uma anotação
+    — de máquina ou de pessoa — não há entrada, e o formulário nasce na opção "anotação
+    da folha". Aqui isso é conferido pelo dado que a resposta entrega, que é o que a tela
+    consome.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    auto = _seed_auto_decided_review(client, job_id, threshold=0.7)
+
+    body = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("tenant-a")).json()
+
+    assert body["selected_associations"].get("rd_2222222222222222") is None
+    # E ela continua corrigível: o alvo da correção é a decisão, não a associação.
+    rectified = client.post(
+        f"/v1/jobs/{job_id}/review/rectifications",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "anotacao-auto-rectify"},
+        json={
+            "base_version": 1,
+            "rectifications": [
+                {
+                    "reading_id": "rd_2222222222222222",
+                    "action": "confirm",
+                    "rectifies_decision_id": auto["rd_2222222222222222"],
+                    "justification": "A altura é 3,90; a automática leu 21,75 da cota ao lado.",
+                    "annotation": True,
+                    "raw_text": "h=3,90",
+                    "value_si": "3.90",
+                    "unit": "m",
+                }
+            ],
+        },
+    )
+
+    assert rectified.status_code == 200
+    corrected = next(
+        reading
+        for reading in rectified.json()["packet"]["readings"]
+        if reading["id"] == "rd_2222222222222222"
+    )
+    assert corrected["value_si"] == "3.90"
+    assert corrected["decision"]["actor"] == "human"
+    assert corrected["decision"]["auto_tier"] is None
+    # Corrigida como anotação, continua sem vínculo — e sem virar geometria.
+    assert "rd_2222222222222222" not in rectified.json()["selected_associations"]
+
+
+def test_auto_decisao_nao_e_sobrescrita_e_e_retificavel_pelo_caminho_humano(
+    tmp_path: Path,
+) -> None:
+    """A recíproca do ADR-0041: gente corrige a máquina pelo caminho do ADR-0022."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    auto = _seed_auto_decided_review(client, job_id)
+
+    overwritten = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "auto-overwrite"},
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": "rd_1111111111111111",
+                    "action": "confirm",
+                    "justification": "Tentativa de decidir de novo o que a máquina decidiu.",
+                    "association_proposal_id": "vp_1111111111111111",
+                }
+            ],
+        },
+    )
+
+    assert overwritten.status_code == 422
+    assert overwritten.json()["detail"]["code"] == "READING_ALREADY_DECIDED"
+
+    rectified = client.post(
+        f"/v1/jobs/{job_id}/review/rectifications",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "auto-rectify"},
+        json={
+            "base_version": 1,
+            "rectifications": [
+                {
+                    "reading_id": "rd_1111111111111111",
+                    "action": "confirm",
+                    "rectifies_decision_id": auto["rd_1111111111111111"],
+                    "justification": "A automática leu a cota da folha ao lado; a largura é 26,10.",
+                    "association_proposal_id": "vp_1111111111111111",
+                    "raw_text": "26,10",
+                    "value_si": "26.10",
+                    "unit": "m",
+                }
+            ],
+        },
+    )
+
+    assert rectified.status_code == 200
+    corrected = next(
+        reading
+        for reading in rectified.json()["packet"]["readings"]
+        if reading["id"] == "rd_1111111111111111"
+    )
+    assert corrected["value_si"] == "26.10"
+    assert corrected["decision"]["actor"] == "human"
+    assert corrected["decision"]["reviewer_role"] == "engineer"
+    assert corrected["decision"]["rectifies_decision_id"] == auto["rd_1111111111111111"]
+    assert corrected["decision"]["decision_id"] != auto["rd_1111111111111111"]
 
 
 def test_confirmed_associations_create_only_a_blocked_draft_scene(tmp_path: Path) -> None:

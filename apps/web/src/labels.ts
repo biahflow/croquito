@@ -368,6 +368,98 @@ export function regionKindLabel(kind: string): string {
 }
 
 /**
+ * Vista de exceções da revisão (F-029): as contagens que o revisor lê no topo.
+ *
+ * `auto` são as cotas que o sistema confirmou sozinho por dupla testemunha, `annotation`
+ * as anotações que ele confirmou por testemunha única (elevações e recados da folha —
+ * ADR-0044), `review` as que ainda esperam uma pessoa e têm a quem associar, e
+ * `unresolved` as que esperam uma pessoa sem candidato nenhum no desenho — o pior caso, e
+ * por isso ele tem contador próprio em vez de ficar escondido dentro do total pendente.
+ *
+ * Cota e anotação contam separado porque o que se aceita de um rótulo não é o que se
+ * aceita de uma medida: somá-las esconderia justamente a diferença de custo do erro que
+ * fez os dois tiers existirem.
+ *
+ * O ícone acompanha a palavra e nunca a substitui: quem lê por leitor de tela ouve
+ * "4 auto-associadas", não um caractere. Os dois atos de máquina compartilham o ⚙ de
+ * propósito — o que os distingue é a palavra, como manda a regra de não indicar estado
+ * só por marca visual.
+ */
+export type ExceptionCounterKind =
+  | "auto"
+  | "annotation"
+  | "review"
+  | "unresolved";
+
+const EXCEPTION_COUNTER_LABELS: Record<
+  ExceptionCounterKind,
+  { icon: string; one: string; many: string }
+> = {
+  auto: { icon: "⚙", one: "auto-associada", many: "auto-associadas" },
+  annotation: {
+    icon: "⚙",
+    one: "anotação automática",
+    many: "anotações automáticas",
+  },
+  review: { icon: "⚠", one: "precisa de revisão", many: "precisam de revisão" },
+  unresolved: { icon: "✗", one: "não resolvida", many: "não resolvidas" },
+};
+
+export function exceptionCounterLabel(
+  kind: ExceptionCounterKind,
+  count: number,
+): string {
+  const label = EXCEPTION_COUNTER_LABELS[kind];
+  return `${label.icon} ${count} ${count === 1 ? label.one : label.many}`;
+}
+
+/** Os dois estados do filtro da lista; nenhum deles decide nada, só o que fica à vista. */
+export function exceptionFilterLabel(mode: "only" | "all"): string {
+  return mode === "only" ? "só exceções" : "todas";
+}
+
+/**
+ * Versão do score que produziu uma auto-decisão, extraída da identidade do ator-máquina
+ * (`system:auto-association@1.0.0`, carimbada pelo worker em `system_reviewer_id`).
+ *
+ * `null` quando a identidade não tem esse formato: a tela então diz apenas que o sistema
+ * associou, sem inventar uma versão e sem despejar o identificador cru na leitura corrida.
+ */
+export function autoDecisionScoreVersion(reviewerId: string): string | null {
+  const match = /^system:[^@]+@(.+)$/.exec(reviewerId.trim());
+  return match ? match[1] : null;
+}
+
+/**
+ * Proveniência de máquina por extenso, do lado da leitura: por qual regra o sistema
+ * decidiu e com que versão de score. Texto, nunca só cor — e nunca o `reviewer_id` cru.
+ *
+ * O tier muda a PALAVRA, não só o tom: "anotação automática" avisa que aquela linha
+ * entrou com uma testemunha só porque não manda na geometria, e quem revisa precisa
+ * poder pesar isso sem abrir a justificativa. Sem tier declarado — decisão de sistema
+ * gravada antes do campo — a frase é a de sempre, que descreve o tier de cota.
+ */
+export function autoDecisionProvenanceLabel(
+  reviewerId: string,
+  tier?: "cota" | "anotacao" | null,
+): string {
+  const version = autoDecisionScoreVersion(reviewerId);
+  const act =
+    tier === "anotacao" ? "anotação automática" : "associada pelo sistema";
+  return version ? `${act} · score ${version}` : act;
+}
+
+/**
+ * Confiança da leitura como o pipeline a registrou, com vírgula decimal.
+ *
+ * É observação exibida ao lado da decisão que ela motivou, e não um veredito: a tela não
+ * compara com corte, não classifica em faixas e não esconde nada por causa dela.
+ */
+export function readingConfidenceLabel(confidence: number): string {
+  return `confiança ${formatDecimal(confidence, 2)}`;
+}
+
+/**
  * Códigos que o solver retangular emite sem sujeito (nenhum `:id` depois do código):
  * o texto inteiro já é a mensagem, e um código novo sem entrada aqui cairia no
  * fallback de decomposição prefixo/sufixo abaixo, que não o reconhece.

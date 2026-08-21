@@ -377,11 +377,31 @@
       "AssociationCandidate": {
         "additionalProperties": false,
         "properties": {
+          "association_confidence": {
+            "default": 0.0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Association Confidence",
+            "type": "number"
+          },
           "export": {
             "const": false,
             "default": false,
             "title": "Export",
             "type": "boolean"
+          },
+          "orientation_alignment": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orientation Alignment"
           },
           "pixel_distance": {
             "minimum": 0.0,
@@ -2630,6 +2650,7 @@
       },
       "HumanDecision": {
         "additionalProperties": false,
+        "description": "A decisão registrada sobre uma leitura — de uma pessoa por padrão, do sistema por exceção.\n\nO ator é campo discriminador ADITIVO (ADR-0041, D1): decisão gravada antes dele\ncontinua válida e é lida como `human`, e nenhum consumidor que ignore o campo muda de\ncomportamento. O nome da classe permanece porque o lugar semântico é o mesmo — \"a\nleitura foi decidida\" —; um tipo irmão duplicaria validação de estado, solver, API,\nretificação e telas.",
         "properties": {
           "action": {
             "enum": [
@@ -2638,6 +2659,30 @@
             ],
             "title": "Action",
             "type": "string"
+          },
+          "actor": {
+            "default": "human",
+            "enum": [
+              "human",
+              "system"
+            ],
+            "title": "Actor",
+            "type": "string"
+          },
+          "auto_tier": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cota",
+                  "anotacao"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Tier"
           },
           "decided_at": {
             "format": "date-time",
@@ -2680,20 +2725,26 @@
             "type": "string"
           },
           "reviewer_role": {
-            "enum": [
-              "engineer",
-              "architect",
-              "domain_reviewer"
+            "anyOf": [
+              {
+                "enum": [
+                  "engineer",
+                  "architect",
+                  "domain_reviewer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Reviewer Role",
-            "type": "string"
+            "title": "Reviewer Role"
           }
         },
         "required": [
           "decision_id",
           "action",
           "reviewer_id",
-          "reviewer_role",
           "decided_at"
         ],
         "title": "HumanDecision",
@@ -3886,6 +3937,26 @@
         "title": "ProviderLineage",
         "type": "object"
       },
+      "ReadingConfidence": {
+        "additionalProperties": false,
+        "description": "\"Li certo?\" por leitura — observação, nunca decisão nem veto de exportação.",
+        "properties": {
+          "reading_confidence": {
+            "title": "Reading Confidence",
+            "type": "number"
+          },
+          "reading_id": {
+            "title": "Reading Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reading_id",
+          "reading_confidence"
+        ],
+        "title": "ReadingConfidence",
+        "type": "object"
+      },
       "ReadingStatus": {
         "enum": [
           "proposed",
@@ -4532,6 +4603,17 @@
           "associations": {
             "$ref": "#/components/schemas/AssociationSet"
           },
+          "auto_association_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Association Rate"
+          },
           "blockers": {
             "items": {
               "type": "string"
@@ -4548,6 +4630,13 @@
                 "type": "null"
               }
             ]
+          },
+          "confidence_shadow": {
+            "items": {
+              "$ref": "#/components/schemas/ShadowDecisionResponse"
+            },
+            "title": "Confidence Shadow",
+            "type": "array"
           },
           "declared_chains": {
             "items": {
@@ -4595,6 +4684,13 @@
               }
             ]
           },
+          "reading_confidences": {
+            "items": {
+              "$ref": "#/components/schemas/ReadingConfidence"
+            },
+            "title": "Reading Confidences",
+            "type": "array"
+          },
           "required_criteria": {
             "items": {
               "$ref": "#/components/schemas/RequiredCriterion"
@@ -4606,6 +4702,17 @@
             "format": "uuid",
             "title": "Review Id",
             "type": "string"
+          },
+          "review_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Rate"
           },
           "scene": {
             "anyOf": [
@@ -4790,6 +4897,64 @@
           "target_amount"
         ],
         "title": "SetEstimateTargetRequest",
+        "type": "object"
+      },
+      "ShadowChoiceResponse": {
+        "additionalProperties": false,
+        "description": "A associação que um corte hipotético TERIA escolhido para uma leitura.",
+        "properties": {
+          "association_confidence": {
+            "title": "Association Confidence",
+            "type": "number"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "reading_confidence": {
+            "title": "Reading Confidence",
+            "type": "number"
+          },
+          "reading_id": {
+            "title": "Reading Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reading_id",
+          "proposal_id",
+          "reading_confidence",
+          "association_confidence"
+        ],
+        "title": "ShadowChoiceResponse",
+        "type": "object"
+      },
+      "ShadowDecisionResponse": {
+        "additionalProperties": false,
+        "description": "Um ponto da grade e o que ele teria auto-decidido — nenhuma decisão real.",
+        "properties": {
+          "association_threshold": {
+            "title": "Association Threshold",
+            "type": "number"
+          },
+          "auto_choices": {
+            "items": {
+              "$ref": "#/components/schemas/ShadowChoiceResponse"
+            },
+            "title": "Auto Choices",
+            "type": "array"
+          },
+          "reading_threshold": {
+            "title": "Reading Threshold",
+            "type": "number"
+          }
+        },
+        "required": [
+          "reading_threshold",
+          "association_threshold",
+          "auto_choices"
+        ],
+        "title": "ShadowDecisionResponse",
         "type": "object"
       },
       "SplineGeometry": {

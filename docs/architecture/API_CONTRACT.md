@@ -187,6 +187,69 @@ outras, em dois campos que nunca entram em `blockers`:
   `CHAIN_READING_SUPERSEDED` com `chain` nulo: uma cota participante deixou de estar
   confirmada depois da declaração, e a cadeia avisa em vez de sumir.
 
+A resposta traz também os campos de **confiança determinística** (F-029), todos
+OBSERVACIONAIS: nenhum decide leitura, seleciona associação, entra em `blockers`, cria
+issue ou toca a exportação. A associação que vale continua sendo a explícita em
+`selected_associations`, e ela só nasce de ato humano.
+
+- Cada candidato de `associations.candidates` carrega `association_confidence` (0–1,
+  "sei a qual segmento esta cota pertence?") e `orientation_alignment` (`number | null`;
+  `null` quando o candidato não tem direção própria — círculo, contorno).
+- `reading_confidences`: `reading_confidence` (0–1, "li esta cota corretamente?") por
+  leitura do pacote. As duas confianças nunca se fundem num número só: associar errado é
+  o erro que nada a jusante percebe. Participar de cadeia que fecha corrobora a leitura;
+  participar de uma cadeia **declarada** cujo total não bate (`mismatch`) a rebaixa — a
+  declaração é ato humano afirmando a completude da soma, e a aritmética contradita é
+  evidência contra uma das participantes. Cadeia `stale` não pesa: perdeu participante e
+  deixou de ser verificável. Cadeia apenas **sugerida** que não fecha também não pesa:
+  ali a soma incompleta pode ser só uma cota que o croqui não traz.
+- `confidence_shadow`: o shadow log gravado na revisão — para cada ponto da grade fixa de
+  thresholds (`reading_threshold` × `association_threshold`, cortes 0,5/0,6/0,7/0,8/0,9/0,95
+  nos dois eixos), a lista `auto_choices` do que TERIA sido auto-decidido ali, com
+  `reading_id`, `proposal_id` e as duas confianças. É registro para calibração, nunca
+  decisão.
+- `auto_association_rate` e `review_rate`: taxas observacionais da revisão corrente,
+  medidas no ponto **mais conservador** da grade. `auto_association_rate` = leituras
+  auto-decidíveis ÷ leituras com ao menos um candidato; `review_rate` = complemento sobre
+  o total de leituras, que inclui as sem candidato — elas também são trabalho humano. Os
+  números dependem da grade e não são recomendação de corte operacional: esse corte é
+  escolhido por uma pessoa a partir do relatório de calibração.
+
+Revisão gravada antes da coluna do shadow responde com as listas vazias e as duas taxas
+`null`: ausência de registro, nunca zero medido. A revisão 1, escrita pelo worker, nasce
+com o shadow computado desde a F-029/T4 — é a foto anterior ao primeiro toque humano, e
+nenhuma revisão posterior conseguiria reconstituí-la.
+
+Toda decisão exibida em `packet.readings[].decision` carrega `actor`
+(`"human" | "system"`, default `"human"`;
+[ADR-0041](../adr/0041-decisao-de-ator-maquina-atras-de-flag-local.md)). Decisão de
+pessoa continua idêntica ao que sempre foi. Decisão de **sistema** — que só existe com o
+modo automático local ligado, nasce no worker e nunca chega por request — tem
+`reviewer_id` no formato `system:auto-association@<versão do score>`, `reviewer_role`
+`null` (papel profissional é atributo de pessoa, derivado do JWT) e `action` sempre
+`confirm`: o sistema nunca rejeita e nunca retifica. `reviewer_role` passa a ser opcional
+no contrato por isso, e continua obrigatório para o ator humano.
+
+A decisão de sistema carrega também `auto_tier` (`"cota" | "anotacao"`;
+[ADR-0044](../adr/0044-triagem-por-testemunha-anotacao-automatica.md)), que diz por qual
+regra a máquina decidiu. `cota` exigiu as duas confianças acima do corte e gravou a
+associação explícita em `selected_associations`. `anotacao` não exigiu corte nenhum e
+**não gravou associação**: a leitura entra confirmada e ausente de
+`selected_associations`, que é a mesma forma da "anotação da folha" declarada por uma
+pessoa (`annotation: true`, a única confirmação sem elemento associado). É essa ausência
+que a mantém fora de qualquer restrição de geometria; o elemento provável viaja como
+observação na `note` da decisão e na auditoria do export, nunca como vínculo.
+
+Decisão humana traz `auto_tier` `null` — pessoa decide por julgamento, não por tier —, e
+decisão de sistema gravada antes do campo é devolvida como `cota`, o único tier que
+existia quando ela foi tomada. O corte continua sendo **um só**, e nenhum tier tem
+threshold próprio.
+
+Uma auto-decisão é imutável pelo mesmo caminho de todas: decidir de novo é
+`READING_ALREADY_DECIDED`, e corrigi-la é a correção declarada de sempre
+(`POST /v1/jobs/{job_id}/review/rectifications`), que a sucede por uma decisão humana com
+`rectifies_decision_id`. Nenhuma rota muda de forma.
+
 Cada leitura de `packet.readings` carrega `annotation_suggested`: `true` quando o
 pipeline leu a linha como **anotação da folha** — um recado escrito, não a medida de um
 elemento:

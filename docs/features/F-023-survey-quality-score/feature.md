@@ -82,6 +82,11 @@ Duas tasks, contrato aditivo (fatia 1):
 
 - Score agregado e recomendações de campo (fatias ≥2 — o coração da F-023,
   depois da calibração com V14–V17).
+  > Nota de 2026-08-21, por decisão humana: o **score calibrado com V14–V17**
+  > migrou para a [F-029](../F-029-auto-associacao-confianca/feature.md)
+  > (auto-associação por confiança calibrada), que o absorve como fatia 1.
+  > As recomendações de campo acionáveis permanecem como fatia futura desta
+  > feature.
 - Promoção de cadeia a `Constraint` de cena (o docstring do motor exige ato
   próprio e contrato próprio; nenhuma cadeia toca geometria nesta fatia).
 - Unificação com a conferência geométrica LSQ do `tracing.py` (o 6,60 fecha

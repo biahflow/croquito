@@ -95,7 +95,20 @@ project-name/
 ```
 
 `auditoria.json` registra revision, exporter version, checks, units, entity counts e
-digest. `hipoteses.json` lista apenas aproximações aceitas e omissões.
+digest. Quando alguma cota entrou sem toque humano (modo automático local da F-029,
+[ADR-0041](../adr/0041-decisao-de-ator-maquina-atras-de-flag-local.md)), ele ganha
+`auto_decided_readings`: a lista **nominal** dessas cotas, cada uma com leitura, valor,
+unidade, associação usada, as duas confianças, o corte vigente, a versão do score e o
+`tier` por qual regra ela entrou (`cota`, de dupla testemunha, ou `anotacao`, de
+testemunha única para leitura sem papel de geometria de planta —
+[ADR-0044](../adr/0044-triagem-por-testemunha-anotacao-automatica.md)). Quem confere o
+pacote precisa distinguir os dois: o que se aceita de um rótulo não é o que se aceita de
+uma medida. No tier `anotacao`, `proposal_id` é nulo — a anotação entra sem elemento
+associado, e o que fica registrado é o `probable_proposal_id`, observação que instruiu a
+fixação do texto e nunca um vínculo. A chave não aparece quando não houve nenhuma — e uma auto-decisão retificada
+por uma pessoa sai da lista, porque deixou de ser automática. Nada disso muda o portão
+`export_errors()`: a listagem é auditoria, nunca permissão.
+`hipoteses.json` lista apenas aproximações aceitas e omissões.
 `aprovacao.json` liga a decisão humana à revisão rascunho e registra os checks
 de evidência, geometria e limitações. Fixtures antigas sem etapa de revisão podem
 produzir somente os cinco artefatos-base.

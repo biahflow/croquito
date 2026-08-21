@@ -41,6 +41,17 @@ export type ReadingDecision = {
   decided_at: string;
   note?: string | null;
   rectifies_decision_id?: string | null;
+  // Quem decidiu (ADR-0041): `system` é a auto-associação por confiança calibrada, e só
+  // confirma — corrigir uma decisão dela é o mesmo ato humano de retificação. Campo
+  // ADITIVO: decisão gravada antes dele volta sem o campo e é lida como `human`, que é
+  // o default do servidor.
+  actor?: "human" | "system";
+  // Por qual regra a máquina decidiu (ADR-0044): `cota` exigiu as duas confianças acima
+  // do corte, `anotacao` dispensou a de leitura porque a cota não manda na geometria de
+  // planta. Também ADITIVO: decisão de sistema gravada antes do campo é do tier `cota`,
+  // o único que existia — o servidor a devolve já normalizada assim. Nunca vem em
+  // decisão humana.
+  auto_tier?: "cota" | "anotacao" | null;
 };
 
 export type ReviewReading = {
@@ -150,6 +161,36 @@ export type DeclaredChain = {
   issue?: { code: string; severity: string; message: string } | null;
 };
 
+/**
+ * "Li certo?" por leitura — observação do pipeline, nunca decisão nem veto de exportação.
+ *
+ * A tela só exibe o número ao lado da leitura que o sistema decidiu sozinho; ela não
+ * compara com corte nenhum, não pré-marca nada e não deriva estado a partir dele.
+ */
+export type ReadingConfidence = {
+  reading_id: string;
+  reading_confidence: number;
+};
+
+/** A associação que um corte hipotético TERIA escolhido para uma leitura. */
+export type ShadowChoice = {
+  reading_id: string;
+  proposal_id: string;
+  reading_confidence: number;
+  association_confidence: number;
+};
+
+/**
+ * Um ponto da grade de cortes e o que ele teria decidido — registro de calibração, não
+ * decisão. A tela não escolhe ponto da grade nem sugere corte: quem escolhe o corte é
+ * uma pessoa, a partir do relatório de calibração (F-029).
+ */
+export type ShadowDecision = {
+  reading_threshold: number;
+  association_threshold: number;
+  auto_choices: ShadowChoice[];
+};
+
 export type Review = {
   job_id: string;
   review_id: string;
@@ -170,6 +211,10 @@ export type Review = {
       proposal_id: string;
       proposal_kind: string;
       relation: string;
+      // Sinais de confiança do ranking (F-029). Opcionais porque pacote associado antes
+      // deles responde sem eles; a tela nunca ordena, filtra ou decide por eles.
+      association_confidence?: number;
+      orientation_alignment?: number | null;
     }[];
   };
   proposals: {
@@ -192,6 +237,14 @@ export type Review = {
   // eles (mesmo motivo do `default_factory` no servidor).
   suggested_chains?: DimensionChain[];
   declared_chains?: DeclaredChain[];
+  // Confiança e calibração (F-029), todos observacionais e todos opcionais: revisão
+  // gravada antes deles — ou por caminho que não os preenche — responde com listas
+  // vazias e taxas nulas, e a tela cai no `?? []` como faz com as cadeias. Ausência é
+  // ausência de registro, nunca zero medido.
+  reading_confidences?: ReadingConfidence[];
+  confidence_shadow?: ShadowDecision[];
+  auto_association_rate?: number | null;
+  review_rate?: number | null;
   scene: {
     id: string;
     version: number;
