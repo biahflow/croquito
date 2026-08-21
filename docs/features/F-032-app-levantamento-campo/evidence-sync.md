@@ -301,6 +301,37 @@ Consolidado por tarefa conforme cada BUILD REPORT chega; a evidência do MVP loc
   clipes reais com verdade escrita; aprovação da rodada paga; promoção de
   primário/reserva pós-eval.
 
+### T16 — e2e in-process da cadeia de campo
+
+- Executor: `implementador-sonnet`. BUILD REPORT: `BUILD_COMPLETE`.
+- Entrega: `tests/e2e/test_field_flow.py` — um teste atravessando API + worker
+  reais sobre os fakes compartilhados: lote idempotente (reenvio byte-idêntico,
+  banco sem duplicata); conflito por gap → 409 com estado → resolução
+  reancorada fecha; regra 6a (presign recusado antes da referência); foto+áudio
+  presign→PUT→confirm publicando análise/transcrição exatamente uma vez;
+  complete recusado com mídia pendente e aceito depois; worker consome as três
+  mensagens; artefatos nas chaves estáveis; transcrição `draft` com `note_id`;
+  **fail-closed provado no e2e** (`export_errors() == ["SCENE_NOT_APPROVED"]`,
+  nenhuma entidade `exact`, nenhuma `export=True`); segundo tenant sem
+  entitlement processa com `skipped_no_entitlement` e ZERO chamadas pagas;
+  contagens finais exatas (1 foto + 1 áudio, só do tenant A). Nenhuma linha de
+  produção tocada; `tests/fakes.py` não precisou de extensão.
+- Validação FINAL da fatia: `pytest tests/e2e tests/api tests/worker` verdes;
+  `make check` exit 0 (mypy strict 216 arquivos); `make test` exit 0 —
+  **pytest 1932 passed/13 skipped, web 853, field 261**.
+
+## Conclusão da fatia
+
+Fatia de sincronização ampliada COMPLETA em 2026-08-21: T7–T17 entregues,
+revisadas linha a linha e integradas (T7 contrato, T8 rotas, T9 transporte, T10
+identidade, T11 export, T12 voz, T13 transcrição+eval, T14 análise de fotos,
+T15 qualidade no aparelho, T16 e2e, T17 marca/endereço). Defeitos de núcleo
+pegos pela revisão nesta fatia: loop de conflito pós-`accept_server` (T9,
+corrigido com mutação provada), chaves sem escopo de tenant e naming de
+comandos (T8), nota só-áudio recusada pelo contrato (T12, achado pelo próprio
+builder), lint do revisor (T15, achado pelo builder). A feature volta a
+`READY_FOR_HUMAN_REVIEW`.
+
 ## PLAN_DEVIATION
 
 (nenhum até o momento)

@@ -2,10 +2,11 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-21 (F-032 em PLANNING da fatia de sincronização ampliada —
-`/v1/surveys`, mídia, conflito, login, export, voz e IA/CV, escopo reaberto por
-decisão humana ([plan-sync](../features/F-032-app-levantamento-campo/plan-sync.md));
-MVP local completo T1–T6 em branch própria, decisão de merge pendente; antes:
+Última revisão: 2026-08-21 (F-032 com a fatia de sincronização ampliada COMPLETA —
+`/v1/surveys`, mídia foto+áudio, conflito explícito, login, export como observações,
+voz com transcrição Groq/OpenAI (eval pendente de rodada paga), IA/CV sobre fotos e
+iOS na matriz ([plan-sync](../features/F-032-app-levantamento-campo/plan-sync.md));
+READY_FOR_HUMAN_REVIEW em branch própria, decisão de merge pendente; antes:
 F-021 e F-022 abertas com contrato — nota pré-classificada na
 decisão e Document AI no braço de OCR, nascidas da segunda revisão real do Guaxindiba,
 ADR-0037 `Proposed`; antes: F-012 documentada com ADR-0036 `Proposed`; inventário
@@ -55,7 +56,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-028 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
-| F-032 | HIGH | PLANNING | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
+| F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002

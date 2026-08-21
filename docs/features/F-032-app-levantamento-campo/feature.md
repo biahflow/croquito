@@ -2,9 +2,21 @@
 
 ## Status
 
-`PLANNING`
+`READY_FOR_HUMAN_REVIEW`
 
-Fatia em planejamento/execução: sincronização ampliada. MVP local completo em 2026-08-21: fatia 0 (T1 scaffold) e o plano "MVP local, fatias
+Fatia de sincronização ampliada COMPLETA em 2026-08-21 (T7–T17 do
+[plan-sync.md](plan-sync.md), evidência em [evidence-sync.md](evidence-sync.md)):
+`/v1/surveys` com sync idempotente e conflito explícito, mídia foto+áudio por
+presign com digest, login OIDC com expiração como estado, export do levantamento
+como observações seguradas pelos portões do scene graph, nota de voz offline,
+transcrição (Groq/OpenAI atrás de eval comparativa pendente de rodada paga),
+análise de fotos com IA atrás de entitlement, qualidade de foto no aparelho e a
+identidade visual aprovada na DAP rev.2 — tudo provado por e2e in-process
+(pytest 1932, web 853, field 261, `make check` exit 0). Pendem atos humanos:
+chave Groq + clipes + rodada paga da eval; papel `field_technician` no realm;
+decisão sobre consentimento por levantamento; decisão de merge/push (dispara
+`deploy-hml`) com a relinearização da migração 0007×F-029 na integração.
+MVP local completo em 2026-08-21: fatia 0 (T1 scaffold) e o plano "MVP local, fatias
 1–3" (T2 motor, T3 coleta/medida, T4 ordens/chegada, T5 conclusão, T6 fotos)
 executados, revisados linha a linha e commitados na branch
 `f-032-app-levantamento-campo`, com portões completos verdes — evidência consolidada
