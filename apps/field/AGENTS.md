@@ -24,11 +24,26 @@ observação (`unresolved`/`approximate`), sujeita aos portões existentes.
 - Toda ação do usuário persiste localmente via `SurveyRepository` **antes** do feedback
   visual (antes de atualizar o estado de React). Isto não é estilo, é a garantia de que
   uma ação em campo sobrevive a fechar o app no meio.
-- Dado local nunca é apagado antes do `ack` do servidor — `acknowledge` só muda
-  `status`, nunca remove a linha do outbox.
-- Proibido introduzir transporte de rede (`fetch`, `axios`, WebSocket) em
-  `src/outbox/` ou em qualquer lugar deste workspace sem uma tarefa que autorize
-  explicitamente a sincronização — esta fatia é só local.
+- Dado local nunca é apagado — nem depois do `ack`. `acknowledge` e a resolução de
+  conflito só mudam `status` (`local` → `pending` → `acked`, ou `superseded` quando o
+  técnico aceita a versão do escritório); nenhuma linha do outbox e nenhuma mídia é
+  removida, e não existe `deleteMedia`/`deleteOperation` no `SurveyRepository`.
+- **Transporte de rede é autorizado exclusivamente em `src/sync/`** (F-032, T9), e
+  dentro dele apenas em `src/sync/apiClient.ts`, que é o único módulo com `fetch`.
+  Nenhum outro diretório do workspace — `src/domain/`, `src/outbox/`, `src/storage/`,
+  `src/ui/`, `src/photos/` — pode chamar `fetch`/`axios`/WebSocket, direta ou
+  indiretamente: quem precisa falar com a API consome a fachada de `src/sync`. O motor
+  (`src/sync/engine.ts`) recebe o cliente injetado, e é assim que os testes exercem a
+  sincronização inteira sem rede real.
+- Sem `VITE_CROQUITO_API_BASE_URL` o app opera em **modo local**: nada de rede sai do
+  aparelho, a coleta funciona igual e o painel diz isso por escrito. Nenhum caminho de
+  coleta pode quebrar por causa de env ausente ou servidor indisponível.
+- Mídia sobe DEPOIS dos metadados (prancha 6a) e sempre por identidade de conteúdo
+  (`sha256`), nunca pela referência local. Conflito é apresentado ao técnico (prancha
+  6b), nunca resolvido em silêncio.
+- Nunca registrar em log (nem devolver à UI) URL assinada, token, digest de arquivo ou
+  conteúdo de mídia — a regra da raiz vale igual aqui, e o caminho de rede é onde ela é
+  mais fácil de violar.
 - Tailwind v4 é restrito a `apps/field` (ADR-0043, D5): não é precedente para
   reestilizar `apps/web`, que continua em CSS puro.
 - Código e identificadores em inglês; todo texto visível em português do Brasil.

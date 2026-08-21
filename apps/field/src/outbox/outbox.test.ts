@@ -74,6 +74,20 @@ describe("outbox", () => {
       expect(nextSeq(history)).toBe(2);
     });
 
+    it("ignora a história preterida na resolução de conflito", () => {
+      // `superseded` é a história que o técnico abandonou ao aceitar a versão do
+      // escritório (prancha 6b); a operação de resolução já reancorou a sequência no ponto
+      // do servidor. Contar o topo abandonado faria a próxima ação nascer fora da
+      // sequência que o servidor espera, reabrindo o conflito a cada comando.
+      const operations = [
+        makeOperation({ operation_id: "acked-do-servidor", seq: 2, status: "acked" }),
+        makeOperation({ operation_id: "resolucao", seq: 3, status: "acked" }),
+        makeOperation({ operation_id: "preterida-alta", seq: 8, status: "superseded" }),
+      ];
+
+      expect(nextSeq(operations)).toBe(4);
+    });
+
     it("devolve o maior seq existente + 1, mesmo fora de ordem", () => {
       const operations = [
         makeOperation({ operation_id: "a", seq: 3 }),

@@ -131,6 +131,43 @@ Consolidado por tarefa conforme cada BUILD REPORT chega; a evidência do MVP loc
   tenant (conferir política de ciclo de vida do prefixo `export/` na operação);
   artefatos ainda sem consumidor no escritório (fatia futura, relação F-030).
 
+### T9 — SyncEngine + painel de sincronização (pranchas 6a/6b)
+
+- Executor: `implementador-opus`. BUILD REPORT: `BUILD_COMPLETE` (rodada inicial
+  + rodada de correção da revisão).
+- Entrega: `apps/field/src/sync/` (config por `VITE_CROQUITO_API_BASE_URL` —
+  ausente = modo local sem rede; `apiClient.ts` como único módulo com `fetch`;
+  backoff exponencial com limites nomeados; engine com lote em ordem `seq` →
+  ack → mídia por categoria 6a → complete com chave idempotente por versão);
+  painel `SyncScreen` + `syncViewModel` puros; transação Dexie única
+  `saveSurveyWithOperation` (fecha a dívida da revisão T3); status local novo
+  `superseded` (dado, não schema — sem migração); `apps/field/AGENTS.md`
+  atualizado (rede só em `src/sync/`, e só em `apiClient.ts`). Field: 210
+  testes (era 161).
+- **CODE_FINDING HIGH da revisão linha a linha, corrigido em rodada**: após
+  `accept_server`, as operações preteridas mantinham seq antigo e `nextSeq`
+  contava sobre elas — cada edição seguinte nasceria acima do que o servidor
+  espera e reabriria a prancha 6b em loop. Correção: `nextSeq` exclui
+  `superseded` (mantendo `acked` — regressão da T1 preservada) e
+  `accept_server` preterí a UNIÃO {não reconhecidas} ∪ {acked acima do head do
+  servidor} — o builder ampliou o critério proposto pela revisão, que deixava
+  escapar a operação recusada com seq abaixo do head. Cada metade da correção
+  provada por mutação (reverter → teste falha com o sintoma exato). Servidor
+  fake dos testes passou a cobrar a MESMA contiguidade da rota T8.
+- Desvios conscientes aceitos: `accept_server` não reescreve o Survey local
+  (não existe `fromSurveyPacket`; reenvia o pacote do SERVIDOR com a resolução —
+  registrado como oportunidade futura); justificativa de conflito por extenso
+  fixa (prancha 6b não tem campo livre); autor do servidor exibido como
+  "escritório" (a API não devolve autor); entrada do painel pela pílula
+  "N pendentes" já aprovada (nenhuma superfície nova).
+- Validação: field 210 verdes; `make check` e `make test` exit 0.
+- Limitações conhecidas registradas: confirmação de mídia não persistida no
+  aparelho (painel conservador mostra "0 de N" até ler o servidor); envio é
+  sempre ato do técnico (sem gatilho automático ao voltar online — fácil de
+  acrescentar); `keep_local` com `acked` local acima do head do servidor
+  (cenário exige perda de dados do servidor) não reoferece essas operações —
+  LOW, o fluxo de conflito reaparece e `accept_server` resolve.
+
 ## PLAN_DEVIATION
 
 (nenhum até o momento)

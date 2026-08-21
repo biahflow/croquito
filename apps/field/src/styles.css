@@ -172,6 +172,17 @@
     font-weight: 500;
   }
 
+  /* Pílula tocável (abre o painel de sincronização, prancha 6): mesma pílula da barra
+     aprovada, só sem os padrões de botão do navegador. O alvo continua confortável na
+     barra de 52px — a pílula ocupa a altura toda dela. */
+  .pill-action {
+    font: inherit;
+    font-size: var(--text-label);
+    font-weight: 500;
+    cursor: pointer;
+    min-height: 32px;
+  }
+
   /* ---------- indicador de identidade (prancha 6c, T10) ---------- */
   .identity-pill {
     background: transparent;

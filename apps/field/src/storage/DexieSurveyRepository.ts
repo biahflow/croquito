@@ -51,9 +51,30 @@ export class DexieSurveyRepository implements SurveyRepository {
     await this.db.operations.put(operation);
   }
 
+  /**
+   * Survey e operação numa transação `rw` única sobre as duas tabelas. Uma falha em
+   * qualquer das duas escritas aborta a transação inteira: o IndexedDB desfaz o `put` já
+   * executado e o banco volta ao estado anterior ao comando — nunca sobra survey avançado
+   * sem operação no outbox (dívida registrada na revisão de T3).
+   *
+   * Não há migração de schema aqui: `surveys` e `operations` são as mesmas tabelas da v1;
+   * o que muda é só a atomicidade da escrita.
+   */
+  async saveSurveyWithOperation(survey: Survey, operation: SurveyOperation): Promise<void> {
+    await this.db.transaction("rw", this.db.surveys, this.db.operations, async () => {
+      await this.db.surveys.put(survey);
+      await this.db.operations.put(operation);
+    });
+  }
+
   async getPendingOperations(surveyId: string): Promise<SurveyOperation[]> {
     const all = await this.listOperations(surveyId);
-    return all.filter((operation) => operation.status !== "acked");
+    // `superseded` sai da fila de envio mas continua no histórico (`listOperations`): a
+    // operação preterida por uma resolução de conflito não é reoferecida ao servidor nem
+    // contada como pendência na barra, e mesmo assim nunca é apagada.
+    return all.filter(
+      (operation) => operation.status !== "acked" && operation.status !== "superseded",
+    );
   }
 
   async listOperations(surveyId: string): Promise<SurveyOperation[]> {
@@ -65,6 +86,15 @@ export class DexieSurveyRepository implements SurveyRepository {
     // update() em chave inexistente devolve 0 sem lançar — reconhecer duas vezes (ou uma
     // operação que já sumiu) não corrompe estado nem apaga histórico.
     await this.db.operations.update(operationId, { status: "acked" });
+  }
+
+  async saveOperations(operations: readonly SurveyOperation[]): Promise<void> {
+    if (operations.length === 0) {
+      return;
+    }
+    // `bulkPut` numa transação implícita única: marcar meio lote como `pending` e o resto
+    // não deixaria o outbox num estado que nenhum caminho de leitura espera.
+    await this.db.operations.bulkPut([...operations]);
   }
 
   async saveMedia(record: MediaRecord): Promise<void> {

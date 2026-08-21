@@ -39,12 +39,17 @@ function recording(inner: SurveyRepository, calls: string[]): SurveyRepository {
       calls.push("appendOperation");
       await inner.appendOperation(operation);
     },
+    saveSurveyWithOperation: async (survey, operation) => {
+      calls.push("saveSurveyWithOperation");
+      await inner.saveSurveyWithOperation(survey, operation);
+    },
     getPendingOperations: (id) => inner.getPendingOperations(id),
     listOperations: async (id) => {
       calls.push("listOperations");
       return inner.listOperations(id);
     },
     acknowledge: (id) => inner.acknowledge(id),
+    saveOperations: (operations) => inner.saveOperations(operations),
     saveMedia: (record) => inner.saveMedia(record),
     getMedia: (id) => inner.getMedia(id),
   };
@@ -81,7 +86,42 @@ describe("applyCommand", () => {
     expect(operations).toHaveLength(1);
     expect(operations[0]?.type).toBe("point.add");
     expect(operations[0]?.status).toBe("local");
-    expect(calls).toEqual(["saveSurvey", "listOperations", "appendOperation"]);
+    // Uma escrita só, e atômica (T9): survey e operação entram juntos ou não entram.
+    expect(calls).toEqual(["listOperations", "saveSurveyWithOperation"]);
+  });
+
+  it("falha ao gravar a operação não deixa o survey avançado sem ela", async () => {
+    const survey = emptySurvey();
+    await repository.saveSurvey(survey);
+    const first = await applyCommand(
+      repository,
+      survey,
+      addPoint(survey, { id: "p1", x_mm: 0, y_mm: 0 }, NOW),
+      { device_id: DEVICE, operation_id: "op-1", created_at: NOW },
+    );
+    expect(first.ok).toBe(true);
+
+    // Payload que o IndexedDB não consegue clonar (função): a gravação da OPERAÇÃO falha
+    // depois de a do survey já ter sido pedida na mesma transação.
+    const poisoned = addPoint(first.ok ? first.survey : survey, { id: "p2", x_mm: 9, y_mm: 9 }, NOW);
+    const outcome = applyCommand(
+      repository,
+      first.ok ? first.survey : survey,
+      poisoned.ok
+        ? {
+            ...poisoned,
+            operation: { type: poisoned.operation.type, payload: { quebra: () => undefined } },
+          }
+        : poisoned,
+      { device_id: DEVICE, operation_id: "op-2", created_at: NOW },
+    );
+
+    await expect(outcome).rejects.toBeDefined();
+    const stored = await repository.getSurvey("survey-1");
+    // A transação foi desfeita: o survey continua com o ponto do comando anterior, e não
+    // existe survey novo sem operação correspondente no outbox.
+    expect(stored?.points.map((point) => point.id)).toEqual(["p1"]);
+    expect(await repository.listOperations("survey-1")).toHaveLength(1);
   });
 
   it("comando com erro não persiste nada e devolve o erro estruturado do domínio", async () => {

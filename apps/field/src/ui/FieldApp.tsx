@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   completeSignInRedirect,
+  getFreshAccessToken,
   isOidcConfigured,
   readIdentity,
   readIdentityState,
@@ -40,6 +41,14 @@ import {
 import type { Order, OrderId } from "../orders/types";
 import { buildMediaRecord, captureFile } from "../photos/media";
 import type { SurveyRepository } from "../storage/SurveyRepository";
+import {
+  API_BASE_URL,
+  createSyncApi,
+  createSyncEngine,
+  initialSyncState,
+  type ConflictDecision,
+  type SyncState,
+} from "../sync";
 import { AddMenu } from "./AddMenu";
 import { ArrivalScreen } from "./ArrivalScreen";
 import { AppBar, type IdentityBarProps } from "./AppBar";
@@ -51,6 +60,7 @@ import { MeasureScreen } from "./MeasureScreen";
 import type { Notice } from "./notice";
 import { OrdersScreen } from "./OrdersScreen";
 import { PhotoAnchorScreen } from "./PhotoAnchorScreen";
+import { SyncScreen } from "./SyncScreen";
 import { TextEntryScreen } from "./TextEntryScreen";
 import {
   DEFAULT_TOLERANCE_MM,
@@ -88,6 +98,7 @@ type Mode =
   | { kind: "justify"; segment_id: string; measurement_id: string }
   | { kind: "observation" }
   | { kind: "conclude" }
+  | { kind: "sync" }
   | { kind: "waive-finding"; finding_code: string; ref_key: string };
 
 function createSurveyForOrder(order: Order, nowIso: string): Survey {
@@ -140,6 +151,9 @@ export function FieldApp({ repository }: FieldAppProps) {
    * limpa ao trocar de ordem. */
   const [accessMediaRef, setAccessMediaRef] = useState<string | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
+  const [syncState, setSyncState] = useState<SyncState>(() =>
+    initialSyncState(API_BASE_URL === null ? "local_mode" : "idle"),
+  );
   const [busy, setBusy] = useState(false);
   const [isOnline, setIsOnline] = useState(() =>
     typeof navigator === "undefined" ? true : navigator.onLine,
@@ -149,6 +163,35 @@ export function FieldApp({ repository }: FieldAppProps) {
     surveyRef.current = next;
     setSurveyState(next);
   }, []);
+
+  /**
+   * Motor de sincronização (T9), instância única por montagem. Sem
+   * `VITE_CROQUITO_API_BASE_URL` a API é `null`: o motor opera em modo local, nenhuma
+   * chamada de rede sai do app e a coleta é exatamente a de antes desta tarefa. O token
+   * vem da T10 (`getFreshAccessToken`), que devolve estado — nunca exceção.
+   */
+  const syncEngine = useMemo(
+    () =>
+      createSyncEngine({
+        repository,
+        api:
+          API_BASE_URL === null
+            ? null
+            : createSyncApi(API_BASE_URL, (input, init) => fetch(input, init)),
+        deviceId: getOrCreateDeviceId(),
+        getFreshAccessToken,
+        onState: setSyncState,
+      }),
+    [repository],
+  );
+
+  // O contador "N pendentes" da barra passa a ler o outbox real depois de cada passada de
+  // sincronização (o ack muda o que está pendente sem passar por nenhum comando).
+  useEffect(() => {
+    if (syncState.survey_id !== null && syncState.survey_id === surveyRef.current?.id) {
+      setPendingCount(syncState.pending_operations);
+    }
+  }, [syncState]);
 
   const refreshOrderStates = useCallback(async () => {
     const entries = await Promise.all(
@@ -493,6 +536,33 @@ export function FieldApp({ repository }: FieldAppProps) {
       })();
     },
     [apply, selectedPointId],
+  );
+
+  /** Painel da prancha 6 — abre pela pílula de pendências da barra. Abrir NÃO dispara
+   * envio: quem decide falar com a rede em campo é o técnico, tocando "Enviar". */
+  const handleOpenSync = useCallback(() => {
+    setNotice(null);
+    setMode({ kind: "sync" });
+    const current = surveyRef.current;
+    if (current !== null) {
+      // Só leitura local: o painel abre dizendo a verdade do outbox sem gastar rede.
+      void syncEngine.refreshLocal(current.id);
+    }
+  }, [syncEngine]);
+
+  const handleSendSync = useCallback(() => {
+    const current = surveyRef.current;
+    if (current === null) {
+      return;
+    }
+    void syncEngine.syncSurvey(current.id);
+  }, [syncEngine]);
+
+  const handleResolveConflict = useCallback(
+    (decision: ConflictDecision) => {
+      void syncEngine.resolveConflict(decision);
+    },
+    [syncEngine],
   );
 
   const handleSegmentTap = useCallback((segmentId: string) => {
@@ -1007,6 +1077,17 @@ export function FieldApp({ repository }: FieldAppProps) {
             busy={busy}
           />
         );
+      case "sync":
+        return (
+          <SyncScreen
+            state={syncState}
+            surveyName={survey.name}
+            onSend={handleSendSync}
+            onResolveConflict={handleResolveConflict}
+            onBack={() => backToCollect()}
+            busy={busy}
+          />
+        );
       case "waive-finding": {
         const findingCode = mode.finding_code;
         const refKey = mode.ref_key;
@@ -1032,7 +1113,13 @@ export function FieldApp({ repository }: FieldAppProps) {
 
   return (
     <div className="flex h-dvh flex-col">
-      <AppBar title={survey.name} pendingCount={pendingCount} isOnline={isOnline} identity={identityBar} />
+      <AppBar
+        title={survey.name}
+        pendingCount={pendingCount}
+        onOpenSync={handleOpenSync}
+        isOnline={isOnline}
+        identity={identityBar}
+      />
       {renderScreen()}
     </div>
   );

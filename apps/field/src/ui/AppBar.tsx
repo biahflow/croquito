@@ -18,6 +18,9 @@ export interface AppBarProps {
   title: string;
   /** Operações do outbox ainda não reconhecidas pelo servidor. */
   pendingCount: number;
+  /** Abre o painel de sincronização (prancha 6). `undefined` fora de um levantamento
+   * aberto — a pílula volta a ser só indicador, como antes da T9. */
+  onOpenSync?: () => void;
   isOnline: boolean;
   /** `null` quando o OIDC não está configurado neste ambiente (sem `VITE_OIDC_*`) — o
    * app opera em modo local, sem identidade, exatamente como antes desta tarefa. */
@@ -30,7 +33,14 @@ export interface AppBarProps {
  * de identidade da prancha 6c — nome/estado do login e a ação "Entrar"/"Entrar
  * novamente" quando aplicável. Nunca é tela nova: cabe na mesma barra de sempre.
  */
-export function AppBar({ title, pendingCount, isOnline, identity }: AppBarProps) {
+export function AppBar({ title, pendingCount, onOpenSync, isOnline, identity }: AppBarProps) {
+  /** A pílula de pendências é o caminho para o painel da prancha 6 quando há levantamento
+   * aberto — elemento que já existe na barra aprovada, agora tocável. Sem levantamento
+   * aberto ela continua sendo só indicador, e some quando não há pendência. */
+  const queueLabel =
+    pendingCount > 0
+      ? `${pendingCount} ${pendingCount === 1 ? "pendente" : "pendentes"}`
+      : "Sem pendências";
   return (
     <header className="appbar">
       <span className="appbar-brand">{title}</span>
@@ -52,10 +62,12 @@ export function AppBar({ title, pendingCount, isOnline, identity }: AppBarProps)
           {isExpiredState(identity.state) ? "Entrar novamente" : "Entrar"}
         </button>
       )}
-      {pendingCount > 0 && (
-        <span className="pill pill-queue">
-          {pendingCount} {pendingCount === 1 ? "pendente" : "pendentes"}
-        </span>
+      {onOpenSync !== undefined ? (
+        <button type="button" className="pill pill-queue pill-action" onClick={onOpenSync}>
+          {queueLabel}
+        </button>
+      ) : (
+        pendingCount > 0 && <span className="pill pill-queue">{queueLabel}</span>
       )}
       <span className={`pill ${isOnline ? "pill-online" : "pill-offline"}`}>
         <span className="pill-dot" />

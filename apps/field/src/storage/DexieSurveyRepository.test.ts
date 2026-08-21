@@ -107,6 +107,41 @@ describe("DexieSurveyRepository", () => {
     repository.close();
   });
 
+  it("saveSurveyWithOperation grava os dois numa transação única", async () => {
+    const repository = new DexieSurveyRepository(databaseName);
+    const survey = makeSurvey("survey-1");
+
+    await repository.saveSurveyWithOperation(survey, makeOperation());
+
+    expect(await repository.getSurvey("survey-1")).toEqual(survey);
+    expect(await repository.listOperations("survey-1")).toHaveLength(1);
+
+    repository.close();
+  });
+
+  it("saveOperations muda status e seq sem apagar linha", async () => {
+    const repository = new DexieSurveyRepository(databaseName);
+    await repository.appendOperation(makeOperation());
+    await repository.appendOperation(makeOperation({ operation_id: "op-2", seq: 2 }));
+
+    await repository.saveOperations([
+      makeOperation({ status: "pending" }),
+      makeOperation({ operation_id: "op-2", seq: 9, status: "superseded" }),
+    ]);
+    const history = await repository.listOperations("survey-1");
+    const pending = await repository.getPendingOperations("survey-1");
+
+    // As duas linhas continuam no histórico; só a `pending` segue oferecível ao servidor —
+    // a preterida por uma resolução de conflito nunca é reenviada e nunca é apagada.
+    expect(history.map((operation) => [operation.operation_id, operation.status])).toEqual([
+      ["op-1", "pending"],
+      ["op-2", "superseded"],
+    ]);
+    expect(pending.map((operation) => operation.operation_id)).toEqual(["op-1"]);
+
+    repository.close();
+  });
+
   it("saveMedia/getMedia fazem roundtrip com o sha256 persistido", async () => {
     const repository = new DexieSurveyRepository(databaseName);
     const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" });
