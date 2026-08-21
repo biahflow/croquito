@@ -162,9 +162,12 @@ Da feature completa (verificáveis nas fatias futuras, herdando os NFRs abaixo):
 - Vínculo survey↔project/job no export (job novo de campo vs. anexar a existente) —
   decisão do spec de T11; vira arbitragem humana se configurar decisão de
   arquitetura.
-- Fornecedor de speech-to-text para a transcrição (Cloud Speech-to-Text, já dentro
-  do GCP, vs. OpenAI) — gate humano: envio de áudio de cliente a serviço externo
-  exige aprovação explícita.
+- ~~Fornecedor de speech-to-text~~ — **resolvido em 2026-08-21 por decisão humana:
+  Groq** (Whisper large-v3; aceita webm/opus e mp4/aac sem transcodificação; API
+  compatível com o formato OpenAI). Fornecedor novo fora do perímetro GCP —
+  entrada obrigatória em `docs/security/AI_VENDOR_RISK.md` e
+  `docs/ai/MODEL_ROUTING.md` na T13; envio de áudio autorizado pelo usuário
+  nesta decisão; chave/conta Groq é ato do usuário antes de ligar em produção.
 - Matriz de aparelhos do piloto (modelos Android e iOS reais dos técnicos).
 - Se tablet+caneta entra no piloto ou só celular.
 
