@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -522,3 +522,189 @@ def test_publish_events_falha_do_sink_sai_com_um_e_nao_marca_o_pendente(
     assert "destino indisponível" in capsys.readouterr().err
     with Database(database_url).sessions() as session:
         assert session.query(DomainEventRecord).one().published_at is None
+
+
+def _job_database(tmp_path: Path) -> tuple[str, str]:
+    """Banco com um job já vivido: duas transições de etapa e três decisões humanas.
+
+    Montado por ORM, e não pela cadeia inteira, porque o que este teste verifica é o
+    RELATÓRIO — que os dois leitores (rota e CLI) contem a mesma história a partir das
+    mesmas linhas.
+    """
+    from croquito_api.database import (
+        Database,
+        JobRecord,
+        JobStageEventRecord,
+        ProjectRecord,
+        ReviewDecisionRecord,
+        ReviewRevisionRecord,
+        UploadRecord,
+    )
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'cli-metrics.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    job_id = "00000000-0000-7000-8000-0000000009a1"
+    birth = datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
+    expires_at = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
+    with database.sessions.begin() as session:
+        session.add(
+            ProjectRecord(
+                id="project-cli-metrics",
+                tenant_id="tenant-cli",
+                name="Praça sintética",
+                default_unit="m",
+                created_by="reviewer",
+                created_at=birth,
+                expires_at=expires_at,
+            )
+        )
+        session.add(
+            UploadRecord(
+                id="upload-cli-metrics",
+                tenant_id="tenant-cli",
+                object_key="tenants/tenant-cli/uploads/croqui.pdf",
+                filename="croqui.pdf",
+                content_type="application/pdf",
+                size_bytes=1,
+                sha256="a" * 64,
+            )
+        )
+        session.flush()
+        session.add(
+            JobRecord(
+                id=job_id,
+                tenant_id="tenant-cli",
+                project_id="project-cli-metrics",
+                upload_id="upload-cli-metrics",
+                status="REVIEW_REQUIRED",
+                stage="REVIEWING",
+                expires_at=expires_at,
+                created_at=birth,
+                updated_at=birth,
+            )
+        )
+        session.flush()
+        for offset_seconds, stage, status, source in (
+            (0, "VALIDATING", "UPLOADED", "api"),
+            (30, "REVIEWING", "REVIEW_REQUIRED", "worker"),
+        ):
+            session.add(
+                JobStageEventRecord(
+                    id=f"stage-cli-{offset_seconds}",
+                    tenant_id="tenant-cli",
+                    job_id=job_id,
+                    from_stage=None if source == "api" else "VALIDATING",
+                    from_status=None if source == "api" else "UPLOADED",
+                    to_stage=stage,
+                    to_status=status,
+                    source=source,
+                    created_at=birth + timedelta(seconds=offset_seconds),
+                )
+            )
+        session.add(
+            ReviewRevisionRecord(
+                id="review-cli-metrics",
+                tenant_id="tenant-cli",
+                job_id=job_id,
+                version=1,
+                packet_json={"readings": []},
+                associations_json={},
+                evidence_refs_json={},
+                created_by="local-worker",
+            )
+        )
+        session.flush()
+        for position, action in enumerate(("confirm", "correct", "reject")):
+            session.add(
+                ReviewDecisionRecord(
+                    id=f"decision-cli-{position}",
+                    tenant_id="tenant-cli",
+                    job_id=job_id,
+                    review_revision_id="review-cli-metrics",
+                    reading_id=f"rd_{position:016d}",
+                    action=action,
+                    reviewer_id="reviewer",
+                    reviewer_role="engineer",
+                )
+            )
+    return database_url, job_id
+
+
+def test_value_report_reproduz_o_json_da_rota_para_o_mesmo_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O relatório do CLI é o MESMO documento da rota, menos a autenticação.
+
+    A parity é o ponto do comando: se os dois números pudessem divergir, o relatório
+    deixaria de servir para conferir a rota — que é exatamente para o que ele existe.
+    """
+    from fastapi.testclient import TestClient
+
+    from croquito_api.config import ApiSettings
+    from croquito_api.database import Database
+    from croquito_api.main import create_app
+
+    database_url, job_id = _job_database(tmp_path)
+    monkeypatch.setenv("CROQUITO_DATABASE_URL", database_url)
+
+    assert _run_main(monkeypatch, ["value-report", "--job", job_id]) == 0
+    reported = json.loads(capsys.readouterr().out)
+
+    application = create_app(
+        settings=ApiSettings(
+            database_url=database_url,
+            artifact_bucket="croquito-test-artifacts",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            queue_url=None,
+            oidc_issuer=None,
+            oidc_audience=None,
+            web_origin="http://localhost:5173",
+            allow_test_tokens=True,
+        ),
+        database=Database(database_url),
+    )
+    with TestClient(application) as client:
+        response = client.get(
+            f"/v1/jobs/{job_id}/metrics",
+            headers={"Authorization": "Bearer test:tenant-cli:reviewer:engineer"},
+        )
+
+    assert response.status_code == 200
+    assert reported == response.json()
+    assert reported["cycle"]["total_ms"] == 30_000
+    assert reported["human"]["correction_rate"] == round(1 / 3, 6)
+
+
+def test_value_report_grava_o_mesmo_documento_no_arquivo_pedido(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    database_url, job_id = _job_database(tmp_path)
+    monkeypatch.setenv("CROQUITO_DATABASE_URL", database_url)
+    destino = tmp_path / "relatorio" / "valor.json"
+
+    assert _run_main(monkeypatch, ["value-report", "--job", job_id, "--output", str(destino)]) == 0
+
+    assert json.loads(destino.read_text(encoding="utf-8")) == json.loads(capsys.readouterr().out)
+
+
+def test_value_report_de_job_inexistente_sai_com_um_e_avisa_no_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    database_url, _ = _job_database(tmp_path)
+    monkeypatch.setenv("CROQUITO_DATABASE_URL", database_url)
+
+    ausente = "00000000-0000-7000-8000-999999999999"
+
+    assert _run_main(monkeypatch, ["value-report", "--job", ausente]) == 1
+    assert "Job não encontrado" in capsys.readouterr().err
+
+
+def test_value_report_sem_url_de_banco_recusa_antes_de_abrir_conexao(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("CROQUITO_DATABASE_URL", raising=False)
+
+    assert _run_main(monkeypatch, ["value-report", "--job", "qualquer"]) == 1
+    assert "CROQUITO_DATABASE_URL" in capsys.readouterr().err

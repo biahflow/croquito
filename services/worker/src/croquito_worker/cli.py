@@ -278,6 +278,16 @@ def main() -> int:
         default=500,
         help="teto de eventos por execução; a próxima continua de onde esta parou",
     )
+    value_report_command = subcommands.add_parser(
+        "value-report",
+        help="métricas de valor de um job (cycle time, ato humano, custo de IA) do banco",
+    )
+    value_report_command.add_argument("--job", required=True, help="id do job (UUID)")
+    value_report_command.add_argument(
+        "--output",
+        type=Path,
+        help="grava o mesmo JSON em arquivo além de imprimi-lo em stdout",
+    )
     seed_review_command = subcommands.add_parser(
         "seed-review",
         help="liga um pacote de revisão autorizado a um job existente, sem decidir nada",
@@ -472,6 +482,42 @@ def main() -> int:
         print(
             json.dumps({"published": relay_result.published, "remaining": relay_result.remaining})
         )
+        return 0
+
+    if args.command == "value-report":
+        import os
+
+        from sqlalchemy import select
+
+        from croquito_api.database import Database, JobRecord
+        from croquito_api.metrics import compute_job_metrics
+
+        # O MESMO cálculo da rota, importado e não reescrito: duas expressões do mesmo
+        # número divergiriam, e o relatório existe justamente para conferir a rota.
+        database_url = os.getenv("CROQUITO_DATABASE_URL")
+        if not database_url:
+            print("CROQUITO_DATABASE_URL é obrigatório para o value-report.", file=sys.stderr)
+            return 1
+        report_database = Database(database_url)
+        try:
+            with report_database.sessions() as report_session:
+                # Sem filtro de tenant, e é a única diferença em relação à rota: aqui não
+                # há JWT do qual derivá-lo. O tenant vem da PRÓPRIA linha do job e é ele
+                # que escopa todas as leituras seguintes, exatamente como na rota.
+                report_job = report_session.scalar(
+                    select(JobRecord).where(JobRecord.id == args.job)
+                )
+                if report_job is None:
+                    print(f"Job não encontrado: {args.job}", file=sys.stderr)
+                    return 1
+                report = compute_job_metrics(report_session, report_job)
+        finally:
+            report_database.engine.dispose()
+        document = json.dumps(report, ensure_ascii=False, sort_keys=True)
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(document + "\n", encoding="utf-8")
+        print(document)
         return 0
 
     if args.command == "synthetic":

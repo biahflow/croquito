@@ -63,6 +63,12 @@ from croquito_api.database import (
     ValuationRoundRecord,
     ValuationRoundRevisionRecord,
 )
+from croquito_api.metrics import (
+    MetricsPeriodError,
+    compute_job_metrics,
+    compute_tenant_summary,
+    parse_period_bound,
+)
 from croquito_api.pubsub_queue import PubSubProcessingQueue, QueuePublishError
 from croquito_api.storage import ArtifactStore
 from croquito_api.valuation_rounds import (
@@ -346,6 +352,83 @@ class ProjectResponse(ApiModel):
     status: str
     expires_at: datetime
     latest_job: LatestJobResponse | None = None
+
+
+class StageDurationResponse(ApiModel):
+    """Uma etapa do job e quanto ela durou; `duration_ms` ausente = etapa ainda aberta."""
+
+    stage: str
+    status: str
+    duration_ms: int | None = None
+
+
+class CycleMetricsResponse(ApiModel):
+    total_ms: int | None = None
+    stages: list[StageDurationResponse]
+
+
+class HumanMetricsResponse(ApiModel):
+    review_revisions: int
+    decisions_total: int
+    confirmed: int
+    corrected: int
+    rejected: int
+    #: `null` quando não houve decisão nenhuma. Não é `0.0`: "nada foi decidido" e "nada
+    #: foi corrigido do que se decidiu" são estados diferentes.
+    correction_rate: float | None = None
+    rectifications: int
+    #: Touch time real é a T4 desta feature; até lá, ausência declarada.
+    interaction_ms_total: int | None = None
+
+
+class AutomationMetricsResponse(ApiModel):
+    """Campos reservados da F-029: enquanto ela não aterrissa, os dois são `null`."""
+
+    auto_association_rate: float | None = None
+    review_rate: float | None = None
+
+
+class AiCostMetricsResponse(ApiModel):
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    #: Decimal exato como TEXTO, a mesma disciplina de `chat_turns.estimated_cost_usd`:
+    #: `float` de custo perde centavo em soma, e é somando que o portal calcula custo por
+    #: transação.
+    estimated_cost_usd: str
+
+
+class JobMetricsResponse(ApiModel):
+    job_id: UUID
+    cycle: CycleMetricsResponse
+    human: HumanMetricsResponse
+    automation: AutomationMetricsResponse
+    ai_cost: AiCostMetricsResponse
+
+
+class MetricsPeriodResponse(ApiModel):
+    """Eco do recorte aplicado, já normalizado em UTC; `null` significa "sem limite"."""
+
+    from_: datetime | None = Field(default=None, alias="from")
+    to: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class MetricsSummaryResponse(ApiModel):
+    period: MetricsPeriodResponse
+    jobs_total: int
+    jobs_completed: int
+    jobs_failed: int
+    #: Denominador de `avg_correction_rate`: sem ele a média não diz sobre quantos jobs foi.
+    jobs_with_decisions: int
+    avg_cycle_total_ms: int | None = None
+    avg_correction_rate: float | None = None
+    ai_cost: AiCostMetricsResponse
+    valuation_rounds_total: int
+    estimate_rounds_total: int
+    #: Custo das extrações pagas das rodadas de medição e de orçamento do período.
+    rounds_ai_cost: AiCostMetricsResponse
 
 
 class ApproveRequest(ApiModel):
@@ -3223,6 +3306,70 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             failure_code=job.failure_code,
             created_at=job.created_at,
             updated_at=job.updated_at,
+        )
+
+    @application.get(
+        "/v1/jobs/{job_id}/metrics", response_model=JobMetricsResponse, tags=["metrics"]
+    )
+    async def get_job_metrics(
+        job_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> JobMetricsResponse:
+        """Cycle time, ato humano e custo de IA do job, derivados do que já está gravado.
+
+        Nada é calculado no worker nem persistido: é leitura sobre `job_stage_events`,
+        `review_decisions`, `chat_turns` e o lineage do pacote de revisão corrente.
+
+        O escopo de tenant é o mesmo das rotas vizinhas e mora no `where`: job de outro
+        tenant não é "sem permissão", é inexistente (`404`), e responder `403` diria ao
+        chamador que aquele id existe em algum lugar.
+        """
+        job = session.scalar(
+            select(JobRecord).where(
+                JobRecord.id == str(job_id), JobRecord.tenant_id == principal.tenant_id
+            )
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        return JobMetricsResponse.model_validate(compute_job_metrics(session, job))
+
+    @application.get("/v1/metrics/summary", response_model=MetricsSummaryResponse, tags=["metrics"])
+    async def get_metrics_summary(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        period_from: Annotated[str | None, Query(alias="from")] = None,
+        period_to: Annotated[str | None, Query(alias="to")] = None,
+    ) -> MetricsSummaryResponse:
+        """Agregado do tenant do JWT no período, recortado por `created_at`.
+
+        Os limites chegam como TEXTO e são convertidos aqui, e não declarados como
+        `datetime` no parâmetro, porque uma data malformada precisa sair como
+        `application/problem+json` com código estável — a validação nativa do FastAPI
+        responderia `422` no formato dela, fora do contrato de erro desta API.
+        """
+        try:
+            period_start = parse_period_bound(period_from, field="from")
+            period_end = parse_period_bound(period_to, field="to")
+        except MetricsPeriodError as error:
+            raise _problem(
+                "INVALID_METRICS_PERIOD",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Período inválido: use instantes ISO 8601 (UTC quando sem fuso).",
+            ) from error
+        if period_start is not None and period_end is not None and period_start > period_end:
+            raise _problem(
+                "INVALID_METRICS_PERIOD",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Período inválido: `from` é posterior a `to`.",
+            )
+        return MetricsSummaryResponse.model_validate(
+            compute_tenant_summary(
+                session,
+                tenant_id=principal.tenant_id,
+                period_start=period_start,
+                period_end=period_end,
+            )
         )
 
     @application.get("/v1/jobs/{job_id}/review", response_model=ReviewResponse, tags=["review"])

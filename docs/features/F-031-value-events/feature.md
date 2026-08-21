@@ -62,7 +62,9 @@ Fatia 1 (esta rodada, tudo local):
   Kafka ficam como alternativa futura atrás da mesma porta). O portal consome
   do broker, sem acoplamento com a API. Contrato documentado em
   [events-contract.md](events-contract.md).
-- **Read-model de métricas**: `GET /v1/metrics/jobs/{job_id}` e
+- **Read-model de métricas**: `GET /v1/jobs/{job_id}/metrics` (aninhada no job,
+  coerente com as vizinhas — o Task Contract T3 prevalece; caminho antigo
+  `/v1/metrics/jobs/{id}` era erro de spec) e
   `GET /v1/metrics/summary` (tenant do JWT) + CLI `value-report` — cycle time
   por etapa, atos humanos, correction_rate, custo de IA por job; campos
   reservados para `auto_association_rate`/`review_rate` da F-029 (`null` até

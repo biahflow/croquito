@@ -3,7 +3,7 @@ import hashlib
 import json
 import math
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast, get_args
@@ -35,6 +35,8 @@ from croquito_api.database import (
     RevisionRecord,
     TraceSolveRecord,
     UploadRecord,
+    ValuationRoundRecord,
+    ValuationRoundRevisionRecord,
 )
 from croquito_api.main import UPLOAD_CONTENT_TYPES, PresignUploadRequest, create_app
 from croquito_core.ids import new_uuid7
@@ -58,6 +60,7 @@ from croquito_worker.review import (
     EvidenceRegion,
     HumanDecision,
     PixelBox,
+    ProviderLineage,
     ReadingStatus,
     ReviewPacket,
 )
@@ -3809,3 +3812,411 @@ def test_aprovacao_publica_o_papel_profissional_e_nunca_a_pessoa(tmp_path: Path)
     }
     # `reviewer` é o subject do JWT nas fixtures; identidade não atravessa a fronteira.
     assert "reviewer" not in json.dumps(evento.payload_json)
+
+
+# --- F-031 T3: read-model de métricas -----------------------------------------------
+
+
+def _create_job_for_metrics(client: TestClient, *, tenant: str, key: str) -> str:
+    upload = _presign_and_put(
+        client, tenant=tenant, filename=f"{key}.pdf", idempotency_key=f"presign-{key}"
+    )
+    created = client.post(
+        "/v1/jobs",
+        headers={**_headers(tenant), "Idempotency-Key": f"job-{key}"},
+        json={"upload_id": upload["upload_id"], "project_name": f"Métricas {key}"},
+    )
+    assert created.status_code == 201
+    return str(created.json()["job_id"])
+
+
+def _metrics(client: TestClient, job_id: str, *, tenant: str = "tenant-a") -> dict[str, Any]:
+    response = client.get(f"/v1/jobs/{job_id}/metrics", headers=_headers(tenant))
+    assert response.status_code == 200
+    return cast(dict[str, Any], response.json())
+
+
+def test_metricas_de_job_recem_criado_tem_etapa_aberta_sem_duracao(tmp_path: Path) -> None:
+    """A etapa corrente não tem duração: ninguém sabe quando ela termina.
+
+    Um `0` aqui afirmaria que a etapa acabou instantaneamente, que é justamente o que não
+    aconteceu — o job acabou de nascer e continua nela.
+    """
+    client = _client(tmp_path)
+    job_id = _create_job_for_metrics(client, tenant="tenant-a", key="recem-criado")
+
+    body = _metrics(client, job_id)
+
+    assert body["job_id"] == job_id
+    assert body["cycle"]["total_ms"] == 0
+    assert body["cycle"]["stages"] == [
+        {"stage": "VALIDATING", "status": "UPLOADED", "duration_ms": None}
+    ]
+    assert body["human"]["decisions_total"] == 0
+    assert body["human"]["correction_rate"] is None
+    assert body["human"]["interaction_ms_total"] is None
+    assert body["automation"] == {"auto_association_rate": None, "review_rate": None}
+    assert body["ai_cost"] == {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "estimated_cost_usd": "0",
+    }
+
+
+def test_metricas_derivam_cycle_time_das_transicoes_consecutivas(tmp_path: Path) -> None:
+    """A duração de uma etapa é o intervalo até a transição SEGUINTE, e nada mais.
+
+    As transições são inseridas com carimbo declarado justamente para que a asserção seja
+    sobre a aritmética do read-model, e não sobre o relógio da máquina que roda o teste.
+    """
+    client = _client(tmp_path)
+    job_id = _create_job_for_metrics(client, tenant="tenant-a", key="cycle-time")
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions.begin() as session:
+        job = session.get(JobRecord, job_id)
+        assert job is not None
+        birth = job.created_at
+        for offset_ms, stage, job_status in (
+            (1_000, "RENDERING", "UPLOADED"),
+            (3_500, "REVIEWING", "REVIEW_REQUIRED"),
+        ):
+            session.add(
+                JobStageEventRecord(
+                    id=str(new_uuid7()),
+                    tenant_id="tenant-a",
+                    job_id=job_id,
+                    from_stage="VALIDATING",
+                    from_status="UPLOADED",
+                    to_stage=stage,
+                    to_status=job_status,
+                    source="worker",
+                    created_at=birth + timedelta(milliseconds=offset_ms),
+                )
+            )
+
+    cycle = _metrics(client, job_id)["cycle"]
+
+    assert cycle["stages"] == [
+        {"stage": "VALIDATING", "status": "UPLOADED", "duration_ms": 1_000},
+        {"stage": "RENDERING", "status": "UPLOADED", "duration_ms": 2_500},
+        {"stage": "REVIEWING", "status": "REVIEW_REQUIRED", "duration_ms": None},
+    ]
+    assert cycle["total_ms"] == 3_500
+
+
+def test_metricas_contam_atos_humanos_e_a_taxa_de_correcao(tmp_path: Path) -> None:
+    """Duas confirmações, uma correção e uma rejeição: a taxa é 1/4 e nada mais.
+
+    `decisions_total` é exatamente `confirmed + corrected + rejected` — manter a identidade
+    é o que permite conferir a conta de fora do sistema.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client, extra_reading=True))
+
+    decided = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "metrics-decisions"},
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": "rd_1111111111111111",
+                    "action": "confirm",
+                    "justification": "Evidência sintética revisada.",
+                    "association_proposal_id": "vp_1111111111111111",
+                },
+                {
+                    "reading_id": "rd_4444444444444444",
+                    "action": "confirm",
+                    "justification": "Detalhe lateral revisado na evidência.",
+                    "association_proposal_id": "vp_4444444444444444",
+                },
+                {
+                    "reading_id": "rd_2222222222222222",
+                    "action": "correct",
+                    "justification": "Leitura corrigida contra a folha.",
+                    "association_proposal_id": "vp_2222222222222222",
+                    "raw_text": "21,75",
+                    "value_si": "21.75",
+                    "unit": "m",
+                    "kind": "height",
+                    "written_decimals": 2,
+                },
+                {
+                    "reading_id": "rd_3333333333333333",
+                    "action": "reject",
+                    "justification": "Marcação não é cota do desenho.",
+                },
+            ],
+        },
+    )
+    assert decided.status_code == 200
+
+    human = _metrics(client, job_id)["human"]
+
+    assert human["decisions_total"] == 4
+    assert human["confirmed"] == 2
+    assert human["corrected"] == 1
+    assert human["rejected"] == 1
+    assert human["correction_rate"] == 0.25
+    assert human["rectifications"] == 0
+    assert human["review_revisions"] == 2
+
+
+def test_metricas_sem_decisao_nenhuma_declaram_taxa_ausente_e_nao_zero(tmp_path: Path) -> None:
+    """`correction_rate` nunca é `0.0` por ausência de denominador: divisão por zero não
+    vira número, vira `null`."""
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+
+    human = _metrics(client, job_id)["human"]
+
+    assert human["decisions_total"] == 0
+    assert human["corrected"] == 0
+    assert human["correction_rate"] is None
+
+
+def test_metricas_somam_o_custo_dos_turnos_de_conversa_do_job(tmp_path: Path) -> None:
+    """Turno que chamou provider entra na conta; turno enfileirado que não chamou, não."""
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions.begin() as session:
+        session.add(
+            ChatSessionRecord(
+                id="00000000-0000-7000-8000-000000000901",
+                tenant_id="tenant-a",
+                job_id=job_id,
+                base_review_revision_id="00000000-0000-7000-8000-000000000302",
+                created_by="reviewer",
+            )
+        )
+        session.flush()
+        for sequence, provider, tokens, cost in (
+            (1, "anthropic", (120, 45), "0.0102"),
+            (2, "openai", (80, 20), "0.0034"),
+            (3, None, (None, None), None),
+        ):
+            session.add(
+                ChatTurnRecord(
+                    id=f"00000000-0000-7000-8000-00000000091{sequence}",
+                    tenant_id="tenant-a",
+                    job_id=job_id,
+                    session_id="00000000-0000-7000-8000-000000000901",
+                    sequence=sequence,
+                    status="COMPLETED" if provider else "QUEUED",
+                    question_text="pergunta sintética",
+                    provider=provider,
+                    input_tokens=tokens[0],
+                    output_tokens=tokens[1],
+                    estimated_cost_usd=cost,
+                    requested_by="reviewer",
+                )
+            )
+
+    assert _metrics(client, job_id)["ai_cost"] == {
+        "calls": 2,
+        "input_tokens": 200,
+        "output_tokens": 65,
+        "estimated_cost_usd": "0.0136",
+    }
+
+
+def test_metricas_nao_multiplicam_o_custo_do_lineage_pelo_numero_de_leituras(
+    tmp_path: Path,
+) -> None:
+    """UMA chamada de provider produz o pacote INTEIRO e é anexada a CADA leitura.
+
+    Somar por leitura publicaria, numa folha de três cotas, três vezes o gasto real. Este
+    teste é o guarda dessa armadilha: o pacote tem a MESMA execução em todas as leituras e
+    o custo publicado tem de ser o de uma chamada só.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+    lineage = ProviderLineage(
+        provider="anthropic",
+        model_id="claude-sonnet-4",
+        prompt_id="measurement-extraction",
+        prompt_version="2.0.2",
+        prompt_hash="c" * 64,
+        schema_version="1.0.0",
+        input_digest="d" * 64,
+        latency_ms=4_200,
+        input_tokens=3_000,
+        output_tokens=600,
+        estimated_cost_usd=Decimal("0.2800"),
+    ).model_dump(mode="json")
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions.begin() as session:
+        review = session.get(ReviewRevisionRecord, "00000000-0000-7000-8000-000000000302")
+        assert review is not None
+        packet = dict(review.packet_json)
+        assert len(packet["readings"]) == 3
+        packet["readings"] = [
+            {**reading, "provider_lineage": [lineage]} for reading in packet["readings"]
+        ]
+        review.packet_json = packet
+
+    assert _metrics(client, job_id)["ai_cost"] == {
+        "calls": 1,
+        "input_tokens": 3_000,
+        "output_tokens": 600,
+        "estimated_cost_usd": "0.2800",
+    }
+
+
+def test_metricas_de_job_de_outro_tenant_nao_existem(tmp_path: Path) -> None:
+    """404 e não 403: responder "sem permissão" confirmaria que aquele id existe."""
+    client = _client(tmp_path)
+    job_id = _create_job_for_metrics(client, tenant="tenant-a", key="isolado")
+
+    alheio = client.get(f"/v1/jobs/{job_id}/metrics", headers=_headers("tenant-b"))
+
+    assert alheio.status_code == 404
+    assert alheio.json()["code"] == "NOT_FOUND"
+
+
+def test_resumo_de_metricas_agrega_somente_o_tenant_do_jwt(tmp_path: Path) -> None:
+    """O agregado do tenant-a não enxerga nada do tenant-b, e vice-versa."""
+    client = _client(tmp_path)
+    _create_job_for_metrics(client, tenant="tenant-a", key="resumo-a1")
+    _create_job_for_metrics(client, tenant="tenant-a", key="resumo-a2")
+    _create_job_for_metrics(client, tenant="tenant-b", key="resumo-b1")
+
+    resumo_a = client.get("/v1/metrics/summary", headers=_headers("tenant-a"))
+    resumo_b = client.get("/v1/metrics/summary", headers=_headers("tenant-b"))
+
+    assert resumo_a.status_code == 200
+    assert resumo_b.status_code == 200
+    assert resumo_a.json()["jobs_total"] == 2
+    assert resumo_b.json()["jobs_total"] == 1
+    assert resumo_a.json()["period"] == {"from": None, "to": None}
+    assert resumo_a.json()["jobs_completed"] == 0
+    assert resumo_a.json()["jobs_failed"] == 0
+    assert resumo_a.json()["avg_correction_rate"] is None
+    assert resumo_a.json()["jobs_with_decisions"] == 0
+    assert resumo_a.json()["valuation_rounds_total"] == 0
+    assert resumo_a.json()["estimate_rounds_total"] == 0
+
+
+def test_resumo_de_metricas_recorta_por_periodo_de_criacao(tmp_path: Path) -> None:
+    """O recorte é por `created_at` do job; fora da janela o job não entra na conta."""
+    client = _client(tmp_path)
+    _create_job_for_metrics(client, tenant="tenant-a", key="janela")
+    agora = datetime.now(UTC)
+
+    dentro = client.get(
+        "/v1/metrics/summary",
+        headers=_headers("tenant-a"),
+        params={
+            "from": (agora - timedelta(days=1)).isoformat(),
+            "to": (agora + timedelta(days=1)).isoformat(),
+        },
+    )
+    fora = client.get(
+        "/v1/metrics/summary",
+        headers=_headers("tenant-a"),
+        params={"from": (agora + timedelta(days=1)).isoformat()},
+    )
+
+    assert dentro.status_code == 200
+    assert dentro.json()["jobs_total"] == 1
+    assert dentro.json()["period"]["from"] is not None
+    assert fora.status_code == 200
+    assert fora.json()["jobs_total"] == 0
+
+
+def test_resumo_de_metricas_recusa_periodo_malformado_com_codigo_estavel(
+    tmp_path: Path,
+) -> None:
+    """Data ilegível e janela invertida saem como problem+json com o mesmo código."""
+    client = _client(tmp_path)
+
+    malformada = client.get(
+        "/v1/metrics/summary", headers=_headers("tenant-a"), params={"from": "ontem"}
+    )
+    invertida = client.get(
+        "/v1/metrics/summary",
+        headers=_headers("tenant-a"),
+        params={"from": "2026-08-21T00:00:00Z", "to": "2026-08-20T00:00:00Z"},
+    )
+
+    assert malformada.status_code == 422
+    assert malformada.json()["code"] == "INVALID_METRICS_PERIOD"
+    assert invertida.status_code == 422
+    assert invertida.json()["code"] == "INVALID_METRICS_PERIOD"
+
+
+def test_resumo_conta_rodadas_de_medicao_sem_duplicar_o_lineage_carregado_adiante(
+    tmp_path: Path,
+) -> None:
+    """A revisão append-only copia `extraction_lineage_json` da cabeça para a linha nova.
+
+    Somar revisão a revisão contaria a MESMA chamada paga tantas vezes quantas revisões a
+    rodada acumulou depois dela — e a rodada acumula uma por ato humano.
+    """
+    client = _client(tmp_path)
+    database = cast(Database, cast(Any, client.app).state.database)
+    execution = {
+        "provider": "anthropic",
+        "model_id": "claude-sonnet-4",
+        "prompt_version": "1.0.0",
+        "input_digest": "e" * 64,
+        "latency_ms": 9_100,
+        "input_tokens": 5_000,
+        "output_tokens": 900,
+        "estimated_cost_usd": "0.4200",
+    }
+    with database.sessions.begin() as session:
+        session.add(
+            UploadRecord(
+                id="upload-catalogo-metricas",
+                tenant_id="tenant-a",
+                object_key="tenants/tenant-a/uploads/catalogo.json",
+                filename="catalogo.json",
+                content_type="application/json",
+                size_bytes=1,
+                sha256="b" * 64,
+            )
+        )
+        session.flush()
+        session.add(
+            ValuationRoundRecord(
+                id="00000000-0000-7000-8000-0000000009b1",
+                tenant_id="tenant-a",
+                worksite_key="praca-sintetica",
+                worksite_name="PRACA SINTETICA",
+                reference_label="MEDICAO 01/2026",
+                period_number=1,
+                catalog_upload_id="upload-catalogo-metricas",
+                catalog_object_key="tenants/tenant-a/uploads/catalogo.json",
+                catalog_source_sha256="b" * 64,
+                catalog_summary_json={"entries": 1},
+                created_by="reviewer",
+            )
+        )
+        session.flush()
+        for version in (1, 2):
+            session.add(
+                ValuationRoundRevisionRecord(
+                    id=f"00000000-0000-7000-8000-0000000009c{version}",
+                    tenant_id="tenant-a",
+                    round_id="00000000-0000-7000-8000-0000000009b1",
+                    version=version,
+                    extraction_lineage_json={"execution": dict(execution)},
+                    created_by="valuation-extraction-v1",
+                )
+            )
+
+    resumo = client.get("/v1/metrics/summary", headers=_headers("tenant-a"))
+
+    assert resumo.status_code == 200
+    assert resumo.json()["valuation_rounds_total"] == 1
+    assert resumo.json()["estimate_rounds_total"] == 0
+    assert resumo.json()["rounds_ai_cost"] == {
+        "calls": 1,
+        "input_tokens": 5_000,
+        "output_tokens": 900,
+        "estimated_cost_usd": "0.4200",
+    }
