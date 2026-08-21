@@ -1,0 +1,67 @@
+import Dexie, { type Table } from "dexie";
+
+import type { Survey } from "../domain/types";
+import type { SurveyOperation } from "../outbox/types";
+import type { SurveyRepository } from "./SurveyRepository";
+
+class FieldDatabase extends Dexie {
+  surveys!: Table<Survey, string>;
+  operations!: Table<SurveyOperation, string>;
+
+  constructor(name: string) {
+    super(name);
+    this.version(1).stores({
+      surveys: "id",
+      // Chave primária é operation_id; survey_id e status são índices simples — o volume
+      // por survey é pequeno o bastante para filtrar/ordenar em memória (ver
+      // getPendingOperations abaixo) em vez de um índice composto.
+      operations: "operation_id, survey_id, status",
+    });
+  }
+}
+
+/**
+ * Implementação de `SurveyRepository` sobre IndexedDB via Dexie (ADR-0043, D2). O nome do
+ * banco é parametrizável para permitir testes isolados sem um survey vazar para outro.
+ */
+export class DexieSurveyRepository implements SurveyRepository {
+  private readonly db: FieldDatabase;
+
+  constructor(databaseName = "croquito-field") {
+    this.db = new FieldDatabase(databaseName);
+  }
+
+  async getSurvey(surveyId: string): Promise<Survey | undefined> {
+    return this.db.surveys.get(surveyId);
+  }
+
+  async saveSurvey(survey: Survey): Promise<void> {
+    await this.db.surveys.put(survey);
+  }
+
+  async appendOperation(operation: SurveyOperation): Promise<void> {
+    await this.db.operations.put(operation);
+  }
+
+  async getPendingOperations(surveyId: string): Promise<SurveyOperation[]> {
+    const all = await this.listOperations(surveyId);
+    return all.filter((operation) => operation.status !== "acked");
+  }
+
+  async listOperations(surveyId: string): Promise<SurveyOperation[]> {
+    const all = await this.db.operations.where("survey_id").equals(surveyId).toArray();
+    return all.sort((a, b) => a.seq - b.seq);
+  }
+
+  async acknowledge(operationId: string): Promise<void> {
+    // update() em chave inexistente devolve 0 sem lançar — reconhecer duas vezes (ou uma
+    // operação que já sumiu) não corrompe estado nem apaga histórico.
+    await this.db.operations.update(operationId, { status: "acked" });
+  }
+
+  /** Fecha a conexão — usado nos testes para simular "reabrir o app" com uma instância
+   * nova apontando para o mesmo banco. */
+  close(): void {
+    this.db.close();
+  }
+}

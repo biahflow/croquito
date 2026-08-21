@@ -72,11 +72,13 @@ check:
 	uv run python -m croquito_core.schema_export --check-dir packages/contracts
 	npm run contracts:check
 	npm run web:check
+	npm run field:check
 	$(MAKE) infra-check
 
 test:
 	uv run pytest
 	npm run web:test
+	npm run field:test
 
 demo:
 	uv run croquito-demo synthetic --output output/demo
