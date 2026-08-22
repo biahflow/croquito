@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Design Approval Package — F-034 fatia 2</title>
+<style>
+/* Tokens copiados VERBATIM de apps/web/src/styles.css (:root). Nenhum valor novo. */
+:root{
+  --bg:#fafaf8; --surface:#ffffff; --surface-subtle:#f4f4f1; --surface-sunken:#efefeb;
+  --ink:#14181d; --ink-secondary:#5b6169; --muted:#9aa0a8; --line:#e5e5e0;
+  --accent:#00c877; --accent-hover:#00b169; --accent-ink:#0e1116; --accent-text:#00744a;
+  --accent-soft:#e6f6ee; --accent-line:#9bdcc0;
+  --dark:#0e1116; --dark-ink:#f2f4f7; --dark-ink-soft:rgba(242,244,247,.72);
+  --dark-line:rgba(242,244,247,.12);
+  color:var(--ink); background:var(--bg);
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box} body{margin:0;padding:0 0 40px}
+.rotulo{margin:26px 24px 6px;font-size:11px;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-secondary)}
+.rotulo small{display:block;margin-top:3px;font-weight:500;letter-spacing:0;
+  text-transform:none;font-size:11.5px;color:var(--muted)}
+/* .authenticated-workspace, .eyebrow, .field-hint, .button, .project-action,
+   .upload-form, .project-list, .ready, .blocked: citados de styles.css. */
+.authenticated-workspace{margin:0 24px 18px;padding:18px;display:grid;
+  grid-template-columns:minmax(240px,1fr) minmax(340px,1.4fr);gap:16px;color:var(--ink);
+  background:var(--surface-subtle);border:1px solid var(--line);border-radius:10px}
+.authenticated-workspace h2{margin:4px 0 8px;font-size:18px}
+.authenticated-workspace p{margin:0;max-width:55ch;font-size:12px;line-height:1.5}
+.eyebrow{display:block;font-size:10.5px;font-weight:800;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-secondary)}
+.field-hint{display:block;margin-top:3px;color:var(--ink-secondary);font-size:10.5px;
+  line-height:1.35}
+.button{min-height:34px;padding:0 14px;color:var(--accent-ink);background:var(--accent);
+  border:1px solid var(--accent);border-radius:6px;font-size:12px;font-weight:700;
+  cursor:pointer;font-family:inherit}
+.button:disabled{color:var(--muted);background:var(--surface-sunken);
+  border-color:var(--line);cursor:not-allowed}
+.project-action{min-height:30px;padding:0 12px;color:var(--accent-text);
+  background:var(--accent-soft);border-color:var(--accent-line);font-size:11px;
+  font-weight:750}
+.upload-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:10px;align-items:end;margin-top:10px}
+.upload-form label{display:grid;gap:4px;color:var(--ink-secondary);font-size:11px;
+  font-weight:700}
+.upload-form input,.upload-form select{min-width:0;padding:8px;color:var(--ink);
+  background:var(--surface);border:1px solid var(--muted);border-radius:5px;
+  font-family:inherit;font-size:12px}
+.upload-form .button{grid-column:1/-1;justify-self:start}
+.project-list{grid-column:1/-1;margin:0;padding:0;list-style:none;display:grid;
+  gap:8px}
+.project-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.project-list li > div{display:grid;gap:2px}
+.project-list span{font-size:11px;color:var(--ink-secondary)}
+.project-list strong{font-size:13px}
+.ready{padding:5px 8px;color:var(--accent-text);background:var(--accent-soft);
+  border-radius:999px;font-size:10px;font-weight:850}
+.blocked{padding:5px 8px;color:#825320;background:#fff0d2;border-radius:999px;
+  font-size:10px;font-weight:850}
+/* NOVO — declarado no README: terceira pastilha, para `disabled`. Sem cor nova: usa
+   `--ink-secondary` sobre `--surface-sunken`, ambos já no sistema. */
+.neutro{padding:5px 8px;color:var(--ink-secondary);background:var(--surface-sunken);
+  border-radius:999px;font-size:10px;font-weight:850}
+.app-alert{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin:0 24px 12px;padding:10px 14px;color:#7c2d12;background:#fee2e2;
+  border-left:4px solid #b91c1c;border-radius:6px;font-size:12px}
+.estados{display:grid;gap:8px;margin-top:10px}
+.estados div{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 12px;background:var(--surface);border:1px solid var(--line);
+  border-radius:8px;font-size:12px}
+.reservado{opacity:.55;border-style:dashed}
+</style>
+</head>
+<body>
+
+<p class="rotulo">1 — Estado normal
+  <small>Seção nova na tela de Plataforma, abaixo da autorização de IA. Mesmo cartão, mesma
+  grade de duas colunas, mesmas pastilhas.</small></p>
+<section class="authenticated-workspace">
+  <div>
+    <span class="eyebrow">DISPONIBILIDADE DE JORNADA</span>
+    <h2>Quais jornadas existem para cada cliente</h2>
+    <p>O estado de cada jornada é declarado no ambiente e não se edita por aqui. Em
+      <strong>piloto</strong>, a jornada existe só para os clientes autorizados abaixo — é
+      onde esta tela age.</p>
+    <span class="field-hint">Ambiente: homologação · 3 jornadas · 1 em piloto</span>
+    <div class="estados">
+      <div><span>Croqui</span><span class="neutro">INDISPONÍVEL</span></div>
+      <div><span>Medição</span><span class="ready">LIBERADA</span></div>
+      <div><span>Orçamento</span><span class="blocked">PILOTO</span></div>
+    </div>
+    <p class="field-hint">Mudar o estado de uma jornada é alterar a configuração do
+      ambiente e publicar — não é ato de tela.</p>
+  </div>
+  <div>
+    <span class="eyebrow">AUTORIZAR CLIENTE NO PILOTO</span>
+    <p class="field-hint">Só jornadas em piloto aceitam autorização. A referência do
+      contrato fica gravada com quem autorizou e quando.</p>
+    <form class="upload-form">
+      <label>Identificador do tenant
+        <input value="tenant-scalle">
+      </label>
+      <label>Jornada
+        <select><option>Orçamento</option></select>
+      </label>
+      <label>Referência do contrato
+        <input value="contrato 05/2024 — aditivo 3">
+      </label>
+      <button class="button" type="button">Autorizar</button>
+    </form>
+  </div>
+  <ul class="project-list">
+    <li>
+      <div>
+        <strong>tenant-scalle</strong>
+        <span>Orçamento · piloto autorizado</span>
+        <span>Contrato: contrato 05/2024 — aditivo 3</span>
+        <span>Autorizado por daniel em 22/08/2026 09:14 · revogado em —</span>
+      </div>
+      <button class="button project-action" type="button">Revogar</button>
+    </li>
+    <li>
+      <div>
+        <strong>tenant-biahflow</strong>
+        <span>Orçamento · autorização revogada</span>
+        <span>Contrato: piloto interno</span>
+        <span>Autorizado por daniel em 20/08/2026 10:45 · revogado em 22/08/2026 08:02</span>
+      </div>
+      <button class="button project-action" type="button">Autorizar de novo</button>
+    </li>
+  </ul>
+</section>
+
+<p class="rotulo">2 — Nenhum cliente autorizado ainda
+  <small>Estado vazio: a lista não some, ela explica.</small></p>
+<section class="authenticated-workspace">
+  <div>
+    <span class="eyebrow">DISPONIBILIDADE DE JORNADA</span>
+    <h2>Quais jornadas existem para cada cliente</h2>
+    <span class="field-hint">Ambiente: homologação · 3 jornadas · 1 em piloto</span>
+    <div class="estados">
+      <div><span>Croqui</span><span class="neutro">INDISPONÍVEL</span></div>
+      <div><span>Medição</span><span class="ready">LIBERADA</span></div>
+      <div><span>Orçamento</span><span class="blocked">PILOTO</span></div>
+    </div>
+  </div>
+  <div>
+    <span class="eyebrow">AUTORIZAR CLIENTE NO PILOTO</span>
+    <p class="field-hint">Nenhum cliente autorizado em jornada de piloto. Enquanto isso, a
+      jornada Orçamento não existe para nenhum tenant.</p>
+    <form class="upload-form">
+      <label>Identificador do tenant<input placeholder="tenant-exemplo"></label>
+      <label>Jornada<select><option>Orçamento</option></select></label>
+      <label>Referência do contrato<input placeholder="contrato 05/2024"></label>
+      <button class="button" type="button" disabled>Autorizar</button>
+    </form>
+  </div>
+</section>
+
+<p class="rotulo">3 — Carregando
+  <small>Sem esqueleto animado: o texto diz o que está acontecendo, e o botão não engana.</small></p>
+<section class="authenticated-workspace">
+  <div>
+    <span class="eyebrow">DISPONIBILIDADE DE JORNADA</span>
+    <h2>Quais jornadas existem para cada cliente</h2>
+    <span class="field-hint">Lendo a lista de autorizações…</span>
+  </div>
+  <div>
+    <span class="eyebrow">AUTORIZAR CLIENTE NO PILOTO</span>
+    <p class="field-hint">Aguardando a lista para saber quais jornadas estão em piloto.</p>
+    <form class="upload-form">
+      <label>Identificador do tenant<input disabled></label>
+      <label>Jornada<select disabled><option>—</option></select></label>
+      <label>Referência do contrato<input disabled></label>
+      <button class="button" type="button" disabled>Autorizar</button>
+    </form>
+  </div>
+</section>
+
+<p class="rotulo">4 — Recusa do servidor
+  <small>Faixa de erro idêntica à da autorização de IA, com a frase do domínio por extenso.</small></p>
+<p class="app-alert">
+  <span>A jornada Medição não está em piloto neste ambiente: ela já existe para todos os
+    clientes, e autorizar um cliente nela não teria efeito.</span>
+  <span aria-hidden="true">×</span>
+</p>
+<section class="authenticated-workspace">
+  <div>
+    <span class="eyebrow">DISPONIBILIDADE DE JORNADA</span>
+    <h2>Quais jornadas existem para cada cliente</h2>
+    <span class="field-hint">Ambiente: homologação · 3 jornadas · 1 em piloto</span>
+    <div class="estados">
+      <div><span>Croqui</span><span class="neutro">INDISPONÍVEL</span></div>
+      <div><span>Medição</span><span class="ready">LIBERADA</span></div>
+      <div><span>Orçamento</span><span class="blocked">PILOTO</span></div>
+    </div>
+  </div>
+  <div>
+    <span class="eyebrow">AUTORIZAR CLIENTE NO PILOTO</span>
+    <p class="field-hint">Corrija a jornada e tente de novo. Nada foi gravado.</p>
+    <form class="upload-form">
+      <label>Identificador do tenant<input value="tenant-scalle"></label>
+      <label>Jornada<select><option>Medição</option></select></label>
+      <label>Referência do contrato<input value="contrato 05/2024"></label>
+      <button class="button" type="button">Autorizar</button>
+    </form>
+  </div>
+</section>
+
+<p class="rotulo">5 — Sem o papel de plataforma
+  <small>Quem chega por URL sem `platform_operator` lê o motivo; não vê tela em branco.</small></p>
+<section class="authenticated-workspace">
+  <div>
+    <span class="eyebrow">DISPONIBILIDADE DE JORNADA</span>
+    <h2>Quais jornadas existem para cada cliente</h2>
+    <p>Esta área é administrada por quem tem o papel de plataforma. Sua conta não o tem,
+      então a lista não é carregada e nenhuma autorização pode ser concedida por aqui.</p>
+    <span class="field-hint">Peça o acesso a quem administra a plataforma.</span>
+  </div>
+</section>
+
+<p class="rotulo">6 — Reservado, não entregue nesta fatia
+  <small>Desenhado só para segurar espaço. Traço tracejado e opacidade o distinguem.</small></p>
+<section class="authenticated-workspace reservado">
+  <div>
+    <span class="eyebrow">HISTÓRICO DE AUTORIZAÇÕES</span>
+    <h2>Quem autorizou o quê, quando</h2>
+    <p>Trilha completa por tenant e jornada, incluindo autorizações revogadas e o motivo.
+      Torna-se real quando a auditoria do entitlement virar tela — hoje é a F-017.</p>
+  </div>
+</section>
+
+</body>
+</html>
