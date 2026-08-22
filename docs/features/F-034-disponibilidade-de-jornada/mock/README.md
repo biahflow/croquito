@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Pendente de aprovação humana**  
+Status: Approved (2026-08-22)  
 Date: 2026-08-22  
 Produced by: agente (Claude Code)
 
@@ -14,14 +14,16 @@ Produced by: agente (Claude Code)
 
 | Campo | Valor |
 | --- | --- |
-| O que foi aprovado | — |
-| Aprovado por | — |
-| Data | — |
-| Revisão aprovada | — |
-| Explicitamente **não** aprovado | — |
+| O que foi aprovado | a composição visual da revisão 1 — os seis estados capturados e as seis decisões listadas em "Decisões que este pacote carrega", incluindo a pastilha `.neutro` como valor novo |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-22 |
+| Revisão aprovada | 1 |
+| Explicitamente **não** aprovado | a copy final; o estado padrão de uma jornada quando o ambiente não declara nada; a fatia 1 (sem superfície); o nome das jornadas na tela; qualquer regra de autorização. As duas questões em aberto ao final deste documento **seguem em aberto** — a aprovação não as decidiu |
 
-Preenchido ao transcrever uma decisão humana explícita. Nenhum agente aprova design,
-inclusive o que produziu o pacote. Aprovar esta revisão não aprova a seguinte.
+Transcrito de decisão humana explícita de 2026-08-22, dada após a rendição e as capturas
+serem entregues e abertas. Nenhum agente aprova design, inclusive o que produziu o pacote.
+Aprovar esta revisão não aprova a seguinte: pacote materialmente alterado é revisão nova e
+precisa de registro próprio.
 
 ## Artefato
 

@@ -4,16 +4,17 @@
 
 `READY_FOR_PLANNING`
 
-> O estado vale para a **fatia 1**, que é a parte planejável. A **fatia 2** está
-> `BLOCKED` pelo Design Approval Package e não pode ser planejada — ver **Split**.
+> As **duas fatias** são planejáveis. O Design Approval Package da fatia 2 foi
+> **aprovado por ato humano em 2026-08-22** (revisão 1, registro em
+> [mock/README.md](mock/README.md)), o que encerrou o único gate que a bloqueava.
 >
 > Nasce em 2026-08-22, de uma pergunta de operação: como impedir que um módulo ainda
 > imaturo — hoje o Croqui — chegue a homologação, e como, mais adiante, liberá-lo para um
 > cliente piloto sem liberá-lo para todos.
 >
 > A feature é dividida por decisão humana registrada (ver **Split**): a fatia 1 não cria
-> superfície nova e pode ser planejada; a fatia 2 cria uma seção nova na tela de
-> Plataforma e fica `BLOCKED` até o Design Approval Package ser aprovado.
+> superfície nova; a fatia 2 cria uma seção nova na tela de Plataforma e por isso passou
+> pelo gate de design, cumprido na mesma data.
 
 ## Classification
 
@@ -104,7 +105,9 @@ dividir para que trabalho sem superfície prossiga com o gate aberto:
   (F-012). Nenhuma cor, tipografia, espaçamento ou componente novo. Por isso segue para
   planejamento sem pacote próprio, citando aquela aprovação como procedência.
 - **Fatia 2** — a seção de administração por tenant na tela de Plataforma. Superfície nova,
-  `DESIGN_APPROVAL_REQUIRED`, `BLOCKED` até aprovação.
+  `DESIGN_APPROVAL_REQUIRED`. O pacote foi produzido e **aprovado em 2026-08-22**
+  (revisão 1): a fatia saiu de `BLOCKED` e está planejável. A implementação deve
+  corresponder à revisão aprovada; divergir dela é revisão nova, com registro próprio.
 
 Se a leitura da fatia 1 for contestada, ela volta para trás do gate — a decisão está
 registrada aqui justamente para poder ser contestada.
@@ -140,8 +143,8 @@ registrada aqui justamente para poder ser contestada.
 
 ## Dependencies
 
-- **Design Approval Package** da fatia 2 — `DESIGN_APPROVAL_REQUIRED`, ato humano, precede
-  o planejamento dela.
+- **Design Approval Package** da fatia 2 — `DESIGN_APPROVAL_REQUIRED`, **satisfeito por
+  ato humano em 2026-08-22** (revisão 1, [mock/README.md](mock/README.md)).
 - F-012 (autorização de IA por tenant) — é o molde de dado, de rota e de tela que esta
   feature copia.
 
