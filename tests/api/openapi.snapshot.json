@@ -2542,6 +2542,71 @@
         "title": "EstimateCodeAssignmentDecisionRequest",
         "type": "object"
       },
+      "EstimateReferenceCatalogListResponse": {
+        "additionalProperties": false,
+        "description": "O que esta rodada pode instalar do acervo, já filtrado pelo servidor.",
+        "properties": {
+          "catalogs": {
+            "items": {
+              "$ref": "#/components/schemas/EstimateReferenceCatalogOption"
+            },
+            "title": "Catalogs",
+            "type": "array"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "round_id",
+          "catalogs"
+        ],
+        "title": "EstimateReferenceCatalogListResponse",
+        "type": "object"
+      },
+      "EstimateReferenceCatalogOption": {
+        "additionalProperties": false,
+        "description": "Uma tabela do acervo como a ESCOLHA da rodada a oferece.\n\nÉ deliberadamente mais pobre que `ReferenceCatalogResponse`: `published_by` é a\nidentidade do operador da plataforma, de outro tenant, e quem escolhe uma tabela não\ntem por que saber quem a publicou. O que sai é o que distingue duas linhas na lista —\nnome, origem, data-base e tamanho — mais o digest da fonte, que é a identidade que a\ncascata e a decisão de código já citam.",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "entry_count": {
+            "title": "Entry Count",
+            "type": "integer"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          },
+          "reference_catalog_id": {
+            "format": "uuid",
+            "title": "Reference Catalog Id",
+            "type": "string"
+          },
+          "reference_month": {
+            "title": "Reference Month",
+            "type": "string"
+          },
+          "source_sha256": {
+            "title": "Source Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference_catalog_id",
+          "display_name",
+          "origin",
+          "reference_month",
+          "entry_count",
+          "source_sha256"
+        ],
+        "title": "EstimateReferenceCatalogOption",
+        "type": "object"
+      },
       "EstimateRoundPage": {
         "additionalProperties": false,
         "properties": {
@@ -3047,21 +3112,39 @@
       },
       "InstallEstimateCatalogRequest": {
         "additionalProperties": false,
-        "description": "Instala UMA fonte de preço no fim da cascata; o JSON sobe pelo presign de sempre.",
+        "description": "Instala UMA fonte de preço no fim da cascata, por um de DOIS caminhos.\n\n`reference_catalog_id` cita uma tabela do acervo da plataforma — a orçamentista\nescolhe de uma lista e nenhum arquivo sobe. `upload_id` é a tabela PRÓPRIA do cliente,\nsubida pelo presign de sempre: a EMOP que ele licenciou, o catálogo de um contrato\nespecífico. Os dois produzem a mesma entrada de cascata; o que muda é quem publicou o\narquivo, e isso fica gravado (ADR-0047 decisão 7).\n\nOs dois são opcionais no contrato e **exatamente um** é obrigatório no ato: o corpo com\nambos, ou com nenhum, recusa `422 ESTIMATE_CATALOG_SOURCE_INVALID`. Deixá-los mutuamente\nexclusivos por tipo não é expressável aqui sem partir a rota em duas, e duas rotas para\ninstalar a mesma coisa dobrariam as regras da cascata.",
         "properties": {
           "base_version": {
             "minimum": 1.0,
             "title": "Base Version",
             "type": "integer"
           },
+          "reference_catalog_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Catalog Id"
+          },
           "upload_id": {
-            "format": "uuid",
-            "title": "Upload Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upload Id"
           }
         },
         "required": [
-          "upload_id",
           "base_version"
         ],
         "title": "InstallEstimateCatalogRequest",
@@ -4035,6 +4118,36 @@
         "title": "Precision",
         "type": "string"
       },
+      "PresignReferenceCatalogRequest": {
+        "additionalProperties": false,
+        "description": "Presign do `catalog.json` que vai ao acervo — sem `content_type`, e é deliberado.\n\nA rota existe porque publicar não pode depender da jornada do croqui (F-037 escopo 7):\n`POST /v1/uploads/presign` cai no prefixo `/v1/uploads`, que é do croqui, e num ambiente\ncom essa jornada desligada o operador da plataforma receberia `403 JOURNEY_UNAVAILABLE`\ne o acervo ficaria sem como ser alimentado.\n\nO tipo não entra no corpo porque o acervo publica catálogo normalizado e nada mais:\nrecebê-lo seria oferecer uma escolha que a rota recusaria em seguida. `ApiModel` recusa\ncampo desconhecido, então um corpo que tente declarar `content_type` — de PDF ou até de\nJSON — é recusado no contrato. A extensão de `filename` continua sendo conferida contra\no tipo por `_safe_filename`, que devolve `422 INVALID_UPLOAD` para nome que não seja\n`.json`.",
+        "properties": {
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[a-fA-F0-9]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000000.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "filename",
+          "size_bytes",
+          "sha256"
+        ],
+        "title": "PresignReferenceCatalogRequest",
+        "type": "object"
+      },
       "PresignSurveyMediaRequest": {
         "additionalProperties": false,
         "description": "Pedido de URL assinada para uma foto ou áudio JÁ referenciado no pacote (prancha 6a).\n\n`mime_type` é fechado no contrato porque é ele que decide o processamento posterior:\nimagem vai para a análise visual, áudio para a transcrição. Um tipo fora da lista não\né \"mídia desconhecida\", é comando que ninguém sabe cumprir.",
@@ -4602,6 +4715,29 @@
         "title": "ProviderLineage",
         "type": "object"
       },
+      "PublishReferenceCatalogRequest": {
+        "additionalProperties": false,
+        "description": "Publica no acervo o `catalog.json` JÁ NORMALIZADO que subiu pelo presign.\n\nO corpo tem DOIS campos, e é deliberado que não tenha mais: `origin`,\n`reference_month`, `source_sha256` e a contagem de entradas são lidos de dentro do\narquivo, nunca informados aqui. Rótulo que se digita ao lado do conteúdo é rótulo que\npode discordar dele — e um catálogo publicado com a data-base errada mudaria o preço de\ntodos os tenants que o escolhessem. `ApiModel` recusa campo desconhecido, então um corpo\nque tente declará-los é recusado no contrato, antes de qualquer leitura.\n\nO que se escreve é só o nome de exibição: é ele que distingue, na escolha, duas linhas\nque sem ele seriam ambas \"SCO\".",
+        "properties": {
+          "display_name": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "upload_id": {
+            "format": "uuid",
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "display_name"
+        ],
+        "title": "PublishReferenceCatalogRequest",
+        "type": "object"
+      },
       "ReadingConfidence": {
         "additionalProperties": false,
         "description": "\"Li certo?\" por leitura — observação, nunca decisão nem veto de exportação.",
@@ -4808,6 +4944,97 @@
           "rectifications"
         ],
         "title": "RectifyReviewDecisionsRequest",
+        "type": "object"
+      },
+      "ReferenceCatalogListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "catalogs": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceCatalogResponse"
+            },
+            "title": "Catalogs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "catalogs"
+        ],
+        "title": "ReferenceCatalogListResponse",
+        "type": "object"
+      },
+      "ReferenceCatalogResponse": {
+        "additionalProperties": false,
+        "description": "Uma publicação do acervo como a administração da plataforma a lê.\n\n`object_key` NÃO sai daqui, pelo mesmo motivo que a `CascadeEntry` não publica a dela: a\nchave é referência interna do store. E aqui a razão é mais forte — o objeto do acervo\nfica fora de `tenants/` e nenhuma rota o assina (ADR-0047 decisão 6), então publicar o\nendereço só ofereceria um caminho que não existe.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "entry_count": {
+            "title": "Entry Count",
+            "type": "integer"
+          },
+          "object_sha256": {
+            "title": "Object Sha256",
+            "type": "string"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "published_by": {
+            "title": "Published By",
+            "type": "string"
+          },
+          "reference_catalog_id": {
+            "format": "uuid",
+            "title": "Reference Catalog Id",
+            "type": "string"
+          },
+          "reference_month": {
+            "title": "Reference Month",
+            "type": "string"
+          },
+          "source_sha256": {
+            "title": "Source Sha256",
+            "type": "string"
+          },
+          "withdrawn_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Withdrawn At"
+          }
+        },
+        "required": [
+          "reference_catalog_id",
+          "display_name",
+          "origin",
+          "reference_month",
+          "entry_count",
+          "object_sha256",
+          "source_sha256",
+          "available",
+          "published_by",
+          "published_at"
+        ],
+        "title": "ReferenceCatalogResponse",
         "type": "object"
       },
       "RegionCandidate": {
@@ -7793,7 +8020,7 @@
     },
     "/v1/estimate-rounds/{round_id}/catalogs": {
       "post": {
-        "description": "Instala uma fonte de preço no FIM da cascata; a posição é a precedência.\n\nO catálogo é lido e validado ANTES de a entrada existir, como na criação da rodada\nde medição: uma fonte que não valida aqui viraria uma cascata inutilizável em toda\netapa seguinte. Segunda fonte da mesma origem recusa com\n`409 ESTIMATE_CASCADE_ORIGIN_DUPLICATE` — o mesmo código que o domínio usa —, e não\nna montagem do orçamento, quando já não haveria o que corrigir sem abrir rodada nova.\n\nNa rodada sob contrato licitado (ADR-0045), fonte de origem fora da tabela\ncontratual recusa aqui com `409 ESTIMATE_CASCADE_ORIGIN_FORBIDDEN`, pelo mesmo\nmotivo e no mesmo instante: a alternativa seria descobrir o erro na medição, sobre\nserviço já executado.",
+        "description": "Instala uma fonte de preço no FIM da cascata; a posição é a precedência.\n\nA fonte vem de UM de dois caminhos, nunca dos dois: a tabela escolhida no acervo da\nplataforma (`reference_catalog_id`) ou o arquivo próprio do cliente (`upload_id`).\nA entrada gravada é a mesma nos dois casos, com a **procedência** declarada ao lado\n(ADR-0047 decisão 7) — e todas as regras da cascata valem iguais, porque o que muda\né de onde o arquivo veio, não o que ele é.\n\nO catálogo é lido e validado ANTES de a entrada existir, como na criação da rodada\nde medição: uma fonte que não valida aqui viraria uma cascata inutilizável em toda\netapa seguinte. Segunda fonte da mesma origem recusa com\n`409 ESTIMATE_CASCADE_ORIGIN_DUPLICATE` — o mesmo código que o domínio usa —, e não\nna montagem do orçamento, quando já não haveria o que corrigir sem abrir rodada nova.\n\nNa rodada sob contrato licitado (ADR-0045), fonte de origem fora da tabela\ncontratual recusa aqui com `409 ESTIMATE_CASCADE_ORIGIN_FORBIDDEN`, pelo mesmo\nmotivo e no mesmo instante: a alternativa seria descobrir o erro na medição, sobre\nserviço já executado. Vale igual para a tabela do acervo, que por isso nem chega a\nser oferecida na escolha daquela rodada.",
         "operationId": "install_estimate_catalog_v1_estimate_rounds__round_id__catalogs_post",
         "parameters": [
           {
@@ -8590,6 +8817,55 @@
           }
         ],
         "summary": "Create Estimate Plate Extraction",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/reference-catalogs": {
+      "get": {
+        "description": "As tabelas do acervo que ESTA rodada pode instalar (F-037, ADR-0047).\n\nA listagem vive sob a rodada, e não numa rota global, porque a rodada é quem\nconhece o regime: sob contrato licitado, o servidor já devolve só a origem que a\ninstalação aceitaria. Uma rota global obrigaria a tela a reimplementar a regra do\nregime e a descobrir a divergência num `409` — exatamente o que a F-033 evitou ao\npublicar `allowed_cascade_origins` do servidor.\n\nDois filtros, e só dois: **em circulação** (o que foi retirado deixa de ser\noferecido, sem sumir do registro nem quebrar a rodada que já o instalou) e **aceito\npelo regime**. Origem já instalada continua aparecendo: instalar a segunda da mesma\norigem recusa com `ESTIMATE_CASCADE_ORIGIN_DUPLICATE`, e esconder a tabela faria a\nlista mentir sobre o que o acervo tem.\n\nLeitura livre para quem opera o orçamento (decisão 5): o acervo é público, não há\nentitlement por tenant e não há tenant a comparar. O papel é exigido antes de\nqualquer lookup, e a rodada continua sendo do tenant — rodada alheia é `404`.",
+        "operationId": "list_estimate_reference_catalogs_v1_estimate_rounds__round_id__reference_catalogs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateReferenceCatalogListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Estimate Reference Catalogs",
         "tags": [
           "estimate"
         ]
@@ -10600,6 +10876,226 @@
           }
         ],
         "summary": "List Platform Journeys",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/reference-catalogs": {
+      "get": {
+        "description": "O acervo INTEIRO, inclusive o que está fora de circulação.\n\nLeitura sem `Idempotency-Key` e sem auditoria, como as demais listagens de\nplataforma. O que foi retirado continua na lista, com `withdrawn_at` carimbado:\nsumir com a linha apagaria a trilha do que houve — e a rodada que o referencia\ncontinua funcionando, então o registro precisa continuar legível.\n\nOrdenação em Python, como em `_all_known_tenant_ids`: SQLite (testes) e PostgreSQL\n(hospedado) não ordenam texto do mesmo jeito, e a tela lê a ordem. O `id` fecha o\ncritério porque é UUIDv7 — duas publicações da mesma origem e data-base saem na\nordem em que foram publicadas.",
+        "operationId": "list_reference_catalogs_v1_platform_reference_catalogs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceCatalogListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Reference Catalogs",
+        "tags": [
+          "platform"
+        ]
+      },
+      "post": {
+        "description": "Publica uma tabela de referência para TODOS os tenants (F-037, ADR-0047).\n\nO que sobe é o `catalog.json` já normalizado pelo CLI (`import-catalog`,\n`import-sinapi`, `import-sicro`), por `POST /v1/platform/reference-catalogs/presign`.\nO servidor não importa `.xlsx` nem `.DBF` (decisão 9): trazer leitor de formato\nbinário sobre arquivo externo para o request path seria superfície de ataque nova sem\nvalor de produto correspondente.\n\nA publicação **não exige** que o upload tenha vindo daquele presign: qualquer upload\nJSON do tenant do operador serve. Exigir a procedência do presign seria uma trava a\nmais sem fronteira nova — quem sobe e quem publica são a mesma pessoa, com o mesmo\npapel, e `_require_valuation_upload` já recusa upload de outro tenant, tipo diferente\nde `application/json` e objeto que não casa com o que foi declarado. O que decide o\nque entra no acervo é o conteúdo lido do arquivo, não por qual porta ele subiu.\n\nTrês recusas, todas ANTES de qualquer escrita — no store ou no banco:\n\n- **papel**, antes de qualquer lookup: quem não é `platform_operator` recebe `403` e\n  não descobre o que existe no acervo;\n- **origem que a plataforma não pode distribuir** (`emop`, paga, e `composition`, do\n  cliente): `422 REFERENCE_CATALOG_ORIGIN_NOT_PUBLISHABLE`. As duas continuam\n  entrando pelo upload de quem tem a licença;\n- **conteúdo já publicado**: `409 REFERENCE_CATALOG_ALREADY_PUBLISHED`. Publicação é\n  imutável e endereçada por digest (decisão 3) — data-base nova tem conteúdo novo,\n  logo entrada nova, e a anterior continua existindo porque uma rodada antiga ainda\n  a referencia.\n\nO objeto é gravado ANTES do `commit`: linha que aponta para objeto inexistente seria\numa escolha oferecida na tela que falharia na instalação, enquanto objeto sem linha é\num arquivo endereçado por conteúdo que ninguém referencia — o mesmo que a próxima\npublicação do mesmo digest reescreveria byte a byte.",
+        "operationId": "publish_reference_catalog_v1_platform_reference_catalogs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishReferenceCatalogRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceCatalogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Publish Reference Catalog",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/reference-catalogs/presign": {
+      "post": {
+        "description": "Presign do acervo, para publicar não depender da jornada do croqui (F-037 escopo 7).\n\nO portão de disponibilidade da F-034 é dependência do router e `/v1/uploads` é do\ncroqui (`journeys.py`): com essa jornada em `disabled`, o operador que subisse o\n`catalog.json` pelo presign de lá receberia `403 JOURNEY_UNAVAILABLE`, e o acervo\nficaria sem como ser alimentado — justo o módulo que a F-034 nasceu para poder\ndesligar. `/v1/platform` já está declarado fora de jornada, então a mesma sequência\nsob este prefixo atravessa. Nada em `journeys.py` muda: tirar o presign do croqui do\nportão resolveria um caso de plataforma enfraquecendo o mecanismo inteiro.\n\nÉ `presign_upload` na íntegra — mesma idempotência, mesmo `UploadRecord` sob\n`tenants/{tenant_id}/uploads/`, mesmo checksum, mesmo header por perfil de storage e\nmesma auditoria (`UPLOAD_PRESIGNED`: o fato é que este principal assinou um upload; o\nato de publicar é auditado à parte) — com duas diferenças, e só elas:\n\n- **papel antes de qualquer coisa**: `platform_operator`, como nas demais rotas de\n  plataforma. Quem não o tem recebe `403` sem que nada seja consultado ou gravado;\n- **tipo fixo** em `application/json`: o acervo publica catálogo normalizado e nada\n  mais, então o tipo não vem do corpo.",
+        "operationId": "presign_reference_catalog_v1_platform_reference_catalogs_presign_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignReferenceCatalogRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignUploadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Presign Reference Catalog",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/reference-catalogs/{reference_catalog_id}/withdraw": {
+      "post": {
+        "description": "Tira o catálogo de circulação: ele deixa de ser oferecido e **não** é apagado.\n\nApagar quebraria toda rodada que já o referencia — o preço de uma linha de orçamento\ncita o digest da fonte, e uma fonte que sumiu do store deixaria de poder ser relida.\nPor isso o ato carimba `status` e `withdrawn_at`, e nada mais: a linha continua na\nlistagem, o objeto continua no store, e o que muda é só o catálogo sair das escolhas\nnovas.\n\nSem corpo: o ato é inteiramente identificado pela rota. Retirar o que já está fora de\ncirculação devolve o registro como está, sem recarimbar a data nem auditar de novo —\na data verdadeira é a da retirada, não a da última vez que alguém repetiu o pedido.",
+        "operationId": "withdraw_reference_catalog_v1_platform_reference_catalogs__reference_catalog_id__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reference_catalog_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Reference Catalog Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceCatalogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Withdraw Reference Catalog",
         "tags": [
           "platform"
         ]

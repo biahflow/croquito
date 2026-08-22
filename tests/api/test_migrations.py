@@ -375,6 +375,10 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
             "survey_media_records",
             "job_stage_events",
             "domain_events",
+            # `0014` (F-037): acervo de catálogos da plataforma. É a ÚNICA tabela sem
+            # `tenant_id` (ADR-0047 decisão 1) e, por isso mesmo, sem índice de listagem por
+            # tenant: a listagem é do acervo inteiro, de dezenas de linhas.
+            "reference_catalogs",
         }
         for table, index_name in (
             ("valuation_rounds", "ix_valuation_rounds_tenant_created"),

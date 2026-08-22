@@ -107,13 +107,18 @@ class ArtifactStore:
             return cast(bytes, body.read(max_bytes + 1))
 
     def write_object(self, *, object_key: str, body: bytes, content_type: str) -> None:
-        """Grava um artefato PEQUENO que a própria API produziu, sob o prefixo do tenant.
+        """Grava um artefato PEQUENO de aplicação; quem monta a chave decide o prefixo.
 
         Contraparte de `read_object`, e com o mesmo limite de intenção: aqui passa só o
-        artefato determinístico que a API acabou de montar e auditar — hoje, a planilha do
-        orçamento-base (ADR-0038). Byte que veio do cliente continua entrando por
-        `presign_upload`: a API não recebe upload no request path, e o que ela grava aqui é
-        resultado de cálculo próprio, não conteúdo de terceiro.
+        artefato determinístico que a API acabou de montar e auditar — a planilha do
+        orçamento-base sob o prefixo do tenant (ADR-0038) e o `catalog.json` que o operador
+        publica no acervo da plataforma, sob o prefixo próprio dele, FORA de `tenants/`
+        (ADR-0047 decisão 1). Byte que veio do cliente continua entrando por
+        `presign_upload`: a API não recebe upload no request path.
+
+        Esta classe não conhece tenant, e por isso não é ela que isola nada — o isolamento é
+        convenção de quem monta a chave, e as guardas que assinam URL o conferem por
+        prefixo, uma a uma.
 
         A gravação acontece DEPOIS do portão de auditoria de quem chama; este método não
         sabe auditar nada, e é justamente por isso que ele não pode ser o lugar onde alguém

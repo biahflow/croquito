@@ -62,6 +62,7 @@ from croquito_api.database import (
     JobStageEventRecord,
     ProjectRecord,
     ProposalDecisionRecord,
+    ReferenceCatalogRecord,
     ReviewDecisionRecord,
     ReviewRevisionRecord,
     RevisionRecord,
@@ -92,6 +93,12 @@ from croquito_api.metrics import (
     parse_period_bound,
 )
 from croquito_api.pubsub_queue import PubSubProcessingQueue, QueuePublishError
+from croquito_api.reference_catalogs import (
+    PUBLISHABLE_ORIGINS,
+    STATUS_AVAILABLE,
+    STATUS_WITHDRAWN,
+    reference_catalog_key,
+)
 from croquito_api.storage import ArtifactStore
 from croquito_api.valuation_rounds import (
     BULLETIN_WORKBOOK_CONTENT_TYPE,
@@ -403,6 +410,71 @@ class JourneyAvailabilityResponse(ApiModel):
 class PlatformJourneyListResponse(ApiModel):
     journeys: list[JourneyAvailabilityResponse]
     entitlements: list[JourneyEntitlementResponse]
+
+
+class PresignReferenceCatalogRequest(ApiModel):
+    """Presign do `catalog.json` que vai ao acervo — sem `content_type`, e é deliberado.
+
+    A rota existe porque publicar não pode depender da jornada do croqui (F-037 escopo 7):
+    `POST /v1/uploads/presign` cai no prefixo `/v1/uploads`, que é do croqui, e num ambiente
+    com essa jornada desligada o operador da plataforma receberia `403 JOURNEY_UNAVAILABLE`
+    e o acervo ficaria sem como ser alimentado.
+
+    O tipo não entra no corpo porque o acervo publica catálogo normalizado e nada mais:
+    recebê-lo seria oferecer uma escolha que a rota recusaria em seguida. `ApiModel` recusa
+    campo desconhecido, então um corpo que tente declarar `content_type` — de PDF ou até de
+    JSON — é recusado no contrato. A extensão de `filename` continua sendo conferida contra
+    o tipo por `_safe_filename`, que devolve `422 INVALID_UPLOAD` para nome que não seja
+    `.json`.
+    """
+
+    filename: str = Field(min_length=1, max_length=255)
+    size_bytes: int = Field(gt=0, le=100_000_000)
+    sha256: str = Field(pattern=r"^[a-fA-F0-9]{64}$")
+
+
+class PublishReferenceCatalogRequest(ApiModel):
+    """Publica no acervo o `catalog.json` JÁ NORMALIZADO que subiu pelo presign.
+
+    O corpo tem DOIS campos, e é deliberado que não tenha mais: `origin`,
+    `reference_month`, `source_sha256` e a contagem de entradas são lidos de dentro do
+    arquivo, nunca informados aqui. Rótulo que se digita ao lado do conteúdo é rótulo que
+    pode discordar dele — e um catálogo publicado com a data-base errada mudaria o preço de
+    todos os tenants que o escolhessem. `ApiModel` recusa campo desconhecido, então um corpo
+    que tente declará-los é recusado no contrato, antes de qualquer leitura.
+
+    O que se escreve é só o nome de exibição: é ele que distingue, na escolha, duas linhas
+    que sem ele seriam ambas "SCO".
+    """
+
+    upload_id: UUID
+    display_name: str = Field(min_length=3, max_length=200)
+
+
+class ReferenceCatalogResponse(ApiModel):
+    """Uma publicação do acervo como a administração da plataforma a lê.
+
+    `object_key` NÃO sai daqui, pelo mesmo motivo que a `CascadeEntry` não publica a dela: a
+    chave é referência interna do store. E aqui a razão é mais forte — o objeto do acervo
+    fica fora de `tenants/` e nenhuma rota o assina (ADR-0047 decisão 6), então publicar o
+    endereço só ofereceria um caminho que não existe.
+    """
+
+    reference_catalog_id: UUID
+    display_name: str
+    origin: str
+    reference_month: str
+    entry_count: int
+    object_sha256: str
+    source_sha256: str
+    available: bool
+    published_by: str
+    published_at: datetime
+    withdrawn_at: datetime | None = None
+
+
+class ReferenceCatalogListResponse(ApiModel):
+    catalogs: list[ReferenceCatalogResponse]
 
 
 class JobResponse(ApiModel):
@@ -1331,9 +1403,22 @@ class EstimateRoundPage(ApiModel):
 
 
 class InstallEstimateCatalogRequest(ApiModel):
-    """Instala UMA fonte de preço no fim da cascata; o JSON sobe pelo presign de sempre."""
+    """Instala UMA fonte de preço no fim da cascata, por um de DOIS caminhos.
 
-    upload_id: UUID
+    `reference_catalog_id` cita uma tabela do acervo da plataforma — a orçamentista
+    escolhe de uma lista e nenhum arquivo sobe. `upload_id` é a tabela PRÓPRIA do cliente,
+    subida pelo presign de sempre: a EMOP que ele licenciou, o catálogo de um contrato
+    específico. Os dois produzem a mesma entrada de cascata; o que muda é quem publicou o
+    arquivo, e isso fica gravado (ADR-0047 decisão 7).
+
+    Os dois são opcionais no contrato e **exatamente um** é obrigatório no ato: o corpo com
+    ambos, ou com nenhum, recusa `422 ESTIMATE_CATALOG_SOURCE_INVALID`. Deixá-los mutuamente
+    exclusivos por tipo não é expressável aqui sem partir a rota em duas, e duas rotas para
+    instalar a mesma coisa dobrariam as regras da cascata.
+    """
+
+    upload_id: UUID | None = None
+    reference_catalog_id: UUID | None = None
     base_version: int = Field(ge=1)
 
 
@@ -1375,6 +1460,31 @@ class EstimateCascadeResponse(ApiModel):
     round_id: UUID
     version: int
     cascade: list[dict[str, Any]]
+
+
+class EstimateReferenceCatalogOption(ApiModel):
+    """Uma tabela do acervo como a ESCOLHA da rodada a oferece.
+
+    É deliberadamente mais pobre que `ReferenceCatalogResponse`: `published_by` é a
+    identidade do operador da plataforma, de outro tenant, e quem escolhe uma tabela não
+    tem por que saber quem a publicou. O que sai é o que distingue duas linhas na lista —
+    nome, origem, data-base e tamanho — mais o digest da fonte, que é a identidade que a
+    cascata e a decisão de código já citam.
+    """
+
+    reference_catalog_id: UUID
+    display_name: str
+    origin: str
+    reference_month: str
+    entry_count: int
+    source_sha256: str
+
+
+class EstimateReferenceCatalogListResponse(ApiModel):
+    """O que esta rodada pode instalar do acervo, já filtrado pelo servidor."""
+
+    round_id: UUID
+    catalogs: list[EstimateReferenceCatalogOption]
 
 
 class EstimateCodeAssignmentDecisionRequest(ApiModel):
@@ -1863,6 +1973,66 @@ def _safe_filename(filename: str, content_type: str) -> str:
     return normalized or f"documento{extension}"
 
 
+def _presign_tenant_upload(
+    application: FastAPI,
+    *,
+    principal: Principal,
+    filename: str,
+    content_type: str,
+    size_bytes: int,
+    sha256: str,
+    storage_flavor: str,
+) -> tuple[UploadRecord, PresignUploadResponse]:
+    """URL de escrita para UM objeto sob o prefixo do tenant, e o registro que o descreve.
+
+    Vive fora das rotas porque há dois presigns com exatamente esta sequência — o do croqui
+    (`POST /v1/uploads/presign`) e o do acervo (`POST /v1/platform/reference-catalogs/presign`,
+    F-037 escopo 7). Duas cópias divergiriam no detalhe que ninguém revisa: o header de
+    checksum entra na assinatura só no S3, e mandá-lo ao GCS faz o PUT falhar.
+
+    O objeto fica sob `tenants/{tenant_id}/uploads/` nos dois casos, inclusive no do acervo:
+    a área de upload é de quem sobe enquanto o arquivo ainda não foi lido, e ele só vira
+    objeto da plataforma depois que a publicação confere o digest e o grava sob o prefixo do
+    acervo. Assinar direto para lá poria no acervo um arquivo que ninguém validou.
+
+    O que NÃO mora aqui: idempotência, auditoria e `commit`. Cada rota tem operação própria
+    e é ela quem decide o que gravou — a chamadora precisa `session.add` do registro
+    devolvido.
+    """
+    upload_id = new_uuid7()
+    safe_filename = _safe_filename(filename, content_type)
+    object_key = f"tenants/{principal.tenant_id}/uploads/{upload_id}/{safe_filename}"
+    expires_at = datetime.now(UTC) + timedelta(minutes=15)
+    record = UploadRecord(
+        id=str(upload_id),
+        tenant_id=principal.tenant_id,
+        object_key=object_key,
+        filename=safe_filename,
+        content_type=content_type,
+        size_bytes=size_bytes,
+        sha256=sha256.lower(),
+    )
+    checksum_sha256 = base64.b64encode(bytes.fromhex(sha256)).decode("ascii")
+    artifact_store: ArtifactStore = application.state.artifact_store
+    url = artifact_store.presign_upload(
+        object_key=object_key,
+        checksum_sha256=checksum_sha256,
+        content_type=content_type,
+    )
+    headers: dict[str, str] = {"Content-Type": content_type}
+    if storage_flavor == "s3":
+        # O header entra na assinatura só no S3; enviá-lo ao GCS faria o PUT falhar.
+        headers["x-amz-checksum-sha256"] = checksum_sha256
+    response = PresignUploadResponse(
+        upload_id=upload_id,
+        object_key=object_key,
+        url=url,
+        headers=headers,
+        expires_at=expires_at,
+    )
+    return record, response
+
+
 def _request_hash(payload: BaseModel, *, exclude: frozenset[str] | None = None) -> str:
     """Impressão digital do COMANDO, para casar replay com a resposta já gravada.
 
@@ -1878,6 +2048,19 @@ def _request_hash(payload: BaseModel, *, exclude: frozenset[str] | None = None) 
         separators=(",", ":"),
     )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+class _ParameterlessCommand(BaseModel):
+    """Comando sem nenhum parâmetro: o ato é inteiramente identificado pela rota.
+
+    Não é modelo de requisição — nenhuma rota o declara, e ele não aparece no OpenAPI. Ele
+    existe só para dar a `_request_hash` um valor ESTÁVEL quando a mutação não tem corpo,
+    para que o registro de idempotência daquela rota continue detectando reuso de chave pelo
+    mesmo caminho de todas as outras.
+    """
+
+
+_PARAMETERLESS_COMMAND: Final = _ParameterlessCommand()
 
 
 def _approval_id(*, scene_id: UUID, reviewer_id: str, decided_at: datetime, statement: str) -> str:
@@ -2016,7 +2199,17 @@ def _record_audit(
     resource_id: str,
     request_id: str,
     tenant_id: str | None = None,
+    details: Mapping[str, str | int] | None = None,
 ) -> None:
+    """Registra o ato no tenant ALVO, ou no de quem o praticou quando não há alvo.
+
+    `details` existe para o ato de plataforma que não tem tenant alvo: publicar no acervo é
+    feito por um operador, para todos, e o `tenant_id` gravado é o DELE — o fato verdadeiro
+    é "esta pessoa, deste tenant, publicou" (ADR-0047 decisão 11). Sem o detalhe, a linha de
+    auditoria diria o tenant errado sobre o alcance do ato. Só cabe aqui identificador
+    opaco e rótulo público: conteúdo de cliente, chave de objeto e URL assinada nunca entram
+    em auditoria (ADR-0028 D5).
+    """
     session.add(
         AuditRecord(
             id=str(new_uuid7()),
@@ -2025,7 +2218,7 @@ def _record_audit(
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
-            metadata_json={"request_id": request_id},
+            metadata_json={"request_id": request_id, **(details or {})},
         )
     )
 
@@ -2573,22 +2766,36 @@ def _require_valuation_upload(
     return upload
 
 
-def _install_catalog(
-    application: FastAPI, upload: UploadRecord
-) -> tuple[PriceCatalog, dict[str, Any]]:
-    """Lê e valida o catálogo instalado na criação da rodada; ilegível recusa a rodada.
+def _read_catalog_object(
+    application: FastAPI,
+    *,
+    object_key: str,
+    expected_sha256: str,
+    unreadable_code: str,
+) -> tuple[bytes, PriceCatalog]:
+    """Bytes e catálogo validado de UM objeto JSON, conferido contra o digest esperado.
 
     O catálogo é o único artefato que a API lê do object store (ver `read_object`): ele é
-    pequeno, é de aplicação e precisa ser validado ANTES de a rodada existir — uma rodada
-    nasce com catálogo por construção, e um catálogo que não valida aqui viraria uma rodada
+    pequeno, é de aplicação e precisa ser validado ANTES de o ato existir — uma rodada nasce
+    com catálogo por construção, e um catálogo que não valida aqui viraria uma rodada
     inutilizável em toda etapa seguinte.
+
+    A entrada é **objeto + digest esperado**, e não o registro de upload, porque a fonte
+    passou a ter dois caminhos (F-037): o upload do cliente e o acervo da plataforma. O que
+    a leitura precisa saber é o mesmo nos dois — qual objeto ler e qual conteúdo ele tem de
+    ter —, e o que muda é só o vocabulário da recusa, porque um objeto ausente do acervo
+    não é problema do upload de ninguém.
+
+    Os BYTES saem junto com o modelo porque a publicação no acervo grava o mesmo arquivo
+    sob o prefixo do acervo, e reler o objeto só para copiá-lo seria uma segunda leitura do
+    mesmo conteúdo — com a janela, entre uma e outra, de o objeto lido não ser o validado.
     """
     payload = application.state.artifact_store.read_object(
-        object_key=upload.object_key, max_bytes=CATALOG_MAX_BYTES
+        object_key=object_key, max_bytes=CATALOG_MAX_BYTES
     )
     if payload is None:
         raise _problem(
-            "INVALID_UPLOAD",
+            unreadable_code,
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Catálogo ausente no armazenamento.",
         )
@@ -2599,11 +2806,11 @@ def _install_catalog(
             "Catálogo excede o limite de leitura da API.",
             {"max_bytes": CATALOG_MAX_BYTES},
         )
-    if hashlib.sha256(payload).hexdigest() != upload.sha256.lower():
+    if hashlib.sha256(payload).hexdigest() != expected_sha256.lower():
         raise _problem(
-            "INVALID_UPLOAD",
+            unreadable_code,
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "Upload ausente, incompleto ou com integridade divergente.",
+            "Catálogo com integridade divergente do digest registrado.",
         )
     try:
         catalog = PriceCatalog.model_validate_json(payload)
@@ -2616,6 +2823,33 @@ def _install_catalog(
             "O catálogo enviado não pôde ser lido.",
             {"code": "MODEL_VALIDATION_FAILED"},
         ) from error
+    return payload, catalog
+
+
+def _read_catalog(application: FastAPI, upload: UploadRecord) -> tuple[bytes, PriceCatalog]:
+    """O catálogo de um upload do cliente; ilegível recusa o ato que o pediu."""
+    return _read_catalog_object(
+        application,
+        object_key=upload.object_key,
+        expected_sha256=upload.sha256,
+        unreadable_code="INVALID_UPLOAD",
+    )
+
+
+def _install_catalog(
+    application: FastAPI,
+    *,
+    object_key: str,
+    object_sha256: str,
+    unreadable_code: str,
+) -> tuple[PriceCatalog, dict[str, Any]]:
+    """Catálogo validado e o resumo que a entrada da cascata guarda ao lado dele."""
+    _, catalog = _read_catalog_object(
+        application,
+        object_key=object_key,
+        expected_sha256=object_sha256,
+        unreadable_code=unreadable_code,
+    )
     summary: dict[str, Any] = {
         "source_label": catalog.source_label,
         "reference_month": catalog.reference_month,
@@ -2623,6 +2857,55 @@ def _install_catalog(
         "entries": len(catalog.entries),
     }
     return catalog, summary
+
+
+def _catalog_source(payload: InstallEstimateCatalogRequest) -> tuple[str, UUID]:
+    """A procedência do ato e o identificador que ela cita; nunca os dois, nunca nenhum.
+
+    A recusa é de CONTRATO e vem antes de qualquer lookup: um corpo que cita as duas
+    formas não é ambíguo só para o servidor — ele é ambíguo sobre qual arquivo o
+    orçamentista quis instalar, e escolher uma delas em silêncio gravaria uma cascata que
+    ninguém pediu. Sem gravar nada, nos dois casos.
+    """
+    if payload.upload_id is not None and payload.reference_catalog_id is None:
+        return estimate_rounds.PROVENANCE_TENANT_UPLOAD, payload.upload_id
+    if payload.reference_catalog_id is not None and payload.upload_id is None:
+        return estimate_rounds.PROVENANCE_REFERENCE_CATALOG, payload.reference_catalog_id
+    raise _problem(
+        estimate_rounds.ESTIMATE_CATALOG_SOURCE_INVALID,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        (
+            "Informe a tabela do acervo (reference_catalog_id) ou o arquivo próprio (upload_id)."
+            if payload.upload_id is None
+            else "Informe apenas uma fonte: a tabela do acervo ou o arquivo próprio."
+        ),
+    )
+
+
+def _require_available_reference_catalog(
+    session: Session, *, reference_catalog_id: UUID
+) -> ReferenceCatalogRecord:
+    """A tabela do acervo em circulação, ou a recusa. **Sem filtro de tenant**, e é a única.
+
+    O acervo é dado da plataforma e ler dele é livre para quem opera o orçamento (ADR-0047
+    decisões 1 e 5): não há tenant a comparar, porque a linha não tem dono. É a exceção
+    autorizada, e ela vale só aqui — o upload do cliente continua filtrado por
+    `tenant_id` em `_require_valuation_upload`.
+
+    Catálogo fora de circulação recusa em vez de instalar: retirar é justamente parar de
+    oferecê-lo em escolha nova, e a rodada que já o instalou continua intacta.
+    """
+    record = session.get(ReferenceCatalogRecord, str(reference_catalog_id))
+    if record is None:
+        raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Catálogo do acervo não encontrado.")
+    if record.status != STATUS_AVAILABLE:
+        raise _problem(
+            "REFERENCE_CATALOG_WITHDRAWN",
+            status.HTTP_409_CONFLICT,
+            "Esta tabela saiu de circulação e não é mais oferecida para instalação nova.",
+            {"reference_catalog_id": record.id},
+        )
+    return record
 
 
 def _require_platform_operator(principal: Principal) -> None:
@@ -2685,6 +2968,23 @@ def _journey_entitlement_response(
         authorized_by=record.authorized_by,
         authorized_at=record.authorized_at,
         revoked_at=record.revoked_at,
+    )
+
+
+def _reference_catalog_response(record: ReferenceCatalogRecord) -> ReferenceCatalogResponse:
+    """Só o que descreve a publicação; a chave do objeto não sai daqui."""
+    return ReferenceCatalogResponse(
+        reference_catalog_id=UUID(record.id),
+        display_name=record.display_name,
+        origin=record.origin,
+        reference_month=record.reference_month,
+        entry_count=record.entry_count,
+        object_sha256=record.object_sha256,
+        source_sha256=record.source_sha256,
+        available=record.status == STATUS_AVAILABLE,
+        published_by=record.published_by,
+        published_at=record.published_at,
+        withdrawn_at=record.withdrawn_at,
     )
 
 
@@ -3965,6 +4265,322 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session.commit()
         return response
 
+    @application.post(
+        "/v1/platform/reference-catalogs/presign",
+        response_model=PresignUploadResponse,
+        tags=["platform"],
+    )
+    async def presign_reference_catalog(
+        payload: PresignReferenceCatalogRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> PresignUploadResponse:
+        """Presign do acervo, para publicar não depender da jornada do croqui (F-037 escopo 7).
+
+        O portão de disponibilidade da F-034 é dependência do router e `/v1/uploads` é do
+        croqui (`journeys.py`): com essa jornada em `disabled`, o operador que subisse o
+        `catalog.json` pelo presign de lá receberia `403 JOURNEY_UNAVAILABLE`, e o acervo
+        ficaria sem como ser alimentado — justo o módulo que a F-034 nasceu para poder
+        desligar. `/v1/platform` já está declarado fora de jornada, então a mesma sequência
+        sob este prefixo atravessa. Nada em `journeys.py` muda: tirar o presign do croqui do
+        portão resolveria um caso de plataforma enfraquecendo o mecanismo inteiro.
+
+        É `presign_upload` na íntegra — mesma idempotência, mesmo `UploadRecord` sob
+        `tenants/{tenant_id}/uploads/`, mesmo checksum, mesmo header por perfil de storage e
+        mesma auditoria (`UPLOAD_PRESIGNED`: o fato é que este principal assinou um upload; o
+        ato de publicar é auditado à parte) — com duas diferenças, e só elas:
+
+        - **papel antes de qualquer coisa**: `platform_operator`, como nas demais rotas de
+          plataforma. Quem não o tem recebe `403` sem que nada seja consultado ou gravado;
+        - **tipo fixo** em `application/json`: o acervo publica catálogo normalizado e nada
+          mais, então o tipo não vem do corpo.
+        """
+        _require_platform_operator(principal)
+        operation = "platform.reference-catalogs.presign"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return PresignUploadResponse.model_validate(existing)
+        record, response = _presign_tenant_upload(
+            application,
+            principal=principal,
+            filename=payload.filename,
+            content_type=CATALOG_CONTENT_TYPE,
+            size_bytes=payload.size_bytes,
+            sha256=payload.sha256,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        session.add(record)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="UPLOAD_PRESIGNED",
+            resource_type="upload",
+            resource_id=str(response.upload_id),
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/platform/reference-catalogs",
+        response_model=ReferenceCatalogResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["platform"],
+    )
+    async def publish_reference_catalog(
+        payload: PublishReferenceCatalogRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReferenceCatalogResponse:
+        """Publica uma tabela de referência para TODOS os tenants (F-037, ADR-0047).
+
+        O que sobe é o `catalog.json` já normalizado pelo CLI (`import-catalog`,
+        `import-sinapi`, `import-sicro`), por `POST /v1/platform/reference-catalogs/presign`.
+        O servidor não importa `.xlsx` nem `.DBF` (decisão 9): trazer leitor de formato
+        binário sobre arquivo externo para o request path seria superfície de ataque nova sem
+        valor de produto correspondente.
+
+        A publicação **não exige** que o upload tenha vindo daquele presign: qualquer upload
+        JSON do tenant do operador serve. Exigir a procedência do presign seria uma trava a
+        mais sem fronteira nova — quem sobe e quem publica são a mesma pessoa, com o mesmo
+        papel, e `_require_valuation_upload` já recusa upload de outro tenant, tipo diferente
+        de `application/json` e objeto que não casa com o que foi declarado. O que decide o
+        que entra no acervo é o conteúdo lido do arquivo, não por qual porta ele subiu.
+
+        Três recusas, todas ANTES de qualquer escrita — no store ou no banco:
+
+        - **papel**, antes de qualquer lookup: quem não é `platform_operator` recebe `403` e
+          não descobre o que existe no acervo;
+        - **origem que a plataforma não pode distribuir** (`emop`, paga, e `composition`, do
+          cliente): `422 REFERENCE_CATALOG_ORIGIN_NOT_PUBLISHABLE`. As duas continuam
+          entrando pelo upload de quem tem a licença;
+        - **conteúdo já publicado**: `409 REFERENCE_CATALOG_ALREADY_PUBLISHED`. Publicação é
+          imutável e endereçada por digest (decisão 3) — data-base nova tem conteúdo novo,
+          logo entrada nova, e a anterior continua existindo porque uma rodada antiga ainda
+          a referencia.
+
+        O objeto é gravado ANTES do `commit`: linha que aponta para objeto inexistente seria
+        uma escolha oferecida na tela que falharia na instalação, enquanto objeto sem linha é
+        um arquivo endereçado por conteúdo que ninguém referencia — o mesmo que a próxima
+        publicação do mesmo digest reescreveria byte a byte.
+        """
+        _require_platform_operator(principal)
+        operation = "platform.reference-catalogs"
+        request_hash = _request_hash(payload)
+        existing_response = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing_response is not None:
+            return ReferenceCatalogResponse.model_validate(existing_response)
+
+        upload = _require_valuation_upload(
+            session,
+            application,
+            upload_id=payload.upload_id,
+            principal=principal,
+            content_type=CATALOG_CONTENT_TYPE,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        body, catalog = _read_catalog(application, upload)
+        if catalog.origin not in PUBLISHABLE_ORIGINS:
+            raise _problem(
+                "REFERENCE_CATALOG_ORIGIN_NOT_PUBLISHABLE",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "A plataforma não distribui tabela desta origem; ela entra pelo upload de "
+                "quem tem a licença dela.",
+                {"origin": catalog.origin.value},
+            )
+        object_sha256 = upload.sha256.lower()
+        published = session.scalar(
+            select(ReferenceCatalogRecord).where(
+                ReferenceCatalogRecord.object_sha256 == object_sha256
+            )
+        )
+        if published is not None:
+            raise _problem(
+                "REFERENCE_CATALOG_ALREADY_PUBLISHED",
+                status.HTTP_409_CONFLICT,
+                "Este conteúdo já está no acervo; publicação é imutável e uma data-base "
+                "nova é entrada nova.",
+                {"reference_catalog_id": published.id},
+            )
+
+        object_key = reference_catalog_key(object_sha256=object_sha256)
+        application.state.artifact_store.write_object(
+            object_key=object_key, body=body, content_type=CATALOG_CONTENT_TYPE
+        )
+        record = ReferenceCatalogRecord(
+            id=str(new_uuid7()),
+            display_name=payload.display_name,
+            # Origem, data-base, digest da fonte e contagem vêm de DENTRO do arquivo: o
+            # rótulo não pode discordar do conteúdo, e um catálogo publicado com a data-base
+            # errada mudaria o preço de todo tenant que o escolhesse.
+            origin=catalog.origin.value,
+            reference_month=catalog.reference_month,
+            object_sha256=object_sha256,
+            source_sha256=catalog.source_sha256,
+            entry_count=len(catalog.entries),
+            object_key=object_key,
+            status=STATUS_AVAILABLE,
+            published_by=principal.subject,
+            published_at=datetime.now(UTC),
+            withdrawn_at=None,
+        )
+        session.add(record)
+        upload.status = "VERIFIED"
+        response = _reference_catalog_response(record)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="REFERENCE_CATALOG_PUBLISHED",
+            resource_type="reference_catalog",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+            # Sem tenant alvo: o ato vale para todos, e o `tenant_id` gravado é o do
+            # OPERADOR (decisão 11). Os detalhes dizem QUAL documento passou a valer para
+            # todos, que é o que a linha de auditoria precisaria de um join para saber.
+            details={
+                "reference_catalog_id": record.id,
+                "origin": record.origin,
+                "reference_month": record.reference_month,
+            },
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/platform/reference-catalogs",
+        response_model=ReferenceCatalogListResponse,
+        tags=["platform"],
+    )
+    async def list_reference_catalogs(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ReferenceCatalogListResponse:
+        """O acervo INTEIRO, inclusive o que está fora de circulação.
+
+        Leitura sem `Idempotency-Key` e sem auditoria, como as demais listagens de
+        plataforma. O que foi retirado continua na lista, com `withdrawn_at` carimbado:
+        sumir com a linha apagaria a trilha do que houve — e a rodada que o referencia
+        continua funcionando, então o registro precisa continuar legível.
+
+        Ordenação em Python, como em `_all_known_tenant_ids`: SQLite (testes) e PostgreSQL
+        (hospedado) não ordenam texto do mesmo jeito, e a tela lê a ordem. O `id` fecha o
+        critério porque é UUIDv7 — duas publicações da mesma origem e data-base saem na
+        ordem em que foram publicadas.
+        """
+        _require_platform_operator(principal)
+        records = session.scalars(select(ReferenceCatalogRecord)).all()
+        ordered = sorted(
+            records, key=lambda record: (record.origin, record.reference_month, record.id)
+        )
+        return ReferenceCatalogListResponse(
+            catalogs=[_reference_catalog_response(record) for record in ordered]
+        )
+
+    @application.post(
+        "/v1/platform/reference-catalogs/{reference_catalog_id}/withdraw",
+        response_model=ReferenceCatalogResponse,
+        tags=["platform"],
+    )
+    async def withdraw_reference_catalog(
+        reference_catalog_id: UUID,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReferenceCatalogResponse:
+        """Tira o catálogo de circulação: ele deixa de ser oferecido e **não** é apagado.
+
+        Apagar quebraria toda rodada que já o referencia — o preço de uma linha de orçamento
+        cita o digest da fonte, e uma fonte que sumiu do store deixaria de poder ser relida.
+        Por isso o ato carimba `status` e `withdrawn_at`, e nada mais: a linha continua na
+        listagem, o objeto continua no store, e o que muda é só o catálogo sair das escolhas
+        novas.
+
+        Sem corpo: o ato é inteiramente identificado pela rota. Retirar o que já está fora de
+        circulação devolve o registro como está, sem recarimbar a data nem auditar de novo —
+        a data verdadeira é a da retirada, não a da última vez que alguém repetiu o pedido.
+        """
+        _require_platform_operator(principal)
+        operation = f"platform.reference-catalogs.withdraw:{reference_catalog_id}"
+        request_hash = _request_hash(_PARAMETERLESS_COMMAND)
+        existing_response = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing_response is not None:
+            return ReferenceCatalogResponse.model_validate(existing_response)
+
+        record = session.get(ReferenceCatalogRecord, str(reference_catalog_id))
+        if record is None:
+            raise _problem(
+                "NOT_FOUND", status.HTTP_404_NOT_FOUND, "Catálogo do acervo não encontrado."
+            )
+        already_withdrawn = record.status == STATUS_WITHDRAWN
+        if not already_withdrawn:
+            record.status = STATUS_WITHDRAWN
+            record.withdrawn_at = datetime.now(UTC)
+        response = _reference_catalog_response(record)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        if not already_withdrawn:
+            _record_audit(
+                session,
+                principal=principal,
+                action="REFERENCE_CATALOG_WITHDRAWN",
+                resource_type="reference_catalog",
+                resource_id=record.id,
+                request_id=request.state.request_id,
+                details={
+                    "reference_catalog_id": record.id,
+                    "origin": record.origin,
+                    "reference_month": record.reference_month,
+                },
+            )
+        session.commit()
+        return response
+
     @application.post("/v1/uploads/presign", response_model=PresignUploadResponse, tags=["uploads"])
     async def presign_upload(
         payload: PresignUploadRequest,
@@ -3983,36 +4599,14 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         if existing is not None:
             return PresignUploadResponse.model_validate(existing)
-        upload_id = new_uuid7()
-        safe_filename = _safe_filename(payload.filename, payload.content_type)
-        object_key = f"tenants/{principal.tenant_id}/uploads/{upload_id}/{safe_filename}"
-        expires_at = datetime.now(UTC) + timedelta(minutes=15)
-        record = UploadRecord(
-            id=str(upload_id),
-            tenant_id=principal.tenant_id,
-            object_key=object_key,
-            filename=safe_filename,
+        record, response = _presign_tenant_upload(
+            application,
+            principal=principal,
+            filename=payload.filename,
             content_type=payload.content_type,
             size_bytes=payload.size_bytes,
-            sha256=payload.sha256.lower(),
-        )
-        checksum_sha256 = base64.b64encode(bytes.fromhex(payload.sha256)).decode("ascii")
-        artifact_store: ArtifactStore = application.state.artifact_store
-        url = artifact_store.presign_upload(
-            object_key=object_key,
-            checksum_sha256=checksum_sha256,
-            content_type=payload.content_type,
-        )
-        headers: dict[str, str] = {"Content-Type": payload.content_type}
-        if runtime_settings.storage_flavor == "s3":
-            # O header entra na assinatura só no S3; enviá-lo ao GCS faria o PUT falhar.
-            headers["x-amz-checksum-sha256"] = checksum_sha256
-        response = PresignUploadResponse(
-            upload_id=upload_id,
-            object_key=object_key,
-            url=url,
-            headers=headers,
-            expires_at=expires_at,
+            sha256=payload.sha256,
+            storage_flavor=runtime_settings.storage_flavor,
         )
         session.add(record)
         _store_idempotent_response(
@@ -4028,7 +4622,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             principal=principal,
             action="UPLOAD_PRESIGNED",
             resource_type="upload",
-            resource_id=str(upload_id),
+            resource_id=str(response.upload_id),
             request_id=request.state.request_id,
         )
         session.commit()
@@ -7197,7 +7791,12 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             content_type=CATALOG_CONTENT_TYPE,
             storage_flavor=runtime_settings.storage_flavor,
         )
-        _catalog, summary = _install_catalog(application, upload)
+        _catalog, summary = _install_catalog(
+            application,
+            object_key=upload.object_key,
+            object_sha256=upload.sha256.lower(),
+            unreadable_code="INVALID_UPLOAD",
+        )
 
         now = datetime.now(UTC)
         round_id = new_uuid7()
@@ -9090,6 +9689,66 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session.commit()
         return response
 
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/reference-catalogs",
+        response_model=EstimateReferenceCatalogListResponse,
+        tags=["estimate"],
+    )
+    async def list_estimate_reference_catalogs(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> EstimateReferenceCatalogListResponse:
+        """As tabelas do acervo que ESTA rodada pode instalar (F-037, ADR-0047).
+
+        A listagem vive sob a rodada, e não numa rota global, porque a rodada é quem
+        conhece o regime: sob contrato licitado, o servidor já devolve só a origem que a
+        instalação aceitaria. Uma rota global obrigaria a tela a reimplementar a regra do
+        regime e a descobrir a divergência num `409` — exatamente o que a F-033 evitou ao
+        publicar `allowed_cascade_origins` do servidor.
+
+        Dois filtros, e só dois: **em circulação** (o que foi retirado deixa de ser
+        oferecido, sem sumir do registro nem quebrar a rodada que já o instalou) e **aceito
+        pelo regime**. Origem já instalada continua aparecendo: instalar a segunda da mesma
+        origem recusa com `ESTIMATE_CASCADE_ORIGIN_DUPLICATE`, e esconder a tabela faria a
+        lista mentir sobre o que o acervo tem.
+
+        Leitura livre para quem opera o orçamento (decisão 5): o acervo é público, não há
+        entitlement por tenant e não há tenant a comparar. O papel é exigido antes de
+        qualquer lookup, e a rodada continua sendo do tenant — rodada alheia é `404`.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        published = session.scalars(
+            select(ReferenceCatalogRecord).where(ReferenceCatalogRecord.status == STATUS_AVAILABLE)
+        ).all()
+        offered = [
+            catalog
+            for catalog in published
+            if estimate_rounds.origin_allowed_under_regime(
+                catalog.origin, regime=record.pricing_regime
+            )
+        ]
+        # Ordenação em Python, como na listagem de plataforma: SQLite (testes) e PostgreSQL
+        # (hospedado) não ordenam texto do mesmo jeito, e a tela lê a ordem.
+        ordered = sorted(
+            offered, key=lambda catalog: (catalog.origin, catalog.reference_month, catalog.id)
+        )
+        return EstimateReferenceCatalogListResponse(
+            round_id=round_id,
+            catalogs=[
+                EstimateReferenceCatalogOption(
+                    reference_catalog_id=UUID(catalog.id),
+                    display_name=catalog.display_name,
+                    origin=catalog.origin,
+                    reference_month=catalog.reference_month,
+                    entry_count=catalog.entry_count,
+                    source_sha256=catalog.source_sha256,
+                )
+                for catalog in ordered
+            ],
+        )
+
     @application.post(
         "/v1/estimate-rounds/{round_id}/catalogs",
         response_model=EstimateCascadeResponse,
@@ -9106,6 +9765,12 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
     ) -> EstimateCascadeResponse:
         """Instala uma fonte de preço no FIM da cascata; a posição é a precedência.
 
+        A fonte vem de UM de dois caminhos, nunca dos dois: a tabela escolhida no acervo da
+        plataforma (`reference_catalog_id`) ou o arquivo próprio do cliente (`upload_id`).
+        A entrada gravada é a mesma nos dois casos, com a **procedência** declarada ao lado
+        (ADR-0047 decisão 7) — e todas as regras da cascata valem iguais, porque o que muda
+        é de onde o arquivo veio, não o que ele é.
+
         O catálogo é lido e validado ANTES de a entrada existir, como na criação da rodada
         de medição: uma fonte que não valida aqui viraria uma cascata inutilizável em toda
         etapa seguinte. Segunda fonte da mesma origem recusa com
@@ -9115,9 +9780,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         Na rodada sob contrato licitado (ADR-0045), fonte de origem fora da tabela
         contratual recusa aqui com `409 ESTIMATE_CASCADE_ORIGIN_FORBIDDEN`, pelo mesmo
         motivo e no mesmo instante: a alternativa seria descobrir o erro na medição, sobre
-        serviço já executado.
+        serviço já executado. Vale igual para a tabela do acervo, que por isso nem chega a
+        ser oferecida na escolha daquela rodada.
         """
         _require_valuation_reviewer(principal)
+        provenance, source_id = _catalog_source(payload)
         operation = f"estimate-rounds.catalogs:{round_id}"
         request_hash = _request_hash(payload)
         existing = _idempotent_response(
@@ -9133,21 +9800,44 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         estimate_rounds.require_base_version(record, payload.base_version)
         entries = estimate_rounds.cascade_entries(record)
-        upload = _require_valuation_upload(
-            session,
+        upload: UploadRecord | None = None
+        reference: ReferenceCatalogRecord | None = None
+        if provenance == estimate_rounds.PROVENANCE_TENANT_UPLOAD:
+            # O filtro por tenant do upload continua exatamente onde estava: o acervo é a
+            # exceção autorizada, o arquivo do cliente não.
+            upload = _require_valuation_upload(
+                session,
+                application,
+                upload_id=source_id,
+                principal=principal,
+                content_type=CATALOG_CONTENT_TYPE,
+                storage_flavor=runtime_settings.storage_flavor,
+            )
+            object_key = upload.object_key
+            object_sha256 = upload.sha256.lower()
+            unreadable_code = "INVALID_UPLOAD"
+        else:
+            reference = _require_available_reference_catalog(
+                session, reference_catalog_id=source_id
+            )
+            object_key = reference.object_key
+            object_sha256 = reference.object_sha256
+            unreadable_code = "REFERENCE_CATALOG_UNREADABLE"
+
+        catalog, summary = _install_catalog(
             application,
-            upload_id=payload.upload_id,
-            principal=principal,
-            content_type=CATALOG_CONTENT_TYPE,
-            storage_flavor=runtime_settings.storage_flavor,
+            object_key=object_key,
+            object_sha256=object_sha256,
+            unreadable_code=unreadable_code,
         )
-        catalog, summary = _install_catalog(application, upload)
         estimate_rounds.ensure_source_installable(entries, catalog, regime=record.pricing_regime)
 
         installed = estimate_rounds.installed_entry(
-            upload_id=str(payload.upload_id),
-            object_key=upload.object_key,
-            object_sha256=upload.sha256.lower(),
+            provenance=provenance,
+            upload_id=None if upload is None else upload.id,
+            reference_catalog_id=None if reference is None else reference.id,
+            object_key=object_key,
+            object_sha256=object_sha256,
             catalog=catalog,
             summary=summary,
         )
@@ -9159,7 +9849,8 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         ]
         record.version += 1
         record.updated_at = datetime.now(UTC)
-        upload.status = "VERIFIED"
+        if upload is not None:
+            upload.status = "VERIFIED"
         response = _estimate_cascade_response(record)
         _store_idempotent_response(
             session,

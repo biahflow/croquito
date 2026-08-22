@@ -1,4 +1,11 @@
-"""Persistência transacional tenant-scoped para o primeiro fluxo SaaS."""
+"""Persistência transacional tenant-scoped para o primeiro fluxo SaaS.
+
+Toda tabela de DADO DE CLIENTE tem `tenant_id`, e o isolamento é conferido no mesmo `where`
+do `id`. A única exceção é `ReferenceCatalogRecord`, o acervo de catálogos públicos da
+plataforma: ela não guarda dado de cliente, e a razão está escrita na docstring dela
+(ADR-0047, decisão 1). Tabela global nova exige ADR próprio — a ausência de `tenant_id`
+nunca é detalhe de implementação.
+"""
 
 from __future__ import annotations
 
@@ -208,6 +215,60 @@ class TenantJourneyEntitlementRecord(Base):
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
+
+
+class ReferenceCatalogRecord(Base):
+    """Catálogo público de referência publicado pela plataforma — **sem `tenant_id`**.
+
+    A ausência é a decisão 1 do ADR-0047, não esquecimento: esta é a primeira e, por
+    enquanto, a única tabela do projeto sem coluna de tenant. Uma tabela pública de preços
+    **não tem dono** — SINAPI, SICRO e o catálogo do SCO são documentos publicados, iguais
+    byte a byte para todo cliente. Replicá-los por tenant guardaria N cópias idênticas de um
+    documento público para satisfazer um invariante que existe para proteger dado PRIVADO.
+
+    A condição que sustenta a ausência está escrita, e é ela que qualquer mudança futura
+    tem de reler: **nenhuma coluna aqui deriva de conteúdo de cliente**. Tudo o que entra
+    vem de um arquivo que o operador da plataforma publicou — `origin`, `reference_month`,
+    `source_sha256` e `entry_count` são lidos de DENTRO do `catalog.json`, e o único texto
+    escrito à mão é o nome de exibição, digitado pelo operador. Nada aqui é derivado de
+    prancha, levantamento, orçamento ou rodada de cliente algum. O teste que verifica essa
+    condição é parte da feature (`tests/api/test_reference_catalogs.py`); acrescentar coluna
+    que a viole é decisão de arquitetura, e exige ADR próprio.
+
+    Cada publicação é imutável e endereçada pelo digest do arquivo (`object_sha256`), que é
+    único: republicar o mesmo conteúdo é recusado, e data-base nova é entrada NOVA. Nunca há
+    atualização no lugar — sobrescrever mudaria preço para todos os tenants ao mesmo tempo,
+    inclusive em rodadas já montadas (ADR-0047 decisão 3, ADR-0027 decisão 4).
+
+    Retirar de circulação carimba `status` e `withdrawn_at`; a linha e o objeto continuam
+    existindo, porque uma rodada antiga ainda os referencia.
+    """
+
+    __tablename__ = "reference_catalogs"
+    __table_args__ = (UniqueConstraint("object_sha256", name="uq_reference_catalog_object"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(200))
+    """Único valor DIGITADO: o nome que a escolha exibe. Origem, data-base e contagem vêm do
+    arquivo justamente para que o rótulo não possa discordar do conteúdo."""
+    origin: Mapped[str] = mapped_column(String(16))
+    reference_month: Mapped[str] = mapped_column(String(7))
+    object_sha256: Mapped[str] = mapped_column(String(64))
+    """Digest dos BYTES do `catalog.json` publicado; é ele que endereça o objeto no store."""
+    source_sha256: Mapped[str] = mapped_column(String(64))
+    """Digest do arquivo de ORIGEM (`.xlsx`, `.DBF`) que o importador leu, carimbado por ele
+    dentro do catálogo. Não é o mesmo que `object_sha256`, e a distinção é a mesma que a
+    `CascadeEntry` já faz: um confere a integridade do objeto lido, o outro é a identidade
+    da fonte que a decisão de código cita."""
+    entry_count: Mapped[int] = mapped_column(Integer)
+    object_key: Mapped[str] = mapped_column(String(512))
+    """Chave do objeto sob o prefixo do acervo, FORA de `tenants/` (ADR-0047 decisão 6).
+    Nenhuma rota assina URL dela: o cliente escolhe a tabela, o servidor é quem a lê."""
+    status: Mapped[str] = mapped_column(String(16), default="AVAILABLE")
+    """``AVAILABLE`` | ``WITHDRAWN``. Retirar não apaga."""
+    published_by: Mapped[str] = mapped_column(String(128))
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AiProcessingAuthorizationRecord(Base):

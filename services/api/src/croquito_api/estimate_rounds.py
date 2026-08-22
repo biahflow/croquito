@@ -97,6 +97,7 @@ ESTIMATE_WORKBOOK_AUDIT_FAILED: Final = "ESTIMATE_WORKBOOK_AUDIT_FAILED"
 ESTIMATE_BDI_INVALID: Final = "ESTIMATE_BDI_INVALID"
 ESTIMATE_TARGET_INVALID: Final = "ESTIMATE_TARGET_INVALID"
 ESTIMATE_CASCADE_ORIGIN_FORBIDDEN: Final = "ESTIMATE_CASCADE_ORIGIN_FORBIDDEN"
+ESTIMATE_CATALOG_SOURCE_INVALID: Final = "ESTIMATE_CATALOG_SOURCE_INVALID"
 ESTIMATE_REGIME_CASCADE_DIRTY: Final = "ESTIMATE_REGIME_CASCADE_DIRTY"
 ESTIMATE_REGIME_IRREVERSIBLE: Final = "ESTIMATE_REGIME_IRREVERSIBLE"
 
@@ -113,6 +114,14 @@ REGIME_ALLOWED_ORIGINS: Final[tuple[str, ...]] = (PriceOrigin.SCO.value,)
 
 Restringir a origem NÃO confere o contrato: garante que o preço veio do SCO, não que veio
 da tabela, data-base e desconto daquele contrato. A lacuna está nomeada no ADR-0045."""
+
+PROVENANCE_REFERENCE_CATALOG: Final = "reference_catalog"
+"""A fonte veio do acervo da plataforma: alguém publicou aquele arquivo para todos."""
+
+PROVENANCE_TENANT_UPLOAD: Final = "tenant_upload"
+"""A fonte é tabela PRÓPRIA do cliente, subida por ele — a EMOP que ele licenciou, o
+catálogo de um contrato específico. É o caminho que existia antes da F-037, e por isso é
+como se lê a ausência do campo numa cascata instalada antes dela: era o único que havia."""
 
 STAGE_CATALOGS: Final = "catalogs"
 STAGE_ESTIMATE: Final = "estimate"
@@ -143,7 +152,6 @@ REVISION_MAP_COLUMNS: Final[tuple[str, ...]] = ("artifact_refs_json", "artifact_
 REVISION_COLUMNS: Final[tuple[str, ...]] = REVISION_DOCUMENT_COLUMNS + REVISION_MAP_COLUMNS
 
 _CASCADE_ENTRY_FIELDS: Final[tuple[str, ...]] = (
-    "upload_id",
     "object_key",
     "object_sha256",
     "source_sha256",
@@ -151,6 +159,11 @@ _CASCADE_ENTRY_FIELDS: Final[tuple[str, ...]] = (
     "reference_month",
     "source_label",
 )
+"""Campos que TODA entrada tem, venha o arquivo de onde vier."""
+
+_CASCADE_SOURCE_FIELDS: Final[tuple[str, ...]] = ("upload_id", "reference_catalog_id")
+"""Identificadores de fonte: exatamente UM por entrada, e é ele que diz de onde o arquivo
+veio. Entrada anterior à F-037 só tem `upload_id`, e continua satisfazendo a regra."""
 
 
 # --- recusas ------------------------------------------------------------------------------
@@ -409,7 +422,15 @@ class CascadeEntry:
     """
 
     position: int
-    upload_id: str
+    provenance: str
+    """De onde veio o ARQUIVO desta fonte: `reference_catalog` (o acervo da plataforma) ou
+    `tenant_upload` (tabela própria, subida pelo cliente). É o fato de quem publicou o
+    arquivo, e não de onde o preço vem — isso é `origin`. Uma proveniência que não
+    distinguisse os dois mentiria sobre a origem do preço (ADR-0047 decisão 7)."""
+    upload_id: str | None
+    """Preenchido só na tabela própria; `None` quando a fonte veio do acervo."""
+    reference_catalog_id: str | None
+    """Preenchido só no acervo; `None` quando a fonte é tabela própria do cliente."""
     object_key: str
     object_sha256: str
     """Digest dos BYTES do JSON gravado no store; é ele que a releitura tem de reproduzir.
@@ -428,13 +449,17 @@ class CascadeEntry:
     summary: dict[str, Any]
 
     def payload(self) -> dict[str, Any]:
-        """A entrada como a tela a lê; `object_key` e `upload_id` não saem daqui.
+        """A entrada como a tela a lê; `object_key` e os dois identificadores de fonte não
+        saem daqui.
 
         A chave do objeto é referência interna do store: publicá-la daria ao cliente o
-        endereço de um artefato que ele só pode ler por URL assinada.
+        endereço de um artefato que ele só pode ler por URL assinada. O que sai é a
+        `provenance` — o FATO de quem publicou o arquivo, que a tela mostra ao lado da
+        fonte —, e não o identificador do upload ou da linha do acervo que o carrega.
         """
         return {
             "position": self.position,
+            "provenance": self.provenance,
             "origin": self.origin,
             "source_sha256": self.source_sha256,
             "reference_month": self.reference_month,
@@ -443,12 +468,43 @@ class CascadeEntry:
         }
 
 
+def _entry_provenance(
+    raw: Mapping[str, Any], *, source_field: str, round_record: EstimateRoundRecord, position: int
+) -> str:
+    """A procedência gravada, conferida contra o identificador de fonte que a entrada tem.
+
+    Ausência é o caso legítimo — toda entrada instalada antes da F-037 — e por isso não
+    recusa: ela é derivada do identificador presente, que naquelas entradas é sempre o do
+    upload. Valor desconhecido, ou que CONTRADIZ o identificador, recusa: rotular a fonte
+    com uma procedência que o próprio registro desmente seria mentir sobre quem publicou o
+    arquivo, que é justamente o que este campo existe para não deixar acontecer.
+    """
+    derived = (
+        PROVENANCE_REFERENCE_CATALOG
+        if source_field == "reference_catalog_id"
+        else PROVENANCE_TENANT_UPLOAD
+    )
+    declared = raw.get("provenance")
+    if declared is None:
+        return derived
+    if declared != derived:
+        raise catalog_required(
+            "a fonte instalada nesta posição declara uma procedência que o registro não sustenta",
+            {"round_id": round_record.id, "position": position},
+        )
+    return str(declared)
+
+
 def cascade_entries(round_record: EstimateRoundRecord) -> list[CascadeEntry]:
     """A cascata instalada, na ordem gravada. Lista vazia é a rodada recém-aberta.
 
     Entrada malformada recusa com `CATALOG_REQUIRED`, e não com erro de servidor: quem
     escreve esta coluna é a rota de instalação, então um registro que não decodifica é
     falha de ambiente (dado adulterado, migração incompleta) e não do ato corrente.
+
+    Entrada instalada ANTES da F-037 não tem `provenance` nem `reference_catalog_id`: ela
+    tem `upload_id`, e a ausência lê como tabela própria — que é o que ela é, porque era o
+    único caminho que existia. Nada é reescrito retroativamente.
     """
     entries: list[CascadeEntry] = []
     for position, raw in enumerate(round_record.catalog_cascade_json or [], start=1):
@@ -459,11 +515,26 @@ def cascade_entries(round_record: EstimateRoundRecord) -> list[CascadeEntry]:
                 "a cascata instalada nesta rodada não pôde ser lida",
                 {"round_id": round_record.id, "position": position},
             )
+        sources = [field for field in _CASCADE_SOURCE_FIELDS if isinstance(raw.get(field), str)]
+        if len(sources) != 1:
+            raise catalog_required(
+                "a fonte instalada nesta posição não declara de onde o arquivo veio",
+                {"round_id": round_record.id, "position": position},
+            )
+        provenance = _entry_provenance(
+            raw, source_field=sources[0], round_record=round_record, position=position
+        )
         summary = raw.get("summary")
+        upload_id = raw.get("upload_id")
+        reference_catalog_id = raw.get("reference_catalog_id")
         entries.append(
             CascadeEntry(
                 position=position,
-                upload_id=str(raw["upload_id"]),
+                provenance=provenance,
+                upload_id=None if upload_id is None else str(upload_id),
+                reference_catalog_id=(
+                    None if reference_catalog_id is None else str(reference_catalog_id)
+                ),
                 object_key=str(raw["object_key"]),
                 object_sha256=str(raw["object_sha256"]),
                 source_sha256=str(raw["source_sha256"]),
@@ -521,6 +592,17 @@ def ensure_regime_declarable(
         raise regime_cascade_dirty(forbidden)
 
 
+def origin_allowed_under_regime(origin: str, *, regime: str | None) -> bool:
+    """A origem entra na cascata desta rodada? UMA formulação da regra, para dois usos.
+
+    A instalação recusa por ela (`ensure_source_installable`) e a escolha do acervo filtra
+    por ela: oferecer na lista uma tabela que a instalação vai recusar é oferecer uma
+    recusa. Duas cópias da condição divergiriam no dia em que o regime mudasse, e a tela
+    descobriria a divergência num `409`.
+    """
+    return regime != REGIME_CONTRACTED_DEMAND or origin in REGIME_ALLOWED_ORIGINS
+
+
 def ensure_source_installable(
     entries: Sequence[CascadeEntry], catalog: PriceCatalog, *, regime: str | None
 ) -> None:
@@ -542,7 +624,7 @@ def ensure_source_installable(
     conseguiriam distinguir a fonte. É recusa de instalação porque é aí que o segundo
     aparece; depois já não haveria o que corrigir sem abrir rodada nova.
     """
-    if regime == REGIME_CONTRACTED_DEMAND and catalog.origin.value not in REGIME_ALLOWED_ORIGINS:
+    if not origin_allowed_under_regime(catalog.origin.value, regime=regime):
         raise cascade_origin_forbidden(catalog.origin.value)
     if any(entry.origin == catalog.origin.value for entry in entries):
         raise cascade_origin_duplicate(catalog.origin.value)
@@ -558,15 +640,25 @@ def ensure_source_installable(
 
 def installed_entry(
     *,
-    upload_id: str,
+    provenance: str,
+    upload_id: str | None,
+    reference_catalog_id: str | None,
     object_key: str,
     object_sha256: str,
     catalog: PriceCatalog,
     summary: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """A entrada nova da cascata, com os metadados lidos do catálogo já validado."""
+    """A entrada nova da cascata, com os metadados lidos do catálogo já validado.
+
+    O identificador da fonte é gravado no campo do caminho que a instalou, e só nele: a
+    entrada do acervo não tem `upload_id` porque não houve upload, e a de tabela própria
+    não tem `reference_catalog_id` porque não há linha de acervo. Guardar uma chave vazia
+    no campo do outro caminho faria a leitura ter de distinguir "vazio" de "ausente".
+    """
     return {
-        "upload_id": upload_id,
+        "provenance": provenance,
+        **({} if upload_id is None else {"upload_id": upload_id}),
+        **({} if reference_catalog_id is None else {"reference_catalog_id": reference_catalog_id}),
         "object_key": object_key,
         "object_sha256": object_sha256,
         "source_sha256": catalog.source_sha256,
@@ -602,9 +694,19 @@ def reordered_cascade(
 
 
 def _entry_document(entry: CascadeEntry) -> dict[str, Any]:
-    """A entrada de volta na forma gravada; `position` não entra, porque é a ordem da lista."""
+    """A entrada de volta na forma gravada; `position` não entra, porque é a ordem da lista.
+
+    A procedência viaja junto: reordenar e remover mexem na cascata, nunca em de onde o
+    arquivo de cada fonte veio.
+    """
     return {
-        "upload_id": entry.upload_id,
+        "provenance": entry.provenance,
+        **({} if entry.upload_id is None else {"upload_id": entry.upload_id}),
+        **(
+            {}
+            if entry.reference_catalog_id is None
+            else {"reference_catalog_id": entry.reference_catalog_id}
+        ),
         "object_key": entry.object_key,
         "object_sha256": entry.object_sha256,
         "source_sha256": entry.source_sha256,

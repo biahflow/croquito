@@ -57,6 +57,9 @@ from tests.fakes import FakeObjectStore, synthetic_pdf
 
 _TENANT = "tenant-a"
 _OTHER_TENANT = "tenant-b"
+_PLATFORM_TENANT = "tenant-plataforma"
+"""Quem publica no acervo. Não é o tenant da rodada de propósito: o acervo é dado da
+PLATAFORMA, e uma tabela publicada por um tenant é instalável por outro sem novo upload."""
 
 _SCO_CODE = "CE04100010(/)"
 _EMOP_CODE = "03.005.0010-A"
@@ -232,6 +235,78 @@ def _install_catalog(
     )
 
 
+def _presign_reference_catalog(client: TestClient, *, payload: bytes, key: str) -> dict[str, Any]:
+    """O presign DA PLATAFORMA (T6): publicar não passa pelo presign do croqui."""
+    presign = client.post(
+        "/v1/platform/reference-catalogs/presign",
+        headers=_headers(_PLATFORM_TENANT, "platform_operator", key=key),
+        json={
+            "filename": "catalogo.json",
+            "size_bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        },
+    )
+    assert presign.status_code == 200, presign.text
+    _store(client).put_direct(
+        object_key=presign.json()["object_key"], body=payload, content_type="application/json"
+    )
+    return cast(dict[str, Any], presign.json())
+
+
+def _publish_reference_catalog(
+    client: TestClient,
+    *,
+    origin: PriceOrigin = PriceOrigin.SCO,
+    display_name: str = "SCO-Rio FGV06 desonerado",
+    key: str = "acervo-sco",
+    unit: str = "m",
+    unit_price: str = "50.00",
+    source_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Publica no acervo da plataforma o MESMO arquivo que o upload subiria.
+
+    Idêntico byte a byte ao de `_install_catalog` para o mesmo `origin`: é isso que torna
+    conferível a afirmação de que a procedência é metadado, e não regra nova — os dois
+    caminhos precisam produzir o mesmo `source_sha256` e o mesmo preço por linha.
+    """
+    payload = _catalog_bytes(
+        origin=origin, unit=unit, unit_price=unit_price, source_sha256=source_sha256
+    )
+    upload = _presign_reference_catalog(client, payload=payload, key=f"upload-{key}")
+    response = client.post(
+        "/v1/platform/reference-catalogs",
+        headers=_headers(_PLATFORM_TENANT, "platform_operator", key=key),
+        json={"upload_id": upload["upload_id"], "display_name": display_name},
+    )
+    assert response.status_code == 201, response.text
+    return cast(dict[str, Any], response.json())
+
+
+def _install_from_acervo(
+    client: TestClient,
+    round_id: str,
+    *,
+    reference_catalog_id: str,
+    base_version: int,
+    key: str,
+    tenant: str = _TENANT,
+) -> Any:
+    """Instala citando a tabela do acervo: nenhum arquivo sobe, e nada é assinado."""
+    return client.post(
+        f"/v1/estimate-rounds/{round_id}/catalogs",
+        headers=_headers(tenant, key=key),
+        json={"reference_catalog_id": reference_catalog_id, "base_version": base_version},
+    )
+
+
+def _reference_catalog_options(
+    client: TestClient, round_id: str, *, tenant: str = _TENANT, key: str = "escolha"
+) -> Any:
+    return client.get(
+        f"/v1/estimate-rounds/{round_id}/reference-catalogs", headers=_headers(tenant, key=key)
+    )
+
+
 def _plate_upload(client: TestClient, *, tenant: str = _TENANT, key: str = "prancha") -> Any:
     return _presign_and_put(
         client,
@@ -346,16 +421,31 @@ def _round_with_cascade_and_takeoff(
     packet: TakeoffPacket | None = None,
     *,
     confirm: Sequence[str] = (_ITEM_FIRST,),
+    sco_from_acervo: bool = False,
 ) -> dict[str, Any]:
     """Rodada com SCO e EMOP instalados, nessa ordem, e o takeoff publicado e revisado.
 
     A confirmação passa pela ROTA de decisão, e não por escrita direta: é o caminho que o
     orçamentista percorre, e usá-lo aqui faz cada cenário adiante partir de um estado que
     a própria API produziu.
+
+    `sco_from_acervo` troca **só** de onde o arquivo do SCO veio — mesmo conteúdo, mesma
+    ordem, mesma EMOP por upload (que é o caminho dela: tabela paga, fora do acervo). É o
+    que permite montar o mesmo orçamento pelos dois caminhos e comparar.
     """
     created = _create_round(client)
     round_id = created["round_id"]
-    sco = _install_catalog(client, round_id, origin=PriceOrigin.SCO, base_version=1)
+    if sco_from_acervo:
+        published = _publish_reference_catalog(client)
+        sco = _install_from_acervo(
+            client,
+            round_id,
+            reference_catalog_id=published["reference_catalog_id"],
+            base_version=1,
+            key="catalogo-sco-acervo",
+        )
+    else:
+        sco = _install_catalog(client, round_id, origin=PriceOrigin.SCO, base_version=1)
     assert sco.status_code == 201, sco.text
     emop = _install_catalog(
         client, round_id, origin=PriceOrigin.EMOP, base_version=2, unit_price="40.00"
@@ -436,6 +526,8 @@ def test_sem_o_papel_toda_rota_recusa_antes_do_lookup(tmp_path: Path) -> None:
         "/v1/estimate-rounds",
         f"/v1/estimate-rounds/{round_id}",
         f"/v1/estimate-rounds/{ghost}",
+        f"/v1/estimate-rounds/{round_id}/reference-catalogs",
+        f"/v1/estimate-rounds/{ghost}/reference-catalogs",
         f"/v1/estimate-rounds/{round_id}/plate",
         f"/v1/estimate-rounds/{round_id}/takeoff",
         f"/v1/estimate-rounds/{round_id}/takeoff/overlay",
@@ -1628,7 +1720,9 @@ def _revisions_with(client: TestClient, column: str) -> list[EstimateRoundRevisi
     return [revision for revision in _revisions(client) if getattr(revision, column) is not None]
 
 
-def _round_ready_for_estimate(client: TestClient) -> dict[str, Any]:
+def _round_ready_for_estimate(
+    client: TestClient, *, sco_from_acervo: bool = False
+) -> dict[str, Any]:
     """Rodada com duas fontes, dois itens confirmados e um código por fonte.
 
     Um item por origem é o que faz a proveniência do orçamentista aparecer em NÚMERO: os
@@ -1636,7 +1730,9 @@ def _round_ready_for_estimate(client: TestClient) -> dict[str, Any]:
     preço da fonte que a decisão citou.
     """
     packet = _takeoff_packet([_takeoff_item(_ITEM_FIRST), _takeoff_item(_ITEM_SECOND)])
-    state = _round_with_cascade_and_takeoff(client, packet, confirm=(_ITEM_FIRST, _ITEM_SECOND))
+    state = _round_with_cascade_and_takeoff(
+        client, packet, confirm=(_ITEM_FIRST, _ITEM_SECOND), sco_from_acervo=sco_from_acervo
+    )
     digests = [entry["source_sha256"] for entry in state["cascade"]]
     first = _confirm_code(
         client,
@@ -1958,3 +2054,446 @@ def test_a_extracao_e_o_estado_nascem_com_carimbo_de_criacao(tmp_path: Path) -> 
     assert item["cascade_origins"] == []
     assert item["extraction_status"] == "idle"
     assert item["reference_label"] == "ORCAMENTO-BASE 2026"
+
+
+# --- acervo de catálogos na cascata (F-037 T2, ADR-0047) ---------------------------------
+
+
+def test_a_tabela_do_acervo_instala_sem_upload_e_a_cascata_declara_a_procedencia(
+    tmp_path: Path,
+) -> None:
+    """O caminho novo inteiro: publicar uma vez, escolher da lista, instalar sem arquivo.
+
+    A tabela é publicada por OUTRO tenant — o da plataforma — e instalada na rodada do
+    cliente sem novo upload: é o que a decisão 1 do ADR-0047 significa na prática, um
+    documento público que não tem dono.
+    """
+    client = _client(tmp_path)
+    publicada = _publish_reference_catalog(client)
+    created = _create_round(client)
+    round_id = created["round_id"]
+
+    escolha = _reference_catalog_options(client, round_id)
+    assert escolha.status_code == 200, escolha.text
+    oferecidas = escolha.json()["catalogs"]
+    assert [oferecida["reference_catalog_id"] for oferecida in oferecidas] == [
+        publicada["reference_catalog_id"]
+    ]
+    assert oferecidas[0]["display_name"] == "SCO-Rio FGV06 desonerado"
+    assert oferecidas[0]["origin"] == "sco"
+    assert oferecidas[0]["entry_count"] == 1
+    # A identidade do operador que publicou não viaja para quem escolhe.
+    assert "published_by" not in oferecidas[0]
+
+    response = _install_from_acervo(
+        client,
+        round_id,
+        reference_catalog_id=publicada["reference_catalog_id"],
+        base_version=1,
+        key="instala-acervo",
+    )
+
+    assert response.status_code == 201, response.text
+    entrada = response.json()["cascade"][0]
+    assert entrada["provenance"] == "reference_catalog"
+    assert entrada["origin"] == "sco"
+    assert entrada["source_sha256"] == publicada["source_sha256"]
+    assert entrada["reference_month"] == "2026-01"
+    assert entrada["summary"]["entries"] == 1
+    # Nem a chave do objeto nem o identificador da linha do acervo saem para o cliente.
+    assert "object_key" not in entrada and "reference_catalog_id" not in entrada
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        gravada = record.catalog_cascade_json[0]
+        assert gravada["reference_catalog_id"] == publicada["reference_catalog_id"]
+        assert gravada["object_sha256"] == publicada["object_sha256"]
+        # Não houve upload: o campo do outro caminho fica ausente, e não vazio.
+        assert "upload_id" not in gravada
+
+
+def test_a_tabela_propria_continua_instalando_como_antes(tmp_path: Path) -> None:
+    """O caminho de hoje não muda: mesma entrada, com a procedência que ela sempre teve."""
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+
+    response = _install_catalog(client, round_id, origin=PriceOrigin.EMOP, base_version=1)
+
+    assert response.status_code == 201, response.text
+    entrada = response.json()["cascade"][0]
+    assert entrada["provenance"] == "tenant_upload"
+    assert entrada["origin"] == "emop"
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        gravada = record.catalog_cascade_json[0]
+        assert gravada["upload_id"]
+        assert "reference_catalog_id" not in gravada
+
+
+def test_corpo_com_as_duas_fontes_recusa_sem_gravar_nada(tmp_path: Path) -> None:
+    """Citar o acervo E o arquivo no mesmo ato é ambíguo sobre o que instalar, não sobre a
+    ordem de precedência do servidor — e escolher em silêncio gravaria o que ninguém pediu.
+    """
+    client = _client(tmp_path)
+    publicada = _publish_reference_catalog(client)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    upload = _presign_and_put(
+        client,
+        filename="catalogo.json",
+        content_type="application/json",
+        payload=_catalog_bytes(origin=PriceOrigin.SCO),
+        key="upload-ambiguo",
+    )
+
+    response = client.post(
+        f"/v1/estimate-rounds/{round_id}/catalogs",
+        headers=_headers(key="ambiguo"),
+        json={
+            "upload_id": upload["upload_id"],
+            "reference_catalog_id": publicada["reference_catalog_id"],
+            "base_version": 1,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "ESTIMATE_CATALOG_SOURCE_INVALID"
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert record.catalog_cascade_json == []
+        assert record.version == 1
+
+
+def test_corpo_sem_fonte_nenhuma_recusa_com_o_mesmo_codigo(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+
+    response = client.post(
+        f"/v1/estimate-rounds/{round_id}/catalogs",
+        headers=_headers(key="sem-fonte"),
+        json={"base_version": 1},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "ESTIMATE_CATALOG_SOURCE_INVALID"
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert record.catalog_cascade_json == []
+
+
+def test_o_orcamento_do_acervo_e_identico_ao_do_arquivo_proprio(tmp_path: Path) -> None:
+    """O critério que prova que a procedência é METADADO, e não regra nova.
+
+    Duas rodadas, dois ambientes, o mesmo catálogo do SCO: numa ele sobe como arquivo do
+    cliente, na outra vem do acervo. Cada linha do orçamento tem de sair idêntica — mesmo
+    `catalog_sha256`, mesma origem de preço, mesmo total —, porque quem publicou o arquivo
+    não muda o que o arquivo diz.
+    """
+    (tmp_path / "arquivo").mkdir()
+    (tmp_path / "acervo").mkdir()
+    por_arquivo = _client(tmp_path / "arquivo")
+    pelo_acervo = _client(tmp_path / "acervo")
+    estado_arquivo = _round_ready_for_estimate(por_arquivo)
+    estado_acervo = _round_ready_for_estimate(pelo_acervo, sco_from_acervo=True)
+
+    montagens = [
+        cliente.post(
+            f"/v1/estimate-rounds/{estado['round_id']}/estimate",
+            headers=_headers(key="montagem-comparada"),
+            json={"base_version": estado["version"], "bdi_percent": "25.00"},
+        )
+        for cliente, estado in (
+            (por_arquivo, estado_arquivo),
+            (pelo_acervo, estado_acervo),
+        )
+    ]
+
+    assert [montagem.status_code for montagem in montagens] == [200, 200], [
+        montagem.text for montagem in montagens
+    ]
+    do_arquivo, do_acervo = (montagem.json() for montagem in montagens)
+    assert do_acervo["estimate"]["lines"] == do_arquivo["estimate"]["lines"]
+    assert do_acervo["total_amount"] == do_arquivo["total_amount"] == "1125.00"
+    # A ÚNICA diferença é quem publicou o arquivo da primeira fonte.
+    assert [entry["provenance"] for entry in estado_acervo["cascade"]] == [
+        "reference_catalog",
+        "tenant_upload",
+    ]
+    assert [entry["provenance"] for entry in estado_arquivo["cascade"]] == [
+        "tenant_upload",
+        "tenant_upload",
+    ]
+    assert estado_acervo["digests"] == estado_arquivo["digests"]
+
+
+def test_sob_o_regime_a_escolha_so_oferece_a_tabela_contratual(tmp_path: Path) -> None:
+    """A lista filtra pelo regime no SERVIDOR, e instalar o que ele recusa segue recusando.
+
+    Oferecer na tela uma tabela que a instalação vai recusar é oferecer uma recusa; e o
+    filtro não substitui a guarda, porque quem cita o identificador direto continua sendo
+    recusado pelo mesmo código de sempre.
+    """
+    client = _client(tmp_path)
+    _publish_reference_catalog(client)
+    sinapi = _publish_reference_catalog(
+        client, origin=PriceOrigin.SINAPI, display_name="SINAPI 07/2026", key="acervo-sinapi"
+    )
+    state = _round_under_contract(client)
+    round_id = state["round_id"]
+
+    escolha = _reference_catalog_options(client, round_id)
+    assert escolha.status_code == 200, escolha.text
+    assert [oferecida["origin"] for oferecida in escolha.json()["catalogs"]] == ["sco"]
+
+    response = _install_from_acervo(
+        client,
+        round_id,
+        reference_catalog_id=sinapi["reference_catalog_id"],
+        base_version=state["version"],
+        key="instala-sinapi",
+    )
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "ESTIMATE_CASCADE_ORIGIN_FORBIDDEN"
+    assert detail["details"] == {"origin": "sinapi", "allowed_origins": ["sco"]}
+
+
+def test_sem_regime_a_escolha_oferece_todas_as_tabelas_publicadas(tmp_path: Path) -> None:
+    """Contra-exemplo do filtro: sem regime declarado, a lista não esconde nada."""
+    client = _client(tmp_path)
+    _publish_reference_catalog(client)
+    _publish_reference_catalog(
+        client, origin=PriceOrigin.SINAPI, display_name="SINAPI 07/2026", key="acervo-sinapi"
+    )
+    created = _create_round(client)
+
+    escolha = _reference_catalog_options(client, created["round_id"])
+
+    assert escolha.status_code == 200, escolha.text
+    assert [oferecida["origin"] for oferecida in escolha.json()["catalogs"]] == ["sco", "sinapi"]
+
+
+def test_tabela_fora_de_circulacao_some_da_escolha_e_nao_instala(tmp_path: Path) -> None:
+    """Retirar é parar de oferecer, não apagar — e a recusa cita o próprio código."""
+    client = _client(tmp_path)
+    publicada = _publish_reference_catalog(client)
+    retirada = client.post(
+        f"/v1/platform/reference-catalogs/{publicada['reference_catalog_id']}/withdraw",
+        headers=_headers(_PLATFORM_TENANT, "platform_operator", key="retirada"),
+    )
+    assert retirada.status_code == 200, retirada.text
+    created = _create_round(client)
+    round_id = created["round_id"]
+
+    escolha = _reference_catalog_options(client, round_id)
+    assert escolha.status_code == 200, escolha.text
+    assert escolha.json()["catalogs"] == []
+
+    response = _install_from_acervo(
+        client,
+        round_id,
+        reference_catalog_id=publicada["reference_catalog_id"],
+        base_version=1,
+        key="instala-retirada",
+    )
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "REFERENCE_CATALOG_WITHDRAWN"
+    assert detail["details"]["reference_catalog_id"] == publicada["reference_catalog_id"]
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert record.catalog_cascade_json == []
+
+
+def test_tabela_inexistente_no_acervo_e_404(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client)
+
+    response = _install_from_acervo(
+        client,
+        created["round_id"],
+        reference_catalog_id=str(uuid4()),
+        base_version=1,
+        key="instala-fantasma",
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "NOT_FOUND"
+
+
+def test_origem_repetida_recusa_igual_venha_a_fonte_de_onde_vier(tmp_path: Path) -> None:
+    """Uma origem por cascata vale para o acervo: a regra é da cascata, não do caminho."""
+    client = _client(tmp_path)
+    publicada = _publish_reference_catalog(client)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    primeiro = _install_catalog(client, round_id, origin=PriceOrigin.SCO, base_version=1)
+    assert primeiro.status_code == 201, primeiro.text
+
+    response = _install_from_acervo(
+        client,
+        round_id,
+        reference_catalog_id=publicada["reference_catalog_id"],
+        base_version=2,
+        key="instala-sco-repetida",
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "ESTIMATE_CASCADE_ORIGIN_DUPLICATE"
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert len(record.catalog_cascade_json) == 1
+
+
+def test_digest_de_origem_repetido_recusa_mesmo_vindo_do_acervo(tmp_path: Path) -> None:
+    """A terceira recusa de `ensure_source_installable` também não conhece procedência."""
+    client = _client(tmp_path)
+    compartilhado = "9" * 64
+    publicada = _publish_reference_catalog(
+        client,
+        origin=PriceOrigin.SINAPI,
+        display_name="SINAPI 07/2026",
+        key="acervo-sinapi",
+        source_sha256=compartilhado,
+    )
+    created = _create_round(client)
+    round_id = created["round_id"]
+    primeiro = _install_catalog(
+        client, round_id, origin=PriceOrigin.SCO, base_version=1, source_sha256=compartilhado
+    )
+    assert primeiro.status_code == 201, primeiro.text
+
+    response = _install_from_acervo(
+        client,
+        round_id,
+        reference_catalog_id=publicada["reference_catalog_id"],
+        base_version=2,
+        key="instala-digest-repetido",
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "ESTIMATE_CASCADE_ORIGIN_DUPLICATE"
+
+
+def test_remover_fonte_do_acervo_citada_por_decisao_recusa_igual(tmp_path: Path) -> None:
+    """A trava por decisão de código vale para a fonte do acervo, sem exceção."""
+    client = _client(tmp_path)
+    state = _round_with_cascade_and_takeoff(client, sco_from_acervo=True)
+    round_id = state["round_id"]
+    digests = [entry["source_sha256"] for entry in state["cascade"]]
+    decided = _confirm_code(
+        client,
+        round_id,
+        item_id=_ITEM_FIRST,
+        code=_SCO_CODE,
+        catalog_sha256=digests[0],
+        base_version=state["version"],
+        key="decisao-acervo",
+    )
+    assert decided.status_code == 200, decided.text
+
+    response = client.post(
+        f"/v1/estimate-rounds/{round_id}/catalogs/remove",
+        headers=_headers(key="remocao-acervo"),
+        json={"base_version": decided.json()["version"], "source_sha256": digests[0]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "ESTIMATE_CASCADE_LOCKED"
+
+
+def test_reordenar_preserva_a_procedencia_de_cada_fonte(tmp_path: Path) -> None:
+    """Reordenar mexe na precedência, nunca em de onde o arquivo de cada fonte veio."""
+    client = _client(tmp_path)
+    state = _round_with_cascade_and_takeoff(client, sco_from_acervo=True)
+    round_id = state["round_id"]
+    digests = [entry["source_sha256"] for entry in state["cascade"]]
+
+    response = client.post(
+        f"/v1/estimate-rounds/{round_id}/catalogs/order",
+        headers=_headers(key="ordem-acervo"),
+        json={"base_version": state["version"], "cascade": list(reversed(digests))},
+    )
+
+    assert response.status_code == 200, response.text
+    cascade = response.json()["cascade"]
+    assert [entry["origin"] for entry in cascade] == ["emop", "sco"]
+    assert [entry["provenance"] for entry in cascade] == ["tenant_upload", "reference_catalog"]
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert record.catalog_cascade_json[1]["reference_catalog_id"]
+
+
+def test_cascata_instalada_antes_da_feature_le_como_tabela_propria(tmp_path: Path) -> None:
+    """Ausência de procedência é o registro anterior à F-037, e ele continua legível.
+
+    Nada é reescrito retroativamente: a entrada gravada sem o campo é lida como tabela
+    própria, que é o que ela é — era o único caminho que existia quando ela foi instalada.
+    """
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    instalada = _install_catalog(client, round_id, origin=PriceOrigin.SCO, base_version=1)
+    assert instalada.status_code == 201, instalada.text
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        legada = dict(record.catalog_cascade_json[0])
+        del legada["provenance"]
+        record.catalog_cascade_json = [legada]
+        session.commit()
+
+    response = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers(key="estado-legado"))
+
+    assert response.status_code == 200, response.text
+    assert [entry["provenance"] for entry in response.json()["cascade"]] == ["tenant_upload"]
+
+
+def test_a_escolha_do_acervo_e_404_na_rodada_de_outro_tenant(tmp_path: Path) -> None:
+    """O acervo é público; a RODADA continua sendo do tenant, e alheia é indistinguível de
+    inexistente."""
+    client = _client(tmp_path)
+    _publish_reference_catalog(client)
+    created = _create_round(client)
+
+    response = _reference_catalog_options(
+        client, created["round_id"], tenant=_OTHER_TENANT, key="escolha-alheia"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "NOT_FOUND"
+
+
+def test_procedencia_que_o_registro_nao_sustenta_recusa_a_leitura(tmp_path: Path) -> None:
+    """Entrada adulterada não é lida como se estivesse certa: fail-closed na leitura.
+
+    Ausência de procedência é o registro legítimo de antes da F-037; procedência que
+    CONTRADIZ o identificador de fonte gravado é registro corrompido, e lê-lo pelo rótulo
+    faria a tela mostrar `DO ACERVO` sobre um arquivo que o cliente subiu.
+    """
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    instalada = _install_catalog(client, round_id, origin=PriceOrigin.SCO, base_version=1)
+    assert instalada.status_code == 201, instalada.text
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        adulterada = {**record.catalog_cascade_json[0], "provenance": "reference_catalog"}
+        record.catalog_cascade_json = [adulterada]
+        session.commit()
+
+    response = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers(key="adulterada"))
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CATALOG_REQUIRED"
