@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Pendente de aprovação humana**  
+Status: Approved (2026-08-22)  
 Date: 2026-08-22  
 Produced by: agente (Claude Code)
 
@@ -18,14 +18,16 @@ Produced by: agente (Claude Code)
 
 | Campo | Valor |
 | --- | --- |
-| O que foi aprovado | — |
-| Aprovado por | — |
-| Data | — |
-| Revisão aprovada | — |
-| Explicitamente **não** aprovado | — |
+| O que foi aprovado | a composição visual da revisão 1 — os oito estados capturados e as seis decisões listadas em "Decisões que este pacote carrega", incluindo o selo do regime como valor novo |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-22 |
+| Revisão aprovada | 1 |
+| Explicitamente **não** aprovado | a copy final (estas frases carregam regra de domínio e merecem leitura à parte); o comportamento, que é do ADR-0045 e já foi aceito; a forma da recusa no servidor (código e status), que é do plano; os nomes das fontes de preço e o formato da data-base exibida. As duas questões em aberto ao final **seguem em aberto** — a aprovação não as decidiu |
 
-Preenchido ao transcrever uma decisão humana explícita. Nenhum agente aprova design,
-inclusive o que produziu o pacote. Aprovar esta revisão não aprova a seguinte.
+Transcrito de decisão humana explícita de 2026-08-22, dada após a rendição e as capturas
+serem entregues e abertas. Nenhum agente aprova design, inclusive o que produziu o pacote.
+Aprovar esta revisão não aprova a seguinte: pacote materialmente alterado é revisão nova e
+precisa de registro próprio.
 
 ## Artefato
 

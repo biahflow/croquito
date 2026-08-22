@@ -2,7 +2,7 @@
 
 ## Status
 
-`BLOCKED`
+`READY_FOR_PLANNING`
 
 > Nasce em 2026-08-21, de uma conversa de operação: mapeando a cadeia real das praças
 > (levantamento → DXF → prancha → orçamento → aprovação → empresa executora), ficou
@@ -14,9 +14,11 @@
 > binária do ADR-0027 num terceiro estado e foi **aceito por ato humano em 2026-08-22**,
 > fixando as três decisões que este contrato marcava como "decisão do ADR, não do plano".
 >
-> Resta o **Design Approval Package** da superfície nova (`DESIGN_APPROVAL_REQUIRED`), que
-> precede o planejamento por a feature ser `INTERFACE_CHANGE`. Cumprido ele, o estado passa
-> a `READY_FOR_PLANNING`.
+> O segundo também: o **Design Approval Package** (`DESIGN_APPROVAL_REQUIRED`) foi
+> **aprovado por ato humano em 2026-08-22**, revisão 1, registro em
+> [mock/README.md](mock/README.md). Com os dois gates cumpridos, a feature está
+> `READY_FOR_PLANNING`. A implementação deve corresponder à revisão aprovada; divergir dela
+> é revisão nova, com registro próprio.
 
 ## Classification
 
@@ -130,8 +132,8 @@ regime a rodada está, para ela não descobrir pelo erro.
 - **ADR** refinando a fronteira binária no terceiro estado —
   `ARCHITECTURE_DECISION_REQUIRED`, **satisfeito em 2026-08-22** pelo
   [ADR-0045](../../adr/0045-terceiro-estado-demanda-sob-contrato.md) (`Accepted`).
-- **Design Approval Package** aprovado — `DESIGN_APPROVAL_REQUIRED`, ato humano, precede
-  o planejamento.
+- **Design Approval Package** — `DESIGN_APPROVAL_REQUIRED`, **satisfeito em 2026-08-22**
+  (revisão 1, [mock/README.md](mock/README.md)).
 - F-027 (modo teto) já na main — o desenho do dado-da-rodada que esta feature copia.
 
 ## Unknowns
