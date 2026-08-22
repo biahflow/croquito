@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Design Approval Package — F-037, acervo central de catálogos</title>
+<style>
+/* Tokens copiados VERBATIM de apps/web/src/styles.css (:root). Nenhum valor novo. */
+:root{
+  --bg:#fafaf8; --surface:#ffffff; --surface-subtle:#f4f4f1; --surface-sunken:#efefeb;
+  --ink:#14181d; --ink-secondary:#5b6169; --muted:#9aa0a8; --line:#e5e5e0;
+  --accent:#00c877; --accent-ink:#0e1116; --accent-text:#00744a; --accent-soft:#e6f6ee;
+  --accent-line:#9bdcc0; --dark:#0e1116; --dark-ink:#f2f4f7;
+  --dark-ink-soft:rgba(242,244,247,.72); --dark-line:rgba(242,244,247,.12);
+  color:var(--ink); background:var(--bg);
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box} body{margin:0;padding:0 0 40px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.rotulo{margin:26px 24px 6px;font-size:11px;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-secondary)}
+.rotulo small{display:block;margin-top:3px;font-weight:500;letter-spacing:0;
+  text-transform:none;font-size:11.5px;color:var(--muted)}
+.rotulo .antes{color:#b91c1c} .rotulo .depois{color:var(--accent-text)}
+.corpo{padding:18px 24px}
+.painel{padding:16px;background:var(--surface);border:1px solid var(--line);
+  border-radius:10px}
+.painel h2{margin:0 0 4px;font-size:15px}
+.painel p{margin:0 0 4px;font-size:12px;line-height:1.5;color:var(--ink-secondary)}
+.eyebrow{display:block;font-size:10.5px;font-weight:800;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-secondary)}
+.hint{display:block;margin-top:8px;color:var(--ink-secondary);font-size:10.5px;
+  line-height:1.4}
+.campo{display:grid;gap:4px;margin-top:12px;color:var(--ink-secondary);font-size:11px;
+  font-weight:700}
+.campo select,.campo input{padding:8px;color:var(--ink);background:var(--surface);
+  border:1px solid var(--muted);border-radius:5px;font-family:inherit;font-size:12px;
+  font-weight:400}
+.campo-dica{margin:0;font-size:10.5px;font-weight:400;line-height:1.4;
+  color:var(--ink-secondary)}
+.acoes-linha{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.botao-primario{min-height:34px;padding:0 14px;color:var(--accent-ink);
+  background:var(--accent);border:1px solid var(--accent);border-radius:6px;font-size:12px;
+  font-weight:700;cursor:pointer;font-family:inherit}
+.botao-secundario{min-height:34px;padding:0 14px;color:var(--ink);background:var(--surface);
+  border:1px solid var(--muted);border-radius:6px;font-size:12px;font-weight:700;
+  cursor:pointer;font-family:inherit}
+.botao-primario:disabled{color:var(--muted);background:var(--surface-sunken);
+  border-color:var(--line);cursor:not-allowed}
+/* .cascata e .item-numero: citados da revisão 1 da F-033. */
+.cascata{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:8px}
+.cascata li{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:11px 12px;background:var(--surface-subtle);border:1px solid var(--line);
+  border-radius:8px;font-size:12.5px}
+.item-numero{display:inline-flex;align-items:center;justify-content:center;width:22px;
+  height:22px;margin-right:9px;background:var(--surface-sunken);border-radius:999px;
+  font-size:11px;font-weight:800;color:var(--ink-secondary)}
+.selo{padding:5px 8px;border-radius:999px;font-size:10px;font-weight:850}
+.selo-sco{color:var(--accent-text);background:var(--accent-soft)}
+.selo-outra{color:#825320;background:#fff0d2}
+.app-alert{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin:0 0 12px;padding:10px 14px;color:#7c2d12;background:#fee2e2;
+  border-left:4px solid #b91c1c;border-radius:6px;font-size:12px;line-height:1.45}
+/* NOVO — declarado no README: a procedência da fonte instalada. Sem cor nova; reusa
+   `--surface-sunken`/`--ink-secondary`, a mesma veste do selo de regime claro da F-033. */
+.selo-proc{display:inline-block;padding:4px 8px;border:1px solid var(--line);
+  border-radius:999px;font-size:9.5px;font-weight:850;color:var(--ink-secondary);
+  background:var(--surface-sunken);letter-spacing:.04em}
+/* NOVO — a linha do acervo na escolha e na administração. */
+.acervo{margin:10px 0 0;padding:0;list-style:none;display:grid;gap:8px}
+.acervo li{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px;background:var(--surface);border:1px solid var(--line);border-radius:8px;
+  font-size:12.5px}
+.acervo .meta{display:block;margin-top:3px;font-size:10.5px;color:var(--ink-secondary)}
+.acervo .retirado{opacity:.55}
+.tabs{display:flex;gap:8px;margin:12px 0 0;padding:0;list-style:none}
+.tabs li{padding:8px 12px;background:var(--surface);border:1px solid var(--line);
+  border-radius:8px;font-size:12px;color:var(--ink-secondary)}
+.tabs .ativa{color:var(--accent-ink);background:var(--accent);border-color:var(--accent);
+  font-weight:700}
+.errado{border:2px dashed #b91c1c;border-radius:10px;padding:2px}
+.certo{border:2px solid var(--accent-line);border-radius:10px;padding:2px}
+.reservado{opacity:.55;border-style:dashed}
+</style>
+</head>
+<body>
+
+<p class="rotulo"><span class="antes">1 — Hoje: o arquivo é problema da orçamentista</span>
+  <small>Ela precisa saber o que é um catálogo em JSON, onde obtê-lo e qual data-base usar.</small></p>
+<div class="corpo errado">
+  <section class="painel">
+    <span class="eyebrow">CASCATA DE FONTES DE PREÇO</span>
+    <h2>Cascata de fontes de preço</h2>
+    <p>A ordem manda: para cada item, vale o preço da primeira fonte que tiver o código.
+      Uma origem entra uma vez só na cascata.</p>
+    <label class="campo">Catálogo de preços (JSON)
+      <span class="campo-dica">Entra no FIM da cascata. Uma origem só entra uma vez.</span>
+      <input type="file">
+    </label>
+    <div class="acoes-linha">
+      <button class="botao-primario" type="button" disabled>Instalar catálogo</button>
+    </div>
+  </section>
+</div>
+
+<p class="rotulo"><span class="depois">2 — Proposto: ela escolhe da lista</span>
+  <small>Nome, origem e data-base, lidos do servidor. Sem arquivo, sem conversão.</small></p>
+<div class="corpo certo">
+  <section class="painel">
+    <span class="eyebrow">CASCATA DE FONTES DE PREÇO</span>
+    <h2>Cascata de fontes de preço</h2>
+    <p>A ordem manda: para cada item, vale o preço da primeira fonte que tiver o código.
+      Uma origem entra uma vez só na cascata.</p>
+    <label class="campo">Tabela de preços
+      <span class="campo-dica">Entra no FIM da cascata. Uma origem só entra uma vez.</span>
+      <select>
+        <option>Escolha uma tabela…</option>
+        <option selected>SCO-Rio FGV06 desonerado · ref. 07/2026 · 4.865 itens</option>
+        <option>SCO-Rio FGV06 onerado · ref. 07/2026 · 4.865 itens</option>
+        <option>SINAPI RJ desonerado · ref. 07/2026</option>
+        <option>SICRO RJ · ref. 06/2026</option>
+      </select>
+    </label>
+    <div class="acoes-linha">
+      <button class="botao-primario" type="button">Instalar tabela</button>
+    </div>
+    <span class="hint">Tem uma tabela própria — a do seu contrato, ou uma que você
+      licenciou? <a href="#" onclick="return false">Enviar arquivo</a>.</span>
+  </section>
+</div>
+
+<p class="rotulo">3 — Tabela própria: o caminho de hoje, declarado como alternativa
+  <small>Quem tem EMOP licenciada ou o catálogo de um contrato continua enviando o arquivo.</small></p>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">CASCATA DE FONTES DE PREÇO</span>
+    <h2>Enviar tabela própria</h2>
+    <p>Para tabela que a plataforma não distribui — a EMOP, que é paga, ou o catálogo
+      específico do seu contrato.</p>
+    <label class="campo">Catálogo de preços (JSON)
+      <span class="campo-dica">Entra no FIM da cascata. Uma origem só entra uma vez.</span>
+      <input type="file">
+    </label>
+    <div class="acoes-linha">
+      <button class="botao-primario" type="button">Instalar catálogo</button>
+      <button class="botao-secundario" type="button">Voltar para a lista</button>
+    </div>
+  </section>
+</div>
+
+<p class="rotulo">4 — A cascata diz de onde cada fonte veio
+  <small>Proveniência que não distingue acervo de arquivo próprio mentiria sobre a origem.</small></p>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">CASCATA DE FONTES DE PREÇO</span>
+    <h2>Duas fontes instaladas</h2>
+    <ol class="cascata">
+      <li>
+        <span><span class="item-numero">1</span>SCO-Rio FGV06 desonerado · ref. 07/2026
+          <span class="selo-proc" style="margin-left:8px">DO ACERVO</span></span>
+        <span class="selo selo-sco">SCO</span>
+      </li>
+      <li>
+        <span><span class="item-numero">2</span>EMOP · ref. 01/2026
+          <span class="selo-proc" style="margin-left:8px">TABELA PRÓPRIA</span></span>
+        <span class="selo selo-outra">EMOP</span>
+      </li>
+    </ol>
+    <span class="hint">O digest é o mesmo nos dois casos: o que muda é quem publicou o
+      arquivo, não como o preço é lido.</span>
+  </section>
+</div>
+
+<p class="rotulo">5 — Sob contrato licitado, a lista já vem filtrada
+  <small>A tela não oferece o que a instalação vai recusar.</small></p>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">CASCATA DE FONTES DE PREÇO</span>
+    <h2>Cascata de fontes de preço</h2>
+    <p>Esta rodada corre sob contrato licitado. Instalar fonte de outra origem é recusado
+      aqui, na instalação — não na montagem, quando já não haveria o que corrigir.</p>
+    <label class="campo">Tabela de preços
+      <span class="campo-dica">Sob contrato licitado, a cascata aceita catálogo de SCO — a
+        tabela do contrato.</span>
+      <select>
+        <option>Escolha uma tabela…</option>
+        <option selected>SCO-Rio FGV06 desonerado · ref. 07/2026 · 4.865 itens</option>
+        <option>SCO-Rio FGV06 onerado · ref. 07/2026 · 4.865 itens</option>
+      </select>
+    </label>
+    <div class="acoes-linha">
+      <button class="botao-primario" type="button">Instalar tabela</button>
+    </div>
+    <span class="hint">SINAPI e SICRO não aparecem nesta rodada: o regime não as aceita, e
+      oferecê-las seria oferecer uma recusa.</span>
+  </section>
+</div>
+
+<p class="rotulo">6 — Acervo vazio
+  <small>O que a tela diz quando ninguém publicou nada ainda.</small></p>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">CASCATA DE FONTES DE PREÇO</span>
+    <h2>Nenhuma tabela disponível</h2>
+    <p>A plataforma ainda não publicou nenhuma tabela de referência que sirva a esta
+      rodada. Enquanto isso, envie a sua.</p>
+    <div class="acoes-linha">
+      <button class="botao-primario" type="button">Enviar tabela própria</button>
+    </div>
+  </section>
+</div>
+
+<p class="rotulo">7 — Plataforma: administrar o acervo
+  <small>Jornada de Plataforma, no desenho da F-012. Só `platform_operator` chega aqui.</small></p>
+<div class="corpo">
+  <ul class="tabs">
+    <li>Tenants</li>
+    <li>Jornadas</li>
+    <li class="ativa">Acervo de tabelas</li>
+  </ul>
+  <section class="painel" style="margin-top:12px">
+    <span class="eyebrow">ACERVO DE TABELAS DE REFERÊNCIA</span>
+    <h2>Tabelas publicadas</h2>
+    <p>Publicar é ato de plataforma e vale para todos os tenants. Cada publicação é
+      imutável: data-base nova é entrada nova, nunca substituição.</p>
+    <ul class="acervo">
+      <li>
+        <span><b>SCO-Rio FGV06 desonerado</b>
+          <span class="meta">origem sco · ref. 07/2026 · 4.865 itens ·
+            <span class="mono">sha256 6f314c9</span> · publicada em 22/08/2026</span></span>
+        <button class="botao-secundario" type="button">Retirar de circulação</button>
+      </li>
+      <li>
+        <span><b>SCO-Rio FGV06 onerado</b>
+          <span class="meta">origem sco · ref. 07/2026 · 4.865 itens ·
+            <span class="mono">sha256 a17b3e0</span> · publicada em 22/08/2026</span></span>
+        <button class="botao-secundario" type="button">Retirar de circulação</button>
+      </li>
+      <li class="retirado">
+        <span><b>SCO-Rio FGV06 desonerado</b>
+          <span class="meta">origem sco · ref. 04/2026 · retirada de circulação em
+            22/08/2026 — 3 rodadas ainda a referenciam</span></span>
+        <span class="selo-proc">FORA DE CIRCULAÇÃO</span>
+      </li>
+    </ul>
+    <span class="hint">Retirar não apaga: rodadas antigas continuam apontando para a tabela
+      que usaram. Ela só deixa de ser oferecida.</span>
+  </section>
+</div>
+
+<p class="rotulo">8 — Publicar uma tabela
+  <small>O que se publica é o catálogo já normalizado pelo CLI, não a planilha bruta.</small></p>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">ACERVO DE TABELAS DE REFERÊNCIA</span>
+    <h2>Publicar tabela</h2>
+    <p>Importe a planilha oficial pelo CLI (<span class="mono">import-sinapi</span>,
+      <span class="mono">import-sicro</span>, <span class="mono">import-catalog</span>) e
+      publique aqui o <span class="mono">catalog.json</span> resultante.</p>
+    <label class="campo">Catálogo normalizado (JSON)
+      <input type="file">
+    </label>
+    <label class="campo">Nome de exibição
+      <span class="campo-dica">é o que a orçamentista lê na lista (ex.: SINAPI RJ
+        desonerado)</span>
+      <input type="text" value="">
+    </label>
+    <div class="acoes-linha">
+      <button class="botao-primario" type="button">Publicar</button>
+    </div>
+    <span class="hint">Origem, data-base e contagem de itens vêm de dentro do arquivo — não
+      são digitadas, para que o rótulo nunca discorde do conteúdo.</span>
+  </section>
+  <p class="app-alert" style="margin-top:12px">
+    <span>Esta tabela já está publicada, com o mesmo conteúdo
+      (<span class="mono">sha256 6f314c9</span>). Publicar de novo não a substitui: uma
+      data-base nova é uma entrada nova, e o preço já em uso nunca muda debaixo de uma
+      rodada.</span>
+    <span aria-hidden="true">×</span>
+  </p>
+</div>
+
+<p class="rotulo">9 — Reservado, não entregue nesta feature
+  <small>Desenhado só para segurar espaço. Tracejado e opacidade o distinguem.</small></p>
+<div class="corpo">
+  <section class="painel reservado">
+    <span class="eyebrow">ATUALIZAÇÃO AUTOMÁTICA</span>
+    <h2>Buscar a data-base nova sozinho</h2>
+    <p>A plataforma buscar SINAPI e SICRO a cada data-base, sem operador. Fora de escopo
+      desta feature: apurado em 2026-08-22 que o portal da Caixa recusa download
+      automatizado com <span class="mono">429</span> e o do DNIT monta a listagem por
+      JavaScript — o obstáculo não é escrever o download.</p>
+  </section>
+</div>
+
+</body>
+</html>

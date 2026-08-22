@@ -2,8 +2,8 @@
 
 Status: Accepted for MVP  
 Responsável: Backend / Frontend  
-Última revisão: 2026-08-21 (superfície `/v1/surveys`: sincronização do levantamento de
-campo — F-032, ADR-0043)
+Última revisão: 2026-08-22 (acervo de catálogos de referência da plataforma e escolha da
+tabela na cascata do orçamento — F-037, ADR-0047)
 
 Base path: `/v1`  
 Autenticação: JWT bearer OIDC  
@@ -182,6 +182,84 @@ Revogar (`enabled: false`) é aceito em **qualquer** estado, de propósito: é o
 encerrar uma autorização criada durante o piloto depois que a jornada foi liberada, em vez
 de deixá-la ativa esperando o próximo piloto. Revogar não apaga o registro: carimba
 `revoked_at` e o status. Revogar o que nunca foi concedido é `404 NOT_FOUND`.
+
+## Acervo de catálogos de referência
+
+Tabelas públicas de preço publicadas **uma vez para todos os tenants**
+([ADR-0047](../adr/0047-acervo-de-catalogos-da-plataforma.md)). O registro do acervo não
+tem tenant: catálogo público não tem dono, e nada nele deriva de conteúdo de cliente. O
+objeto vive sob prefixo próprio, **fora** de `tenants/`, e **nenhuma rota devolve URL
+assinada dele** — o cliente escolhe a tabela, o servidor é quem a lê.
+
+### `POST /v1/platform/reference-catalogs/presign`
+
+Requer `platform_operator` e `Idempotency-Key`. Entrada: `filename`, `size_bytes` e
+`sha256` — **sem `content_type`**, que é fixo em `application/json`: o acervo publica
+catálogo já normalizado e nada mais, então declarar o tipo é campo desconhecido e devolve
+`422`. Nome que não termine em `.json` devolve `422 INVALID_UPLOAD`. Saída idêntica à de
+`POST /v1/uploads/presign`, inclusive quanto ao header de checksum, que só existe no perfil
+de storage que o assina.
+
+Existe porque publicar **não pode depender da jornada do croqui**: o portão de
+disponibilidade da [F-034](../features/F-034-disponibilidade-de-jornada/feature.md) é
+dependência do router e `/v1/uploads` é do croqui, então num ambiente com essa jornada
+`disabled` o operador receberia `403 JOURNEY_UNAVAILABLE` e o acervo ficaria sem como ser
+alimentado. `/v1/platform` está declarado fora de jornada; `/v1/uploads` **não muda**.
+
+O objeto assinado fica sob `tenants/{tenant_id}/uploads/` do **operador**, e não sob o
+prefixo do acervo: o arquivo só vira objeto da plataforma depois que a publicação o lê e
+confere o digest. Auditado como `UPLOAD_PRESIGNED`, como qualquer upload.
+
+### `POST /v1/platform/reference-catalogs`
+
+Requer `platform_operator` e `Idempotency-Key`. Entrada: `upload_id` (o `catalog.json`
+**já normalizado**, subido por `POST /v1/platform/reference-catalogs/presign`) e
+`display_name` (3 a 200 caracteres). `origin`, `reference_month`, `source_sha256` e a
+contagem de entradas são lidos de **dentro** do arquivo e não podem ser informados no
+corpo — campo desconhecido é recusado no contrato (`422`). O servidor não importa
+`.xlsx` nem `.DBF`: o operador importa pelo CLI (`import-catalog`, `import-sinapi`,
+`import-sicro`) e publica o resultado.
+
+A rota **não exige** que o upload tenha vindo daquele presign: qualquer upload
+`application/json` do tenant do operador é aceito. Exigir a procedência seria trava sem
+fronteira nova — quem sobe e quem publica são a mesma pessoa, com o mesmo papel, e a
+conferência de tenant, tipo, tamanho e checksum do objeto já acontece. O que decide o que
+entra no acervo é o conteúdo lido do arquivo, não a porta por onde ele subiu.
+
+Responde `201` com `reference_catalog_id`, `display_name`, `origin`, `reference_month`,
+`entry_count`, `object_sha256` (digest dos bytes publicados), `source_sha256` (digest do
+arquivo de origem, carimbado pelo importador), `available`, `published_by`,
+`published_at` e `withdrawn_at`. A chave do objeto **não** sai na resposta.
+
+Recusas, todas antes de qualquer escrita:
+
+- `422 REFERENCE_CATALOG_ORIGIN_NOT_PUBLISHABLE` para origem que a plataforma não
+  distribui — `emop` (tabela paga) e `composition` (do cliente por natureza), com
+  `details.origin`. As duas continuam entrando pelo upload de quem tem a licença;
+- `409 REFERENCE_CATALOG_ALREADY_PUBLISHED` quando o digest do arquivo já está no
+  acervo, com `details.reference_catalog_id` da entrada existente. Publicação é imutável:
+  data-base nova é **entrada nova**, e a anterior continua existindo porque uma rodada já
+  montada ainda a referencia.
+
+O ato é auditado (`REFERENCE_CATALOG_PUBLISHED`) com o `tenant_id` **do operador** — não
+há tenant alvo, e o fato verdadeiro é quem publicou —, com o identificador, a origem e a
+data-base do catálogo nos detalhes.
+
+### `GET /v1/platform/reference-catalogs`
+
+Requer `platform_operator`. Leitura sem `Idempotency-Key` e sem auditoria. Devolve o
+acervo **inteiro**, inclusive o que saiu de circulação (com `available: false` e
+`withdrawn_at`), ordenado deterministicamente por `(origin, reference_month, id)`.
+
+### `POST /v1/platform/reference-catalogs/{reference_catalog_id}/withdraw`
+
+Requer `platform_operator` e `Idempotency-Key`; **sem corpo** — o ato é inteiramente
+identificado pela rota. Marca o catálogo como fora de circulação (`available: false` e
+`withdrawn_at`) e **não apaga** linha nem objeto: rodada que já o referencia continua
+funcionando, e ele só deixa de ser oferecido em escolha nova. Repetir sobre um catálogo já
+retirado devolve o registro como está, sem recarimbar a data e sem auditar de novo.
+Catálogo inexistente é `404 NOT_FOUND`. Auditado como `REFERENCE_CATALOG_WITHDRAWN`, no
+tenant do operador.
 
 ### `GET /v1/jobs/{job_id}`
 
@@ -1144,9 +1222,9 @@ cabeça de cada rodada para derivar aquele bloco. Rodada sem teto devolve os doi
 
 ### `GET /v1/estimate-rounds/{round_id}`
 
-Estado da rodada: `version`, cascata instalada (origem, digest, data-base e rótulo de cada
-fonte, na ordem), etapas por presença e digest de artefato, estado da extração paga e o
-estado do orçamento (`estimate_sha256`, `workbook_sha256`).
+Estado da rodada: `version`, cascata instalada (origem, digest, data-base, rótulo e
+**procedência** de cada fonte, na ordem), etapas por presença e digest de artefato, estado
+da extração paga e o estado do orçamento (`estimate_sha256`, `workbook_sha256`).
 
 Com teto declarado (ADR-0040), a resposta ganha `target: {amount, label}`; com teto **e**
 orçamento montado, ganha também `consumed` (o `total_amount` do documento, como está),
@@ -1191,10 +1269,46 @@ Duas recusas, as duas **sem gravar nada**:
 - `409 ESTIMATE_REGIME_CASCADE_DIRTY` — há fonte de origem ≠ `sco` instalada. A saída é
   removê-la por `POST .../catalogs/remove`; nada é reescrito por uma declaração posterior.
 
+### `GET /v1/estimate-rounds/{round_id}/reference-catalogs`
+
+O que **esta rodada** pode instalar do [acervo](#acervo-de-catálogos-de-referência), para a
+escolha da cascata. Requer o papel do orçamento, exigido antes de qualquer lookup; rodada de
+outro tenant é `404 NOT_FOUND`. Leitura sem `Idempotency-Key` e sem auditoria.
+
+Devolve `round_id` e `catalogs`, cada um com `reference_catalog_id`, `display_name`,
+`origin`, `reference_month`, `entry_count` e `source_sha256` — sem `published_by` e sem
+chave de objeto: quem escolhe uma tabela pública não precisa saber quem a publicou, e nada
+do acervo é assinado para o cliente.
+
+Dois filtros, aplicados no **servidor**: só o que está em circulação, e só a origem que o
+regime da rodada aceita. Sob contrato licitado ([ADR-0045](../adr/0045-terceiro-estado-demanda-sob-contrato.md))
+a lista já vem restrita — oferecer uma tabela que a instalação vai recusar é oferecer uma
+recusa, e é a mesma razão pela qual `allowed_cascade_origins` sai do servidor. Origem já
+instalada **continua** aparecendo: a segunda da mesma origem é recusada na instalação, e
+escondê-la faria a lista mentir sobre o que o acervo tem.
+
 ### `POST /v1/estimate-rounds/{round_id}/catalogs`
 
-Entrada: `upload_id`, `base_version`. Instala uma fonte de preço no **fim** da cascata; o
-JSON do catálogo sobe por `POST /v1/uploads/presign`, como o catálogo da medição.
+Entrada: `base_version` e **exatamente uma** de `reference_catalog_id` (a tabela escolhida
+no acervo da plataforma) ou `upload_id` (a tabela **própria** do cliente, cujo JSON sobe por
+`POST /v1/uploads/presign` como o catálogo da medição). Instala uma fonte de preço no
+**fim** da cascata.
+
+Corpo com as duas, ou com nenhuma, devolve `422 ESTIMATE_CATALOG_SOURCE_INVALID` sem gravar
+nada: um ato que cita duas fontes é ambíguo sobre qual arquivo instalar. Tabela do acervo
+inexistente é `404 NOT_FOUND`; tabela fora de circulação é
+`409 REFERENCE_CATALOG_WITHDRAWN`, com `details.reference_catalog_id`.
+
+A entrada gravada é a mesma nos dois caminhos, mais a **procedência**: cada fonte da cascata
+sai com `provenance` — `reference_catalog` ou `tenant_upload` —, porque uma proveniência que
+não distinguisse acervo de arquivo próprio mentiria sobre a origem do preço
+([ADR-0047](../adr/0047-acervo-de-catalogos-da-plataforma.md) decisão 7). Fonte instalada
+**antes** desta superfície não tem o campo gravado, e a ausência é lida como
+`tenant_upload` — que é o que ela é. Nada é reescrito retroativamente. O identificador do
+upload e o da linha do acervo **não** saem na resposta, como a chave do objeto já não saía.
+
+Todas as demais regras da cascata valem iguais, venha o arquivo de onde vier: origem
+duplicada, digest de origem duplicado, regime e a trava por decisão de código.
 
 A fonte é lida e validada antes de a entrada existir. Segunda fonte da mesma origem devolve
 `409 ESTIMATE_CASCADE_ORIGIN_DUPLICATE` — o mesmo código do domínio —, porque a origem

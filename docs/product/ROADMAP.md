@@ -58,8 +58,9 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-030 | A DEFINIR | READY_FOR_SPEC | Fotos do levantamento na jornada de revisão (a definir em contrato) |
 | F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | READY_FOR_PLANNING | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
-| F-035 | A DEFINIR | READY_FOR_SPEC | Aprovação nominal do orçamento antes do despacho (a definir em contrato) |
+| F-035 | HIGH | BLOCKED | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
 | F-036 | A DEFINIR | READY_FOR_SPEC | Vínculo entre orçamento aprovado e rodada de medição (a definir em contrato) |
+| F-037 | HIGH | READY_FOR_HUMAN_REVIEW | [Acervo central de catálogos de preço](../features/F-037-acervo-de-catalogos/feature.md) |
 | F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 | F-031 | MEDIUM | READY_FOR_HUMAN_REVIEW | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — branch isolada `feat/f-031-value-events`, não integra no MVP |
 
@@ -384,10 +385,48 @@ declara que o orçamento não tem contrato nem aprovação. Ligar as duas pontas
 mesma lacuna que a F-033 deixou aberta — o orçamento não modela contrato como entidade —,
 e por isso a F-036 é mais funda que a F-035 e vem depois dela.
 
-As duas nascem **sem contrato e sem prioridade**, de propósito: a validação com quem está
-dentro da prefeitura decide se a aprovação precisa ficar registrada no sistema ou se ela vive
-bem no processo de fora. Despachar por e-mail ou Drive, que a mesma conversa levantou, só faz
-sentido depois da aprovação existir — é candidata a fatia da F-035, não feature própria.
+As duas nasceram **sem contrato e sem prioridade**, de propósito: a validação com quem está
+dentro da prefeitura decidiria se a aprovação precisa ficar registrada no sistema ou se ela
+vive bem no processo de fora.
+
+A F-035 saiu desse estado na mesma data, por seleção humana, e ganhou contrato com
+prioridade `HIGH`. A conversa de especificação expôs que o problema é mais fundo do que a
+falta do registro: `POST .../estimate` **monta e publica o `.xlsx` num ato só**, então não
+existe instante em que o orçamento esteja pronto e ainda não despachável — não há o que
+aprovar "antes do despacho" porque não há despacho separado. Três decisões humanas de
+2026-08-22 fixaram o desenho: portão real em vez de carimbo (separar montar de publicar,
+espelhando `calc` → `approve` → `export` da medição), papel `aprovador` novo e distinto de
+`orcamentista` com **recusa de auto-aprovação** no código, e despacho por e-mail ou Drive
+**fora de escopo** — não há provedor de e-mail, que é o mesmo motivo pelo qual a F-008 está
+`BLOCKED` e pelo qual a F-028 deixou o item de fora. A feature está `BLOCKED` por dois gates
+humanos precedendo o planejamento: o
+[ADR-0046](../adr/0046-aprovacao-do-orcamento-base.md) (`Proposed`), que autoriza o
+orçamento a ter aprovação própria contra a leitura literal da decisão 6 do ADR-0027, e o
+Design Approval Package. Contrato em
+[F-035](../features/F-035-aprovacao-do-orcamento/feature.md).
+
+A F-036 segue sem contrato e sem prioridade, e continua depois da F-035.
+
+F-037 — acervo central de catálogos de preço — nasce em 2026-08-22, na mesma conversa, quando
+o dono do produto explicou o rumo: **o sistema deve trazer as tabelas prontas, e o
+orçamentista escolher**, como faz o software de orçamento consolidado no mercado. Hoje a
+cascata é alimentada por upload de um JSON por rodada — atalho deliberado de fase de teste,
+e não o produto: a orçamentista não tem por que saber o que é um JSON de catálogo, e num
+contrato guarda-chuva com vinte praças ela sobe o mesmo arquivo vinte vezes. A parte difícil
+já existe: `sco.py`, `emop.py`, `sinapi.py` e `sicro.py` leem os quatro formatos e
+normalizam para o mesmo `PriceCatalog`, com origem, data-base e digest. O que falta é onde
+guardar centralmente, de onde puxar e a tela de escolha.
+
+Duas restrições nascem com ela. A **EMOP é paga** (decisão humana de 2026-08-22, informada
+pelo dono do produto), então fica **fora** do acervo central e continua entrando por upload
+do próprio cliente — o acervo não distribui tabela que a plataforma não pode distribuir. E o
+[ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md) decisão 4 já fixou que
+cada importação gera catálogo novo amarrado por digest, nunca troca silenciosa de preço:
+num acervo central isso vale com mais força, porque uma atualização mudaria preço para todos
+os tenants ao mesmo tempo. Selecionada por decisão humana de 2026-08-22 com prioridade
+`HIGH` e precedência sobre a F-035, porque o dono quer testar a cadeia com essa parte
+funcionando. Contrato em
+[F-037](../features/F-037-acervo-de-catalogos/feature.md).
 [F-032](../features/F-032-app-levantamento-campo/feature.md) — app de levantamento de
 campo — nasce em 2026-08-21, por seleção humana: o levantamento hoje nasce em papel e
 todo o pipeline existe para interpretá-lo; a F-032 ataca a ambiguidade na origem, com
@@ -561,7 +600,7 @@ independente. Nenhuma linha afirma estado remoto.
 | 21 | Próximo — medição além do v1 / Reajuste de preços entre medições (data-base móvel). | PLANEJADO | [Roadmap](ROADMAP.md) | Declarado fora do v1 como extensão futura. |
 | 22 | Próximo — medição além do v1 / UI web de revisão da medição (v1 é CLI-first, como o resto do produto). | PLANEJADO | [Roadmap](ROADMAP.md), [ADR-0020](../adr/0020-local-homologation-server-for-valuation.md), [ADR-0026](../adr/0026-medicao-hospedada-sessao-autenticada-minima.md), [Status](../STATUS.md) | O M6 entregou `apps/medicao` com tela de revisão do takeoff (ADR-0020, ADR-0026), que o Status declara ponte descartável até a migração da medição para a API `/v1` autenticada. O bullet completo qualifica o v1 como CLI-first; se o M6 já o satisfaz é decisão humana pendente, registrada em [evidence.md](../features/F-001-roadmap-clarification/evidence.md). |
 | 23 | Próximo — medição além do v1 / Múltiplas pranchas por praça na extração de legenda. | PLANEJADO | [Roadmap](ROADMAP.md) | Declarado fora do v1 como extensão futura. |
-| 24 | Próximo — medição além do v1 / Cascata configurável de fontes de preço além do SCO (SINAPI, SICRO, tabelas estaduais), cada fonte com importador próprio — tabela de preços é dado, não código. | PLANEJADO | [Roadmap](ROADMAP.md), [ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md), [Status](../STATUS.md) | O M8 entregou a cascata de fontes declarada como dado e o importador EMOP `.DBF` (ADR-0027, decisões 4 e 6), com o arquivo real dependente da assinatura GRE. SINAPI, SICRO e as demais fontes citadas no bullet seguem sem importador próprio. |
+| 24 | Próximo — medição além do v1 / Cascata configurável de fontes de preço além do SCO (SINAPI, SICRO, tabelas estaduais), cada fonte com importador próprio — tabela de preços é dado, não código. | PLANEJADO | [Roadmap](ROADMAP.md), [ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md), [Status](../STATUS.md) | O M8 entregou a cascata de fontes declarada como dado e o importador EMOP `.DBF` (ADR-0027, decisões 4 e 6), com o arquivo real dependente da assinatura GRE. SINAPI e SICRO ganharam importador próprio na [F-026](../features/F-026-importadores-sinapi-sicro/feature.md) (`sinapi.py`, `sicro.py`), o que fecha as fontes citadas nominalmente pelo bullet; o que **permanece** aberto é a distribuição dessas tabelas ao usuário, hoje por upload de arquivo — tratada na [F-037](../features/F-037-acervo-de-catalogos/feature.md). |
 | 25 | Depois — produto comercial ampliado / DWG após decisão de licenciamento. | PLANEJADO | [Roadmap](ROADMAP.md) | Declarado para depois e dependente de decisão de licenciamento. |
 | 26 | Depois — produto comercial ampliado / Comparação de versões V1/V2. | PLANEJADO | [Roadmap](ROADMAP.md) | Declarado para depois. |
 | 27 | Depois — produto comercial ampliado / Templates de layers por cliente. | PLANEJADO | [Roadmap](ROADMAP.md) | Declarado para depois. |

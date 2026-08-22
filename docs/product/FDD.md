@@ -518,6 +518,37 @@ novo — e nunca descarta refino pago: shortlist com lineage de chamada paga é 
 servidor em vez de sobrescrita. É o caminho de cura para a shortlist gravada por uma
 versão anterior do matcher, que antes obrigava a apagar o arquivo pela mão.
 
+## De onde vem a tabela de preços
+
+A cascata de fontes do orçamento é alimentada por **escolha**, não por arquivo
+([F-037](../features/F-037-acervo-de-catalogos/feature.md),
+[ADR-0047](../adr/0047-acervo-de-catalogos-da-plataforma.md)). A plataforma publica as
+tabelas públicas de referência uma vez para todos os tenants, e a orçamentista escolhe de
+uma lista que traz nome, origem, data-base e tamanho — é o que distingue duas linhas que,
+sem isso, seriam ambas "SCO". Ela não precisa saber o que é um catálogo em JSON, nem obter
+o arquivo, nem escolher a data-base certa entre versões que ninguém nomeou.
+
+O **arquivo próprio continua existindo**, declarado como alternativa e dito para quem
+serve: quem tem a EMOP licenciada — que é tabela paga e por isso a plataforma não distribui
+— ou o catálogo específico de um contrato envia o arquivo pelo caminho de sempre. O que
+mudou é que ele deixou de ser a primeira coisa que aparece.
+
+A cascata **declara de onde cada fonte veio**: `DO ACERVO` ou `TABELA PRÓPRIA`, ao lado da
+origem do preço. São coisas diferentes — origem é de onde o preço vem, procedência é quem
+publicou o arquivo —, e uma proveniência que não as distinguisse mentiria sobre a primeira.
+Quem publicou o arquivo **não muda o que o arquivo diz**: o orçamento montado sobre uma
+tabela do acervo é linha a linha idêntico ao montado sobre o mesmo arquivo enviado pelo
+cliente.
+
+Sob regime de contrato licitado, a lista **já chega filtrada do servidor** pelo que o regime
+aceita: oferecer uma tabela que a instalação vai recusar é oferecer uma recusa. A tela não
+guarda cópia da regra — ela mostra o que recebeu.
+
+Publicar é ato de plataforma, e cada publicação é imutável: data-base nova é **entrada
+nova**, nunca substituição, porque sobrescrever mudaria preço para todos os tenants ao mesmo
+tempo — inclusive em rodadas já montadas. Retirar uma tabela de circulação a tira das
+escolhas novas e **não** apaga nada: a rodada que já a citou continua funcionando.
+
 ## Estados e ações
 
 | Estado | Ação do usuário | Próximo estado |
