@@ -1,10 +1,95 @@
 # Design Approval Package — F-033, demanda sob contrato licitado
 
 Classification: INTERFACE_CHANGE  
-Revision: 1  
-Status: Approved (2026-08-22)  
+Revision: 2 (a revisão 1 permanece registrada abaixo, aprovada e implementada)  
+Status: Revision 2 — Pending approval  
 Date: 2026-08-22  
 Produced by: agente (Claude Code)
+
+---
+
+# Revisão 2 — o regime na abertura, e o rótulo que não mente
+
+Status: **Pending approval**  
+Data: 2026-08-22  
+Artefato: [`abertura-r2.html`](abertura-r2.html)
+
+## Por que existe uma revisão 2
+
+Levantada por Daniel Campos em 2026-08-22, olhando a tela construída: para orçar uma praça
+que **já está sob contrato licitado**, ele precisa abrir a rodada, ler no cabeçalho que ela
+é "pré-licitação", e só então declarar o regime — a rodada nasce dizendo o contrário do que
+ela é.
+
+Ao apurar, o defeito é maior do que a inconveniência descrita. Na tela de lista **não existe
+rodada nenhuma**, e mesmo assim o cabeçalho afirma `ORÇAMENTO-BASE · PRÉ-LICITAÇÃO` e a
+faixa âmbar fala de pré-licitação. São três telas com esse texto fixo
+(`OrcamentoApp.tsx:1551`, `1568`, `1587`): sem sessão, sem acesso e nenhum orçamento aberto.
+Nenhuma delas tem rodada. **A tela afirma um regime sobre nada.**
+
+A revisão 1 decidiu (decisão 4) que declarar o regime é ato próprio e "não é caixa de marcar
+escondida no formulário de abertura". Esta revisão **não contradiz** aquela decisão: o que
+ela rejeitou foi a caixa **escondida**. O campo proposto aqui tem o mesmo peso do Teto da
+verba — rótulo, dica e o aviso da mão única antes do clique — e o painel de declarar depois
+**continua existindo**, para quem abriu sem declarar.
+
+O servidor já aceita o que se propõe: `POST /v1/estimate-rounds` recebe `pricing_regime`
+opcional desde a revisão 1 (`CreateEstimateRoundRequest`). Só a tela não oferecia.
+
+## O que a revisão 2 muda
+
+| # | Mudança | Custo |
+| --- | --- | --- |
+| 1 | **Rótulo neutro sem rodada.** As três telas sem rodada usam `ORÇAMENTO-BASE`, sem sufixo, e uma faixa âmbar que não afirma momento. O sufixo (`PRÉ-LICITAÇÃO` / `DEMANDA SOB CONTRATO`) só aparece com rodada aberta. | Só tela |
+| 2 | **Campo Regime na abertura**, ao lado do Teto, com a mão única dita antes do clique. | Só tela — o servidor já aceita |
+| 3 | **Selo do regime no card da lista**, para distinguir as rodadas antes de abrir. | Exige `pricing_regime` na resposta de `GET /v1/estimate-rounds` — acréscimo aditivo |
+| 4 | **O painel de declarar depois permanece**, com a copy ajustada para dizer que a rodada foi aberta em pré-licitação. | Só tela |
+
+## Decisões que esta revisão carrega
+
+1. **A tela não afirma o que não sabe.** Sem rodada não há regime, e o rótulo cala sobre
+   ele. É a mesma regra da revisão 1 — "ausência não é um valor, é a falta dele" — aplicada
+   ao lugar onde ela tinha sido violada.
+2. **Declarar na abertura não é esconder.** O campo é visível, rotulado e carrega a
+   consequência. O que a revisão 1 recusou foi a caixa discreta; o que entra aqui é o
+   oposto.
+3. **Dois caminhos, não dois donos.** Abrir declarando e declarar depois são o mesmo ato em
+   momentos diferentes; o segundo passa a ser o caminho de correção, não o caminho único.
+4. **O card diz o regime, e o silêncio também diz.** Card sem selo é rodada em
+   pré-licitação. Nenhuma pastilha nova é inventada: é o mesmo selo da revisão 1, num
+   terceiro lugar.
+
+## Efeito colateral desejado
+
+Com a rodada nascendo declarada, a cascata **nunca** está suja no instante da declaração — a
+recusa `ESTIMATE_REGIME_CASCADE_DIRTY` deixa de ser alcançável pelo caminho normal. Isso
+resolve, de graça, um segundo achado da mesma conversa: na aba Cascata o painel "Instalar
+catálogo" está **acima** da pergunta do regime (`OrcamentoApp.tsx:2096` vs `2104`), e a
+leitura natural — instalar primeiro, declarar depois — leva justamente à recusa que a
+feature existe para evitar. A recusa continua implementada e testada, porque a rodada aberta
+sem regime ainda pode chegar nela.
+
+## Artefato da revisão 2
+
+| Arquivo | O que é |
+| --- | --- |
+| [`abertura-r2.html`](abertura-r2.html) | A rendição autocontida da revisão 2 |
+| [`r2-00-pagina-inteira.png`](r2-00-pagina-inteira.png) | Todos os estados numa imagem |
+| [`r2-01-defeito-hoje.png`](r2-01-defeito-hoje.png) | O que está no ar: regime afirmado sobre nada |
+| [`r2-02-rotulo-neutro.png`](r2-02-rotulo-neutro.png) | Proposto: rótulo neutro sem rodada |
+| [`r2-03-abertura-com-regime.png`](r2-03-abertura-com-regime.png) | O campo Regime na abertura e o selo no card da lista |
+| [`r2-04-dentro-da-rodada.png`](r2-04-dentro-da-rodada.png) | Dentro da rodada o sufixo volta — idêntico à revisão 1 |
+| [`r2-05-declarar-depois.png`](r2-05-declarar-depois.png) | O painel de declarar depois, que permanece |
+
+## O que esta aprovação NÃO cobre
+
+- A copy final dos textos novos, que é proposta do agente.
+- O nome do campo na resposta de `GET /v1/estimate-rounds` e a forma da paginação.
+- Qualquer mudança de comportamento do regime: ele segue mão única, e isso é do ADR-0045.
+
+---
+
+# Revisão 1 — aprovada e implementada
 
 > Governado por [design-approval](../../../engineering-os/workflows/design-approval.md). Este
 > artefato é evidência para um gate humano. Não é implementação e não deve ser copiado para

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Design Approval Package — F-033, revisão 2: o regime na abertura</title>
+<style>
+/* Tokens copiados VERBATIM de apps/web/src/styles.css (:root). Nenhum valor novo. */
+:root{
+  --bg:#fafaf8; --surface:#ffffff; --surface-subtle:#f4f4f1; --surface-sunken:#efefeb;
+  --ink:#14181d; --ink-secondary:#5b6169; --muted:#9aa0a8; --line:#e5e5e0;
+  --accent:#00c877; --accent-ink:#0e1116; --accent-text:#00744a; --accent-soft:#e6f6ee;
+  --accent-line:#9bdcc0; --dark:#0e1116; --dark-ink:#f2f4f7;
+  --dark-ink-soft:rgba(242,244,247,.72); --dark-line:rgba(242,244,247,.12);
+  color:var(--ink); background:var(--bg);
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box} body{margin:0;padding:0 0 40px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.rotulo{margin:26px 24px 6px;font-size:11px;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-secondary)}
+.rotulo small{display:block;margin-top:3px;font-weight:500;letter-spacing:0;
+  text-transform:none;font-size:11.5px;color:var(--muted)}
+.rotulo .antes{color:#b91c1c} .rotulo .depois{color:var(--accent-text)}
+.topbar{min-height:76px;padding:14px 32px;display:flex;align-items:center;
+  justify-content:space-between;gap:16px;color:var(--dark-ink);background:var(--dark);
+  border-bottom:1px solid var(--dark-line)}
+.topbar .eyebrow{display:block;font-size:10.5px;font-weight:800;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--dark-ink-soft)}
+.topbar h1{margin:3px 0 2px;font-size:19px}
+.topbar-meta{margin:0;font-size:11.5px;color:var(--dark-ink-soft)}
+.aviso-fixo{margin:0;max-width:46ch;padding:10px 14px;color:#4a3208;background:#f6d99a;
+  border-left:4px solid #b47512;border-radius:6px;font-size:11.5px;line-height:1.45}
+.corpo{padding:18px 24px}
+.colunas{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.painel{padding:16px;background:var(--surface);border:1px solid var(--line);
+  border-radius:10px}
+.painel h2{margin:0 0 4px;font-size:15px}
+.painel p{margin:0 0 4px;font-size:12px;line-height:1.5;color:var(--ink-secondary)}
+.eyebrow{display:block;font-size:10.5px;font-weight:800;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-secondary)}
+.hint{display:block;margin-top:8px;color:var(--ink-secondary);font-size:10.5px;
+  line-height:1.4}
+.cartao{padding:14px;margin-top:12px;background:var(--surface);border:1px solid var(--line);
+  border-radius:8px}
+.cartao h3{margin:0 0 6px;font-size:14px}
+.cartao p{margin:0 0 4px;font-size:12px;color:var(--ink-secondary);line-height:1.5}
+.campo{display:grid;gap:4px;margin-top:12px;color:var(--ink-secondary);font-size:11px;
+  font-weight:700}
+.campo select,.campo input{padding:8px;color:var(--ink);background:var(--surface);
+  border:1px solid var(--muted);border-radius:5px;font-family:inherit;font-size:12px;
+  font-weight:400}
+.campo-dica{margin:0;font-size:10.5px;font-weight:400;line-height:1.4;
+  color:var(--ink-secondary)}
+.botao-primario{width:100%;min-height:38px;margin-top:14px;color:var(--accent-ink);
+  background:var(--accent);border:1px solid var(--accent);border-radius:6px;font-size:13px;
+  font-weight:700;cursor:pointer;font-family:inherit}
+.botao-secundario{min-height:32px;padding:0 12px;color:var(--ink);background:var(--surface);
+  border:1px solid var(--muted);border-radius:6px;font-size:12px;font-weight:700;
+  cursor:pointer;font-family:inherit}
+/* Selo do regime: a MESMA peça aprovada na revisão 1, agora num terceiro lugar. */
+.selo-regime-claro{display:inline-block;padding:5px 9px;border:1px solid var(--line);
+  border-radius:999px;font-size:10px;font-weight:850;color:var(--ink-secondary);
+  background:var(--surface-sunken);letter-spacing:.04em}
+.errado{border:2px dashed #b91c1c;border-radius:10px;padding:2px}
+.certo{border:2px solid var(--accent-line);border-radius:10px;padding:2px}
+</style>
+</head>
+<body>
+
+<p class="rotulo"><span class="antes">1 — Hoje, e é o defeito</span>
+  <small>Não existe rodada nenhuma nesta tela, e mesmo assim ela afirma um regime. O
+    cabeçalho e a faixa falam de pré-licitação sobre nada.</small></p>
+<div class="errado">
+<header class="topbar">
+  <div>
+    <span class="eyebrow">ORÇAMENTO-BASE · PRÉ-LICITAÇÃO</span>
+    <h1>Nenhum orçamento aberto</h1>
+    <p class="topbar-meta">Escolha um orçamento da lista ou abra um novo.</p>
+  </div>
+  <p class="aviso-fixo">Orçamento-base de pré-licitação; o preço vem da cascata declarada —
+    nenhum preço daqui alcança um boletim de medição.</p>
+</header>
+</div>
+
+<p class="rotulo"><span class="depois">2 — Proposto: rótulo neutro sem rodada</span>
+  <small>O sufixo do momento só aparece onde ele é verdade: dentro de uma rodada aberta.</small></p>
+<div class="certo">
+<header class="topbar">
+  <div>
+    <span class="eyebrow">ORÇAMENTO-BASE</span>
+    <h1>Nenhum orçamento aberto</h1>
+    <p class="topbar-meta">Escolha um orçamento da lista ou abra um novo.</p>
+  </div>
+  <p class="aviso-fixo">O orçamento-base precifica pela cascata declarada na rodada. Nenhum
+    preço daqui alcança um boletim de medição.</p>
+</header>
+</div>
+
+<p class="rotulo">3 — A abertura declara o regime
+  <small>O campo tem o mesmo peso do Teto da verba: rótulo, dica e a mão única antes do
+    clique. Não é caixa escondida.</small></p>
+<div class="corpo">
+  <div class="colunas">
+    <section class="painel">
+      <h2>Orçamentos do tenant</h2>
+      <button class="botao-secundario" type="button">Recarregar lista</button>
+      <div class="cartao">
+        <h3>Campo do Toca <span class="mono" style="font-weight:400">(campo-do-toca)</span></h3>
+        <span class="selo-regime-claro">SOB CONTRATO LICITADO</span>
+        <p style="margin-top:8px">Campo do Toca · etapa orçamento aberto · versão 4</p>
+        <p>Cascata: SCO-Rio</p>
+        <button class="botao-secundario" type="button" style="margin-top:8px">Abrir orçamento</button>
+      </div>
+      <div class="cartao">
+        <h3>Praça Raul Campelo <span class="mono" style="font-weight:400">(praca-raul-campelo)</span></h3>
+        <p style="margin-top:8px">Praça Raul Campelo · etapa cascata · versão 1</p>
+        <p>Cascata: nenhuma fonte instalada</p>
+        <button class="botao-secundario" type="button" style="margin-top:8px">Abrir orçamento</button>
+      </div>
+      <span class="hint">Rodada sem selo é rodada em pré-licitação: ausência não é um valor,
+        é a falta dele — a mesma regra da revisão 1, aplicada ao card.</span>
+    </section>
+
+    <section class="painel">
+      <h2>Abrir orçamento novo</h2>
+      <p>O catálogo não é pedido aqui: a cascata é a etapa seguinte, e ela aceita mais de
+        uma fonte, em ordem declarada.</p>
+      <label class="campo">Chave da obra
+        <span class="campo-dica">minúsculas, números e hífen (ex.: praca-do-exemplo). É ela
+          que amarra os artefatos.</span>
+        <input type="text" value="">
+      </label>
+      <label class="campo">Nome da obra
+        <input type="text" value="">
+      </label>
+      <label class="campo">Rótulo do orçamento
+        <span class="campo-dica">como aparece na planilha (ex.: ORÇAMENTO-BASE 2026)</span>
+        <input type="text" value="">
+      </label>
+      <label class="campo">Endereço (opcional)
+        <input type="text" value="">
+      </label>
+      <label class="campo">Teto da verba (opcional)
+        <span class="campo-dica">a verba prevista para esta demanda, em reais.</span>
+        <input type="text" value="">
+      </label>
+      <label class="campo" style="border-top:1px solid var(--line);padding-top:12px">Regime
+        <span class="campo-dica">a demanda corre dentro de um contrato guarda-chuva já
+          licitado, ou é orçamento de pré-licitação?</span>
+        <select>
+          <option>Pré-licitação (padrão)</option>
+          <option selected>Demanda sob contrato licitado</option>
+        </select>
+        <span class="campo-dica"><b>Sob contrato, a cascata só aceita a tabela do
+          contrato</b>, e declarar é mão única: a rodada não volta para pré-licitação.
+          Corrigir um engano é abrir outra rodada.</span>
+      </label>
+      <button class="botao-primario" type="button">Abrir orçamento</button>
+    </section>
+  </div>
+</div>
+
+<p class="rotulo">4 — Dentro da rodada, o sufixo volta
+  <small>Aqui existe rodada, e o momento é verdade. Idêntico à revisão 1 — nada muda.</small></p>
+<header class="topbar">
+  <div>
+    <span class="eyebrow">ORÇAMENTO-BASE · DEMANDA SOB CONTRATO</span>
+    <h1>Campo do Toca</h1>
+    <p class="topbar-meta">campo-do-toca · orçamento 01a0241</p>
+    <p class="topbar-meta">ORÇAMENTO 2026 · versão 1 · BDI não declarado</p>
+  </div>
+  <span class="selo-regime-claro" style="border-color:rgba(242,244,247,.34);
+    background:transparent;color:var(--dark-ink)">SOB CONTRATO LICITADO</span>
+  <p class="aviso-fixo">Demanda dentro de contrato já licitado: o preço está fixado pelo
+    contrato, e só a tabela contratual vale. Nenhum preço daqui alcança um boletim sem
+    passar pela medição.</p>
+</header>
+
+<p class="rotulo">5 — O painel de declarar continua existindo
+  <small>Para quem abriu sem declarar e descobriu depois. Deixa de ser o único caminho, não
+    deixa de ser um caminho.</small></p>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">REGIME DA RODADA</span>
+    <h2>Esta demanda corre sob contrato licitado?</h2>
+    <p>Esta rodada foi aberta em pré-licitação. Declare aqui se ela for, na verdade, orçada
+      dentro de um contrato guarda-chuva já licitado.</p>
+    <label class="campo">Regime
+      <select><option>Pré-licitação (padrão)</option><option>Demanda sob contrato</option></select>
+    </label>
+    <button class="botao-secundario" type="button" style="margin-top:12px">Declarar</button>
+    <span class="hint">Declarar é mão única. Se a cascata já tiver fonte de outra origem, a
+      declaração recusa até a fonte ser removida — nenhuma fonte sai sozinha.</span>
+  </section>
+</div>
+
+</body>
+</html>

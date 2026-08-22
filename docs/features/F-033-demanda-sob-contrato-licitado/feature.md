@@ -19,6 +19,11 @@
 > [mock/README.md](mock/README.md). Com os dois gates cumpridos, a feature está
 > `READY_FOR_PLANNING`. A implementação deve corresponder à revisão aprovada; divergir dela
 > é revisão nova, com registro próprio.
+>
+> **Revisão 2 do pacote, aberta em 2026-08-22 e pendente de aprovação**: a tela construída
+> afirma um regime onde não há rodada, e obriga a abrir em pré-licitação para declarar
+> depois. O escopo 6 registra a ampliação; a revisão 2 do pacote precisa de aprovação
+> humana antes de ser implementada.
 
 ## Classification
 
@@ -101,6 +106,29 @@ regime a rodada está, para ela não descobrir pelo erro.
 5. **Cobertura**: rodada sem regime declarado idêntica a hoje; rodada sob contrato
    aceitando `sco` e recusando as quatro outras origens; declaração recusada com cascata
    suja; cadeia inteira sob o regime chegando à planilha com todas as linhas citando `sco`.
+
+6. **Ampliação de 2026-08-22 — o regime na abertura e o rótulo que não mente** (decisão
+   humana, revisão 2 do [pacote de design](mock/README.md)). A implementação da revisão 1
+   deixou a tela afirmando um regime onde não há rodada: as três telas sem rodada
+   (`OrcamentoApp.tsx:1551`, `1568`, `1587`) dizem `ORÇAMENTO-BASE · PRÉ-LICITAÇÃO`, e a
+   faixa âmbar fala de pré-licitação — sobre nada. E orçar uma demanda que já está sob
+   contrato obriga a abrir a rodada em pré-licitação para só então declarar o regime.
+
+   Quatro mudanças, três delas só de tela:
+
+   - rótulo neutro `ORÇAMENTO-BASE` e faixa que não afirma momento nas telas sem rodada;
+   - campo **Regime** no formulário de abertura, com o mesmo peso do teto — o servidor já
+     aceita `pricing_regime` em `POST /v1/estimate-rounds` desde a revisão 1, e só a tela
+     não oferecia;
+   - selo do regime no card da lista, o que exige `pricing_regime` na resposta de
+     `GET /v1/estimate-rounds` — acréscimo aditivo;
+   - o painel de declarar depois **permanece**, como caminho de correção.
+
+   Isto não contradiz a decisão 4 da revisão 1: ela recusou "caixa de marcar **escondida**
+   no formulário de abertura", e o campo proposto é o oposto de esconder. Efeito colateral
+   desejado: com a rodada nascendo declarada, `ESTIMATE_REGIME_CASCADE_DIRTY` deixa de ser
+   alcançável pelo caminho normal — a recusa continua implementada e testada, porque a
+   rodada aberta sem regime ainda chega nela.
 
 ## Out of Scope
 
