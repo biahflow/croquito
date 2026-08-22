@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_HUMAN_REVIEW`
 
 > Nasce em 2026-08-21, de uma conversa de operação: mapeando a cadeia real das praças
 > (levantamento → DXF → prancha → orçamento → aprovação → empresa executora), ficou

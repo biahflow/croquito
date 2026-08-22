@@ -37,7 +37,7 @@ from __future__ import annotations
 import hashlib
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -785,3 +785,291 @@ def test_estimate_round_target_over_and_exact_limit_through_v1_api(
     ).json()
     assert unchanged_after_invalid["version"] == version
     assert unchanged_after_invalid["target"]["amount"] == total_amount
+
+
+def test_estimate_round_contracted_demand_regime_through_v1_api(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stack: tuple[TestClient, FakeObjectStore, FakeQueue, str],
+) -> None:
+    """Regime "demanda sob contrato" (F-033, ADR-0045) pela cadeia REAL `/v1`, critério 5.
+
+    Réplica enxuta de `test_estimate_round_full_chain_through_v1_api` até a planilha
+    publicada — mesma prancha sintética, mesmos helpers —, desta vez com
+    `pricing_regime=contracted_demand` declarado na CRIAÇÃO da rodada (no molde do
+    `target_amount` de `test_estimate_round_target_over_and_exact_limit_through_v1_api`).
+    Prova, pela cadeia inteira e não só pela rota isolada (já coberta por
+    `tests/api/test_estimate_round_routes.py`): a cascata só aceita `sco`; `emop` recusa na
+    INSTALAÇÃO com `409 ESTIMATE_CASCADE_ORIGIN_FORBIDDEN` sem mudar a cascata nem a
+    versão da rodada; e a planilha publicada chega com TODA linha de preço citando `sco`
+    na coluna FONTE.
+
+    Sob o regime só o catálogo SCO instala, e a MAPÃO sintética
+    (`build_synthetic_previous_mapao`) precifica pavimento, alambrado, banco, luminária e
+    piso emborrachado — os mesmos cinco códigos do demo de medição, catálogo único
+    (`croquito_worker.valuation.synthetic._DEMO_CODE_ASSIGNMENTS`) — mas não o gramado, que
+    no orçamento de cascata livre (`estimate_fixture.py`) vem da EMOP ou de composição
+    manual. Aqui o gramado fica REJEITADO: candidato a aditivo (ADR-0045, decisão 5), não
+    falha de precificação — e é esse rejeitado que prova `amendment_candidates` no bloco do
+    regime.
+    """
+    client, storage, queue, database_url = stack
+
+    plate = render_synthetic_plate(tmp_path / "plate-source")
+    monkeypatch.setenv(AI_BUDGET_ENV, "1.50")
+    monkeypatch.setenv(_ANTHROPIC_KEY_ENV, "chave-de-teste-nunca-usada")
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url=QUEUE_URL,
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            artifact_bucket="croquito-estimate-v1-e2e",
+        ),
+        valuation_extraction_adapter=legend_fixture_adapter(plate),
+    )
+    worker.client = queue
+    worker.s3_client = storage
+
+    # A única fonte que a rodada sob contrato aceita, e uma fonte proibida (EMOP) para
+    # provar a recusa na instalação — nunca chega a entrar na cascata.
+    template = default_template()
+    previous_mapao_path = build_synthetic_previous_mapao(tmp_path / "previous-mapao-regime.xlsx")
+    sco_catalog = read_price_catalog(
+        previous_mapao_path,
+        template,
+        source_label=SYNTHETIC_CONTRACT_SOURCE_LABEL,
+        reference_month=SYNTHETIC_REFERENCE_MONTH,
+    )
+    dbf_path = write_emop_dbf(tmp_path / "emop-sintetico-regime.dbf")
+    emop_catalog, _emop_notes = read_emop_catalog_with_report(dbf_path, emop_fixture_layout())
+
+    # 1. `POST /v1/estimate-rounds` JÁ com `pricing_regime=contracted_demand` (ADR-0045)
+    # declarado na CRIAÇÃO — no molde do `target_amount` do teste de teto.
+    created = client.post(
+        "/v1/estimate-rounds",
+        headers=_headers("rodada-regime-e2e"),
+        json={
+            "worksite_key": "praca-sintetica-regime-e2e",
+            "worksite_name": SYNTHETIC_ESTIMATE_WORKSITE_NAME,
+            "reference_label": "ORCAMENTO V1 REGIME E2E 01/2026",
+            "address": ADDRESS,
+            "pricing_regime": "contracted_demand",
+        },
+    )
+    assert created.status_code == 201, created.text
+    round_id = created.json()["round_id"]
+    version = created.json()["version"]
+
+    # 2. O bloco do regime já aparece no estado da rodada, cascata ainda vazia: só `sco` é
+    # aceito (ADR-0045, decisão 3), e nenhum candidato a aditivo existe ainda.
+    state_after_creation = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers()).json()
+    assert state_after_creation["regime"] == {
+        "value": "contracted_demand",
+        "allowed_cascade_origins": ["sco"],
+        "amendment_candidates": 0,
+    }
+
+    # 3. `sco` instala normalmente.
+    sco_upload = _presign_and_put(
+        client,
+        storage,
+        filename="catalogo-regime-sco.json",
+        content_type="application/json",
+        payload=_catalog_upload_bytes(sco_catalog),
+        key="presign-catalogo-regime-sco",
+    )
+    installed = client.post(
+        f"/v1/estimate-rounds/{round_id}/catalogs",
+        headers=_headers("instala-catalogo-regime-sco"),
+        json={"upload_id": sco_upload["upload_id"], "base_version": version},
+    )
+    assert installed.status_code == 201, installed.text
+    version = installed.json()["version"]
+    assert [entry["origin"] for entry in installed.json()["cascade"]] == ["sco"]
+
+    # 4. `emop` recusa NA INSTALAÇÃO com `409 ESTIMATE_CASCADE_ORIGIN_FORBIDDEN` (critério 3
+    # da feature): a cascata segue com uma fonte só e a versão da rodada não muda.
+    emop_upload = _presign_and_put(
+        client,
+        storage,
+        filename="catalogo-regime-emop.json",
+        content_type="application/json",
+        payload=_catalog_upload_bytes(emop_catalog),
+        key="presign-catalogo-regime-emop",
+    )
+    forbidden = client.post(
+        f"/v1/estimate-rounds/{round_id}/catalogs",
+        headers=_headers("instala-catalogo-regime-emop"),
+        json={"upload_id": emop_upload["upload_id"], "base_version": version},
+    )
+    assert forbidden.status_code == 409, forbidden.text
+    assert forbidden.json()["detail"]["code"] == "ESTIMATE_CASCADE_ORIGIN_FORBIDDEN"
+    assert forbidden.json()["detail"]["details"] == {"origin": "emop", "allowed_origins": ["sco"]}
+
+    unchanged = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers()).json()
+    assert unchanged["version"] == version
+    assert [entry["origin"] for entry in unchanged["cascade"]] == ["sco"]
+
+    # 5. Segue a cadeia como o teste-molde: prancha, extração paga (via fixture, offline),
+    # takeoff e código — só a cascata muda de forma.
+    plate_payload = plate.pdf_path.read_bytes()
+    plate_upload = _presign_and_put(
+        client,
+        storage,
+        filename="prancha-regime.pdf",
+        content_type="application/pdf",
+        payload=plate_payload,
+        key="presign-prancha-regime",
+    )
+    associated = client.post(
+        f"/v1/estimate-rounds/{round_id}/plate",
+        headers=_headers("prancha-associada-regime"),
+        json={"upload_id": plate_upload["upload_id"], "base_version": version},
+    )
+    assert associated.status_code == 200, associated.text
+    version = associated.json()["version"]
+
+    extraction = client.post(
+        f"/v1/estimate-rounds/{round_id}/plate/extractions",
+        headers=_headers("extracao-regime-e2e"),
+        json={"base_version": version},
+    )
+    assert extraction.status_code == 202, extraction.text
+    version = extraction.json()["version"]
+
+    assert _drain(worker) == 1
+
+    round_after_extraction = client.get(
+        f"/v1/estimate-rounds/{round_id}", headers=_headers()
+    ).json()
+    assert round_after_extraction["extraction"]["status"] == "done"
+    version = round_after_extraction["version"]
+
+    takeoff = client.get(f"/v1/estimate-rounds/{round_id}/takeoff", headers=_headers()).json()
+    assert takeoff["version"] == version
+    packet = _packet_from_takeoff_response(takeoff)
+
+    takeoff_decisions = build_demo_takeoff_decisions(packet).decisions
+    last_decision_response: dict[str, Any] | None = None
+    for index, decision in enumerate(takeoff_decisions):
+        response = client.post(
+            f"/v1/estimate-rounds/{round_id}/takeoff/decisions",
+            headers=_headers(f"decisao-takeoff-regime-{index}"),
+            json={
+                "base_version": version,
+                "item_id": decision.item_id,
+                "action": decision.action,
+                "quantity": None if decision.quantity is None else str(decision.quantity),
+                "unit": decision.unit,
+                "note": decision.note,
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        version = body["version"]
+        last_decision_response = body
+    assert last_decision_response is not None
+    assert last_decision_response["review_status"] == "complete"
+
+    assert _drain(worker) == len(takeoff_decisions)
+
+    final_takeoff = client.get(f"/v1/estimate-rounds/{round_id}/takeoff", headers=_headers()).json()
+    final_packet = _packet_from_takeoff_response(final_takeoff)
+
+    # 5b. Confirma código citando SEMPRE `sco` — é a única fonte instalada, e a única que o
+    # regime aceitaria. A MAPÃO sintética precifica cinco dos seis itens confirmados no
+    # takeoff (a área de intervenção já foi rejeitada NO takeoff, não chega aqui); o
+    # gramado — que só a EMOP ou uma composição manual precificam no orçamento livre — fica
+    # sem código nela e é REJEITADO: candidato a aditivo, não falha.
+    _RegimeCodeDecision = tuple[str, Literal["confirm", "reject"], str | None]
+    regime_code_decisions: Final[tuple[_RegimeCodeDecision, ...]] = (
+        ("PISO INTERTRAVADO SINTETICO", "confirm", "AD04050060(/)"),
+        ("GRAMADO SINTETICO", "reject", None),
+        ("ALAMBRADO SINTETICO", "confirm", "CE02100010(/)"),
+        ("BANCO DE CONCRETO SINTETICO", "confirm", "MB01100010(/)"),
+        ("LUMINARIA DUPLA SINTETICA", "confirm", "MB01300010(/)"),
+        ("PISO EMBORRACHADO SINTETICO", "confirm", "AD04150010(/)"),
+    )
+    lawn_item_id = item_for_label(final_packet, "GRAMADO SINTETICO").id
+    for index, (label, action, code) in enumerate(regime_code_decisions):
+        response = client.post(
+            f"/v1/estimate-rounds/{round_id}/code-assignments/decisions",
+            headers=_headers(f"decisao-codigo-regime-{index}"),
+            json={
+                "base_version": version,
+                "item_id": item_for_label(final_packet, label).id,
+                "action": action,
+                "code": code,
+                "catalog_sha256": None if code is None else sco_catalog.source_sha256,
+                "note": (
+                    "sem código na tabela contratual; candidato a aditivo sob o regime "
+                    "(ADR-0045, decisão 5)"
+                    if code is None
+                    else "precificado pela tabela contratual (SCO)"
+                ),
+            },
+        )
+        assert response.status_code == 200, response.text
+        version = response.json()["version"]
+
+    assignments_state = client.get(
+        f"/v1/estimate-rounds/{round_id}/code-assignments", headers=_headers()
+    ).json()
+    assert assignments_state["pending_items"] == []
+    assert assignments_state["rejected"] == 1  # o gramado: candidato a aditivo
+    assert assignments_state["confirmed"] == len(regime_code_decisions) - 1
+
+    # O bloco do regime lê o mesmo rejeitado como candidato a aditivo (ADR-0045, decisão 5).
+    round_after_codes = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers()).json()
+    assert round_after_codes["regime"]["amendment_candidates"] == 1
+
+    # 6. `POST .../estimate`: monta, audita e publica — as cinco linhas de preço vêm todas
+    # do SCO, e o gramado sai como único item sem preço (critério central desta feature).
+    built = client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate",
+        headers=_headers("orcamento-regime-e2e"),
+        json={"base_version": version, "bdi_percent": BDI_PERCENT},
+    )
+    assert built.status_code == 200, built.text
+    built_body = built.json()
+    version = built_body["version"]
+    assert built_body["workbook_present"] is True
+
+    estimate = Estimate.model_validate(built_body["estimate"])
+    assert len(estimate.lines) == len(regime_code_decisions) - 1
+    assert all(line.price_origin == PriceOrigin.SCO for line in estimate.lines)
+    assert estimate.unpriced_item_ids == [lawn_item_id]
+
+    # 7. `GET .../estimate`: lê o BLOB publicado do object store (a URL assinada da fixture
+    # não é buscável por HTTP) e confere a planilha canônica — TODA linha de preço cita
+    # `sco` na coluna FONTE (critério 5 da feature: a cadeia inteira sob o regime chega à
+    # planilha citando só a tabela contratual).
+    read = client.get(f"/v1/estimate-rounds/{round_id}/estimate", headers=_headers()).json()
+    assert read["estimate_sha256"] == built_body["estimate_sha256"]
+
+    object_key = estimate_workbook_key(
+        tenant_id=TENANT, round_id=str(round_id), estimate_sha256=read["estimate_sha256"]
+    )
+    workbook_bytes = storage.body(object_key)
+    assert hashlib.sha256(workbook_bytes).hexdigest() == read["workbook_sha256"]
+
+    workbook_path = tmp_path / "orcamento-regime-publicado.xlsx"
+    workbook_path.write_bytes(workbook_bytes)
+
+    audit = audit_estimate_workbook(workbook_path, estimate, template)
+    assert audit.status == "ok"
+    assert audit.findings == []
+
+    layout = template.estimate
+    assert layout is not None
+    columns = layout.columns
+    canonical = canonicalize_workbook(workbook_path, template)
+    cells = _canonical_cells(canonical, layout.sheet_name)
+
+    header_row = layout.header_row
+    for offset in range(len(estimate.lines)):
+        row = header_row + 1 + offset
+        source_cell = cells[f"{columns.source.letter}{row}"]["value"]
+        assert isinstance(source_cell, str), row
+        assert "SCO" in source_cell, row

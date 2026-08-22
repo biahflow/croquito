@@ -56,7 +56,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
 | F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
 | F-030 | A DEFINIR | READY_FOR_SPEC | Fotos do levantamento na jornada de revisão (a definir em contrato) |
-| F-033 | HIGH | READY_FOR_PLANNING | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
+| F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | READY_FOR_PLANNING | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
