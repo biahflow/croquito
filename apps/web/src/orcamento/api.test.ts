@@ -11,7 +11,9 @@ import {
   getTakeoff,
   getTakeoffOverlay,
   installCatalog,
+  installReferenceCatalog,
   listEstimates,
+  listReferenceCatalogs,
   postBuildEstimate,
   postCodeDecision,
   postRegime,
@@ -120,6 +122,24 @@ describe("leituras do orçamento", () => {
   });
 
   /**
+   * O acervo é lido SOB a rodada, porque é a rodada que conhece o regime — e os dois
+   * filtros (circulação e regime) são do servidor. A tela não manda parâmetro de filtro
+   * nenhum: mandá-lo seria guardar aqui uma cópia da regra que a instalação aplica.
+   */
+  it("o acervo da rodada é leitura pura, sem filtro e sem chave de idempotência", async () => {
+    await listReferenceCatalogs(TOKEN, ROUND);
+
+    expect(chamadas).toHaveLength(1);
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/estimate-rounds/${ROUND}/reference-catalogs`,
+    );
+    expect(chamadas[0].init?.method ?? "GET").toBe("GET");
+    expect(headersDaChamada().Authorization).toBe(`Bearer ${TOKEN}`);
+    expect(headersDaChamada()).not.toHaveProperty("Idempotency-Key");
+    expect(chamadas[0].url).not.toContain("origin=");
+  });
+
+  /**
    * A rota do orçamento NÃO expõe `arm`: o braço híbrido depende de índice de embeddings
    * que nenhuma rota de `/v1` publica, e mandar o parâmetro inventaria contrato.
    */
@@ -160,6 +180,25 @@ describe("mutações do orçamento", () => {
 
     expect(chamadas[0].url).toBe(`${BASE}/v1/estimate-rounds/${ROUND}/catalogs`);
     expect(corpoDaChamada()).toEqual({ upload_id: "upload-1", base_version: 3 });
+    // O caminho do arquivo próprio segue exatamente como era: nenhuma tabela do acervo
+    // entra no corpo dele por engano.
+    expect(corpoDaChamada()).not.toHaveProperty("reference_catalog_id");
+  });
+
+  /**
+   * A tabela do acervo entra pela MESMA rota, com a mesma guarda otimista e a mesma chave
+   * de idempotência — o que muda é qual fonte o corpo cita, e ele cita exatamente uma.
+   */
+  it("instalar do acervo usa a mesma rota, citando a tabela e nenhum arquivo", async () => {
+    await installReferenceCatalog(TOKEN, ROUND, "tabela-do-acervo-1", 3);
+
+    expect(chamadas[0].url).toBe(`${BASE}/v1/estimate-rounds/${ROUND}/catalogs`);
+    expect(headersDaChamada()["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(corpoDaChamada()).toEqual({
+      reference_catalog_id: "tabela-do-acervo-1",
+      base_version: 3,
+    });
+    expect(corpoDaChamada()).not.toHaveProperty("upload_id");
   });
 
   /** A reordenação é a permutação COMPLETA: corpo parcial faria o servidor escolher. */
@@ -417,6 +456,57 @@ describe("regime da rodada", () => {
 });
 
 describe("recusas traduzidas", () => {
+  /**
+   * A lista que a tela leu pode envelhecer entre a leitura e o clique: uma tabela retirada
+   * de circulação nesse intervalo recusa na instalação. A frase diz as três coisas que
+   * importam — a tabela saiu, as rodadas que já a instalaram continuam de pé, e nada foi
+   * gravado agora.
+   */
+  it("tabela retirada entre a leitura e o clique é recusa de instalação, não erro da tela", async () => {
+    stub(() =>
+      problema(
+        409,
+        "REFERENCE_CATALOG_WITHDRAWN",
+        "a tabela saiu de circulação",
+        { reference_catalog_id: "tabela-do-acervo-1" },
+      ),
+    );
+
+    const erro = await installReferenceCatalog(
+      TOKEN,
+      ROUND,
+      "tabela-do-acervo-1",
+      3,
+    ).catch((error: unknown) => error);
+
+    expect(describeError(erro)).toContain("saiu de circulação");
+    expect(describeError(erro)).toContain(
+      "continua valendo nas rodadas que já a instalaram",
+    );
+    expect(describeError(erro)).toContain("nada foi instalado");
+  });
+
+  /** As regras da cascata valem iguais, venha o arquivo do acervo ou do cliente. */
+  it("origem repetida recusa igual quando a fonte veio do acervo", async () => {
+    stub(() =>
+      problema(
+        409,
+        "ESTIMATE_CASCADE_ORIGIN_DUPLICATE",
+        "a cascata já tem um catálogo desta origem",
+        { origin: "sco" },
+      ),
+    );
+
+    const erro = await installReferenceCatalog(
+      TOKEN,
+      ROUND,
+      "tabela-do-acervo-1",
+      3,
+    ).catch((error: unknown) => error);
+
+    expect(describeError(erro)).toContain("Cada origem entra uma vez só");
+  });
+
   it("o 409 da rodada é o convite a recarregar, não falha do ato", async () => {
     stub(() =>
       problema(409, "REVISION_CONFLICT", "a rodada mudou depois da leitura", {

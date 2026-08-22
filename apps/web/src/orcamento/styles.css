@@ -639,6 +639,40 @@ p {
   border-color: var(--line);
 }
 
+/* Selo de PROCEDÊNCIA da fonte instalada (F-037, revisão 1 aprovada) — o único valor
+   visual novo do pacote, e nenhuma cor nova entra por ele: é a mesma veste do selo de
+   regime claro (`--surface-sunken` sobre `--line`, texto em `--ink-secondary`), que o
+   pacote cita como procedência deste sinal. Ele lê diferente dos selos de ORIGEM, que são
+   coloridos por tabela: origem é de onde o preço vem, procedência é quem publicou o
+   arquivo. A palavra vai dentro do selo — a veste é redundância. */
+.selo-procedencia {
+  color: var(--ink-secondary);
+  background: var(--surface-sunken);
+  border-color: var(--line);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+/* A alternativa nomeada da escolha da fonte: o pacote aprovado a desenha como um LINK
+   dentro da frase que diz para quem ela serve, e não como um segundo botão ao lado do
+   principal — dois botões empatariam os dois caminhos, e a lista é o principal. Aqui ela é
+   um `button` de verdade, porque não navega para lugar nenhum; a classe só lhe dá a
+   aparência de link. */
+.botao-texto {
+  padding: 0;
+  color: var(--accent-text);
+  background: none;
+  border: none;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.botao-texto:disabled {
+  color: var(--ink-secondary);
+  cursor: default;
+}
+
 /* Cascata de catálogos — a etapa que a medição não tem ---------------------- */
 /* A ordem é a regra de precificação, então ela é numerada e visível: o número no
    círculo é composição nova sobre `.item-numero`, e a posição também aparece por

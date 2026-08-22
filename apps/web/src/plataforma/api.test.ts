@@ -12,11 +12,17 @@ import {
   getEntitlement,
   journeyEntitlementBody,
   listJourneys,
+  listReferenceCatalogs,
   listTenants,
+  publishCatalogBody,
+  publishReferenceCatalog,
+  referenceCatalogPresignBody,
   setEntitlement,
   setJourneyEntitlement,
+  uploadReferenceCatalog,
+  withdrawReferenceCatalog,
 } from "./api";
-import { describeError } from "./labels";
+import { describeAcervoError, describeError } from "./labels";
 
 /** Base do build de teste: `VITE_API_BASE_URL` não é declarada neste ambiente. */
 const BASE = "http://localhost:8000";
@@ -308,5 +314,270 @@ describe("disponibilidade de jornada (F-034)", () => {
         agreementReference: "   ",
       }),
     ).toEqual({ enabled: true });
+  });
+});
+
+/**
+ * Acervo de catálogos de referência (F-037).
+ *
+ * O oráculo continua sendo o que SAIU no `fetch`. Duas coisas são fixadas aqui porque um
+ * erro nelas só apareceria como `422` em produção: o presign do acervo NÃO manda
+ * `content_type`, e a publicação manda dois campos e nada mais.
+ */
+describe("acervo de catálogos", () => {
+  /** Um `catalog.json` sintético; o conteúdo não importa, o digest dele sim. */
+  function catalogFile(conteudo = '{"source_label":"SCO"}'): File {
+    return new File([conteudo], "catalog.json", { type: "application/json" });
+  }
+
+  it("lê o acervo inteiro numa chamada, sem chave de idempotência", async () => {
+    stub(() =>
+      ok({
+        catalogs: [
+          {
+            reference_catalog_id: "0198-aaa",
+            display_name: "SCO-Rio FGV06 desonerado",
+            origin: "sco",
+            reference_month: "2026-07",
+            entry_count: 4865,
+            object_sha256: "6f314c9".padEnd(64, "0"),
+            source_sha256: "a17b3e0".padEnd(64, "0"),
+            available: true,
+            published_by: "daniel",
+            published_at: "2026-08-22T09:14:00Z",
+            withdrawn_at: null,
+          },
+        ],
+      }),
+    );
+
+    const catalogos = await listReferenceCatalogs(TOKEN);
+
+    expect(chamadas[0].url).toBe(`${BASE}/v1/platform/reference-catalogs`);
+    expect(chamadas[0].init?.method).toBeUndefined();
+    expect(headersDaChamada()).not.toHaveProperty("Idempotency-Key");
+    expect(catalogos).toHaveLength(1);
+    expect(catalogos[0].display_name).toBe("SCO-Rio FGV06 desonerado");
+  });
+
+  /**
+   * O tipo é FIXO na rota (`application/json`) e o corpo recusa campo desconhecido:
+   * mandar `content_type` "por garantia" derrubaria a publicação com `422`.
+   */
+  it("o corpo do presign não carrega content_type", () => {
+    expect(
+      referenceCatalogPresignBody({
+        filename: "catalog.json",
+        sizeBytes: 1234,
+        sha256: "a".repeat(64),
+      }),
+    ).toEqual({
+      filename: "catalog.json",
+      size_bytes: 1234,
+      sha256: "a".repeat(64),
+    });
+  });
+
+  it("o corpo da publicação tem dois campos, com o nome sem espaço nas pontas", () => {
+    expect(
+      publishCatalogBody({
+        uploadId: "0198-upload",
+        displayName: "  SINAPI RJ desonerado  ",
+      }),
+    ).toEqual({
+      upload_id: "0198-upload",
+      display_name: "SINAPI RJ desonerado",
+    });
+  });
+
+  it("sobe pelo presign da plataforma e faz o PUT direto no store", async () => {
+    stub((call) =>
+      call.url.endsWith("/presign")
+        ? ok({
+            upload_id: "0198-upload",
+            url: "https://store.example/objeto?assinado",
+            headers: { "Content-Type": "application/json" },
+          })
+        : ok(),
+    );
+
+    const upload = await uploadReferenceCatalog(TOKEN, catalogFile());
+
+    // A rota é a da PLATAFORMA, não `/v1/uploads/presign`: o presign do croqui está sob o
+    // portão de disponibilidade de jornada, e o acervo não pode depender dele.
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/platform/reference-catalogs/presign`,
+    );
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(headersDaChamada(0)["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(corpoDaChamada(0)).not.toHaveProperty("content_type");
+    // O byte vai direto ao store, com os cabeçalhos que o servidor assinou.
+    expect(chamadas[1].url).toBe("https://store.example/objeto?assinado");
+    expect(chamadas[1].init?.method).toBe("PUT");
+    expect(upload.uploadId).toBe("0198-upload");
+    expect(upload.objectSha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  /** O digest é do conteúdo, não do nome: dois arquivos diferentes não colidem. */
+  it("calcula o digest do conteúdo do arquivo", async () => {
+    stub((call) =>
+      call.url.endsWith("/presign")
+        ? ok({ upload_id: "u", url: "https://store.example/o", headers: {} })
+        : ok(),
+    );
+
+    const primeiro = await uploadReferenceCatalog(TOKEN, catalogFile("{}"));
+    const segundo = await uploadReferenceCatalog(
+      TOKEN,
+      catalogFile('{"outro":1}'),
+    );
+
+    expect(primeiro.objectSha256).not.toBe(segundo.objectSha256);
+  });
+
+  it("o PUT que não conclui vira recusa com código próprio, e nada é publicado", async () => {
+    stub((call) =>
+      call.url.endsWith("/presign")
+        ? ok({ upload_id: "u", url: "https://store.example/o", headers: {} })
+        : new Response("", { status: 503 }),
+    );
+
+    const erro = await uploadReferenceCatalog(TOKEN, catalogFile()).catch(
+      (e: unknown) => e,
+    );
+
+    expect(erro).toBeInstanceOf(ApiError);
+    expect((erro as ApiError).code).toBe("UPLOAD_TRANSFER_FAILED");
+    expect(describeAcervoError(erro)).toContain("Nada foi publicado");
+    // A publicação nem chega a sair: só o presign e o PUT recusado.
+    expect(chamadas).toHaveLength(2);
+  });
+
+  it("publica com POST, dois campos e chave de idempotência", async () => {
+    await publishReferenceCatalog(TOKEN, {
+      uploadId: "0198-upload",
+      displayName: "SINAPI RJ desonerado",
+    });
+
+    expect(chamadas[0].url).toBe(`${BASE}/v1/platform/reference-catalogs`);
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(headersDaChamada()["Content-Type"]).toBe("application/json");
+    expect(headersDaChamada()["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(corpoDaChamada()).toEqual({
+      upload_id: "0198-upload",
+      display_name: "SINAPI RJ desonerado",
+    });
+  });
+
+  /** Sem corpo: o ato é inteiramente identificado pela rota. */
+  it("retira de circulação pelo identificador escapado, sem corpo", async () => {
+    await withdrawReferenceCatalog(TOKEN, "0198 aaa/bbb");
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/platform/reference-catalogs/0198%20aaa%2Fbbb/withdraw`,
+    );
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(chamadas[0].init?.body).toBeUndefined();
+    expect(headersDaChamada()).toHaveProperty("Idempotency-Key");
+    expect(headersDaChamada()).not.toHaveProperty("Content-Type");
+  });
+
+  it("dá uma chave de idempotência NOVA a cada retirada", async () => {
+    await withdrawReferenceCatalog(TOKEN, "a");
+    await withdrawReferenceCatalog(TOKEN, "a");
+
+    expect(headersDaChamada(0)["Idempotency-Key"]).not.toBe(
+      headersDaChamada(1)["Idempotency-Key"],
+    );
+  });
+});
+
+describe("recusas do acervo", () => {
+  it("republicar o mesmo conteúdo cita o digest que a tela subiu", async () => {
+    stub(() =>
+      problema(
+        409,
+        "REFERENCE_CATALOG_ALREADY_PUBLISHED",
+        "Este conteúdo já está no acervo.",
+      ),
+    );
+
+    const erro = await publishReferenceCatalog(TOKEN, {
+      uploadId: "u",
+      displayName: "SCO-Rio FGV06 desonerado",
+    }).catch((e: unknown) => e);
+
+    const frase = describeAcervoError(erro, "6f314c9".padEnd(64, "0"));
+    expect(frase).toContain("já está publicada");
+    expect(frase).toContain("sha256 6f314c900000");
+    expect(frase).toContain("data-base nova é uma entrada nova");
+  });
+
+  /** Sem o digest a frase segue verdadeira e não inventa conteúdo nenhum. */
+  it("a mesma recusa sem digest não fabrica um", async () => {
+    stub(() =>
+      problema(409, "REFERENCE_CATALOG_ALREADY_PUBLISHED", "Já está no acervo."),
+    );
+
+    const erro = await publishReferenceCatalog(TOKEN, {
+      uploadId: "u",
+      displayName: "qualquer",
+    }).catch((e: unknown) => e);
+
+    const frase = describeAcervoError(erro);
+    expect(frase).toContain("já está publicada");
+    expect(frase).not.toContain("sha256");
+  });
+
+  /** A origem vem do `details` do SERVIDOR; a tela nunca abre o `catalog.json`. */
+  it("origem que a plataforma não distribui é nomeada pelo servidor", async () => {
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            detail: {
+              code: "REFERENCE_CATALOG_ORIGIN_NOT_PUBLISHABLE",
+              detail: "A plataforma não distribui tabela desta origem.",
+              details: { origin: "emop" },
+            },
+          }),
+          { status: 422 },
+        ),
+      ),
+    );
+
+    const erro = await publishReferenceCatalog(TOKEN, {
+      uploadId: "u",
+      displayName: "EMOP RJ",
+    }).catch((e: unknown) => e);
+
+    expect(describeAcervoError(erro)).toContain("de origem emop");
+    expect(describeAcervoError(erro)).toContain("Nada foi publicado");
+  });
+
+  /**
+   * `NOT_FOUND` significa duas coisas diferentes nesta jornada. No acervo ele não pode
+   * virar a frase do tenant nunca autorizado — seria a explicação da seção errada.
+   */
+  it("catálogo inexistente não vira a frase do tenant nunca autorizado", async () => {
+    stub(() => problema(404, "NOT_FOUND", "Catálogo do acervo não encontrado."));
+
+    const erro = await withdrawReferenceCatalog(TOKEN, "0198-sumiu").catch(
+      (e: unknown) => e,
+    );
+
+    expect(describeAcervoError(erro)).toContain("não está no acervo");
+    expect(describeAcervoError(erro)).not.toContain("autorização contratual");
+    // A seção de tenants continua com a frase dela.
+    expect(describeError(erro)).toContain("nunca teve autorização contratual");
+  });
+
+  /** Código que a tela não conhece nunca vira frase inventada. */
+  it("código desconhecido cai na frase do transporte, com o código dentro", async () => {
+    stub(() => problema(418, "CODIGO_QUE_NAO_EXISTE", "Recusa nova."));
+
+    const erro = await listReferenceCatalogs(TOKEN).catch((e: unknown) => e);
+
+    expect(describeAcervoError(erro)).toContain("CODIGO_QUE_NAO_EXISTE");
   });
 });

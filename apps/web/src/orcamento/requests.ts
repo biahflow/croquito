@@ -172,12 +172,30 @@ export function regimeBody(
   return { ...versionBody(baseVersion), pricing_regime: "contracted_demand" };
 }
 
-/** Corpo do `POST .../catalogs`: o JSON do catálogo já subiu pelo presign. */
+/**
+ * Corpo do `POST .../catalogs` pela tabela PRÓPRIA: o JSON já subiu pelo presign.
+ *
+ * Uma fonte só, e a do cliente: `reference_catalog_id` não sai daqui de propósito. A rota
+ * aceita exatamente uma das duas, e um corpo com as duas recusa
+ * `422 ESTIMATE_CATALOG_SOURCE_INVALID` — construir os dois corpos em funções separadas é
+ * o que torna esse corpo ambíguo inexpressável nesta tela.
+ */
 export function installCatalogBody(
   uploadId: string,
   baseVersion: number,
 ): Record<string, string | number> {
   return { upload_id: uploadId, ...versionBody(baseVersion) };
+}
+
+/** Corpo do `POST .../catalogs` pelo ACERVO: a linha escolhida, e nenhum arquivo. */
+export function installReferenceCatalogBody(
+  referenceCatalogId: string,
+  baseVersion: number,
+): Record<string, string | number> {
+  return {
+    reference_catalog_id: referenceCatalogId,
+    ...versionBody(baseVersion),
+  };
 }
 
 /**

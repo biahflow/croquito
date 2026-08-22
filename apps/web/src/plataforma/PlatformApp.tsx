@@ -5,9 +5,13 @@ import {
   ApiError,
   getEntitlement,
   listJourneys,
+  listReferenceCatalogs,
   listTenants,
+  publishReferenceCatalog,
   setEntitlement,
   setJourneyEntitlement,
+  uploadReferenceCatalog,
+  withdrawReferenceCatalog,
   type EntitlementDraft,
   type Journey,
   type JourneyAvailability,
@@ -15,33 +19,49 @@ import {
   type JourneyState,
   type PlatformJourneys,
   type PlatformTenant,
+  type ReferenceCatalog,
 } from "./api";
 import {
+  AVISO_ACERVO,
   AVISO_DISPONIBILIDADE,
   AVISO_ESTADO_NAO_EDITAVEL,
   AVISO_PLATAFORMA,
+  AVISO_PUBLICAR,
+  AVISO_RETIRADA,
   AVISO_REVOGACAO,
   AVISO_TENANT_NOVO,
+  DICA_ACERVO_SEM_PAPEL,
   DICA_APOS_RECUSA,
   DICA_AUTORIZAR_PILOTO,
+  DICA_CAMPOS_DO_ARQUIVO,
   DICA_JORNADAS_CARREGANDO,
   DICA_JORNADAS_SEM_PAPEL,
+  DICA_NOME_EXIBICAO,
   DICA_REFERENCIA,
+  describeAcervoError,
   describeError,
   describeJourneyError,
+  digestCurto,
   estadoDaAutorizacao,
   estadoLabel,
   ESTADO_JORNADA_CLASSE,
   ESTADO_JORNADA_LABEL,
+  formatarContagem,
+  formatarDataBase,
+  formatarDia,
   formatarInstante,
   JORNADA_LABEL,
+  MENSAGEM_ACERVO_SEM_PAPEL,
   MENSAGEM_JORNADAS_CARREGANDO,
   MENSAGEM_JORNADAS_SEM_PAPEL,
   MENSAGEM_LISTA_VAZIA,
   MENSAGEM_SEM_LEITURA,
   MENSAGEM_SEM_SESSAO,
   mensagemSemAutorizacao,
+  NOME_EXIBICAO_MINIMO,
+  resumoDoAcervo,
   resumoDoAmbiente,
+  SELO_FORA_DE_CIRCULACAO,
 } from "./labels";
 
 /**
@@ -421,6 +441,13 @@ export function PlatformApp({ session }: { session: User | null }) {
           fatia 2, decisão 1): as duas respondem à mesma pergunta — o que este cliente pode
           usar — e são administradas pelo mesmo papel. */}
       <DisponibilidadeDeJornada session={session} />
+
+      {/* Terceira seção EMPILHADA, não uma aba (Design Approval Package da F-037, revisão
+          1, divergência 1): a tela 7 desenha `Tenants | Jornadas | Acervo de tabelas` como
+          fita de abas, e esta jornada não tem mecanismo de aba nenhum — cada assunto é uma
+          `<section>` própria. O conteúdo aprovado entra inteiro; o que fica de fora é a
+          fita, que o mock inventou. */}
+      <AcervoDeCatalogos session={session} />
 
       {sucesso ? (
         <p className="app-toast" role="status">
@@ -803,6 +830,342 @@ export function DisponibilidadeDeJornada({ session }: { session: User | null }) 
               />
             ))}
           </ul>
+        ) : null}
+      </section>
+    </>
+  );
+}
+
+/**
+ * Acervo de catálogos de referência (F-037, ADR-0047).
+ *
+ * Corresponde às telas 7 e 8 da revisão 1 do Design Approval Package, aprovada por ato
+ * humano em 2026-08-22, com uma divergência declarada ANTES da implementação: o mock
+ * desenha abas e esta jornada não tem abas — o acervo é uma seção empilhada, como a
+ * disponibilidade de jornada acima dela.
+ *
+ * Três decisões do pacote viram código:
+ *
+ * - **Publicar é ato de plataforma e é imutável.** Não há "substituir": data-base nova é
+ *   entrada nova, e republicar o mesmo conteúdo é recusado pelo SERVIDOR com código
+ *   estável, que a tela traduz. Nenhuma regra de imutabilidade é reimplementada aqui.
+ * - **Retirar de circulação mostra a consequência.** A linha retirada CONTINUA na lista,
+ *   com a palavra escrita e a data — apagá-la esconderia o que aconteceu, e as rodadas que
+ *   já a referenciam continuam funcionando.
+ * - **Rótulo não se digita onde o arquivo já diz.** Só o nome de exibição é escrito;
+ *   origem, data-base e contagem são lidas de dentro do `catalog.json` pelo servidor. A
+ *   tela nunca abre o arquivo — ela calcula o digest para subir, e nada mais.
+ *
+ * O bloco RESERVADO do pacote (tela 9, a plataforma buscar data-base nova sozinha) não é
+ * construído aqui: está fora de escopo pela decisão 10 do ADR-0047.
+ */
+
+/** Uma publicação na lista, com a marca escrita de quem saiu de circulação. */
+export function LinhaCatalogo({
+  catalogo,
+  enviando,
+  onRetirar,
+}: {
+  catalogo: ReferenceCatalog;
+  enviando: boolean;
+  onRetirar: () => void;
+}) {
+  const foraDeCirculacao = !catalogo.available;
+  return (
+    <li>
+      <div>
+        <strong>{catalogo.display_name}</strong>
+        {foraDeCirculacao ? (
+          // A linha retirada diz o que houve e quando. A contagem de rodadas que ainda a
+          // referenciam está desenhada no pacote aprovado e NÃO entra: nenhuma rota
+          // devolve esse número hoje, e escrevê-lo a partir de um palpite seria pior do
+          // que omiti-lo (divergência registrada na entrega desta task).
+          <span>
+            origem {catalogo.origin} · ref.{" "}
+            {formatarDataBase(catalogo.reference_month)} · retirada de circulação em{" "}
+            {formatarDia(catalogo.withdrawn_at)}
+          </span>
+        ) : (
+          <span>
+            origem {catalogo.origin} · ref.{" "}
+            {formatarDataBase(catalogo.reference_month)} ·{" "}
+            {formatarContagem(catalogo.entry_count)} itens ·{" "}
+            {/* Digest truncado na tela, valor inteiro no `title`: é o padrão do produto
+                para conferência visual de conteúdo. */}
+            <code title={catalogo.object_sha256}>
+              sha256 {digestCurto(catalogo.object_sha256)}
+            </code>{" "}
+            · publicada por {catalogo.published_by} em{" "}
+            {formatarDia(catalogo.published_at)}
+          </span>
+        )}
+      </div>
+      {foraDeCirculacao ? (
+        // Cor nunca é o único indicador: a pastilha carrega a PALAVRA, e a linha já diz
+        // por extenso que a tabela foi retirada e quando.
+        <span className="neutral">{SELO_FORA_DE_CIRCULACAO}</span>
+      ) : (
+        <button
+          className="button project-action"
+          type="button"
+          disabled={enviando}
+          onClick={onRetirar}
+        >
+          Retirar de circulação
+        </button>
+      )}
+    </li>
+  );
+}
+
+/**
+ * A coluna da direita: publicar uma tabela.
+ *
+ * O arquivo é o `catalog.json` já normalizado pelo CLI; o servidor não importa `.xlsx`
+ * nem `.DBF` (ADR-0047 decisão 9), e a frase acima do campo diz isso. O botão só destrava
+ * com arquivo escolhido e nome de exibição do tamanho que o CONTRATO exige — não é regra
+ * própria da tela, é o mesmo `min_length` do servidor, repetido para o nome curto demais
+ * morrer antes da rede.
+ */
+export function FormularioDePublicacao({
+  arquivoEscolhido,
+  nomeExibicao,
+  enviando,
+  campoArquivoKey,
+  onArquivo,
+  onNomeExibicao,
+  onPublicar,
+}: {
+  arquivoEscolhido: boolean;
+  nomeExibicao: string;
+  enviando: boolean;
+  campoArquivoKey: number;
+  onArquivo: (arquivo: File | null) => void;
+  onNomeExibicao: (valor: string) => void;
+  onPublicar: () => void;
+}) {
+  const nomeCurto = nomeExibicao.trim().length < NOME_EXIBICAO_MINIMO;
+  return (
+    <div>
+      <span className="eyebrow">PUBLICAR TABELA</span>
+      <p className="field-hint">
+        {AVISO_PUBLICAR.antes}
+        <code>{AVISO_PUBLICAR.comandos[0]}</code>,{" "}
+        <code>{AVISO_PUBLICAR.comandos[1]}</code>,{" "}
+        <code>{AVISO_PUBLICAR.comandos[2]}</code>
+        {AVISO_PUBLICAR.meio}
+        <code>{AVISO_PUBLICAR.arquivo}</code>
+        {AVISO_PUBLICAR.depois}
+      </p>
+      <form
+        className="upload-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onPublicar();
+        }}
+      >
+        <label>
+          Catálogo normalizado (JSON)
+          {/* O campo de arquivo é não controlado por natureza; a `key` muda depois de uma
+              publicação e é o que o esvazia sem tocar no DOM por fora do React. */}
+          <input
+            key={campoArquivoKey}
+            type="file"
+            accept="application/json,.json"
+            disabled={enviando}
+            onChange={(event) => onArquivo(event.target.files?.[0] ?? null)}
+          />
+        </label>
+        <label>
+          Nome de exibição
+          <input
+            value={nomeExibicao}
+            onChange={(event) => onNomeExibicao(event.target.value)}
+            placeholder="SINAPI RJ desonerado"
+            disabled={enviando}
+          />
+          <small className="field-hint">{DICA_NOME_EXIBICAO}</small>
+        </label>
+        <button
+          className="button button-primary"
+          type="submit"
+          disabled={enviando || !arquivoEscolhido || nomeCurto}
+        >
+          Publicar
+        </button>
+      </form>
+      <span className="field-hint">{DICA_CAMPOS_DO_ARQUIVO}</span>
+    </div>
+  );
+}
+
+export function AcervoDeCatalogos({ session }: { session: User | null }) {
+  const [catalogos, setCatalogos] = useState<ReferenceCatalog[] | null>(null);
+  const [carregando, setCarregando] = useState(false);
+  const [semPapel, setSemPapel] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [nomeExibicao, setNomeExibicao] = useState("");
+  const [campoArquivoKey, setCampoArquivoKey] = useState(0);
+
+  const accessToken = session?.access_token ?? null;
+
+  const carregar = useCallback(async () => {
+    if (accessToken === null) {
+      return;
+    }
+    setCarregando(true);
+    try {
+      setCatalogos(await listReferenceCatalogs(accessToken));
+      setSemPapel(false);
+      setErro(null);
+    } catch (error) {
+      // `403` aqui não é falha: é a conta sem o papel de plataforma, e ela lê o motivo em
+      // vez de encarar uma seção em branco. Quem autoriza continua sendo o servidor.
+      if (error instanceof ApiError && error.status === 403) {
+        setSemPapel(true);
+        setErro(null);
+        return;
+      }
+      setErro(describeAcervoError(error));
+    } finally {
+      setCarregando(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    void carregar();
+  }, [carregar]);
+
+  // Sem toast de sucesso, ao contrário da seção de autorização: `.app-toast` é
+  // `position: fixed` no mesmo canto (`styles.css`), e duas seções empilhadas com toast
+  // próprio sobreporiam as faixas no mesmo pixel quando dois atos acontecessem na mesma
+  // janela. Aqui a confirmação é a releitura da lista — a linha nova aparece publicada, a
+  // retirada aparece fora de circulação —, que é o mesmo desenho de
+  // `DisponibilidadeDeJornada`.
+  const publicar = useCallback(async () => {
+    if (accessToken === null || arquivo === null) {
+      return;
+    }
+    setEnviando(true);
+    // O digest é o do arquivo que ESTA tela subiu, e é ele que a recusa de republicar
+    // cita. Nasce nulo porque a falha pode acontecer antes de o arquivo ser lido, e aí
+    // não há conteúdo a nomear.
+    let objectSha256: string | null = null;
+    try {
+      const upload = await uploadReferenceCatalog(accessToken, arquivo);
+      objectSha256 = upload.objectSha256;
+      const publicado = await publishReferenceCatalog(accessToken, {
+        uploadId: upload.uploadId,
+        displayName: nomeExibicao,
+      });
+      setErro(null);
+      setArquivo(null);
+      setNomeExibicao("");
+      setCampoArquivoKey((valor) => valor + 1);
+      // O que a tela mostra depois do ato é o que o servidor devolve na releitura: a
+      // linha nova aparecendo na lista É a confirmação de que a publicação aconteceu.
+      await carregar();
+    } catch (error) {
+      setErro(describeAcervoError(error, objectSha256));
+    } finally {
+      setEnviando(false);
+    }
+  }, [accessToken, arquivo, carregar, nomeExibicao]);
+
+  const retirar = useCallback(
+    async (catalogo: ReferenceCatalog) => {
+      if (accessToken === null) {
+        return;
+      }
+      setEnviando(true);
+      try {
+        await withdrawReferenceCatalog(
+          accessToken,
+          catalogo.reference_catalog_id,
+        );
+        setErro(null);
+        // A linha reaparecendo marcada como fora de circulação é a confirmação do ato.
+        await carregar();
+      } catch (error) {
+        setErro(describeAcervoError(error));
+      } finally {
+        setEnviando(false);
+      }
+    },
+    [accessToken, carregar],
+  );
+
+  if (session === null) {
+    return null;
+  }
+
+  if (semPapel) {
+    return (
+      <section className="authenticated-workspace">
+        <div>
+          <span className="eyebrow">ACERVO DE TABELAS DE REFERÊNCIA</span>
+          <h2>Tabelas publicadas</h2>
+          <p>{MENSAGEM_ACERVO_SEM_PAPEL}</p>
+          <span className="field-hint">{DICA_ACERVO_SEM_PAPEL}</span>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <>
+      {erro ? <AlertaPersistente mensagem={erro} /> : null}
+
+      <section className="authenticated-workspace">
+        <div>
+          <span className="eyebrow">ACERVO DE TABELAS DE REFERÊNCIA</span>
+          <h2>Tabelas publicadas</h2>
+          <p>{AVISO_ACERVO}</p>
+          <span className="field-hint">{resumoDoAcervo(catalogos, carregando)}</span>
+          <button
+            className="button project-action"
+            type="button"
+            onClick={() => void carregar()}
+            disabled={carregando}
+          >
+            Recarregar acervo
+          </button>
+        </div>
+
+        <FormularioDePublicacao
+          arquivoEscolhido={arquivo !== null}
+          nomeExibicao={nomeExibicao}
+          enviando={enviando}
+          campoArquivoKey={campoArquivoKey}
+          onArquivo={setArquivo}
+          onNomeExibicao={setNomeExibicao}
+          onPublicar={() => void publicar()}
+        />
+
+        {/* `journey-entitlements` é a regra de linha de LARGURA INTEIRA que a F-034
+            escreveu — `.project-list` sozinha é uma faixa de chips, apertada para uma
+            linha que carrega origem, data-base, contagem, digest e autor. O nome ficou
+            preso à jornada porque renomeá-lo toca `src/styles.css`, fora da fronteira
+            desta task. */}
+        {catalogos !== null && catalogos.length > 0 ? (
+          <>
+            <ul className="project-list journey-entitlements">
+              {catalogos.map((catalogo) => (
+                <LinhaCatalogo
+                  key={catalogo.reference_catalog_id}
+                  catalogo={catalogo}
+                  enviando={enviando}
+                  onRetirar={() => void retirar(catalogo)}
+                />
+              ))}
+            </ul>
+            {/* A consequência de retirar, por escrito, logo abaixo da lista onde o ato
+                acontece. Sem lista não há ato a explicar: o estado do acervo vazio já
+                está escrito na coluna ao lado. */}
+            <p className="field-hint">{AVISO_RETIRADA}</p>
+          </>
         ) : null}
       </section>
     </>

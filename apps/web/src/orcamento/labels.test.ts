@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   assignmentStatusLabel,
+  AVISO_ACERVO_FILTRADO,
   errorMessage,
+  opcaoDoAcervo,
   origensAceitasNaCascata,
   priceOriginLabel,
   priceOriginSeloClass,
+  procedenciaDaFonte,
 } from "./labels";
 
 describe("priceOriginLabel", () => {
@@ -116,5 +119,90 @@ describe("recusas do regime", () => {
 
     expect(frase).toContain("mão única");
     expect(frase).toContain("abra outra rodada");
+  });
+});
+
+/**
+ * Acervo de tabelas da plataforma (F-037, ADR-0047 decisão 7). A procedência é o FATO de
+ * quem publicou o arquivo, e a marca dela é a PALAVRA — a veste do selo é redundância.
+ */
+describe("procedência da fonte instalada", () => {
+  it("nomeia por extenso os dois caminhos que existem", () => {
+    expect(procedenciaDaFonte("reference_catalog")).toBe("DO ACERVO");
+    expect(procedenciaDaFonte("tenant_upload")).toBe("TABELA PRÓPRIA");
+  });
+
+  /**
+   * Cascata instalada ANTES da feature não tem o campo, e a ausência lê como tabela
+   * própria — que é o que ela é, porque era o único caminho que existia. Ela continua
+   * legível; nada é reescrito para trás e nada aparece como "desconhecido".
+   */
+  it("a ausência do campo lê como tabela própria, sem inventar um terceiro estado", () => {
+    expect(procedenciaDaFonte()).toBe("TABELA PRÓPRIA");
+    expect(procedenciaDaFonte(null)).toBe("TABELA PRÓPRIA");
+    expect(procedenciaDaFonte(undefined)).toBe("TABELA PRÓPRIA");
+  });
+});
+
+describe("opção do acervo", () => {
+  /**
+   * O que distingue duas linhas que sem isto seriam ambas "SCO": nome, data-base e
+   * tamanho (decisão 2 do pacote aprovado). A contagem é agrupada em milhar, e a
+   * conversão é de PONTUAÇÃO — nenhum dígito é acrescentado nem removido.
+   */
+  it("carrega nome, data-base e contagem numa linha só", () => {
+    expect(
+      opcaoDoAcervo({
+        display_name: "SCO-Rio FGV06 desonerado",
+        reference_month: "2026-07",
+        entry_count: 4865,
+      }),
+    ).toBe("SCO-Rio FGV06 desonerado · ref. 2026-07 · 4.865 itens");
+  });
+
+  it("contagem pequena não ganha separador que ela não tem", () => {
+    expect(
+      opcaoDoAcervo({
+        display_name: "SICRO RJ",
+        reference_month: "2026-06",
+        entry_count: 12,
+      }),
+    ).toContain("12 itens");
+  });
+});
+
+/**
+ * O filtro do regime é do SERVIDOR. A frase que explica a lista mais curta não nomeia
+ * origem nenhuma: nomeá-las seria guardar aqui uma cópia da regra, exatamente o que
+ * `origensAceitasNaCascata` existe para não fazer.
+ */
+describe("aviso da lista filtrada", () => {
+  it("diz que o filtro é do servidor sem repetir a regra do regime", () => {
+    expect(AVISO_ACERVO_FILTRADO).toContain("filtrada pelo servidor");
+    expect(AVISO_ACERVO_FILTRADO).toContain("oferecer uma recusa");
+    expect(AVISO_ACERVO_FILTRADO).not.toContain("SINAPI");
+    expect(AVISO_ACERVO_FILTRADO).not.toContain("SICRO");
+    expect(AVISO_ACERVO_FILTRADO).not.toContain("SCO");
+  });
+});
+
+/**
+ * As recusas do acervo são de INSTALAÇÃO, e as três declaram que nada foi gravado: a
+ * lista que a tela leu pode ter envelhecido entre a leitura e o clique.
+ */
+describe("recusas do acervo", () => {
+  it("a tabela retirada não vira erro da tela nem apaga as rodadas que a usam", () => {
+    const frase = errorMessage("REFERENCE_CATALOG_WITHDRAWN");
+
+    expect(frase).toContain("saiu de circulação");
+    expect(frase).toContain("continua valendo nas rodadas que já a instalaram");
+    expect(frase).toContain("nada foi instalado");
+  });
+
+  it("a fonte ambígua diz qual é a regra e que nada foi instalado", () => {
+    const frase = errorMessage("ESTIMATE_CATALOG_SOURCE_INVALID");
+
+    expect(frase).toContain("nunca as duas");
+    expect(frase).toContain("nada foi instalado");
   });
 });

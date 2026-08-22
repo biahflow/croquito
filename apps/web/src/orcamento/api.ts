@@ -42,6 +42,7 @@ import {
   codeDecisionBody,
   createEstimateBody,
   installCatalogBody,
+  installReferenceCatalogBody,
   regimeBody,
   takeoffDecisionBody,
   targetBody,
@@ -197,11 +198,25 @@ export type EstimateCreated = {
 };
 
 /**
+ * Quem publicou o ARQUIVO de uma fonte instalada (ADR-0047, decisão 7).
+ *
+ * Não se confunde com `PriceOrigin`: origem é de onde o PREÇO vem (SCO, EMOP, SINAPI),
+ * procedência é quem publicou o arquivo — o acervo da plataforma ou o próprio cliente.
+ * Uma proveniência que não distinguisse as duas mentiria sobre a origem do preço.
+ */
+export type CatalogProvenance = "reference_catalog" | "tenant_upload";
+
+/**
  * Uma fonte de preço instalada, com a posição que ela ocupa na cascata.
  *
  * `position` é derivado da ordem gravada e nunca é o dado autoritativo: a ORDEM da lista
  * é a precedência. `object_key` e `upload_id` não saem da API de propósito — a chave do
  * objeto é referência interna do store.
+ *
+ * `provenance` é OPCIONAL aqui porque a ausência é um caso legítimo, e não uma omissão do
+ * contrato: fonte instalada antes da F-037 não tem o campo gravado, e a ausência lê como
+ * `tenant_upload` — que é o que ela é, porque era o único caminho que existia. Nada é
+ * reescrito retroativamente, e a leitura do padrão mora em `procedenciaDaFonte`.
  */
 export type CascadeEntry = {
   position: number;
@@ -209,12 +224,44 @@ export type CascadeEntry = {
   source_sha256: string;
   reference_month: string;
   source_label: string;
+  provenance?: CatalogProvenance;
   summary: {
     source_label?: string;
     reference_month?: string;
     source_sha256?: string;
     entries?: number;
   };
+};
+
+/**
+ * Uma tabela do acervo como a ESCOLHA da rodada a oferece.
+ *
+ * É deliberadamente mais pobre que a linha da administração da plataforma: `published_by`
+ * é a identidade de um operador de outro tenant, e quem escolhe uma tabela pública não tem
+ * por que saber quem a publicou. O que sai é o que distingue duas linhas na lista — nome,
+ * origem, data-base e tamanho — mais o digest da fonte, que é a identidade que a cascata e
+ * a decisão de código já citam.
+ */
+export type ReferenceCatalogOption = {
+  reference_catalog_id: string;
+  display_name: string;
+  origin: PriceOrigin;
+  reference_month: string;
+  entry_count: number;
+  source_sha256: string;
+};
+
+/**
+ * O que ESTA rodada pode instalar do acervo, já filtrado pelo servidor.
+ *
+ * Os dois filtros — em circulação e aceito pelo regime — são aplicados lá, e é por isso
+ * que a listagem vive sob a rodada e não numa rota global: a rodada é quem conhece o
+ * regime. A tela mostra o que recebeu e não guarda cópia da regra; guardá-la só produziria
+ * a divergência que aparece numa recusa.
+ */
+export type ReferenceCatalogListResponse = {
+  round_id: string;
+  catalogs: ReferenceCatalogOption[];
 };
 
 export type CascadeResponse = {
@@ -714,7 +761,27 @@ export function postRegime(
   );
 }
 
-/** Instala uma fonte no FIM da cascata; a posição é a precedência de precificação. */
+/**
+ * As tabelas do acervo que ESTA rodada pode instalar (F-037, ADR-0047).
+ *
+ * Leitura pura: sem `Idempotency-Key`, sem gravar nada e sem parâmetro de filtro — os dois
+ * filtros (em circulação e aceito pelo regime) são do servidor. A tela não pergunta "quais
+ * origens?"; ela lê o que a rodada oferece.
+ */
+export function listReferenceCatalogs(
+  accessToken: string,
+  roundId: string,
+): Promise<ReferenceCatalogListResponse> {
+  return apiJson<ReferenceCatalogListResponse>(
+    roundPath(roundId, "/reference-catalogs"),
+    accessToken,
+  );
+}
+
+/**
+ * Instala a tabela PRÓPRIA do cliente no FIM da cascata; a posição é a precedência de
+ * precificação. O JSON já subiu pelo presign, e é o `upload_id` que a rota cita.
+ */
 export function installCatalog(
   accessToken: string,
   roundId: string,
@@ -725,6 +792,27 @@ export function installCatalog(
     roundPath(roundId, "/catalogs"),
     accessToken,
     installCatalogBody(uploadId, baseVersion),
+  );
+}
+
+/**
+ * Instala uma tabela do ACERVO no fim da cascata, pela mesma rota e com as mesmas regras.
+ *
+ * Função separada, e não um parâmetro a mais em `installCatalog`, porque a rota aceita
+ * **exatamente uma** das duas fontes: um corpo com as duas — ou com nenhuma — recusa
+ * `422 ESTIMATE_CATALOG_SOURCE_INVALID`. Duas funções com um caminho cada tornam esse
+ * corpo ambíguo inexpressável daqui, em vez de dependerem de quem chama lembrar da regra.
+ */
+export function installReferenceCatalog(
+  accessToken: string,
+  roundId: string,
+  referenceCatalogId: string,
+  baseVersion: number,
+): Promise<CascadeResponse> {
+  return post<CascadeResponse>(
+    roundPath(roundId, "/catalogs"),
+    accessToken,
+    installReferenceCatalogBody(referenceCatalogId, baseVersion),
   );
 }
 

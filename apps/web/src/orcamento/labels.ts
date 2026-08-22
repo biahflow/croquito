@@ -15,6 +15,7 @@
 import type { TakeoffPacket } from "@croquito/contracts";
 
 import type { PriceOrigin } from "./api";
+import { formatDecimalText } from "./format";
 import type { TetoEstado } from "./teto";
 
 /**
@@ -130,6 +131,89 @@ export const AVISO_CASCATA =
 export const AVISO_CASCATA_TRAVADA =
   "Esta rodada já tem decisão de código: a ordem da cascata ficou travada, porque " +
   "reordená-la invalidaria as decisões já registradas.";
+
+/* Acervo de tabelas da plataforma (F-037, ADR-0047) ------------------------- */
+
+/**
+ * A procedência de uma fonte instalada, por EXTENSO — a palavra é a marca, e a veste do
+ * selo é redundância (decisão 3 do pacote aprovado da F-037).
+ *
+ * Fonte sem o campo é a instalada antes desta superfície: ela lê como tabela própria, que
+ * é o que ela é, porque era o único caminho que existia. Nada é reescrito para trás.
+ */
+export function procedenciaDaFonte(provenance?: string | null): string {
+  return provenance === "reference_catalog" ? "DO ACERVO" : "TABELA PRÓPRIA";
+}
+
+/** O rótulo do campo de escolha: a lista é o caminho principal, e ela é de tabelas. */
+export const ROTULO_TABELA_DO_ACERVO = "Tabela de preços";
+
+/** A opção vazia do seletor: nada nasce escolhido, como em toda decisão desta jornada. */
+export const OPCAO_TABELA_NAO_ESCOLHIDA = "Escolha uma tabela…";
+
+/**
+ * Uma linha da lista, com o que distingue duas tabelas que sem isso seriam ambas "SCO":
+ * nome, data-base e tamanho (decisão 2 do pacote aprovado).
+ *
+ * A contagem é agrupada em milhar pela mesma função dos outros números da tela — é troca
+ * de pontuação, nunca aritmética.
+ */
+export function opcaoDoAcervo(catalog: {
+  display_name: string;
+  reference_month: string;
+  entry_count: number;
+}): string {
+  return (
+    `${catalog.display_name} · ref. ${catalog.reference_month} · ` +
+    `${formatDecimalText(String(catalog.entry_count))} itens`
+  );
+}
+
+/**
+ * Por que a lista pode estar mais curta do que o acervo, sem repetir a regra do regime.
+ *
+ * A frase diz que o filtro é do SERVIDOR e o que ele evita; ela não nomeia as origens
+ * recusadas, porque nomeá-las seria guardar aqui uma cópia da regra — exatamente o que
+ * `origensAceitasNaCascata` existe para não fazer.
+ */
+export const AVISO_ACERVO_FILTRADO =
+  "Esta lista já vem filtrada pelo servidor: tabela que o regime desta rodada não " +
+  "aceitaria não aparece aqui, porque oferecê-la seria oferecer uma recusa.";
+
+/** Acervo vazio é ESTADO, não erro: a plataforma ainda não publicou (decisão 5). */
+export const TITULO_ACERVO_VAZIO = "Nenhuma tabela disponível";
+
+export const AVISO_ACERVO_VAZIO =
+  "A plataforma ainda não publicou nenhuma tabela de referência que sirva a esta rodada. " +
+  "Enquanto isso, envie a sua.";
+
+/** A lista ainda não foi lida — declarado, nunca disfarçado de acervo vazio. */
+export const AVISO_ACERVO_NAO_LIDO =
+  "A lista de tabelas desta rodada ainda não foi lida.";
+
+/** Falha de LEITURA do acervo: ela não esconde o caminho do arquivo próprio. */
+export const AVISO_ACERVO_INDISPONIVEL =
+  "A lista de tabelas da plataforma não pôde ser lida agora. O caminho da tabela própria " +
+  "continua disponível abaixo.";
+
+/** A alternativa nomeada: quem ela serve, dito antes do clique (decisão 1). */
+export const CONVITE_TABELA_PROPRIA =
+  "Tem uma tabela própria — a do seu contrato, ou uma que você licenciou?";
+
+export const ACAO_TABELA_PROPRIA = "Enviar arquivo";
+
+export const TITULO_TABELA_PROPRIA = "Enviar tabela própria";
+
+export const DESCRICAO_TABELA_PROPRIA =
+  "Para tabela que a plataforma não distribui — a EMOP, que é paga, ou o catálogo " +
+  "específico do seu contrato.";
+
+export const ACAO_VOLTAR_PARA_A_LISTA = "Voltar para a lista";
+
+/** O que a procedência NÃO muda, ao lado da cascata que a declara. */
+export const AVISO_PROCEDENCIA =
+  "O digest é o mesmo nos dois casos: o que muda é quem publicou o arquivo, não como o " +
+  "preço é lido.";
 
 /** O BDI, dito uma vez, no lugar em que ele é digitado. */
 export const AVISO_BDI =
@@ -462,6 +546,15 @@ const ERROR_MESSAGES: LookupTable = {
     "Não é possível declarar esta rodada como demanda sob contrato enquanto a cascata tiver fonte fora da tabela contratual. Remova a fonte e declare de novo — nenhuma fonte é removida automaticamente, e a declaração não foi gravada.",
   ESTIMATE_REGIME_IRREVERSIBLE:
     "O regime é mão única: uma rodada declarada sob contrato licitado não volta para pré-licitação, e a ausência de regime já é a pré-licitação. Para orçar sob a outra regra, abra outra rodada.",
+  // Acervo de tabelas da plataforma (F-037, ADR-0047). As três recusas são de INSTALAÇÃO,
+  // e as três declaram que nada foi gravado — a lista que a tela leu pode ter envelhecido
+  // entre a leitura e o clique, e é o servidor quem tem a versão de agora.
+  REFERENCE_CATALOG_WITHDRAWN:
+    "Esta tabela saiu de circulação depois que a lista foi lida; ela continua valendo nas rodadas que já a instalaram, mas não entra em nenhuma nova. Recarregue a lista e escolha outra — nada foi instalado.",
+  REFERENCE_CATALOG_UNREADABLE:
+    "O arquivo desta tabela do acervo não pôde ser lido pelo servidor; nada foi instalado. Avise quem administra a plataforma.",
+  ESTIMATE_CATALOG_SOURCE_INVALID:
+    "A instalação cita a tabela do acervo ou o arquivo próprio, nunca as duas e nunca nenhuma; nada foi instalado. Recarregue a tela e refaça a escolha.",
   CATALOG_REQUIRED:
     "Um catálogo da cascata não pôde ser lido; sem ele não há código nem preço a consultar.",
   CATALOG_QUERY_EMPTY:

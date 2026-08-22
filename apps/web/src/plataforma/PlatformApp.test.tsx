@@ -6,14 +6,18 @@ import type {
   JourneyAvailability,
   JourneyEntitlement,
   PlatformTenant,
+  ReferenceCatalog,
 } from "./api";
 import {
+  AcervoDeCatalogos,
   AlertaPersistente,
   ColunaDoAmbiente,
   DisponibilidadeDeJornada,
   EstadoDasJornadas,
   FormularioDeAutorizacao,
+  FormularioDePublicacao,
   LinhaAutorizacao,
+  LinhaCatalogo,
   LinhaTenant,
   PlatformApp,
 } from "./PlatformApp";
@@ -428,5 +432,247 @@ describe("FormularioDeAutorizacao", () => {
 
     expect(html).toContain('type="submit" disabled=""');
     expect(html).toContain("Nenhum cliente autorizado em jornada de piloto.");
+  });
+});
+
+/**
+ * Acervo de catálogos de referência (F-037). Os renders abaixo cobrem os estados que o
+ * pacote aprovado congelou nas telas 7 e 8: a lista com uma linha fora de circulação, a
+ * publicação e a leitura ainda em curso. A recusa do servidor é a mesma faixa de erro já
+ * coberta por `AlertaPersistente`.
+ */
+describe("LinhaCatalogo", () => {
+  function catalogo(overrides: Partial<ReferenceCatalog> = {}): ReferenceCatalog {
+    return {
+      reference_catalog_id: "0198-aaa",
+      display_name: "SCO-Rio FGV06 desonerado",
+      origin: "sco",
+      reference_month: "2026-07",
+      entry_count: 4865,
+      object_sha256: "6f314c9".padEnd(64, "0"),
+      source_sha256: "a17b3e0".padEnd(64, "0"),
+      available: true,
+      published_by: "daniel",
+      published_at: "2026-08-22T09:14:00Z",
+      withdrawn_at: null,
+      ...overrides,
+    };
+  }
+
+  const inertes = { enviando: false, onRetirar: () => {} };
+
+  it("mostra origem, data-base, contagem, digest e quem publicou", () => {
+    const html = renderToStaticMarkup(
+      <LinhaCatalogo catalogo={catalogo()} {...inertes} />,
+    );
+
+    expect(html).toContain("SCO-Rio FGV06 desonerado");
+    expect(html).toContain("origem sco");
+    expect(html).toContain("ref.");
+    expect(html).toContain("07/2026");
+    expect(html).toContain("4.865");
+    expect(html).toContain("sha256 6f314c900000");
+    expect(html).toContain("publicada por daniel em ");
+    expect(html).toContain("22/08/2026");
+    expect(html).toContain("Retirar de circulação");
+  });
+
+  /** O digest inteiro fica no `title`; a tela mostra o curto para conferência. */
+  it("guarda o digest inteiro no title, e não na linha", () => {
+    const html = renderToStaticMarkup(
+      <LinhaCatalogo catalogo={catalogo()} {...inertes} />,
+    );
+
+    expect(html).toContain(`title="${"6f314c9".padEnd(64, "0")}"`);
+  });
+
+  /**
+   * Retirar não apaga: a linha continua, com a PALAVRA e a data. Cor nunca é o único
+   * indicador — a pastilha carrega o texto e a linha o repete por extenso.
+   */
+  it("mantém a linha fora de circulação, com a marca escrita e a data", () => {
+    const html = renderToStaticMarkup(
+      <LinhaCatalogo
+        catalogo={catalogo({
+          reference_month: "2026-04",
+          available: false,
+          withdrawn_at: "2026-08-22T11:00:00Z",
+        })}
+        {...inertes}
+      />,
+    );
+
+    expect(html).toContain("FORA DE CIRCULAÇÃO");
+    expect(html).toContain("retirada de circulação em ");
+    expect(html).toContain("04/2026");
+    expect(html).toContain('class="neutral"');
+    // Quem já saiu de circulação não oferece sair de novo.
+    expect(html).not.toContain("<button");
+  });
+
+  /**
+   * A contagem de rodadas que ainda referenciam a tabela está desenhada no pacote e NÃO
+   * entra: nenhuma rota a devolve hoje, e escrevê-la seria fabricar um número.
+   */
+  it("não fabrica a contagem de rodadas que ainda referenciam", () => {
+    const html = renderToStaticMarkup(
+      <LinhaCatalogo
+        catalogo={catalogo({
+          available: false,
+          withdrawn_at: "2026-08-22T11:00:00Z",
+        })}
+        {...inertes}
+      />,
+    );
+
+    expect(html).not.toContain("rodadas ainda a referenciam");
+  });
+});
+
+describe("FormularioDePublicacao", () => {
+  const inertes = {
+    campoArquivoKey: 0,
+    onArquivo: () => {},
+    onNomeExibicao: () => {},
+    onPublicar: () => {},
+  };
+
+  it("pede o catálogo normalizado e o nome de exibição, e diz de onde vem o resto", () => {
+    const html = renderToStaticMarkup(
+      <FormularioDePublicacao
+        arquivoEscolhido
+        nomeExibicao="SINAPI RJ desonerado"
+        enviando={false}
+        {...inertes}
+      />,
+    );
+
+    expect(html).toContain("Catálogo normalizado (JSON)");
+    expect(html).toContain('type="file"');
+    expect(html).toContain("Nome de exibição");
+    expect(html).toContain("é o que a orçamentista lê na lista");
+    expect(html).toContain("<code>import-sinapi</code>");
+    expect(html).toContain("<code>catalog.json</code>");
+    expect(html).toContain(
+      "Origem, data-base e contagem de itens vêm de dentro do arquivo",
+    );
+    expect(html).toContain("Publicar");
+    expect(html).not.toContain('type="submit" disabled=""');
+  });
+
+  /**
+   * Sem arquivo não há o que publicar; e o nome curto demais é o `min_length` do
+   * CONTRATO, repetido para o operador ler uma frase em vez de um 422 sem código.
+   */
+  it("não publica sem arquivo nem com nome de exibição curto demais", () => {
+    const semArquivo = renderToStaticMarkup(
+      <FormularioDePublicacao
+        arquivoEscolhido={false}
+        nomeExibicao="SINAPI RJ desonerado"
+        enviando={false}
+        {...inertes}
+      />,
+    );
+    const nomeCurto = renderToStaticMarkup(
+      <FormularioDePublicacao
+        arquivoEscolhido
+        nomeExibicao=" a "
+        enviando={false}
+        {...inertes}
+      />,
+    );
+
+    expect(semArquivo).toContain('type="submit" disabled=""');
+    expect(nomeCurto).toContain('type="submit" disabled=""');
+  });
+
+  /** Origem, data-base e contagem não são digitadas: não existe campo para elas. */
+  it("não oferece campo para o que vem de dentro do arquivo", () => {
+    const html = renderToStaticMarkup(
+      <FormularioDePublicacao
+        arquivoEscolhido
+        nomeExibicao="SINAPI RJ desonerado"
+        enviando={false}
+        {...inertes}
+      />,
+    );
+
+    expect(html).not.toContain("Data-base");
+    expect(html).not.toContain("Origem<");
+    expect(html).not.toContain("Contagem");
+    expect(html).not.toContain("<select");
+  });
+});
+
+describe("AcervoDeCatalogos", () => {
+  it("não aparece sem sessão: a seção inteira é autenticada", () => {
+    expect(renderToStaticMarkup(<AcervoDeCatalogos session={null} />)).toBe("");
+  });
+
+  /**
+   * `renderToStaticMarkup` não roda efeitos, então o que sai é o estado ANTES da primeira
+   * resposta: nenhuma tabela, nenhum digest e nenhum carimbo fabricados.
+   */
+  it("antes da primeira resposta não fabrica tabela nenhuma", () => {
+    const html = renderToStaticMarkup(<AcervoDeCatalogos session={sessao} />);
+
+    expect(html).toContain("ACERVO DE TABELAS DE REFERÊNCIA");
+    expect(html).toContain("Tabelas publicadas");
+    expect(html).toContain("O acervo ainda não foi lido.");
+    expect(html).toContain("data-base nova é entrada nova");
+    // Sem lista não há ato a explicar: a consequência de retirar só aparece junto das
+    // linhas onde o botão existe.
+    expect(html).not.toContain("Retirar não apaga");
+    expect(html).not.toContain("sha256");
+    expect(html).not.toContain("FORA DE CIRCULAÇÃO");
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain("app-toast");
+  });
+
+  /** O bloco reservado do pacote (tela 9) não é construído nesta feature. */
+  it("não constrói a atualização automática, que é o bloco reservado", () => {
+    const html = renderToStaticMarkup(<AcervoDeCatalogos session={sessao} />);
+
+    expect(html).not.toContain("ATUALIZAÇÃO AUTOMÁTICA");
+  });
+
+  /**
+   * O acervo NÃO tem toast de sucesso, e isto é decisão de desenho, não esquecimento.
+   *
+   * `.app-toast` é `position: fixed` no canto inferior direito (`src/styles.css`), e a
+   * jornada de Plataforma empilha seções: um toast por seção sobreporia duas faixas no
+   * mesmo pixel quando dois atos acontecessem dentro da mesma janela. Aqui a confirmação
+   * é a releitura da lista, como em `DisponibilidadeDeJornada` — a linha nova aparece
+   * publicada, a retirada aparece fora de circulação.
+   */
+  it("confirma o ato pela releitura da lista, não por um toast que sobreporia o da seção vizinha", () => {
+    const comCatalogo = renderToStaticMarkup(
+      <AcervoDeCatalogos session={sessao} />,
+    );
+
+    expect(comCatalogo).not.toContain("app-toast");
+    expect(comCatalogo).not.toContain("publicada para todos os tenants");
+    expect(comCatalogo).not.toContain("saiu de circulação. As rodadas");
+  });
+});
+
+/**
+ * A divergência 1 do pacote aprovado, fixada por teste: a jornada de Plataforma não tem
+ * abas, e o acervo entra como uma terceira `<section>` empilhada. Se alguém introduzir a
+ * fita de abas desenhada no mock, este teste cai.
+ */
+describe("composição da jornada de plataforma", () => {
+  it("empilha as seções e não introduz navegação por abas", () => {
+    const html = renderToStaticMarkup(<PlatformApp session={sessao} />);
+
+    expect(
+      html.split('class="authenticated-workspace"').length - 1,
+    ).toBe(3);
+    expect(html).toContain("Autorização contratual de IA");
+    expect(html).toContain("Quais jornadas existem para cada cliente");
+    expect(html).toContain("Tabelas publicadas");
+    expect(html).not.toContain('role="tablist"');
+    expect(html).not.toContain('role="tab"');
+    expect(html).not.toContain("Acervo de tabelas<");
   });
 });

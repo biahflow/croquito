@@ -14,7 +14,9 @@ import {
   getTakeoff,
   getTakeoffOverlay,
   installCatalog,
+  installReferenceCatalog,
   listEstimates,
+  listReferenceCatalogs,
   postBuildEstimate,
   postCodeDecision,
   postSuggestionsRecompute,
@@ -28,6 +30,7 @@ import {
   uploadPlateFile,
   type CascadeEntry,
   type CascadeSearchResponse,
+  type CatalogProvenance,
   type CodesResponse,
   type EstimateResponse,
   type EstimateState,
@@ -36,6 +39,7 @@ import {
   type OverlayResponse,
   type PriceOrigin,
   type PricingRegime,
+  type ReferenceCatalogOption,
   type SuggestionsResponse,
   type TakeoffItem,
   type TakeoffResponse,
@@ -60,7 +64,13 @@ import {
   shortDigest,
 } from "./format";
 import {
+  ACAO_TABELA_PROPRIA,
+  ACAO_VOLTAR_PARA_A_LISTA,
   assignmentStatusLabel,
+  AVISO_ACERVO_FILTRADO,
+  AVISO_ACERVO_INDISPONIVEL,
+  AVISO_ACERVO_NAO_LIDO,
+  AVISO_ACERVO_VAZIO,
   AVISO_BDI,
   AVISO_CANDIDATO_ADITIVO,
   AVISO_CASCATA,
@@ -70,6 +80,7 @@ import {
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
   AVISO_ORCAMENTO,
   AVISO_ORCAMENTO_SOB_CONTRATO,
+  AVISO_PROCEDENCIA,
   AVISO_QUANTIDADE_AMBIGUA,
   AVISO_REGIME_MAO_UNICA,
   AVISO_SEM_PRECO,
@@ -79,9 +90,11 @@ import {
   AVISO_TETO_LIMITE,
   cascadePositionLabel,
   CONSEQUENCIAS_DO_ESTOURO,
+  CONVITE_TABELA_PROPRIA,
   DESCRICAO_CALCULO_SHORTLIST,
   DESCRICAO_MONTAGEM,
   DESCRICAO_REGIME,
+  DESCRICAO_TABELA_PROPRIA,
   DICA_BDI,
   DICA_CANDIDATO_ADITIVO,
   DICA_QUANTIDADE,
@@ -92,16 +105,22 @@ import {
   extractionStatusLabel,
   itemStatusLabel,
   MENSAGEM_ORCAMENTO_MUDOU,
+  OPCAO_TABELA_NAO_ESCOLHIDA,
+  opcaoDoAcervo,
   origensAceitasNaCascata,
   PERGUNTA_REGIME,
   priceOriginSeloClass,
   priceSourceLabel,
+  procedenciaDaFonte,
   REGIME_OPCAO_PRE_LICITACAO,
   REGIME_OPCAO_SOB_CONTRATO,
+  ROTULO_TABELA_DO_ACERVO,
   SELO_REGIME,
   stageLabel,
   tetoClasse,
   tetoEtiqueta,
+  TITULO_ACERVO_VAZIO,
+  TITULO_TABELA_PROPRIA,
   unitLabel,
   unitMismatchHint,
 } from "./labels";
@@ -300,6 +319,213 @@ export function SeloFonte({
         <span className="selo selo-neutro">{cascadePositionLabel(position)}</span>
       )}
     </>
+  );
+}
+
+/**
+ * Procedência da fonte instalada: quem publicou o ARQUIVO (F-037, ADR-0047 decisão 7).
+ *
+ * Ele fica ao lado do selo de origem e não no lugar dele, porque as duas coisas são
+ * diferentes: origem é de onde o PREÇO vem, procedência é de onde o arquivo veio. A marca
+ * é a PALAVRA — "DO ACERVO" ou "TABELA PRÓPRIA" —, e a veste do selo é redundância.
+ *
+ * Fonte instalada antes desta superfície não tem o campo, e a ausência lê como tabela
+ * própria: era o único caminho que existia, e nada é reescrito para trás.
+ */
+export function SeloProcedencia({
+  provenance,
+}: {
+  provenance?: CatalogProvenance;
+}) {
+  return (
+    <span className="selo selo-procedencia">{procedenciaDaFonte(provenance)}</span>
+  );
+}
+
+/**
+ * A escolha da fonte de preço da rodada: a LISTA do acervo como caminho principal, e a
+ * tabela própria como alternativa nomeada (F-037, revisão 1 aprovada, telas 2, 3, 5 e 6).
+ *
+ * Três coisas que este painel NÃO faz, e que são a razão de ele ser assim:
+ *
+ * - **Não filtra.** A lista chega filtrada do servidor, pelos dois critérios que só ele
+ *   conhece (circulação e regime da rodada). Guardar aqui uma cópia da regra do regime só
+ *   produziria a divergência que aparece numa recusa — a mesma razão de
+ *   `origensAceitasNaCascata` ler `allowed_cascade_origins` em vez de decidir.
+ * - **Não esconde o upload.** Quem tem a EMOP licenciada ou o catálogo de um contrato
+ *   continua enviando o arquivo, pelo mesmo caminho de sempre; ele só deixa de ser a
+ *   primeira coisa que aparece.
+ * - **Não trata acervo vazio como erro.** É estado: a plataforma ainda não publicou, e a
+ *   tela oferece o caminho que funciona hoje.
+ */
+export function PainelEscolhaDeFonte({
+  acervo,
+  acervoAviso,
+  escolhida,
+  arquivo,
+  tabelaPropria,
+  regimeAceita,
+  sobContrato,
+  instalando,
+  onEscolher,
+  onArquivo,
+  onTabelaPropria,
+  onInstalarDoAcervo,
+  onInstalarArquivo,
+}: {
+  /** `null` é "ainda não lido", que não é a mesma coisa que acervo vazio. */
+  acervo: ReferenceCatalogOption[] | null;
+  acervoAviso: string | null;
+  escolhida: string;
+  arquivo: File | null;
+  tabelaPropria: boolean;
+  regimeAceita: string | null;
+  sobContrato: boolean;
+  instalando: boolean;
+  onEscolher: (referenceCatalogId: string) => void;
+  onArquivo: (file: File | null) => void;
+  onTabelaPropria: (value: boolean) => void;
+  onInstalarDoAcervo: () => void;
+  onInstalarArquivo: () => void;
+}) {
+  if (tabelaPropria) {
+    return (
+      <form
+        className="formulario"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onInstalarArquivo();
+        }}
+      >
+        <h3>{TITULO_TABELA_PROPRIA}</h3>
+        <p className="dica">{DESCRICAO_TABELA_PROPRIA}</p>
+        <label className="campo">
+          Catálogo de preços (JSON)
+          <span className="campo-dica">
+            Entra no FIM da cascata. Uma origem só entra uma vez.
+          </span>
+          {/* Quais origens a instalação aceitaria, LIDAS do servidor. A tela não
+              guarda a própria cópia da regra: se ela guardasse, a divergência só
+              apareceria numa recusa. */}
+          {regimeAceita === null ? null : (
+            <span className="campo-dica">{regimeAceita}</span>
+          )}
+          <input
+            type="file"
+            accept=".json,application/json"
+            onChange={(event) => onArquivo(event.target.files?.[0] ?? null)}
+          />
+        </label>
+        <div className="acoes-linha">
+          <button
+            type="submit"
+            className="botao-primario"
+            disabled={instalando || arquivo === null}
+          >
+            {instalando ? "Instalando…" : "Instalar catálogo"}
+          </button>
+          <button
+            type="button"
+            className="botao-secundario"
+            onClick={() => onTabelaPropria(false)}
+            disabled={instalando}
+          >
+            {ACAO_VOLTAR_PARA_A_LISTA}
+          </button>
+        </div>
+      </form>
+    );
+  }
+
+  // Acervo vazio é estado, não erro — e a saída fica oferecida na mesma tela.
+  if (acervo !== null && acervo.length === 0) {
+    return (
+      <div className="formulario">
+        <h3>{TITULO_ACERVO_VAZIO}</h3>
+        <p className="dica">{AVISO_ACERVO_VAZIO}</p>
+        {sobContrato ? <p className="dica">{AVISO_ACERVO_FILTRADO}</p> : null}
+        <div className="acoes-linha">
+          <button
+            type="button"
+            className="botao-primario"
+            onClick={() => onTabelaPropria(true)}
+            disabled={instalando}
+          >
+            {TITULO_TABELA_PROPRIA}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <form
+      className="formulario"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onInstalarDoAcervo();
+      }}
+    >
+      <label className="campo">
+        {ROTULO_TABELA_DO_ACERVO}
+        <span className="campo-dica">
+          Entra no FIM da cascata. Uma origem só entra uma vez.
+        </span>
+        {/* A regra do regime continua vindo do servidor, escrita ao lado do campo em que
+            ela age — a lista já chega filtrada por ela. */}
+        {regimeAceita === null ? null : (
+          <span className="campo-dica">{regimeAceita}</span>
+        )}
+        <select
+          value={escolhida}
+          onChange={(event) => onEscolher(event.target.value)}
+          disabled={instalando || acervo === null}
+        >
+          <option value="">{OPCAO_TABELA_NAO_ESCOLHIDA}</option>
+          {(acervo ?? []).map((catalogo) => (
+            <option
+              key={catalogo.reference_catalog_id}
+              value={catalogo.reference_catalog_id}
+            >
+              {opcaoDoAcervo(catalogo)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {acervo === null && acervoAviso === null ? (
+        <p className="campo-dica">{AVISO_ACERVO_NAO_LIDO}</p>
+      ) : null}
+      {acervoAviso === null ? null : (
+        <p className="campo-aviso" role="alert">
+          {acervoAviso}
+        </p>
+      )}
+      <div className="acoes-linha">
+        <button
+          type="submit"
+          className="botao-primario"
+          disabled={instalando || escolhida === ""}
+        >
+          {instalando ? "Instalando…" : "Instalar tabela"}
+        </button>
+      </div>
+      {/* Por que a lista pode estar mais curta do que o acervo — depois do ato, como o
+          pacote aprovado a compõe (tela 5). Silêncio aqui pareceria acervo pobre, não
+          regime. */}
+      {sobContrato ? <p className="dica">{AVISO_ACERVO_FILTRADO}</p> : null}
+      <p className="dica">
+        {CONVITE_TABELA_PROPRIA}{" "}
+        <button
+          type="button"
+          className="botao-texto"
+          onClick={() => onTabelaPropria(true)}
+          disabled={instalando}
+        >
+          {ACAO_TABELA_PROPRIA}
+        </button>
+        .
+      </p>
+    </form>
   );
 }
 
@@ -862,6 +1088,18 @@ export function OrcamentoApp({
   const [catalogFile, setCatalogFile] = useState<File | null>(null);
   const [plateFile, setPlateFile] = useState<File | null>(null);
 
+  // Acervo de tabelas da plataforma (F-037). `null` é "ainda não lido", que NÃO é a mesma
+  // coisa que acervo vazio: um é ausência de leitura, o outro é a plataforma não ter
+  // publicado nada que sirva a esta rodada, e a tela diz coisas diferentes nos dois casos.
+  const [acervo, setAcervo] = useState<ReferenceCatalogOption[] | null>(null);
+  // Falha de leitura do acervo vira aviso AO LADO do campo, e não o alerta global: a lista
+  // é secundária ao ato, e o caminho da tabela própria continua aberto sem ela.
+  const [acervoAviso, setAcervoAviso] = useState<string | null>(null);
+  const [tabelaEscolhida, setTabelaEscolhida] = useState("");
+  // A alternativa nomeada é um MODO da mesma seção, não um painel a mais: os dois lado a
+  // lado empatariam os dois caminhos, e a lista é o principal (decisão 1 do pacote).
+  const [tabelaPropria, setTabelaPropria] = useState(false);
+
   // Revisão do takeoff.
   const [selectedItemId, setSelectedItemId] = useState("");
   const [decision, setDecision] = useState(EMPTY_DECISION);
@@ -1038,6 +1276,40 @@ export function OrcamentoApp({
   }, [autenticado, carregarEstado, carregarLista, orcamento]);
 
   /**
+   * O acervo desta rodada: leitura pura, sem `Idempotency-Key` e sem gravar nada.
+   *
+   * Ela não entra em `carregarEstado` de propósito. O estado é relido a cada mutação e a
+   * cada volta do poll da extração; pendurar o acervo ali faria a lista ser buscada de três
+   * em três segundos para responder sempre a mesma coisa. Quem a invalida é o REGIME, que é
+   * o filtro do servidor — e é ele que a relê, no efeito abaixo.
+   */
+  const carregarAcervo = useCallback(async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null) {
+      return;
+    }
+    try {
+      const disponivel = await listReferenceCatalogs(token, orcamento);
+      setAcervo(disponivel.catalogs);
+      setAcervoAviso(null);
+    } catch (error) {
+      // Falha aqui não toma a tela nem apaga a escolha: a lista fica declaradamente não
+      // lida, o motivo aparece ao lado do campo e o caminho do arquivo próprio segue de pé.
+      setAcervo(null);
+      setAcervoAviso(`${AVISO_ACERVO_INDISPONIVEL} ${describeError(error)}`);
+    }
+  }, [orcamento, tokenDaSessao]);
+
+  useEffect(() => {
+    if (!autenticado || orcamento === null) {
+      return;
+    }
+    void carregarAcervo();
+    // O regime da rodada é dependência REAL: é ele que filtra a lista no servidor, e uma
+    // rodada declarada depois da leitura passa a oferecer menos do que ofereceu.
+  }, [autenticado, carregarAcervo, orcamento, state?.regime?.value]);
+
+  /**
    * Busca em voo não sobrevive à saída da tela: o timer do debounce e a consulta pendente
    * são cancelados, e o cancelamento nunca vira alerta (`isAbortError`).
    */
@@ -1082,6 +1354,11 @@ export function OrcamentoApp({
       setBdiInput("");
       setTetoInput("");
       setTetoLabelInput("");
+      // O acervo é filtrado PELA rodada: a lista da rodada anterior não vale para a nova.
+      setAcervo(null);
+      setAcervoAviso(null);
+      setTabelaEscolhida("");
+      setTabelaPropria(false);
       setAuditoriaReprovada(null);
       setRevisionConflict(false);
       setAlertMessage(null);
@@ -1130,6 +1407,10 @@ export function OrcamentoApp({
     }
   };
 
+  /**
+   * A tabela PRÓPRIA do cliente: o caminho que já existia, inteiro e sem mudança de
+   * comportamento. Ele deixou de ser a primeira coisa que aparece, não de existir.
+   */
   const instalarCatalogo = async () => {
     const token = tokenDaSessao();
     if (token === null || orcamento === null || version === null || catalogFile === null) {
@@ -1144,6 +1425,42 @@ export function OrcamentoApp({
       setAlertMessage(null);
       setRevisionConflict(false);
       setToast("Fonte instalada no fim da cascata.");
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * A tabela do ACERVO: mesma rota, mesmas regras de cascata, nenhum arquivo. A escolha só
+   * é limpa quando o servidor confirmou a instalação — recusa preserva o que foi escolhido,
+   * como o resto da jornada faz com o formulário.
+   */
+  const instalarDoAcervo = async () => {
+    const token = tokenDaSessao();
+    if (
+      token === null ||
+      orcamento === null ||
+      version === null ||
+      tabelaEscolhida === ""
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const cascade = await installReferenceCatalog(
+        token,
+        orcamento,
+        tabelaEscolhida,
+        version,
+      );
+      aplicarVersao(cascade.version);
+      setTabelaEscolhida("");
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast("Tabela do acervo instalada no fim da cascata.");
       await carregarEstado();
     } catch (error) {
       registrarRecusa(error);
@@ -2015,6 +2332,7 @@ export function OrcamentoApp({
                             referenceMonth={entry.reference_month}
                             position={entry.position}
                           />
+                          <SeloProcedencia provenance={entry.provenance} />
                           {entry.summary.entries === undefined ? null : (
                             <span className="selo selo-neutro">
                               {entry.summary.entries} itens
@@ -2063,40 +2381,24 @@ export function OrcamentoApp({
                   ))}
                 </ol>
               )}
-              <form
-                className="formulario"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void instalarCatalogo();
-                }}
-              >
-                <label className="campo">
-                  Catálogo de preços (JSON)
-                  <span className="campo-dica">
-                    Entra no FIM da cascata. Uma origem só entra uma vez.
-                  </span>
-                  {/* Quais origens a instalação aceitaria, LIDAS do servidor. A tela não
-                      guarda a própria cópia da regra: se ela guardasse, a divergência só
-                      apareceria numa recusa. */}
-                  {regimeAceita === null ? null : (
-                    <span className="campo-dica">{regimeAceita}</span>
-                  )}
-                  <input
-                    type="file"
-                    accept=".json,application/json"
-                    onChange={(event) => setCatalogFile(event.target.files?.[0] ?? null)}
-                  />
-                </label>
-                <div className="acoes-linha">
-                  <button
-                    type="submit"
-                    className="botao-primario"
-                    disabled={submitting || catalogFile === null}
-                  >
-                    {submitting ? "Instalando…" : "Instalar catálogo"}
-                  </button>
-                </div>
-              </form>
+              {cascade.length === 0 ? null : (
+                <p className="dica">{AVISO_PROCEDENCIA}</p>
+              )}
+              <PainelEscolhaDeFonte
+                acervo={acervo}
+                acervoAviso={acervoAviso}
+                escolhida={tabelaEscolhida}
+                arquivo={catalogFile}
+                tabelaPropria={tabelaPropria}
+                regimeAceita={regimeAceita}
+                sobContrato={sobContrato}
+                instalando={submitting}
+                onEscolher={setTabelaEscolhida}
+                onArquivo={setCatalogFile}
+                onTabelaPropria={setTabelaPropria}
+                onInstalarDoAcervo={() => void instalarDoAcervo()}
+                onInstalarArquivo={() => void instalarCatalogo()}
+              />
             </section>
             {/* Declarar é ato da rodada SEM regime. Declarada, não sobra ato — o regime é
                 mão única, e um painel com seletor desabilitado ofereceria o que não existe. */}

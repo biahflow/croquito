@@ -5,19 +5,27 @@ import type {
   JourneyAvailability,
   JourneyEntitlement,
   PlatformTenant,
+  ReferenceCatalog,
 } from "./api";
 import {
   describeError,
   describeJourneyError,
+  digestCurto,
   errorMessage,
   estadoDaAutorizacao,
   estadoLabel,
   ESTADO_JORNADA_CLASSE,
   ESTADO_JORNADA_LABEL,
+  formatarContagem,
+  formatarDataBase,
+  formatarDia,
   formatarInstante,
+  MENSAGEM_ACERVO_SEM_LEITURA,
+  MENSAGEM_ACERVO_VAZIO,
   MENSAGEM_REDE,
   mensagemForaDoPiloto,
   mensagemSemAutorizacao,
+  resumoDoAcervo,
   resumoDoAmbiente,
 } from "./labels";
 
@@ -233,5 +241,113 @@ describe("rótulos da disponibilidade de jornada (F-034)", () => {
         MENSAGEM_REDE,
       );
     });
+  });
+});
+
+/**
+ * Acervo de catálogos de referência (F-037). Os formatadores só trocam pontuação: nenhum
+ * deles soma, arredonda ou adivinha um valor que o servidor não mandou.
+ */
+describe("formatadores do acervo", () => {
+  it("mostra a data-base como a obra a escreve", () => {
+    expect(formatarDataBase("2026-07")).toBe("07/2026");
+    expect(formatarDataBase("2026-04")).toBe("04/2026");
+  });
+
+  /** Texto fora da forma volta como veio: a data-base é lida do arquivo, não inventada. */
+  it("não adivinha data-base fora da forma AAAA-MM", () => {
+    expect(formatarDataBase("julho de 2026")).toBe("julho de 2026");
+    expect(formatarDataBase("2026")).toBe("2026");
+  });
+
+  it("agrupa o milhar da contagem sem mexer no número", () => {
+    expect(formatarContagem(4865)).toBe("4.865");
+    expect(formatarContagem(865)).toBe("865");
+    expect(formatarContagem(1234567)).toBe("1.234.567");
+    expect(formatarContagem(0)).toBe("0");
+  });
+
+  it("mostra só o dia do carimbo, e travessão quando não houve ato", () => {
+    expect(formatarDia("2026-08-22T09:14:00")).toBe("22/08/2026");
+    expect(formatarDia(null)).toBe("—");
+    expect(formatarDia("não é data")).toBe("não é data");
+  });
+
+  it("trunca o digest para conferência visual", () => {
+    expect(digestCurto("6f314c9".padEnd(64, "0"))).toBe("6f314c900000");
+    expect(digestCurto(null)).toBe("—");
+  });
+});
+
+describe("resumoDoAcervo", () => {
+  function catalogo(overrides: Partial<ReferenceCatalog> = {}): ReferenceCatalog {
+    return {
+      reference_catalog_id: "0198-aaa",
+      display_name: "SCO-Rio FGV06 desonerado",
+      origin: "sco",
+      reference_month: "2026-07",
+      entry_count: 4865,
+      object_sha256: "a".repeat(64),
+      source_sha256: "b".repeat(64),
+      available: true,
+      published_by: "daniel",
+      published_at: "2026-08-22T09:14:00Z",
+      withdrawn_at: null,
+      ...overrides,
+    };
+  }
+
+  it("distingue não ter lido de ter lido e não haver nada", () => {
+    expect(resumoDoAcervo(null, false)).toBe(MENSAGEM_ACERVO_SEM_LEITURA);
+    expect(resumoDoAcervo(null, true)).toContain("Lendo o acervo");
+    expect(resumoDoAcervo([], false)).toBe(MENSAGEM_ACERVO_VAZIO);
+  });
+
+  /** O que saiu de circulação é contado à parte: ele continua no acervo, e não na oferta. */
+  it("conta em circulação e fora de circulação separadamente", () => {
+    expect(resumoDoAcervo([catalogo()], false)).toBe("1 tabela em circulação.");
+    expect(
+      resumoDoAcervo(
+        [
+          catalogo(),
+          catalogo({ reference_catalog_id: "0198-bbb" }),
+          catalogo({
+            reference_catalog_id: "0198-ccc",
+            available: false,
+            withdrawn_at: "2026-08-22T10:00:00Z",
+          }),
+        ],
+        false,
+      ),
+    ).toBe("2 tabelas em circulação · 1 fora de circulação.");
+  });
+});
+
+describe("recusas do acervo em palavra", () => {
+  /**
+   * As duas entradas novas do mapa são a forma SEM o fato declarado pelo servidor. Elas
+   * existem para que qualquer chamador do mapa comum tenha frase, e são a MESMA copy que
+   * `describeAcervoError` monta quando o fato existe.
+   */
+  it("os códigos da T1 têm frase estável no mapa", () => {
+    expect(errorMessage("REFERENCE_CATALOG_ALREADY_PUBLISHED")).toContain(
+      "já está publicada",
+    );
+    expect(errorMessage("REFERENCE_CATALOG_ORIGIN_NOT_PUBLISHABLE")).toContain(
+      "não distribui tabela desta origem",
+    );
+    expect(errorMessage("INVALID_UPLOAD")).toContain("Nada foi publicado");
+    expect(errorMessage("DOMAIN_VALIDATION_FAILED")).toContain(
+      "catálogo normalizado",
+    );
+    expect(errorMessage("LIMIT_EXCEEDED")).toContain("limite de leitura");
+    expect(errorMessage("UPLOAD_TRANSFER_FAILED")).toContain(
+      "não foi concluído",
+    );
+  });
+
+  /** A regra da casa que a seção nova não afrouxa. */
+  it("código de acervo desconhecido continua devolvendo null", () => {
+    expect(errorMessage("REFERENCE_CATALOG_QUALQUER_COISA")).toBeNull();
   });
 });

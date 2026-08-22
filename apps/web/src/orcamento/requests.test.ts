@@ -8,6 +8,7 @@ import {
   codeDecisionBody,
   createEstimateBody,
   installCatalogBody,
+  installReferenceCatalogBody,
   regimeBody,
   takeoffDecisionBody,
   targetBody,
@@ -31,6 +32,27 @@ describe("corpos das mutações", () => {
       upload_id: "upload-1",
       base_version: 4,
     });
+  });
+
+  /**
+   * A rota aceita EXATAMENTE uma fonte, e o corpo com as duas recusa
+   * `422 ESTIMATE_CATALOG_SOURCE_INVALID`. Dois construtores com um caminho cada tornam
+   * esse corpo ambíguo inexpressável nesta tela — é isto que os dois casos abaixo fixam.
+   */
+  it("instalar do acervo cita a tabela escolhida, e nunca um arquivo", () => {
+    const body = installReferenceCatalogBody("tabela-do-acervo-1", 4);
+
+    expect(body).toEqual({
+      reference_catalog_id: "tabela-do-acervo-1",
+      base_version: 4,
+    });
+    expect(body).not.toHaveProperty("upload_id");
+  });
+
+  it("instalar a tabela própria continua citando só o upload", () => {
+    expect(installCatalogBody("upload-1", 9)).not.toHaveProperty(
+      "reference_catalog_id",
+    );
   });
 
   it("abrir orçamento não leva catálogo, período nem contrato", () => {

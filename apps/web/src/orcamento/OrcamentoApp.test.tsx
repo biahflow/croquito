@@ -8,15 +8,22 @@ import {
   FaixaTetoEstourado,
   LinhaTetoDaRodada,
   OrcamentoApp,
+  PainelEscolhaDeFonte,
   PainelRegimeDaRodada,
   PainelSemAcesso,
   PainelTetoDaVerba,
   SeloFonte,
+  SeloProcedencia,
   SeloRegime,
   SemPrecoNaCascata,
   TelaAuditoriaReprovada,
 } from "./OrcamentoApp";
-import { AVISO_ORCAMENTO } from "./labels";
+import {
+  AVISO_ACERVO_FILTRADO,
+  AVISO_ORCAMENTO,
+  origensAceitasNaCascata,
+} from "./labels";
+import type { ReferenceCatalogOption } from "./api";
 import { derivarTeto } from "./teto";
 
 /**
@@ -617,5 +624,208 @@ describe("rodada sem regime declarado", () => {
       expect(html).not.toContain("candidato a aditivo");
       expect(html).not.toContain("contrato licitado");
     }
+  });
+});
+
+/**
+ * Procedência da fonte instalada (F-037, revisão 1 aprovada, tela 4). A marca é a
+ * PALAVRA — cor nunca é o único indicador — e a ausência do campo continua legível.
+ */
+describe("SeloProcedencia", () => {
+  it("escreve de onde o arquivo veio, por extenso", () => {
+    expect(
+      renderToStaticMarkup(<SeloProcedencia provenance="reference_catalog" />),
+    ).toContain("DO ACERVO");
+    expect(
+      renderToStaticMarkup(<SeloProcedencia provenance="tenant_upload" />),
+    ).toContain("TABELA PRÓPRIA");
+  });
+
+  /** Cascata instalada antes da feature não tem o campo e não vira "desconhecido". */
+  it("sem o campo, lê como tabela própria — que é o que ela é", () => {
+    const html = renderToStaticMarkup(<SeloProcedencia />);
+
+    expect(html).toContain("TABELA PRÓPRIA");
+    expect(html).not.toContain("desconhec");
+  });
+
+  it("a classe é redundância da palavra, nunca o indicador sozinho", () => {
+    const html = renderToStaticMarkup(
+      <SeloProcedencia provenance="reference_catalog" />,
+    );
+
+    expect(html).toContain("selo-procedencia");
+    expect(html).toContain(">DO ACERVO<");
+  });
+});
+
+/**
+ * A escolha da fonte (F-037, telas 2, 3, 5 e 6): a lista é o caminho principal e o
+ * arquivo próprio é a alternativa NOMEADA — ela diz para quem serve, e não some.
+ */
+describe("PainelEscolhaDeFonte", () => {
+  const ACERVO: ReferenceCatalogOption[] = [
+    {
+      reference_catalog_id: "0197f2a0-0000-7000-8000-00000000aaaa",
+      display_name: "SCO-Rio FGV06 desonerado",
+      origin: "sco",
+      reference_month: "2026-07",
+      entry_count: 4865,
+      source_sha256: "a".repeat(64),
+    },
+    {
+      reference_catalog_id: "0197f2a0-0000-7000-8000-00000000bbbb",
+      display_name: "SINAPI RJ desonerado",
+      origin: "sinapi",
+      reference_month: "2026-07",
+      entry_count: 12034,
+      source_sha256: "b".repeat(64),
+    },
+  ];
+
+  const props = {
+    acervo: ACERVO,
+    acervoAviso: null,
+    escolhida: "",
+    arquivo: null,
+    tabelaPropria: false,
+    regimeAceita: null,
+    sobContrato: false,
+    instalando: false,
+    onEscolher: () => {},
+    onArquivo: () => {},
+    onTabelaPropria: () => {},
+    onInstalarDoAcervo: () => {},
+    onInstalarArquivo: () => {},
+  };
+
+  it("oferece a lista com nome, data-base e contagem, e nada nasce escolhido", () => {
+    const html = renderToStaticMarkup(<PainelEscolhaDeFonte {...props} />);
+
+    expect(html).toContain("Tabela de preços");
+    expect(html).toContain("Escolha uma tabela…");
+    expect(html).toContain("SCO-Rio FGV06 desonerado · ref. 2026-07 · 4.865 itens");
+    expect(html).toContain("SINAPI RJ desonerado · ref. 2026-07 · 12.034 itens");
+    expect(html).toContain("Instalar tabela");
+    // Sem escolha, o ato não está disponível: nada é instalado por engano.
+    expect(html).toContain("disabled");
+  });
+
+  /** A alternativa não some, e ela diz PARA QUEM serve antes do clique. */
+  it("nomeia a alternativa da tabela própria em vez de escondê-la", () => {
+    const html = renderToStaticMarkup(<PainelEscolhaDeFonte {...props} />);
+
+    expect(html).toContain("a do seu contrato, ou uma que você licenciou");
+    expect(html).toContain("Enviar arquivo");
+  });
+
+  /** Escolhida uma tabela, o botão instala — e o caminho não pede arquivo nenhum. */
+  it("com a tabela escolhida, instala sem pedir arquivo", () => {
+    const html = renderToStaticMarkup(
+      <PainelEscolhaDeFonte
+        {...props}
+        escolhida="0197f2a0-0000-7000-8000-00000000aaaa"
+      />,
+    );
+
+    expect(html).not.toContain('type="file"');
+    expect(html).not.toContain("disabled");
+  });
+
+  /**
+   * Tela 3: o caminho de hoje, inteiro. O campo, o `accept` e o rótulo do botão são os
+   * mesmos que já estavam no ar — o que mudou é a ordem em que ele aparece.
+   */
+  it("no modo tabela própria, o formulário de arquivo é o de hoje", () => {
+    const html = renderToStaticMarkup(
+      <PainelEscolhaDeFonte {...props} tabelaPropria />,
+    );
+
+    expect(html).toContain("Enviar tabela própria");
+    expect(html).toContain("a EMOP, que é paga");
+    expect(html).toContain("Catálogo de preços (JSON)");
+    expect(html).toContain('type="file"');
+    expect(html).toContain('accept=".json,application/json"');
+    expect(html).toContain("Entra no FIM da cascata. Uma origem só entra uma vez.");
+    expect(html).toContain("Instalar catálogo");
+    // A volta para a lista existe: a alternativa não é um beco sem saída.
+    expect(html).toContain("Voltar para a lista");
+  });
+
+  it("sem arquivo escolhido, o caminho da tabela própria não instala nada", () => {
+    const semArquivo = renderToStaticMarkup(
+      <PainelEscolhaDeFonte {...props} tabelaPropria />,
+    );
+    const comArquivo = renderToStaticMarkup(
+      <PainelEscolhaDeFonte
+        {...props}
+        tabelaPropria
+        arquivo={new File(["{}"], "catalogo.json", { type: "application/json" })}
+      />,
+    );
+
+    expect(semArquivo).toContain("disabled");
+    expect(comArquivo).not.toContain("disabled");
+  });
+
+  /**
+   * Tela 5: a lista já vem filtrada do SERVIDOR, e a tela explica por escrito por que ela
+   * pode estar mais curta. Ela não reimplementa a regra — a frase das origens aceitas
+   * continua sendo a que o servidor mandou.
+   */
+  it("sob contrato, explica a lista curta sem guardar cópia da regra", () => {
+    const html = renderToStaticMarkup(
+      <PainelEscolhaDeFonte
+        {...props}
+        acervo={[ACERVO[0]]}
+        sobContrato
+        regimeAceita={origensAceitasNaCascata(["sco"])}
+      />,
+    );
+
+    expect(html).toContain(AVISO_ACERVO_FILTRADO);
+    expect(html).toContain("catálogo de SCO");
+    expect(html).toContain("SCO-Rio FGV06 desonerado");
+    expect(html).not.toContain("SINAPI");
+  });
+
+  /** Tela 6: acervo vazio é ESTADO, não erro — e a saída fica na mesma tela. */
+  it("acervo vazio afirma que a plataforma não publicou e oferece o arquivo", () => {
+    const html = renderToStaticMarkup(
+      <PainelEscolhaDeFonte {...props} acervo={[]} />,
+    );
+
+    expect(html).toContain("Nenhuma tabela disponível");
+    expect(html).toContain("A plataforma ainda não publicou");
+    expect(html).toContain("Enviar tabela própria");
+    // Estado, não falha: nada de alerta de erro nesta tela.
+    expect(html).not.toContain('role="alert"');
+  });
+
+  /** Lista não lida não é acervo vazio, e a tela não confunde as duas. */
+  it("lista ainda não lida é declarada, nunca disfarçada de acervo vazio", () => {
+    const html = renderToStaticMarkup(
+      <PainelEscolhaDeFonte {...props} acervo={null} />,
+    );
+
+    expect(html).toContain("ainda não foi lida");
+    expect(html).not.toContain("Nenhuma tabela disponível");
+    // O caminho do arquivo próprio continua oferecido enquanto a lista não chega.
+    expect(html).toContain("Enviar arquivo");
+  });
+
+  /** Falha de leitura do acervo é persistente e não esconde o outro caminho. */
+  it("falha ao ler o acervo aparece como aviso, com o arquivo próprio ainda oferecido", () => {
+    const html = renderToStaticMarkup(
+      <PainelEscolhaDeFonte
+        {...props}
+        acervo={null}
+        acervoAviso="A lista de tabelas da plataforma não pôde ser lida agora."
+      />,
+    );
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("não pôde ser lida agora");
+    expect(html).toContain("Enviar arquivo");
   });
 });
