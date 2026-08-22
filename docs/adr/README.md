@@ -62,6 +62,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0040](0040-teto-de-verba-do-orcamento-base.md) | Teto de verba do orçamento-base — declarado, visível, nunca tesoura | Accepted |
 | [0041](0041-decisao-de-ator-maquina-atras-de-flag-local.md) | Decisão de ator-máquina na revisão, atrás de flag local | Accepted |
 | [0044](0044-triagem-por-testemunha-anotacao-automatica.md) | Triagem por custo do erro: anotação automática (0042/0043 em worktrees paralelos) | Accepted |
+| [0045](0045-terceiro-estado-demanda-sob-contrato.md) | Demanda sob contrato: o terceiro estado entre pré-licitação e medição | Proposed |
 
 ## Processo
 
