@@ -45,7 +45,7 @@ describe("App", () => {
   /**
    * ADR-0032, D3: `/login` é o único lugar onde o produto se apresenta sem sessão, e
    * NENHUMA peça da casca das jornadas é renderizada antes de haver sessão. Não é estética:
-   * a casca anuncia versão de schema e alterna jornadas que a próxima chamada recusaria com
+   * a casca identifica a sessão e alterna jornadas que a próxima chamada recusaria com
    * 401. Cada asserção abaixo nomeia uma peça citada na decisão.
    */
   it("sem sessão, nenhuma peça da casca das jornadas é renderizada", () => {
@@ -53,7 +53,7 @@ describe("App", () => {
 
     expect(html).not.toContain("app-shell");
     expect(html).not.toContain("topbar");
-    expect(html).not.toContain("schema-pill");
+    expect(html).not.toContain("topbar-actions");
     expect(html).not.toContain("identity-pill");
     expect(html).not.toContain('aria-label="Jornadas"');
     expect(html).not.toContain(">Medição<");

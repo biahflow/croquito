@@ -690,15 +690,6 @@ footer {
   gap: 10px;
 }
 
-.schema-pill {
-  margin-right: 8px;
-  padding: 7px 10px;
-  color: var(--dark-ink-soft);
-  border: 1px solid var(--dark-line);
-  border-radius: 999px;
-  font-size: 11px;
-}
-
 /* Navegação sobre o topbar escuro. O verde da marca é preenchimento e nunca cor de
    texto: o texto é `--dark-ink-soft` e o estado ativo (hover/foco) sobe para
    `--dark-ink`, com a borda mais firme. */

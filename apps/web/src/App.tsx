@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import sceneSchema from "@croquito/contracts/scene.schema.json";
 import type { User } from "oidc-client-ts";
 
 import {
@@ -510,9 +509,6 @@ export function App() {
               Trocar de jornada fecha a que estava aberta — a URL passa a declarar a
               jornada nova, e nada fica aberto por baixo do que se vê. */}
           <JourneySwitch route={route} roles={roles} onOpen={openJourney} />
-          <span className="schema-pill">
-            Cena {sceneSchema.$id?.split("/").at(-1)}
-          </span>
           <span className="identity-pill">
             Sessão: {session.profile.preferred_username ?? session.profile.sub}
           </span>

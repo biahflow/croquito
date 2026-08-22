@@ -253,18 +253,78 @@ body#keycloak-bg {
   color: var(--croquito-muted);
 }
 
-/* O botão de mostrar/ocultar senha da v2 fica colado ao campo; sem isso ele herda o
-   controle cinza da PatternFly e destoa do campo ao lado. */
+/* O campo de senha é um `input-group`: o `<input>` e o botão de mostrar/ocultar são
+   IRMÃOS no DOM da PatternFly, não pai e filho. Para o olho aparecer DENTRO do campo sem
+   tocar no template, a moldura deixa de ser do campo e passa a ser do grupo — o botão
+   perde borda e fundo e vira ícone sobre a mesma superfície. */
+.pf-v5-c-input-group {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--croquito-line);
+  border-radius: 9px;
+  background: var(--croquito-surface-subtle);
+}
+
+/* Sob o grupo, o campo não desenha a própria moldura: quem desenha é o grupo, e duas
+   molduras concêntricas leriam como dois controles.
+   A moldura do campo na PatternFly NÃO está na borda do elemento: ela é pintada por um
+   `::before` absoluto. Zerar só `border` deixaria de pé exatamente o traço vertical entre
+   o texto e o olho — que é a borda direita desse pseudo-elemento. */
+.pf-v5-c-input-group .pf-v5-c-form-control,
+.pf-v5-c-input-group .pf-v5-c-form-control::before {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* O foco é do grupo inteiro, porque o campo e o botão agora são uma peça só. Mesmo
+   indicador de antes (traço em `--accent-text`), só que um nível acima. */
+.pf-v5-c-input-group:focus-within {
+  background: var(--croquito-surface);
+  border-color: var(--croquito-accent-line);
+  outline: 2px solid var(--croquito-accent-text);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px var(--croquito-accent-soft);
+}
+
+/* ...e o campo não repete o anel por dentro dele. */
+.pf-v5-c-input-group .pf-v5-c-form-control:focus-within {
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  border-color: transparent;
+}
+
 .pf-v5-c-input-group .pf-v5-c-button.pf-m-control {
-  --pf-v5-c-button--m-control--BackgroundColor: var(--croquito-surface-subtle);
-  --pf-v5-c-button--m-control--BorderTopColor: var(--croquito-line);
-  --pf-v5-c-button--m-control--BorderRightColor: var(--croquito-line);
-  --pf-v5-c-button--m-control--BorderBottomColor: var(--croquito-line);
-  --pf-v5-c-button--m-control--BorderLeftColor: var(--croquito-line);
-  --pf-v5-c-button--m-control--after--BorderBottomColor: var(--croquito-line);
+  --pf-v5-c-button--m-control--BackgroundColor: transparent;
+  --pf-v5-c-button--m-control--BorderTopColor: transparent;
+  --pf-v5-c-button--m-control--BorderRightColor: transparent;
+  --pf-v5-c-button--m-control--BorderBottomColor: transparent;
+  --pf-v5-c-button--m-control--BorderLeftColor: transparent;
+  --pf-v5-c-button--m-control--after--BorderBottomColor: transparent;
   color: var(--croquito-ink-secondary);
-  border-radius: 0 9px 9px 0;
-  min-height: 42px;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  /* 40px de alvo de toque dentro de um campo de 42px: o dedo alcança sem o botão
+     encostar na borda. */
+  min-height: 40px;
+  min-width: 40px;
+  margin-inline-end: 1px;
+}
+
+/* A moldura do `pf-m-control` não vive na borda do botão: a PatternFly a desenha num
+   `::after` absoluto, e é dele que vinha o traço vertical entre o texto e o olho. */
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control::after {
+  border: 0;
+}
+
+/* Sem borda própria, o botão precisaria do foco do navegador para ser alcançável por
+   teclado — e ele fica DENTRO do campo, então o traço vai para dentro (`offset` negativo)
+   em vez de vazar por cima da moldura do grupo. */
+.pf-v5-c-input-group .pf-v5-c-button.pf-m-control:focus-visible {
+  outline: 2px solid var(--croquito-accent-text);
+  outline-offset: -2px;
 }
 
 /* A caixa marcada é preenchimento, e por isso pode usar `--accent` — mas a marca de
