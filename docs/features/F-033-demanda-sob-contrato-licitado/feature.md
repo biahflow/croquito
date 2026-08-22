@@ -9,12 +9,14 @@
 > visível que o fluxo do usuário é um **terceiro estado** que o
 > [ADR-0027](../../adr/0027-price-source-provenance-and-bid-boundary.md) não representa.
 >
-> Bloqueada por **dois gates humanos**, nenhum dos quais um agente pode exercer:
-> falta a decisão de arquitetura que refina a fronteira binária do ADR-0027 num terceiro
-> estado (`ARCHITECTURE_DECISION_REQUIRED` — ADR novo ou emenda, escrito e aceito por
-> ato humano); e falta o Design Approval Package da superfície nova
-> (`DESIGN_APPROVAL_REQUIRED`), que precede o planejamento por a feature ser
-> `INTERFACE_CHANGE`. Exercidos os dois, o estado passa a `READY_FOR_PLANNING`.
+> Eram **dois gates humanos**. O primeiro foi cumprido: o
+> [ADR-0045](../../adr/0045-terceiro-estado-demanda-sob-contrato.md) refina a fronteira
+> binária do ADR-0027 num terceiro estado e foi **aceito por ato humano em 2026-08-22**,
+> fixando as três decisões que este contrato marcava como "decisão do ADR, não do plano".
+>
+> Resta o **Design Approval Package** da superfície nova (`DESIGN_APPROVAL_REQUIRED`), que
+> precede o planejamento por a feature ser `INTERFACE_CHANGE`. Cumprido ele, o estado passa
+> a `READY_FOR_PLANNING`.
 
 ## Classification
 
@@ -83,9 +85,15 @@ regime a rodada está, para ela não descobrir pelo erro.
    na instalação e não na montagem.
 3. **Selo na jornada**: cabeçalho e aba Cascata dizem o regime da rodada, conforme o
    Design Approval Package aprovado.
-4. **Cobertura**: rodada sem regime declarado idêntica a hoje; rodada sob contrato
-   aceitando `sco` e recusando as quatro outras origens; cadeia inteira sob o regime
-   chegando à planilha com todas as linhas citando `sco`.
+4. **Candidato a aditivo no orçamento** (ampliação de escopo por decisão humana de
+   2026-08-22, fixada no ADR-0045): sob o regime, item confirmado no takeoff cuja
+   confirmação de código foi **rejeitada** pela orçamentista é sinalizado como candidato a
+   aditivo. O sinal vem do julgamento humano, **nunca** de uma conferência contra um
+   contrato que o orçamento não modela, e reusa a regra do
+   `amendment_dossier.py` da medição, cujo construtor não recebe catálogo nem contrato.
+5. **Cobertura**: rodada sem regime declarado idêntica a hoje; rodada sob contrato
+   aceitando `sco` e recusando as quatro outras origens; declaração recusada com cascata
+   suja; cadeia inteira sob o regime chegando à planilha com todas as linhas citando `sco`.
 
 ## Out of Scope
 
@@ -114,25 +122,31 @@ regime a rodada está, para ela não descobrir pelo erro.
   sendo a última linha, não a primeira.
 - `packages/valuation` segue sem depender do worker nem do scene graph (ADR-0016).
 - A recusa é da instalação; nenhuma cascata já instalada é reescrita retroativamente por
-  uma declaração posterior de regime — o que fazer nesse caso é decisão do ADR.
+  uma declaração posterior de regime. Pelo ADR-0045, a declaração **recusa** enquanto
+  houver fonte proibida instalada — nada é reescrito sem ato humano.
 
 ## Dependencies
 
-- **ADR novo (ou emenda ao ADR-0027)** refinando a fronteira binária no terceiro estado
-  — `ARCHITECTURE_DECISION_REQUIRED`, ato humano, precede o planejamento.
+- **ADR** refinando a fronteira binária no terceiro estado —
+  `ARCHITECTURE_DECISION_REQUIRED`, **satisfeito em 2026-08-22** pelo
+  [ADR-0045](../../adr/0045-terceiro-estado-demanda-sob-contrato.md) (`Accepted`).
 - **Design Approval Package** aprovado — `DESIGN_APPROVAL_REQUIRED`, ato humano, precede
   o planejamento.
 - F-027 (modo teto) já na main — o desenho do dado-da-rodada que esta feature copia.
 
 ## Unknowns
 
-1. **Retroatividade**: rodada que já tem fonte não-`sco` instalada e passa a declarar o
-   regime — recusa a declaração, exige remover a fonte antes, ou aceita e sinaliza? É
-   decisão do ADR, não do plano.
-2. **Nome do regime no domínio e na tela** — "sob contrato", "obra licitada", "demanda
-   contratada". Sai do Design Approval Package.
-3. **Se o regime deveria também restringir a data-base** do catálogo à do contrato. Fora
-   do escopo declarado acima, mas o ADR pode querer registrar a posição.
+As três que estavam abertas foram **decididas pelo
+[ADR-0045](../../adr/0045-terceiro-estado-demanda-sob-contrato.md)** (`Accepted`,
+2026-08-22) e ficam aqui como registro do que era pergunta:
+
+1. ~~**Retroatividade**~~ → declarar o regime numa rodada que já tem fonte não-`sco`
+   **recusa**, com código estável próprio, até a fonte ser removida pelo caminho existente.
+   Rodada sob contrato nunca contém fonte proibida.
+2. ~~**Nome do regime**~~ → "demanda sob contrato" no domínio; selo "Sob contrato licitado"
+   na tela.
+3. ~~**Data-base do catálogo**~~ → segue **fora de escopo**, e o ADR registra a posição: o
+   regime garante a origem, não a identidade do contrato. Fechar isso é feature própria.
 
 ## Risks
 

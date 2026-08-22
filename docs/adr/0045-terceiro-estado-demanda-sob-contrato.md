@@ -1,7 +1,7 @@
 # ADR-0045: Demanda sob contrato — o terceiro estado entre pré-licitação e medição
 
-Status: Proposed  
-Data: 2026-08-22  
+Status: Accepted  
+Data: 2026-08-22 (aceito por ato humano na mesma data)  
 Responsável: Product / Engineering
 
 ## Contexto
