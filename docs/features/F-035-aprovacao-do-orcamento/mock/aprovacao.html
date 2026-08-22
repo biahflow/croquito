@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Design Approval Package — F-035, aprovação do orçamento</title>
+<style>
+/* Tokens copiados VERBATIM de apps/web/src/styles.css (:root). Nenhum valor novo. */
+:root{
+  --bg:#fafaf8; --surface:#ffffff; --surface-subtle:#f4f4f1; --surface-sunken:#efefeb;
+  --ink:#14181d; --ink-secondary:#5b6169; --muted:#9aa0a8; --line:#e5e5e0;
+  --accent:#00c877; --accent-ink:#0e1116; --accent-text:#00744a; --accent-soft:#e6f6ee;
+  --accent-line:#9bdcc0; --dark:#0e1116; --dark-ink:#f2f4f7;
+  --dark-ink-soft:rgba(242,244,247,.72); --dark-line:rgba(242,244,247,.12);
+  color:var(--ink); background:var(--bg);
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box} body{margin:0;padding:0 0 40px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.rotulo{margin:26px 24px 6px;font-size:11px;font-weight:800;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-secondary)}
+.rotulo small{display:block;margin-top:3px;font-weight:500;letter-spacing:0;
+  text-transform:none;font-size:11.5px;color:var(--muted)}
+/* .topbar, .eyebrow, .aviso-fixo, .painel: citados da jornada do orçamento
+   (apps/web/src/orcamento/styles.css), aprovada na F-020 e estendida na F-033. */
+.topbar{min-height:76px;padding:14px 32px;display:flex;align-items:center;
+  justify-content:space-between;gap:16px;color:var(--dark-ink);background:var(--dark);
+  border-bottom:1px solid var(--dark-line)}
+.topbar .eyebrow{display:block;font-size:10.5px;font-weight:800;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--dark-ink-soft)}
+.topbar h1{margin:3px 0 2px;font-size:19px}
+.topbar-meta{margin:0;font-size:11.5px;color:var(--dark-ink-soft)}
+.aviso-fixo{margin:0;max-width:46ch;padding:10px 14px;color:#4a3208;background:#f6d99a;
+  border-left:4px solid #b47512;border-radius:6px;font-size:11.5px;line-height:1.45}
+.corpo{padding:18px 24px}
+.painel{padding:16px;background:var(--surface);border:1px solid var(--line);
+  border-radius:10px}
+.painel h2{margin:0 0 4px;font-size:15px}
+.painel p{margin:0 0 4px;font-size:12px;line-height:1.5;color:var(--ink-secondary)}
+.eyebrow{display:block;font-size:10.5px;font-weight:800;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-secondary)}
+.hint{display:block;margin-top:8px;color:var(--ink-secondary);font-size:10.5px;
+  line-height:1.4}
+.app-alert{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin:0 0 12px;padding:10px 14px;color:#7c2d12;background:#fee2e2;
+  border-left:4px solid #b91c1c;border-radius:6px;font-size:12px;line-height:1.45}
+.acoes-linha{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.botao-primario{min-height:34px;padding:0 14px;color:var(--accent-ink);
+  background:var(--accent);border:1px solid var(--accent);border-radius:6px;font-size:12px;
+  font-weight:700;cursor:pointer;font-family:inherit}
+.botao-secundario{min-height:34px;padding:0 14px;color:var(--ink);background:var(--surface);
+  border:1px solid var(--muted);border-radius:6px;font-size:12px;font-weight:700;
+  cursor:pointer;font-family:inherit}
+.botao-primario:disabled{color:var(--muted);background:var(--surface-sunken);
+  border-color:var(--line);cursor:not-allowed}
+.campo-dica{margin:4px 0 0;font-size:10.5px;line-height:1.4;color:var(--ink-secondary)}
+/* .ato, .registro e .digest-par: citados VERBATIM de apps/web/src/medicao/styles.css,
+   aprovados no pacote da F-028. É o mesmo ato, na outra cadeia — copiar a forma é o que
+   faz as duas assinaturas se parecerem com uma assinatura. */
+.ato{margin-top:20px;padding:18px 20px;background:var(--surface);
+  border:2px solid var(--accent-text);border-radius:8px}
+.ato-etiqueta{display:inline-block;padding:3px 10px;font-size:11.5px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink);
+  background:var(--accent);border-radius:999px}
+.ato h3{margin:10px 0 4px;font-size:16px}
+.ato p{margin:0;font-size:12.5px;line-height:1.5}
+.ato-consequencia{margin:10px 0 0;padding-left:20px;font-size:12.5px}
+.ato-consequencia li{max-width:84ch;margin-bottom:6px;line-height:1.45}
+.ato-identidade{margin-top:14px;padding:12px 14px;background:var(--surface-subtle);
+  border:1px solid var(--line);border-left:5px solid var(--accent-text);border-radius:6px}
+.ato-identidade b{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-secondary)}
+.ato-identidade .mono{font-size:14px}
+.ato-confirmacao{margin-top:14px;padding:12px 14px;color:#3c2708;background:#fbe6c2;
+  border-left:5px solid #b47512;border-radius:6px;font-size:12.5px;line-height:1.5}
+.registro{margin-top:16px;padding:14px 16px;background:var(--accent-soft);
+  border:1px solid var(--accent-line);border-left:5px solid var(--accent-text);
+  border-radius:6px}
+.registro dl{display:grid;grid-template-columns:13rem 1fr;gap:6px 16px;margin:10px 0 0;
+  font-size:12.5px}
+.registro dt{font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-secondary)}
+.registro dd{margin:0}
+.registro-caduca{background:var(--surface);border:2px dashed #b47512}
+.registro-etiqueta{display:inline-block;padding:2px 8px;font-size:11.5px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--accent-text);
+  background:var(--surface);border:1px solid var(--accent-text);border-radius:999px}
+.registro-caduca .registro-etiqueta{color:#6b3a06;background:#fbe6c2;border-color:#b47512}
+.digest-par{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;
+  margin-top:12px}
+.digest-par > div{padding:10px 12px;background:var(--surface-subtle);
+  border:1px solid var(--line);border-radius:6px}
+.digest-par b{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-secondary)}
+.progresso{margin:10px 0 0;padding-left:20px;font-size:12.5px}
+.progresso li{margin-bottom:6px;max-width:84ch;line-height:1.45}
+.passo-estado{font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-secondary)}
+/* Etapas da jornada: citado de apps/web/src/orcamento/styles.css (F-020). */
+.etapas{display:flex;gap:8px;padding:0 24px;margin:14px 0 0;list-style:none;flex-wrap:wrap}
+.etapas li{padding:8px 12px;background:var(--surface);border:1px solid var(--line);
+  border-radius:8px;font-size:12px;color:var(--ink-secondary)}
+.etapas .ativa{color:var(--accent-ink);background:var(--accent);border-color:var(--accent);
+  font-weight:700}
+.etapas .feita{color:var(--accent-text);background:var(--accent-soft);
+  border-color:var(--accent-line)}
+/* NOVO — declarado no README: o selo do estado do despacho. Sem cor nova; reusa
+   `--surface-sunken`/`--ink-secondary` e o âmbar que a caducidade já usa. */
+.selo-despacho{display:inline-block;padding:5px 9px;border:1px solid var(--line);
+  border-radius:999px;font-size:10px;font-weight:850;color:var(--ink-secondary);
+  background:var(--surface-sunken);letter-spacing:.04em}
+.reservado{opacity:.55;border-style:dashed}
+</style>
+</head>
+<body>
+
+<p class="rotulo">1 — Orçamento montado e ainda não assinado
+  <small>O estado que hoje não existe: pronto, e por isso mesmo ainda não despachável.</small></p>
+<ul class="etapas">
+  <li class="feita">Cascata · concluída</li>
+  <li class="feita">Prancha · concluída</li>
+  <li class="feita">Revisão do takeoff · concluída</li>
+  <li class="feita">Códigos · concluída</li>
+  <li class="feita">BDI e montagem · concluída</li>
+  <li class="ativa">Aprovação e despacho · em aberto</li>
+</ul>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">APROVAÇÃO E DESPACHO</span>
+    <h2>Orçamento montado, aguardando aprovação nominal</h2>
+    <p>O orçamento foi montado e conferido pelo domínio. A planilha ainda não foi publicada:
+      publicar é ato próprio, e depende da assinatura.</p>
+    <span class="selo-despacho">NÃO DESPACHADO</span>
+    <span class="hint">Total R$ 184.230,55 · BDI 24,15% · conteúdo
+      <span class="mono">sha256 9c41ab7</span></span>
+  </section>
+</div>
+
+<p class="rotulo">2 — O ato de aprovar, primeiro passo
+  <small>Mesma peça da medição (F-028). O que muda é a consequência, que fala de despacho.</small></p>
+<div class="corpo">
+  <div class="ato">
+    <span class="ato-etiqueta">Ato nominal · orçamento</span>
+    <h3>Aprovar este orçamento</h3>
+    <p>Antes de aprovar, o que aprovar faz:</p>
+    <ul class="ato-consequencia">
+      <li><strong>Publica o seu nome.</strong> A aprovação fica registrada como sua, com
+        data e hora, e é o que autoriza este orçamento a sair.</li>
+      <li><strong>Libera o despacho.</strong> Sem aprovação nominal válida, a rota de
+        exportação recusa — não é convenção, é recusa do servidor. Nenhuma planilha é
+        escrita antes da assinatura.</li>
+      <li><strong>Vale só para este orçamento, exatamente como ele está agora</strong>
+        (<span class="mono">sha256 9c41ab7</span>). Qualquer mudança depois disso derruba a
+        aprovação e exige aprovar de novo.</li>
+    </ul>
+    <div class="ato-identidade">
+      <b>Você aprova como</b>
+      <span class="mono">marina.gestora</span>
+      <p class="campo-dica">Papel aprovador · identidade da sessão. Não existe campo de nome
+        nesta tela: quem aprova é quem entrou, e o servidor lê a identidade do token e
+        recusa qualquer nome que venha do cliente.</p>
+    </div>
+    <div class="acoes-linha">
+      <button type="button" class="botao-primario">Aprovar este orçamento</button>
+    </div>
+  </div>
+</div>
+
+<p class="rotulo">3 — Segundo passo: confirmar
+  <small>Não é "tem certeza?" vazio — a consequência vem repetida, sobre o âmbar de atenção.</small></p>
+<div class="corpo">
+  <div class="ato">
+    <span class="ato-etiqueta">Ato nominal · orçamento</span>
+    <h3>Aprovar este orçamento</h3>
+    <div class="ato-identidade">
+      <b>Você aprova como</b>
+      <span class="mono">marina.gestora</span>
+      <p class="campo-dica">Papel aprovador · identidade da sessão.</p>
+    </div>
+    <div class="ato-confirmacao">
+      <p><strong>Confirmar a aprovação nominal?</strong> O nome
+        <span class="mono">marina.gestora</span> fica registrado como quem aprovou este
+        orçamento, no conteúdo <span class="mono">sha256 9c41ab7</span>, e o despacho da
+        planilha fica liberado.</p>
+      <div class="acoes-linha">
+        <button type="button" class="botao-primario">Confirmar aprovação nominal</button>
+        <button type="button" class="botao-secundario">Cancelar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="rotulo">4 — Aprovado, e ainda não despachado
+  <small>Dois estados que não se confundem: assinar e despachar são atos diferentes.</small></p>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">APROVAÇÃO E DESPACHO</span>
+    <h2>Orçamento aprovado</h2>
+    <div class="registro">
+      <span class="registro-etiqueta">Aprovada</span>
+      <dl>
+        <dt>Quem aprovou</dt>
+        <dd><span class="mono">marina.gestora</span> · papel aprovador</dd>
+        <dt>Quando</dt>
+        <dd>22/08/2026 15:41</dd>
+        <dt>Conteúdo aprovado</dt>
+        <dd><span class="mono">sha256 9c41ab7</span> — igual ao do orçamento atual</dd>
+      </dl>
+    </div>
+    <div class="acoes-linha">
+      <button type="button" class="botao-primario">Despachar: publicar a planilha</button>
+    </div>
+    <span class="hint">Despachar exige o papel orcamentista. Assinar é assumir o conteúdo;
+      despachar é operar o envio — o produto não funde os dois só porque acontecem em
+      sequência.</span>
+  </section>
+</div>
+
+<p class="rotulo">5 — Aprovação caduca
+  <small>O orçamento mudou depois de assinado. O registro velho não some: fica marcado.</small></p>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">APROVAÇÃO E DESPACHO</span>
+    <h2>O orçamento mudou depois de aprovado</h2>
+    <div class="registro registro-caduca">
+      <span class="registro-etiqueta">Aprovação caduca</span>
+      <dl>
+        <dt>Quem aprovou</dt>
+        <dd><span class="mono">marina.gestora</span> · papel aprovador</dd>
+        <dt>Quando</dt>
+        <dd>22/08/2026 15:41</dd>
+      </dl>
+      <div class="digest-par">
+        <div>
+          <b>Conteúdo aprovado</b>
+          <span class="mono">sha256 9c41ab7</span>
+          <p class="campo-dica">o que foi assinado no ato registrado acima</p>
+        </div>
+        <div>
+          <b>Conteúdo atual</b>
+          <span class="mono">sha256 2e77d04</span>
+          <p class="campo-dica">o orçamento como está agora, depois da remontagem</p>
+        </div>
+      </div>
+    </div>
+    <span class="hint">O despacho recusa enquanto os dois digests divergirem. A saída é uma
+      só: aprovar de novo o orçamento como ele está.</span>
+  </section>
+</div>
+
+<p class="rotulo">6 — Auto-aprovação recusada
+  <small>Quem montou não assina. Acumular os dois papéis não contorna.</small></p>
+<div class="corpo">
+  <p class="app-alert">
+    <span>Este orçamento foi montado por <span class="mono">marina.gestora</span>, e quem
+      monta não aprova. A assinatura tem de vir de outra pessoa com o papel aprovador —
+      acumular os dois papéis não muda essa regra.</span>
+    <span aria-hidden="true">×</span>
+  </p>
+  <section class="painel">
+    <span class="eyebrow">APROVAÇÃO E DESPACHO</span>
+    <h2>Orçamento montado, aguardando aprovação nominal</h2>
+    <p>Montado por <span class="mono">marina.gestora</span> em 22/08/2026 15:12.</p>
+    <span class="selo-despacho">NÃO DESPACHADO</span>
+    <span class="hint">Nada foi gravado. O orçamento segue montado e não assinado, como
+      estava.</span>
+  </section>
+</div>
+
+<p class="rotulo">7 — Sem o papel de aprovador
+  <small>A etapa é lida, não operada. Ver o que se assina não é poder assinar.</small></p>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">APROVAÇÃO E DESPACHO</span>
+    <h2>Orçamento montado, aguardando aprovação nominal</h2>
+    <p>Total R$ 184.230,55 · BDI 24,15% · conteúdo <span class="mono">sha256 9c41ab7</span>.</p>
+    <span class="selo-despacho">NÃO DESPACHADO</span>
+    <div class="acoes-linha">
+      <button type="button" class="botao-primario" disabled>Aprovar este orçamento</button>
+    </div>
+    <span class="hint">Sua sessão tem o papel orcamentista, e aprovar exige o papel
+      aprovador. Você vê o orçamento e o estado da assinatura; assinar é de quem tem o
+      papel.</span>
+  </section>
+</div>
+
+<p class="rotulo">8 — Despacho em curso, e a auditoria que pode reprovar
+  <small>Três dos quatro passos acontecem antes de existir arquivo. Barra esconderia isso.</small></p>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">APROVAÇÃO E DESPACHO</span>
+    <h2>Publicando a planilha</h2>
+    <ol class="progresso">
+      <li><span class="passo-estado">concluído</span> — portão de domínio: a assinatura
+        confere com o conteúdo atual</li>
+      <li><span class="passo-estado">concluído</span> — planilha escrita em arquivo
+        temporário</li>
+      <li><span class="passo-estado">em curso</span> — reaberta e reconferida centavo a
+        centavo contra o orçamento</li>
+      <li><span class="passo-estado">aguardando</span> — publicação</li>
+    </ol>
+    <span class="hint">Nada é publicado antes do quarto passo.</span>
+  </section>
+  <p class="app-alert" style="margin-top:12px">
+    <span>A conferência da planilha reprovou (<span class="mono">ESTIMATE_WORKBOOK_AUDIT_FAILED</span>).
+      <strong>Nada foi publicado.</strong> A aprovação continua válida e o orçamento não
+      mudou.</span>
+    <span aria-hidden="true">×</span>
+  </p>
+</div>
+
+<p class="rotulo">9 — Despachado
+  <small>Só aqui a planilha existe publicada, e o link aparece.</small></p>
+<div class="corpo">
+  <section class="painel">
+    <span class="eyebrow">APROVAÇÃO E DESPACHO</span>
+    <h2>Orçamento aprovado e despachado</h2>
+    <div class="registro">
+      <span class="registro-etiqueta">Aprovada</span>
+      <dl>
+        <dt>Quem aprovou</dt>
+        <dd><span class="mono">marina.gestora</span> · papel aprovador</dd>
+        <dt>Quando</dt>
+        <dd>22/08/2026 15:41</dd>
+        <dt>Conteúdo aprovado</dt>
+        <dd><span class="mono">sha256 9c41ab7</span> — igual ao do orçamento atual</dd>
+      </dl>
+    </div>
+    <span class="selo-despacho" style="margin-top:12px">DESPACHADO EM 22/08/2026 15:44</span>
+    <p style="margin-top:10px"><a href="#" onclick="return false">Baixar planilha</a> ·
+      <span class="mono">sha256 6d0f13b</span></p>
+    <span class="hint">O arquivo é endereçado pelo digest: despachar de novo nunca
+      sobrescreve a planilha que uma revisão anterior ainda referencia.</span>
+  </section>
+</div>
+
+<p class="rotulo">10 — Reservado, não entregue nesta feature
+  <small>Desenhado só para segurar espaço. Tracejado e opacidade o distinguem.</small></p>
+<div class="corpo">
+  <section class="painel reservado">
+    <span class="eyebrow">ENVIO DO ORÇAMENTO APROVADO</span>
+    <h2>Despachar por e-mail ou Drive</h2>
+    <p>Enviar a planilha aprovada a um destinatário, com registro de para quem foi e quando.
+      Fora de escopo da F-035 por decisão humana: não há provedor de e-mail no projeto — o
+      mesmo motivo pelo qual a F-008 está bloqueada. Torna-se real quando o provedor
+      existir.</p>
+  </section>
+</div>
+
+</body>
+</html>
