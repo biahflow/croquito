@@ -58,6 +58,8 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-030 | A DEFINIR | READY_FOR_SPEC | Fotos do levantamento na jornada de revisão (a definir em contrato) |
 | F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | READY_FOR_PLANNING | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
+| F-035 | A DEFINIR | READY_FOR_SPEC | Aprovação nominal do orçamento antes do despacho (a definir em contrato) |
+| F-036 | A DEFINIR | READY_FOR_SPEC | Vínculo entre orçamento aprovado e rodada de medição (a definir em contrato) |
 | F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 | F-031 | MEDIUM | READY_FOR_HUMAN_REVIEW | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — branch isolada `feat/f-031-value-events`, não integra no MVP |
 
@@ -365,6 +367,27 @@ reimplementar autorização. Dividida por decisão humana registrada: a fatia 1 
 valor visual novo e está `READY_FOR_PLANNING`; a fatia 2 — administrar o entitlement na
 tela de Plataforma — é superfície nova e fica `BLOCKED` até o Design Approval Package.
 Contrato em [F-034](../features/F-034-disponibilidade-de-jornada/feature.md).
+
+F-035 e F-036 — aprovação do orçamento e sua ligação com a medição — nascem em 2026-08-22,
+de uma conversa de alinhamento sobre a cadeia real, quando ficou visível uma **assimetria**:
+a medição tem `POST .../approve` com aprovação nominal registrada, e o orçamento **não tem
+aprovação nenhuma**. A cadeia dele termina na planilha. Hoje o gerente aprova fora do
+sistema — no e-mail, na reunião —, e o produto não sabe que aquele orçamento foi aprovado,
+por quem, nem quando. A F-035 traz esse ato para dentro, no molde do que a medição já faz,
+o que a torna barata.
+
+A F-036 é a consequência: quando a obra começa e a medição abre, a rodada de medição **não
+herda nada** do orçamento — é criada do zero, com outra prancha, outro catálogo e o
+consolidado contratual que o orçamento nem conhece. Nada liga "esta medição mede aquele
+orçamento". Não é defeito de implementação: o [ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)
+declara que o orçamento não tem contrato nem aprovação. Ligar as duas pontas esbarra na
+mesma lacuna que a F-033 deixou aberta — o orçamento não modela contrato como entidade —,
+e por isso a F-036 é mais funda que a F-035 e vem depois dela.
+
+As duas nascem **sem contrato e sem prioridade**, de propósito: a validação com quem está
+dentro da prefeitura decide se a aprovação precisa ficar registrada no sistema ou se ela vive
+bem no processo de fora. Despachar por e-mail ou Drive, que a mesma conversa levantou, só faz
+sentido depois da aprovação existir — é candidata a fatia da F-035, não feature própria.
 [F-032](../features/F-032-app-levantamento-campo/feature.md) — app de levantamento de
 campo — nasce em 2026-08-21, por seleção humana: o levantamento hoje nasce em papel e
 todo o pipeline existe para interpretá-lo; a F-032 ataca a ambiguidade na origem, com
