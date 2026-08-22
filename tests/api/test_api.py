@@ -240,12 +240,21 @@ def test_me_returns_subject_tenant_and_sorted_roles_without_requiring_a_role(
     operator = client.get("/v1/me", headers=_headers("platform", "platform_operator,tenant_admin"))
 
     assert plain.status_code == 200
-    assert plain.json() == {"subject": "reviewer", "tenant_id": "tenant-a", "roles": ["engineer"]}
+    # `journeys` entra sem afrouxar a igualdade exata: ambiente sem nenhuma variável de
+    # jornada declarada resolve pelo PAPEL apenas — `engineer` abre o croqui e nada mais.
+    assert plain.json() == {
+        "subject": "reviewer",
+        "tenant_id": "tenant-a",
+        "roles": ["engineer"],
+        "journeys": ["croqui"],
+    }
     assert operator.status_code == 200
     assert operator.json() == {
         "subject": "reviewer",
         "tenant_id": "platform",
         "roles": ["platform_operator", "tenant_admin"],
+        # `platform_operator` administra a plataforma e não é papel de jornada nenhuma.
+        "journeys": [],
     }
     # Nunca claims brutos nem token: só o que o Principal expõe.
     assert "token" not in plain.json()

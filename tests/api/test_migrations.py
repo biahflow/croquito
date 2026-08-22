@@ -363,6 +363,10 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
             "valuation_round_revisions",
             "estimate_rounds",
             "estimate_round_revisions",
+            # `0008` (F-034): entitlement de jornada por tenant. Sem índice composto aqui —
+            # ela não tem listagem com cursor; a consulta é sempre por
+            # (`tenant_id`, `journey`), coberta pela unicidade do par.
+            "tenant_journey_entitlements",
         }
         for table, index_name in (
             ("valuation_rounds", "ix_valuation_rounds_tenant_created"),

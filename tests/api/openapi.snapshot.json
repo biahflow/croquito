@@ -3011,6 +3011,18 @@
       "MeResponse": {
         "additionalProperties": false,
         "properties": {
+          "journeys": {
+            "items": {
+              "enum": [
+                "croqui",
+                "medicao",
+                "orcamento"
+              ],
+              "type": "string"
+            },
+            "title": "Journeys",
+            "type": "array"
+          },
           "roles": {
             "items": {
               "type": "string"
@@ -3030,7 +3042,8 @@
         "required": [
           "subject",
           "tenant_id",
-          "roles"
+          "roles",
+          "journeys"
         ],
         "title": "MeResponse",
         "type": "object"
@@ -8841,7 +8854,7 @@
     },
     "/v1/me": {
       "get": {
-        "description": "A SPA descobre quem é o principal autenticado. Exige só autenticação — nenhum\npapel — e nunca devolve claims brutos ou o token: só o que o `Principal` já\nexpõe (subject, tenant, roles), a mesma superfície usada nas decisões de\nautorização.",
+        "description": "A SPA descobre quem é o principal autenticado. Exige só autenticação — nenhum\npapel — e nunca devolve claims brutos ou o token: só o que o `Principal` já\nexpõe (subject, tenant, roles), a mesma superfície usada nas decisões de\nautorização.\n\n`journeys` sai daqui já resolvido pelas três perguntas da F-034 — ambiente, tenant\ne papel — porque decisão de disponibilidade não é tomada no navegador. A tela\nesconde o que não está na lista; quem autoriza continua sendo o servidor, e a URL\ndireta segue recusada pelo portão das rotas.",
         "operationId": "me_v1_me_get",
         "responses": {
           "200": {

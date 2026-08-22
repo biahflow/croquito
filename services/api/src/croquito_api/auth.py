@@ -71,6 +71,32 @@ class OidcAuthenticator:
         return Principal(subject=parts[2], tenant_id=parts[1], roles=roles)
 
 
+def optional_principal(request: Request) -> Principal | None:
+    """Principal do request quando há Bearer válido; `None` quando não há.
+
+    Existe para o portão de disponibilidade de jornada (F-034), que roda antes das
+    dependências da rota e precisa do `tenant_id` sem poder declarar `bearer_scheme`: uma
+    dependência global com esquema de segurança acrescentaria `security` ao documento
+    OpenAPI de TODA rota, inclusive das públicas (`/v1/meta`, `/v1/schemas/scene`).
+
+    Nunca recusa: sem principal não há tenant nem papel para resolver, e quem decide `401`
+    continua sendo a dependência de autenticação da própria rota. Ler o header aqui é a
+    única duplicação em relação a `require_principal`, e é deliberada — a validação do token
+    segue inteira no mesmo `OidcAuthenticator`.
+    """
+    header = request.headers.get("Authorization")
+    if not header:
+        return None
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    authenticator: OidcAuthenticator = request.app.state.authenticator
+    try:
+        return authenticator.authenticate(token)
+    except (HTTPException, jwt.PyJWTError):
+        return None
+
+
 def require_principal(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],

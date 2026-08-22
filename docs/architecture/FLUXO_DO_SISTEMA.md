@@ -196,6 +196,7 @@ não defeito.
 | `VALUATION_EXPORT_BLOCKED` | `valuation/models.py` | medição não aprovada, aprovação que não casa com o conteúdo, período fora de sequência, código fora do contrato, preço/unidade divergentes do contrato ou saldo estourado |
 | Auditoria da planilha | `valuation/canonical.py` | reabre o `.xlsx`, recanonicaliza e compara célula a célula; divergência não publica |
 | Entitlement de IA | rotas de extração | tenant sem autorização contratual — recusa **antes** de enfileirar |
+| `JOURNEY_UNAVAILABLE` | dependência única do router, por prefixo de rota (`croquito_api.journeys`) | a jornada está `disabled` neste ambiente, ou está `pilot` e o tenant não tem entitlement ativo — recusa **antes** do portão de papel de cada rota, que continua onde estava |
 
 Duas simetrias que valem notar: cada cadeia tem o **seu** portão de exportação
 (`SceneRevision` de um lado, `Valuation` do outro), e cada uma **reabre e audita o que

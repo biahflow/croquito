@@ -102,6 +102,38 @@ class TenantAiProcessingEntitlementRecord(Base):
     )
 
 
+class TenantJourneyEntitlementRecord(Base):
+    """Contractual authorization for one tenant to open one journey (F-034).
+
+    Deliberately the same shape as `TenantAiProcessingEntitlementRecord`: this is the same
+    kind of fact — a durable commercial decision, with who authorized it and when — and the
+    platform screen that will administer it (fatia 2) is the same screen. The only
+    difference is the `journey` discriminator, which makes the uniqueness a pair.
+
+    Only read while the environment declares that journey `pilot`; `enabled` and `disabled`
+    never reach this table.
+    """
+
+    __tablename__ = "tenant_journey_entitlements"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "journey", name="uq_journey_entitlement_tenant_journey"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    journey: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
+    agreement_reference: Mapped[str] = mapped_column(String(128))
+    authorized_by: Mapped[str] = mapped_column(String(128))
+    authorized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
 class AiProcessingAuthorizationRecord(Base):
     """Immutable per-job snapshot of the contractual AI-processing authorization."""
 

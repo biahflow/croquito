@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, cast, get_args
 
+from croquito_api.journeys import (
+    JOURNEY_AVAILABILITIES,
+    Journey,
+    JourneyAvailability,
+)
 from croquito_core.errors import DomainValidationError
 
 #: `s3` é a AWS; `gcs` é o Cloud Storage pela interoperabilidade XML/HMAC, que assina
@@ -28,6 +34,51 @@ def _storage_flavor(name: str) -> StorageFlavor:
     return cast(StorageFlavor, raw)
 
 
+def _journey_availability(name: str) -> JourneyAvailability:
+    """Estado declarado de uma jornada; valor inválido recusa aqui, na SUBIDA da aplicação.
+
+    Mesmo molde de `_storage_flavor` e mesma razão de `auto_association_mode()` no
+    construtor do worker: configuração incoerente que só falhasse no primeiro request
+    deixaria o ambiente parecer saudável até alguém abrir a jornada errada.
+    """
+    raw = os.getenv(name) or "enabled"
+    if raw not in JOURNEY_AVAILABILITIES:
+        raise DomainValidationError(
+            [f"{name} inválido: use um de {', '.join(JOURNEY_AVAILABILITIES)} (recebido: {raw!r})."]
+        )
+    # Sem `cast`, ao contrário de `_storage_flavor`: `JOURNEY_AVAILABILITIES` é uma tupla
+    # tipada de literais, então o próprio `not in` estreita `raw` para `JourneyAvailability`.
+    return raw
+
+
+@dataclass(frozen=True, slots=True)
+class JourneyAvailabilitySettings:
+    """Estado de cada jornada neste ambiente.
+
+    O padrão é `enabled` nas três (decisão humana de 2026-08-22): é a única escolha que não
+    muda o comportamento de nenhum ambiente já no ar ao subir esta feature. Ambientes
+    hospedados declaram explicitamente o que quiserem restringir.
+    """
+
+    croqui: JourneyAvailability = "enabled"
+    medicao: JourneyAvailability = "enabled"
+    orcamento: JourneyAvailability = "enabled"
+
+    def as_mapping(self) -> Mapping[Journey, JourneyAvailability]:
+        return {"croqui": self.croqui, "medicao": self.medicao, "orcamento": self.orcamento}
+
+    def state_of(self, journey: Journey) -> JourneyAvailability:
+        return self.as_mapping()[journey]
+
+    @classmethod
+    def from_environment(cls) -> JourneyAvailabilitySettings:
+        return cls(
+            croqui=_journey_availability("CROQUITO_JOURNEY_CROQUI"),
+            medicao=_journey_availability("CROQUITO_JOURNEY_MEDICAO"),
+            orcamento=_journey_availability("CROQUITO_JOURNEY_ORCAMENTO"),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ApiSettings:
     database_url: str
@@ -47,6 +98,9 @@ class ApiSettings:
     ai_max_estimated_cost_usd: str | None = None
     storage_flavor: StorageFlavor = "s3"
     pubsub_topic: str | None = None
+    #: Instância imutável e compartilhável como default: sem variável declarada, as três
+    #: jornadas existem, que é exatamente o comportamento anterior a esta feature.
+    journeys: JourneyAvailabilitySettings = JourneyAvailabilitySettings()
 
     @property
     def queue_backend(self) -> QueueBackend:
@@ -84,4 +138,5 @@ class ApiSettings:
             ai_max_estimated_cost_usd=os.getenv("CROQUITO_AI_MAX_ESTIMATED_COST_USD") or None,
             storage_flavor=_storage_flavor("CROQUITO_STORAGE_FLAVOR"),
             pubsub_topic=os.getenv("CROQUITO_PUBSUB_TOPIC") or None,
+            journeys=JourneyAvailabilitySettings.from_environment(),
         )

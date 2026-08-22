@@ -20,8 +20,34 @@ checks e geração de clientes:
 ### `GET /v1/me`
 
 Exige só autenticação — nenhum papel específico. Devolve o principal que o JWT
-carrega: `subject`, `tenant_id` e `roles` (lista ordenada). Nunca devolve claims
-brutos nem o token; é a rota que a SPA usa para descobrir quem está logado.
+carrega: `subject`, `tenant_id` e `roles` (lista ordenada), mais `journeys`. Nunca
+devolve claims brutos nem o token; é a rota que a SPA usa para descobrir quem está
+logado.
+
+`journeys` é a lista das jornadas (`croqui`, `medicao`, `orcamento`) que este principal
+pode abrir, **já resolvida no servidor** pelas três perguntas da F-034, nesta ordem:
+o estado declarado da jornada neste ambiente, o entitlement do tenant (consultado
+somente quando o estado é `pilot`) e o papel do JWT. A SPA renderiza a lista; ela não
+recalcula papel nem decide disponibilidade. Lista vazia é resposta legítima: significa
+que não há jornada para oferecer a este principal.
+
+### Disponibilidade de jornada
+
+Cada jornada tem um estado por ambiente — `enabled` (existe para todos os tenants),
+`pilot` (existe só para tenants com entitlement ativo) ou `disabled` (não existe aqui).
+O padrão de todas é `enabled`, então um ambiente que não declara nada se comporta como
+antes desta regra existir.
+
+As rotas de jornada são recusadas com `403 JOURNEY_UNAVAILABLE` quando a jornada não está
+disponível — esconder a aba não protege a URL. A recusa é **a mesma** para jornada
+`disabled` e para piloto sem entitlement (inclusive entitlement revogado): a diferença
+entre as duas revelaria a existência de um piloto do qual o tenant não faz parte.
+
+O portão antecede o portão de papel de cada rota e não o substitui: com a jornada
+disponível, papel ausente continua recusando com o `403 FORBIDDEN` de sempre. Prefixos por
+jornada: `/v1/jobs`, `/v1/uploads` e `/v1/projects` (croqui), `/v1/valuation-rounds`
+(medição) e `/v1/estimate-rounds` (orçamento). Fora de jornada, explicitamente: `/v1/me`,
+`/v1/meta`, `/v1/schemas` e `/v1/platform`.
 
 Os demais endpoints exigem JWT emitido por um provedor OIDC configurado. A API
 valida assinatura por JWKS, `issuer` e `audience`, e deriva tenant, identidade e
@@ -1275,7 +1301,7 @@ nem em auditoria. Artefato de outro tenant retorna `404`.
 `REVISION_CONFLICT`, `UNRESOLVED_GEOMETRY`, `PROVIDER_UNAVAILABLE`,
 `EXPORT_AUDIT_FAILED`, `CALIBRATION_INVALID`, `CALIBRATION_REQUIRED`,
 `CALIBRATION_STALE`, `PROPOSAL_ALREADY_DECIDED`, `PROPOSALS_NOT_READY`,
-`FORBIDDEN`, `NOT_FOUND`, `AI_PROCESSING_NOT_AUTHORIZED`,
+`FORBIDDEN`, `NOT_FOUND`, `AI_PROCESSING_NOT_AUTHORIZED`, `JOURNEY_UNAVAILABLE`,
 `AGREEMENT_REFERENCE_REQUIRED`, `SCENE_NOT_APPROVED`,
 `CRITERION_NOT_ACKNOWLEDGEABLE`, `CRITERION_DECLARATION_CONFLICT`,
 `DOMAIN_VALIDATION_FAILED`,

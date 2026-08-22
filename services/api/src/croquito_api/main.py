@@ -7,7 +7,7 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Collection, Generator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -36,7 +36,12 @@ from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from croquito_api import estimate_rounds
-from croquito_api.auth import OidcAuthenticator, Principal, require_principal
+from croquito_api.auth import (
+    OidcAuthenticator,
+    Principal,
+    optional_principal,
+    require_principal,
+)
 from croquito_api.config import ApiSettings
 from croquito_api.database import (
     AiProcessingAuthorizationRecord,
@@ -56,10 +61,19 @@ from croquito_api.database import (
     ReviewRevisionRecord,
     RevisionRecord,
     TenantAiProcessingEntitlementRecord,
+    TenantJourneyEntitlementRecord,
     TraceSolveRecord,
     UploadRecord,
     ValuationRoundRecord,
     ValuationRoundRevisionRecord,
+)
+from croquito_api.journeys import (
+    CROQUI_REVIEWER_ROLES,
+    Journey,
+    journey_of_path,
+    journey_reachable,
+    pilot_journeys,
+    resolve_journeys,
 )
 from croquito_api.pubsub_queue import PubSubProcessingQueue, QueuePublishError
 from croquito_api.storage import ArtifactStore
@@ -290,6 +304,9 @@ class MeResponse(ApiModel):
     subject: str
     tenant_id: str
     roles: list[str]
+    #: Jornadas que este principal pode abrir, já resolvidas pelas três perguntas da F-034
+    #: (ambiente, tenant e papel). A SPA renderiza esta lista; ela não recalcula papel.
+    journeys: list[Journey]
 
 
 class PlatformTenantResponse(ApiModel):
@@ -1609,7 +1626,7 @@ def _record_audit(
 
 def _reviewer_role(principal: Principal) -> str:
     """Maps only signed roles to the review contract's professional role vocabulary."""
-    for role in ("engineer", "architect", "domain_reviewer"):
+    for role in CROQUI_REVIEWER_ROLES:
         if principal.has_role(role):
             return role
     raise _problem(
@@ -1644,6 +1661,45 @@ def _require_active_ai_entitlement(
             "O tenant não possui autorização contratual ativa para processamento externo.",
         )
     return entitlement
+
+
+def _entitled_journeys(
+    database: Database, *, tenant_id: str, journeys: Collection[Journey]
+) -> frozenset[Journey]:
+    """Jornadas em `pilot` que este tenant tem autorizadas, lidas do entitlement (F-034).
+
+    Sem jornada em `pilot` nenhuma sessão é aberta: em ambiente que não declara piloto — o
+    padrão — este caminho não toca o banco, e nem o portão das rotas nem `GET /v1/me`
+    passam a depender dele para responder.
+
+    A sessão é própria e curta de propósito: o portão roda antes das dependências da rota, e
+    `GET /v1/me` não tem sessão. `status == "ACTIVE"` é o mesmo critério do entitlement de
+    IA, então revogar (que grava `REVOKED` e `revoked_at`) fecha a jornada pelo mesmo
+    caminho de quem nunca teve autorização.
+    """
+    wanted = frozenset(journeys)
+    if not wanted:
+        return frozenset()
+    with database.sessions() as session:
+        granted = session.scalars(
+            select(TenantJourneyEntitlementRecord.journey).where(
+                TenantJourneyEntitlementRecord.tenant_id == tenant_id,
+                TenantJourneyEntitlementRecord.journey.in_(sorted(wanted)),
+                TenantJourneyEntitlementRecord.status == "ACTIVE",
+            )
+        ).all()
+    return frozenset(cast(Journey, journey) for journey in granted) & wanted
+
+
+def _journey_unavailable(journey: Journey) -> HTTPException:
+    """Recusa única da jornada indisponível: `disabled` e piloto sem entitlement respondem
+    exatamente isto, para que ninguém descubra pela diferença de mensagem que existe um
+    piloto do qual não faz parte."""
+    return _problem(
+        "JOURNEY_UNAVAILABLE",
+        status.HTTP_403_FORBIDDEN,
+        f"A jornada {journey} não está disponível neste ambiente.",
+    )
 
 
 def _require_valuation_reviewer(principal: Principal) -> str:
@@ -2731,10 +2787,54 @@ def _require_idempotency(
 def create_app(settings: ApiSettings | None = None, database: Database | None = None) -> FastAPI:
     runtime_settings = settings or ApiSettings.from_environment()
     runtime_database = database or Database(runtime_settings.database_url)
+
+    def journey_gate(request: Request) -> None:
+        """Portão de disponibilidade de jornada, aplicado UMA vez para toda rota (F-034).
+
+        Entra como dependência do router — não como cópia em cada uma das rotas — porque a
+        checagem replicada rota a rota é exatamente o jeito de uma rota nova nascer sem
+        portão. `tests/api/test_journeys.py` percorre as rotas publicadas e reprova o
+        prefixo `/v1/` que ninguém classificou.
+
+        Declara só `Request`: qualquer outro parâmetro (esquema de segurança, header, sessão
+        de banco) viraria `security`/`parameters` no documento OpenAPI de TODAS as rotas,
+        inclusive das públicas, e abriria sessão de banco até no `/healthz`.
+
+        Responde só às duas primeiras perguntas — ambiente e tenant. O papel continua sendo
+        exigido por cada rota, com o código que ela já usa: a disponibilidade ANTECEDE o
+        portão de papel, não o substitui.
+        """
+        journey = journey_of_path(request.url.path)
+        if journey is None:
+            return
+        state = runtime_settings.journeys.state_of(journey)
+        if state == "enabled":
+            # Caminho de todo ambiente que não declara nada: nem autentica de novo, nem
+            # toca o banco. É o que faz esta feature não custar nada onde não foi ligada.
+            return
+        principal = optional_principal(request)
+        if principal is None:
+            # Sem principal não há tenant para perguntar, e o portão não fabrica recusa de
+            # autenticação: a dependência da própria rota devolve o `401` de sempre.
+            return
+        if state == "disabled":
+            # Nenhum entitlement muda esta resposta, então não se pergunta ao banco. Importa
+            # porque `disabled` é justamente o estado que segue recebendo tráfego — link
+            # antigo, aba aberta, bundle velho da SPA — e cada uma dessas requisições abriria
+            # uma sessão para uma consulta cujo resultado já é irrelevante.
+            raise _journey_unavailable(journey)
+        entitled = _entitled_journeys(
+            runtime_database, tenant_id=principal.tenant_id, journeys=(journey,)
+        )
+        if journey_reachable(state, entitled=journey in entitled):
+            return
+        raise _journey_unavailable(journey)
+
     application = FastAPI(
         title="Croquito API",
         version="0.2.0",
         description="API de controle; processamento pesado ocorre fora do request HTTP.",
+        dependencies=[Depends(journey_gate)],
     )
     application.add_middleware(
         CORSMiddleware,
@@ -2849,11 +2949,27 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         papel — e nunca devolve claims brutos ou o token: só o que o `Principal` já
         expõe (subject, tenant, roles), a mesma superfície usada nas decisões de
         autorização.
+
+        `journeys` sai daqui já resolvido pelas três perguntas da F-034 — ambiente, tenant
+        e papel — porque decisão de disponibilidade não é tomada no navegador. A tela
+        esconde o que não está na lista; quem autoriza continua sendo o servidor, e a URL
+        direta segue recusada pelo portão das rotas.
         """
+        availability = runtime_settings.journeys.as_mapping()
+        entitled = _entitled_journeys(
+            runtime_database,
+            tenant_id=principal.tenant_id,
+            journeys=pilot_journeys(availability),
+        )
         return MeResponse(
             subject=principal.subject,
             tenant_id=principal.tenant_id,
             roles=sorted(principal.roles),
+            journeys=list(
+                resolve_journeys(
+                    availability=availability, entitled=entitled, roles=principal.roles
+                )
+            ),
         )
 
     @application.get(
