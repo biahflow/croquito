@@ -2,23 +2,46 @@ import { useCallback, useEffect, useState } from "react";
 import type { User } from "oidc-client-ts";
 
 import {
+  ApiError,
   getEntitlement,
+  listJourneys,
   listTenants,
   setEntitlement,
+  setJourneyEntitlement,
   type EntitlementDraft,
+  type Journey,
+  type JourneyAvailability,
+  type JourneyEntitlement,
+  type JourneyState,
+  type PlatformJourneys,
   type PlatformTenant,
 } from "./api";
 import {
+  AVISO_DISPONIBILIDADE,
+  AVISO_ESTADO_NAO_EDITAVEL,
   AVISO_PLATAFORMA,
   AVISO_REVOGACAO,
   AVISO_TENANT_NOVO,
+  DICA_APOS_RECUSA,
+  DICA_AUTORIZAR_PILOTO,
+  DICA_JORNADAS_CARREGANDO,
+  DICA_JORNADAS_SEM_PAPEL,
   DICA_REFERENCIA,
   describeError,
+  describeJourneyError,
+  estadoDaAutorizacao,
   estadoLabel,
+  ESTADO_JORNADA_CLASSE,
+  ESTADO_JORNADA_LABEL,
   formatarInstante,
+  JORNADA_LABEL,
+  MENSAGEM_JORNADAS_CARREGANDO,
+  MENSAGEM_JORNADAS_SEM_PAPEL,
   MENSAGEM_LISTA_VAZIA,
   MENSAGEM_SEM_LEITURA,
   MENSAGEM_SEM_SESSAO,
+  mensagemSemAutorizacao,
+  resumoDoAmbiente,
 } from "./labels";
 
 /**
@@ -394,11 +417,394 @@ export function PlatformApp({ session }: { session: User | null }) {
         ) : null}
       </section>
 
+      {/* A seção nova mora ABAIXO da autorização de IA (Design Approval Package da F-034
+          fatia 2, decisão 1): as duas respondem à mesma pergunta — o que este cliente pode
+          usar — e são administradas pelo mesmo papel. */}
+      <DisponibilidadeDeJornada session={session} />
+
       {sucesso ? (
         <p className="app-toast" role="status">
           {sucesso}
         </p>
       ) : null}
+    </>
+  );
+}
+
+/**
+ * Disponibilidade de jornada por tenant (F-034, fatia 2).
+ *
+ * Corresponde à revisão 1 do Design Approval Package, aprovada por ato humano em
+ * 2026-08-22: mesma seção da autorização de IA, logo abaixo dela, com os estados normal,
+ * vazio, carregando, recusa e sem papel. O bloco de histórico do pacote está desenhado
+ * como RESERVADO e é a F-017; ele não é construído aqui.
+ *
+ * Três decisões do pacote viram código:
+ *
+ * - **O estado do ambiente é mostrado e não é editável.** Não existe rota que o escreva, e
+ *   a tela diz isso por escrito para ninguém procurar um interruptor que não existe.
+ * - **A tela age só onde tem efeito, mas quem recusa é o servidor.** O seletor oferece as
+ *   três jornadas; autorizar numa que não está em piloto sobe como `409` e vira a frase
+ *   por extenso. Reimplementar a regra aqui faria a tela decidir autorização.
+ * - **Revogado continua na lista**, com a data da revogação — sumir apagaria a trilha.
+ */
+
+/** Pastilha do estado do ambiente. A palavra ao lado é o que carrega o significado. */
+export function PastilhaDeEstado({ state }: { state: JourneyState }) {
+  return (
+    <span className={ESTADO_JORNADA_CLASSE[state]}>
+      {ESTADO_JORNADA_LABEL[state]}
+    </span>
+  );
+}
+
+/** Estado declarado de cada jornada neste ambiente; leitura, nunca edição. */
+export function EstadoDasJornadas({
+  journeys,
+}: {
+  journeys: JourneyAvailability[];
+}) {
+  return (
+    <div className="journey-states">
+      {journeys.map((entry) => (
+        <div key={entry.journey}>
+          <span>{JORNADA_LABEL[entry.journey]}</span>
+          <PastilhaDeEstado state={entry.state} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Uma autorização na lista, com o contrato e os carimbos do ato.
+ *
+ * A linha revogada oferece "Autorizar de novo", que apenas PREENCHE o formulário ao lado:
+ * autorizar de novo é ato novo e precisa de uma referência de contrato que alguém conferiu
+ * — reenviar a antiga gravaria um ato sob um contrato que ninguém leu.
+ */
+export function LinhaAutorizacao({
+  entitlement,
+  enviando,
+  onRevogar,
+  onReautorizar,
+}: {
+  entitlement: JourneyEntitlement;
+  enviando: boolean;
+  onRevogar: () => void;
+  onReautorizar: () => void;
+}) {
+  return (
+    <li>
+      <div>
+        <strong>{entitlement.tenant_id}</strong>
+        <span>{estadoDaAutorizacao(entitlement)}</span>
+        <span>Contrato: {entitlement.agreement_reference}</span>
+        <span>
+          Autorizado por {entitlement.authorized_by} em{" "}
+          {formatarInstante(entitlement.authorized_at)} · revogado em{" "}
+          {formatarInstante(entitlement.revoked_at)}
+        </span>
+      </div>
+      <button
+        className="button project-action"
+        type="button"
+        disabled={enviando}
+        onClick={() => (entitlement.enabled ? onRevogar() : onReautorizar())}
+      >
+        {entitlement.enabled ? "Revogar" : "Autorizar de novo"}
+      </button>
+    </li>
+  );
+}
+
+/**
+ * A coluna da esquerda: o que a seção é e o estado de cada jornada neste ambiente.
+ *
+ * `journeys === null` é a leitura ainda em curso — e aí não há estado a descrever, então a
+ * coluna diz só o que está acontecendo, em vez de explicar uma lista que não está na tela.
+ */
+export function ColunaDoAmbiente({
+  journeys,
+}: {
+  journeys: JourneyAvailability[] | null;
+}) {
+  return (
+    <div>
+      <span className="eyebrow">DISPONIBILIDADE DE JORNADA</span>
+      <h2>Quais jornadas existem para cada cliente</h2>
+      {journeys === null ? (
+        <span className="field-hint">{MENSAGEM_JORNADAS_CARREGANDO}</span>
+      ) : (
+        <>
+          <p>
+            {AVISO_DISPONIBILIDADE.antes}
+            <strong>{AVISO_DISPONIBILIDADE.enfase}</strong>
+            {AVISO_DISPONIBILIDADE.depois}
+          </p>
+          <span className="field-hint">{resumoDoAmbiente(journeys)}</span>
+          <EstadoDasJornadas journeys={journeys} />
+          {/* Por escrito, para ninguém procurar um interruptor que não existe. */}
+          <p className="field-hint">{AVISO_ESTADO_NAO_EDITAVEL}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A coluna da direita: autorizar um cliente numa jornada.
+ *
+ * O seletor oferece as TRÊS jornadas, não só as em piloto: quem recusa a que não tem
+ * efeito é o servidor, com a frase por extenso. Filtrar aqui esconderia a regra em vez de
+ * explicá-la, e faria a tela decidir autorização.
+ */
+export function FormularioDeAutorizacao({
+  journeys,
+  dica,
+  tenantId,
+  jornada,
+  referencia,
+  enviando,
+  onTenantId,
+  onJornada,
+  onReferencia,
+  onAutorizar,
+}: {
+  journeys: JourneyAvailability[] | null;
+  dica: string;
+  tenantId: string;
+  jornada: Journey | null;
+  referencia: string;
+  enviando: boolean;
+  onTenantId: (valor: string) => void;
+  onJornada: (valor: Journey) => void;
+  onReferencia: (valor: string) => void;
+  onAutorizar: () => void;
+}) {
+  const lido = journeys !== null;
+  return (
+    <div>
+      <span className="eyebrow">AUTORIZAR CLIENTE NO PILOTO</span>
+      <p className="field-hint">{dica}</p>
+      <form
+        className="upload-form journey-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onAutorizar();
+        }}
+      >
+        <label>
+          Identificador do tenant
+          <input
+            value={tenantId}
+            onChange={(event) => onTenantId(event.target.value)}
+            placeholder="tenant-exemplo"
+            disabled={!lido}
+          />
+        </label>
+        <label>
+          Jornada
+          <select
+            value={jornada ?? ""}
+            onChange={(event) => onJornada(event.target.value as Journey)}
+            disabled={!lido}
+          >
+            {journeys === null ? (
+              <option value="">—</option>
+            ) : (
+              journeys.map((entry) => (
+                <option key={entry.journey} value={entry.journey}>
+                  {JORNADA_LABEL[entry.journey]}
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+        <label>
+          Referência do contrato
+          <input
+            value={referencia}
+            onChange={(event) => onReferencia(event.target.value)}
+            placeholder="contrato 05/2024"
+            disabled={!lido}
+          />
+        </label>
+        {/* `button-primary` é o que pinta o verde na folha real; no pacote aprovado o
+            mesmo verde vem de `.button`, porque a rendição carrega um recorte da folha.
+            A captura aprovada mostra o botão preenchido, e é ele que sai aqui. */}
+        <button
+          className="button button-primary"
+          type="submit"
+          disabled={!lido || enviando || tenantId.trim() === ""}
+        >
+          Autorizar
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/** Primeira jornada em piloto, ou a primeira da lista quando nenhuma está em piloto. */
+function jornadaInicial(journeys: JourneyAvailability[]): Journey | null {
+  const piloto = journeys.find((entry) => entry.state === "pilot");
+  return piloto?.journey ?? journeys[0]?.journey ?? null;
+}
+
+export function DisponibilidadeDeJornada({ session }: { session: User | null }) {
+  const [dados, setDados] = useState<PlatformJourneys | null>(null);
+  const [semPapel, setSemPapel] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [tenantId, setTenantId] = useState("");
+  const [jornada, setJornada] = useState<Journey | null>(null);
+  const [referencia, setReferencia] = useState("");
+
+  const accessToken = session?.access_token ?? null;
+
+  const carregar = useCallback(async () => {
+    if (accessToken === null) {
+      return;
+    }
+    try {
+      const resposta = await listJourneys(accessToken);
+      setDados(resposta);
+      setSemPapel(false);
+      setErro(null);
+      // A jornada escolhida só é reposicionada quando ainda não há escolha: sobrescrever
+      // depois de cada ato jogaria fora a seleção de quem está no meio do trabalho.
+      setJornada((atual) => atual ?? jornadaInicial(resposta.journeys));
+    } catch (error) {
+      // `403` aqui não é falha: é a conta sem o papel de plataforma, e o pacote aprovado
+      // desenha um estado próprio para ela — motivo por extenso, e não tela em branco.
+      if (error instanceof ApiError && error.status === 403) {
+        setSemPapel(true);
+        setErro(null);
+        return;
+      }
+      setErro(describeJourneyError(error));
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    void carregar();
+  }, [carregar]);
+
+  const autorizar = useCallback(async () => {
+    if (accessToken === null || jornada === null) {
+      return;
+    }
+    setEnviando(true);
+    try {
+      await setJourneyEntitlement(accessToken, {
+        tenantId: tenantId.trim(),
+        journey: jornada,
+        enabled: true,
+        agreementReference: referencia,
+      });
+      setErro(null);
+      setTenantId("");
+      setReferencia("");
+      // O que a tela mostra depois do ato é o que o servidor devolve na releitura.
+      await carregar();
+    } catch (error) {
+      setErro(describeJourneyError(error));
+    } finally {
+      setEnviando(false);
+    }
+  }, [accessToken, carregar, jornada, referencia, tenantId]);
+
+  const revogar = useCallback(
+    async (entitlement: JourneyEntitlement) => {
+      if (accessToken === null) {
+        return;
+      }
+      setEnviando(true);
+      try {
+        await setJourneyEntitlement(accessToken, {
+          tenantId: entitlement.tenant_id,
+          journey: entitlement.journey,
+          enabled: false,
+        });
+        setErro(null);
+        await carregar();
+      } catch (error) {
+        setErro(describeJourneyError(error));
+      } finally {
+        setEnviando(false);
+      }
+    },
+    [accessToken, carregar],
+  );
+
+  if (session === null) {
+    return null;
+  }
+
+  if (semPapel) {
+    return (
+      <section className="authenticated-workspace">
+        <div>
+          <span className="eyebrow">DISPONIBILIDADE DE JORNADA</span>
+          <h2>Quais jornadas existem para cada cliente</h2>
+          <p>{MENSAGEM_JORNADAS_SEM_PAPEL}</p>
+          <span className="field-hint">{DICA_JORNADAS_SEM_PAPEL}</span>
+        </div>
+      </section>
+    );
+  }
+
+  const entitlements = dados?.entitlements ?? [];
+  // A recusa manda na dica: depois dela, o que importa é que nada foi gravado. Sem recusa,
+  // a dica descreve o que a leitura encontrou.
+  const dicaDoFormulario = erro
+    ? DICA_APOS_RECUSA
+    : dados === null
+      ? DICA_JORNADAS_CARREGANDO
+      : entitlements.length === 0
+        ? mensagemSemAutorizacao(dados.journeys)
+        : DICA_AUTORIZAR_PILOTO;
+
+  return (
+    <>
+      {erro ? <AlertaPersistente mensagem={erro} /> : null}
+
+      <section className="authenticated-workspace">
+        <ColunaDoAmbiente journeys={dados?.journeys ?? null} />
+
+        <FormularioDeAutorizacao
+          journeys={dados?.journeys ?? null}
+          dica={dicaDoFormulario}
+          tenantId={tenantId}
+          jornada={jornada}
+          referencia={referencia}
+          enviando={enviando}
+          onTenantId={setTenantId}
+          onJornada={setJornada}
+          onReferencia={setReferencia}
+          onAutorizar={() => void autorizar()}
+        />
+
+        {entitlements.length > 0 ? (
+          <ul className="project-list journey-entitlements">
+            {entitlements.map((entitlement) => (
+              <LinhaAutorizacao
+                key={`${entitlement.tenant_id}:${entitlement.journey}`}
+                entitlement={entitlement}
+                enviando={enviando}
+                onRevogar={() => void revogar(entitlement)}
+                onReautorizar={() => {
+                  // Autorizar de novo é ato novo: o formulário é preenchido com o par, e a
+                  // referência do contrato nasce VAZIA para alguém escrevê-la de fato.
+                  setTenantId(entitlement.tenant_id);
+                  setJornada(entitlement.journey);
+                  setReferencia("");
+                }}
+              />
+            ))}
+          </ul>
+        ) : null}
+      </section>
     </>
   );
 }

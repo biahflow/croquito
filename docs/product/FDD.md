@@ -31,6 +31,15 @@ documento. Um snapshot imutável dessa autorização é ligado ao job; sua revog
 bloqueia novas chamadas externas. O piloto atual analisa apenas a primeira página;
 páginas restantes aparecem como limitação explícita, sem descarte silencioso.
 
+A mesma tela de Plataforma administra a **disponibilidade de jornada por tenant**
+(F-034). Cada jornada — Croqui, Medição e Orçamento — tem um estado declarado no
+ambiente (`liberada`, `piloto` ou `indisponível`) que a tela **mostra e não edita**:
+mudar o estado é alterar configuração e publicar, e a tela diz isso por escrito. Em
+`piloto`, a jornada existe só para os clientes autorizados nominalmente ali, com
+referência de contrato, quem autorizou e quando. Autorizar um cliente numa jornada que
+não está em piloto é recusado pelo servidor, com a frase por extenso, e nada é gravado.
+Revogar não apaga: a linha permanece na lista com a data da revogação.
+
 Erros de MIME, limite ou PDF corrompido são apresentados antes de iniciar o job.
 
 ### 3. Processamento

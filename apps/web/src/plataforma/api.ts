@@ -157,3 +157,99 @@ export function setEntitlement(
     },
   );
 }
+
+/**
+ * Estado declarado de uma jornada NESTE ambiente (F-034, fatia 2).
+ *
+ * A tela mostra e não edita: mudar o estado é alterar configuração e publicar, e por isso
+ * não existe rota que o escreva — o pacote de design aprovado diz isso por escrito na
+ * própria tela, para ninguém procurar um interruptor que não existe.
+ */
+export type JourneyState = "enabled" | "pilot" | "disabled";
+
+export type JourneyAvailability = {
+  journey: Journey;
+  state: JourneyState;
+};
+
+/**
+ * Uma autorização de (tenant, jornada). Diferente de `PlatformTenant`: aqui a linha só
+ * existe porque houve um ato, então contrato, autor e data chegam preenchidos.
+ *
+ * `enabled: false` com `revoked_at` preenchido é a autorização revogada, que CONTINUA na
+ * lista — sumir com ela apagaria a trilha de que um dia houve autorização.
+ */
+export type JourneyEntitlement = {
+  tenant_id: string;
+  journey: Journey;
+  enabled: boolean;
+  agreement_reference: string;
+  authorized_by: string;
+  authorized_at: string;
+  revoked_at: string | null;
+};
+
+/** O que `GET /v1/platform/journeys` devolve: o ambiente e os atos, numa leitura só. */
+export type PlatformJourneys = {
+  journeys: JourneyAvailability[];
+  entitlements: JourneyEntitlement[];
+};
+
+/** O gesto de autorizar ou revogar um cliente numa jornada, antes de virar requisição. */
+export type JourneyEntitlementDraft = {
+  tenantId: string;
+  journey: Journey;
+  enabled: boolean;
+  agreementReference?: string;
+};
+
+/**
+ * Corpo do `PUT`. Mesma regra do entitlement de IA: na revogação a referência NÃO viaja,
+ * porque o contrato que autorizou continua sendo o que está gravado, e reescrevê-lo com o
+ * que estava na tela apagaria o registro do ato original.
+ */
+export function journeyEntitlementBody(
+  draft: JourneyEntitlementDraft,
+): Record<string, unknown> {
+  const reference = draft.agreementReference?.trim() ?? "";
+  if (!draft.enabled || reference === "") {
+    return { enabled: draft.enabled };
+  }
+  return { enabled: draft.enabled, agreement_reference: reference };
+}
+
+function journeyEntitlementPath(tenantId: string, journey: Journey): string {
+  return `/v1/platform/tenants/${encodeURIComponent(
+    tenantId,
+  )}/journey-entitlements/${journey}`;
+}
+
+/** Estado das jornadas neste ambiente e toda autorização já concedida. */
+export function listJourneys(accessToken: string): Promise<PlatformJourneys> {
+  return apiJson<PlatformJourneys>("/v1/platform/journeys", accessToken);
+}
+
+/**
+ * Autoriza ou revoga um cliente numa jornada.
+ *
+ * Autorizar jornada que não está em piloto é recusado pelo SERVIDOR
+ * (`409 JOURNEY_NOT_IN_PILOT`), e é assim que fica: a tela oferece todas as jornadas e
+ * deixa a recusa subir com a frase por extenso, em vez de reimplementar a regra aqui.
+ */
+export function setJourneyEntitlement(
+  accessToken: string,
+  draft: JourneyEntitlementDraft,
+): Promise<JourneyEntitlement> {
+  return apiJson<JourneyEntitlement>(
+    journeyEntitlementPath(draft.tenantId, draft.journey),
+    accessToken,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify(journeyEntitlementBody(draft)),
+    },
+  );
+}

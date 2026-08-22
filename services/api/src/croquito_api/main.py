@@ -69,7 +69,9 @@ from croquito_api.database import (
 )
 from croquito_api.journeys import (
     CROQUI_REVIEWER_ROLES,
+    JOURNEYS,
     Journey,
+    JourneyAvailability,
     journey_of_path,
     journey_reachable,
     pilot_journeys,
@@ -327,6 +329,52 @@ class PlatformTenantResponse(ApiModel):
 
 class PlatformTenantListResponse(ApiModel):
     tenants: list[PlatformTenantResponse]
+
+
+class SetJourneyEntitlementRequest(ApiModel):
+    """Conceder (`enabled=true`) ou revogar (`enabled=false`) uma jornada para um tenant.
+
+    Mesma forma de `SetAiProcessingEntitlementRequest` de propósito: é o mesmo tipo de
+    fato — decisão comercial durável, com quem autorizou e quando — e o mesmo papel a
+    administra. O par (tenant, jornada) vem da rota; o corpo carrega só o ato.
+    """
+
+    enabled: bool
+    agreement_reference: str | None = Field(default=None, min_length=3, max_length=128)
+
+
+class JourneyEntitlementResponse(ApiModel):
+    """Uma autorização de (tenant, jornada), com o registro do ato que a criou.
+
+    `authorized_by` sai daqui porque o ato é NOMINAL: a tela de plataforma mostra quem
+    autorizou e quando. Uma autorização revogada continua sendo devolvida, com
+    `revoked_at` carimbado — sumir com a linha apagaria a trilha do que houve antes.
+    """
+
+    tenant_id: str
+    journey: Journey
+    enabled: bool
+    agreement_reference: str
+    authorized_by: str
+    authorized_at: datetime
+    revoked_at: datetime | None = None
+
+
+class JourneyAvailabilityResponse(ApiModel):
+    """Estado declarado de uma jornada neste ambiente — leitura, nunca escrita.
+
+    Mudar o estado é alterar configuração de ambiente e publicar, e por isso não existe
+    rota para escrevê-lo: a tela mostra o estado para ninguém procurar um interruptor
+    que não existe.
+    """
+
+    journey: Journey
+    state: JourneyAvailability
+
+
+class PlatformJourneyListResponse(ApiModel):
+    journeys: list[JourneyAvailabilityResponse]
+    entitlements: list[JourneyEntitlementResponse]
 
 
 class JobResponse(ApiModel):
@@ -2011,6 +2059,21 @@ def _platform_tenant_response(
     )
 
 
+def _journey_entitlement_response(
+    record: TenantJourneyEntitlementRecord,
+) -> JourneyEntitlementResponse:
+    """Só as colunas do ato; nada de `id`, `updated_at` ou linha bruta de banco."""
+    return JourneyEntitlementResponse(
+        tenant_id=record.tenant_id,
+        journey=cast(Journey, record.journey),
+        enabled=record.status == "ACTIVE",
+        agreement_reference=record.agreement_reference,
+        authorized_by=record.authorized_by,
+        authorized_at=record.authorized_at,
+        revoked_at=record.revoked_at,
+    )
+
+
 def _latest_review(
     session: Session, *, job_id: UUID, tenant_id: str
 ) -> ReviewRevisionRecord | None:
@@ -3107,6 +3170,156 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 else "AI_PROCESSING_ENTITLEMENT_REVOKED"
             ),
             resource_type="tenant_ai_processing_entitlement",
+            resource_id=entitlement.id,
+            request_id=request.state.request_id,
+            tenant_id=tenant_id,
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/platform/journeys",
+        response_model=PlatformJourneyListResponse,
+        tags=["platform"],
+    )
+    async def list_platform_journeys(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> PlatformJourneyListResponse:
+        """Estado de cada jornada neste ambiente e toda autorização já concedida (F-034).
+
+        Duas leituras num lugar só porque a tela responde uma pergunta só: quais jornadas
+        existem para cada cliente. O estado vem da configuração e é **somente leitura**; as
+        autorizações vêm da tabela do entitlement.
+
+        A listagem traz apenas os pares (tenant, jornada) que TÊM registro — inclusive os
+        revogados, que continuam na lista com `revoked_at`. Listar todo tenant conhecido
+        (como faz `/v1/platform/tenants`) é questão em aberto do pacote de design aprovado,
+        e portanto não é decidida aqui em silêncio.
+        """
+        _require_platform_operator(principal)
+        availability = runtime_settings.journeys.as_mapping()
+        records = session.scalars(select(TenantJourneyEntitlementRecord)).all()
+        # Ordenação em Python, como em `_all_known_tenant_ids`: SQLite (testes) e
+        # PostgreSQL (hospedado) não ordenam texto do mesmo jeito, e a tela lê a ordem.
+        ordered = sorted(records, key=lambda record: (record.tenant_id, record.journey))
+        return PlatformJourneyListResponse(
+            journeys=[
+                JourneyAvailabilityResponse(journey=journey, state=availability[journey])
+                for journey in JOURNEYS
+            ],
+            entitlements=[_journey_entitlement_response(record) for record in ordered],
+        )
+
+    @application.put(
+        "/v1/platform/tenants/{tenant_id}/journey-entitlements/{journey}",
+        response_model=JourneyEntitlementResponse,
+        tags=["platform"],
+    )
+    async def set_journey_entitlement(
+        tenant_id: str,
+        journey: Journey,
+        payload: SetJourneyEntitlementRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> JourneyEntitlementResponse:
+        """Concede ou revoga o acesso de um tenant a uma jornada, por ato nominal (F-034).
+
+        O tenant ALVO vem da rota e só `platform_operator` chega aqui; o `tenant_id` do JWT
+        de quem chama não decide nada nesta rota, exatamente como no entitlement de IA.
+        """
+        _require_platform_operator(principal)
+        state = runtime_settings.journeys.state_of(journey)
+        if payload.enabled and state != "pilot":
+            # Recusa ANTES de qualquer escrita. Autorizar um cliente numa jornada que já
+            # existe para todos, ou que não existe neste ambiente, não teria efeito nenhum
+            # hoje — e o registro criado passaria a valer sozinho, sem ato novo, se o
+            # estado virasse `pilot` depois.
+            #
+            # Revogar segue permitido em QUALQUER estado, de propósito: é o que permite
+            # encerrar uma autorização criada durante o piloto depois que a jornada foi
+            # liberada, em vez de deixá-la ativa esperando o próximo piloto.
+            raise _problem(
+                "JOURNEY_NOT_IN_PILOT",
+                status.HTTP_409_CONFLICT,
+                f"A jornada {journey} não está em piloto neste ambiente; autorizar um "
+                "cliente nela não teria efeito.",
+                {"journey": journey, "state": state},
+            )
+        if payload.enabled and payload.agreement_reference is None:
+            raise _problem(
+                "AGREEMENT_REFERENCE_REQUIRED",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Autorizar um cliente numa jornada em piloto exige a referência lógica "
+                "do contrato.",
+            )
+        operation = f"platform.journey-entitlement:{tenant_id}:{journey}"
+        request_hash = _request_hash(payload)
+        existing_response = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing_response is not None:
+            return JourneyEntitlementResponse.model_validate(existing_response)
+
+        now = datetime.now(UTC)
+        entitlement = session.scalar(
+            select(TenantJourneyEntitlementRecord).where(
+                TenantJourneyEntitlementRecord.tenant_id == tenant_id,
+                TenantJourneyEntitlementRecord.journey == journey,
+            )
+        )
+        if entitlement is None:
+            if not payload.enabled:
+                raise _problem(
+                    "NOT_FOUND",
+                    status.HTTP_404_NOT_FOUND,
+                    "Autorização de jornada não encontrada para o tenant.",
+                )
+            entitlement = TenantJourneyEntitlementRecord(
+                id=str(new_uuid7()),
+                tenant_id=tenant_id,
+                journey=journey,
+                status="ACTIVE",
+                agreement_reference=payload.agreement_reference or "",
+                authorized_by=principal.subject,
+                authorized_at=now,
+                revoked_at=None,
+            )
+            session.add(entitlement)
+        elif payload.enabled:
+            entitlement.status = "ACTIVE"
+            entitlement.agreement_reference = payload.agreement_reference or ""
+            entitlement.authorized_by = principal.subject
+            entitlement.authorized_at = now
+            entitlement.revoked_at = None
+        else:
+            # Revogar NÃO apaga: o registro fica, com o contrato e o autor do ato original,
+            # e ganha a data da revogação. É a trilha que a tela mostra.
+            entitlement.status = "REVOKED"
+            entitlement.revoked_at = now
+
+        response = _journey_entitlement_response(entitlement)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action=(
+                "JOURNEY_ENTITLEMENT_GRANTED" if payload.enabled else "JOURNEY_ENTITLEMENT_REVOKED"
+            ),
+            resource_type="tenant_journey_entitlement",
             resource_id=entitlement.id,
             request_id=request.state.request_id,
             tenant_id=tenant_id,

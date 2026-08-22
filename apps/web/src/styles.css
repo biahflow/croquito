@@ -2367,6 +2367,74 @@ h2 {
   font-weight: 850;
 }
 
+/* Terceira pastilha, ao lado de `.ready` e `.blocked` (Design Approval Package da F-034
+   fatia 2, revisão 1, onde ela aparece como `.neutro`). Sem cor nova: `--ink-secondary`
+   sobre `--surface-sunken`, ambos já no sistema. Existe porque as duas pastilhas atuais
+   são "positivo" e "atenção", e um módulo que não existe neste ambiente não é nenhum
+   dos dois. */
+.neutral {
+  padding: 5px 8px;
+  color: var(--ink-secondary);
+  background: var(--surface-sunken);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+/* Duas correções de forma para a seção de disponibilidade de jornada corresponder à
+   captura aprovada (revisão 1 do Design Approval Package da F-034 fatia 2). As duas
+   existem porque a rendição do pacote carrega um RECORTE da folha, sem estas regras — e
+   é a captura, não o recorte, que a aprovação referencia.
+
+   1. O terceiro campo do formulário fica na coluna dele. `.upload-form` manda o último
+      rótulo ocupar a linha inteira, o que serve a um formulário de dois campos (o da
+      autorização de IA, ao lado) e estica o de três. */
+.journey-form label:last-of-type {
+  grid-column: auto;
+}
+
+/* 2. A lista de autorizações empilha em linhas de largura inteira. `.project-list`
+      sozinha é uma faixa de chips que quebra em colunas — boa para nome curto de
+      projeto, apertada para uma linha que carrega contrato, autor e duas datas. */
+.journey-entitlements {
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  font-size: 12px;
+}
+
+.journey-entitlements li {
+  padding: 12px;
+  background: var(--surface);
+  border-radius: 8px;
+}
+
+.journey-entitlements strong {
+  font-size: 13px;
+}
+
+/* Estado de cada jornada no ambiente: lista de leitura dentro da coluna, e não a lista de
+   largura inteira do cartão (`.project-list` reserva `grid-column: 1 / -1`). */
+.journey-states {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.journey-states div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
 .audit-list {
   margin: 0;
   padding: 10px 16px;

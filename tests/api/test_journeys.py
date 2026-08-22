@@ -1,14 +1,15 @@
-"""Disponibilidade de jornada por ambiente e por tenant (F-034, fatia 1).
+"""Disponibilidade de jornada por ambiente e por tenant (F-034, fatias 1 e 2).
 
-Três blocos, na ordem em que a regra é composta:
+Quatro blocos, na ordem em que a regra é composta:
 
 1. a decisão pura (`croquito_api.journeys`), sem app e sem banco;
 2. a configuração, que recusa valor inválido na SUBIDA da aplicação;
-3. o portão nas rotas e a lista resolvida em `GET /v1/me`.
+3. o portão nas rotas e a lista resolvida em `GET /v1/me`;
+4. a administração do entitlement pela plataforma (T3): conceder, revogar e listar.
 
-O último teste do arquivo é o que impede uma rota futura de nascer sem portão: ele percorre
-as rotas publicadas e reprova qualquer prefixo `/v1/` que ninguém tenha classificado — nem
-como jornada, nem como explicitamente fora de jornada.
+O teste que fecha o bloco 3 é o que impede uma rota futura de nascer sem portão: ele
+percorre as rotas publicadas e reprova qualquer prefixo `/v1/` que ninguém tenha
+classificado — nem como jornada, nem como explicitamente fora de jornada.
 """
 
 from __future__ import annotations
@@ -407,3 +408,297 @@ def test_toda_rota_v1_publicada_esta_classificada() -> None:
     # Nenhum prefixo classificado dos dois jeitos: um caminho não pode ser de jornada e
     # fora de jornada ao mesmo tempo.
     assert set(JOURNEY_ROUTE_PREFIXES) & JOURNEYLESS_ROUTE_PREFIXES == set()
+
+
+# --------------------------------------------------------------------------------------
+# 4. A administração do entitlement pela plataforma (T3)
+
+
+#: Caminho da rota que concede e revoga; o par (tenant, jornada) vive na URL, nunca no corpo.
+def _entitlement_path(tenant_id: str, journey: Journey) -> str:
+    return f"/v1/platform/tenants/{tenant_id}/journey-entitlements/{journey}"
+
+
+def _operator(key: str) -> dict[str, str]:
+    """Cabeçalhos de um `platform_operator` agindo sobre OUTRO tenant, com chave por gesto."""
+    return {**_headers("platform", "platform_operator"), "Idempotency-Key": key}
+
+
+def test_conceder_registra_contrato_autor_e_data_e_aparece_na_listagem(tmp_path: Path) -> None:
+    client, _ = _app(tmp_path, journeys=JourneyAvailabilitySettings(orcamento="pilot"))
+
+    granted = client.put(
+        _entitlement_path("tenant-scalle", "orcamento"),
+        headers=_operator("conceder-orcamento"),
+        json={"enabled": True, "agreement_reference": "contrato 05/2024 — aditivo 3"},
+    )
+
+    assert granted.status_code == 200
+    body = granted.json()
+    assert body["tenant_id"] == "tenant-scalle"
+    assert body["journey"] == "orcamento"
+    assert body["enabled"] is True
+    assert body["agreement_reference"] == "contrato 05/2024 — aditivo 3"
+    assert body["authorized_by"] == "reviewer"
+    assert body["authorized_at"] is not None
+    assert body["revoked_at"] is None
+    # Nada de linha bruta de banco: `id` e `updated_at` não são superfície pública.
+    assert set(body) == {
+        "tenant_id",
+        "journey",
+        "enabled",
+        "agreement_reference",
+        "authorized_by",
+        "authorized_at",
+        "revoked_at",
+    }
+
+    listing = client.get("/v1/platform/journeys", headers=_headers("platform", "platform_operator"))
+    assert listing.status_code == 200
+    listed = listing.json()["entitlements"]
+    assert len(listed) == 1
+    # `authorized_at` é comparado sem o fuso: `DateTime(timezone=True)` volta ingênuo do
+    # SQLite dos testes e com fuso do PostgreSQL hospedado. É a mesma característica do
+    # entitlement de IA, e não uma diferença desta rota.
+    assert {key: value for key, value in listed[0].items() if key != "authorized_at"} == {
+        key: value for key, value in body.items() if key != "authorized_at"
+    }
+    assert listed[0]["authorized_at"].rstrip("Z") == body["authorized_at"].rstrip("Z")
+
+
+def test_revogar_carimba_a_data_e_mantem_a_linha_na_lista(tmp_path: Path) -> None:
+    """Revogar NÃO apaga: a linha fica, com o contrato e o autor do ato original."""
+    client, _ = _app(tmp_path, journeys=JourneyAvailabilitySettings(orcamento="pilot"))
+    client.put(
+        _entitlement_path("tenant-scalle", "orcamento"),
+        headers=_operator("conceder"),
+        json={"enabled": True, "agreement_reference": "piloto interno"},
+    )
+
+    revoked = client.put(
+        _entitlement_path("tenant-scalle", "orcamento"),
+        headers=_operator("revogar"),
+        json={"enabled": False},
+    )
+
+    assert revoked.status_code == 200
+    assert revoked.json()["enabled"] is False
+    assert revoked.json()["revoked_at"] is not None
+    assert revoked.json()["agreement_reference"] == "piloto interno"
+    assert revoked.json()["authorized_by"] == "reviewer"
+
+    listing = client.get("/v1/platform/journeys", headers=_headers("platform", "platform_operator"))
+    assert [entry["tenant_id"] for entry in listing.json()["entitlements"]] == ["tenant-scalle"]
+    assert listing.json()["entitlements"][0]["enabled"] is False
+
+
+@pytest.mark.parametrize("state", ["enabled", "disabled"])
+def test_conceder_fora_do_piloto_recusa_com_codigo_estavel_e_nao_grava_nada(
+    tmp_path: Path, state: JourneyAvailability
+) -> None:
+    """Autorizar onde não tem efeito é recusado ANTES de escrever.
+
+    Sem esta recusa o registro criado passaria a valer sozinho, sem ato novo, no dia em que
+    o ambiente declarasse a jornada `pilot`.
+    """
+    client, database = _app(tmp_path, journeys=JourneyAvailabilitySettings(medicao=state))
+
+    refused = client.put(
+        _entitlement_path("tenant-scalle", "medicao"),
+        headers=_operator("conceder-fora-do-piloto"),
+        json={"enabled": True, "agreement_reference": "contrato 05/2024"},
+    )
+
+    assert refused.status_code == 409
+    assert refused.headers["content-type"].startswith("application/problem+json")
+    assert refused.json()["code"] == "JOURNEY_NOT_IN_PILOT"
+    # A tela compõe a frase por extenso a partir destes dois fatos declarados.
+    assert refused.json()["detail"]["details"] == {"journey": "medicao", "state": state}
+    with database.sessions() as session:
+        assert session.query(TenantJourneyEntitlementRecord).count() == 0
+    listing = client.get("/v1/platform/journeys", headers=_headers("platform", "platform_operator"))
+    assert listing.json()["entitlements"] == []
+
+
+def test_revogar_continua_permitido_depois_que_a_jornada_saiu_do_piloto(tmp_path: Path) -> None:
+    """A recusa é só de conceder.
+
+    Uma autorização criada durante o piloto precisa poder ser encerrada depois que a
+    jornada foi liberada para todos — senão ela ficaria ativa esperando o próximo piloto.
+    """
+    client, database = _app(tmp_path, journeys=JourneyAvailabilitySettings(orcamento="pilot"))
+    client.put(
+        _entitlement_path("tenant-scalle", "orcamento"),
+        headers=_operator("conceder"),
+        json={"enabled": True, "agreement_reference": "piloto interno"},
+    )
+    # O ambiente liberou a jornada para todos depois do piloto.
+    liberado, _ = _app(tmp_path, journeys=JourneyAvailabilitySettings(orcamento="enabled"))
+
+    revoked = liberado.put(
+        _entitlement_path("tenant-scalle", "orcamento"),
+        headers=_operator("revogar-fora-do-piloto"),
+        json={"enabled": False},
+    )
+
+    assert revoked.status_code == 200
+    assert revoked.json()["enabled"] is False
+    with database.sessions() as session:
+        record = session.query(TenantJourneyEntitlementRecord).one()
+        assert record.status == "REVOKED"
+
+
+def test_conceder_sem_referencia_de_contrato_recusa_sem_gravar(tmp_path: Path) -> None:
+    client, database = _app(tmp_path, journeys=JourneyAvailabilitySettings(orcamento="pilot"))
+
+    refused = client.put(
+        _entitlement_path("tenant-scalle", "orcamento"),
+        headers=_operator("conceder-sem-contrato"),
+        json={"enabled": True},
+    )
+
+    assert refused.status_code == 422
+    assert refused.json()["code"] == "AGREEMENT_REFERENCE_REQUIRED"
+    with database.sessions() as session:
+        assert session.query(TenantJourneyEntitlementRecord).count() == 0
+
+
+def test_revogar_o_que_nunca_foi_concedido_e_404(tmp_path: Path) -> None:
+    client, _ = _app(tmp_path, journeys=JourneyAvailabilitySettings(orcamento="pilot"))
+
+    response = client.put(
+        _entitlement_path("tenant-sem-nada", "orcamento"),
+        headers=_operator("revogar-inexistente"),
+        json={"enabled": False},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "NOT_FOUND"
+
+
+def test_administrar_jornada_exige_platform_operator(tmp_path: Path) -> None:
+    """`403` para quem não tem o papel — na leitura e na escrita, inclusive no próprio tenant."""
+    client, database = _app(tmp_path, journeys=JourneyAvailabilitySettings(orcamento="pilot"))
+
+    listing = client.get("/v1/platform/journeys", headers=_headers("tenant-scalle", "orcamentista"))
+    write = client.put(
+        _entitlement_path("tenant-scalle", "orcamento"),
+        headers={
+            **_headers("tenant-scalle", "orcamentista"),
+            "Idempotency-Key": "tentativa-sem-papel",
+        },
+        json={"enabled": True, "agreement_reference": "contrato 05/2024"},
+    )
+
+    assert listing.status_code == 403
+    assert listing.json()["code"] == "FORBIDDEN"
+    assert write.status_code == 403
+    assert write.json()["code"] == "FORBIDDEN"
+    with database.sessions() as session:
+        assert session.query(TenantJourneyEntitlementRecord).count() == 0
+
+
+def test_conceder_exige_chave_de_idempotencia_e_repete_a_mesma_resposta(tmp_path: Path) -> None:
+    client, database = _app(tmp_path, journeys=JourneyAvailabilitySettings(orcamento="pilot"))
+    path = _entitlement_path("tenant-scalle", "orcamento")
+    payload = {"enabled": True, "agreement_reference": "contrato 05/2024"}
+
+    sem_chave = client.put(path, headers=_headers("platform", "platform_operator"), json=payload)
+    primeira = client.put(path, headers=_operator("mesma-chave"), json=payload)
+    replay = client.put(path, headers=_operator("mesma-chave"), json=payload)
+
+    assert sem_chave.status_code == 400
+    assert primeira.status_code == 200
+    assert replay.json() == primeira.json()
+    with database.sessions() as session:
+        assert session.query(TenantJourneyEntitlementRecord).count() == 1
+
+
+def test_listagem_mostra_o_estado_das_tres_jornadas_e_nao_oferece_como_edita_lo(
+    tmp_path: Path,
+) -> None:
+    """O estado é leitura: existe na resposta e não existe rota publicada que o escreva."""
+    client, _ = _app(
+        tmp_path,
+        journeys=JourneyAvailabilitySettings(
+            croqui="disabled", medicao="enabled", orcamento="pilot"
+        ),
+    )
+
+    listing = client.get("/v1/platform/journeys", headers=_headers("platform", "platform_operator"))
+
+    assert listing.status_code == 200
+    assert listing.json()["journeys"] == [
+        {"journey": "croqui", "state": "disabled"},
+        {"journey": "medicao", "state": "enabled"},
+        {"journey": "orcamento", "state": "pilot"},
+    ]
+    document: dict[str, Any] = json.loads(snapshot_text())
+    escritas = {
+        method
+        for path, operations in document["paths"].items()
+        if path == "/v1/platform/journeys"
+        for method in operations
+    }
+    assert escritas == {"get"}
+
+
+def test_listagem_ordena_por_tenant_e_jornada(tmp_path: Path) -> None:
+    client, database = _app(
+        tmp_path, journeys=JourneyAvailabilitySettings(croqui="pilot", orcamento="pilot")
+    )
+    _grant(database, tenant_id="tenant-z", journey="orcamento")
+    _grant(database, tenant_id="tenant-a", journey="orcamento")
+    _grant(database, tenant_id="tenant-a", journey="croqui")
+
+    listing = client.get("/v1/platform/journeys", headers=_headers("platform", "platform_operator"))
+
+    assert [(entry["tenant_id"], entry["journey"]) for entry in listing.json()["entitlements"]] == [
+        ("tenant-a", "croqui"),
+        ("tenant-a", "orcamento"),
+        ("tenant-z", "orcamento"),
+    ]
+
+
+def test_conceder_e_revogar_mudam_o_que_o_tenant_ve_em_me(tmp_path: Path) -> None:
+    """Ponta a ponta: o ato da plataforma é o que abre e fecha a jornada para o cliente."""
+    client, _ = _app(tmp_path, journeys=JourneyAvailabilitySettings(orcamento="pilot"))
+    cliente = _headers("tenant-scalle", "orcamentista")
+
+    antes = client.get("/v1/me", headers=cliente)
+    assert antes.json()["journeys"] == ["medicao"]
+    assert client.get("/v1/estimate-rounds", headers=cliente).status_code == 403
+
+    client.put(
+        _entitlement_path("tenant-scalle", "orcamento"),
+        headers=_operator("abrir"),
+        json={"enabled": True, "agreement_reference": "contrato 05/2024"},
+    )
+
+    depois = client.get("/v1/me", headers=cliente)
+    assert depois.json()["journeys"] == ["medicao", "orcamento"]
+    assert client.get("/v1/estimate-rounds", headers=cliente).status_code == 200
+
+    client.put(
+        _entitlement_path("tenant-scalle", "orcamento"),
+        headers=_operator("fechar"),
+        json={"enabled": False},
+    )
+
+    revogado = client.get("/v1/me", headers=cliente)
+    assert revogado.json()["journeys"] == ["medicao"]
+    assert client.get("/v1/estimate-rounds", headers=cliente).status_code == 403
+
+
+def test_jornada_desconhecida_na_rota_nao_chega_a_gravar(tmp_path: Path) -> None:
+    client, database = _app(tmp_path, journeys=JourneyAvailabilitySettings(orcamento="pilot"))
+
+    response = client.put(
+        "/v1/platform/tenants/tenant-scalle/journey-entitlements/plataforma",
+        headers=_operator("jornada-inexistente"),
+        json={"enabled": True, "agreement_reference": "contrato 05/2024"},
+    )
+
+    assert response.status_code == 422
+    with database.sessions() as session:
+        assert session.query(TenantJourneyEntitlementRecord).count() == 0

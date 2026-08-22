@@ -2904,6 +2904,94 @@
         "title": "JobResponse",
         "type": "object"
       },
+      "JourneyAvailabilityResponse": {
+        "additionalProperties": false,
+        "description": "Estado declarado de uma jornada neste ambiente — leitura, nunca escrita.\n\nMudar o estado é alterar configuração de ambiente e publicar, e por isso não existe\nrota para escrevê-lo: a tela mostra o estado para ninguém procurar um interruptor\nque não existe.",
+        "properties": {
+          "journey": {
+            "enum": [
+              "croqui",
+              "medicao",
+              "orcamento"
+            ],
+            "title": "Journey",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "enabled",
+              "pilot",
+              "disabled"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "journey",
+          "state"
+        ],
+        "title": "JourneyAvailabilityResponse",
+        "type": "object"
+      },
+      "JourneyEntitlementResponse": {
+        "additionalProperties": false,
+        "description": "Uma autorização de (tenant, jornada), com o registro do ato que a criou.\n\n`authorized_by` sai daqui porque o ato é NOMINAL: a tela de plataforma mostra quem\nautorizou e quando. Uma autorização revogada continua sendo devolvida, com\n`revoked_at` carimbado — sumir com a linha apagaria a trilha do que houve antes.",
+        "properties": {
+          "agreement_reference": {
+            "title": "Agreement Reference",
+            "type": "string"
+          },
+          "authorized_at": {
+            "format": "date-time",
+            "title": "Authorized At",
+            "type": "string"
+          },
+          "authorized_by": {
+            "title": "Authorized By",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "journey": {
+            "enum": [
+              "croqui",
+              "medicao",
+              "orcamento"
+            ],
+            "title": "Journey",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "journey",
+          "enabled",
+          "agreement_reference",
+          "authorized_by",
+          "authorized_at"
+        ],
+        "title": "JourneyEntitlementResponse",
+        "type": "object"
+      },
       "KeepApartPair": {
         "additionalProperties": false,
         "description": "Par mantido separado com o eixo da separação declarado.\n\nFormato aditivo: `[\"vp_a\", \"vp_b\"]` continua valendo e significa os dois eixos. O eixo\nexiste porque o problema costuma ser de um só: no Guaxindiba a mureta e o patamar\nprecisam ficar em faixas X distintas (é o dente de 3,30/4,80 que a folha cota), mas o\nencontro VERTICAL da base da mureta com a base do campo é legítimo — separar também em\nY soltou o sistema do muro inteiro e ele deslizou 14,5 m para baixo do campo.",
@@ -3366,6 +3454,31 @@
           "points"
         ],
         "title": "PixelPolyline",
+        "type": "object"
+      },
+      "PlatformJourneyListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "entitlements": {
+            "items": {
+              "$ref": "#/components/schemas/JourneyEntitlementResponse"
+            },
+            "title": "Entitlements",
+            "type": "array"
+          },
+          "journeys": {
+            "items": {
+              "$ref": "#/components/schemas/JourneyAvailabilityResponse"
+            },
+            "title": "Journeys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "journeys",
+          "entitlements"
+        ],
+        "title": "PlatformJourneyListResponse",
         "type": "object"
       },
       "PlatformTenantListResponse": {
@@ -4910,6 +5023,34 @@
           "target_amount"
         ],
         "title": "SetEstimateTargetRequest",
+        "type": "object"
+      },
+      "SetJourneyEntitlementRequest": {
+        "additionalProperties": false,
+        "description": "Conceder (`enabled=true`) ou revogar (`enabled=false`) uma jornada para um tenant.\n\nMesma forma de `SetAiProcessingEntitlementRequest` de propósito: é o mesmo tipo de\nfato — decisão comercial durável, com quem autorizou e quando — e o mesmo papel a\nadministra. O par (tenant, jornada) vem da rota; o corpo carrega só o ato.",
+        "properties": {
+          "agreement_reference": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agreement Reference"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "SetJourneyEntitlementRequest",
         "type": "object"
       },
       "ShadowChoiceResponse": {
@@ -8900,6 +9041,33 @@
         ]
       }
     },
+    "/v1/platform/journeys": {
+      "get": {
+        "description": "Estado de cada jornada neste ambiente e toda autorização já concedida (F-034).\n\nDuas leituras num lugar só porque a tela responde uma pergunta só: quais jornadas\nexistem para cada cliente. O estado vem da configuração e é **somente leitura**; as\nautorizações vêm da tabela do entitlement.\n\nA listagem traz apenas os pares (tenant, jornada) que TÊM registro — inclusive os\nrevogados, que continuam na lista com `revoked_at`. Listar todo tenant conhecido\n(como faz `/v1/platform/tenants`) é questão em aberto do pacote de design aprovado,\ne portanto não é decidida aqui em silêncio.",
+        "operationId": "list_platform_journeys_v1_platform_journeys_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformJourneyListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Platform Journeys",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/v1/platform/tenants": {
       "get": {
         "operationId": "list_platform_tenants_v1_platform_tenants_get",
@@ -9039,6 +9207,94 @@
           }
         ],
         "summary": "Set Ai Processing Entitlement",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/tenants/{tenant_id}/journey-entitlements/{journey}": {
+      "put": {
+        "description": "Concede ou revoga o acesso de um tenant a uma jornada, por ato nominal (F-034).\n\nO tenant ALVO vem da rota e só `platform_operator` chega aqui; o `tenant_id` do JWT\nde quem chama não decide nada nesta rota, exatamente como no entitlement de IA.",
+        "operationId": "set_journey_entitlement_v1_platform_tenants__tenant_id__journey_entitlements__journey__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "journey",
+            "required": true,
+            "schema": {
+              "enum": [
+                "croqui",
+                "medicao",
+                "orcamento"
+              ],
+              "title": "Journey",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetJourneyEntitlementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JourneyEntitlementResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Journey Entitlement",
         "tags": [
           "platform"
         ]

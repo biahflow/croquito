@@ -2,9 +2,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { User } from "oidc-client-ts";
 
-import type { PlatformTenant } from "./api";
+import type {
+  JourneyAvailability,
+  JourneyEntitlement,
+  PlatformTenant,
+} from "./api";
 import {
   AlertaPersistente,
+  ColunaDoAmbiente,
+  DisponibilidadeDeJornada,
+  EstadoDasJornadas,
+  FormularioDeAutorizacao,
+  LinhaAutorizacao,
   LinhaTenant,
   PlatformApp,
 } from "./PlatformApp";
@@ -171,5 +180,253 @@ describe("AlertaPersistente", () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain("Sua conta não tem o papel de operador.");
     expect(html).not.toContain("app-alert-close");
+  });
+});
+
+/**
+ * Disponibilidade de jornada (F-034, fatia 2). Os renders abaixo cobrem os estados que o
+ * pacote de design aprovado congelou em captura: normal, vazio, carregando e sem papel. A
+ * recusa do servidor é a mesma faixa de erro já coberta por `AlertaPersistente`.
+ */
+describe("EstadoDasJornadas", () => {
+  const ambiente: JourneyAvailability[] = [
+    { journey: "croqui", state: "disabled" },
+    { journey: "medicao", state: "enabled" },
+    { journey: "orcamento", state: "pilot" },
+  ];
+
+  it("mostra o estado de cada jornada por palavra, com a pastilha ao lado", () => {
+    const html = renderToStaticMarkup(
+      <EstadoDasJornadas journeys={ambiente} />,
+    );
+
+    expect(html).toContain("Croqui");
+    expect(html).toContain("INDISPONÍVEL");
+    expect(html).toContain('class="neutral"');
+    expect(html).toContain("Medição");
+    expect(html).toContain("LIBERADA");
+    expect(html).toContain('class="ready"');
+    expect(html).toContain("Orçamento");
+    expect(html).toContain("PILOTO");
+    expect(html).toContain('class="blocked"');
+  });
+
+  /** O estado é mostrado, não editado: nenhum controle aparece na lista de estados. */
+  it("não oferece jeito nenhum de mudar o estado", () => {
+    const html = renderToStaticMarkup(
+      <EstadoDasJornadas journeys={ambiente} />,
+    );
+
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("<select");
+  });
+});
+
+describe("LinhaAutorizacao", () => {
+  function autorizacao(
+    overrides: Partial<JourneyEntitlement> = {},
+  ): JourneyEntitlement {
+    return {
+      tenant_id: "tenant-scalle",
+      journey: "orcamento",
+      enabled: true,
+      agreement_reference: "contrato 05/2024 — aditivo 3",
+      authorized_by: "daniel",
+      authorized_at: "2026-08-22T09:14:00Z",
+      revoked_at: null,
+      ...overrides,
+    };
+  }
+
+  const inertes = {
+    enviando: false,
+    onRevogar: () => {},
+    onReautorizar: () => {},
+  };
+
+  it("mostra contrato, autor e data do ato, e oferece revogar", () => {
+    const html = renderToStaticMarkup(
+      <LinhaAutorizacao entitlement={autorizacao()} {...inertes} />,
+    );
+
+    expect(html).toContain("tenant-scalle");
+    expect(html).toContain("Orçamento · piloto autorizado");
+    expect(html).toContain("Contrato: contrato 05/2024 — aditivo 3");
+    expect(html).toContain("Autorizado por daniel em ");
+    expect(html).toContain("22/08/2026");
+    expect(html).toContain("revogado em ");
+    expect(html).toContain("—");
+    expect(html).toContain("Revogar");
+  });
+
+  /** Revogar não apaga: a linha fica, com a data, e oferece autorizar de novo. */
+  it("mantém a linha revogada, com a data da revogação", () => {
+    const html = renderToStaticMarkup(
+      <LinhaAutorizacao
+        entitlement={autorizacao({
+          enabled: false,
+          revoked_at: "2026-08-22T08:02:00Z",
+        })}
+        {...inertes}
+      />,
+    );
+
+    expect(html).toContain("Orçamento · autorização revogada");
+    expect(html).toContain("Contrato: contrato 05/2024 — aditivo 3");
+    expect(html).toContain("Autorizar de novo");
+    expect(html).not.toContain(">Revogar<");
+  });
+});
+
+describe("DisponibilidadeDeJornada", () => {
+  it("não aparece sem sessão: a seção inteira é autenticada", () => {
+    expect(
+      renderToStaticMarkup(<DisponibilidadeDeJornada session={null} />),
+    ).toBe("");
+  });
+
+  /**
+   * `renderToStaticMarkup` não roda efeitos, então o que sai é o estado ANTES da primeira
+   * resposta: nenhuma jornada, nenhum tenant e nenhum contrato fabricados, e o formulário
+   * que não engana — ele não sabe ainda quais jornadas estão em piloto.
+   */
+  it("antes da primeira resposta não fabrica jornada nem autorização", () => {
+    const html = renderToStaticMarkup(
+      <DisponibilidadeDeJornada session={sessao} />,
+    );
+
+    expect(html).toContain("DISPONIBILIDADE DE JORNADA");
+    expect(html).toContain("Quais jornadas existem para cada cliente");
+    expect(html).toContain("Lendo a lista de autorizações…");
+    expect(html).toContain(
+      "Aguardando a lista para saber quais jornadas estão em piloto.",
+    );
+    // O formulário inteiro nasce desabilitado: sem a lista ele não sabe quais jornadas
+    // estão em piloto, e um botão habilitado enganaria quem clica.
+    expect(html).toContain('<input placeholder="tenant-exemplo" disabled=""');
+    expect(html).toContain('<select disabled=""');
+    expect(html).toContain(
+      '<button class="button button-primary" type="submit" disabled=""',
+    );
+    // Nenhuma pastilha de estado antes de saber o estado.
+    expect(html).not.toContain('class="neutral"');
+    expect(html).not.toContain('class="ready"');
+    expect(html).not.toContain('class="blocked"');
+    expect(html).not.toContain('role="alert"');
+  });
+
+  it("não constrói o bloco reservado ao histórico, que é a F-017", () => {
+    const html = renderToStaticMarkup(
+      <DisponibilidadeDeJornada session={sessao} />,
+    );
+
+    expect(html).not.toContain("HISTÓRICO DE AUTORIZAÇÕES");
+  });
+});
+
+describe("ColunaDoAmbiente", () => {
+  const ambiente: JourneyAvailability[] = [
+    { journey: "croqui", state: "disabled" },
+    { journey: "medicao", state: "enabled" },
+    { journey: "orcamento", state: "pilot" },
+  ];
+
+  /** Estado 1 do pacote aprovado: o que a seção é, o resumo e as três jornadas. */
+  it("descreve o piloto, resume o ambiente e lista o estado das jornadas", () => {
+    const html = renderToStaticMarkup(
+      <ColunaDoAmbiente journeys={ambiente} />,
+    );
+
+    expect(html).toContain("DISPONIBILIDADE DE JORNADA");
+    expect(html).toContain("Quais jornadas existem para cada cliente");
+    expect(html).toContain("declarado no ambiente e não se edita por aqui");
+    expect(html).toContain("<strong>piloto</strong>");
+    expect(html).toContain("3 jornadas · 1 em piloto");
+    expect(html).toContain("INDISPONÍVEL");
+    expect(html).toContain("LIBERADA");
+    expect(html).toContain("PILOTO");
+  });
+
+  /**
+   * A decisão 2 do pacote aprovado: mudar o estado é configuração e publicação, e a tela
+   * diz isso POR ESCRITO — não basta não oferecer o controle.
+   */
+  it("diz por escrito que o estado não se muda por aqui, e não oferece controle", () => {
+    const html = renderToStaticMarkup(
+      <ColunaDoAmbiente journeys={ambiente} />,
+    );
+
+    expect(html).toContain(
+      "Mudar o estado de uma jornada é alterar a configuração do ambiente e publicar",
+    );
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<select");
+  });
+
+  it("durante a leitura diz o que está acontecendo, sem descrever lista que não há", () => {
+    const html = renderToStaticMarkup(<ColunaDoAmbiente journeys={null} />);
+
+    expect(html).toContain("Lendo a lista de autorizações…");
+    expect(html).not.toContain("3 jornadas");
+    expect(html).not.toContain("Mudar o estado de uma jornada");
+  });
+});
+
+describe("FormularioDeAutorizacao", () => {
+  const ambiente: JourneyAvailability[] = [
+    { journey: "croqui", state: "disabled" },
+    { journey: "medicao", state: "enabled" },
+    { journey: "orcamento", state: "pilot" },
+  ];
+
+  const inertes = {
+    referencia: "",
+    enviando: false,
+    onTenantId: () => {},
+    onJornada: () => {},
+    onReferencia: () => {},
+    onAutorizar: () => {},
+  };
+
+  /**
+   * As três jornadas são oferecidas, inclusive as que não estão em piloto: quem recusa é o
+   * servidor, com a frase por extenso. É o estado 4 do pacote aprovado — sem esta escolha
+   * a recusa desenhada seria inalcançável.
+   */
+  it("oferece as três jornadas, não só as em piloto", () => {
+    const html = renderToStaticMarkup(
+      <FormularioDeAutorizacao
+        journeys={ambiente}
+        dica="Só jornadas em piloto aceitam autorização."
+        tenantId="tenant-scalle"
+        jornada="medicao"
+        {...inertes}
+      />,
+    );
+
+    expect(html).toContain('value="croqui"');
+    expect(html).toContain('value="medicao"');
+    expect(html).toContain('value="orcamento"');
+    expect(html).toContain("Identificador do tenant");
+    expect(html).toContain("Referência do contrato");
+    expect(html).toContain("Autorizar");
+    // Com tenant escrito e a lista lida, o botão não fica travado.
+    expect(html).not.toContain('type="submit" disabled=""');
+  });
+
+  it("não deixa autorizar sem identificador de tenant", () => {
+    const html = renderToStaticMarkup(
+      <FormularioDeAutorizacao
+        journeys={ambiente}
+        dica="Nenhum cliente autorizado em jornada de piloto."
+        tenantId="   "
+        jornada="orcamento"
+        {...inertes}
+      />,
+    );
+
+    expect(html).toContain('type="submit" disabled=""');
+    expect(html).toContain("Nenhum cliente autorizado em jornada de piloto.");
   });
 });

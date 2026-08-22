@@ -10,8 +10,11 @@ import {
   entitlementBody,
   fetchMe,
   getEntitlement,
+  journeyEntitlementBody,
+  listJourneys,
   listTenants,
   setEntitlement,
+  setJourneyEntitlement,
 } from "./api";
 import { describeError } from "./labels";
 
@@ -222,5 +225,88 @@ describe("recusas legíveis", () => {
     }).catch((e: unknown) => e);
 
     expect(describeError(erro)).toContain("nunca teve autorização contratual");
+  });
+});
+
+describe("disponibilidade de jornada (F-034)", () => {
+  it("lê o ambiente e as autorizações numa chamada só, sem chave de idempotência", async () => {
+    stub(() =>
+      ok({
+        journeys: [
+          { journey: "croqui", state: "disabled" },
+          { journey: "medicao", state: "enabled" },
+          { journey: "orcamento", state: "pilot" },
+        ],
+        entitlements: [
+          {
+            tenant_id: "tenant-scalle",
+            journey: "orcamento",
+            enabled: true,
+            agreement_reference: "contrato 05/2024 — aditivo 3",
+            authorized_by: "daniel",
+            authorized_at: "2026-08-22T09:14:00Z",
+            revoked_at: null,
+          },
+        ],
+      }),
+    );
+
+    const resposta = await listJourneys(TOKEN);
+
+    expect(chamadas[0].url).toBe(`${BASE}/v1/platform/journeys`);
+    expect(chamadas[0].init?.method).toBeUndefined();
+    expect(headersDaChamada()).not.toHaveProperty("Idempotency-Key");
+    expect(resposta.journeys).toHaveLength(3);
+    expect(resposta.entitlements[0].authorized_by).toBe("daniel");
+  });
+
+  it("autoriza no par (tenant, jornada) da URL, com contrato e chave por gesto", async () => {
+    await setJourneyEntitlement(TOKEN, {
+      tenantId: "tenant com espaço",
+      journey: "orcamento",
+      enabled: true,
+      agreementReference: "  contrato 05/2024  ",
+    });
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/platform/tenants/tenant%20com%20espa%C3%A7o/journey-entitlements/orcamento`,
+    );
+    expect(chamadas[0].init?.method).toBe("PUT");
+    expect(headersDaChamada()).toHaveProperty("Idempotency-Key");
+    // A referência viaja sem espaço nas pontas; o par nunca vai no corpo.
+    expect(corpoDaChamada()).toEqual({
+      enabled: true,
+      agreement_reference: "contrato 05/2024",
+    });
+  });
+
+  /**
+   * Revogar NÃO reescreve o contrato: o que autorizou continua sendo o que está gravado, e
+   * mandar o que estava na tela apagaria o registro do ato original.
+   */
+  it("revoga sem mandar referência de contrato, mesmo com uma preenchida", () => {
+    expect(
+      journeyEntitlementBody({
+        tenantId: "acme",
+        journey: "croqui",
+        enabled: false,
+        agreementReference: "contrato 05/2024",
+      }),
+    ).toEqual({ enabled: false });
+  });
+
+  /**
+   * Referência vazia não vira `agreement_reference: ""`: ela some do corpo e a recusa vem
+   * do servidor com o código estável, como no entitlement de IA.
+   */
+  it("não inventa referência vazia ao autorizar", () => {
+    expect(
+      journeyEntitlementBody({
+        tenantId: "acme",
+        journey: "croqui",
+        enabled: true,
+        agreementReference: "   ",
+      }),
+    ).toEqual({ enabled: true });
   });
 });

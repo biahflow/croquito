@@ -144,6 +144,44 @@ nunca teve entitlement criado (`enabled: false` e os demais campos nulos) — n�
 tabela de tenants, então `404` seria arbitrário. Mesmo formato de item usado na
 listagem, distinto da resposta do PUT (que só existe depois da primeira ativação).
 
+## Disponibilidade de jornada por tenant
+
+### `GET /v1/platform/journeys`
+
+Requer `platform_operator`. Leitura sem `Idempotency-Key` e sem auditoria. Devolve duas
+coisas numa resposta só, porque a tela responde uma pergunta só (quais jornadas existem
+para cada cliente):
+
+- `journeys`: o estado declarado de cada jornada neste ambiente (`enabled`, `pilot` ou
+  `disabled`), na ordem estável `croqui`, `medicao`, `orcamento`. É **somente leitura** —
+  mudar o estado é alterar configuração de ambiente e publicar, e por isso não existe rota
+  que o escreva;
+- `entitlements`: toda autorização já concedida, ordenada por `(tenant_id, journey)`, com
+  `agreement_reference`, `authorized_by`, `authorized_at` e `revoked_at`. A autorização
+  **revogada continua na lista**, com a data — sumir com ela apagaria a trilha.
+
+Só entram os pares `(tenant, jornada)` que têm registro; ao contrário de
+`GET /v1/platform/tenants`, esta rota não faz união com `projects` nem `uploads`.
+
+### `PUT /v1/platform/tenants/{tenant_id}/journey-entitlements/{journey}`
+
+Requer `platform_operator` e `Idempotency-Key`. O par `(tenant, jornada)` vem da rota; o
+corpo carrega só o ato: `enabled` e, ao conceder, `agreement_reference` (3 a 128
+caracteres). O tenant **alvo** é o da rota — o `tenant_id` do JWT de quem chama não decide
+nada aqui, exatamente como no entitlement de IA. O ato é auditado no tenant alvo
+(`JOURNEY_ENTITLEMENT_GRANTED` / `JOURNEY_ENTITLEMENT_REVOKED`).
+
+Conceder exige que a jornada esteja em `pilot` neste ambiente. Fora disso a resposta é
+`409 JOURNEY_NOT_IN_PILOT`, **sem gravar nada**, com `details` declarando `journey` e
+`state` — autorizar um cliente numa jornada que já existe para todos, ou que não existe
+aqui, não teria efeito, e o registro criado passaria a valer sozinho se o estado virasse
+`pilot` depois.
+
+Revogar (`enabled: false`) é aceito em **qualquer** estado, de propósito: é o que permite
+encerrar uma autorização criada durante o piloto depois que a jornada foi liberada, em vez
+de deixá-la ativa esperando o próximo piloto. Revogar não apaga o registro: carimba
+`revoked_at` e o status. Revogar o que nunca foi concedido é `404 NOT_FOUND`.
+
 ### `GET /v1/jobs/{job_id}`
 
 Retorna status, etapa, `page_count`, timestamps e falha normalizada. A lista de
@@ -1302,6 +1340,7 @@ nem em auditoria. Artefato de outro tenant retorna `404`.
 `EXPORT_AUDIT_FAILED`, `CALIBRATION_INVALID`, `CALIBRATION_REQUIRED`,
 `CALIBRATION_STALE`, `PROPOSAL_ALREADY_DECIDED`, `PROPOSALS_NOT_READY`,
 `FORBIDDEN`, `NOT_FOUND`, `AI_PROCESSING_NOT_AUTHORIZED`, `JOURNEY_UNAVAILABLE`,
+`JOURNEY_NOT_IN_PILOT`,
 `AGREEMENT_REFERENCE_REQUIRED`, `SCENE_NOT_APPROVED`,
 `CRITERION_NOT_ACKNOWLEDGEABLE`, `CRITERION_DECLARATION_CONFLICT`,
 `DOMAIN_VALIDATION_FAILED`,
