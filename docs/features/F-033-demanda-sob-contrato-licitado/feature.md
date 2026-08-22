@@ -91,8 +91,13 @@ regime a rodada está, para ela não descobrir pelo erro.
    2026-08-22, fixada no ADR-0045): sob o regime, item confirmado no takeoff cuja
    confirmação de código foi **rejeitada** pela orçamentista é sinalizado como candidato a
    aditivo. O sinal vem do julgamento humano, **nunca** de uma conferência contra um
-   contrato que o orçamento não modela, e reusa a regra do
-   `amendment_dossier.py` da medição, cujo construtor não recebe catálogo nem contrato.
+   contrato que o orçamento não modela.
+
+   Reusa a **regra** do `amendment_dossier.py` da medição, não a função: o planejamento
+   (2026-08-22) apurou que `build_amendment_dossier` exige decisão de código em TODO item
+   confirmado, por ser artefato de fechamento — chamá-lo faria o sinal aparecer só no fim,
+   que é o atraso que esta feature combate. O dado já existe: item rejeitado produz
+   `CodeAssignment(status="rejected")` e o estado da rodada já conta `codes.rejected`.
 5. **Cobertura**: rodada sem regime declarado idêntica a hoje; rodada sob contrato
    aceitando `sco` e recusando as quatro outras origens; declaração recusada com cascata
    suja; cadeia inteira sob o regime chegando à planilha com todas as linhas citando `sco`.
