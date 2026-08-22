@@ -71,7 +71,7 @@ from croquito_valuation.estimate_workbook import (
     audit_estimate_workbook,
     write_estimate_workbook,
 )
-from croquito_valuation.models import PriceCatalog
+from croquito_valuation.models import PriceCatalog, PriceOrigin
 from croquito_valuation.takeoff import TakeoffPacket
 from croquito_valuation.template import WorkbookTemplate
 from croquito_worker.valuation.catalog_search import search_catalog
@@ -96,6 +96,23 @@ ESTIMATE_CASCADE_LOCKED: Final = "ESTIMATE_CASCADE_LOCKED"
 ESTIMATE_WORKBOOK_AUDIT_FAILED: Final = "ESTIMATE_WORKBOOK_AUDIT_FAILED"
 ESTIMATE_BDI_INVALID: Final = "ESTIMATE_BDI_INVALID"
 ESTIMATE_TARGET_INVALID: Final = "ESTIMATE_TARGET_INVALID"
+ESTIMATE_CASCADE_ORIGIN_FORBIDDEN: Final = "ESTIMATE_CASCADE_ORIGIN_FORBIDDEN"
+ESTIMATE_REGIME_CASCADE_DIRTY: Final = "ESTIMATE_REGIME_CASCADE_DIRTY"
+ESTIMATE_REGIME_IRREVERSIBLE: Final = "ESTIMATE_REGIME_IRREVERSIBLE"
+
+REGIME_CONTRACTED_DEMAND: Final = "contracted_demand"
+"""Único regime GRAVÁVEL (ADR-0045): a demanda orçada dentro de contrato já licitado.
+
+Não há constante para "pré-licitação" porque ela não é um valor: é a ausência de regime.
+A fronteira `/v1` aceita a palavra `pre_bid` no corpo só para poder recusá-la com código
+estável (`SetEstimateRegimeRequest`), e ela nunca chega a esta camada como algo gravável —
+qualquer regime que não seja este recusa em `ensure_regime_declarable`."""
+
+REGIME_ALLOWED_ORIGINS: Final[tuple[str, ...]] = (PriceOrigin.SCO.value,)
+"""Origens que a cascata aceita sob o regime. Uma só, e é a tabela contratual (ADR-0045).
+
+Restringir a origem NÃO confere o contrato: garante que o preço veio do SCO, não que veio
+da tabela, data-base e desconto daquele contrato. A lacuna está nomeada no ADR-0045."""
 
 STAGE_CATALOGS: Final = "catalogs"
 STAGE_ESTIMATE: Final = "estimate"
@@ -152,6 +169,59 @@ def cascade_origin_duplicate(origin: str) -> RoundRefusal:
         "a cascata já tem um catálogo desta origem; a origem deixaria de identificar a "
         "fonte do preço de cada linha",
         {"origin": origin},
+    )
+
+
+def cascade_origin_forbidden(origin: str) -> RoundRefusal:
+    """Origem fora da tabela contratual numa rodada sob contrato (ADR-0045, decisão 3).
+
+    Recusa na INSTALAÇÃO, no mesmo ponto em que `ESTIMATE_CASCADE_ORIGIN_DUPLICATE` recusa,
+    porque é aqui que ainda há o que corrigir. Deixar a fonte entrar levaria o preço dela
+    até um orçamento aprovado e uma obra executada, e só a medição recusaria
+    (`BULLETIN_PRICE_ORIGIN_FORBIDDEN`) — sobre serviço já feito, quando a única saída é
+    aditivo. O guardrail da medição continua existindo; ele deixa de ser o primeiro a ver.
+    """
+    return RoundRefusal(
+        409,
+        ESTIMATE_CASCADE_ORIGIN_FORBIDDEN,
+        "a rodada corre sob contrato licitado e só aceita preço da tabela contratual; "
+        "um preço desta fonte seria recusado na medição, sobre serviço já executado",
+        {"origin": origin, "allowed_origins": list(REGIME_ALLOWED_ORIGINS)},
+    )
+
+
+def regime_cascade_dirty(origins: Sequence[str]) -> RoundRefusal:
+    """Declaração recusada enquanto houver fonte proibida instalada (ADR-0045, decisão 4).
+
+    Nada é reescrito e nada é gravado. Aceitar a declaração barrando só as instalações
+    futuras deixaria existir rodada "sob contrato" com EMOP dentro — precisamente o estado
+    que a decisão torna impossível. A saída é remover a fonte pelo caminho que já existe
+    (`POST .../catalogs/remove`), que é ato humano com as suas próprias travas.
+    """
+    return RoundRefusal(
+        409,
+        ESTIMATE_REGIME_CASCADE_DIRTY,
+        "a cascata tem fonte fora da tabela contratual; remova a fonte antes de declarar "
+        "que a rodada corre sob contrato licitado — nada foi gravado",
+        {"origins": list(origins), "allowed_origins": list(REGIME_ALLOWED_ORIGINS)},
+    )
+
+
+def regime_irreversible(regime: str, *, current: str | None) -> RoundRefusal:
+    """Pré-licitação não é valor declarável: o regime é mão única (decisão humana 2026-08-22).
+
+    Vale para os dois casos, e por isso um código só: rodada já sob contrato não volta
+    atrás — voltar devolveria a permissão de instalar a fonte que ela foi impedida de
+    instalar, com as decisões de código tomadas sob a outra regra ainda de pé —, e rodada
+    sem regime não "declara pré-licitação", porque ausência é a falta do regime, não um
+    valor. Enganar-se ao declarar se corrige abrindo outra rodada, não desdizendo esta.
+    """
+    return RoundRefusal(
+        409,
+        ESTIMATE_REGIME_IRREVERSIBLE,
+        "pré-licitação não é regime declarável: a ausência de regime já é ela, e uma "
+        "rodada declarada sob contrato licitado não volta atrás",
+        {"requested_regime": regime, "current_regime": current},
     )
 
 
@@ -425,13 +495,46 @@ def cascade_entry_payload(entries: Sequence[CascadeEntry]) -> list[dict[str, Any
     return [entry.payload() for entry in entries]
 
 
-def ensure_source_installable(entries: Sequence[CascadeEntry], catalog: PriceCatalog) -> None:
-    """Duas recusas antes de instalar, e as duas são sobre identificar a fonte de um preço.
+def forbidden_cascade_origins(entries: Sequence[CascadeEntry]) -> list[str]:
+    """Origens instaladas que o regime não aceita, ordenadas; vazio é cascata limpa."""
+    return sorted({entry.origin for entry in entries if entry.origin not in REGIME_ALLOWED_ORIGINS})
 
-    A primeira é a do domínio: uma origem por cascata, senão "o preço veio da EMOP" deixa
+
+def ensure_regime_declarable(
+    regime: str, *, current: str | None, entries: Sequence[CascadeEntry]
+) -> None:
+    """As duas recusas da DECLARAÇÃO do regime (ADR-0045, decisão 4 + mão única do plano).
+
+    A ordem importa: o valor é conferido antes da cascata, porque uma tentativa de voltar
+    para pré-licitação é recusada pelo que ela pede, não pelo estado da cascata — e o
+    contrário faria a mesma tentativa devolver códigos diferentes conforme o que estivesse
+    instalado.
+
+    Serve a criação da rodada e a rota de declaração com a MESMA regra: na criação a
+    cascata é vazia por construção, e passar `entries=()` ali é dizer isso, não abrir
+    exceção. Nada é gravado por esta função; ela só recusa.
+    """
+    if regime != REGIME_CONTRACTED_DEMAND:
+        raise regime_irreversible(regime, current=current)
+    forbidden = forbidden_cascade_origins(entries)
+    if forbidden:
+        raise regime_cascade_dirty(forbidden)
+
+
+def ensure_source_installable(
+    entries: Sequence[CascadeEntry], catalog: PriceCatalog, *, regime: str | None
+) -> None:
+    """Três recusas antes de instalar: uma do regime e duas sobre identificar a fonte.
+
+    A do regime vem primeiro e é a mais grosseira (ADR-0045, decisão 3): sob contrato
+    licitado, fonte fora da tabela contratual não entra de jeito nenhum, seja ela a
+    primeira daquela origem ou não. `regime=None` é a rodada de pré-licitação, e para ela
+    nada muda — a cascata segue livre, como antes desta decisão.
+
+    A segunda é a do domínio: uma origem por cascata, senão "o preço veio da EMOP" deixa
     de dizer de qual arquivo ele veio.
 
-    A segunda é a que o domínio não tem como ver daqui: dois catálogos de ORIGENS
+    A terceira é a que o domínio não tem como ver daqui: dois catálogos de ORIGENS
     diferentes importados do MESMO arquivo de origem teriam o mesmo `source_sha256` — e é
     esse digest que a confirmação de código cita, que a reordenação recebe e que
     `build_worksite_estimate` usa para achar o catálogo. Com dois candidatos, a citação
@@ -439,6 +542,8 @@ def ensure_source_installable(entries: Sequence[CascadeEntry], catalog: PriceCat
     conseguiriam distinguir a fonte. É recusa de instalação porque é aí que o segundo
     aparece; depois já não haveria o que corrigir sem abrir rodada nova.
     """
+    if regime == REGIME_CONTRACTED_DEMAND and catalog.origin.value not in REGIME_ALLOWED_ORIGINS:
+        raise cascade_origin_forbidden(catalog.origin.value)
     if any(entry.origin == catalog.origin.value for entry in entries):
         raise cascade_origin_duplicate(catalog.origin.value)
     if any(entry.source_sha256 == catalog.source_sha256 for entry in entries):
@@ -962,6 +1067,41 @@ def target_state(
     return state
 
 
+def regime_state(
+    round_record: EstimateRoundRecord,
+    assignments: CodeAssignmentSet | None,
+) -> dict[str, Any]:
+    """Bloco `{regime}` derivado na leitura, no molde do `target_state` (ADR-0045).
+
+    Sem regime declarado, o dicionário volta VAZIO — a chave não aparece, como o teto
+    ausente não aparece. Ausência não é um valor, e devolver `{"regime": null}` faria a
+    tela ter de distinguir "não declarado" de "declarado como nada".
+
+    `allowed_cascade_origins` sai do servidor porque a regra é do servidor: a tela oferece
+    o que a instalação aceitaria, em vez de guardar a sua própria cópia da lista e
+    descobrir a divergência numa recusa.
+
+    `amendment_candidates` é `codes.rejected` LIDO SOB O REGIME — o mesmo número, do mesmo
+    conjunto, no mesmo instante de leitura, e por isso não pode divergir dele. O que muda é
+    o significado: sob contrato, item cuja confirmação de código foi rejeitada é candidato
+    a aditivo (ADR-0045, decisão 5). O sinal vem do julgamento de quem revisou — "a
+    orçamentista não achou código na tabela contratual" —, nunca de uma conferência contra
+    um contrato que o orçamento não modela. Fora do regime a rejeição continua sendo só
+    rejeição, e por isso o número não aparece.
+    """
+    if round_record.pricing_regime is None:
+        return {}
+    return {
+        "regime": {
+            "value": round_record.pricing_regime,
+            "allowed_cascade_origins": list(REGIME_ALLOWED_ORIGINS),
+            "amendment_candidates": (
+                0 if assignments is None else count_status(assignments, "rejected")
+            ),
+        }
+    }
+
+
 def round_state_payload(
     round_record: EstimateRoundRecord,
     revision: EstimateRoundRevisionRecord | None,
@@ -1040,6 +1180,7 @@ def round_state_payload(
             "workbook_sha256": digests.get(ESTIMATE_WORKBOOK_DIGEST),
         },
         **target_state(round_record, revision),
+        **regime_state(round_record, assignments),
         "created_at": round_record.created_at.isoformat(),
         "updated_at": round_record.updated_at.isoformat(),
     }

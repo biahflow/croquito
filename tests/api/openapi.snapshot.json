@@ -1217,7 +1217,7 @@
       },
       "CreateEstimateRoundRequest": {
         "additionalProperties": false,
-        "description": "Rodada de orçamento-base nova: a obra e o rótulo, nada mais.\n\nTrês diferenças de `CreateValuationRoundRequest` dão nome à fronteira do ADR-0027.\nNão há `catalog_upload_id`: a rodada abre SEM fonte e as fontes entram depois, uma a\numa, em ordem declarada (`POST .../catalogs`) — instalar uma só na criação faria a\nprimeira fonte parecer privilegiada. Não há `period_number` nem `contract_label`:\nperíodo é da medição e contrato é da obra licitada, e antes da licitação não existe\nnenhum dos dois.\n\n`worksite_key` repete `WORKSITE_KEY_PATTERN`, que o domínio exige do `Estimate`, pelo\nmesmo motivo da medição: a chave é imutável na rodada, e aceitá-la livre aqui faria uma\nrodada nascer válida e só quebrar na montagem, dezenas de decisões depois.\n\n`target_amount`/`target_label` são o teto de verba (ADR-0040), OPCIONAIS: a tela de\nabertura da rodada é onde ele nasce, mas uma rodada sem verba prevista continua se\nabrindo exatamente como antes desta feature. `target_amount` viaja como TEXTO pelo\nmesmo motivo do BDI — é `Decimal` exato, e um número de JSON já teria passado por\nbinário antes de chegar aqui.",
+        "description": "Rodada de orçamento-base nova: a obra e o rótulo, nada mais.\n\nTrês diferenças de `CreateValuationRoundRequest` dão nome à fronteira do ADR-0027.\nNão há `catalog_upload_id`: a rodada abre SEM fonte e as fontes entram depois, uma a\numa, em ordem declarada (`POST .../catalogs`) — instalar uma só na criação faria a\nprimeira fonte parecer privilegiada. Não há `period_number` nem `contract_label`:\nperíodo é da medição e contrato é da obra licitada, e antes da licitação não existe\nnenhum dos dois.\n\n`worksite_key` repete `WORKSITE_KEY_PATTERN`, que o domínio exige do `Estimate`, pelo\nmesmo motivo da medição: a chave é imutável na rodada, e aceitá-la livre aqui faria uma\nrodada nascer válida e só quebrar na montagem, dezenas de decisões depois.\n\n`target_amount`/`target_label` são o teto de verba (ADR-0040), OPCIONAIS: a tela de\nabertura da rodada é onde ele nasce, mas uma rodada sem verba prevista continua se\nabrindo exatamente como antes desta feature. `target_amount` viaja como TEXTO pelo\nmesmo motivo do BDI — é `Decimal` exato, e um número de JSON já teria passado por\nbinário antes de chegar aqui.\n\n`pricing_regime` é o regime de preço da rodada (ADR-0045), OPCIONAL e declarável\ntambém depois (`POST .../regime`). Omitir é a pré-licitação de sempre, com cascata\nlivre. `pre_bid` é aceito pelo schema só para ser recusado com código estável: ele\nnunca é gravado, porque a ausência já é ele e porque o regime é mão única.",
         "properties": {
           "address": {
             "anyOf": [
@@ -1231,6 +1231,21 @@
               }
             ],
             "title": "Address"
+          },
+          "pricing_regime": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pre_bid",
+                  "contracted_demand"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Regime"
           },
           "reference_label": {
             "maxLength": 120,
@@ -4989,6 +5004,31 @@
         "title": "SetAiProcessingEntitlementRequest",
         "type": "object"
       },
+      "SetEstimateRegimeRequest": {
+        "additionalProperties": false,
+        "description": "Declara que a rodada corre sob contrato licitado (ADR-0045): um valor, uma direção.\n\nO campo aceita `pre_bid` no schema de propósito, apesar de ele nunca poder ser gravado:\nrecusar a volta com `409 ESTIMATE_REGIME_IRREVERSIBLE` diz por que ela não acontece,\nenquanto um `422` de schema diria apenas que o valor não existe — e a mão única é\ndecisão de produto, não digitação errada. Corrigir um engano de declaração é abrir\noutra rodada.\n\nNão há campo de rótulo: o regime não descreve QUAL contrato, e um rótulo livre aqui\ndaria ao orçamento a aparência de conhecer um contrato que ele não modela (ADR-0045,\ndecisão 6).",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "pricing_regime": {
+            "enum": [
+              "pre_bid",
+              "contracted_demand"
+            ],
+            "title": "Pricing Regime",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "pricing_regime"
+        ],
+        "title": "SetEstimateRegimeRequest",
+        "type": "object"
+      },
       "SetEstimateTargetRequest": {
         "additionalProperties": false,
         "description": "Declara ou edita o teto de verba da rodada (ADR-0040): valor exato + rótulo opcional.\n\n`target_amount` viaja como TEXTO pelo mesmo motivo do BDI — `Decimal` exato, e um\nnúmero de JSON já teria passado por binário. Zero e negativo recusam com\n`422 ESTIMATE_TARGET_INVALID`; \"sem teto\" é ausência do campo na criação da rodada, e\nesta rota não tem contraparte de remoção — o Design Approval Package não desenha\napagar um teto já declarado (questão em aberto do pacote), e por isso esta rota só\ndeclara ou edita.",
@@ -6453,7 +6493,7 @@
     },
     "/v1/estimate-rounds/{round_id}/catalogs": {
       "post": {
-        "description": "Instala uma fonte de preço no FIM da cascata; a posição é a precedência.\n\nO catálogo é lido e validado ANTES de a entrada existir, como na criação da rodada\nde medição: uma fonte que não valida aqui viraria uma cascata inutilizável em toda\netapa seguinte. Segunda fonte da mesma origem recusa com\n`409 ESTIMATE_CASCADE_ORIGIN_DUPLICATE` — o mesmo código que o domínio usa —, e não\nna montagem do orçamento, quando já não haveria o que corrigir sem abrir rodada nova.",
+        "description": "Instala uma fonte de preço no FIM da cascata; a posição é a precedência.\n\nO catálogo é lido e validado ANTES de a entrada existir, como na criação da rodada\nde medição: uma fonte que não valida aqui viraria uma cascata inutilizável em toda\netapa seguinte. Segunda fonte da mesma origem recusa com\n`409 ESTIMATE_CASCADE_ORIGIN_DUPLICATE` — o mesmo código que o domínio usa —, e não\nna montagem do orçamento, quando já não haveria o que corrigir sem abrir rodada nova.\n\nNa rodada sob contrato licitado (ADR-0045), fonte de origem fora da tabela\ncontratual recusa aqui com `409 ESTIMATE_CASCADE_ORIGIN_FORBIDDEN`, pelo mesmo\nmotivo e no mesmo instante: a alternativa seria descobrir o erro na medição, sobre\nserviço já executado.",
         "operationId": "install_estimate_catalog_v1_estimate_rounds__round_id__catalogs_post",
         "parameters": [
           {
@@ -7250,6 +7290,83 @@
           }
         ],
         "summary": "Create Estimate Plate Extraction",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/regime": {
+      "post": {
+        "description": "Declara que a rodada corre sob contrato licitado (ADR-0045); sem volta.\n\nMesmo desenho do teto (ADR-0040, decisão 2): o regime é dado da RODADA, grava uma\ncoluna de `estimate_rounds` e avança a versão da rodada como qualquer ato humano.\nNenhuma revisão append-only nasce daqui, e o `Estimate` não ganha campo — o\norçamento continua puro e recomputável.\n\nDuas recusas, as duas antes de gravar qualquer coisa: `pre_bid` recusa com\n`409 ESTIMATE_REGIME_IRREVERSIBLE`, porque ausência de regime já é a pré-licitação\ne porque uma rodada declarada não volta atrás; cascata com fonte fora da tabela\ncontratual recusa com `409 ESTIMATE_REGIME_CASCADE_DIRTY`, e a saída é remover a\nfonte por `POST .../catalogs/remove`, que já existe. Rodada sob contrato nunca\ncontém fonte proibida — nem por declaração posterior, nem por instalação.",
+        "operationId": "set_estimate_regime_v1_estimate_rounds__round_id__regime_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetEstimateRegimeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set Estimate Regime V1 Estimate Rounds  Round Id  Regime Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Estimate Regime",
         "tags": [
           "estimate"
         ]

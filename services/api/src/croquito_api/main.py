@@ -1130,6 +1130,11 @@ class CreateEstimateRoundRequest(ApiModel):
     abrindo exatamente como antes desta feature. `target_amount` viaja como TEXTO pelo
     mesmo motivo do BDI — é `Decimal` exato, e um número de JSON já teria passado por
     binário antes de chegar aqui.
+
+    `pricing_regime` é o regime de preço da rodada (ADR-0045), OPCIONAL e declarável
+    também depois (`POST .../regime`). Omitir é a pré-licitação de sempre, com cascata
+    livre. `pre_bid` é aceito pelo schema só para ser recusado com código estável: ele
+    nunca é gravado, porque a ausência já é ele e porque o regime é mão única.
     """
 
     worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
@@ -1138,6 +1143,7 @@ class CreateEstimateRoundRequest(ApiModel):
     address: str | None = Field(default=None, min_length=1, max_length=200)
     target_amount: str | None = Field(default=None, min_length=1, max_length=32)
     target_label: str | None = Field(default=None, min_length=1, max_length=120)
+    pricing_regime: Literal["pre_bid", "contracted_demand"] | None = None
 
 
 class EstimateRoundResponse(ApiModel):
@@ -1281,6 +1287,24 @@ class SetEstimateTargetRequest(ApiModel):
     base_version: int = Field(ge=1)
     target_amount: str = Field(min_length=1, max_length=32)
     target_label: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class SetEstimateRegimeRequest(ApiModel):
+    """Declara que a rodada corre sob contrato licitado (ADR-0045): um valor, uma direção.
+
+    O campo aceita `pre_bid` no schema de propósito, apesar de ele nunca poder ser gravado:
+    recusar a volta com `409 ESTIMATE_REGIME_IRREVERSIBLE` diz por que ela não acontece,
+    enquanto um `422` de schema diria apenas que o valor não existe — e a mão única é
+    decisão de produto, não digitação errada. Corrigir um engano de declaração é abrir
+    outra rodada.
+
+    Não há campo de rótulo: o regime não descreve QUAL contrato, e um rótulo livre aqui
+    daria ao orçamento a aparência de conhecer um contrato que ele não modela (ADR-0045,
+    decisão 6).
+    """
+
+    base_version: int = Field(ge=1)
+    pricing_regime: Literal["pre_bid", "contracted_demand"]
 
 
 class ValuationDocumentResponse(RootModel[dict[str, Any]]):
@@ -7909,6 +7933,12 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             if payload.target_amount is None
             else str(estimate_rounds.parse_target_amount(payload.target_amount))
         )
+        if payload.pricing_regime is not None:
+            # Cascata vazia por construção na abertura: a rodada nasce sem fonte. A recusa
+            # possível aqui é só a da mão única, e ela vale desde o primeiro instante.
+            estimate_rounds.ensure_regime_declarable(
+                payload.pricing_regime, current=None, entries=()
+            )
         now = datetime.now(UTC)
         round_id = new_uuid7()
         record = EstimateRoundRecord(
@@ -7920,6 +7950,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             address=payload.address,
             target_amount=target_amount,
             target_label=payload.target_label,
+            pricing_regime=payload.pricing_regime,
             status="OPEN",
             version=1,
             catalog_cascade_json=[],
@@ -8106,6 +8137,83 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         return response
 
     @application.post(
+        "/v1/estimate-rounds/{round_id}/regime",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def set_estimate_regime(
+        round_id: UUID,
+        payload: SetEstimateRegimeRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Declara que a rodada corre sob contrato licitado (ADR-0045); sem volta.
+
+        Mesmo desenho do teto (ADR-0040, decisão 2): o regime é dado da RODADA, grava uma
+        coluna de `estimate_rounds` e avança a versão da rodada como qualquer ato humano.
+        Nenhuma revisão append-only nasce daqui, e o `Estimate` não ganha campo — o
+        orçamento continua puro e recomputável.
+
+        Duas recusas, as duas antes de gravar qualquer coisa: `pre_bid` recusa com
+        `409 ESTIMATE_REGIME_IRREVERSIBLE`, porque ausência de regime já é a pré-licitação
+        e porque uma rodada declarada não volta atrás; cascata com fonte fora da tabela
+        contratual recusa com `409 ESTIMATE_REGIME_CASCADE_DIRTY`, e a saída é remover a
+        fonte por `POST .../catalogs/remove`, que já existe. Rodada sob contrato nunca
+        contém fonte proibida — nem por declaração posterior, nem por instalação.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.regime:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        estimate_rounds.ensure_regime_declarable(
+            payload.pricing_regime,
+            current=record.pricing_regime,
+            entries=estimate_rounds.cascade_entries(record),
+        )
+        record.pricing_regime = payload.pricing_regime
+        record.version += 1
+        record.updated_at = datetime.now(UTC)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        response: dict[str, Any] = {
+            "round_id": record.id,
+            "version": record.version,
+            **estimate_rounds.regime_state(record, estimate_rounds.assignments_of(revision)),
+        }
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_REGIME_DECLARED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.post(
         "/v1/estimate-rounds/{round_id}/catalogs",
         response_model=EstimateCascadeResponse,
         status_code=status.HTTP_201_CREATED,
@@ -8126,6 +8234,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         etapa seguinte. Segunda fonte da mesma origem recusa com
         `409 ESTIMATE_CASCADE_ORIGIN_DUPLICATE` — o mesmo código que o domínio usa —, e não
         na montagem do orçamento, quando já não haveria o que corrigir sem abrir rodada nova.
+
+        Na rodada sob contrato licitado (ADR-0045), fonte de origem fora da tabela
+        contratual recusa aqui com `409 ESTIMATE_CASCADE_ORIGIN_FORBIDDEN`, pelo mesmo
+        motivo e no mesmo instante: a alternativa seria descobrir o erro na medição, sobre
+        serviço já executado.
         """
         _require_valuation_reviewer(principal)
         operation = f"estimate-rounds.catalogs:{round_id}"
@@ -8152,7 +8265,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             storage_flavor=runtime_settings.storage_flavor,
         )
         catalog, summary = _install_catalog(application, upload)
-        estimate_rounds.ensure_source_installable(entries, catalog)
+        estimate_rounds.ensure_source_installable(entries, catalog, regime=record.pricing_regime)
 
         installed = estimate_rounds.installed_entry(
             upload_id=str(payload.upload_id),

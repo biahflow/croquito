@@ -640,6 +640,18 @@ class EstimateRoundRecord(Base):
     target_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
     """Rótulo livre da origem da verba (ex.: a demanda da Relação de Praças). Opcional
     mesmo quando há teto declarado."""
+    pricing_regime: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """Regime de preço declarado para a rodada (ADR-0045). `NULL` é o estado de sempre —
+    pré-licitação, cascata livre —, e é AUSÊNCIA, não valor: "pré-licitação" nunca é
+    gravado aqui, porque escrevê-lo faria a falta de uma declaração humana parecer uma.
+
+    O único valor gravável é `contracted_demand`: a demanda orçada dentro de um contrato
+    guarda-chuva já licitado, que tem a FORMA do orçamento-base e a REGRA da obra licitada
+    — só a tabela contratual vale. Declarado, restringe a cascata a `sco` na INSTALAÇÃO
+    (`ensure_source_installable`), e é mão única: não há caminho de volta, porque desfazer
+    o regime devolveria à rodada a permissão de instalar a fonte que ela já foi impedida
+    de instalar. É dado da RODADA, como o teto e o BDI; o `Estimate` não ganha campo por
+    causa dele."""
     status: Mapped[str] = mapped_column(String(32), default="OPEN")
     version: Mapped[int] = mapped_column(Integer, default=1)
     """Contador ÚNICO de toda a cadeia da rodada, como o da medição (ADR-0028 D3): só ato

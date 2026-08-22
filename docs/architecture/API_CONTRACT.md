@@ -1109,6 +1109,11 @@ A rodada nasce **sem** fonte de preço — as fontes entram uma a uma, em ordem 
 `422 ESTIMATE_TARGET_INVALID`. Sem `target_amount`, a rodada nasce sem teto — o
 comportamento de antes desta decisão, sem qualquer bloco derivado.
 
+`pricing_regime` (opcional, ADR-0045) declara na abertura que a demanda corre sob contrato
+já licitado. O único valor gravável é `contracted_demand`; `pre_bid` devolve
+`409 ESTIMATE_REGIME_IRREVERSIBLE`, e omitir o campo é a pré-licitação de sempre — ausência
+não é um valor, é a falta dele.
+
 ### `GET /v1/estimate-rounds`
 
 Lista as rodadas do tenant, com cursor opaco. Devolve `round_id`, `worksite_key`,
@@ -1131,6 +1136,14 @@ orçamento montado, ganha também `consumed` (o `total_amount` do documento, com
 **estrito** — o limite exato não é estouro). Nada aqui recomputa dinheiro: os dois lados da
 comparação são lidos, nunca refeitos. Rodada sem teto não ganha nenhuma dessas chaves.
 
+Com regime declarado (ADR-0045), a resposta ganha `regime: {value,
+allowed_cascade_origins, amendment_candidates}`. `allowed_cascade_origins` é a lista que a
+instalação aceitaria, servida pelo servidor para a tela não guardar cópia própria da regra.
+`amendment_candidates` é o **mesmo** número de `codes.rejected`, lido sob o regime: item
+cuja confirmação de código foi rejeitada é candidato a aditivo, e o sinal vem do julgamento
+de quem revisou — nunca de uma conferência contra um contrato que o orçamento não modela.
+Rodada sem regime não ganha a chave.
+
 ### `POST /v1/estimate-rounds/{round_id}/target`
 
 Entrada: `base_version`, `target_amount` (texto, `Decimal` exato, **> 0**),
@@ -1144,6 +1157,22 @@ duas colunas de `estimate_rounds` e avança a versão da rodada, como o BDI — 
 revisão append-only nasce deste ato. **Não existe rota de remoção**: o Design Approval
 Package não desenha apagar um teto já declarado.
 
+### `POST /v1/estimate-rounds/{round_id}/regime`
+
+Entrada: `base_version`, `pricing_regime`. Declara que a rodada corre **sob contrato
+licitado** (ADR-0045). Como o teto, o regime é dado da RODADA: grava uma coluna de
+`estimate_rounds` e avança a versão da rodada, sem revisão append-only e sem campo novo no
+`Estimate`.
+
+Duas recusas, as duas **sem gravar nada**:
+
+- `409 ESTIMATE_REGIME_IRREVERSIBLE` — `pricing_regime: "pre_bid"`. O regime é **mão
+  única**: rodada declarada não volta atrás, e rodada sem regime não "declara
+  pré-licitação", porque a ausência já é ela. Corrigir um engano é abrir outra rodada. A
+  mesma recusa vale na criação da rodada.
+- `409 ESTIMATE_REGIME_CASCADE_DIRTY` — há fonte de origem ≠ `sco` instalada. A saída é
+  removê-la por `POST .../catalogs/remove`; nada é reescrito por uma declaração posterior.
+
 ### `POST /v1/estimate-rounds/{round_id}/catalogs`
 
 Entrada: `upload_id`, `base_version`. Instala uma fonte de preço no **fim** da cascata; o
@@ -1153,6 +1182,12 @@ A fonte é lida e validada antes de a entrada existir. Segunda fonte da mesma or
 `409 ESTIMATE_CASCADE_ORIGIN_DUPLICATE` — o mesmo código do domínio —, porque a origem
 deixaria de identificar de qual arquivo o preço de cada linha veio. Catálogo ilegível
 devolve `422 DOMAIN_VALIDATION_FAILED`.
+
+Na rodada **sob contrato licitado** (ADR-0045), origem fora da tabela contratual devolve
+`409 ESTIMATE_CASCADE_ORIGIN_FORBIDDEN`, no mesmo instante e pelo mesmo motivo: a
+alternativa é o preço atravessar orçamento e execução e só ser recusado na medição
+(`BULLETIN_PRICE_ORIGIN_FORBIDDEN`), sobre serviço já feito. Sem regime declarado, a
+cascata segue livre.
 
 ### `POST /v1/estimate-rounds/{round_id}/catalogs/order`
 

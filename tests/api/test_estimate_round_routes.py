@@ -485,6 +485,10 @@ def test_sem_o_papel_toda_rota_recusa_antes_do_lookup(tmp_path: Path) -> None:
             f"/v1/estimate-rounds/{round_id}/target",
             {"base_version": 1, "target_amount": "10000.00"},
         ),
+        (
+            f"/v1/estimate-rounds/{round_id}/regime",
+            {"base_version": 1, "pricing_regime": "contracted_demand"},
+        ),
     ]
     for path, payload in writes:
         response = client.post(path, headers=headers, json=payload)
@@ -522,8 +526,13 @@ def test_post_sem_idempotency_key_recusa(tmp_path: Path) -> None:
         headers=headers,
         json={"base_version": 1, "target_amount": "10000.00"},
     )
+    regime = client.post(
+        f"/v1/estimate-rounds/{created['round_id']}/regime",
+        headers=headers,
+        json={"base_version": 1, "pricing_regime": "contracted_demand"},
+    )
 
-    for response in (criacao, orcamento, teto):
+    for response in (criacao, orcamento, teto, regime):
         assert response.status_code == 400
         assert response.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
 
@@ -838,6 +847,357 @@ def test_bloco_derivado_nos_tres_estados_do_teto(tmp_path: Path) -> None:
     assert leitura.status_code == 200, leitura.text
     assert leitura.json()["remaining"] == "-0.01"
     assert leitura.json()["over"] is True
+
+
+# --- regime de preço da rodada (ADR-0045) ------------------------------------------------
+
+
+def _set_regime(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    pricing_regime: str = "contracted_demand",
+    key: str,
+    tenant: str = _TENANT,
+) -> Any:
+    return client.post(
+        f"/v1/estimate-rounds/{round_id}/regime",
+        headers=_headers(tenant, key=key),
+        json={"base_version": base_version, "pricing_regime": pricing_regime},
+    )
+
+
+def _round_under_contract(client: TestClient) -> dict[str, Any]:
+    """Rodada declarada sob contrato na ABERTURA, com a única fonte que ela aceita.
+
+    A cascata é montada pela rota, e não por escrita direta: é a instalação que o regime
+    restringe, e usá-la aqui prova que `sco` continua entrando por onde sempre entrou.
+    """
+    created = _create_round(client, pricing_regime="contracted_demand")
+    round_id = created["round_id"]
+    sco = _install_catalog(client, round_id, origin=PriceOrigin.SCO, base_version=1)
+    assert sco.status_code == 201, sco.text
+    return {
+        "round_id": round_id,
+        "version": sco.json()["version"],
+        "cascade": sco.json()["cascade"],
+    }
+
+
+def test_criar_rodada_sob_contrato_o_estado_devolve_o_bloco_do_regime(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    created = _create_round(client, pricing_regime="contracted_demand")
+
+    state = client.get(
+        f"/v1/estimate-rounds/{created['round_id']}", headers=_headers(key="estado-regime")
+    )
+    assert state.status_code == 200, state.text
+    assert state.json()["regime"] == {
+        "value": "contracted_demand",
+        "allowed_cascade_origins": ["sco"],
+        # Sem decisão de código ainda: candidato a aditivo nasce da rejeição, e não houve.
+        "amendment_candidates": 0,
+    }
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, created["round_id"])
+        assert record is not None
+        assert record.pricing_regime == "contracted_demand"
+        assert record.version == 1
+
+
+def test_rodada_sem_regime_nao_ganha_o_bloco_nem_com_orcamento_montado(tmp_path: Path) -> None:
+    """Ausência não é um valor: nenhuma chave nova aparece na jornada de sempre.
+
+    O cenário é o caminho feliz INTEIRO da F-020 — duas fontes, dois itens decididos e o
+    orçamento montado —, porque é ele que esta feature não pode ter mudado.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    montagem = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="montagem-sem-regime"),
+        json={"base_version": state["version"], "bdi_percent": "25.00"},
+    )
+    assert montagem.status_code == 200, montagem.text
+
+    leitura = client.get(
+        f"/v1/estimate-rounds/{state['round_id']}", headers=_headers(key="estado-sem-regime")
+    )
+    assert leitura.status_code == 200, leitura.text
+    assert "regime" not in leitura.json()
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, state["round_id"])
+        assert record is not None
+        assert record.pricing_regime is None
+
+
+def test_declarar_o_regime_depois_da_criacao(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+
+    response = _set_regime(client, round_id, base_version=1, key="declarar-regime")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["round_id"] == round_id
+    assert body["version"] == 2
+    assert body["regime"]["value"] == "contracted_demand"
+    assert body["regime"]["allowed_cascade_origins"] == ["sco"]
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert record.pricing_regime == "contracted_demand"
+        assert record.version == 2
+    # O regime é parâmetro da RODADA, como o teto: nenhuma revisão append-only nasce dele.
+    assert _revisions(client) == []
+
+
+def test_declarar_o_regime_com_cascata_limpa_e_possivel_depois_da_instalacao(
+    tmp_path: Path,
+) -> None:
+    """Cascata só com `sco` já instalada não impede a declaração — não há o que remover."""
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    sco = _install_catalog(client, round_id, origin=PriceOrigin.SCO, base_version=1)
+    assert sco.status_code == 201, sco.text
+
+    response = _set_regime(client, round_id, base_version=2, key="declarar-com-sco")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["regime"]["value"] == "contracted_demand"
+
+
+def test_declarar_com_cascata_suja_recusa_sem_gravar_nada(tmp_path: Path) -> None:
+    """Fonte proibida instalada recusa a declaração; nada é reescrito e nada é limpo.
+
+    É a decisão 4 do ADR-0045: a alternativa aceita deixaria existir rodada "sob contrato"
+    com EMOP dentro, que é exatamente o estado que a feature torna impossível.
+    """
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    assert _install_catalog(client, round_id, origin=PriceOrigin.SCO, base_version=1).status_code
+    emop = _install_catalog(client, round_id, origin=PriceOrigin.EMOP, base_version=2)
+    assert emop.status_code == 201, emop.text
+
+    response = _set_regime(client, round_id, base_version=3, key="declarar-suja")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "ESTIMATE_REGIME_CASCADE_DIRTY"
+    assert detail["details"]["origins"] == ["emop"]
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert record.pricing_regime is None
+        assert record.version == 3
+        assert [entry["origin"] for entry in record.catalog_cascade_json] == ["sco", "emop"]
+
+
+def test_declarar_depois_de_remover_a_fonte_proibida_e_possivel(tmp_path: Path) -> None:
+    """A saída da cascata suja é a rota de remoção que já existe, e ela basta."""
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    assert _install_catalog(client, round_id, origin=PriceOrigin.SCO, base_version=1).status_code
+    emop = _install_catalog(client, round_id, origin=PriceOrigin.EMOP, base_version=2)
+    assert emop.status_code == 201, emop.text
+    emop_digest = next(
+        entry["source_sha256"] for entry in emop.json()["cascade"] if entry["origin"] == "emop"
+    )
+
+    removed = client.post(
+        f"/v1/estimate-rounds/{round_id}/catalogs/remove",
+        headers=_headers(key="remover-emop"),
+        json={"base_version": 3, "source_sha256": emop_digest},
+    )
+    assert removed.status_code == 200, removed.text
+    response = _set_regime(
+        client, round_id, base_version=removed.json()["version"], key="declarar-limpa"
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["regime"]["value"] == "contracted_demand"
+
+
+def test_voltar_para_pre_licitacao_recusa_com_codigo_proprio(tmp_path: Path) -> None:
+    """Mão única: nem a rodada declarada volta, nem a sem regime "declara pré-licitação"."""
+    client = _client(tmp_path)
+    declarada = _create_round(client, key="rodada-declarada", pricing_regime="contracted_demand")
+    sem_regime = _create_round(client, key="rodada-sem-regime", worksite_key="praca-sintetica-sul")
+
+    volta = _set_regime(
+        client,
+        declarada["round_id"],
+        base_version=1,
+        pricing_regime="pre_bid",
+        key="voltar-declarada",
+    )
+    nunca = _set_regime(
+        client,
+        sem_regime["round_id"],
+        base_version=1,
+        pricing_regime="pre_bid",
+        key="voltar-sem-regime",
+    )
+
+    for response, current in ((volta, "contracted_demand"), (nunca, None)):
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "ESTIMATE_REGIME_IRREVERSIBLE"
+        assert detail["details"] == {"requested_regime": "pre_bid", "current_regime": current}
+    with _database(client).sessions() as session:
+        for round_id, regime in (
+            (declarada["round_id"], "contracted_demand"),
+            (sem_regime["round_id"], None),
+        ):
+            record = session.get(EstimateRoundRecord, round_id)
+            assert record is not None
+            assert record.pricing_regime == regime
+            assert record.version == 1
+
+
+def test_criar_rodada_declarando_pre_licitacao_recusa_na_criacao(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/v1/estimate-rounds",
+        headers=_headers(key="criacao-pre-licitacao"),
+        json=_round_payload(pricing_regime="pre_bid"),
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "ESTIMATE_REGIME_IRREVERSIBLE"
+    with _database(client).sessions() as session:
+        assert session.scalars(select(EstimateRoundRecord)).all() == []
+
+
+def test_regime_com_base_version_velho_recusa_sem_gravar_nada(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    teto = _set_target(client, round_id, base_version=1, target_amount="10000.00", key="teto-antes")
+    assert teto.status_code == 200, teto.text
+
+    stale = _set_regime(client, round_id, base_version=1, key="regime-velho")
+
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "REVISION_CONFLICT"
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert record.pricing_regime is None
+        assert record.version == 2
+
+
+def test_sob_o_regime_so_a_tabela_contratual_instala(tmp_path: Path) -> None:
+    """`sco` entra; as quatro outras origens recusam na INSTALAÇÃO e a cascata não muda.
+
+    A recusa acontece aqui, e não na montagem, porque é aqui que ainda há o que corrigir:
+    do outro lado, o preço só seria recusado na medição, sobre serviço já executado.
+    """
+    client = _client(tmp_path)
+    state = _round_under_contract(client)
+    round_id = state["round_id"]
+    version = state["version"]
+
+    for origin in (
+        PriceOrigin.EMOP,
+        PriceOrigin.SINAPI,
+        PriceOrigin.SICRO,
+        PriceOrigin.COMPOSITION,
+    ):
+        response = _install_catalog(
+            client, round_id, origin=origin, base_version=version, unit_price="40.00"
+        )
+        assert response.status_code == 409, (origin, response.text)
+        detail = response.json()["detail"]
+        assert detail["code"] == "ESTIMATE_CASCADE_ORIGIN_FORBIDDEN", origin
+        assert detail["details"] == {
+            "origin": origin.value,
+            "allowed_origins": ["sco"],
+        }, origin
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert [entry["origin"] for entry in record.catalog_cascade_json] == ["sco"]
+        assert record.version == version
+
+
+def test_sem_regime_a_cascata_continua_livre(tmp_path: Path) -> None:
+    """O contra-exemplo do teste acima: sem declaração, `emop` instala como sempre."""
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    assert _install_catalog(client, round_id, origin=PriceOrigin.SCO, base_version=1).status_code
+
+    response = _install_catalog(
+        client, round_id, origin=PriceOrigin.EMOP, base_version=2, unit_price="40.00"
+    )
+
+    assert response.status_code == 201, response.text
+    assert [entry["origin"] for entry in response.json()["cascade"]] == ["sco", "emop"]
+
+
+def test_item_rejeitado_sob_o_regime_e_candidato_a_aditivo(tmp_path: Path) -> None:
+    """O sinal vem da REJEIÇÃO da orçamentista, e é o mesmo número de `codes.rejected`.
+
+    Nenhum artefato novo nasce disso: sob contrato, item cuja confirmação de código foi
+    rejeitada é candidato a aditivo (ADR-0045, decisão 5). O que o produto afirma é que a
+    orçamentista não achou código na tabela contratual — nunca que o item não existe no
+    contrato, que o orçamento não modela.
+    """
+    client = _client(tmp_path)
+    state = _round_under_contract(client)
+    round_id = state["round_id"]
+    published = _publish_takeoff(
+        client,
+        round_id,
+        _takeoff_packet([_takeoff_item(_ITEM_FIRST), _takeoff_item(_ITEM_SECOND)]),
+    )
+    version = published["version"]
+    for index, item_id in enumerate((_ITEM_FIRST, _ITEM_SECOND), start=1):
+        decided = _confirm_takeoff_item(
+            client, round_id, item_id=item_id, base_version=version, key=f"regime-takeoff-{index}"
+        )
+        assert decided.status_code == 200, decided.text
+        version = decided.json()["version"]
+    confirmado = _confirm_code(
+        client,
+        round_id,
+        item_id=_ITEM_FIRST,
+        code=_SCO_CODE,
+        catalog_sha256=state["cascade"][0]["source_sha256"],
+        base_version=version,
+        key="regime-decisao-sco",
+    )
+    assert confirmado.status_code == 200, confirmado.text
+
+    rejeitado = client.post(
+        f"/v1/estimate-rounds/{round_id}/code-assignments/decisions",
+        headers=_headers(key="regime-decisao-rejeicao"),
+        json={
+            "base_version": confirmado.json()["version"],
+            "item_id": _ITEM_SECOND,
+            "action": "reject",
+            "note": "sem código na tabela contratual para este serviço",
+        },
+    )
+
+    assert rejeitado.status_code == 200, rejeitado.text
+    leitura = client.get(
+        f"/v1/estimate-rounds/{round_id}", headers=_headers(key="estado-candidato")
+    )
+    assert leitura.status_code == 200, leitura.text
+    body = leitura.json()
+    assert body["codes"]["rejected"] == 1
+    assert body["codes"]["confirmed"] == 1
+    # O mesmo número, lido sob o regime: candidato a aditivo é a leitura, não um artefato.
+    assert body["regime"]["amendment_candidates"] == 1
 
 
 # --- cascata ----------------------------------------------------------------------------
