@@ -22,7 +22,8 @@ Produced by: agente (Claude Code)
 | Aprovado por | Daniel Campos |
 | Data | 2026-08-22 |
 | Revisão aprovada | 1 |
-| Explicitamente **não** aprovado | a copy final (estas frases carregam regra de domínio e merecem leitura à parte); o comportamento, que é do ADR-0045 e já foi aceito; a forma da recusa no servidor (código e status), que é do plano; os nomes das fontes de preço e o formato da data-base exibida. As duas questões em aberto ao final **seguem em aberto** — a aprovação não as decidiu |
+| Explicitamente **não** aprovado (na revisão 1) | o comportamento, que é do ADR-0045 e já foi aceito; a forma da recusa no servidor (código e status), que é do plano; os nomes das fontes de preço e o formato da data-base exibida. As duas questões em aberto ao final **seguem em aberto** |
+| **Copy — aprovada em 2026-08-22, depois da implementação** | Daniel Campos aprovou a copy da tela construída, incluindo os três desvios registrados em "Divergências apuradas": a frase que prometia trocar de regime foi substituída, o aviso da mão única (autoral, sem contraparte no mock) entra, e a recusa fala em "fonte de outra origem" em vez de nomear EMOP. Aprovou também a mudança de veste do status da decisão na rodada **sem** regime, e a quebra de linha do cabeçalho real, que o mock não previa por não desenhar as ações de sessão |
 
 Transcrito de decisão humana explícita de 2026-08-22, dada após a rendição e as capturas
 serem entregues e abertas. Nenhum agente aprova design, inclusive o que produziu o pacote.

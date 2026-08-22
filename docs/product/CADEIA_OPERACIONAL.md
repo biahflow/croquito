@@ -22,7 +22,7 @@ com regras de preço opostas. A operação real tem três:
 | momento | quem manda no preço | fontes permitidas | onde no produto |
 |---|---|---|---|
 | **Pré-licitação** — orçar uma obra que ainda não foi contratada | ninguém ainda; o orçamento é a estimativa que vai ao edital | cascata livre: `sco`, `emop`, `sinapi`, `sicro`, `composition` | jornada Orçamento |
-| **Demanda sob contrato** — orçar uma praça dentro de um contrato guarda-chuva já licitado | o contrato | **só a tabela contratual** (na prática `sco`) | jornada Orçamento, **sem guardrail** — ver §5 |
+| **Demanda sob contrato** — orçar uma praça dentro de um contrato guarda-chuva já licitado | o contrato | **só a tabela contratual** (na prática `sco`) | jornada Orçamento, guardrail na instalação da fonte (F-033) |
 | **Execução / medição** — medir e pagar o que foi feito | o contrato | só `PriceOrigin.sco`, guardrail `BULLETIN_PRICE_ORIGIN_FORBIDDEN` fail-closed | jornada Medição |
 
 O terceiro estado é o que a operação das praças usa, e é o que o modelo ainda não
@@ -31,7 +31,7 @@ representa. Está registrado como
 
 <figure>
 <div class="figbox">
-<svg viewBox="0 0 720 250" role="img" aria-label="Linha do tempo com tres momentos de preco separados pela licitacao e pela execucao: pre-licitacao com cascata livre, demanda sob contrato sem guardrail, e medicao com guardrail fail-closed.">
+<svg viewBox="0 0 720 250" role="img" aria-label="Linha do tempo com tres momentos de preco separados pela licitacao e pela execucao: pre-licitacao com cascata livre, demanda sob contrato com guardrail na instalacao da fonte, e medicao com guardrail fail-closed.">
 <defs>
 <marker id="ar-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="f-ink"/></marker>
 <marker id="ar-gap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="f-gap"/></marker>
@@ -51,7 +51,7 @@ representa. Está registrado como
 <text x="270" y="76" class="mono t-gap" font-size="11">DEMANDA SOB CONTRATO</text>
 <text x="270" y="102" font-size="12.5">Orçamento da praça</text>
 <text x="270" y="124" font-size="12" class="quiet">Só a tabela do contrato</text>
-<text x="270" y="148" class="mono t-gap" font-size="11">SEM GUARDRAIL</text>
+<text x="270" y="148" class="mono t-gap" font-size="11">GUARDRAIL NA FONTE</text>
 <text x="270" y="164" class="mono t-gap" font-size="10">F-033</text>
 <rect x="488" y="52" width="208" height="122" fill="none" class="l-ink" stroke-width="1"/>
 <text x="502" y="76" class="mono" font-size="11">MEDIÇÃO</text>
@@ -162,15 +162,17 @@ Aritmética, que difere entre os dois: dinheiro **trunca** (`money_trunc`), quan
 
 ## 5. Lacunas conhecidas
 
-1. **Demanda sob contrato não tem guardrail de fonte.** Na etapa 8, nada impede instalar
-   EMOP/SINAPI na cascata de uma demanda já contratada e confirmar um código de lá. O
-   orçamento monta e é aprovado; na etapa 12, `BULLETIN_PRICE_ORIGIN_FORBIDDEN` recusa
-   aquele código e o serviço já executado vira pedido de aditivo. O defeito nasce no
-   orçamento e só aparece no pagamento.
-   Registrado como [F-033](../features/F-033-demanda-sob-contrato-licitado/feature.md)
-   (`BLOCKED`, aguardando dois gates humanos).
-   **Enquanto não existir**: em demanda sob contrato, instalar **uma única** fonte na
-   cascata — o catálogo `sco` da tabela e data-base que o contrato fixa.
+1. ~~**Demanda sob contrato não tem guardrail de fonte.**~~ **Fechada em 2026-08-22** pela
+   [F-033](../features/F-033-demanda-sob-contrato-licitado/feature.md), sobre o
+   [ADR-0045](../adr/0045-terceiro-estado-demanda-sob-contrato.md) (`Accepted`).
+   A rodada declara que corre sob contrato licitado, e a partir daí instalar fonte com
+   origem diferente de `sco` recusa na **instalação** (`ESTIMATE_CASCADE_ORIGIN_FORBIDDEN`)
+   — quando ainda há o que corrigir, e não meses depois no pagamento. O regime é mão única
+   e declará-lo com fonte proibida já instalada também recusa, sem reescrever nada.
+   `BULLETIN_PRICE_ORIGIN_FORBIDDEN` continua existindo; deixou de ser o primeiro a ver.
+   Fica registrado o que era a mitigação manual enquanto isso não existia — instalar uma
+   fonte só, o catálogo `sco` do contrato —, porque ela ainda é a boa prática: o guardrail
+   trata da **origem**, não da identidade do contrato (item 4).
 
 2. **A etapa 8 depende de chamada paga para ler a legenda da prancha.**
    `POST /v1/estimate-rounds/{id}/plate/extractions` exige, nesta ordem: entitlement de
@@ -183,9 +185,12 @@ Aritmética, que difere entre os dois: dinheiro **trunca** (`money_trunc`), quan
    auditado (6) e recebe a prancha de volta (8); entre um e outro há trabalho de CAD que
    ele não faz nem acompanha.
 
-4. **Restringir a origem não garante o contrato certo.** Mesmo com a F-033 entregue, nada
-   confere se o catálogo `sco` instalado é o da data-base e do desconto daquele contrato.
-   Está declarado como fora do escopo dela.
+4. **Restringir a origem não garante o contrato certo.** Com a F-033 entregue, esta é a
+   lacuna que **permanece**: nada confere se o catálogo `sco` instalado é o da data-base e
+   do desconto daquele contrato. Está declarada fora do escopo dela e nomeada na decisão 6
+   do [ADR-0045](../adr/0045-terceiro-estado-demanda-sob-contrato.md); o pacote de design
+   a desenha como bloco **reservado**. Fechá-la exige o orçamento modelar contrato como
+   entidade, o que é feature própria.
 
 ## Documentos relacionados
 
