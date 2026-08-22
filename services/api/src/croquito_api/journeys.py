@@ -66,7 +66,10 @@ JOURNEY_ROUTE_PREFIXES: Final[Mapping[str, Journey]] = {
 #: coisa que "não classificado": `unclassified_v1_paths` distingue os dois, e é isso que
 #: impede uma rota futura de ficar sem portão por esquecimento.
 JOURNEYLESS_ROUTE_PREFIXES: Final[frozenset[str]] = frozenset(
-    {"/v1/me", "/v1/meta", "/v1/schemas", "/v1/platform"}
+    # `/v1/surveys` é do app de campo (F-032), que não é uma das três jornadas da SPA e tem
+    # papel próprio: a disponibilidade da F-034 não o governa. Se um dia governar, ele vira
+    # jornada aqui — e essa é decisão humana, não consequência de merge.
+    {"/v1/me", "/v1/meta", "/v1/schemas", "/v1/platform", "/v1/surveys"}
 )
 
 

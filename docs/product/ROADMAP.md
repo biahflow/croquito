@@ -2,12 +2,12 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-22 (F-034 aberta com contrato — disponibilidade de jornada por
-ambiente e por tenant, fatia 1 planejável e fatia 2 com gate de design; antes: F-029 aberta
-com contrato — auto-associação de cotas por confiança calibrada, experimento local,
-absorvendo a fatia 2 da F-023; F-030 registrada
-sem contrato — fotos do levantamento na revisão; F-021 e F-022 abertas com
-contrato, ADR-0037 `Proposed`; F-012 documentada com ADR-0036 `Proposed`; inventário
+Última revisão: 2026-08-22 (F-033 e F-034 entregues e em READY_FOR_HUMAN_REVIEW —
+demanda sob contrato licitado sobre o ADR-0045, e disponibilidade de jornada por ambiente e
+por tenant; F-032 integrada à main com a fatia de sincronização completa; F-030 registrada
+sem contrato — fotos do levantamento na revisão; antes: F-029 aberta com contrato,
+absorvendo a fatia 2 da F-023; F-021 e F-022 abertas com contrato, ADR-0037 `Proposed`;
+F-012 documentada com ADR-0036 `Proposed`; inventário
 F-013..F-017 aberto; F-018/F-019 abertas; F-020 aberta com contrato)
 
 ## Uso no ciclo de engenharia
@@ -58,6 +58,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-030 | A DEFINIR | READY_FOR_SPEC | Fotos do levantamento na jornada de revisão (a definir em contrato) |
 | F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | READY_FOR_PLANNING | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
+| F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -363,6 +364,23 @@ reimplementar autorização. Dividida por decisão humana registrada: a fatia 1 
 valor visual novo e está `READY_FOR_PLANNING`; a fatia 2 — administrar o entitlement na
 tela de Plataforma — é superfície nova e fica `BLOCKED` até o Design Approval Package.
 Contrato em [F-034](../features/F-034-disponibilidade-de-jornada/feature.md).
+[F-032](../features/F-032-app-levantamento-campo/feature.md) — app de levantamento de
+campo — nasce em 2026-08-21, por seleção humana: o levantamento hoje nasce em papel e
+todo o pipeline existe para interpretá-lo; a F-032 ataca a ambiguidade na origem, com
+coleta estruturada offline-first (PWA em `apps/field`) em que toda medida nasce
+vinculada (valor, pontos, elemento, instrumento, evidência) e a validação geométrica
+roda ainda no local. O pacote coletado entra no pipeline como observações, sob os
+portões do scene graph. Arquitetura no
+[ADR-0043](../adr/0043-app-de-campo-pwa-offline-first.md) (aceito por ato humano em 2026-08-21); é
+`INTERFACE_CHANGE` e exigirá Design Approval Package antes do planejamento das fatias
+de superfície; a fatia 0 (scaffold técnico, sem telas finais) foi autorizada por plano
+aprovado pelo usuário na mesma data e executa em branch/worktree própria
+(`f-032-app-levantamento-campo`), sem tocar a homologação. O ID salta de F-028 para
+F-032 nesta tabela porque F-029, F-030 e F-031 foram reivindicados por sessões
+paralelas ainda não integradas à main (F-029/F-030 no checkout de trabalho;
+F-031 — eventos de valor — na branch `feat/f-031-value-events`); relação direta com a
+futura F-030: o app de campo produz as fotos já ancoradas à geometria que aquela
+jornada consumirá.
 
 ## Agora — MVP privado
 

@@ -5,12 +5,12 @@ import socket
 from base64 import b64encode
 from collections.abc import Iterator, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from ssl import SSLCertVerificationError
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, Final, cast
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -29,24 +29,34 @@ from croquito_worker.provider_review import (
     pair_readings_by_evidence,
 )
 from croquito_worker.providers import (
+    AUDIO_TASKS,
+    AUDIO_UPLOAD_FILENAMES,
+    DEFAULT_GROQ_TRANSCRIPTION_MODEL,
     DEFAULT_PROVIDER_RETRY_DEADLINE_SECONDS,
     DOCAI_PROCESSOR_ENV,
     EMBEDDINGS_MAX_BATCH,
     EMBEDDINGS_MODEL,
     GCP_DOCUMENT_AI_MODEL_ID,
+    GROQ_API_KEY_ENV,
+    GROQ_TRANSCRIPTION_ENDPOINT,
     HTTP_ERROR_DETAIL_LIMIT,
     IMAGE_TEXT_TASKS,
     OCR_FAILURE_DETAIL_LIMIT,
     OCR_LINE_TEXT_LIMIT,
     OPENAI_ARM_ENABLED_ENV,
     OPENAI_STRICT_PATTERN_REWRITES,
+    OPENAI_TRANSCRIPTION_ENDPOINT,
     PROMPT_SPECS,
     PROVIDER_RETRY_DEADLINE_ENV,
     RETRY_ATTEMPT_CEILING,
     SYNTHETIC_CHAT_PROPOSAL_ID,
     SYNTHETIC_CHAT_READING_ID,
     TEXT_TASKS,
+    TRANSCRIPTION_FALLBACK_ENV,
+    TRANSCRIPTION_PRIMARY_ENV,
     AnthropicProviderAdapter,
+    AudioTranscriptionOutput,
+    AudioTranscriptionProviderAdapter,
     BedrockAnthropicProviderAdapter,
     BudgetedEmbeddingsAdapter,
     BudgetedProviderAdapter,
@@ -102,6 +112,7 @@ from croquito_worker.providers import (
     _parse_output,
     _prompt_template,
     _UrllibAuthRequest,
+    build_audio_request,
     build_embeddings_adapter,
     build_extraction_arm,
     build_image_text_request,
@@ -109,6 +120,7 @@ from croquito_worker.providers import (
     build_request,
     build_synthetic_provider_suite,
     build_text_request,
+    build_transcription_arm,
     embeddings_input_digest,
     image_text_input_digest,
 )
@@ -128,7 +140,18 @@ class _FakeGcpCredentials:
         self.token = "refreshed-access-token"
 
 
+AUDIO_FIXTURE: Final[bytes] = b"croquito-synthetic-audio::providers" * 4
+
+
 def _request(task: PromptTask) -> ProviderRequest:
+    """Requisição sintética da tarefa — de imagem ou de áudio, conforme o que ela é.
+
+    O despacho existe porque `build_request` RECUSA `audio_bytes` (e a tarefa de áudio
+    recusa ficar sem ele): são dois construtores porque são duas formas de entrada, e um
+    teste parametrizado sobre `list(PromptTask)` precisa acertar a forma de cada uma.
+    """
+    if task in AUDIO_TASKS:
+        return build_audio_request(task, audio_bytes=AUDIO_FIXTURE, audio_mime_type="audio/webm")
     image = b"synthetic-provider-input"
     return build_request(
         task,
@@ -2326,6 +2349,13 @@ def _point() -> dict[str, object]:
 # omitir — a forma que o dialeto estrito obriga o modelo a devolver, já que lá não existe
 # campo opcional.
 _NULLED_PAYLOADS: dict[PromptTask, dict[str, object]] = {
+    # Transcrição: texto e nada além dele. Os opcionais entram NULOS de propósito — é o
+    # que este teste mede, que o schema do Gemini não os transforme em obrigatórios.
+    PromptTask.AUDIO_TRANSCRIPTION: {
+        "text": "muro de arrimo doze e quarenta",
+        "language": None,
+        "duration_s": None,
+    },
     PromptTask.PAGE_SURVEY: {
         "orientation": "up",
         "regions": [
@@ -2418,6 +2448,19 @@ _NULLED_PAYLOADS: dict[PromptTask, dict[str, object]] = {
         "open_question": None,
         "proposed_acts": None,
     },
+    PromptTask.FIELD_PHOTO_READING: {
+        "readings": [
+            {
+                "raw_text": "PRAÇA MUNICIPAL",
+                "kind_hint": None,
+                "value_hint": None,
+                "unit_hint": None,
+                "target_hint": None,
+                "confidence": "medium",
+            }
+        ],
+        "notes": None,
+    },
 }
 
 
@@ -2435,7 +2478,11 @@ def _request_for(task: PromptTask) -> ProviderRequest:
     return _request(task)
 
 
-@pytest.mark.parametrize("task", list(PromptTask))
+# As tarefas de FALA ficam de fora: elas não passam pelo endpoint de Responses nem pelo
+# dialeto estrito de JSON Schema. A transcrição fala outro endpoint (multipart, `verbose_json`)
+# e sua saída é montada campo a campo pelo adapter — não há schema traduzido cuja volta possa
+# trazer `null` onde o contrato diria "ausente".
+@pytest.mark.parametrize("task", [task for task in PromptTask if task not in AUDIO_TASKS])
 def test_openai_adapter_parses_the_explicit_nulls_the_strict_dialect_forces(
     task: PromptTask,
 ) -> None:
@@ -2532,6 +2579,8 @@ TASKS_WITH_OWN_PROMPT_BRANCH = frozenset(
         PromptTask.LEGEND_EXTRACTION,
         PromptTask.SCO_REFINEMENT,
         PromptTask.REVIEW_CHAT,
+        PromptTask.FIELD_PHOTO_READING,
+        PromptTask.AUDIO_TRANSCRIPTION,
     }
 )
 """Tarefas cujo template tem ramo e versão próprios; o resto compartilha o texto `@1.1.1`."""
@@ -2577,6 +2626,14 @@ def test_prompt_hashes_of_existing_tasks_are_frozen() -> None:
         "sco-refinement": "sco-refinement@1.0.2",
         # Primeira tarefa imagem+texto: a folha e a pergunta do profissional viajam juntas.
         "review-chat": "review-chat@1.0.1",
+        # Primeira tarefa sobre foto de campo (F-032): nasce depois do rebranding, em 1.0.0,
+        # e é o único template em português — o que se pede é transcrição literal do que
+        # está escrito em português na praça.
+        "field-photo-reading": "field-photo-reading@1.0.0",
+        # Primeira tarefa de FALA (F-032 T13): nasce em 1.0.0 e é a única cujo template não é
+        # enviado ao fornecedor — ele versiona a POLÍTICA de transcrição (idioma pedido,
+        # ausência de viés, temperatura), que é o que muda o resultado numa API de fala.
+        "audio-transcription": "audio-transcription@1.0.0",
     }
 
 
@@ -3536,6 +3593,11 @@ def _hosted_suite_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # de OCR declara na própria função. Sem isso, um `CROQUITO_DOCAI_PROCESSOR` exportado no
     # shell trocaria o braço `ocr` de toda a suíte sem ninguém pedir.
     monkeypatch.delenv(DOCAI_PROCESSOR_ENV, raising=False)
+    # E pelo mesmo motivo o roteamento de transcrição (F-032 T13): uma chave da Groq
+    # exportada no shell montaria um braço pago em toda a suíte sem ninguém pedir.
+    monkeypatch.delenv(GROQ_API_KEY_ENV, raising=False)
+    monkeypatch.delenv(TRANSCRIPTION_PRIMARY_ENV, raising=False)
+    monkeypatch.delenv(TRANSCRIPTION_FALLBACK_ENV, raising=False)
     # `build_real_provider_suite` também monta o braço `ocr` sempre, via ADC
     # (`google.auth.default`) — sem rede/credencial real em teste, mocka a única chamada
     # de autenticação envolvida na construção da suite.
@@ -5092,3 +5154,342 @@ def test_synthetic_chat_drafts_can_be_bound_to_another_revision() -> None:
     decision = answer.proposed_acts[0]
     assert isinstance(decision, ChatReadingDecisionDraft)
     assert decision.reading_id == "rd_4444444444444444"
+
+
+# --- Transcrição de nota de voz (F-032 T13) -------------------------------------------
+#
+# Nenhum teste desta seção fala com a Groq ou com a OpenAI: o transporte é sempre um
+# `http_post` injetado, que devolve resposta gravada e CONTA o que teria saído da máquina.
+
+
+"""Bytes sintéticos. Nada aqui decodifica áudio; o que importa é o digest e o transporte."""
+
+
+def _audio_request(mime_type: str = "audio/webm") -> ProviderRequest:
+    return build_audio_request(
+        PromptTask.AUDIO_TRANSCRIPTION, audio_bytes=AUDIO_FIXTURE, audio_mime_type=mime_type
+    )
+
+
+def _transcription_response(
+    text_value: str = "O muro do fundo tem 12,40 m.",
+) -> dict[str, object]:
+    """Resposta de `verbose_json` como os dois fornecedores a devolvem, inclusive o ruído."""
+    return {
+        # A resposta traz uma chave `task` PRÓPRIA, com valor do vocabulário do fornecedor:
+        # se o adapter espalhasse o corpo sobre o modelo, ela sobrescreveria o discriminador.
+        "task": "transcribe",
+        "language": "portuguese",
+        "duration": 4.5,
+        "text": text_value,
+        "segments": [{"id": 0, "start": 0.0, "end": 4.5, "text": text_value}],
+    }
+
+
+@dataclass
+class _CountingPost:
+    """`http_post` injetado que guarda o que seria enviado e responde do jeito gravado."""
+
+    status: int = 200
+    response: dict[str, object] = field(default_factory=_transcription_response)
+    calls: list[tuple[str, dict[str, str], bytes]] = field(default_factory=list)
+
+    def __call__(
+        self, url: str, headers: dict[str, str], body: bytes, _timeout: float
+    ) -> tuple[int, dict[str, object]]:
+        self.calls.append((url, headers, body))
+        return self.status, self.response
+
+
+def _transcription_adapter(
+    post: _CountingPost,
+    *,
+    provider: ProviderName = ProviderName.GROQ,
+    raw_store: ProtectedRawResponseStore | None = None,
+) -> AudioTranscriptionProviderAdapter:
+    return AudioTranscriptionProviderAdapter(
+        provider=provider,
+        api_key="chave-de-teste",
+        model_id=DEFAULT_GROQ_TRANSCRIPTION_MODEL,
+        endpoint=GROQ_TRANSCRIPTION_ENDPOINT,
+        raw_store=raw_store,
+        http_post=post,
+    )
+
+
+def test_audio_request_carries_the_audio_digest_and_refuses_outra_evidencia() -> None:
+    """`input_digest` descreve o que foi enviado; misturar evidências faria o lineage mentir."""
+    request = _audio_request()
+
+    assert request.task in AUDIO_TASKS
+    assert request.image_sha256 == hashlib.sha256(AUDIO_FIXTURE).hexdigest()
+    assert request.audio_mime_type == "audio/webm"
+    assert (request.image_bytes, request.text_payload) == (None, None)
+    with pytest.raises(ValidationError, match="somente tarefa de áudio"):
+        ProviderRequest(
+            task=PromptTask.MEASUREMENT_EXTRACTION,
+            image_bytes=b"png",
+            image_sha256=hashlib.sha256(b"png").hexdigest(),
+            image_width_px=10,
+            image_height_px=10,
+            audio_bytes=AUDIO_FIXTURE,
+            prompt=PROMPT_SPECS[PromptTask.MEASUREMENT_EXTRACTION],
+        )
+    with pytest.raises(ValueError, match="não é tarefa de áudio"):
+        build_audio_request(PromptTask.OCR, audio_bytes=AUDIO_FIXTURE, audio_mime_type="audio/webm")
+
+
+def test_transcription_adapter_sends_multipart_sem_prompt_de_conteudo() -> None:
+    """O campo que enviesaria a decodificação simplesmente não existe no corpo enviado.
+
+    É a invariante central desta tarefa: `prompt` é um parâmetro documentado das duas APIs de
+    fala e serve para SUGERIR palavras ao decodificador. Numa nota que dita medida, sugerir é
+    escolher o número por quem falou.
+    """
+    post = _CountingPost()
+
+    _transcription_adapter(post).execute(_audio_request())
+
+    url, headers, body = post.calls[0]
+    assert url == GROQ_TRANSCRIPTION_ENDPOINT
+    assert headers["Authorization"] == "Bearer chave-de-teste"
+    assert headers["Content-Type"].startswith("multipart/form-data; boundary=")
+    assert b'name="prompt"' not in body
+    assert b'name="model"\r\n\r\nwhisper-large-v3-turbo' in body
+    assert b'name="language"\r\n\r\npt' in body
+    assert b'name="response_format"\r\n\r\nverbose_json' in body
+    assert b'name="temperature"\r\n\r\n0' in body
+    # O container declarado viaja na extensão E no `Content-Type` da parte: é por eles que o
+    # fornecedor escolhe o decodificador.
+    assert b'filename="nota.webm"' in body
+    assert b"Content-Type: audio/webm" in body
+    assert AUDIO_FIXTURE in body
+    assert len(post.calls) == 1
+
+
+def test_transcription_adapter_declara_o_container_do_iphone() -> None:
+    post = _CountingPost()
+
+    _transcription_adapter(post).execute(_audio_request("audio/mp4"))
+
+    _url, _headers, body = post.calls[0]
+    assert b'filename="nota.mp4"' in body
+    assert b"Content-Type: audio/mp4" in body
+    assert set(AUDIO_UPLOAD_FILENAMES) == {"audio/webm", "audio/mp4"}
+
+
+def test_transcription_adapter_le_apenas_os_campos_declarados() -> None:
+    """Segmentos e a chave `task` do fornecedor ficam no bruto; a saída é estrita."""
+    post = _CountingPost()
+
+    execution = _transcription_adapter(post).execute(_audio_request())
+
+    assert execution.provider is ProviderName.GROQ
+    assert execution.model_id == DEFAULT_GROQ_TRANSCRIPTION_MODEL
+    assert execution.input_digest == hashlib.sha256(AUDIO_FIXTURE).hexdigest()
+    assert execution.prompt.prompt_version == "audio-transcription@1.0.0"
+    output = execution.output
+    assert isinstance(output, AudioTranscriptionOutput)
+    assert output.task is PromptTask.AUDIO_TRANSCRIPTION
+    assert output.text == "O muro do fundo tem 12,40 m."
+    assert (output.language, output.duration_s) == ("portuguese", 4.5)
+    # Nem tokens inventados nem custo antes do wrapper de budget.
+    assert (execution.usage.input_tokens, execution.usage.estimated_cost_usd) == (None, None)
+
+
+def test_transcription_adapter_recusa_container_que_nao_sabe_declarar() -> None:
+    """Recusa ANTES de gastar a chamada: o fornecedor devolveria 400 pelo mesmo motivo."""
+    post = _CountingPost()
+    request = build_audio_request(
+        PromptTask.AUDIO_TRANSCRIPTION, audio_bytes=AUDIO_FIXTURE, audio_mime_type="audio/ogg"
+    )
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _transcription_adapter(post).execute(request)
+
+    assert error.value.code is ProviderFailureCode.REFUSED
+    assert post.calls == []
+
+
+def test_transcription_adapter_recusa_tarefa_que_nao_e_de_fala() -> None:
+    post = _CountingPost()
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _transcription_adapter(post).execute(_request(PromptTask.MEASUREMENT_EXTRACTION))
+
+    assert error.value.code is ProviderFailureCode.REFUSED
+    assert post.calls == []
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (401, ProviderFailureCode.REFUSED),
+        (413, ProviderFailureCode.REFUSED),
+        (429, ProviderFailureCode.RATE_LIMITED),
+        (503, ProviderFailureCode.UNAVAILABLE),
+    ],
+)
+def test_transcription_adapter_separa_falha_permanente_de_transitoria(
+    status: int, expected: ProviderFailureCode
+) -> None:
+    """Credencial e arquivo grande demais não melhoram com retentativa; 5xx melhora."""
+    post = _CountingPost(status=status, response={"error": {"message": "recusado"}})
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _transcription_adapter(post).execute(_audio_request())
+
+    assert error.value.code is expected
+
+
+def test_transcription_adapter_guarda_o_bruto_so_no_raw_store_protegido() -> None:
+    """A transcrição inteira está na resposta bruta; ela só existe por referência privada."""
+    raw_store = _RecordingRawStore()
+    post = _CountingPost()
+
+    execution = _transcription_adapter(post, raw_store=raw_store).execute(_audio_request())
+
+    assert execution.raw_response_ref == "raw/aceito/0"
+    persisted = raw_store.calls[0]
+    assert persisted.provider is ProviderName.GROQ
+    assert persisted.rejected_stage is None
+    assert b"12,40" in persisted.payload
+    # A referência é uma CHAVE de objeto privado, nunca a resposta embutida no lineage.
+    assert "12,40" not in execution.raw_response_ref
+
+
+def test_transcription_adapter_recusa_resposta_sem_texto_e_marca_o_estagio() -> None:
+    """Corpo 200 sem `text` é contrato quebrado; o bruto recusado fica separado do aceito."""
+    raw_store = _RecordingRawStore()
+    post = _CountingPost(response={"task": "transcribe", "duration": 1.0})
+
+    with pytest.raises(ProviderExecutionError) as error:
+        _transcription_adapter(post, raw_store=raw_store).execute(_audio_request())
+
+    assert error.value.code is ProviderFailureCode.INVALID_SCHEMA
+    assert raw_store.calls[0].rejected_stage == "contract_rejected"
+
+
+def test_transcricao_vazia_e_resposta_legitima() -> None:
+    """Silêncio, vento ou fala inaudível: transcrição vazia é registrada, nunca preenchida."""
+    post = _CountingPost(response={"text": "", "language": "portuguese"})
+
+    output = _transcription_adapter(post).execute(_audio_request()).output
+
+    assert isinstance(output, AudioTranscriptionOutput)
+    assert output.text == ""
+
+
+def test_build_transcription_arm_sem_chave_e_braco_desligado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Conta da Groq é ato do usuário: sem chave o braço não existe, e isso não é erro."""
+    monkeypatch.delenv(GROQ_API_KEY_ENV, raising=False)
+
+    assert (
+        build_transcription_arm(
+            ProviderName.GROQ.value,
+            budget=CostBudget(Decimal("5")),
+            estimated_cost_usd=Decimal("0.01"),
+        )
+        is None
+    )
+
+
+def test_build_transcription_arm_embrulha_em_retry_e_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transcrição paga entra sob as MESMAS proteções das demais chamadas externas."""
+    monkeypatch.setenv(GROQ_API_KEY_ENV, "groq-key")
+    budget = CostBudget(Decimal("5"))
+
+    arm = build_transcription_arm(
+        ProviderName.GROQ.value, budget=budget, estimated_cost_usd=Decimal("0.01")
+    )
+
+    assert arm is not None
+    budgeted = _budgeted(arm)
+    assert budgeted.budget is budget
+    adapter = cast(AudioTranscriptionProviderAdapter, budgeted.adapter)
+    assert adapter.provider is ProviderName.GROQ
+    assert adapter.endpoint == GROQ_TRANSCRIPTION_ENDPOINT
+    assert adapter.model_id == DEFAULT_GROQ_TRANSCRIPTION_MODEL
+
+
+def test_suite_hospedada_monta_groq_como_primario_provisorio_sem_reserva(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default do roteamento: Groq turbo transcreve, e não há segundo fornecedor pago.
+
+    O reserva nasce desligado de propósito — quem deve ser o reserva é justamente o que a
+    eval comparativa vai dizer, e ligar um segundo fornecedor pago por conta própria
+    decidiria o resultado antes de medi-lo.
+    """
+    _hosted_suite_env(monkeypatch)
+    monkeypatch.setenv(GROQ_API_KEY_ENV, "groq-key")
+
+    suite = build_real_provider_suite()
+
+    assert suite.transcription is not None
+    assert suite.transcription_fallback is None
+    adapter = cast(AudioTranscriptionProviderAdapter, _budgeted(suite.transcription).adapter)
+    assert (adapter.provider, adapter.model_id) == (
+        ProviderName.GROQ,
+        DEFAULT_GROQ_TRANSCRIPTION_MODEL,
+    )
+    assert adapter.language == "pt"
+    # Mesmo teto da rodada: transcrição não tem orçamento próprio.
+    assert _budgeted(suite.transcription).budget is _budgeted(suite.anthropic).budget
+
+
+def test_suite_hospedada_sem_chave_da_groq_fica_sem_braco_de_transcricao(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ausência de chave não derruba a suite: o levantamento continua, sem transcrição."""
+    _hosted_suite_env(monkeypatch)
+
+    suite = build_real_provider_suite()
+
+    assert suite.transcription is None
+    assert suite.anthropic is not None
+
+
+def test_roteamento_de_transcricao_aceita_openai_como_reserva_declarado(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Promover um reserva é ato de configuração, e o segundo braço é outro fornecedor."""
+    _hosted_suite_env(monkeypatch)
+    monkeypatch.setenv(GROQ_API_KEY_ENV, "groq-key")
+    monkeypatch.setenv(TRANSCRIPTION_FALLBACK_ENV, "openai")
+
+    suite = build_real_provider_suite()
+
+    assert suite.transcription_fallback is not None
+    reserve = cast(
+        AudioTranscriptionProviderAdapter, _budgeted(suite.transcription_fallback).adapter
+    )
+    assert reserve.provider is ProviderName.OPENAI
+    assert reserve.endpoint == OPENAI_TRANSCRIPTION_ENDPOINT
+
+
+def test_roteamento_de_transcricao_recusa_valor_estranho(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Para qual fornecedor a voz do técnico vai não se decide por interpretação de string."""
+    _hosted_suite_env(monkeypatch)
+    monkeypatch.setenv(TRANSCRIPTION_PRIMARY_ENV, "gorq")
+
+    with pytest.raises(ValueError, match=TRANSCRIPTION_PRIMARY_ENV):
+        build_real_provider_suite()
+
+
+def test_reserva_de_transcricao_nao_pode_repetir_o_primario(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reserva igual ao primário é fallback que reexecuta a mesma falha, cobrando de novo."""
+    _hosted_suite_env(monkeypatch)
+    monkeypatch.setenv(GROQ_API_KEY_ENV, "groq-key")
+    monkeypatch.setenv(TRANSCRIPTION_FALLBACK_ENV, "groq")
+
+    with pytest.raises(ValueError, match=TRANSCRIPTION_FALLBACK_ENV):
+        build_real_provider_suite()

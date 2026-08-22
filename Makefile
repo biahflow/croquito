@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: docs setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval ocr-eval solver-eval association-eval association-calibration extraction-eval extraction-eval-degrau valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
+.PHONY: docs setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval ocr-eval solver-eval association-eval association-calibration transcription-eval extraction-eval extraction-eval-degrau valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
 
 setup:
 	uv sync --all-groups
@@ -79,11 +79,13 @@ check:
 	uv run python -m croquito_core.schema_export --check-dir packages/contracts
 	npm run contracts:check
 	npm run web:check
+	npm run field:check
 	$(MAKE) infra-check
 
 test:
 	uv run pytest
 	npm run web:test
+	npm run field:test
 
 demo:
 	uv run croquito-demo synthetic --output output/demo
@@ -108,6 +110,16 @@ association-eval:
 # escolhe o corte — só instrui a escolha humana do threshold operacional.
 association-calibration:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run croquito-demo calibration-report --output output/association-calibration
+
+# Eval comparativa dos braços de transcrição de voz (F-032 T13). Offline e determinística
+# como as demais: corpus sintético, adapters gravados, nenhuma chave e nenhuma rede — o que
+# ela prova é que as métricas (fidelidade de medida falada, WER/CER, container) discriminam.
+# A RODADA PAGA que promove primário/reserva é ato humano separado, com clipes reais gravados
+# fora do repositório e aprovação de custo:
+#   uv run croquito-demo transcription-eval --output output/transcription-eval \
+#     --corpus <caminho>/corpus.json --live
+transcription-eval:
+	uv run croquito-demo transcription-eval --output output/transcription-eval
 
 valuation-demo:
 	uv run croquito-valuation demo --output output/valuation-demo

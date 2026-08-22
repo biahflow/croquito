@@ -1,0 +1,721 @@
+{
+  "$defs": {
+    "ArrivalContext": {
+      "additionalProperties": false,
+      "description": "Espelho de `ArrivalContext` (prancha 2). `access_media_ref` carrega a referência\nde mídia resolvida (sha256/mime_type/byte_size), não o `MediaRecord.id` local —\nmesma razão de `MediaAnchor.media_ref`.",
+      "properties": {
+        "access_media_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MediaRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "arrived_at": {
+          "format": "date-time",
+          "title": "Arrived At",
+          "type": "string"
+        },
+        "gps": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GpsFix"
+            },
+            {
+              "const": "unavailable",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gps"
+        },
+        "instrument": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Instrument",
+          "type": "string"
+        },
+        "reference_note": {
+          "maxLength": 2000,
+          "title": "Reference Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instrument",
+        "reference_note",
+        "arrived_at"
+      ],
+      "title": "ArrivalContext",
+      "type": "object"
+    },
+    "ElementObject": {
+      "additionalProperties": false,
+      "description": "Espelho de `ElementObject`.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "point_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Point Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "created_at"
+      ],
+      "title": "ElementObject",
+      "type": "object"
+    },
+    "GpsFix": {
+      "additionalProperties": false,
+      "description": "Espelho de `GpsFix` — referência geográfica, nunca medição.",
+      "properties": {
+        "accuracy_m": {
+          "minimum": 0,
+          "title": "Accuracy M",
+          "type": "number"
+        },
+        "lat": {
+          "title": "Lat",
+          "type": "number"
+        },
+        "lng": {
+          "title": "Lng",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lat",
+        "lng",
+        "accuracy_m"
+      ],
+      "title": "GpsFix",
+      "type": "object"
+    },
+    "Measurement": {
+      "additionalProperties": false,
+      "description": "Espelho de `Measurement`. `value_mm` nunca é negativo — diferente de\n`x_mm`/`y_mm`, que são coordenadas relativas a uma origem local e podem ser\nnegativas.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "element_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element Id"
+        },
+        "from_point_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "From Point Id"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "instrument": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Instrument",
+          "type": "string"
+        },
+        "justification": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Justification"
+        },
+        "kind": {
+          "$ref": "#/$defs/MeasurementKind"
+        },
+        "second_from_point_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Second From Point Id"
+        },
+        "second_to_point_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Second To Point Id"
+        },
+        "status": {
+          "$ref": "#/$defs/MeasurementStatus"
+        },
+        "to_point_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "To Point Id"
+        },
+        "value_mm": {
+          "maximum": 1000000,
+          "minimum": 0,
+          "title": "Value Mm",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "value_mm",
+        "kind",
+        "instrument",
+        "status",
+        "created_at"
+      ],
+      "title": "Measurement",
+      "type": "object"
+    },
+    "MeasurementKind": {
+      "description": "Espelho de `MeasurementKind` (`apps/field/src/domain/types.ts`).",
+      "enum": [
+        "length",
+        "diagonal",
+        "width",
+        "radius",
+        "level",
+        "drop",
+        "height",
+        "angle"
+      ],
+      "title": "MeasurementKind",
+      "type": "string"
+    },
+    "MeasurementStatus": {
+      "description": "Espelho de `MeasurementStatus`.",
+      "enum": [
+        "draft",
+        "confirmed"
+      ],
+      "title": "MeasurementStatus",
+      "type": "string"
+    },
+    "MediaAnchor": {
+      "additionalProperties": false,
+      "description": "Âncora de uma foto OU áudio a um ponto, elemento ou nota do levantamento — envelope\núnico para os dois tipos de mídia (`local_media_ref`/áudio de T12), sempre resolvido\npara `media_ref` (sha256/mime_type/byte_size) pelo mapeamento de\n`apps/field/src/sync/contract.ts`, nunca a referência local (`MediaRecord.id`), que só\ntem sentido dentro do dispositivo de origem.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "element_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element Id"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "media_ref": {
+          "$ref": "#/$defs/MediaRef"
+        },
+        "note_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note Id"
+        },
+        "point_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Point Id"
+        }
+      },
+      "required": [
+        "id",
+        "media_ref",
+        "created_at"
+      ],
+      "title": "MediaAnchor",
+      "type": "object"
+    },
+    "MediaRef": {
+      "additionalProperties": false,
+      "description": "Referência a um arquivo de mídia local — nunca o blob (`apps/field/AGENTS.md`:\n\"o domínio não carrega blobs\"). `sha256`/`mime_type`/`byte_size` espelham\n`MediaRecord` (`apps/field/src/storage/SurveyRepository.ts`), sem o campo `blob`.",
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "mime_type": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256",
+        "mime_type",
+        "byte_size"
+      ],
+      "title": "MediaRef",
+      "type": "object"
+    },
+    "ObservationNote": {
+      "additionalProperties": false,
+      "description": "Espelho de `ObservationNote`. Desde a T12 (prancha 7a da DAP rev.2, aprovada) a\nnota pode ser texto, voz (`audio_media_ref`) ou os dois; o que continua inválido é a\nnota VAZIA — sem texto e sem áudio ela não registra nada, mesma regra `EMPTY_TEXT`\ndo domínio do app (`apps/field/src/domain/commands.ts`).",
+      "properties": {
+        "audio_media_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MediaRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "element_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element Id"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "point_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Point Id"
+        },
+        "text": {
+          "maxLength": 5000,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "created_at"
+      ],
+      "title": "ObservationNote",
+      "type": "object"
+    },
+    "Segment": {
+      "additionalProperties": false,
+      "description": "Espelho de `Segment` — ligação observada entre dois pontos, sem medida\nconfirmada.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "from_point_id": {
+          "minLength": 1,
+          "title": "From Point Id",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "to_point_id": {
+          "minLength": 1,
+          "title": "To Point Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "from_point_id",
+        "to_point_id",
+        "created_at"
+      ],
+      "title": "Segment",
+      "type": "object"
+    },
+    "SurveyOperation": {
+      "additionalProperties": false,
+      "description": "Espelho de `SurveyOperation` (`apps/field/src/outbox/types.ts`) — histórico do\noutbox, sem `status`: reconhecimento (`ack`) é estado local do app, nunca viaja no\npacote.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "device_id": {
+          "minLength": 1,
+          "title": "Device Id",
+          "type": "string"
+        },
+        "operation_id": {
+          "minLength": 1,
+          "title": "Operation Id",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "survey_id": {
+          "minLength": 1,
+          "title": "Survey Id",
+          "type": "string"
+        },
+        "type": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_id",
+        "device_id",
+        "survey_id",
+        "seq",
+        "type",
+        "created_at"
+      ],
+      "title": "SurveyOperation",
+      "type": "object"
+    },
+    "SurveyPoint": {
+      "additionalProperties": false,
+      "description": "Espelho de `SurveyPoint`.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "x_mm": {
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "title": "X Mm",
+          "type": "integer"
+        },
+        "y_mm": {
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "title": "Y Mm",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "x_mm",
+        "y_mm",
+        "created_at"
+      ],
+      "title": "SurveyPoint",
+      "type": "object"
+    },
+    "SurveyStatus": {
+      "description": "Espelho de `SurveyStatus` (T5).",
+      "enum": [
+        "collecting",
+        "concluded"
+      ],
+      "title": "SurveyStatus",
+      "type": "string"
+    },
+    "Waiver": {
+      "additionalProperties": false,
+      "description": "Espelho de `Waiver` (prancha 5b) — justificativa de pendência não crítica mantida\nna conclusão.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "finding_code": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Finding Code",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "justification": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Justification",
+          "type": "string"
+        },
+        "ref_key": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Ref Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "finding_code",
+        "ref_key",
+        "justification",
+        "created_at"
+      ],
+      "title": "Waiver",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.croquito.local/field/survey-packet/1.0.0.json",
+  "additionalProperties": false,
+  "description": "Pacote de levantamento de campo — o `Survey` inteiro pronto para sincronização\n(T9). Sem `tenant_id`: tenant vem sempre do JWT no momento do envio.\n\n`status`/`waivers` viajam sempre resolvidos (equivalente a `surveyStatus`/\n`surveyWaivers` do domínio, nunca o campo bruto opcional pré-T5); `order_id` e\n`arrival_context` continuam opcionais porque o próprio domínio os declara assim\n(levantamento legado sem ordem de origem; chegada ainda não registrada).",
+  "properties": {
+    "arrival_context": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArrivalContext"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "device_id": {
+      "minLength": 1,
+      "title": "Device Id",
+      "type": "string"
+    },
+    "elements": {
+      "items": {
+        "$ref": "#/$defs/ElementObject"
+      },
+      "title": "Elements",
+      "type": "array"
+    },
+    "gps_fixes": {
+      "items": {
+        "$ref": "#/$defs/GpsFix"
+      },
+      "title": "Gps Fixes",
+      "type": "array"
+    },
+    "measurements": {
+      "items": {
+        "$ref": "#/$defs/Measurement"
+      },
+      "title": "Measurements",
+      "type": "array"
+    },
+    "media_anchors": {
+      "items": {
+        "$ref": "#/$defs/MediaAnchor"
+      },
+      "title": "Media Anchors",
+      "type": "array"
+    },
+    "name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/ObservationNote"
+      },
+      "title": "Observations",
+      "type": "array"
+    },
+    "operations": {
+      "items": {
+        "$ref": "#/$defs/SurveyOperation"
+      },
+      "title": "Operations",
+      "type": "array"
+    },
+    "order_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Order Id"
+    },
+    "points": {
+      "items": {
+        "$ref": "#/$defs/SurveyPoint"
+      },
+      "title": "Points",
+      "type": "array"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/Segment"
+      },
+      "title": "Segments",
+      "type": "array"
+    },
+    "status": {
+      "$ref": "#/$defs/SurveyStatus"
+    },
+    "survey_id": {
+      "minLength": 1,
+      "title": "Survey Id",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "waivers": {
+      "items": {
+        "$ref": "#/$defs/Waiver"
+      },
+      "title": "Waivers",
+      "type": "array"
+    }
+  },
+  "required": [
+    "survey_id",
+    "name",
+    "device_id",
+    "created_at",
+    "updated_at",
+    "status"
+  ],
+  "title": "Croquito Survey Packet",
+  "type": "object"
+}

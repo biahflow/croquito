@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Ícone do croquito campo">
+  <!-- Marca real (Task Contract T17, DAP rev.2): quadrado grafite com traço verde do
+       wordmark canônico (apps/web/src/assets/croquito-logo-dark.svg), substituindo o
+       placeholder azul do scaffold. Fundo cobre a tela toda para servir de ícone
+       "maskable"; o quadrado central fica dentro da zona segura (raio ~40% do canvas). -->
+  <rect width="512" height="512" fill="#0e1116" />
+  <rect x="156" y="156" width="200" height="200" fill="#0e1116" stroke="#00e389" stroke-width="58" />
+</svg>

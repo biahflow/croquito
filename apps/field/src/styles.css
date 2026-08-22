@@ -1,0 +1,591 @@
+@import "tailwindcss";
+
+/*
+ * Tokens do app de campo.
+ *
+ * Cor, tipografia e raio vêm do Design Approval Package aprovado (revisão 1,
+ * `docs/features/F-032-app-levantamento-campo/mock/campo.html`), que por sua vez cita
+ * `docs/engineering/DESIGN_SYSTEM.md` verbatim para a paleta da marca e declara como
+ * NOVOS os tokens de estado (`--state-*`), a escala mínima do campo (`--touch`, `--s-*`,
+ * `--r-*`, `--fs-*`) e o layout de celular 390px retrato.
+ *
+ * Regras que não são estilo (DESIGN_SYSTEM, seção "Regras de uso"):
+ * 1. `--color-accent` só em PREENCHIMENTO, sempre com `--color-accent-ink` por cima —
+ *    2,2:1 sobre branco, nunca serve de cor de texto sobre claro;
+ * 2. verde de texto/traço sobre claro é `--color-accent-text` (5,8:1);
+ * 3. texto secundário é `--color-ink-secondary`; `--color-muted` é só ícone, borda de
+ *    controle, placeholder e desabilitado;
+ * 5. cor nunca é o único portador de significado — todo estado sinalizado por cor
+ *    também está escrito na tela.
+ */
+@theme {
+  /* ---- paleta da marca: verbatim do DESIGN_SYSTEM ---- */
+  --color-bg: #fafaf8;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f4f4f1;
+  --color-surface-sunken: #efefeb;
+  --color-ink: #14181d;
+  --color-ink-secondary: #5b6169;
+  --color-muted: #9aa0a8;
+  --color-line: #e5e5e0;
+  --color-accent: #00c877;
+  --color-accent-hover: #00b169;
+  --color-accent-ink: #0e1116;
+  --color-accent-text: #00744a;
+  --color-accent-soft: #e6f6ee;
+  --color-accent-line: #9bdcc0;
+  --color-dark: #0e1116;
+  --color-dark-ink: #f2f4f7;
+  --color-dark-ink-soft: rgba(242, 244, 247, 0.72);
+  --color-dark-line: rgba(242, 244, 247, 0.12);
+  --color-dark-line-strong: rgba(242, 244, 247, 0.34);
+
+  /* ---- cor de domínio da validação de campo: NOVOS no pacote aprovado ---- */
+  --color-state-ok: #167a45;
+  --color-state-ok-soft: #e6f6ee;
+  --color-state-ok-line: #9bdcc0;
+  --color-state-warn: #8a5a00;
+  --color-state-warn-soft: #fdf3e0;
+  --color-state-warn-line: #ecd9ad;
+  --color-state-error: #b3261e;
+  --color-state-error-soft: #fdecea;
+  --color-state-error-line: #f2c1bd;
+  --color-state-todo: #5b6169;
+  --color-state-todo-soft: #f4f4f1;
+
+  /* ---- tipografia ---- */
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-serif: Georgia, "Times New Roman", serif;
+  --text-title: 19px;
+  --text-body: 15px;
+  --text-label: 13px;
+  --text-num: 26px;
+
+  /* ---- raio: NOVOS no pacote aprovado ---- */
+  --radius-lg: 14px;
+  --radius-md: 10px;
+  --radius-pill: 999px;
+}
+
+@layer base {
+  :root {
+    /* Escala mínima do campo — NOVOS no pacote aprovado; `--touch` é o alvo mínimo de
+       toque exigido pelo NFR da F-032. */
+    --touch: 48px;
+    --s-1: 4px;
+    --s-2: 8px;
+    --s-3: 12px;
+    --s-4: 16px;
+    --s-5: 24px;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: 1.45;
+    /* DESIGN_SYSTEM, seção Tipografia: peso falso de fonte não é aceito. */
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/*
+ * Primitivas do pacote aprovado. Os nomes e valores são os do `campo.html` — manter uma
+ * camada de componentes (em vez de repetir utilitários em cada JSX) é o que garante que
+ * um valor visual aprovado exista em UM lugar só neste workspace.
+ */
+@layer components {
+  /* ---------- barra superior escura (todas as telas) ---------- */
+  .appbar {
+    background: var(--color-dark);
+    color: var(--color-dark-ink);
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    min-height: 52px;
+  }
+
+  .appbar-brand {
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+  }
+
+  /* Marca do croquito (T17, DAP rev.2): quadrado do wordmark, mesma regra visual de
+     `.appbar .brand::before` no mock aprovado (`docs/features/F-032-.../mock/campo.html`)
+     — aqui como elemento real `aria-hidden` em vez de pseudo-elemento (ver AppBar.tsx). */
+  .appbar-mark {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    background: var(--color-dark);
+    border: 3px solid var(--color-accent);
+  }
+
+  .appbar-spacer {
+    flex: 1;
+  }
+
+  .pill {
+    border-radius: var(--radius-pill);
+    padding: 4px 10px;
+    font-size: var(--text-label);
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+
+  .pill-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .pill-online {
+    background: transparent;
+    border-color: var(--color-dark-line-strong);
+    color: var(--color-dark-ink);
+  }
+
+  .pill-online .pill-dot {
+    background: var(--color-accent);
+  }
+
+  /* Pílula Offline invertida (tinta clara de fundo) — decisão de legibilidade ao sol
+     declarada como nova no pacote aprovado. */
+  .pill-offline {
+    background: var(--color-dark-ink);
+    color: var(--color-dark);
+  }
+
+  .pill-offline .pill-dot {
+    background: var(--color-dark);
+  }
+
+  .pill-queue {
+    background: transparent;
+    border-color: var(--color-dark-line-strong);
+    color: var(--color-dark-ink-soft);
+    font-weight: 500;
+  }
+
+  /* Pílula tocável (abre o painel de sincronização, prancha 6): mesma pílula da barra
+     aprovada, só sem os padrões de botão do navegador. O alvo continua confortável na
+     barra de 52px — a pílula ocupa a altura toda dela. */
+  .pill-action {
+    font: inherit;
+    font-size: var(--text-label);
+    font-weight: 500;
+    cursor: pointer;
+    min-height: 32px;
+  }
+
+  /* ---------- indicador de identidade (prancha 6c, T10) ---------- */
+  .identity-pill {
+    background: transparent;
+    border-color: var(--color-dark-line-strong);
+    color: var(--color-dark-ink);
+    font-weight: 500;
+  }
+
+  /* Mesma inversão de legibilidade da pílula Offline (fundo claro sobre a barra escura):
+     estado vencido é o único que precisa saltar aos olhos ao sol, não só no hover do
+     título. O texto do estado (`.identity-status`) garante que a informação não dependa
+     só desta cor (regra 5 do Design System). */
+  .identity-pill-warn {
+    background: var(--color-state-warn-soft);
+    border-color: var(--color-state-warn-line);
+    color: var(--color-state-warn);
+  }
+
+  .identity-status {
+    font-weight: 500;
+  }
+
+  /* Ação da barra ("Entrar"/"Entrar novamente"): mesmo `.btn-primary`, só mais estreita —
+     a barra não tem a largura de um botão de rodapé, mas o alvo mínimo (`--touch`)
+     continua o mesmo. */
+  .identity-action {
+    padding: 0 var(--s-3);
+    font-size: var(--text-label);
+  }
+
+  /* ---------- blocos comuns ---------- */
+  .screen {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .content {
+    flex: 1;
+    overflow: auto;
+    padding: var(--s-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    min-height: 0;
+  }
+
+  .screen-title {
+    font-family: var(--font-serif);
+    font-size: var(--text-title);
+    font-weight: 600;
+  }
+
+  .sub {
+    color: var(--color-ink-secondary);
+    font-size: var(--text-label);
+  }
+
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-lg);
+    padding: var(--s-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+
+  .card-title {
+    font-weight: 600;
+  }
+
+  .card-meta {
+    color: var(--color-ink-secondary);
+    font-size: var(--text-label);
+  }
+
+  .tag {
+    display: inline-block;
+    border-radius: var(--radius-pill);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border: 1px solid var(--color-line);
+    color: var(--color-ink-secondary);
+    background: var(--color-surface-subtle);
+    width: fit-content;
+  }
+
+  .tag-ok {
+    background: var(--color-state-ok-soft);
+    color: var(--color-state-ok);
+    border-color: var(--color-accent-line);
+  }
+
+  .tag-warn {
+    background: var(--color-state-warn-soft);
+    color: var(--color-state-warn);
+    border-color: var(--color-state-warn-line);
+  }
+
+  .tag-error {
+    background: var(--color-state-error-soft);
+    color: var(--color-state-error);
+    border-color: var(--color-state-error-line);
+  }
+
+  .btn {
+    min-height: var(--touch);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-line);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font: inherit;
+    font-weight: 600;
+    padding: 0 var(--s-4);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    text-align: center;
+  }
+
+  .btn-primary {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-accent-ink);
+  }
+
+  .btn-dark {
+    background: var(--color-dark);
+    border-color: var(--color-dark);
+    color: var(--color-dark-ink);
+  }
+
+  .btn-block {
+    width: 100%;
+  }
+
+  /* Item do menu Adicionar: lista plana, rótulo alinhado à esquerda. */
+  .btn-menu {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .btn:disabled {
+    background: var(--color-surface-sunken);
+    color: var(--color-muted);
+    border-color: var(--color-line);
+    cursor: default;
+  }
+
+  .bottombar {
+    border-top: 1px solid var(--color-line);
+    background: var(--color-surface);
+    padding: var(--s-3) var(--s-4);
+    display: flex;
+    gap: var(--s-2);
+  }
+
+  .bottombar .btn {
+    flex: 1;
+    padding: 0 var(--s-2);
+  }
+
+  .banner {
+    border-radius: var(--radius-md);
+    padding: var(--s-3) var(--s-4);
+    font-size: var(--text-label);
+    border: 1px solid var(--color-line);
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+
+  .banner-info {
+    background: var(--color-surface-subtle);
+    color: var(--color-ink-secondary);
+  }
+
+  .banner-ok {
+    background: var(--color-state-ok-soft);
+    border-color: var(--color-accent-line);
+    color: var(--color-state-ok);
+  }
+
+  .banner-warn {
+    background: var(--color-state-warn-soft);
+    border-color: var(--color-state-warn-line);
+    color: var(--color-state-warn);
+  }
+
+  .banner-error {
+    background: var(--color-state-error-soft);
+    border-color: var(--color-state-error-line);
+    color: var(--color-state-error);
+  }
+
+  /* Ação de escape dentro do aviso (cancelar o modo de coleta em andamento). */
+  .banner-action {
+    font: inherit;
+    font-weight: 600;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    text-decoration: underline;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  /* ---------- canvas de coleta ---------- */
+  .canvas-wrap {
+    position: relative;
+    flex: 1;
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  .canvas-wrap svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: manipulation;
+  }
+
+  .canvas-legend {
+    position: absolute;
+    left: var(--s-3);
+    bottom: var(--s-3);
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  /* ---------- teclado numérico próprio ---------- */
+  .numpad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s-2);
+  }
+
+  .numpad .btn {
+    min-height: 56px;
+    font-size: var(--text-num);
+    font-weight: 600;
+  }
+
+  .numview {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-md);
+    padding: var(--s-3) var(--s-4);
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .numview-value {
+    font-size: 34px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  .numview-value-empty {
+    color: var(--color-muted);
+  }
+
+  .numview-unit {
+    color: var(--color-ink-secondary);
+    font-weight: 600;
+  }
+
+  /* ---------- checklist (prancha 2 e 5) ---------- */
+  .check {
+    display: flex;
+    gap: var(--s-3);
+    align-items: flex-start;
+    padding: var(--s-3);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+  }
+
+  .check-state {
+    flex-shrink: 0;
+    margin-top: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--color-muted);
+  }
+
+  .check-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .check-title {
+    display: block;
+    font-weight: 600;
+  }
+
+  .check-detail {
+    color: var(--color-ink-secondary);
+    font-size: var(--text-label);
+  }
+
+  .check-ok .check-state {
+    background: var(--color-state-ok);
+    border-color: var(--color-state-ok);
+  }
+
+  .check-warn .check-state {
+    background: var(--color-state-warn);
+    border-color: var(--color-state-warn);
+  }
+
+  .check-error .check-state {
+    background: var(--color-state-error);
+    border-color: var(--color-state-error);
+  }
+
+  /* Estado neutro (ex.: GPS ainda sendo lido) — mesma cor de "ainda não levantado". */
+  .check-todo .check-state {
+    background: var(--color-state-todo);
+    border-color: var(--color-state-todo);
+  }
+
+  /* ---------- segmented control (instrumento, prancha 2) ---------- */
+  .seg {
+    display: flex;
+    border: 1px solid var(--color-muted);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  .seg-item {
+    flex: 1;
+    min-height: var(--touch);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: inherit;
+    font-weight: 600;
+    color: var(--color-ink-secondary);
+    background: var(--color-surface);
+    border: 0;
+    cursor: pointer;
+  }
+
+  .seg-item-on {
+    background: var(--color-dark);
+    color: var(--color-dark-ink);
+  }
+
+  /* ---------- campo de texto ---------- */
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .field-label {
+    font-size: var(--text-label);
+    font-weight: 600;
+    color: var(--color-ink-secondary);
+  }
+
+  .field-input {
+    min-height: var(--touch);
+    border: 1px solid var(--color-muted);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font: inherit;
+    padding: var(--s-3);
+    width: 100%;
+    resize: vertical;
+  }
+
+  .field-input::placeholder {
+    color: var(--color-muted);
+  }
+}
