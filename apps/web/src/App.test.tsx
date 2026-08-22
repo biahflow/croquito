@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { App, JourneySwitch } from "./App";
-import { PLATFORM_OPERATOR_ROLE } from "./plataforma/api";
+import { PLATFORM_OPERATOR_ROLE, type Journey } from "./plataforma/api";
 import { entryRedirect, LOGIN_PATH, type Route } from "./route";
 
 /**
@@ -81,17 +81,21 @@ describe("App", () => {
 });
 
 /**
- * A jornada de plataforma é oferecida por PAPEL, e o papel vem da API (`GET /v1/me`) —
- * a SPA não decodifica token. A regra é conferida no seletor, que é onde ela vive: a
- * casca inteira só renderiza com sessão, e a condição não depende de sessão nenhuma.
+ * Croqui, Medição e Orçamento são oferecidos pela lista `journeys` que `GET /v1/me`
+ * resolveu (F-034, 2026-08-22) — a SPA não recalcula papel nem ambiente, só renderiza o
+ * que chegou. A Plataforma segue por PAPEL, não pela lista: ela não é jornada. A regra é
+ * conferida no seletor, que é onde ela vive: a casca inteira só renderiza com sessão, e
+ * nenhuma das duas condições depende de sessão nenhuma.
  */
 describe("seletor de jornadas", () => {
   const CROQUI: Route = { kind: "croqui", jobId: "" };
+  const TODAS_JORNADAS: Journey[] = ["croqui", "medicao", "orcamento"];
 
-  it("com o papel de operador, a Plataforma aparece no seletor", () => {
+  it("com as três jornadas na lista e o papel de operador, o seletor é o de sempre", () => {
     const html = renderToStaticMarkup(
       <JourneySwitch
         route={CROQUI}
+        journeys={TODAS_JORNADAS}
         roles={["revisor", PLATFORM_OPERATOR_ROLE]}
         onOpen={() => {}}
       />,
@@ -101,28 +105,72 @@ describe("seletor de jornadas", () => {
     expect(html).toContain(">Croqui<");
     expect(html).toContain(">Medição<");
     expect(html).toContain(">Orçamento<");
+    expect(html).not.toContain("app-alert");
   });
 
   /**
-   * "Orçamento é jornada, não modo da medição" (Design Approval Package da F-020): o
-   * terceiro botão fica ao lado de Croqui e Medição, e não atrás de um seletor dentro da
-   * tela ambígua que originou a feature. Ele é INCONDICIONAL como os outros dois — qual
-   * papel autoriza a jornada é decisão humana ainda aberta, e escondê-lo por um papel
-   * que ninguém escolheu seria tomá-la no cliente. Quem autoriza é o backend.
+   * F-034 (2026-08-22) inverteu o que este teste media: Orçamento não é mais
+   * incondicional (a leitura de "qual papel autoriza é decisão humana aberta" fechou), e
+   * passa a depender exatamente da lista que o servidor devolveu — nunca de papel, que
+   * segue sendo assunto só da Plataforma.
    */
-  it("Orçamento é o terceiro botão, sem depender de papel nenhum", () => {
+  it("Orçamento aparece quando a lista o inclui, sem depender de papel nenhum", () => {
     const html = renderToStaticMarkup(
-      <JourneySwitch route={CROQUI} roles={[]} onOpen={() => {}} />,
+      <JourneySwitch
+        route={CROQUI}
+        journeys={["orcamento"]}
+        roles={[]}
+        onOpen={() => {}}
+      />,
     );
 
     expect(html).toContain(">Orçamento<");
     expect(html).not.toContain("disabled");
   });
 
+  /**
+   * Ausente da lista, o botão não existe — nem desabilitado, o mesmo mecanismo que já
+   * valia só para a Plataforma. Croqui e Medição continuam presentes: a ausência é por
+   * jornada, não um efeito colateral das outras.
+   */
+  it("Orçamento ausente da lista não aparece, mesmo com Croqui e Medição presentes", () => {
+    const html = renderToStaticMarkup(
+      <JourneySwitch
+        route={CROQUI}
+        journeys={["croqui", "medicao"]}
+        roles={[]}
+        onOpen={() => {}}
+      />,
+    );
+
+    expect(html).not.toContain(">Orçamento<");
+    expect(html).not.toContain("disabled");
+    expect(html).toContain(">Croqui<");
+    expect(html).toContain(">Medição<");
+  });
+
+  /**
+   * "Ainda não sei" e "sei que não há nenhuma" são estados diferentes. Enquanto `/v1/me`
+   * não respondeu a lista é `null`, e o seletor não afirma nada: nem abas, nem aviso.
+   * Tratar os dois como lista vazia faria TODA sessão — inclusive a de quem tem as três
+   * jornadas — exibir "nenhuma jornada liberada" durante a ida e volta da chamada.
+   */
+  it("enquanto a lista não foi resolvida, o seletor não mostra abas nem aviso", () => {
+    const html = renderToStaticMarkup(
+      <JourneySwitch route={CROQUI} journeys={null} roles={[]} onOpen={() => {}} />,
+    );
+
+    expect(html).not.toContain("app-alert");
+    expect(html).not.toContain(">Croqui<");
+    expect(html).not.toContain(">Medição<");
+    expect(html).not.toContain(">Orçamento<");
+  });
+
   it("a jornada do orçamento aberta é declarada em aria-current", () => {
     const html = renderToStaticMarkup(
       <JourneySwitch
         route={{ kind: "orcamento", roundId: null }}
+        journeys={["orcamento"]}
         roles={[]}
         onOpen={() => {}}
       />,
@@ -133,11 +181,17 @@ describe("seletor de jornadas", () => {
 
   /**
    * Ausente, não desabilitado: um botão apagado anunciaria a existência de uma área que
-   * aquela conta não administra. Sem papel, o elemento não existe no DOM.
+   * aquela conta não administra. Sem papel, o elemento da Plataforma não existe no DOM;
+   * Croqui e Medição continuam vindo da lista, não do papel.
    */
-  it("sem o papel, o botão não existe — nem desabilitado", () => {
+  it("sem o papel, o botão da Plataforma não existe — nem desabilitado", () => {
     const html = renderToStaticMarkup(
-      <JourneySwitch route={CROQUI} roles={["revisor"]} onOpen={() => {}} />,
+      <JourneySwitch
+        route={CROQUI}
+        journeys={["croqui", "medicao"]}
+        roles={["revisor"]}
+        onOpen={() => {}}
+      />,
     );
 
     expect(html).not.toContain("Plataforma");
@@ -148,21 +202,46 @@ describe("seletor de jornadas", () => {
   });
 
   /**
-   * Falha em `/v1/me` deixa os papéis vazios (fail-closed): a jornada some do seletor e
-   * nenhum erro é jogado na cara de quem entrou para revisar um croqui.
+   * Falha em `/v1/me` deixa papéis E jornadas vazios (fail-closed): nenhuma aba de
+   * produto aparece, e o aviso escrito ocupa o lugar do seletor — texto, não silêncio,
+   * porque a tela não pode mudar sem explicação.
    */
-  it("sem resposta de papéis, o seletor é o de antes desta feature", () => {
+  it("lista vazia: nenhuma aba de jornada e o aviso escrito com role=alert", () => {
     const html = renderToStaticMarkup(
-      <JourneySwitch route={CROQUI} roles={[]} onOpen={() => {}} />,
+      <JourneySwitch route={CROQUI} journeys={[]} roles={[]} onOpen={() => {}} />,
     );
 
+    expect(html).not.toContain(">Croqui<");
+    expect(html).not.toContain(">Medição<");
+    expect(html).not.toContain(">Orçamento<");
     expect(html).not.toContain("Plataforma");
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("não tem nenhuma jornada liberada");
+  });
+
+  /**
+   * Lista vazia não apaga a Plataforma: ela é governada por papel, não pela lista, e
+   * continua sendo o lugar onde a disponibilidade das outras jornadas é administrada.
+   */
+  it("lista vazia com papel de operador: aviso e Plataforma convivem", () => {
+    const html = renderToStaticMarkup(
+      <JourneySwitch
+        route={CROQUI}
+        journeys={[]}
+        roles={[PLATFORM_OPERATOR_ROLE]}
+        onOpen={() => {}}
+      />,
+    );
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain(">Plataforma<");
   });
 
   it("a jornada aberta é declarada em aria-current, não só pintada", () => {
     const html = renderToStaticMarkup(
       <JourneySwitch
         route={{ kind: "plataforma" }}
+        journeys={TODAS_JORNADAS}
         roles={[PLATFORM_OPERATOR_ROLE]}
         onOpen={() => {}}
       />,

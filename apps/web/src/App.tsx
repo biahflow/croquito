@@ -12,7 +12,7 @@ import {
 import { CroquiApp } from "./CroquiApp";
 import { MedicaoApp } from "./medicao/MedicaoApp";
 import { OrcamentoApp } from "./orcamento/OrcamentoApp";
-import { fetchMe, PLATFORM_OPERATOR_ROLE } from "./plataforma/api";
+import { fetchMe, PLATFORM_OPERATOR_ROLE, type Journey } from "./plataforma/api";
 import { PlatformApp } from "./plataforma/PlatformApp";
 import { entryRedirect, readRoute, routeSearch, type Route } from "./route";
 import logoDark from "./assets/croquito-logo-dark.svg";
@@ -21,6 +21,22 @@ const CROQUI_ROOT: Route = { kind: "croqui", jobId: "" };
 const MEDICAO_ROOT: Route = { kind: "medicao", roundId: "" };
 const ORCAMENTO_ROOT: Route = { kind: "orcamento", roundId: null };
 const PLATAFORMA: Route = { kind: "plataforma" };
+
+/**
+ * Rota raiz de cada jornada de produto (F-034). Usada pela aterrissagem padrão para
+ * escolher a primeira jornada da lista que `/v1/me` devolveu; a Plataforma não entra
+ * aqui porque não é jornada — é governada por papel, não pela lista.
+ */
+function journeyRoot(journey: Journey): Route {
+  switch (journey) {
+    case "croqui":
+      return CROQUI_ROOT;
+    case "medicao":
+      return MEDICAO_ROOT;
+    case "orcamento":
+      return ORCAMENTO_ROOT;
+  }
+}
 
 function currentRoute(): Route {
   return typeof window === "undefined"
@@ -95,60 +111,94 @@ function applyEntryRedirect(hasSession: boolean): void {
 }
 
 /**
+ * Aviso da lista vazia (F-034, decisão de 2026-08-22): nenhuma jornada liberada não pode
+ * ser uma tela que muda sem explicação, então o seletor troca os botões por um aviso
+ * escrito — texto, nunca só a ausência silenciosa das abas. Reusa `app-alert` com
+ * `role="alert"`, o mesmo padrão do `sessionNotice` da casca.
+ */
+const SEM_JORNADA_LIBERADA =
+  "Esta conta não tem nenhuma jornada liberada. Peça acesso a quem administra o seu " +
+  "tenant.";
+
+/**
  * Alternância entre as jornadas abertas para quem está na sessão.
  *
- * A jornada de plataforma é a única condicional, e a condição é o PAPEL: sem
+ * Croqui, Medição e Orçamento são condicionados pela lista `journeys` de `GET /v1/me`
+ * (F-034, decisão de 2026-08-22): ela já resolveu ambiente, tenant e papel no servidor, e
+ * o seletor só renderiza o botão da jornada presente nela — **ausente, nunca
+ * desabilitado**, o mesmo mecanismo que já valia só para a Plataforma. Lista vazia troca
+ * as três abas pelo aviso escrito, para que a tela nunca mude sem explicação.
+ *
+ * A Plataforma continua fora dessa lista e condicionada só pelo PAPEL: sem
  * `platform_operator` o botão **não é renderizado** — nem desabilitado, nem oculto por
- * CSS. Botão desabilitado anunciaria a existência de uma área que aquela conta não
- * administra, e a decisão de mostrar sai do que a API respondeu em `/v1/me`, nunca de
- * token decodificado no navegador. Esconder é ergonomia; quem autoriza continua sendo o
- * backend, que recusa cada rota de plataforma com `403` sem o papel.
+ * CSS. Ela não é uma jornada, é onde a disponibilidade das outras é administrada, e por
+ * isso a pergunta que a autoriza continua sendo o papel do JWT, nunca a lista.
  *
  * Componente exportado porque é aqui que essa regra é testável: o render estático da
  * casca inteira exige sessão, e a regra não depende de sessão nenhuma para ser conferida.
  */
 export function JourneySwitch({
   route,
+  journeys,
   roles,
   onOpen,
 }: {
   route: Route;
+  /**
+   * `null` enquanto `/v1/me` não respondeu; a lista (possivelmente vazia) depois. A
+   * distinção existe porque "ainda não sei" e "sei que não há nenhuma" são estados
+   * diferentes: tratar os dois como lista vazia faria TODA sessão — inclusive a de quem
+   * tem as três jornadas — exibir "nenhuma jornada liberada" durante a ida e volta da
+   * chamada. Aviso falso é pior que ausência silenciosa.
+   */
+  journeys: readonly Journey[] | null;
   roles: readonly string[];
   onOpen: (next: Route) => void;
 }) {
+  const disponiveis = journeys ?? [];
   return (
     <nav className="journey-switch" aria-label="Jornadas">
-      <button
-        className="topbar-link"
-        type="button"
-        aria-current={route.kind === "croqui" ? "page" : undefined}
-        onClick={() => onOpen(CROQUI_ROOT)}
-      >
-        Croqui
-      </button>
-      <button
-        className="topbar-link"
-        type="button"
-        aria-current={route.kind === "medicao" ? "page" : undefined}
-        onClick={() => onOpen(MEDICAO_ROOT)}
-      >
-        Medição
-      </button>
-      {/* Orçamento é jornada, não modo da medição (Design Approval Package da F-020): foi
-          exatamente a ambiguidade "medição × orçamento" que originou a feature, e
-          resolvê-la com mais um controle dentro da tela ambígua a manteria. Ele é
-          incondicional como Croqui e Medição — QUAL papel autoriza esta jornada é
-          decisão humana ainda aberta, e esconder o botão por um papel que ninguém
-          escolheu seria tomá-la aqui. Quem autoriza é o backend, que recusa cada rota
-          com `403`, e a jornada mostra esse motivo por extenso. */}
-      <button
-        className="topbar-link"
-        type="button"
-        aria-current={route.kind === "orcamento" ? "page" : undefined}
-        onClick={() => onOpen(ORCAMENTO_ROOT)}
-      >
-        Orçamento
-      </button>
+      {disponiveis.includes("croqui") ? (
+        <button
+          className="topbar-link"
+          type="button"
+          aria-current={route.kind === "croqui" ? "page" : undefined}
+          onClick={() => onOpen(CROQUI_ROOT)}
+        >
+          Croqui
+        </button>
+      ) : null}
+      {disponiveis.includes("medicao") ? (
+        <button
+          className="topbar-link"
+          type="button"
+          aria-current={route.kind === "medicao" ? "page" : undefined}
+          onClick={() => onOpen(MEDICAO_ROOT)}
+        >
+          Medição
+        </button>
+      ) : null}
+      {/* Orçamento é jornada, não modo da medição (Design Approval Package da F-020), e
+          seguiu incondicional enquanto "qual papel autoriza" era decisão humana aberta.
+          F-034 (2026-08-22) fechou essa pergunta: a lista `journeys` de `/v1/me` já
+          resolveu ambiente, tenant e papel para as três jornadas de produto, e Orçamento
+          passa a ser condicionado por ela como Croqui e Medição — ausente da lista, o
+          botão não renderiza; presente, aparece exatamente como hoje. */}
+      {disponiveis.includes("orcamento") ? (
+        <button
+          className="topbar-link"
+          type="button"
+          aria-current={route.kind === "orcamento" ? "page" : undefined}
+          onClick={() => onOpen(ORCAMENTO_ROOT)}
+        >
+          Orçamento
+        </button>
+      ) : null}
+      {journeys !== null && journeys.length === 0 ? (
+        <p className="app-alert" role="alert">
+          <span>{SEM_JORNADA_LIBERADA}</span>
+        </p>
+      ) : null}
       {roles.includes(PLATFORM_OPERATOR_ROLE) ? (
         <button
           className="topbar-link"
@@ -180,6 +230,9 @@ export function App() {
   // Papéis do principal, como a API os declara. Começam vazios e assim ficam se a
   // pergunta falhar: sem resposta, nenhuma jornada condicional é oferecida.
   const [roles, setRoles] = useState<readonly string[]>([]);
+  // Jornadas que este principal pode abrir, já resolvidas pelo servidor (F-034).
+  // Começam vazias e assim ficam se a pergunta falhar — fail-closed, como os papéis.
+  const [journeys, setJourneys] = useState<readonly Journey[] | null>(null);
   const rolesRequested = useRef(false);
 
   useEffect(() => {
@@ -225,7 +278,9 @@ export function App() {
    * Falha aqui é silenciosa por decisão (fail-closed): sem resposta não há papel, sem
    * papel não há botão, e a jornada de plataforma segue inalcançável pelo seletor. Erro
    * de leitura de papel não é assunto de quem entrou para revisar um croqui, e a área
-   * continua protegida pelo backend de qualquer forma.
+   * continua protegida pelo backend de qualquer forma. A mesma resposta também traz
+   * `journeys` (F-034): falha aqui zera a lista do mesmo jeito, e nenhuma jornada de
+   * produto é oferecida.
    */
   useEffect(() => {
     if (session === null || rolesRequested.current) {
@@ -236,8 +291,29 @@ export function App() {
       try {
         const me = await fetchMe(session.access_token);
         setRoles(me.roles);
+        setJourneys(me.journeys);
+        // Aterrissagem padrão (F-034, 2026-08-22): a raiz sem parâmetro caía sempre no
+        // Croqui, o que mandaria para uma jornada indisponível quem não a tem. Ela passa
+        // a escolher a primeira jornada da lista que o servidor devolveu — só quando a
+        // rota corrente É essa aterrissagem implícita (Croqui sem `jobId`); um `?job=`
+        // de verdade, ou qualquer outra jornada já aberta na URL, nunca é redirecionado.
+        if (
+          route.kind === "croqui" &&
+          route.jobId === "" &&
+          me.journeys.length > 0 &&
+          !me.journeys.includes("croqui")
+        ) {
+          const next = journeyRoot(me.journeys[0]);
+          setRoute(next);
+          window.history.replaceState(
+            null,
+            "",
+            routeSearch(next) || window.location.pathname,
+          );
+        }
       } catch {
         setRoles([]);
+        setJourneys([]);
       }
     })();
   }, [session]);
@@ -287,8 +363,11 @@ export function App() {
     void clearSession();
     setSession(null);
     setSessionNotice(notice);
-    // Papel é da sessão que caiu: quem entrar depois pergunta de novo.
+    // Papel e jornadas são da sessão que caiu: quem entrar depois pergunta de novo. A
+    // lista volta a `null` — não resolvida —, e não a vazia: vazia afirmaria que a próxima
+    // sessão não tem jornada nenhuma antes de alguém ter perguntado.
     setRoles([]);
+    setJourneys(null);
     rolesRequested.current = false;
   }, []);
 
@@ -508,7 +587,12 @@ export function App() {
               há nenhuma. O estado ativo é escrito em `aria-current`, não só pintado.
               Trocar de jornada fecha a que estava aberta — a URL passa a declarar a
               jornada nova, e nada fica aberto por baixo do que se vê. */}
-          <JourneySwitch route={route} roles={roles} onOpen={openJourney} />
+          <JourneySwitch
+            route={route}
+            journeys={journeys}
+            roles={roles}
+            onOpen={openJourney}
+          />
           <span className="identity-pill">
             Sessão: {session.profile.preferred_username ?? session.profile.sub}
           </span>
