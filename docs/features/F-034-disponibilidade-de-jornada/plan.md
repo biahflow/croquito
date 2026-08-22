@@ -44,10 +44,24 @@ tasks:
     depends_on: [T1]
     validation: npm --workspace @croquito/web run test, run check
     relative_effort: S
+  - id: T3
+    role: builder
+    goal: administrar o entitlement por tenant e jornada na tela de Plataforma
+    scope: rotas de conceder e revogar sob `/v1/platform/`, listagem por tenant e jornada,
+      e a seção nova em `apps/web/src/plataforma/`, correspondendo à revisão 1 aprovada do
+      Design Approval Package.
+    out_of_scope: mudar o estado de jornada pela tela (é configuração de ambiente, e o
+      pacote aprovado diz isso por escrito); o bloco de histórico, desenhado como reservado
+      e que é a F-017; qualquer alteração na resolução entregue por T1.
+    depends_on: [T1]
+    validation: make check, make test, npm --workspace @croquito/web run test
+    relative_effort: M
 
-parallel_groups: nenhum — T2 consome o contrato que T1 publica.
-critical_path: T1 → T2.
+parallel_groups: T2 e T3 podem correr juntas depois de T1 — tocam arquivos diferentes
+  (`App.tsx` e casca contra `plataforma/` e rotas de plataforma). Sem PARALLELISM_RISK.
+critical_path: T1 → T3 (a maior das duas dependentes).
 integration_strategy: commits separados por task na `main`, com revisão linha a linha entre
   eles; nenhuma task encerra com portão vermelho.
-human_gates: fatia 2 permanece `BLOCKED` pelo Design Approval Package. A decisão do estado
+human_gates: nenhum aberto. O Design Approval Package da fatia 2 foi aprovado por ato
+  humano em 2026-08-22 (revisão 1), e T3 deve corresponder a essa revisão. A decisão do estado
   padrão está registrada em assumptions e pode ser revertida sem custo de dado.
