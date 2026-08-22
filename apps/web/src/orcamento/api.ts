@@ -42,6 +42,7 @@ import {
   codeDecisionBody,
   createEstimateBody,
   installCatalogBody,
+  regimeBody,
   takeoffDecisionBody,
   targetBody,
   versionBody,
@@ -117,6 +118,44 @@ export type EstimateTargetState = {
   consumed?: string;
   remaining?: string;
   over?: boolean;
+};
+
+/**
+ * Regime de preço da rodada (ADR-0045). Um valor só, e é o único DECLARÁVEL: "demanda sob
+ * contrato" é a praça orçada dentro de contrato guarda-chuva já licitado.
+ *
+ * Não existe o valor "pré-licitação" porque ele não é um valor: é a ausência do regime, e
+ * a API a exprime omitindo o bloco inteiro. O `pre_bid` que a fronteira aceita no corpo
+ * existe só para poder ser recusado com código estável (`ESTIMATE_REGIME_IRREVERSIBLE`), e
+ * esta tela nunca o manda — o regime é mão única, e oferecer a volta seria oferecer o que
+ * o servidor recusa.
+ */
+export type PricingRegime = "contracted_demand";
+
+/**
+ * Bloco `{regime}` que o servidor DERIVA a cada leitura, no molde do teto (ADR-0045).
+ *
+ * `allowed_cascade_origins` vem do servidor porque a regra é do servidor: a tela declara o
+ * que a instalação aceitaria em vez de guardar a própria cópia da lista e descobrir a
+ * divergência numa recusa.
+ *
+ * `amendment_candidates` é `codes.rejected` LIDO SOB O REGIME — o mesmo número, do mesmo
+ * conjunto, no mesmo instante. O que muda é o significado: item cuja confirmação de código
+ * foi rejeitada é candidato a aditivo, e o sinal vem do julgamento de quem revisou, nunca
+ * de uma conferência contra um contrato que o orçamento não modela.
+ */
+export type EstimateRegime = {
+  value: PricingRegime;
+  allowed_cascade_origins: PriceOrigin[];
+  amendment_candidates: number;
+};
+
+/**
+ * A chave é opcional porque a ausência é significado, não omissão: rodada de pré-licitação
+ * não traz `regime` nenhum, e é ela a rodada de sempre — cascata livre e tela de hoje.
+ */
+export type EstimateRegimeState = {
+  regime?: EstimateRegime;
 };
 
 /**
@@ -246,28 +285,29 @@ export type EstimateStateEstimate = {
   workbook_sha256: string | null;
 };
 
-export type EstimateState = EstimateTargetState & {
-  round_id: string;
-  version: number;
-  status: string;
-  reviewer_role: string;
-  worksite_key: string;
-  worksite_name: string;
-  reference_label: string;
-  address: string | null;
-  revision_id: string | null;
-  revision_version: number | null;
-  /** A cascata na ordem instalada; vazia é a rodada recém-aberta. */
-  cascade: CascadeEntry[];
-  artifacts: Record<string, string>;
-  plate: EstimateStatePlate;
-  extraction: EstimateStateExtraction;
-  takeoff: EstimateStateTakeoff;
-  codes: EstimateStateCodes;
-  estimate: EstimateStateEstimate;
-  created_at: string;
-  updated_at: string;
-};
+export type EstimateState = EstimateTargetState &
+  EstimateRegimeState & {
+    round_id: string;
+    version: number;
+    status: string;
+    reviewer_role: string;
+    worksite_key: string;
+    worksite_name: string;
+    reference_label: string;
+    address: string | null;
+    revision_id: string | null;
+    revision_version: number | null;
+    /** A cascata na ordem instalada; vazia é a rodada recém-aberta. */
+    cascade: CascadeEntry[];
+    artifacts: Record<string, string>;
+    plate: EstimateStatePlate;
+    extraction: EstimateStateExtraction;
+    takeoff: EstimateStateTakeoff;
+    codes: EstimateStateCodes;
+    estimate: EstimateStateEstimate;
+    created_at: string;
+    updated_at: string;
+  };
 
 /**
  * Metadados da prancha. `image_url` é URL assinada de curta duração da página promovida:
@@ -639,6 +679,38 @@ export function postTarget(
     roundPath(roundId, "/target"),
     accessToken,
     body,
+  );
+}
+
+/**
+ * Resposta do `POST .../regime`: a rodada com a versão nova e o bloco do regime já
+ * derivado, do mesmo jeito que a leitura da rodada o traz.
+ */
+export type EstimateRegimeResponse = EstimateRegimeState & {
+  round_id: string;
+  version: number;
+};
+
+/**
+ * Declara que a rodada corre sob contrato licitado (ADR-0045). Um ato, uma direção: o
+ * corpo não tem parâmetro de regime porque só existe um valor declarável, e o `pre_bid`
+ * que a fronteira aceita para poder recusá-lo (`ESTIMATE_REGIME_IRREVERSIBLE`) não sai
+ * daqui. Não existe contraparte de retração — o regime é mão única, e desfazer um engano é
+ * abrir outra rodada.
+ *
+ * Recusa possível que a tela não antecipa: cascata com fonte fora da tabela contratual
+ * devolve `409 ESTIMATE_REGIME_CASCADE_DIRTY` sem gravar nada. Quem decide isso é o
+ * servidor, contra a cascata que ele tem — não a cópia que esta tela leu.
+ */
+export function postRegime(
+  accessToken: string,
+  roundId: string,
+  baseVersion: number,
+): Promise<EstimateRegimeResponse> {
+  return post<EstimateRegimeResponse>(
+    roundPath(roundId, "/regime"),
+    accessToken,
+    regimeBody(baseVersion),
   );
 }
 

@@ -18,6 +18,7 @@ import {
   postBuildEstimate,
   postCodeDecision,
   postSuggestionsRecompute,
+  postRegime,
   postTakeoffDecision,
   postTarget,
   removeCascadeSource,
@@ -34,6 +35,7 @@ import {
   type EstimateSummary,
   type OverlayResponse,
   type PriceOrigin,
+  type PricingRegime,
   type SuggestionsResponse,
   type TakeoffItem,
   type TakeoffResponse,
@@ -60,12 +62,16 @@ import {
 import {
   assignmentStatusLabel,
   AVISO_BDI,
+  AVISO_CANDIDATO_ADITIVO,
   AVISO_CASCATA,
+  AVISO_CASCATA_SOB_CONTRATO,
   AVISO_CASCATA_TRAVADA,
   AVISO_CONSUMO_COM_BDI,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
   AVISO_ORCAMENTO,
+  AVISO_ORCAMENTO_SOB_CONTRATO,
   AVISO_QUANTIDADE_AMBIGUA,
+  AVISO_REGIME_MAO_UNICA,
   AVISO_SEM_PRECO,
   AVISO_TETO_ABERTURA,
   AVISO_TETO_EDICAO,
@@ -75,16 +81,24 @@ import {
   CONSEQUENCIAS_DO_ESTOURO,
   DESCRICAO_CALCULO_SHORTLIST,
   DESCRICAO_MONTAGEM,
+  DESCRICAO_REGIME,
   DICA_BDI,
+  DICA_CANDIDATO_ADITIVO,
   DICA_QUANTIDADE,
+  DICA_REGIME,
   DICA_TETO,
   DICA_TETO_DEMANDA,
   extractionFailureMessage,
   extractionStatusLabel,
   itemStatusLabel,
   MENSAGEM_ORCAMENTO_MUDOU,
+  origensAceitasNaCascata,
+  PERGUNTA_REGIME,
   priceOriginSeloClass,
   priceSourceLabel,
+  REGIME_OPCAO_PRE_LICITACAO,
+  REGIME_OPCAO_SOB_CONTRATO,
+  SELO_REGIME,
   stageLabel,
   tetoClasse,
   tetoEtiqueta,
@@ -156,6 +170,109 @@ async function leituraObservacional<T>(
   } catch {
     return null;
   }
+}
+
+/**
+ * Selo do regime da rodada (F-033, revisão 1 do Design Approval Package aprovada em
+ * 2026-08-22). É o ÚNICO valor visual novo do pacote, e o que ele acrescenta é FORMA, não
+ * cor: um selo de contorno, distinto dos selos preenchidos que indicam origem de preço,
+ * porque regime da rodada e origem de uma linha são coisas diferentes e não podem ler
+ * igual.
+ *
+ * Ele aparece em DOIS lugares por decisão do pacote: no cabeçalho, porque o regime vale
+ * para a rodada inteira; e no painel da Cascata, porque é ali que a regra age e ali que a
+ * recusa acontece — um selo só no topo faria a recusa parecer arbitrária a quem está na
+ * aba. Daí as duas vestes: `escuro` sobre a topbar, `claro` sobre o painel.
+ *
+ * Rodada sem regime não tem selo, e não é este componente que decide isso: ausência não é
+ * um valor, é a falta dele, e quem não a lê não renderiza nada.
+ */
+export function SeloRegime({
+  variante = "escuro",
+}: {
+  variante?: "escuro" | "claro";
+}) {
+  return (
+    <span
+      className={
+        variante === "claro" ? "selo-regime selo-regime-claro" : "selo-regime"
+      }
+    >
+      {SELO_REGIME}
+    </span>
+  );
+}
+
+/**
+ * Declarar o regime: ato próprio, com seletor e botão, no molde do `PainelTetoDaVerba` da
+ * F-027 — não caixa de marcar escondida no formulário de abertura (decisão 4 do pacote
+ * aprovado).
+ *
+ * O seletor tem duas opções e mesmo assim não oferece a volta: "Pré-licitação" é onde a
+ * rodada JÁ está, e escolhê-la não é um ato (o botão continua desligado). O regime é mão
+ * única — o servidor recusa `pre_bid` com `ESTIMATE_REGIME_IRREVERSIBLE` —, e oferecer o
+ * caminho de volta seria oferecer o que não existe.
+ *
+ * Por isso o painel só existe na rodada SEM regime: declarada a rodada, não sobra ato, e
+ * um seletor desabilitado seria a mesma promessa vazia. Quem conta o regime dali em diante
+ * é o selo, nos dois lugares em que ele aparece.
+ */
+export function PainelRegimeDaRodada({
+  valor,
+  versao,
+  declarando,
+  onValor,
+  onDeclarar,
+}: {
+  valor: "" | PricingRegime;
+  versao: number | null;
+  declarando: boolean;
+  onValor: (value: "" | PricingRegime) => void;
+  onDeclarar: () => void;
+}) {
+  return (
+    <section className="painel" aria-label="Regime da rodada">
+      <div className="painel-cabecalho">
+        <h2>{PERGUNTA_REGIME}</h2>
+      </div>
+      <form
+        className="formulario"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onDeclarar();
+        }}
+      >
+        <p className="dica">{DESCRICAO_REGIME}</p>
+        <label className="campo">
+          Regime
+          <select
+            value={valor}
+            onChange={(event) =>
+              onValor(event.target.value === "" ? "" : "contracted_demand")
+            }
+            disabled={declarando}
+          >
+            <option value="">{REGIME_OPCAO_PRE_LICITACAO}</option>
+            <option value="contracted_demand">{REGIME_OPCAO_SOB_CONTRATO}</option>
+          </select>
+        </label>
+        <p className="dica">{AVISO_REGIME_MAO_UNICA}</p>
+        <div className="acoes-linha">
+          <button
+            type="submit"
+            className="botao-secundario"
+            disabled={declarando || valor === ""}
+          >
+            {declarando ? "Declarando…" : "Declarar"}
+          </button>
+        </div>
+        <p className="dica">{DICA_REGIME}</p>
+        {versao === null ? null : (
+          <p className="digest">rodada versão {versao} · gravado sobre esta versão</p>
+        )}
+      </form>
+    </section>
+  );
 }
 
 /**
@@ -649,6 +766,22 @@ export function LinhaTetoDaRodada({
   );
 }
 
+/**
+ * Veste do selo da decisão de código. Ela é REDUNDÂNCIA do texto que vai dentro do selo —
+ * "código confirmado", "sem código na cascata", "candidato a aditivo" —, e nenhuma leitura
+ * depende de distinguir a cor.
+ *
+ * A pastilha âmbar é a mesma do `.blocked` da casca, que o pacote de design cita como
+ * procedência do sinal de candidato a aditivo. Fora do regime ela não aparece: rejeição de
+ * pré-licitação continua sendo rejeição, e nada mais.
+ */
+function seloDaDecisao(status: string, sobContrato: boolean): string {
+  if (status === "rejected") {
+    return sobContrato ? "selo-aditivo" : "selo-neutro";
+  }
+  return status === "confirmed" ? "selo-ok" : "selo-neutro";
+}
+
 /** Um item confirmado sem decisão de código ainda não tem preço: rótulo para a lista. */
 function rotuloDoItem(label: string, quantity: string | null, unit: string): string {
   return `${label} · ${formatQuantityText(quantity, unitLabel(unit))}`;
@@ -752,6 +885,10 @@ export function OrcamentoApp({
   // Teto da verba da rodada (ADR-0040): parâmetro da rodada, editado na mesma etapa.
   const [tetoInput, setTetoInput] = useState("");
   const [tetoLabelInput, setTetoLabelInput] = useState("");
+
+  // Regime da rodada (ADR-0045). `""` é onde toda rodada começa — a pré-licitação, que é
+  // a ausência do regime e não um valor gravado. O seletor não nasce pré-marcado no ato.
+  const [regimeInput, setRegimeInput] = useState<"" | PricingRegime>("");
 
   useEffect(() => {
     if (toast === null) {
@@ -1328,6 +1465,43 @@ export function OrcamentoApp({
     }
   };
 
+  /**
+   * Declara que a rodada corre sob contrato licitado (ADR-0045). Mutação como as outras:
+   * cita `base_version`, manda `Idempotency-Key` e não reescreve cascata nenhuma.
+   *
+   * A tela não antecipa a recusa da cascata suja. Quem conhece a cascata gravada é o
+   * servidor, e `ESTIMATE_REGIME_CASCADE_DIRTY` chega por extenso, dizendo que nada foi
+   * gravado e que remover a fonte é o caminho — o estado da rodada não muda na tela porque
+   * ele não mudou no servidor.
+   */
+  const declararRegime = async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null) {
+      return;
+    }
+    // Pré-licitação não é ato: ela é onde a rodada já está, e mandá-la ao servidor só
+    // colheria `ESTIMATE_REGIME_IRREVERSIBLE` para dizer o que a tela já sabe.
+    if (regimeInput === "") {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const response = await postRegime(token, orcamento, version);
+      aplicarVersao(response.version);
+      setRegimeInput("");
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast(
+        "Regime declarado: a rodada corre sob contrato licitado, e a cascata passa a aceitar só a tabela do contrato.",
+      );
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const jornada = useMemo(() => derivarEtapas(state), [state]);
   const etapaVisivel: EtapaId | "resumo" = openStep ?? "resumo";
 
@@ -1340,6 +1514,15 @@ export function OrcamentoApp({
 
   const cascade = state?.cascade ?? [];
   const cascataTravada = state?.codes.assignments_present ?? false;
+  // O regime lido da rodada, e nada além dele: ausência do bloco é a rodada de sempre —
+  // pré-licitação, cascata livre, tela de hoje —, e `null` aqui não é um estado a
+  // comunicar. A lista de origens aceitas vem junto porque a regra é do servidor.
+  const regime = state?.regime ?? null;
+  const sobContrato = regime !== null;
+  const regimeAceita =
+    regime === null
+      ? null
+      : origensAceitasNaCascata(regime.allowed_cascade_origins);
   const itens = takeoff?.packet.items ?? [];
   const itemSelecionado = itens.find((item) => item.id === selectedItemId) ?? null;
   const pendingItems = codes?.pending_items ?? [];
@@ -1648,7 +1831,14 @@ export function OrcamentoApp({
     <div className="jornada-orcamento">
       <header className="topbar">
         <div>
-          <span className="eyebrow">ORÇAMENTO-BASE · PRÉ-LICITAÇÃO</span>
+          {/* A sobrescrita declara o MOMENTO da rodada, e o momento mudou: sob contrato
+              licitado o preço já está fixado, e a cascata deixou de ser livre. Rodada sem
+              regime lê exatamente o que lia antes. */}
+          <span className="eyebrow">
+            {sobContrato
+              ? "ORÇAMENTO-BASE · DEMANDA SOB CONTRATO"
+              : "ORÇAMENTO-BASE · PRÉ-LICITAÇÃO"}
+          </span>
           <h1>{state === null ? "Orçamento não carregado" : state.worksite_name}</h1>
           {state === null ? (
             <p className="topbar-meta">
@@ -1673,8 +1863,13 @@ export function OrcamentoApp({
             </>
           )}
         </div>
+        {/* Primeiro dos dois lugares do selo (decisão 1 do pacote aprovado): o regime vale
+            para a rodada inteira, e é aqui que ele é lido antes de qualquer etapa. */}
+        {sobContrato ? <SeloRegime /> : null}
         {/* Aviso permanente: ele não fecha, não recolhe e não expira. */}
-        <p className="aviso-fixo">{AVISO_ORCAMENTO}</p>
+        <p className="aviso-fixo">
+          {sobContrato ? AVISO_ORCAMENTO_SOB_CONTRATO : AVISO_ORCAMENTO}
+        </p>
         <div className="topbar-acoes">
           <button
             type="button"
@@ -1781,111 +1976,140 @@ export function OrcamentoApp({
             </ul>
           </section>
         ) : etapaVisivel === "cascata" ? (
-          <section className="painel" aria-label="Cascata de fontes de preço">
-            <div className="painel-cabecalho">
-              <h2>Cascata de fontes de preço</h2>
-            </div>
-            <p className="dica">{AVISO_CASCATA}</p>
-            {cascataTravada ? (
-              <p className="aviso-fixo aviso-inline">{AVISO_CASCATA_TRAVADA}</p>
-            ) : null}
-            {cascade.length === 0 ? (
-              <p className="dica">
-                Nenhuma fonte instalada. Um orçamento sem cascata não precifica nada —
-                comece pelo catálogo oficial da prefeitura.
-              </p>
-            ) : (
-              <ol className="cascata">
-                {cascade.map((entry) => (
-                  <li key={entry.source_sha256}>
-                    <span className="cascata-ordem" aria-hidden="true">
-                      {entry.position}
-                    </span>
-                    <div className="cascata-corpo">
-                      <h4>{entry.source_label}</h4>
-                      <div className="codigo-selos">
-                        <SeloFonte
-                          origin={entry.origin}
-                          referenceMonth={entry.reference_month}
-                          position={entry.position}
-                        />
-                        {entry.summary.entries === undefined ? null : (
-                          <span className="selo selo-neutro">
-                            {entry.summary.entries} itens
-                          </span>
-                        )}
-                      </div>
-                      <p className="digest" title={entry.source_sha256}>
-                        sha256 {shortDigest(entry.source_sha256)}
-                      </p>
-                    </div>
-                    <div className="cascata-controles">
-                      <button
-                        type="button"
-                        onClick={() => void moverFonte(entry, "up")}
-                        disabled={
-                          submitting ||
-                          cascataTravada ||
-                          !canMove(cascade, entry.source_sha256, "up")
-                        }
-                        aria-label={`Subir ${entry.source_label} na cascata`}
-                      >
-                        Subir
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void moverFonte(entry, "down")}
-                        disabled={
-                          submitting ||
-                          cascataTravada ||
-                          !canMove(cascade, entry.source_sha256, "down")
-                        }
-                        aria-label={`Descer ${entry.source_label} na cascata`}
-                      >
-                        Descer
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void removerFonte(entry)}
-                        disabled={submitting || cascataTravada}
-                        aria-label={`Remover ${entry.source_label} da cascata`}
-                      >
-                        Remover
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
-            <form
-              className="formulario"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void instalarCatalogo();
-              }}
-            >
-              <label className="campo">
-                Catálogo de preços (JSON)
-                <span className="campo-dica">
-                  Entra no FIM da cascata. Uma origem só entra uma vez.
-                </span>
-                <input
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={(event) => setCatalogFile(event.target.files?.[0] ?? null)}
-                />
-              </label>
-              <div className="acoes-linha">
-                <button
-                  type="submit"
-                  className="botao-primario"
-                  disabled={submitting || catalogFile === null}
-                >
-                  {submitting ? "Instalando…" : "Instalar catálogo"}
-                </button>
+          <div className="coluna-empilhada">
+            <section className="painel" aria-label="Cascata de fontes de preço">
+              <div className="painel-cabecalho">
+                <h2>Cascata de fontes de preço</h2>
               </div>
-            </form>
-          </section>
+              <p className="dica">
+                {sobContrato ? AVISO_CASCATA_SOB_CONTRATO : AVISO_CASCATA}
+              </p>
+              {/* Segundo lugar do selo (decisão 1 do pacote aprovado): é aqui que a regra
+                  age e aqui que a recusa acontece. Sem ele, a recusa da instalação pareceria
+                  arbitrária a quem está na aba. */}
+              {sobContrato ? (
+                <div className="codigo-selos">
+                  <SeloRegime variante="claro" />
+                </div>
+              ) : null}
+              {cascataTravada ? (
+                <p className="aviso-fixo aviso-inline">{AVISO_CASCATA_TRAVADA}</p>
+              ) : null}
+              {cascade.length === 0 ? (
+                <p className="dica">
+                  Nenhuma fonte instalada. Um orçamento sem cascata não precifica nada —
+                  comece pelo catálogo oficial da prefeitura.
+                </p>
+              ) : (
+                <ol className="cascata">
+                  {cascade.map((entry) => (
+                    <li key={entry.source_sha256}>
+                      <span className="cascata-ordem" aria-hidden="true">
+                        {entry.position}
+                      </span>
+                      <div className="cascata-corpo">
+                        <h4>{entry.source_label}</h4>
+                        <div className="codigo-selos">
+                          <SeloFonte
+                            origin={entry.origin}
+                            referenceMonth={entry.reference_month}
+                            position={entry.position}
+                          />
+                          {entry.summary.entries === undefined ? null : (
+                            <span className="selo selo-neutro">
+                              {entry.summary.entries} itens
+                            </span>
+                          )}
+                        </div>
+                        <p className="digest" title={entry.source_sha256}>
+                          sha256 {shortDigest(entry.source_sha256)}
+                        </p>
+                      </div>
+                      <div className="cascata-controles">
+                        <button
+                          type="button"
+                          onClick={() => void moverFonte(entry, "up")}
+                          disabled={
+                            submitting ||
+                            cascataTravada ||
+                            !canMove(cascade, entry.source_sha256, "up")
+                          }
+                          aria-label={`Subir ${entry.source_label} na cascata`}
+                        >
+                          Subir
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void moverFonte(entry, "down")}
+                          disabled={
+                            submitting ||
+                            cascataTravada ||
+                            !canMove(cascade, entry.source_sha256, "down")
+                          }
+                          aria-label={`Descer ${entry.source_label} na cascata`}
+                        >
+                          Descer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void removerFonte(entry)}
+                          disabled={submitting || cascataTravada}
+                          aria-label={`Remover ${entry.source_label} da cascata`}
+                        >
+                          Remover
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              <form
+                className="formulario"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void instalarCatalogo();
+                }}
+              >
+                <label className="campo">
+                  Catálogo de preços (JSON)
+                  <span className="campo-dica">
+                    Entra no FIM da cascata. Uma origem só entra uma vez.
+                  </span>
+                  {/* Quais origens a instalação aceitaria, LIDAS do servidor. A tela não
+                      guarda a própria cópia da regra: se ela guardasse, a divergência só
+                      apareceria numa recusa. */}
+                  {regimeAceita === null ? null : (
+                    <span className="campo-dica">{regimeAceita}</span>
+                  )}
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={(event) => setCatalogFile(event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                <div className="acoes-linha">
+                  <button
+                    type="submit"
+                    className="botao-primario"
+                    disabled={submitting || catalogFile === null}
+                  >
+                    {submitting ? "Instalando…" : "Instalar catálogo"}
+                  </button>
+                </div>
+              </form>
+            </section>
+            {/* Declarar é ato da rodada SEM regime. Declarada, não sobra ato — o regime é
+                mão única, e um painel com seletor desabilitado ofereceria o que não existe. */}
+            {sobContrato ? null : (
+              <PainelRegimeDaRodada
+                valor={regimeInput}
+                versao={version}
+                declarando={submitting}
+                onValor={setRegimeInput}
+                onDeclarar={() => void declararRegime()}
+              />
+            )}
+          </div>
         ) : etapaVisivel === "prancha" ? (
           <section className="painel" aria-label="Prancha e extração">
             <div className="painel-cabecalho">
@@ -2141,6 +2365,13 @@ export function OrcamentoApp({
                 </p>
               ))}
 
+              {/* Sob contrato, a rejeição muda de nome, e a tela diz de onde o nome vem:
+                  do julgamento de quem revisou, nunca de uma conferência contra um
+                  contrato que o orçamento não modela (ADR-0045, decisão 5). */}
+              {sobContrato ? (
+                <p className="dica">{AVISO_CANDIDATO_ADITIVO}</p>
+              ) : null}
+
               <ul className="confirmados-lista">
                 {(codes?.assignments?.assignments ?? []).map((assignment) => {
                   const fonte = entryOfDigest(cascade, assignment.catalog_sha256);
@@ -2150,22 +2381,27 @@ export function OrcamentoApp({
                       {assignment.code ? (
                         <span className="mono">{assignment.code}</span>
                       ) : null}
-                      <p className="topbar-meta">
-                        {assignmentStatusLabel(assignment.status)}
-                      </p>
-                      {fonte === null ? null : (
-                        <div className="codigo-selos">
+                      <div className="codigo-selos">
+                        <span
+                          className={`selo ${seloDaDecisao(assignment.status, sobContrato)}`}
+                        >
+                          {assignmentStatusLabel(assignment.status, sobContrato)}
+                        </span>
+                        {fonte === null ? null : (
                           <SeloFonte
                             origin={fonte.origin}
                             referenceMonth={fonte.reference_month}
                             position={fonte.position}
                           />
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </li>
                   );
                 })}
               </ul>
+              {sobContrato ? (
+                <p className="dica">{DICA_CANDIDATO_ADITIVO}</p>
+              ) : null}
 
               <h3>Itens sem decisão de código</h3>
               <ul className="itens">

@@ -132,6 +132,15 @@ p {
   margin-bottom: 12px;
 }
 
+/* O selo do regime entra como TERCEIRO item do topbar, e um item novo num flex de largura
+   fixa encolhe todos os outros na mesma proporção: sem esta linha o bloco de identidade
+   perde ~100px e o nome da obra quebra em duas, que não é a composição aprovada da F-033.
+   Quem absorve é o aviso permanente, porque ele é parágrafo e reflui — e a regra só vale
+   onde o selo existe, para a rodada sem regime continuar exatamente como hoje. */
+.topbar:has(> .selo-regime) .aviso-fixo {
+  flex-shrink: 6;
+}
+
 .etapas {
   display: flex;
   flex-wrap: wrap;
@@ -462,12 +471,26 @@ p {
   font-size: 0.9rem;
 }
 
+/* `select` entra na mesma regra dos outros controles do formulário: o seletor do regime
+   (F-033) é o primeiro desta jornada, e um controle com veste própria leria como se fosse
+   de outro sistema. */
 .campo input,
+.campo select,
 .campo textarea {
   padding: 8px 10px;
   font: inherit;
   border: 1px solid var(--muted);
   border-radius: 6px;
+}
+
+/* Duas calibragens do `select`, que é o controle novo desta jornada (F-033) e o único a
+   quem elas alcançam. A superfície é declarada porque o `select` nativo não a herda como
+   `input` e `textarea` herdam; e a largura é limitada porque ele tem duas opções curtas —
+   um controle de escolha esticado pelo painel inteiro lê como campo de texto vazio. */
+.campo select {
+  max-width: 22rem;
+  color: var(--ink);
+  background: var(--surface);
 }
 
 .campo-dica {
@@ -580,6 +603,40 @@ p {
 .selo-fonte-ausente {
   border-color: #a02323;
   color: #7a1212;
+}
+
+/* Pastilha do candidato a aditivo (F-033, revisão 1 aprovada). Sem cor nova: é o âmbar da
+   `.blocked` da casca (#825320 sobre #fff0d2), que o pacote de design cita como
+   procedência deste sinal, com a borda do âmbar que a folha já usa. A palavra vai dentro
+   da pastilha — a cor é redundância, e sob o regime a rejeição continua escrita. */
+.selo-aditivo {
+  color: #825320;
+  background: #fff0d2;
+  border-color: #b47512;
+}
+
+/* Selo do REGIME da rodada (F-033) — o único valor visual novo do pacote aprovado, e o
+   que ele traz é forma, não cor: contorno onde os selos de origem são preenchidos, porque
+   regime da rodada e origem de uma linha não podem ler igual. Duas vestes, uma por
+   superfície: `--dark-ink` sobre `--dark-line-strong` na topbar escura, e a variante clara
+   no painel da Cascata. Nenhum token novo entra por aqui. */
+.selo-regime {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  color: var(--dark-ink);
+  background: transparent;
+  border: 1px solid var(--dark-line-strong);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.selo-regime-claro {
+  color: var(--ink-secondary);
+  background: var(--surface-sunken);
+  border-color: var(--line);
 }
 
 /* Cascata de catálogos — a etapa que a medição não tem ---------------------- */

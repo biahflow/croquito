@@ -102,6 +102,31 @@ aqui, e o `Out of Scope` do contrato diz o mesmo.
 - **A forma da recusa no servidor** (código de erro, status), que é do plano.
 - **Os nomes das fontes de preço** e o formato da data-base exibida.
 
+## Divergências apuradas na implementação (2026-08-22)
+
+Registradas aqui para que a revisão 1 não seja lida como fiel ao que foi construído. As três
+caem **dentro** do que a aprovação já excluía — "a copy final" e a composição de estados que
+o pacote não desenhou —, e por isso **não** reabrem o gate. Uma revisão 2 deste pacote só é
+necessária se a composição visual mudar.
+
+1. **A dica da tela 2 promete um ato que o produto recusa.** Ela diz "Trocar de regime é ato
+   próprio, com o orçamento ainda em aberto". O pacote foi aprovado **antes** da decisão de
+   2026-08-22 que fixou o regime como **mão única**: declarado, não volta. O servidor recusa
+   com `ESTIMATE_REGIME_IRREVERSIBLE`, e manter aquela frase na tela seria prometer o que a
+   API nega. A implementação a substituiu e acrescentou um aviso da mão única no painel de
+   declarar — texto autoral, portanto **não aprovado**.
+2. **O cabeçalho real tem uma peça que o mock omitiu.** As telas 1 e 6 desenham identidade +
+   selo + aviso; o cabeçalho de verdade carrega também as ações de sessão ("Trocar de
+   orçamento", "Sessão", "Sair"). Com o selo, são quatro elementos disputando a largura, e o
+   bloco de identidade quebra em mais linhas do que a captura sugere. É fidelidade do mock,
+   não defeito do código — mas quem comparar as duas imagens precisa saber.
+3. **O status da decisão de código mudou de veste também FORA do regime.** Ele era um
+   parágrafo `.topbar-meta` dentro de um painel branco: `rgba(242,244,247,.72)` sobre
+   `#ffffff`, contraste de ~1,05:1 — texto efetivamente **invisível**, defeito preexistente.
+   Como é justamente esse texto que passa a dizer "candidato a aditivo", deixá-lo assim
+   faria o sinal nascer invisível. Virou pastilha. O texto da rodada sem regime não mudou;
+   a veste, sim.
+
 ## Questões em aberto
 
 1. O seletor de regime deve permitir **voltar** para pré-licitação depois de declarado? O

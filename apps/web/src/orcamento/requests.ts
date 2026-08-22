@@ -158,6 +158,20 @@ export function targetBody(
   return { ...versionBody(baseVersion), ...fields };
 }
 
+/**
+ * Corpo do `POST .../regime`: a guarda otimista de sempre e o único regime declarável.
+ *
+ * `pricing_regime` é constante de propósito. A fronteira aceita `pre_bid` no schema para
+ * poder recusá-lo com código estável (`ESTIMATE_REGIME_IRREVERSIBLE`, ADR-0045 + mão única
+ * do plano da F-033); a tela não tem esse ato, então o corpo não tem esse parâmetro. Um
+ * argumento aqui daria à jornada a forma de um ato que ela não oferece.
+ */
+export function regimeBody(
+  baseVersion: number,
+): Record<string, string | number> {
+  return { ...versionBody(baseVersion), pricing_regime: "contracted_demand" };
+}
+
 /** Corpo do `POST .../catalogs`: o JSON do catálogo já subiu pelo presign. */
 export function installCatalogBody(
   uploadId: string,

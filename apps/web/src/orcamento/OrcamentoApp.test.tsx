@@ -8,9 +8,11 @@ import {
   FaixaTetoEstourado,
   LinhaTetoDaRodada,
   OrcamentoApp,
+  PainelRegimeDaRodada,
   PainelSemAcesso,
   PainelTetoDaVerba,
   SeloFonte,
+  SeloRegime,
   SemPrecoNaCascata,
   TelaAuditoriaReprovada,
 } from "./OrcamentoApp";
@@ -500,6 +502,120 @@ describe("BDI por grupo não é renderizado", () => {
       expect(html).not.toContain("BDI por grupo");
       expect(html).not.toContain("reservado");
       expect(html).not.toContain("Reservado");
+    }
+  });
+});
+
+/**
+ * O selo do regime (F-033, revisão 1 aprovada em 2026-08-22): o único valor visual novo do
+ * pacote, e a única peça que a rodada sob contrato acrescenta ao cabeçalho e à aba Cascata.
+ * O que ele diz vai ESCRITO — a forma de contorno é redundância.
+ */
+describe("SeloRegime", () => {
+  it("escreve o regime por extenso, no vocabulário que o ADR-0045 fixou", () => {
+    expect(renderToStaticMarkup(<SeloRegime />)).toContain(
+      "SOB CONTRATO LICITADO",
+    );
+  });
+
+  it("tem uma veste por superfície: a escura do topbar e a clara do painel", () => {
+    const escuro = renderToStaticMarkup(<SeloRegime />);
+    const claro = renderToStaticMarkup(<SeloRegime variante="claro" />);
+
+    expect(escuro).toContain("selo-regime");
+    expect(escuro).not.toContain("selo-regime-claro");
+    expect(claro).toContain("selo-regime-claro");
+    // As duas dizem a mesma coisa: a diferença é de superfície, nunca de conteúdo.
+    expect(claro).toContain("SOB CONTRATO LICITADO");
+  });
+});
+
+/**
+ * Declarar o regime é ato próprio, com seletor e botão (decisão 4 do pacote aprovado) — e
+ * mão única: o painel não oferece a volta para pré-licitação, que o servidor recusa com
+ * `ESTIMATE_REGIME_IRREVERSIBLE`.
+ */
+describe("PainelRegimeDaRodada", () => {
+  function painel(valor: "" | "contracted_demand" = "") {
+    return renderToStaticMarkup(
+      <PainelRegimeDaRodada
+        valor={valor}
+        versao={4}
+        declarando={false}
+        onValor={() => {}}
+        onDeclarar={() => {}}
+      />,
+    );
+  }
+
+  it("pergunta, explica o que a declaração faz e grava sobre a versão lida", () => {
+    const html = painel();
+
+    expect(html).toContain("Esta demanda corre sob contrato licitado?");
+    expect(html).toContain("contrato guarda-chuva já licitado");
+    expect(html).toContain("Declarar");
+    expect(html).toContain("rodada versão 4");
+  });
+
+  /** O que a declaração NÃO faz, dito ANTES do clique — a lacuna que o ADR-0045 nomeia. */
+  it("declara que restringir a origem não confere o contrato", () => {
+    const html = painel();
+
+    expect(html).toContain("Restringir a origem não confere o contrato");
+    expect(html).toContain("não que veio da tabela, data-base e desconto");
+  });
+
+  /** Mão única, escrita antes e não só na recusa. */
+  it("diz que a rodada não volta para pré-licitação", () => {
+    expect(painel()).toContain("mão única");
+    expect(painel()).toContain("abrir outra rodada");
+  });
+
+  /**
+   * "Pré-licitação" é onde a rodada JÁ está, e escolhê-la não é um ato: o botão continua
+   * desligado. É assim que o painel mostra as duas opções sem oferecer a volta.
+   */
+  it("com a pré-licitação escolhida, declarar está desligado", () => {
+    expect(painel()).toContain("disabled");
+  });
+
+  it("escolhida a demanda sob contrato, declarar fica disponível", () => {
+    expect(painel("contracted_demand")).not.toContain("disabled");
+  });
+});
+
+/**
+ * Rodada SEM regime é a tela de hoje, sem nenhuma peça nova (decisão 5 do pacote): ausência
+ * não é um valor, é a falta dele — e nada no primeiro render fala de contrato.
+ */
+describe("rodada sem regime declarado", () => {
+  const sessao = {
+    access_token: "token-de-teste",
+    profile: { sub: "orcamentista-de-teste" },
+  } as unknown as User;
+
+  it("mantém a linha fixa e a sobrescrita da pré-licitação", () => {
+    const html = renderToStaticMarkup(
+      <OrcamentoApp session={sessao} roundId="0197f2a0-0000-7000-8000-000000000009" />,
+    );
+
+    expect(html).toContain("ORÇAMENTO-BASE · PRÉ-LICITAÇÃO");
+    expect(html).toContain(AVISO_ORCAMENTO);
+    expect(html).not.toContain("DEMANDA SOB CONTRATO");
+  });
+
+  it("não tem selo, não tem candidato a aditivo e não fala em contrato licitado", () => {
+    for (const html of [
+      renderToStaticMarkup(<OrcamentoApp session={null} />),
+      renderToStaticMarkup(<OrcamentoApp session={sessao} roundId={null} />),
+      renderToStaticMarkup(
+        <OrcamentoApp session={sessao} roundId="0197f2a0-0000-7000-8000-000000000009" />,
+      ),
+    ]) {
+      expect(html).not.toContain("SOB CONTRATO LICITADO");
+      expect(html).not.toContain("selo-regime");
+      expect(html).not.toContain("candidato a aditivo");
+      expect(html).not.toContain("contrato licitado");
     }
   });
 });

@@ -8,6 +8,7 @@ import {
   codeDecisionBody,
   createEstimateBody,
   installCatalogBody,
+  regimeBody,
   takeoffDecisionBody,
   targetBody,
   tetoAmountError,
@@ -301,5 +302,23 @@ describe("formatação pt-BR sem aritmética", () => {
     for (const valor of ["25.00", "1234.5678", "0.01", "340.50"]) {
       expect(parseDecimalInput(formatDecimalText(valor))).toBe(valor);
     }
+  });
+});
+
+/**
+ * O corpo da declaração do regime (ADR-0045). Ele NÃO tem parâmetro de regime, e isso é a
+ * decisão: só existe um valor declarável, e a volta para pré-licitação — que a fronteira
+ * aceita no schema só para recusá-la — não é ato desta tela.
+ */
+describe("corpo do regime da rodada", () => {
+  it("cita a versão base e declara o único regime gravável", () => {
+    expect(regimeBody(7)).toEqual({
+      base_version: 7,
+      pricing_regime: "contracted_demand",
+    });
+  });
+
+  it("não tem como exprimir a volta para pré-licitação", () => {
+    expect(JSON.stringify(regimeBody(1))).not.toContain("pre_bid");
   });
 });

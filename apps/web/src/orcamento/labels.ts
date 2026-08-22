@@ -31,6 +31,86 @@ export const AVISO_ORCAMENTO =
   "Orçamento-base de pré-licitação; o preço vem da cascata declarada — nenhum preço " +
   "daqui alcança um boletim de medição.";
 
+/* Regime da rodada (ADR-0045, F-033) --------------------------------------- */
+
+/**
+ * O selo do regime, nas duas superfícies em que ele aparece (cabeçalho da rodada e painel
+ * da Cascata). O vocabulário é o que o ADR-0045 fixou: "demanda sob contrato" no domínio,
+ * "Sob contrato licitado" na tela.
+ */
+export const SELO_REGIME = "SOB CONTRATO LICITADO";
+
+/**
+ * A linha fixa da rodada SOB CONTRATO, no lugar da de pré-licitação. O momento mudou, e a
+ * linha que declara o momento muda com ele: aqui o preço já está fixado pelo contrato, e a
+ * cascata deixou de ser livre.
+ */
+export const AVISO_ORCAMENTO_SOB_CONTRATO =
+  "Demanda dentro de contrato já licitado: o preço está fixado pelo contrato, e só a " +
+  "tabela contratual vale. Nenhum preço daqui alcança um boletim sem passar pela medição.";
+
+/** O que o regime faz com a cascata, dito na aba onde a regra age. */
+export const AVISO_CASCATA_SOB_CONTRATO =
+  "Esta rodada corre sob contrato licitado. Instalar fonte de outra origem é recusado " +
+  "aqui, na instalação — não na montagem, quando já não haveria o que corrigir.";
+
+/**
+ * As origens que a instalação aceitaria, escritas ao lado do campo do catálogo.
+ *
+ * A lista vem do SERVIDOR (`regime.allowed_cascade_origins`) e não de uma cópia desta
+ * tela: a regra é de lá, e guardá-la aqui só produziria a divergência que aparece numa
+ * recusa. Lista vazia não vira frase — a tela não afirma uma restrição que não leu.
+ */
+export function origensAceitasNaCascata(origins: readonly string[]): string | null {
+  if (origins.length === 0) {
+    return null;
+  }
+  const nomes = origins.map(priceOriginLabel).join(", ");
+  return (
+    `Sob contrato licitado, a cascata aceita catálogo de ${nomes} — a tabela do ` +
+    "contrato. Catálogo de outra origem é recusado na instalação, e nada é gravado."
+  );
+}
+
+/** O ato de declarar, no molde do teto: um seletor, um botão e o que ele decide. */
+export const PERGUNTA_REGIME = "Esta demanda corre sob contrato licitado?";
+
+export const DESCRICAO_REGIME =
+  "Declare quando a praça for orçada dentro de um contrato guarda-chuva já licitado. A " +
+  "partir daí a cascata só aceita a tabela do contrato.";
+
+/**
+ * O que a declaração NÃO faz, dito antes do clique. Restringir a origem garante que o
+ * preço veio do SCO; não garante que veio da tabela, data-base e desconto DAQUELE
+ * contrato — a lacuna que o ADR-0045 nomeia e deixa aberta.
+ */
+export const DICA_REGIME =
+  "Restringir a origem não confere o contrato: o sistema garante que o preço veio do " +
+  "SCO, não que veio da tabela, data-base e desconto daquele contrato.";
+
+/** Declarar é mão única, e a tela diz isso antes, não na recusa. */
+export const AVISO_REGIME_MAO_UNICA =
+  "Declarar é mão única: a rodada não volta para pré-licitação, e as decisões tomadas " +
+  "sob o regime continuam de pé. Corrigir um engano é abrir outra rodada.";
+
+/** As duas opções do seletor: onde a rodada está, e para onde ela pode ir. */
+export const REGIME_OPCAO_PRE_LICITACAO = "Pré-licitação (padrão)";
+export const REGIME_OPCAO_SOB_CONTRATO = "Demanda sob contrato";
+
+/**
+ * De onde vem o sinal de candidato a aditivo — do julgamento de quem revisou, e não de uma
+ * conferência contra um contrato que o orçamento não modela (ADR-0045, decisão 5).
+ */
+export const AVISO_CANDIDATO_ADITIVO =
+  "Item cuja confirmação de código foi rejeitada, numa rodada sob contrato, é candidato " +
+  "a aditivo: não há código na tabela contratual que o cubra, segundo o julgamento de " +
+  "quem revisou.";
+
+/** O limite do que o produto afirma, escrito ao lado do sinal. */
+export const DICA_CANDIDATO_ADITIVO =
+  "O produto afirma que a orçamentista não achou código na tabela contratual — nunca que " +
+  "o item não existe no contrato. O orçamento não conhece o contrato como entidade.";
+
 /**
  * O `409 REVISION_CONFLICT` dito como o que ele é: o orçamento andou entre a leitura e o
  * ato. Não é falha do que se tentou fazer, e por isso a frase começa pelo orçamento e
@@ -305,8 +385,27 @@ const ASSIGNMENT_STATUS_LABELS: LookupTable = {
   rejected: "sem código na cascata",
 };
 
-export function assignmentStatusLabel(status: string): string {
-  return ASSIGNMENT_STATUS_LABELS[status] ?? status;
+/**
+ * Sob contrato licitado, a rejeição continua sendo a MESMA decisão e ganha outro nome: o
+ * item que ninguém achou na tabela contratual é candidato a aditivo (ADR-0045, decisão 5).
+ * Nada novo é calculado — muda o que a rejeição significa quando a rodada corre sob
+ * contrato, e por isso o rótulo é o ponto de mudança.
+ *
+ * Fora do regime a rejeição segue lendo o que lê hoje: "sem código na cascata" é a frase
+ * de uma rodada de pré-licitação, onde não há contrato de que aditar.
+ */
+const ASSIGNMENT_STATUS_LABELS_SOB_CONTRATO: LookupTable = {
+  rejected: "candidato a aditivo",
+};
+
+export function assignmentStatusLabel(
+  status: string,
+  sobContrato = false,
+): string {
+  const sobRegime = sobContrato
+    ? ASSIGNMENT_STATUS_LABELS_SOB_CONTRATO[status]
+    : undefined;
+  return sobRegime ?? ASSIGNMENT_STATUS_LABELS[status] ?? status;
 }
 
 /**
@@ -355,6 +454,14 @@ const ERROR_MESSAGES: LookupTable = {
     "O orçamento não tem fonte de preço instalada; sem cascata não há o que precificar.",
   ESTIMATE_CASCADE_CONTRACT_FORBIDDEN:
     "Contrato de obra licitada não entra na cascata do orçamento-base: antes da licitação não existe contrato.",
+  // Regime da rodada (ADR-0045): as duas recusas dizem o que aconteceria se a fonte
+  // entrasse, e as duas declaram por extenso que nada foi gravado.
+  ESTIMATE_CASCADE_ORIGIN_FORBIDDEN:
+    "Esta rodada corre sob contrato licitado: a cascata só aceita a tabela do contrato (SCO). Uma fonte de outra origem produziria aqui um preço que a medição recusaria depois, sobre serviço já executado. Nada foi instalado e nada foi alterado.",
+  ESTIMATE_REGIME_CASCADE_DIRTY:
+    "Não é possível declarar esta rodada como demanda sob contrato enquanto a cascata tiver fonte fora da tabela contratual. Remova a fonte e declare de novo — nenhuma fonte é removida automaticamente, e a declaração não foi gravada.",
+  ESTIMATE_REGIME_IRREVERSIBLE:
+    "O regime é mão única: uma rodada declarada sob contrato licitado não volta para pré-licitação, e a ausência de regime já é a pré-licitação. Para orçar sob a outra regra, abra outra rodada.",
   CATALOG_REQUIRED:
     "Um catálogo da cascata não pôde ser lido; sem ele não há código nem preço a consultar.",
   CATALOG_QUERY_EMPTY:

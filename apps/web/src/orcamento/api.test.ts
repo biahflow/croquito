@@ -14,6 +14,7 @@ import {
   listEstimates,
   postBuildEstimate,
   postCodeDecision,
+  postRegime,
   postSuggestionsRecompute,
   postTakeoffDecision,
   postTarget,
@@ -340,6 +341,78 @@ describe("teto da rodada", () => {
     }
 
     expect(chamadas).toHaveLength(0);
+  });
+});
+
+/**
+ * Regime da rodada (ADR-0045): mesmo desenho do teto, com uma diferença que é a decisão —
+ * o corpo não tem parâmetro, porque só existe um valor declarável e a volta não é ato
+ * desta tela.
+ */
+describe("regime da rodada", () => {
+  it("declara na rota da rodada, com base_version e chave de idempotência", async () => {
+    await postRegime(TOKEN, ROUND, 12);
+
+    expect(chamadas).toHaveLength(1);
+    expect(chamadas[0].url).toBe(`${BASE}/v1/estimate-rounds/${ROUND}/regime`);
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(headersDaChamada()).toHaveProperty("Idempotency-Key");
+    expect(corpoDaChamada()).toEqual({
+      base_version: 12,
+      pricing_regime: "contracted_demand",
+    });
+  });
+
+  /** Mão única: a pré-licitação não sai daqui nem por engano de chamada. */
+  it("nunca manda `pre_bid`, que é a volta que o servidor recusa", async () => {
+    await postRegime(TOKEN, ROUND, 3);
+
+    expect(JSON.stringify(corpoDaChamada())).not.toContain("pre_bid");
+  });
+
+  /**
+   * A recusa da cascata suja é do SERVIDOR, contra a cascata que ele tem. A tela não a
+   * antecipa: ela viaja, é recusada e a frase chega por extenso.
+   */
+  it("deixa a cascata suja ser recusada pelo servidor, e traduz a recusa", async () => {
+    stub(() =>
+      problema(
+        409,
+        "ESTIMATE_REGIME_CASCADE_DIRTY",
+        "a cascata tem fonte fora da tabela contratual",
+        { origins: ["emop"], allowed_origins: ["sco"] },
+      ),
+    );
+
+    const erro = await postRegime(TOKEN, ROUND, 12).catch((error) => error);
+
+    expect(erro).toBeInstanceOf(ApiError);
+    expect(orcamentoErrorCode(erro as ApiError)).toBe(
+      "ESTIMATE_REGIME_CASCADE_DIRTY",
+    );
+    expect(describeError(erro)).toContain("Remova a fonte e declare de novo");
+    expect(describeError(erro)).toContain("a declaração não foi gravada");
+  });
+
+  /** A recusa da instalação nasce na INSTALAÇÃO, e a frase diz o que teria acontecido. */
+  it("traduz a origem proibida dizendo o que a medição faria com aquele preço", async () => {
+    stub(() =>
+      problema(
+        409,
+        "ESTIMATE_CASCADE_ORIGIN_FORBIDDEN",
+        "a rodada corre sob contrato licitado",
+        { origin: "emop", allowed_origins: ["sco"] },
+      ),
+    );
+
+    const erro = await installCatalog(TOKEN, ROUND, "upload", 4).catch(
+      (error) => error,
+    );
+
+    expect(describeError(erro)).toContain(
+      "sobre serviço já executado",
+    );
+    expect(describeError(erro)).toContain("Nada foi instalado e nada foi alterado");
   });
 });
 
