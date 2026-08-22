@@ -2,9 +2,11 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-21 (F-029 aberta com contrato — auto-associação de cotas por
-confiança calibrada, experimento local, absorvendo a fatia 2 da F-023; F-030 registrada
-sem contrato — fotos do levantamento na revisão; antes: F-021 e F-022 abertas com
+Última revisão: 2026-08-22 (F-034 aberta com contrato — disponibilidade de jornada por
+ambiente e por tenant, fatia 1 planejável e fatia 2 com gate de design; antes: F-029 aberta
+com contrato — auto-associação de cotas por confiança calibrada, experimento local,
+absorvendo a fatia 2 da F-023; F-030 registrada
+sem contrato — fotos do levantamento na revisão; F-021 e F-022 abertas com
 contrato, ADR-0037 `Proposed`; F-012 documentada com ADR-0036 `Proposed`; inventário
 F-013..F-017 aberto; F-018/F-019 abertas; F-020 aberta com contrato)
 
@@ -55,6 +57,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
 | F-030 | A DEFINIR | READY_FOR_SPEC | Fotos do levantamento na jornada de revisão (a definir em contrato) |
 | F-033 | HIGH | BLOCKED | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
+| F-034 | HIGH | READY_FOR_PLANNING | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002
@@ -345,6 +348,21 @@ cascata dessa demanda — o orçamento é aprovado, e só na medição
 Feature Contract e está `BLOCKED` por dois gates humanos: a decisão de arquitetura que
 refina a fronteira do ADR-0027 (`ARCHITECTURE_DECISION_REQUIRED`) e o Design Approval
 Package (`DESIGN_APPROVAL_REQUIRED`), ambos precedendo o planejamento.
+
+F-034 — disponibilidade de jornada por ambiente e por tenant — nasce em 2026-08-22, de uma
+pergunta de operação: como impedir que um módulo ainda imaturo (hoje o Croqui) chegue a
+homologação, e como depois liberá-lo para um cliente piloto sem liberá-lo para todos. São
+duas perguntas de naturezas diferentes — "ainda não está pronto" é condição temporária de
+engenharia por ambiente; "este cliente contratou" é decisão comercial duradoura por tenant
+— e o produto já resolveu esse mesmo par para o processamento de IA (F-012/ADR-0036). A
+feature aplica o par às jornadas, com três estados por ambiente (`enabled`, `pilot`,
+`disabled`), entitlement por tenant consultado só em `pilot`, e a resolução das três
+perguntas (ambiente, tenant, pessoa) feita no servidor: `GET /v1/me` passa a devolver as
+jornadas disponíveis já resolvidas, e a tela renderiza o que recebeu em vez de
+reimplementar autorização. Dividida por decisão humana registrada: a fatia 1 não introduz
+valor visual novo e está `READY_FOR_PLANNING`; a fatia 2 — administrar o entitlement na
+tela de Plataforma — é superfície nova e fica `BLOCKED` até o Design Approval Package.
+Contrato em [F-034](../features/F-034-disponibilidade-de-jornada/feature.md).
 
 ## Agora — MVP privado
 
