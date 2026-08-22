@@ -65,7 +65,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0043](0043-app-de-campo-pwa-offline-first.md) | App de levantamento de campo como PWA offline-first no monorepo | Accepted |
 | [0044](0044-triagem-por-testemunha-anotacao-automatica.md) | Triagem por custo do erro: anotação automática | Accepted |
 | [0045](0045-terceiro-estado-demanda-sob-contrato.md) | Demanda sob contrato: o terceiro estado entre pré-licitação e medição | Accepted |
-| [0046](0046-aprovacao-do-orcamento-base.md) | O orçamento tem aprovação nominal própria, e publicar deixa de ser parte de montar | Proposed |
+| [0046](0046-aprovacao-do-orcamento-base.md) | O orçamento tem aprovação nominal própria, e publicar deixa de ser parte de montar | Accepted |
 | [0047](0047-acervo-de-catalogos-da-plataforma.md) | Catálogo de referência é dado da plataforma, sem dono e endereçado por digest | Accepted |
 
 ## Processo

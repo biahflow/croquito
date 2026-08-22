@@ -58,7 +58,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-030 | A DEFINIR | READY_FOR_SPEC | Fotos do levantamento na jornada de revisão (a definir em contrato) |
 | F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | READY_FOR_PLANNING | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
-| F-035 | HIGH | BLOCKED | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
+| F-035 | HIGH | READY_FOR_PLANNING | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
 | F-036 | A DEFINIR | READY_FOR_SPEC | Vínculo entre orçamento aprovado e rodada de medição (a definir em contrato) |
 | F-037 | HIGH | READY_FOR_HUMAN_REVIEW | [Acervo central de catálogos de preço](../features/F-037-acervo-de-catalogos/feature.md) |
 | F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
@@ -398,12 +398,12 @@ aprovar "antes do despacho" porque não há despacho separado. Três decisões h
 espelhando `calc` → `approve` → `export` da medição), papel `aprovador` novo e distinto de
 `orcamentista` com **recusa de auto-aprovação** no código, e despacho por e-mail ou Drive
 **fora de escopo** — não há provedor de e-mail, que é o mesmo motivo pelo qual a F-008 está
-`BLOCKED` e pelo qual a F-028 deixou o item de fora. A feature está `BLOCKED` por dois gates
-humanos precedendo o planejamento: o
-[ADR-0046](../adr/0046-aprovacao-do-orcamento-base.md) (`Proposed`), que autoriza o
-orçamento a ter aprovação própria contra a leitura literal da decisão 6 do ADR-0027, e o
-Design Approval Package. Contrato em
-[F-035](../features/F-035-aprovacao-do-orcamento/feature.md).
+`BLOCKED` e pelo qual a F-028 deixou o item de fora. Os dois gates humanos que precediam o
+planejamento foram cumpridos em 2026-08-22, em atos separados: o
+[ADR-0046](../adr/0046-aprovacao-do-orcamento-base.md) foi **aceito** — ele autoriza o
+orçamento a ter aprovação própria contra a leitura literal da decisão 6 do ADR-0027 — e o
+Design Approval Package foi **aprovado** (revisão 1). A feature está `READY_FOR_PLANNING`.
+Contrato em [F-035](../features/F-035-aprovacao-do-orcamento/feature.md).
 
 A F-036 segue sem contrato e sem prioridade, e continua depois da F-035.
 

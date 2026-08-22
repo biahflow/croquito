@@ -20,10 +20,9 @@
 > `READY_FOR_PLANNING`. A implementação deve corresponder à revisão aprovada; divergir dela
 > é revisão nova, com registro próprio.
 >
-> **Revisão 2 do pacote, aberta em 2026-08-22 e pendente de aprovação**: a tela construída
-> afirma um regime onde não há rodada, e obriga a abrir em pré-licitação para declarar
-> depois. O escopo 6 registra a ampliação; a revisão 2 do pacote precisa de aprovação
-> humana antes de ser implementada.
+> **Revisão 2 do pacote, aberta e APROVADA em 2026-08-22**: a tela construída afirma um
+> regime onde não há rodada, e obriga a abrir em pré-licitação para declarar depois. O
+> escopo 6 registra a ampliação, e o gate de design dela está cumprido — falta implementar.
 
 ## Classification
 

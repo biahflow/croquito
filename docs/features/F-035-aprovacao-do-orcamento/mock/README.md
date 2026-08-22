@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: Pending approval  
+Status: Approved (2026-08-22)  
 Date: 2026-08-22  
 Produced by: agente (Claude Code)
 
@@ -11,18 +11,19 @@ Produced by: agente (Claude Code)
 > código de aplicação.
 >
 > O comportamento que estas telas mostram é do
-> [ADR-0046](../../../adr/0046-aprovacao-do-orcamento-base.md), ainda `Proposed`. **Os dois
-> gates são independentes**: aprovar este desenho não aceita o ADR, e aceitar o ADR não
-> aprova este desenho.
+> [ADR-0046](../../../adr/0046-aprovacao-do-orcamento-base.md), **aceito por ato humano em
+> 2026-08-22**. Os dois gates eram independentes e foram exercidos na mesma data, em atos
+> separados: aprovar este desenho não aceitou o ADR, e aceitar o ADR não aprovou este
+> desenho.
 
 ## Registro de aprovação
 
 | Campo | Valor |
 | --- | --- |
-| O que se pede aprovar | a composição visual da revisão 1 — os dez estados capturados e as sete decisões listadas em "Decisões que este pacote carrega" |
-| Aprovado por | _pendente_ |
-| Data | _pendente_ |
-| Revisão | 1 |
+| O que foi aprovado | a composição visual da revisão 1 — os dez estados capturados e as sete decisões listadas em "Decisões que este pacote carrega" |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-22 |
+| Revisão aprovada | 1 |
 | Explicitamente **não** coberto | a copy final (os textos são proposta do agente e carregam regra de domínio); o comportamento, que é do ADR-0046; os códigos de erro e status, que são do plano; o formato da data e do digest curto |
 
 Nenhum agente aprova design, inclusive o que produziu o pacote. Aprovar esta revisão não

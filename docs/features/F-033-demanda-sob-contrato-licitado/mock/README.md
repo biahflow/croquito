@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 2 (a revisão 1 permanece registrada abaixo, aprovada e implementada)  
-Status: Revision 2 — Pending approval  
+Status: Revision 2 — Approved (2026-08-22)  
 Date: 2026-08-22  
 Produced by: agente (Claude Code)
 
@@ -10,8 +10,8 @@ Produced by: agente (Claude Code)
 
 # Revisão 2 — o regime na abertura, e o rótulo que não mente
 
-Status: **Pending approval**  
-Data: 2026-08-22  
+Status: **Approved**  
+Aprovada por: Daniel Campos, em 2026-08-22  
 Artefato: [`abertura-r2.html`](abertura-r2.html)
 
 ## Por que existe uma revisão 2

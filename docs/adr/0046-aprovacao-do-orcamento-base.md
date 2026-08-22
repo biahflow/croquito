@@ -1,7 +1,7 @@
 # ADR-0046: O orçamento tem aprovação nominal própria, e publicar deixa de ser parte de montar
 
-Status: Proposed  
-Data: 2026-08-22  
+Status: Accepted  
+Data: 2026-08-22 (aceito por ato humano na mesma data)  
 Responsável: Product / Engineering
 
 ## Contexto

@@ -2,7 +2,7 @@
 
 ## Status
 
-`BLOCKED`
+`READY_FOR_PLANNING`
 
 > Nasce em 2026-08-22, de uma conversa de alinhamento sobre a cadeia real, quando ficou
 > visível uma **assimetria**: a medição tem `POST .../approve` com aprovação nominal
@@ -14,10 +14,15 @@
 > três escolhas registradas em `Scope`: portão real (não carimbo), papel novo de aprovador
 > com recusa de auto-aprovação, e despacho por e-mail/Drive fora de escopo.
 >
-> Está `BLOCKED` por **dois gates humanos**, ambos precedendo o planejamento: a decisão de
-> arquitetura que autoriza o orçamento a ter aprovação (`ARCHITECTURE_DECISION_REQUIRED`,
-> [ADR-0046](../../adr/0046-aprovacao-do-orcamento-base.md), `Proposed`) e o Design
-> Approval Package (`DESIGN_APPROVAL_REQUIRED`).
+> Eram **dois gates humanos**, ambos precedendo o planejamento, e os dois foram cumpridos
+> em 2026-08-22, em atos separados: o
+> [ADR-0046](../../adr/0046-aprovacao-do-orcamento-base.md) foi **aceito**, fixando as oito
+> decisões que este contrato marcava como decisão do ADR — inclusive o portão no domínio, a
+> quebra declarada de `POST .../estimate` e a recusa de auto-aprovação —, e o **Design
+> Approval Package** foi **aprovado**, revisão 1 ([mock/README.md](mock/README.md)).
+>
+> Com os dois cumpridos, a feature está `READY_FOR_PLANNING`. A implementação deve
+> corresponder à revisão aprovada; divergir dela é revisão nova, com registro próprio.
 
 ## Classification
 
@@ -159,11 +164,12 @@ assinatura em silêncio: ela fica caduca, visível, e o despacho recusa até um 
 
 ## Dependencies
 
-- **ADR-0046** — `ARCHITECTURE_DECISION_REQUIRED`. O
-  [ADR-0027](../../adr/0027-price-source-provenance-and-bid-boundary.md) decisão 6 e o
-  código dele derivado declaram que o orçamento é "sem aprovação"; autorizar a aprovação
-  própria é decisão de arquitetura, não do plano.
-- **Design Approval Package** — `DESIGN_APPROVAL_REQUIRED`, antes do planejamento.
+- **ADR-0046** — `ARCHITECTURE_DECISION_REQUIRED`, **satisfeito em 2026-08-22**
+  (`Accepted`). O [ADR-0027](../../adr/0027-price-source-provenance-and-bid-boundary.md)
+  decisão 6 e o código dele derivado declaravam que o orçamento é "sem aprovação"; autorizar
+  a aprovação própria era decisão de arquitetura, não do plano.
+- **Design Approval Package** — `DESIGN_APPROVAL_REQUIRED`, **satisfeito em 2026-08-22**
+  (revisão 1).
 - **Papel no realm** — `aprovador` precisa existir no Keycloak local e no de HML, e ser
   atribuído a alguém. Atribuir papel a pessoa é ato humano.
 - F-028 na main — o molde inteiro que esta feature copia.
@@ -204,8 +210,9 @@ assinatura em silêncio: ela fica caduca, visível, e o despacho recusa até um 
 ## Human Gates
 
 1. Seleção (2026-08-22) — exercida.
-2. **ADR-0046 aceito** — pendente. Nada de domínio muda antes.
-3. **Design Approval Package aprovado** antes do planejamento — pendente.
+2. **ADR-0046 aceito** — **exercido em 2026-08-22**.
+3. **Design Approval Package aprovado** antes do planejamento — **exercido em 2026-08-22**,
+   revisão 1 ([mock/](mock/README.md)).
 4. Papel `aprovador` atribuído no realm de HML — pendente.
 5. Merge e deploy.
 6. O ato nominal sobre um orçamento real — ato do usuário, pós-deploy.
