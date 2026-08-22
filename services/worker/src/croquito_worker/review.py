@@ -169,6 +169,12 @@ class ProviderLineage(ReviewModel):
     # Chave privada da resposta bruta no object store, nunca o payload. Sem ela a
     # resposta é gravada e depois se torna irrecuperável a partir do banco.
     raw_response_ref: str | None = Field(default=None, max_length=400)
+    # Opcionais e retrocompatíveis (F-031 T1): pacote antigo sem estes campos continua
+    # carregando com `None` — nenhum replay quebra. `Decimal` serializa como string em
+    # `model_dump(mode="json")`, o padrão do repo para valor monetário exato.
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    estimated_cost_usd: Decimal | None = Field(default=None, ge=0)
 
 
 class DimensionReading(ReviewModel):

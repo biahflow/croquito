@@ -288,6 +288,40 @@ def main() -> int:
             "nenhum byte sai da máquina"
         ),
     )
+    publish_events_command = subcommands.add_parser(
+        "publish-events",
+        help="drena a outbox de eventos de domínio e publica no sink escolhido",
+    )
+    publish_events_command.add_argument(
+        "--sink",
+        choices=("file", "pubsub"),
+        required=True,
+        help="para onde publicar: arquivo JSONL local ou o tópico Pub/Sub configurado",
+    )
+    publish_events_command.add_argument(
+        "--path",
+        type=Path,
+        help="arquivo JSONL de destino; obrigatório com --sink file",
+    )
+    publish_events_command.add_argument(
+        "--limit",
+        type=int,
+        # Literal, e não `DEFAULT_RELAY_LIMIT`: o parser é montado antes do despacho, e
+        # importar o módulo do publicador aqui em cima tiraria do lazy-import todo comando
+        # deste CLI. O valor espelha `domain_event_publisher.DEFAULT_RELAY_LIMIT`.
+        default=500,
+        help="teto de eventos por execução; a próxima continua de onde esta parou",
+    )
+    value_report_command = subcommands.add_parser(
+        "value-report",
+        help="métricas de valor de um job (cycle time, ato humano, custo de IA) do banco",
+    )
+    value_report_command.add_argument("--job", required=True, help="id do job (UUID)")
+    value_report_command.add_argument(
+        "--output",
+        type=Path,
+        help="grava o mesmo JSON em arquivo além de imprimi-lo em stdout",
+    )
     seed_review_command = subcommands.add_parser(
         "seed-review",
         help="liga um pacote de revisão autorizado a um job existente, sem decidir nada",
@@ -332,6 +366,10 @@ def main() -> int:
         help="identificador lógico do responsável pelo refresh; nunca um segredo",
     )
     args = parser.parse_args()
+
+    from croquito_core.logging_config import configure_logging
+
+    configure_logging()
 
     if args.command == "seed-review":
         from croquito_worker.criteria import ScopeCriterionError, parse_criterion_declaration
@@ -442,6 +480,84 @@ def main() -> int:
         suite = build_synthetic_provider_suite() if args.fixtures else None
         processed = run_local_worker_once(provider_suite=suite)
         print(json.dumps({"processed": processed, "fixtures": bool(args.fixtures)}))
+        return 0
+
+    if args.command == "publish-events":
+        from sqlalchemy import create_engine
+
+        from croquito_worker.domain_event_publisher import (
+            DomainEventPublisher,
+            DomainEventPublishError,
+            FileDomainEventPublisher,
+            PubSubDomainEventPublisher,
+            drain_domain_events,
+        )
+        from croquito_worker.local_queue import LocalWorkerSettings
+
+        # O relay nunca consome a fila de comandos: exigir a URL dela impediria de drenar
+        # a outbox num ambiente que só tem banco.
+        relay_settings = LocalWorkerSettings.from_environment(require_queue=False)
+        publisher: DomainEventPublisher
+        if args.sink == "file":
+            if args.path is None:
+                parser.error("--sink file exige --path: sem destino não há onde publicar")
+            publisher = FileDomainEventPublisher(args.path)
+        else:
+            if not relay_settings.domain_events_topic:
+                print(
+                    "CROQUITO_DOMAIN_EVENTS_TOPIC é obrigatório para o sink pubsub.",
+                    file=sys.stderr,
+                )
+                return 1
+            publisher = PubSubDomainEventPublisher(relay_settings.domain_events_topic)
+        relay_engine = create_engine(relay_settings.database_url)
+        try:
+            relay_result = drain_domain_events(relay_engine, publisher, limit=args.limit)
+        except DomainEventPublishError as publish_error:
+            # Sem `published_at` nos que faltaram: rodar o comando de novo continua dali.
+            print(str(publish_error), file=sys.stderr)
+            return 1
+        finally:
+            relay_engine.dispose()
+        print(
+            json.dumps({"published": relay_result.published, "remaining": relay_result.remaining})
+        )
+        return 0
+
+    if args.command == "value-report":
+        import os
+
+        from sqlalchemy import select
+
+        from croquito_api.database import Database, JobRecord
+        from croquito_api.metrics import compute_job_metrics
+
+        # O MESMO cálculo da rota, importado e não reescrito: duas expressões do mesmo
+        # número divergiriam, e o relatório existe justamente para conferir a rota.
+        database_url = os.getenv("CROQUITO_DATABASE_URL")
+        if not database_url:
+            print("CROQUITO_DATABASE_URL é obrigatório para o value-report.", file=sys.stderr)
+            return 1
+        report_database = Database(database_url)
+        try:
+            with report_database.sessions() as report_session:
+                # Sem filtro de tenant, e é a única diferença em relação à rota: aqui não
+                # há JWT do qual derivá-lo. O tenant vem da PRÓPRIA linha do job e é ele
+                # que escopa todas as leituras seguintes, exatamente como na rota.
+                report_job = report_session.scalar(
+                    select(JobRecord).where(JobRecord.id == args.job)
+                )
+                if report_job is None:
+                    print(f"Job não encontrado: {args.job}", file=sys.stderr)
+                    return 1
+                report = compute_job_metrics(report_session, report_job)
+        finally:
+            report_database.engine.dispose()
+        document = json.dumps(report, ensure_ascii=False, sort_keys=True)
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(document + "\n", encoding="utf-8")
+        print(document)
         return 0
 
     if args.command == "synthetic":

@@ -11,7 +11,13 @@ vi.mock("./auth", () => ({
   readLastRenewFailure: vi.fn(() => null),
 }));
 
-import { ApiError, apiJson } from "./api";
+import {
+  ApiError,
+  apiJson,
+  submitReviewDecisions,
+  submitReviewRectification,
+} from "./api";
+import type { ReviewDecision, ReviewRectification } from "./api";
 import { renewAccessToken } from "./auth";
 
 function resposta401(code: string): Response {
@@ -64,5 +70,75 @@ describe("apiJson e o 401", () => {
     expect(corpo).toEqual({ ok: true });
     expect(renewAccessToken).toHaveBeenCalledTimes(1);
     expect(tokens).toEqual(["Bearer token-vencido", "Bearer token-renovado"]);
+  });
+});
+
+/**
+ * Touch time (F-031 T4): o transporte carrega a medida quando ela existe e OMITE a
+ * chave quando não existe. Ausente quer dizer "não medido" — publicar `null` afirmaria
+ * que alguém mediu zero, que é diferente.
+ */
+describe("touch time no envio da revisão", () => {
+  const decisao: ReviewDecision = {
+    reading_id: "rd_1111111111111111",
+    action: "confirm",
+    justification: "Conferido na evidência protegida.",
+    association_proposal_id: "vp_1111111111111111",
+  };
+  const correcao: ReviewRectification = {
+    reading_id: "rd_1111111111111111",
+    action: "confirm",
+    rectifies_decision_id: "hd_1111111111111111",
+    justification: "A cota foi transcrita errada; conferida de novo na folha.",
+    association_proposal_id: "vp_1111111111111111",
+  };
+
+  function capturaCorpo(): { corpos: Record<string, unknown>[] } {
+    const corpos: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        corpos.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ version: 2 }), { status: 200 });
+      }),
+    );
+    return { corpos };
+  }
+
+  it("decisões enviam o acumulado medido, arredondado em milissegundos", async () => {
+    const { corpos } = capturaCorpo();
+
+    await submitReviewDecisions("token", "job-1", 1, [decisao], 4_200.6);
+
+    expect(corpos[0].interaction_ms).toBe(4_201);
+    expect(corpos[0].base_version).toBe(1);
+  });
+
+  it("correção declarada envia a medida do próprio ato", async () => {
+    const { corpos } = capturaCorpo();
+
+    await submitReviewRectification("token", "job-1", 2, correcao, 3_000);
+
+    expect(corpos[0].interaction_ms).toBe(3_000);
+  });
+
+  it("sem medida, a chave não viaja — nem como null", async () => {
+    const { corpos } = capturaCorpo();
+
+    await submitReviewDecisions("token", "job-1", 1, [decisao]);
+    await submitReviewDecisions("token", "job-1", 1, [decisao], null);
+    await submitReviewRectification("token", "job-1", 2, correcao);
+
+    expect(corpos.every((corpo) => !("interaction_ms" in corpo))).toBe(true);
+  });
+
+  it("medida implausível não viaja e o envio continua acontecendo", async () => {
+    const { corpos } = capturaCorpo();
+
+    await submitReviewDecisions("token", "job-1", 1, [decisao], -5);
+    await submitReviewDecisions("token", "job-1", 1, [decisao], Number.NaN);
+
+    expect(corpos).toHaveLength(2);
+    expect(corpos.every((corpo) => !("interaction_ms" in corpo))).toBe(true);
   });
 });

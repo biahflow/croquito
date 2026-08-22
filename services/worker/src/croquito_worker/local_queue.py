@@ -25,13 +25,21 @@ import fitz
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import ValidationError
-from sqlalchemy import create_engine, text
+from sqlalchemy import DateTime, bindparam, create_engine, text
 from sqlalchemy.engine import Connection, RowMapping
 from sqlalchemy.exc import IntegrityError
 
 from croquito_core.errors import DomainValidationError
+from croquito_core.events import (
+    EVENT_AI_CALL_EXECUTED,
+    EVENT_EXPORT_COMPLETED,
+    EVENT_EXPORT_FAILED,
+    EVENT_JOB_STAGE_CHANGED,
+    build_domain_event,
+)
 from croquito_core.field import SurveyPacket
 from croquito_core.ids import new_uuid7
+from croquito_core.logging_config import configure_logging
 from croquito_core.models import SceneRevision
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.takeoff import TakeoffPacket
@@ -135,6 +143,26 @@ from croquito_worker.vision import VisionProposalSet
 logger = logging.getLogger("croquito_worker.local_queue")
 
 
+def _duration_ms(started_at: datetime | None, finished_at: datetime) -> int | None:
+    """Intervalo em milissegundos, ou `None` quando ele não é mensurável.
+
+    Devolve `None` em dois casos, e nos dois "não medido" é a resposta honesta: não existe
+    marco anterior, ou o delta saiu NEGATIVO. O negativo acontece quando os dois escritores
+    (API e worker, processos diferentes) têm relógios em desacordo — publicar um número
+    negativo envenenaria o cycle time do consumidor, e publicar zero inventaria uma medida
+    que ninguém fez. A ausência do campo já significa "não medido" no contrato de eventos.
+
+    O marco anterior chega naive do SQLite (o `bind_processor` do dialeto descarta o
+    offset ao gravar) e aware do PostgreSQL. Os dois caminhos de escrita gravam UTC, então
+    reancorar o naive em UTC recupera o mesmo instante em vez de comparar maçã com laranja.
+    """
+    if started_at is None:
+        return None
+    anchored = started_at if started_at.tzinfo is not None else started_at.replace(tzinfo=UTC)
+    elapsed = (finished_at - anchored).total_seconds() * 1000
+    return int(elapsed) if elapsed >= 0 else None
+
+
 @dataclass(frozen=True, slots=True)
 class LocalWorkerSettings:
     database_url: str
@@ -146,6 +174,13 @@ class LocalWorkerSettings:
     # recusa o header pela interoperabilidade; lá a flag desliga sem perder criptografia.
     storage_sse_enabled: bool = True
     real_providers_enabled: bool = False
+    domain_events_topic: str | None = None
+    """Tópico do relay de eventos de domínio (`croquito-demo publish-events`, ADR-0042).
+
+    Mora na configuração do WORKER, e não na da API, porque é o relay quem publica: a API
+    só grava na outbox, e uma variável que ela lesse sem usar seria configuração morta.
+    Ausente, o sink `pubsub` recusa antes de tentar — publicar em tópico não declarado
+    seria falhar em silêncio."""
 
     @classmethod
     def from_environment(cls, *, require_queue: bool = True) -> LocalWorkerSettings:
@@ -169,6 +204,7 @@ class LocalWorkerSettings:
             in {"1", "true", "yes"},
             real_providers_enabled=os.getenv("CROQUITO_REAL_PROVIDERS_ENABLED", "").lower()
             in {"1", "true", "yes"},
+            domain_events_topic=os.getenv("CROQUITO_DOMAIN_EVENTS_TOPIC") or None,
         )
 
 
@@ -691,8 +727,173 @@ class LocalQueueWorker:
     def s3_client(self, value: Any) -> None:
         self._object_client = value
 
+    def _current_job_stage(
+        self, connection: Connection, *, job_id: str, tenant_id: str
+    ) -> tuple[str, str] | None:
+        """Lê `(stage, status)` do job na MESMA conexão, para servir de `from_*` do evento.
+
+        Precisa ser chamado antes do `UPDATE` que muda o job, na mesma transação: depois
+        do `UPDATE` o valor anterior já foi sobrescrito.
+        """
+        row = connection.execute(
+            text("SELECT stage, status FROM jobs WHERE id = :job_id AND tenant_id = :tenant_id"),
+            {"job_id": job_id, "tenant_id": tenant_id},
+        ).one_or_none()
+        if row is None:
+            return None
+        return row[0], row[1]
+
+    def _record_stage_event(
+        self,
+        connection: Connection,
+        *,
+        tenant_id: str,
+        job_id: str,
+        from_stage: str | None,
+        from_status: str | None,
+        to_stage: str,
+        to_status: str,
+        failure_code: str | None = None,
+        source: str = "worker",
+    ) -> None:
+        """Grava uma linha append-only de `job_stage_events`, na MESMA transação do caller.
+
+        O caller é responsável por chamar isto só depois de confirmar (via `rowcount` ou
+        equivalente) que o `UPDATE`/`INSERT` do job realmente aconteceu — inserir aqui para
+        um job que não existe violaria a FK em banco que a exige (ADR-0029).
+
+        `created_at` é passado como parâmetro Python (`datetime.now(UTC)`), não como
+        `CURRENT_TIMESTAMP` do SQL, e com o TIPO da coluna anotado explicitamente no bind
+        (`bindparam(..., type_=DateTime(timezone=True))`): sem essa anotação, um bind de
+        `text()` pula o `bind_processor` do dialeto e vai cru para o driver — no SQLite, o
+        adapter default do `sqlite3` grava o offset (`+00:00`) e o valor sai tz-aware na
+        leitura, enquanto o MESMO INSERT feito pelo ORM (`main.py`, evento da API) usa o
+        `bind_processor` do `DATETIME` do dialeto SQLite, que SEMPRE descarta o offset — a
+        mesma tabela ficaria com dois formatos divergentes conforme a origem, não conforme
+        a coluna. Anotar o tipo força os dois caminhos a passarem pelo MESMO
+        `bind_processor`, no SQLite e no Postgres, igual ao que o ORM já faz.
+
+        Desde a F-031 T2 a mesma chamada grava o `croquito.job.stage_changed.v1` na outbox,
+        de propósito no MESMO lugar: separar as duas escritas deixaria nascer um sítio de
+        transição que registra o histórico e esquece de publicá-lo, e é justamente essa
+        divergência silenciosa que o barramento externo não teria como perceber.
+        """
+        previous_at = self._last_stage_event_at(connection, job_id=job_id, tenant_id=tenant_id)
+        moment = datetime.now(UTC)
+        connection.execute(
+            text(
+                "INSERT INTO job_stage_events (id, tenant_id, job_id, from_stage, "
+                "from_status, to_stage, to_status, source, failure_code, created_at) "
+                "VALUES (:id, :tenant_id, :job_id, :from_stage, :from_status, :to_stage, "
+                ":to_status, :source, :failure_code, :created_at)"
+            ).bindparams(bindparam("created_at", type_=DateTime(timezone=True))),
+            {
+                "id": str(new_uuid7()),
+                "tenant_id": tenant_id,
+                "job_id": job_id,
+                "from_stage": from_stage,
+                "from_status": from_status,
+                "to_stage": to_stage,
+                "to_status": to_status,
+                "source": source,
+                "failure_code": failure_code,
+                "created_at": moment,
+            },
+        )
+        payload: dict[str, Any] = {
+            "from_stage": from_stage,
+            "to_stage": to_stage,
+            "from_status": from_status,
+            "to_status": to_status,
+            "stage_duration_ms": _duration_ms(previous_at, moment),
+        }
+        if failure_code is not None:
+            payload["failure_code"] = failure_code
+        self._record_domain_event(
+            connection,
+            event_type=EVENT_JOB_STAGE_CHANGED,
+            tenant_id=tenant_id,
+            job_id=job_id,
+            payload=payload,
+            occurred_at=moment,
+        )
+
+    def _last_stage_event_at(
+        self, connection: Connection, *, job_id: str, tenant_id: str
+    ) -> datetime | None:
+        """Instante da ÚLTIMA transição já registrada deste job, na mesma conexão.
+
+        É o único insumo do `stage_duration_ms`: o tempo da etapa é o intervalo entre duas
+        transições consecutivas, e ninguém mais o conhece. A consulta é o índice de
+        `job_id` com `LIMIT 1` — barata de propósito, porque o contrato manda emitir `None`
+        em vez de pagar por uma varredura.
+
+        `.columns(...)` não é enfeite: um `SELECT` por `text()` puro devolve o valor CRU do
+        driver, e no SQLite isso é a STRING gravada, não um `datetime`. Declarar o tipo faz
+        o `result_processor` do dialeto rodar, aqui como roda no ORM. A forma por NOME
+        (`nome=tipo`) é deliberada: a posicional casa pela ORDEM das colunas do `SELECT`, e
+        acrescentar uma coluna à frente ligaria o processador de data na coluna errada.
+        """
+        recorded = connection.execute(
+            text(
+                "SELECT created_at FROM job_stage_events WHERE job_id = :job_id "
+                "AND tenant_id = :tenant_id ORDER BY created_at DESC LIMIT 1"
+            ).columns(created_at=DateTime(timezone=True)),
+            {"job_id": job_id, "tenant_id": tenant_id},
+        ).scalar_one_or_none()
+        return cast(datetime | None, recorded)
+
+    def _record_domain_event(
+        self,
+        connection: Connection,
+        *,
+        event_type: str,
+        tenant_id: str,
+        payload: Mapping[str, Any],
+        job_id: str | None = None,
+        occurred_at: datetime | None = None,
+    ) -> None:
+        """Grava um evento de domínio na outbox, na MESMA transação do caller (ADR-0042).
+
+        O caller sempre passa a `connection` do `engine.begin()` que aplicou a mudança de
+        estado: é essa co-transação que garante que nada é publicado sem ter acontecido e
+        que nada acontece sem ficar publicável. O worker escreve por SQL cru como todo o
+        resto deste arquivo, com o mesmo bind tipado de `_record_stage_event` para os
+        timestamps e com a expressão JSON do dialeto para o payload — os dois caminhos de
+        escrita (API por ORM, worker por SQL) precisam deixar a MESMA forma na coluna.
+        """
+        moment = occurred_at or datetime.now(UTC)
+        envelope = build_domain_event(
+            event_type=event_type,
+            tenant_id=tenant_id,
+            occurred_at=moment,
+            payload=payload,
+            job_id=job_id,
+        )
+        payload_expression = json_expression(self.engine.dialect.name, "payload_json")
+        connection.execute(
+            text(
+                "INSERT INTO domain_events (id, tenant_id, event_type, job_id, occurred_at, "
+                f"payload_json, published_at, created_at) VALUES (:id, :tenant_id, "
+                f":event_type, :job_id, :occurred_at, {payload_expression}, NULL, :created_at)"
+            ).bindparams(
+                bindparam("occurred_at", type_=DateTime(timezone=True)),
+                bindparam("created_at", type_=DateTime(timezone=True)),
+            ),
+            {
+                "id": envelope["event_id"],
+                "tenant_id": tenant_id,
+                "event_type": event_type,
+                "job_id": job_id,
+                "occurred_at": moment,
+                "payload_json": json.dumps(envelope["payload"], ensure_ascii=False),
+                "created_at": moment,
+            },
+        )
+
     def _mark_failed(self, *, job_id: str, tenant_id: str, failure_code: str) -> None:
         with self.engine.begin() as connection:
+            current = self._current_job_stage(connection, job_id=job_id, tenant_id=tenant_id)
             result = connection.execute(
                 text(
                     "UPDATE jobs SET status = 'FAILED', stage = 'VALIDATING', "
@@ -701,8 +902,18 @@ class LocalQueueWorker:
                 ),
                 {"job_id": job_id, "tenant_id": tenant_id, "failure_code": failure_code},
             )
-        if result.rowcount != 1:
-            raise ValueError("Job não encontrado ou tenant divergente")
+            if result.rowcount != 1:
+                raise ValueError("Job não encontrado ou tenant divergente")
+            self._record_stage_event(
+                connection,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                from_stage=current[0] if current is not None else None,
+                from_status=current[1] if current is not None else None,
+                to_stage="VALIDATING",
+                to_status="FAILED",
+                failure_code=failure_code,
+            )
 
     def _mark_invalid_upload(self, *, job_id: str, tenant_id: str) -> None:
         self._mark_failed(job_id=job_id, tenant_id=tenant_id, failure_code="INVALID_UPLOAD")
@@ -734,7 +945,49 @@ class LocalQueueWorker:
         Contrato com o chamador: retorno normal significa ack (o transporte pode
         descartar a mensagem); exceção significa reentrega. Nenhum handler apaga
         mensagem — a semântica do transporte mora aqui e em `run_once`.
+
+        Envolve `_dispatch_command` só para medir e logar o desfecho (comando, job,
+        duração, status); a reentrega continua decidida pela exceção propagar intocada.
         """
+        command = body.get("command", "process_upload")
+        job_id = body.get("job_id")
+        started = time.monotonic()
+        try:
+            result = self._dispatch_command(body)
+        except Exception as exc:
+            duration_ms = (time.monotonic() - started) * 1000
+            error_code_value = getattr(exc, "code", None)
+            # `code` costuma ser um StrEnum (ex. `ProviderFailureCode`); `str()` nele
+            # devolve só o valor ("TIMEOUT"), nunca "ProviderFailureCode.TIMEOUT" — sem
+            # `.value` explícito não há ambiguidade de tipo com o `None` do fallback.
+            error_code = (
+                str(error_code_value) if error_code_value is not None else type(exc).__name__
+            )
+            logger.error(
+                "worker_command_failed",
+                extra={
+                    "command": command,
+                    "job_id": job_id if isinstance(job_id, str) else None,
+                    "status": "error",
+                    "duration_ms": round(duration_ms, 3),
+                    "error_code": error_code,
+                },
+            )
+            raise
+        duration_ms = (time.monotonic() - started) * 1000
+        logger.info(
+            "worker_command_completed",
+            extra={
+                "command": command,
+                "job_id": job_id if isinstance(job_id, str) else None,
+                "status": "ok",
+                "duration_ms": round(duration_ms, 3),
+            },
+        )
+        return result
+
+    def _dispatch_command(self, body: Mapping[str, Any]) -> int:
+        """Corpo original de `dispatch`: roteia pelo `command` sem instrumentação."""
         # Messages published before the command field are always ingestion work.
         command = body.get("command", "process_upload")
         tenant_id = body.get("tenant_id")
@@ -945,6 +1198,9 @@ class LocalQueueWorker:
                     associations=review_snapshot.associations,
                     proposals=review_snapshot.proposals,
                     source_image_bytes=review_snapshot.source_image_bytes,
+                    # A cópia é só para acrescentar a nota da página; perder as execuções
+                    # aqui faria o job de várias páginas ser o único a não publicar custo.
+                    executions=review_snapshot.executions,
                 )
             source_image_key = f"tenants/{tenant_id}/jobs/{job_id}/review/source.png"
             self.s3_client.put_object(
@@ -955,6 +1211,7 @@ class LocalQueueWorker:
             )
 
         with self.engine.begin() as connection:
+            current = self._current_job_stage(connection, job_id=job_id, tenant_id=tenant_id)
             if review_snapshot is not None:
                 # Redelivery of an already ingested job never replaces recorded evidence.
                 with suppress(ReviewAlreadyExistsError):
@@ -992,9 +1249,69 @@ class LocalQueueWorker:
                     "page_count": validated_upload.page_count,
                 },
             )
-        if result.rowcount != 1:
-            raise ValueError("Job não encontrado ou tenant divergente")
+            if result.rowcount != 1:
+                raise ValueError("Job não encontrado ou tenant divergente")
+            self._record_stage_event(
+                connection,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                from_stage=current[0] if current is not None else None,
+                from_status=current[1] if current is not None else None,
+                to_stage="PREVIEWING",
+                to_status="REVIEW_REQUIRED",
+            )
+            if review_snapshot is not None:
+                self._record_ai_calls(
+                    connection,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    executions=review_snapshot.executions,
+                )
         return 1
+
+    def _record_ai_calls(
+        self,
+        connection: Connection,
+        *,
+        tenant_id: str,
+        job_id: str,
+        executions: Sequence[ProviderExecution],
+    ) -> None:
+        """Um `croquito.ai.call_executed.v1` por chamada de provider concluída.
+
+        O evento é o insumo do custo por transação, e por isso vive na mesma transação da
+        revisão que a chamada produziu: publicar custo de uma extração que não chegou a
+        virar pacote contaria gasto que o cliente não recebeu.
+
+        Do `ProviderExecution` viaja só o que a política de logs já permite — provider,
+        modelo, versão de prompt, latência, tokens e custo. `output`, `input_digest` e
+        `raw_response_ref` NÃO viajam: os dois primeiros descrevem o desenho do cliente e o
+        terceiro é ponteiro para a resposta bruta protegida, que nunca sai daqui.
+
+        `estimated_cost_usd` vira STRING decimal de propósito: o contrato pede assim porque
+        `float` de custo perde centavo em soma, e é somando que o portal calcula custo por
+        transação.
+        """
+        for execution in executions:
+            self._record_domain_event(
+                connection,
+                event_type=EVENT_AI_CALL_EXECUTED,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                payload={
+                    "provider": execution.provider.value,
+                    "model_id": execution.model_id,
+                    "prompt_version": execution.prompt.prompt_version,
+                    "latency_ms": execution.latency_ms,
+                    "input_tokens": execution.usage.input_tokens,
+                    "output_tokens": execution.usage.output_tokens,
+                    "estimated_cost_usd": (
+                        str(execution.usage.estimated_cost_usd)
+                        if execution.usage.estimated_cost_usd is not None
+                        else None
+                    ),
+                },
+            )
 
     def _finish_export(
         self,
@@ -1014,6 +1331,7 @@ class LocalQueueWorker:
             "CAST(:audit AS JSONB)" if self.engine.dialect.name == "postgresql" else "json(:audit)"
         )
         with self.engine.begin() as connection:
+            current = self._current_job_stage(connection, job_id=job_id, tenant_id=tenant_id)
             connection.execute(
                 text(
                     "UPDATE export_artifacts SET status = :status, "
@@ -1034,13 +1352,50 @@ class LocalQueueWorker:
                     **({"audit": json.dumps(audit_json)} if audit_json is not None else {}),
                 },
             )
-            connection.execute(
+            result = connection.execute(
                 text(
                     "UPDATE jobs SET status = :job_status, updated_at = CURRENT_TIMESTAMP "
                     "WHERE id = :job_id AND tenant_id = :tenant_id"
                 ),
                 {"job_id": job_id, "tenant_id": tenant_id, "job_status": job_status},
             )
+            if result.rowcount == 1 and current is not None:
+                self._record_stage_event(
+                    connection,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    from_stage=current[0],
+                    from_status=current[1],
+                    to_stage=current[0],
+                    to_status=job_status,
+                    failure_code=failure_code,
+                )
+            # O desfecho do export é fato próprio no catálogo v1, e não só uma transição de
+            # status: o ZIP publicado (ou a falha fechada do auditor) é o que o portal
+            # conta. Vai na MESMA transação do `UPDATE export_artifacts`, como todo o resto.
+            #
+            # `duration_ms` fica ausente ("não medido"): a duração honesta seria do instante
+            # em que o export foi RECLAMADO até agora, e esse marco só existe em
+            # `export_artifacts.updated_at`, gravado por `CURRENT_TIMESTAMP` — que é
+            # `timestamptz` no PostgreSQL e texto de segundo inteiro no SQLite. Medir a
+            # partir de uma origem que muda de tipo e de resolução conforme o banco não é
+            # medir; publicar o campo só quando ele tiver um marco confiável é.
+            if status == "COMPLETED":
+                self._record_domain_event(
+                    connection,
+                    event_type=EVENT_EXPORT_COMPLETED,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    payload={"export_id": export_id},
+                )
+            else:
+                self._record_domain_event(
+                    connection,
+                    event_type=EVENT_EXPORT_FAILED,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    payload={"export_id": export_id, "failure_code": failure_code},
+                )
 
     def _auto_decided_readings(
         self, connection: Connection, *, job_id: str, tenant_id: str
@@ -2768,6 +3123,7 @@ class LocalQueueWorker:
 
 def run_local_worker_once(*, provider_suite: ProviderSuite | None = None) -> int:
     """Consome uma mensagem local; a suíte só existe quando o chamador a injeta."""
+    configure_logging()
     return LocalQueueWorker(
         LocalWorkerSettings.from_environment(), provider_suite=provider_suite
     ).run_once()

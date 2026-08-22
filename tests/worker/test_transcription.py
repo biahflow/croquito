@@ -283,6 +283,56 @@ def test_merge_converts_one_full_reading_field_by_field(tmp_path: Path) -> None:
     assert new_reading.extractor_version == "anthropic.claude-sonnet-5+measurement-extraction@1.1.0"
     assert len(new_reading.provider_lineage) == 1
     assert new_reading.provider_lineage[0].provider == "bedrock_anthropic"
+    # Artefato sem tokens/custo (o caso comum): o lineage não inventa valor (F-031 T1).
+    assert new_reading.provider_lineage[0].input_tokens is None
+    assert new_reading.provider_lineage[0].estimated_cost_usd is None
+
+
+def test_merge_carries_tokens_and_cost_into_the_lineage_when_the_artifact_has_them(
+    tmp_path: Path,
+) -> None:
+    """F-031 T1: `TranscriptionArtifact` tokens/custo chegam ao `ProviderLineage` mesclado."""
+    image_path, manifest_path, digest = _seed_bundle(tmp_path)
+    base_packet = build_packet(dataset_id="golden-local-v1", digest=digest)
+    artifact = TranscriptionArtifact(
+        arm="sonnet",
+        provider="bedrock_anthropic",
+        model_id="anthropic.claude-sonnet-5",
+        prompt_id="measurement-extraction",
+        prompt_version="measurement-extraction@1.1.0",
+        prompt_hash="a" * 64,
+        schema_version="1.0.0",
+        input_digest="b" * 64,
+        latency_ms=12,
+        raw_response_ref=None,
+        input_tokens=900,
+        output_tokens=40,
+        estimated_cost_usd=Decimal("0.0123"),
+        output=MeasurementExtractionOutput(
+            readings=[
+                _reading(
+                    raw_text="1,20 m",
+                    kind="radius",
+                    value="1.20",
+                    unit="m",
+                    bbox=NormalizedBox(left=0.5, top=0.5, right=0.75, bottom=0.875),
+                )
+            ]
+        ),
+    )
+
+    merged, _report = merge_readings_into_packet(
+        artifact, base_packet, manifest_path=manifest_path, image_path=image_path
+    )
+
+    new_reading = next(
+        reading
+        for reading in merged.readings
+        if reading.id not in {WIDTH_READING_ID, HEIGHT_READING_ID, CIRCLE_READING_ID}
+    )
+    assert new_reading.provider_lineage[0].input_tokens == 900
+    assert new_reading.provider_lineage[0].output_tokens == 40
+    assert new_reading.provider_lineage[0].estimated_cost_usd == Decimal("0.0123")
     assert new_reading.status == ReadingStatus.PROPOSED
     assert new_reading.decision is None
 

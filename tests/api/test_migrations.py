@@ -373,6 +373,8 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
             "survey_records",
             "survey_operation_records",
             "survey_media_records",
+            "job_stage_events",
+            "domain_events",
         }
         for table, index_name in (
             ("valuation_rounds", "ix_valuation_rounds_tenant_created"),

@@ -39,6 +39,35 @@
         "title": "AddMeasurementOperation",
         "type": "object"
       },
+      "AiCostMetricsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "estimated_cost_usd": {
+            "title": "Estimated Cost Usd",
+            "type": "string"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "calls",
+          "input_tokens",
+          "output_tokens",
+          "estimated_cost_usd"
+        ],
+        "title": "AiCostMetricsResponse",
+        "type": "object"
+      },
       "AiProcessingEntitlementResponse": {
         "additionalProperties": false,
         "properties": {
@@ -587,6 +616,36 @@
           "safety_notes"
         ],
         "title": "AssociationSet",
+        "type": "object"
+      },
+      "AutomationMetricsResponse": {
+        "additionalProperties": false,
+        "description": "Campos reservados da F-029: enquanto ela não aterrissa, os dois são `null`.",
+        "properties": {
+          "auto_association_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Association Rate"
+          },
+          "review_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Rate"
+          }
+        },
+        "title": "AutomationMetricsResponse",
         "type": "object"
       },
       "BuildAmendmentDossierRequest": {
@@ -1766,6 +1825,34 @@
         "title": "CreateValuationRoundRequest",
         "type": "object"
       },
+      "CycleMetricsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageDurationResponse"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "total_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Ms"
+          }
+        },
+        "required": [
+          "stages"
+        ],
+        "title": "CycleMetricsResponse",
+        "type": "object"
+      },
       "DecideProposalBatchRequest": {
         "additionalProperties": false,
         "description": "Uma decisão para muitas propostas: traçar um croqui inteiro uma a uma é inviável.\n\nO lote inteiro vira uma revisão e uma cena, então ou entra tudo ou não entra nada.\nA justificativa é única por lote e vale para cada proposta nele.",
@@ -2897,6 +2984,67 @@
         "title": "HumanDecision",
         "type": "object"
       },
+      "HumanMetricsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "integer"
+          },
+          "corrected": {
+            "title": "Corrected",
+            "type": "integer"
+          },
+          "correction_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Rate"
+          },
+          "decisions_total": {
+            "title": "Decisions Total",
+            "type": "integer"
+          },
+          "interaction_ms_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interaction Ms Total"
+          },
+          "rectifications": {
+            "title": "Rectifications",
+            "type": "integer"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "review_revisions": {
+            "title": "Review Revisions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "review_revisions",
+          "decisions_total",
+          "confirmed",
+          "corrected",
+          "rejected",
+          "rectifications"
+        ],
+        "title": "HumanMetricsResponse",
+        "type": "object"
+      },
       "InstallEstimateCatalogRequest": {
         "additionalProperties": false,
         "description": "Instala UMA fonte de preço no fim da cascata; o JSON sobe pelo presign de sempre.",
@@ -2979,6 +3127,37 @@
         ],
         "title": "IssueStatus",
         "type": "string"
+      },
+      "JobMetricsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "ai_cost": {
+            "$ref": "#/components/schemas/AiCostMetricsResponse"
+          },
+          "automation": {
+            "$ref": "#/components/schemas/AutomationMetricsResponse"
+          },
+          "cycle": {
+            "$ref": "#/components/schemas/CycleMetricsResponse"
+          },
+          "human": {
+            "$ref": "#/components/schemas/HumanMetricsResponse"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "cycle",
+          "human",
+          "automation",
+          "ai_cost"
+        ],
+        "title": "JobMetricsResponse",
+        "type": "object"
       },
       "JobResponse": {
         "additionalProperties": false,
@@ -3402,6 +3581,111 @@
           "scene_schema_version"
         ],
         "title": "MetaResponse",
+        "type": "object"
+      },
+      "MetricsPeriodResponse": {
+        "additionalProperties": false,
+        "description": "Eco do recorte aplicado, já normalizado em UTC; `null` significa \"sem limite\".",
+        "properties": {
+          "from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To"
+          }
+        },
+        "title": "MetricsPeriodResponse",
+        "type": "object"
+      },
+      "MetricsSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "ai_cost": {
+            "$ref": "#/components/schemas/AiCostMetricsResponse"
+          },
+          "avg_correction_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Correction Rate"
+          },
+          "avg_cycle_total_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Cycle Total Ms"
+          },
+          "estimate_rounds_total": {
+            "title": "Estimate Rounds Total",
+            "type": "integer"
+          },
+          "jobs_completed": {
+            "title": "Jobs Completed",
+            "type": "integer"
+          },
+          "jobs_failed": {
+            "title": "Jobs Failed",
+            "type": "integer"
+          },
+          "jobs_total": {
+            "title": "Jobs Total",
+            "type": "integer"
+          },
+          "jobs_with_decisions": {
+            "title": "Jobs With Decisions",
+            "type": "integer"
+          },
+          "period": {
+            "$ref": "#/components/schemas/MetricsPeriodResponse"
+          },
+          "rounds_ai_cost": {
+            "$ref": "#/components/schemas/AiCostMetricsResponse"
+          },
+          "valuation_rounds_total": {
+            "title": "Valuation Rounds Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "period",
+          "jobs_total",
+          "jobs_completed",
+          "jobs_failed",
+          "jobs_with_decisions",
+          "ai_cost",
+          "valuation_rounds_total",
+          "estimate_rounds_total",
+          "rounds_ai_cost"
+        ],
+        "title": "MetricsSummaryResponse",
         "type": "object"
       },
       "ObservationNote": {
@@ -4211,10 +4495,34 @@
         "additionalProperties": false,
         "description": "Metadata needed to reproduce a provider observation without retaining its payload.",
         "properties": {
+          "estimated_cost_usd": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Cost Usd"
+          },
           "input_digest": {
             "pattern": "^[a-f0-9]{64}$",
             "title": "Input Digest",
             "type": "string"
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
           },
           "latency_ms": {
             "minimum": 0.0,
@@ -4226,6 +4534,18 @@
             "minLength": 1,
             "title": "Model Id",
             "type": "string"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
           },
           "prompt_hash": {
             "pattern": "^[a-f0-9]{64}$",
@@ -4461,6 +4781,17 @@
             "minimum": 1.0,
             "title": "Base Version",
             "type": "integer"
+          },
+          "interaction_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interaction Ms"
           },
           "rectifications": {
             "items": {
@@ -5413,6 +5744,37 @@
         "title": "SplineGeometry",
         "type": "object"
       },
+      "StageDurationResponse": {
+        "additionalProperties": false,
+        "description": "Uma etapa do job e quanto ela durou; `duration_ms` ausente = etapa ainda aberta.",
+        "properties": {
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "status"
+        ],
+        "title": "StageDurationResponse",
+        "type": "object"
+      },
       "SubmitReviewDecisionsRequest": {
         "additionalProperties": false,
         "properties": {
@@ -5429,6 +5791,17 @@
             "minItems": 1,
             "title": "Decisions",
             "type": "array"
+          },
+          "interaction_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interaction Ms"
           }
         },
         "required": [
@@ -9140,6 +9513,55 @@
         ]
       }
     },
+    "/v1/jobs/{job_id}/metrics": {
+      "get": {
+        "description": "Cycle time, ato humano e custo de IA do job, derivados do que já está gravado.\n\nNada é calculado no worker nem persistido: é leitura sobre `job_stage_events`,\n`review_decisions`, `chat_turns` e o lineage do pacote de revisão corrente.\n\nO escopo de tenant é o mesmo das rotas vizinhas e mora no `where`: job de outro\ntenant não é \"sem permissão\", é inexistente (`404`), e responder `403` diria ao\nchamador que aquele id existe em algum lugar.",
+        "operationId": "get_job_metrics_v1_jobs__job_id__metrics_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobMetricsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Job Metrics",
+        "tags": [
+          "metrics"
+        ]
+      }
+    },
     "/v1/jobs/{job_id}/review": {
       "get": {
         "operationId": "get_review_v1_jobs__job_id__review_get",
@@ -10082,6 +10504,77 @@
         "summary": "Metadata",
         "tags": [
           "meta"
+        ]
+      }
+    },
+    "/v1/metrics/summary": {
+      "get": {
+        "description": "Agregado do tenant do JWT no período, recortado por `created_at`.\n\nOs limites chegam como TEXTO e são convertidos aqui, e não declarados como\n`datetime` no parâmetro, porque uma data malformada precisa sair como\n`application/problem+json` com código estável — a validação nativa do FastAPI\nresponderia `422` no formato dela, fora do contrato de erro desta API.",
+        "operationId": "get_metrics_summary_v1_metrics_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricsSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Metrics Summary",
+        "tags": [
+          "metrics"
         ]
       }
     },

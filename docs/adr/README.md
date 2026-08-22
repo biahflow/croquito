@@ -61,13 +61,10 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0039](0039-sinapi-sicro-como-origens-de-preco.md) | SINAPI e SICRO como origens de preço da pré-licitação | Accepted |
 | [0040](0040-teto-de-verba-do-orcamento-base.md) | Teto de verba do orçamento-base — declarado, visível, nunca tesoura | Accepted |
 | [0041](0041-decisao-de-ator-maquina-atras-de-flag-local.md) | Decisão de ator-máquina na revisão, atrás de flag local | Accepted |
+| [0042](0042-eventos-de-dominio-outbox-pubsub.md) | Eventos de domínio por outbox transacional com publicação em Pub/Sub | Accepted |
 | [0043](0043-app-de-campo-pwa-offline-first.md) | App de levantamento de campo como PWA offline-first no monorepo | Accepted |
 | [0044](0044-triagem-por-testemunha-anotacao-automatica.md) | Triagem por custo do erro: anotação automática | Accepted |
 | [0045](0045-terceiro-estado-demanda-sob-contrato.md) | Demanda sob contrato: o terceiro estado entre pré-licitação e medição | Accepted |
-
-O número **0042** segue reservado pela branch `feat/f-031-value-events`, ainda não
-integrada à main; a linha entra no índice quando aquele trabalho for integrado — e o
-ADR ainda está `Proposed`, portanto pendente de aceite humano.
 
 ## Processo
 

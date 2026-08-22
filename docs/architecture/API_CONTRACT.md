@@ -400,7 +400,8 @@ Entrada:
       "justification": "Conferido na evidência protegida.",
       "association_proposal_id": "vp_..."
     }
-  ]
+  ],
+  "interaction_ms": 4200
 }
 ```
 
@@ -423,6 +424,19 @@ Quando a configuração do job exigir a família retangular, somente leituras
 confirmadas **e** associações explícitas chegam ao solver. A cena resultante é
 uma `SceneRevision` nova, métrica e não aprovada; blockers críticos pendentes do
 caso continuam nela e impedem aprovação, exportação e DXF.
+
+`interaction_ms` é opcional e **observacional**: o tempo de interação humana que a tela
+cronometrou até este envio, em milissegundos, pausado enquanto a aba esteve em segundo
+plano. Vale para este comando e para o de retificação. Ele é telemetria, não dado de
+negócio, e por isso a validação é leve e **nunca recusa a mutação**: ausente, negativo,
+acima de 24 h ou de tipo inesperado, o campo é descartado para `null` e o ato humano
+entra igual. Ele fica gravado na revisão de leitura que o envio criou, soma em
+`human.interaction_ms_total` do read-model de métricas e viaja como campo opcional dos
+eventos `review.decisions_recorded.v1` e `review.rectifications_recorded.v1` — ausente
+quando não houve medição, nunca `0`. Cliente que não o envia continua funcionando sem
+mudança nenhuma, e ele fica **fora** da impressão digital da `Idempotency-Key`: um replay
+do mesmo comando com o cronômetro noutro valor devolve a resposta gravada, e não
+`IDEMPOTENCY_KEY_REUSED`.
 
 ### `POST /v1/jobs/{job_id}/review/rectifications`
 
@@ -453,7 +467,10 @@ As ações são `confirm` e `reject` — não existe `correct`: o que muda em re
 registro anterior viaja nos mesmos campos da decisão. `rectifies_decision_id` cita
 nominalmente a decisão vigente da leitura e `justification` é obrigatória. Revisor,
 papel e horário vêm do JWT e do relógio do servidor. Exige papel profissional elegível,
-`Idempotency-Key` e de 1 a 50 correções (a tela envia uma por vez).
+`Idempotency-Key` e de 1 a 50 correções (a tela envia uma por vez). O corpo aceita o
+mesmo `interaction_ms` opcional e observacional descrito no comando de decisão — a
+medida é do ato que está sendo registrado, e a da decisão corrigida continua na revisão
+em que aconteceu.
 
 A **associação é sempre redeclarada**: valem as mesmas regras do comando de decisão —
 confirmar exige `association_proposal_id` pertencente à leitura ou a declaração
@@ -1436,6 +1453,68 @@ Retorna `status`, `audit_status`, `dxf_sha256`, `failure_code` e `audit_errors`.
 é `COMPLETED` e a chave está sob o prefixo do tenant. A URL nunca é registrada em log
 nem em auditoria. Artefato de outro tenant retorna `404`.
 
+## Métricas de valor
+
+Read-model derivado (F-031): nenhuma das duas rotas persiste nada e nenhuma delas
+calcula no worker. Tudo sai de fato já gravado — `job_stage_events`,
+`review_revisions`/`review_decisions`, `chat_turns` e o lineage de provider do pacote
+de revisão corrente. Exigem só autenticação; o tenant vem do JWT, como nas demais.
+
+Duas convenções atravessam as respostas:
+
+- **Taxa sem denominador é `null`, nunca `0.0`.** "Nenhuma decisão ainda" e "nada foi
+  corrigido do que se decidiu" são estados diferentes.
+- **Custo é `Decimal` exato em TEXTO** (`"0.4200"`), pela mesma razão que a coluna
+  `chat_turns.estimated_cost_usd` é texto: `float` perde centavo em soma.
+
+### `GET /v1/jobs/{job_id}/metrics`
+
+Métricas de um job, em quatro blocos:
+
+- `cycle`: `total_ms` (criação do job até a última transição) e `stages`, um item por
+  transição de `job_stage_events` com `stage`, `status` e `duration_ms` — a duração é o
+  intervalo até a transição SEGUINTE, então a etapa corrente sai com `duration_ms: null`
+  por estar aberta. Delta negativo entre relógios de escritores diferentes também sai
+  `null`: "não medido" é a resposta honesta.
+- `human`: `review_revisions`, `decisions_total`, `confirmed`, `corrected`, `rejected`,
+  `correction_rate`, `rectifications` e `interaction_ms_total`. `decisions_total` é
+  exatamente `confirmed + corrected + rejected`; a retificação declarada
+  (`POST .../review/rectifications`) é contada à parte em `rectifications`, porque
+  corrige o registro de uma pessoa e não a proposta da máquina. `correction_rate` é
+  `corrected/decisions_total`, `null` sem decisões. `interaction_ms_total` soma o
+  `interaction_ms` autorrelatado pelas revisões de leitura do job e é `null` quando
+  NENHUMA delas trouxe medida — cliente antigo, aba fechada antes do envio ou valor
+  descartado por implausível. `null` diz "não medido", nunca "zero milissegundo na tela".
+- `automation`: `auto_association_rate` e `review_rate`, ambos `null` — campos
+  reservados da auto-associação por confiança, publicados antes dela para que o
+  consumidor não precise mudar de forma quando ela aterrissar.
+- `ai_cost`: `calls`, `input_tokens`, `output_tokens` e `estimated_cost_usd` somando os
+  turnos de conversa do job (só os que chegaram a chamar um provider) e o lineage do
+  pacote de revisão corrente. O lineage é deduplicado por execução: uma chamada produz a
+  folha inteira e viaja anexada a cada leitura, e somar por leitura multiplicaria o gasto
+  pelo número de cotas.
+
+Job de outro tenant retorna `404 NOT_FOUND`, como as demais rotas de job.
+
+### `GET /v1/metrics/summary`
+
+Agregado do tenant do JWT. Parâmetros opcionais `from` e `to` (instantes ISO 8601;
+sem fuso são lidos como UTC) recortam por `created_at` do job e da rodada; ausentes,
+o agregado é de toda a história do tenant.
+
+Retorna `period` (eco do recorte normalizado em UTC), `jobs_total`, `jobs_completed`,
+`jobs_failed`, `jobs_with_decisions`, `avg_cycle_total_ms`, `avg_correction_rate`,
+`ai_cost` (soma dos jobs do recorte), `valuation_rounds_total`,
+`estimate_rounds_total` e `rounds_ai_cost` (soma das extrações pagas registradas em
+`extraction_lineage_json`, também deduplicada por execução — a revisão append-only
+carrega o lineage da cabeça adiante). As médias são `null` quando nada foi medido.
+
+Erros: `422 INVALID_METRICS_PERIOD` para data malformada ou `from` posterior a `to`.
+
+O mesmo cálculo por job está disponível fora do HTTP em
+`croquito-demo value-report --job <id>`, que lê o banco direto e imprime o documento
+idêntico ao desta rota.
+
 ## Problem details
 
 ```json
@@ -1468,7 +1547,7 @@ nem em auditoria. Artefato de outro tenant retorna `404`.
 `IDEMPOTENCY_KEY_REUSED`,
 `ROUND_STAGE_NOT_READY`, `ROUND_PLATE_ALREADY_PRESENT`, `EXTRACTION_IN_PROGRESS`,
 `SUGGESTIONS_ALREADY_REFINED`, `TAKEOFF_REVIEW_INCOMPLETE`, `CATALOG_QUERY_EMPTY`,
-`CATALOG_REQUIRED`,
+`CATALOG_REQUIRED`, `INVALID_METRICS_PERIOD`,
 `SURVEY_CONFLICT`, `SURVEY_PACKET_INVALID`, `SURVEY_MEDIA_NOT_REFERENCED`,
 `SURVEY_MEDIA_DIGEST_MISMATCH`, `SURVEY_MEDIA_PENDING`, `SURVEY_NOT_CONCLUDED`.
 

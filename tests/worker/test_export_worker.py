@@ -10,6 +10,7 @@ import pytest
 from croquito_api.database import (
     ApprovalRecord,
     Database,
+    DomainEventRecord,
     ExportArtifactRecord,
     JobRecord,
     ProjectRecord,
@@ -173,6 +174,19 @@ def test_export_publishes_audited_package_with_the_approval(
         job = session.get(JobRecord, JOB_ID)
         assert job is not None
         assert job.status == "COMPLETED"
+        # F-031 T2: o ZIP publicado é fato próprio no catálogo v1, gravado na MESMA
+        # transação do `UPDATE export_artifacts` — o portal conta pacote entregue, e não
+        # apenas mudança de status do job.
+        completed = (
+            session.query(DomainEventRecord)
+            .filter_by(event_type="croquito.export.completed.v1")
+            .one()
+        )
+        assert completed.job_id == JOB_ID
+        assert completed.tenant_id == TENANT_ID
+        assert completed.payload_json == {"export_id": EXPORT_ID}
+        # Nasce pendente: publicar é trabalho do relay, nunca do caminho de escrita.
+        assert completed.published_at is None
     assert len(storage.puts) == 1
     assert storage.puts[0]["ContentType"] == "application/zip"
     assert storage.puts[0]["ServerSideEncryption"] == "AES256"
@@ -232,6 +246,21 @@ def test_export_of_unapproved_scene_fails_closed_without_publishing(
         job = session.get(JobRecord, JOB_ID)
         assert job is not None
         assert job.status == "FAILED"
+        # F-031 T2: a falha fechada publica o CÓDIGO estável, nunca a lista de erros do
+        # auditor — ela descreve a cena do cliente e não tem o que fazer num barramento.
+        failed = (
+            session.query(DomainEventRecord).filter_by(event_type="croquito.export.failed.v1").one()
+        )
+        assert failed.payload_json == {
+            "export_id": EXPORT_ID,
+            "failure_code": "EXPORT_AUDIT_FAILED",
+        }
+        assert (
+            session.query(DomainEventRecord)
+            .filter_by(event_type="croquito.export.completed.v1")
+            .count()
+            == 0
+        )
 
 
 def test_export_refuses_a_message_from_another_tenant(

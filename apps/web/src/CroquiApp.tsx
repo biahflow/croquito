@@ -145,6 +145,7 @@ import {
   traceDraftStorageKey,
 } from "./traceStorage";
 import { buildAnnotationBatch, suggestedAnnotationIds } from "./readingBatch";
+import { useTouchTime } from "./touchTime";
 import {
   JUSTIFICATION_MAX_LENGTH,
   JUSTIFICATION_MIN_LENGTH,
@@ -1107,6 +1108,16 @@ export function CroquiApp({
   });
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [review, setReview] = useState<Review | null>(null);
+  // Tempo de interação humana desta sessão de revisão (F-031 T4), observacional: viaja
+  // como campo opcional do envio e nada depende dele. A medida acompanha a revisão
+  // apresentada — carga, recarga e cada ato registrado abrem uma revisão nova, e é aí
+  // que o relógio recomeça.
+  const touchTime = useTouchTime();
+  useEffect(() => {
+    if (review?.review_id) {
+      touchTime.restart();
+    }
+  }, [review?.review_id, touchTime]);
   const [selectedReadingId, setSelectedReadingId] = useState("");
   const [selectedProposalId, setSelectedProposalId] = useState("");
   const [correction, setCorrection] = useState("");
@@ -2249,6 +2260,7 @@ export function CroquiApp({
         jobId,
         review.version,
         [decision],
+        touchTime.elapsedMs(),
       );
       setReview(next);
       setConflict(false);
@@ -2321,6 +2333,7 @@ export function CroquiApp({
         jobId,
         review.version,
         decisions,
+        touchTime.elapsedMs(),
       );
       const decided = decisions.length;
       setReview(next);
@@ -2493,6 +2506,7 @@ export function CroquiApp({
         jobId,
         review.version,
         command,
+        touchTime.elapsedMs(),
       );
       setReview(next);
       setConflict(false);

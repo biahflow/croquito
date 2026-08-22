@@ -69,7 +69,11 @@ JOURNEYLESS_ROUTE_PREFIXES: Final[frozenset[str]] = frozenset(
     # `/v1/surveys` é do app de campo (F-032), que não é uma das três jornadas da SPA e tem
     # papel próprio: a disponibilidade da F-034 não o governa. Se um dia governar, ele vira
     # jornada aqui — e essa é decisão humana, não consequência de merge.
-    {"/v1/me", "/v1/meta", "/v1/schemas", "/v1/platform", "/v1/surveys"}
+    # `/v1/metrics` é o resumo do TENANT, atravessando as jornadas (F-031) — não pertence a
+    # nenhuma. O que é de uma jornada já entra por ela: `/v1/jobs/{id}/metrics` cai em
+    # `/v1/jobs` e portanto no croqui. E note que `/v1/meta` NÃO reivindica `/v1/metrics`:
+    # é para isso que `_matches` casa segmento inteiro.
+    {"/v1/me", "/v1/meta", "/v1/metrics", "/v1/schemas", "/v1/platform", "/v1/surveys"}
 )
 
 

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -9,11 +10,14 @@ from typing import cast
 import fitz
 import pytest
 from PIL import Image
+from sqlalchemy import text
 
 from croquito_api.database import (
     AiProcessingAuthorizationRecord,
     Database,
+    DomainEventRecord,
     JobRecord,
+    JobStageEventRecord,
     ProjectRecord,
     ReviewRevisionRecord,
     TenantAiProcessingEntitlementRecord,
@@ -27,6 +31,7 @@ from croquito_worker.local_queue import (
     LocalQueueWorker,
     LocalWorkerSettings,
     S3ProtectedRawResponseStore,
+    UnroutableMessageError,
     ValidatedUpload,
     _validate_pdf_stream,
 )
@@ -150,6 +155,20 @@ def test_local_queue_worker_advances_only_the_queued_tenant(
         assert job.status == "REVIEW_REQUIRED"
         assert job.stage == "PREVIEWING"
         assert job.page_count == 1
+        # F-031 T1: a transição gravada pelo worker traz o `from_*` real, lido do job
+        # ANTES do UPDATE — não é inventado a partir do estado final.
+        events = (
+            session.query(JobStageEventRecord)
+            .filter_by(job_id="00000000-0000-7000-8000-000000000001")
+            .all()
+        )
+        assert len(events) == 1
+        assert events[0].from_stage == "VALIDATING"
+        assert events[0].from_status == "UPLOADED"
+        assert events[0].to_stage == "PREVIEWING"
+        assert events[0].to_status == "REVIEW_REQUIRED"
+        assert events[0].source == "worker"
+        assert events[0].failure_code is None
     assert fake_client.deleted == ["receipt-1"]
     assert worker.s3_client.puts == []
 
@@ -266,8 +285,202 @@ def test_budget_exceeded_fails_the_job_instead_of_burning_the_ceiling_again(
         assert job.status == "FAILED"
         assert job.failure_code == "AI_BUDGET_EXCEEDED"
         assert session.query(ReviewRevisionRecord).filter_by(job_id=job_id).count() == 0
+        # F-031 T1: `_mark_failed` registra `failure_code` no evento, na mesma transação.
+        event = session.query(JobStageEventRecord).filter_by(job_id=job_id).one()
+        assert event.from_stage == "VALIDATING"
+        assert event.from_status == "UPLOADED"
+        assert event.to_stage == "VALIDATING"
+        assert event.to_status == "FAILED"
+        assert event.source == "worker"
+        assert event.failure_code == "AI_BUDGET_EXCEEDED"
     # Mensagem drenada: sem isso a fila reentregaria e o teto seria gasto outra vez.
     assert queue.deleted == ["receipt-1"]
+
+
+def test_mark_failed_rolls_back_the_whole_transaction_when_the_event_insert_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Falha injetada depois do UPDATE e antes do commit não deixa evento órfão.
+
+    `_record_stage_event` roda na MESMA `engine.begin()` do `UPDATE jobs SET`: uma falha
+    ali precisa desfazer os dois, não só deixar de gravar o evento. Provar isso exige
+    injetar a falha DEPOIS do UPDATE (a asserção fica vazia se a falha for antes) e
+    conferir que nem o evento nem a mudança de status sobrevivem.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'atomic-worker.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    expires_at = datetime.now(UTC) + timedelta(days=7)
+    job_id = "00000000-0000-7000-8000-000000000099"
+    with database.sessions.begin() as session:
+        session.add(
+            ProjectRecord(
+                id="project-atomic",
+                tenant_id="tenant-atomic",
+                name="Atomic",
+                default_unit="m",
+                created_by="reviewer",
+                expires_at=expires_at,
+            )
+        )
+        session.add(
+            UploadRecord(
+                id="upload-atomic",
+                tenant_id="tenant-atomic",
+                object_key="tenants/tenant-atomic/uploads/atomic.pdf",
+                filename="atomic.pdf",
+                content_type="application/pdf",
+                size_bytes=10,
+                sha256="0" * 64,
+            )
+        )
+        session.flush()
+        session.add(
+            JobRecord(
+                id=job_id,
+                tenant_id="tenant-atomic",
+                project_id="project-atomic",
+                upload_id="upload-atomic",
+                status="UPLOADED",
+                stage="VALIDATING",
+                expires_at=expires_at,
+            )
+        )
+
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+        )
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("falha injetada depois do UPDATE, antes do commit")
+
+    monkeypatch.setattr(LocalQueueWorker, "_record_stage_event", _boom)
+
+    with pytest.raises(RuntimeError, match="falha injetada"):
+        worker._mark_failed(job_id=job_id, tenant_id="tenant-atomic", failure_code="INVALID_UPLOAD")
+
+    with database.sessions() as session:
+        job = session.get(JobRecord, job_id)
+        assert job is not None
+        # O UPDATE foi desfeito junto: nada de status FAILED "meio aplicado".
+        assert job.status == "UPLOADED"
+        assert job.stage == "VALIDATING"
+        assert session.query(JobStageEventRecord).filter_by(job_id=job_id).count() == 0
+
+
+def test_worker_recorded_stage_event_timestamp_matches_the_api_ones_format(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As duas fontes de `job_stage_events` (API e worker) gravam o MESMO formato.
+
+    A API grava `created_at` via ORM (`datetime.now(UTC)`, campo mapeado
+    `DateTime(timezone=True)`); o worker grava por SQL cru. Sem o bind tipado
+    (`bindparam(..., type_=DateTime(timezone=True))`), um `text()` com parâmetro
+    Python puro pula o `bind_processor` do dialeto SQLite e vai cru para o driver —
+    aí o `sqlite3` grava o offset (`+00:00`) e o ORM não, e a MESMA coluna sai com
+    dois formatos conforme a origem da linha, não conforme a coluna. Este teste seeda
+    um evento "estilo API" (ORM) e um evento do worker (via `_mark_failed`) na mesma
+    tabela e prova que os dois têm a MESMA forma armazenada e são comparáveis sem
+    `TypeError: can't compare offset-naive and offset-aware datetimes`.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'tz-worker.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    expires_at = datetime.now(UTC) + timedelta(days=7)
+    job_id = "00000000-0000-7000-8000-000000000098"
+    api_created_at = datetime.now(UTC)
+    with database.sessions.begin() as session:
+        session.add(
+            ProjectRecord(
+                id="project-tz",
+                tenant_id="tenant-tz",
+                name="TZ",
+                default_unit="m",
+                created_by="reviewer",
+                expires_at=expires_at,
+            )
+        )
+        session.add(
+            UploadRecord(
+                id="upload-tz",
+                tenant_id="tenant-tz",
+                object_key="tenants/tenant-tz/uploads/tz.pdf",
+                filename="tz.pdf",
+                content_type="application/pdf",
+                size_bytes=10,
+                sha256="0" * 64,
+            )
+        )
+        session.flush()
+        session.add(
+            JobRecord(
+                id=job_id,
+                tenant_id="tenant-tz",
+                project_id="project-tz",
+                upload_id="upload-tz",
+                status="UPLOADED",
+                stage="VALIDATING",
+                expires_at=expires_at,
+            )
+        )
+        session.flush()
+        # Evento "estilo API": mesmo caminho de `main.py` (ORM, `datetime.now(UTC)`).
+        session.add(
+            JobStageEventRecord(
+                id="event-api",
+                tenant_id="tenant-tz",
+                job_id=job_id,
+                from_stage=None,
+                to_stage="VALIDATING",
+                from_status=None,
+                to_status="UPLOADED",
+                source="api",
+                created_at=api_created_at,
+            )
+        )
+
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+        )
+    )
+    worker._mark_failed(job_id=job_id, tenant_id="tenant-tz", failure_code="INVALID_UPLOAD")
+
+    with database.sessions() as session:
+        events = {
+            event.source: event
+            for event in session.query(JobStageEventRecord).filter_by(job_id=job_id).all()
+        }
+        api_event = events["api"]
+        worker_event = events["worker"]
+        # Mesma "forma" de tzinfo (as duas naive ou as duas aware) — nunca uma de cada,
+        # que é exatamente o bug que quebraria a comparação/delta do cycle time (T3).
+        assert (api_event.created_at.tzinfo is None) == (worker_event.created_at.tzinfo is None)
+        # Comparáveis (nenhum `TypeError: can't compare offset-naive and offset-aware
+        # datetimes`) e na ordem causal certa: o evento do worker aconteceu depois.
+        assert worker_event.created_at >= api_event.created_at
+
+    with database.engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT source, created_at FROM job_stage_events WHERE job_id = :job_id"),
+            {"job_id": job_id},
+        ).all()
+        stored: dict[str, str] = {row[0]: row[1] for row in rows}
+    # Nenhuma das duas strings brutas carrega offset que a outra não carregue — a
+    # forma gravada é a mesma nos dois caminhos de escrita, não só o valor Python lido.
+    assert ("+00:00" in stored["api"]) == ("+00:00" in stored["worker"])
 
 
 def test_hosted_suite_labels_the_revision_as_paid_extraction(
@@ -681,3 +894,343 @@ def test_raw_response_store_keeps_the_accepted_key_and_marks_the_rejected_one() 
         f"{input_digest}/{payload_digest}.json"
     )
     assert [str(put["Key"]) for put in storage.puts] == [accepted, rejected]
+
+
+def _domain_events(database: Database, *, event_type: str) -> list[DomainEventRecord]:
+    with database.sessions() as session:
+        return (
+            session.query(DomainEventRecord)
+            .filter_by(event_type=event_type)
+            .order_by(DomainEventRecord.created_at, DomainEventRecord.id)
+            .all()
+        )
+
+
+def _seed_plain_job(database: Database, *, job_id: str, pdf: bytes) -> None:
+    expires_at = datetime.now(UTC) + timedelta(days=7)
+    with database.sessions.begin() as session:
+        session.add(
+            ProjectRecord(
+                id="project-evt",
+                tenant_id="tenant-a",
+                name="Projeto",
+                default_unit="m",
+                created_by="reviewer",
+                expires_at=expires_at,
+            )
+        )
+        session.add(
+            UploadRecord(
+                id="upload-evt",
+                tenant_id="tenant-a",
+                object_key=UPLOAD_KEY_A,
+                filename="entrada.pdf",
+                content_type="application/pdf",
+                size_bytes=len(pdf),
+                sha256=hashlib.sha256(pdf).hexdigest(),
+            )
+        )
+        session.flush()
+        session.add(
+            JobRecord(
+                id=job_id,
+                tenant_id="tenant-a",
+                project_id="project-evt",
+                upload_id="upload-evt",
+                status="UPLOADED",
+                stage="VALIDATING",
+                expires_at=expires_at,
+            )
+        )
+
+
+def test_transicao_do_worker_publica_evento_coerente_com_a_linha_de_historico(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O `job.stage_changed.v1` diz exatamente o que `job_stage_events` registrou (F-031 T2).
+
+    Os dois nascem na mesma chamada e na mesma transação de propósito: um histórico que
+    diverge da mensagem publicada faria o portal e a auditoria contarem etapas diferentes
+    do mesmo job, sem que nada aqui denunciasse a diferença.
+
+    O evento inicial da API é seeded à mão para que exista marco anterior: `stage_duration_ms`
+    é o intervalo entre duas transições, e sem a primeira ele seria honestamente `None`.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'events-worker.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    pdf = synthetic_pdf()
+    job_id = "00000000-0000-7000-8000-000000000021"
+    _seed_plain_job(database, job_id=job_id, pdf=pdf)
+    with database.sessions.begin() as session:
+        session.add(
+            JobStageEventRecord(
+                id="stage-api",
+                tenant_id="tenant-a",
+                job_id=job_id,
+                from_stage=None,
+                to_stage="VALIDATING",
+                from_status=None,
+                to_status="UPLOADED",
+                source="api",
+                created_at=datetime.now(UTC) - timedelta(seconds=3),
+            )
+        )
+
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+        )
+    )
+    worker.client = _queue({"job_id": job_id, "tenant_id": "tenant-a"})
+    worker.s3_client = _storage(object_key=UPLOAD_KEY_A, pdf=pdf)
+
+    assert worker.run_once() == 1
+
+    with database.sessions() as session:
+        historico = (
+            session.query(JobStageEventRecord).filter_by(job_id=job_id, source="worker").one()
+        )
+        evento = (
+            session.query(DomainEventRecord)
+            .filter_by(event_type="croquito.job.stage_changed.v1")
+            .one()
+        )
+    payload = evento.payload_json
+    assert evento.job_id == job_id
+    assert evento.tenant_id == "tenant-a"
+    assert payload["from_stage"] == historico.from_stage
+    assert payload["to_stage"] == historico.to_stage
+    assert payload["from_status"] == historico.from_status
+    assert payload["to_status"] == historico.to_status
+    # Intervalo real contra a transição anterior (~3s), nunca zero inventado.
+    assert isinstance(payload["stage_duration_ms"], int)
+    assert payload["stage_duration_ms"] >= 2_000
+    # Transição bem-sucedida não carrega código de falha; ausência é ausência.
+    assert "failure_code" not in payload
+
+
+def test_falha_do_job_publica_o_codigo_estavel_no_evento(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'failed-events.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    job_id = "00000000-0000-7000-8000-000000000022"
+    _seed_plain_job(database, job_id=job_id, pdf=synthetic_pdf())
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+        )
+    )
+
+    worker._mark_failed(job_id=job_id, tenant_id="tenant-a", failure_code="INVALID_UPLOAD")
+
+    evento = _domain_events(database, event_type="croquito.job.stage_changed.v1")[0]
+    assert evento.payload_json["failure_code"] == "INVALID_UPLOAD"
+    assert evento.payload_json["to_status"] == "FAILED"
+    # Sem transição anterior registrada, "não medido" é a resposta honesta.
+    assert evento.payload_json["stage_duration_ms"] is None
+
+
+def test_evento_de_dominio_cai_junto_com_o_update_quando_a_transacao_falha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Falha DEPOIS de gravar o evento desfaz o evento e o `UPDATE` — os dois ou nenhum.
+
+    A injeção precisa acontecer depois do insert na outbox; falhar antes deixaria a
+    asserção vazia, provando apenas que nada foi escrito porque nada foi tentado.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'atomic-outbox.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    job_id = "00000000-0000-7000-8000-000000000023"
+    _seed_plain_job(database, job_id=job_id, pdf=synthetic_pdf())
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+        )
+    )
+    real = LocalQueueWorker._record_domain_event
+
+    def _grava_e_explode(self: LocalQueueWorker, *args: object, **kwargs: object) -> None:
+        real(self, *args, **kwargs)  # type: ignore[arg-type]
+        raise RuntimeError("falha injetada depois do insert do evento")
+
+    monkeypatch.setattr(LocalQueueWorker, "_record_domain_event", _grava_e_explode)
+
+    with pytest.raises(RuntimeError, match="falha injetada"):
+        worker._mark_failed(job_id=job_id, tenant_id="tenant-a", failure_code="INVALID_UPLOAD")
+
+    monkeypatch.undo()
+    with database.sessions() as session:
+        job = session.get(JobRecord, job_id)
+        assert job is not None
+        assert job.status == "UPLOADED"
+        assert session.query(DomainEventRecord).count() == 0
+        assert session.query(JobStageEventRecord).count() == 0
+
+
+def test_chamada_de_provider_concluida_vira_evento_de_custo_sem_conteudo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cada `ProviderExecution` que retornou vira um `ai.call_executed.v1` (F-031 T2).
+
+    É o insumo do custo por transação. O que viaja é o que a política de logs permite:
+    provider, modelo, versão de prompt, latência, tokens e custo. `input_digest`,
+    `raw_response_ref` e a saída do modelo ficam de fora — os dois primeiros descrevem o
+    documento do cliente e o terceiro aponta para a resposta bruta protegida.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'ai-events.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    pdf = synthetic_pdf()
+    job_id = "00000000-0000-7000-8000-000000000024"
+    _seed_plain_job(database, job_id=job_id, pdf=pdf)
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+        ),
+        provider_suite=build_synthetic_provider_suite(),
+    )
+    worker.client = _queue({"job_id": job_id, "tenant_id": "tenant-a"})
+    worker.s3_client = _storage(object_key=UPLOAD_KEY_A, pdf=pdf)
+
+    assert worker.run_once() == 1
+
+    eventos = _domain_events(database, event_type="croquito.ai.call_executed.v1")
+    assert eventos, "a suíte sintética executa survey, extração e geometria"
+    assert {evento.job_id for evento in eventos} == {job_id}
+    for evento in eventos:
+        payload = evento.payload_json
+        assert set(payload) == {
+            "provider",
+            "model_id",
+            "prompt_version",
+            "latency_ms",
+            "input_tokens",
+            "output_tokens",
+            "estimated_cost_usd",
+        }
+        assert payload["provider"] in {member.value for member in ProviderName}
+        assert isinstance(payload["latency_ms"], int)
+    # A âncora da extração é o braço primário; o evento nomeia quem realmente respondeu.
+    assert "anthropic" in {evento.payload_json["provider"] for evento in eventos}
+
+
+def test_dispatch_logs_command_completion_with_status_ok_and_duration(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """F-031 T5: comando despachado com sucesso loga `command`/`job_id`/`status`/
+    `duration_ms` — usa o caminho de reentrega (job já ingerido) porque não precisa
+    de storage nem provider para completar com `status: "ok"`."""
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'worker.db'}"
+    database = Database(database_url)
+    database.create_schema()
+    expires_at = datetime.now(UTC) + timedelta(days=7)
+    job_id = "00000000-0000-7000-8000-000000000002"
+    with database.sessions.begin() as session:
+        session.add(
+            ProjectRecord(
+                id="project-log",
+                tenant_id="tenant-a",
+                name="Projeto",
+                default_unit="m",
+                created_by="reviewer",
+                expires_at=expires_at,
+            )
+        )
+        session.add(
+            UploadRecord(
+                id="upload-log",
+                tenant_id="tenant-a",
+                object_key="tenants/tenant-a/uploads/upload-log/entrada.pdf",
+                filename="entrada.pdf",
+                content_type="application/pdf",
+                size_bytes=10,
+                sha256="a" * 64,
+            )
+        )
+        session.flush()
+        session.add(
+            JobRecord(
+                id=job_id,
+                tenant_id="tenant-a",
+                project_id="project-log",
+                upload_id="upload-log",
+                status="REVIEW_REQUIRED",  # já ingerido: dispatch encerra sem tocar storage
+                stage="PREVIEWING",
+                expires_at=expires_at,
+            )
+        )
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+        )
+    )
+
+    with caplog.at_level(logging.INFO, logger="croquito_worker.local_queue"):
+        result = worker.dispatch(
+            {"command": "process_upload", "job_id": job_id, "tenant_id": "tenant-a"}
+        )
+
+    assert result == 1
+    records = [r for r in caplog.records if r.name == "croquito_worker.local_queue"]
+    assert len(records) == 1
+    record = records[0]
+    assert record.command == "process_upload"  # type: ignore[attr-defined]
+    assert record.job_id == job_id  # type: ignore[attr-defined]
+    assert record.status == "ok"  # type: ignore[attr-defined]
+    assert isinstance(record.duration_ms, float)  # type: ignore[attr-defined]
+
+
+def test_dispatch_logs_error_status_and_code_then_still_reraises(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Comando que falha loga `status: "error"` com `error_code` estável e a exceção
+    continua propagando — a semântica de reentrega da fila não pode mudar."""
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'worker.db'}"
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url="http://localstack/queue",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localstack",
+        )
+    )
+
+    with (
+        caplog.at_level(logging.INFO, logger="croquito_worker.local_queue"),
+        pytest.raises(UnroutableMessageError),
+    ):
+        worker.dispatch({"command": "process_upload", "tenant_id": "tenant-a"})  # sem job_id
+
+    records = [r for r in caplog.records if r.name == "croquito_worker.local_queue"]
+    assert len(records) == 1
+    record = records[0]
+    assert record.status == "error"  # type: ignore[attr-defined]
+    assert record.error_code == "UnroutableMessageError"  # type: ignore[attr-defined]
+    assert isinstance(record.duration_ms, float)  # type: ignore[attr-defined]

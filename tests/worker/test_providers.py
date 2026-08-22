@@ -22,6 +22,7 @@ from croquito_worker.provider_review import (
     READING_MATCH_MAX_CENTER_DISTANCE,
     ProviderReviewSnapshot,
     _execute_with_fallback,
+    _lineage,
     _normalize_ocr_text,
     _reading_confirmed_by_ocr,
     _readings_agree,
@@ -94,6 +95,7 @@ from croquito_worker.providers import (
     ProviderOutput,
     ProviderRequest,
     ProviderSuite,
+    ProviderUsage,
     RetryingEmbeddingsAdapter,
     RetryingProviderAdapter,
     ReviewChatOutput,
@@ -124,7 +126,7 @@ from croquito_worker.providers import (
     embeddings_input_digest,
     image_text_input_digest,
 )
-from croquito_worker.review import ReadingStatus, ReviewPacket
+from croquito_worker.review import ProviderLineage, ReadingStatus, ReviewPacket
 from croquito_worker.synthetic import render_synthetic_input
 from tests.bundles import build_packet
 
@@ -287,6 +289,69 @@ def test_provider_snapshot_preserves_dual_lineage_and_requires_review(tmp_path: 
     ]
     assert all(reading.extractor == "anthropic+openai" for reading in snapshot.packet.readings)
     assert snapshot.associations.unassociated_reading_ids == []
+
+
+def test_lineage_carries_tokens_and_cost_when_usage_is_present() -> None:
+    """F-031 T1: `execution.usage` deixa de ser descartado ao virar `ProviderLineage`."""
+    base_execution = _openai_arm(build_synthetic_provider_suite()).execute(
+        _request(PromptTask.PAGE_SURVEY)
+    )
+    execution = base_execution.model_copy(
+        update={
+            "usage": ProviderUsage(
+                input_tokens=1234, output_tokens=56, estimated_cost_usd=Decimal("0.0078")
+            )
+        }
+    )
+
+    lineage = _lineage(execution)
+
+    assert lineage.input_tokens == 1234
+    assert lineage.output_tokens == 56
+    assert lineage.estimated_cost_usd == Decimal("0.0078")
+    # Decimal serializa como string em `model_dump(mode="json")` — o padrão do repo para
+    # valor monetário exato (nunca float, que perderia centavo).
+    dumped = lineage.model_dump(mode="json")
+    assert dumped["estimated_cost_usd"] == "0.0078"
+
+
+def test_lineage_defaults_tokens_and_cost_to_none_without_usage() -> None:
+    """Braço fixture não declara `usage`; o lineage não pode inventar tokens/custo."""
+    execution = _openai_arm(build_synthetic_provider_suite()).execute(
+        _request(PromptTask.PAGE_SURVEY)
+    )
+
+    lineage = _lineage(execution)
+
+    assert lineage.input_tokens is None
+    assert lineage.output_tokens is None
+    assert lineage.estimated_cost_usd is None
+
+
+def test_provider_lineage_accepts_a_legacy_packet_without_cost_fields() -> None:
+    """Replay de um `packet_json` gravado antes de F-031 T1 não pode quebrar.
+
+    A revisão antiga nunca teve `input_tokens`/`output_tokens`/`estimated_cost_usd` na
+    linhagem gravada; o modelo precisa continuar validando essa forma e preencher os
+    campos novos com `None`, nunca inventar um valor.
+    """
+    legacy = {
+        "provider": "anthropic",
+        "model_id": "anthropic.claude-sonnet-5",
+        "prompt_id": "page-survey",
+        "prompt_version": "page-survey@1.0.0",
+        "prompt_hash": "a" * 64,
+        "schema_version": "1.0.0",
+        "input_digest": "b" * 64,
+        "latency_ms": 12,
+        "raw_response_ref": None,
+    }
+
+    lineage = ProviderLineage.model_validate(legacy)
+
+    assert lineage.input_tokens is None
+    assert lineage.output_tokens is None
+    assert lineage.estimated_cost_usd is None
 
 
 def test_provider_snapshot_blocks_extraction_when_page_roles_are_ambiguous(tmp_path: Path) -> None:

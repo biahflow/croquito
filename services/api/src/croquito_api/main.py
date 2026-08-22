@@ -5,8 +5,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import math
 import re
+import time
 from collections.abc import Collection, Generator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -23,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     RootModel,
@@ -50,11 +53,13 @@ from croquito_api.database import (
     ChatSessionRecord,
     ChatTurnRecord,
     Database,
+    DomainEventRecord,
     EstimateRoundRecord,
     EstimateRoundRevisionRecord,
     ExportArtifactRecord,
     IdempotencyRecord,
     JobRecord,
+    JobStageEventRecord,
     ProjectRecord,
     ProposalDecisionRecord,
     ReviewDecisionRecord,
@@ -79,6 +84,12 @@ from croquito_api.journeys import (
     journey_reachable,
     pilot_journeys,
     resolve_journeys,
+)
+from croquito_api.metrics import (
+    MetricsPeriodError,
+    compute_job_metrics,
+    compute_tenant_summary,
+    parse_period_bound,
 )
 from croquito_api.pubsub_queue import PubSubProcessingQueue, QueuePublishError
 from croquito_api.storage import ArtifactStore
@@ -123,8 +134,21 @@ from croquito_api.valuation_rounds import (
     takeoff_overlay_state,
 )
 from croquito_core.errors import DomainValidationError
+from croquito_core.events import (
+    EVENT_ESTIMATE_ACTION_RECORDED,
+    EVENT_JOB_CREATED,
+    EVENT_REVIEW_CALIBRATION_SET,
+    EVENT_REVIEW_CHAINS_DECLARED,
+    EVENT_REVIEW_DECISIONS_RECORDED,
+    EVENT_REVIEW_PROPOSALS_DECIDED,
+    EVENT_REVIEW_RECTIFICATIONS_RECORDED,
+    EVENT_SCENE_APPROVED,
+    EVENT_VALUATION_ACTION_RECORDED,
+    build_domain_event,
+)
 from croquito_core.field import SurveyOperation, SurveyPacket, SurveyStatus
 from croquito_core.ids import new_uuid7
+from croquito_core.logging_config import configure_logging
 from croquito_core.models import (
     SCENE_SCHEMA_VERSION,
     Entity,
@@ -408,6 +432,83 @@ class ProjectResponse(ApiModel):
     latest_job: LatestJobResponse | None = None
 
 
+class StageDurationResponse(ApiModel):
+    """Uma etapa do job e quanto ela durou; `duration_ms` ausente = etapa ainda aberta."""
+
+    stage: str
+    status: str
+    duration_ms: int | None = None
+
+
+class CycleMetricsResponse(ApiModel):
+    total_ms: int | None = None
+    stages: list[StageDurationResponse]
+
+
+class HumanMetricsResponse(ApiModel):
+    review_revisions: int
+    decisions_total: int
+    confirmed: int
+    corrected: int
+    rejected: int
+    #: `null` quando não houve decisão nenhuma. Não é `0.0`: "nada foi decidido" e "nada
+    #: foi corrigido do que se decidiu" são estados diferentes.
+    correction_rate: float | None = None
+    rectifications: int
+    #: Touch time real é a T4 desta feature; até lá, ausência declarada.
+    interaction_ms_total: int | None = None
+
+
+class AutomationMetricsResponse(ApiModel):
+    """Campos reservados da F-029: enquanto ela não aterrissa, os dois são `null`."""
+
+    auto_association_rate: float | None = None
+    review_rate: float | None = None
+
+
+class AiCostMetricsResponse(ApiModel):
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    #: Decimal exato como TEXTO, a mesma disciplina de `chat_turns.estimated_cost_usd`:
+    #: `float` de custo perde centavo em soma, e é somando que o portal calcula custo por
+    #: transação.
+    estimated_cost_usd: str
+
+
+class JobMetricsResponse(ApiModel):
+    job_id: UUID
+    cycle: CycleMetricsResponse
+    human: HumanMetricsResponse
+    automation: AutomationMetricsResponse
+    ai_cost: AiCostMetricsResponse
+
+
+class MetricsPeriodResponse(ApiModel):
+    """Eco do recorte aplicado, já normalizado em UTC; `null` significa "sem limite"."""
+
+    from_: datetime | None = Field(default=None, alias="from")
+    to: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class MetricsSummaryResponse(ApiModel):
+    period: MetricsPeriodResponse
+    jobs_total: int
+    jobs_completed: int
+    jobs_failed: int
+    #: Denominador de `avg_correction_rate`: sem ele a média não diz sobre quantos jobs foi.
+    jobs_with_decisions: int
+    avg_cycle_total_ms: int | None = None
+    avg_correction_rate: float | None = None
+    ai_cost: AiCostMetricsResponse
+    valuation_rounds_total: int
+    estimate_rounds_total: int
+    #: Custo das extrações pagas das rodadas de medição e de orçamento do período.
+    rounds_ai_cost: AiCostMetricsResponse
+
+
 class ApproveRequest(ApiModel):
     """Mirrors the SceneApproval contract: every verification is stated, never inferred."""
 
@@ -442,6 +543,45 @@ class CreateRevisionRequest(ApiModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+#: Teto do touch time aceito num envio: 24 horas em milissegundos. Acima disso não é
+#: sessão de revisão nenhuma — é aba esquecida aberta, relógio do cliente saltando ou
+#: soma de um cronômetro que ninguém zerou.
+MAX_INTERACTION_MS: Final = 24 * 60 * 60 * 1000
+
+#: Campos de TELEMETRIA do payload: descritos no contrato, fora da identidade do comando.
+#: São excluídos do `_request_hash` por duas razões que apontam para o mesmo lado: um
+#: replay legítimo (mesma `Idempotency-Key`, cronômetro necessariamente diferente) não
+#: pode virar `IDEMPOTENCY_KEY_REUSED`, e o hash gravado ANTES deste campo existir
+#: precisa continuar batendo com o de um envio idêntico feito depois.
+TELEMETRY_PAYLOAD_FIELDS: Final[frozenset[str]] = frozenset({"interaction_ms"})
+
+
+def _observational_interaction_ms(value: object) -> int | None:
+    """Lê o touch time autorrelatado; o que não for plausível vira `None`, nunca 422.
+
+    Isto é telemetria, não dado de negócio: o ato humano — a decisão, a correção — não
+    pode ser recusado porque o cronômetro da tela veio negativo, veio como texto ou veio
+    com um número que não descreve sessão de trabalho nenhuma. Recusar aqui inverteria a
+    prioridade e faria a medição do processo atrapalhar o processo.
+
+    `bool` cai fora de propósito, ainda que seja subclasse de `int`: um `true` no campo
+    significaria "1 ms de revisão", que é uma medida inventada a partir de um engano.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        measured = value
+    elif isinstance(value, float) and math.isfinite(value):
+        measured = int(value)
+    else:
+        return None
+    return measured if 0 <= measured <= MAX_INTERACTION_MS else None
+
+
+#: Touch time do envio, em milissegundos, medido pela tela que o produziu.
+InteractionMs = Annotated[int | None, BeforeValidator(_observational_interaction_ms)]
+
+
 class ReviewDecisionCommand(ApiModel):
     reading_id: str = Field(pattern=r"^rd_[a-f0-9]{16}$")
     action: Literal["confirm", "correct", "reject"]
@@ -461,6 +601,9 @@ class ReviewDecisionCommand(ApiModel):
 class SubmitReviewDecisionsRequest(ApiModel):
     base_version: int = Field(ge=1)
     decisions: list[ReviewDecisionCommand] = Field(min_length=1, max_length=50)
+    # Observacional e opcional: ausente diz "não medido" (cliente antigo, aba fechada
+    # antes do envio), nunca "zero". Ver `_observational_interaction_ms`.
+    interaction_ms: InteractionMs = None
 
 
 class RectifyReadingCommand(ApiModel):
@@ -491,6 +634,7 @@ class RectifyReadingCommand(ApiModel):
 class RectifyReviewDecisionsRequest(ApiModel):
     base_version: int = Field(ge=1)
     rectifications: list[RectifyReadingCommand] = Field(min_length=1, max_length=50)
+    interaction_ms: InteractionMs = None
 
 
 class ReviewChainCommand(ApiModel):
@@ -1719,8 +1863,20 @@ def _safe_filename(filename: str, content_type: str) -> str:
     return normalized or f"documento{extension}"
 
 
-def _request_hash(payload: BaseModel) -> str:
-    encoded = json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+def _request_hash(payload: BaseModel, *, exclude: frozenset[str] | None = None) -> str:
+    """Impressão digital do COMANDO, para casar replay com a resposta já gravada.
+
+    `exclude` existe para os campos de telemetria (`TELEMETRY_PAYLOAD_FIELDS`): o touch
+    time descreve como o comando foi produzido, não o que ele manda fazer. Deixá-lo no
+    hash faria um replay legítimo — a mesma `Idempotency-Key` com o cronômetro em outro
+    valor — responder `IDEMPOTENCY_KEY_REUSED`, e faria o hash de um envio idêntico
+    deixar de bater com o que foi gravado antes de o campo existir.
+    """
+    encoded = json.dumps(
+        payload.model_dump(mode="json", exclude=set(exclude or frozenset())),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -1871,6 +2027,85 @@ def _record_audit(
             resource_id=resource_id,
             metadata_json={"request_id": request_id},
         )
+    )
+
+
+def _optional_interaction_ms(interaction_ms: int | None) -> dict[str, int]:
+    """Trecho de payload com o touch time, ou VAZIO quando ninguém mediu.
+
+    O contrato de eventos marca `interaction_ms` como opcional, e opcional ali quer dizer
+    ausente: publicar a chave com `null` diria ao consumidor que a medição existe e vale
+    nada. Chave ausente é a única forma de dizer "não medido" sem inventar um número.
+    """
+    return {} if interaction_ms is None else {"interaction_ms": interaction_ms}
+
+
+def _record_domain_event(
+    session: Session,
+    *,
+    principal: Principal,
+    event_type: str,
+    payload: Mapping[str, Any],
+    job_id: UUID | str | None = None,
+) -> None:
+    """Grava um evento de domínio na outbox, na MESMA sessão (e transação) do fato.
+
+    Deliberadamente ao lado de `_record_audit` e nunca depois do `commit`: o `session.add`
+    daqui entra na mesma unidade de trabalho do registro de negócio, então ou os dois
+    commitam ou nenhum. Publicar do request path — direto na fila, depois de responder —
+    publicaria fatos de transação abortada e perderia fatos em falha de broker; é o que o
+    ADR-0042 rejeitou.
+
+    Emitir só nos atos que o catálogo v1 cobre é regra, e não omissão: `build_domain_event`
+    recusa `event_type` fora do catálogo, e um ato auditado sem tipo publicado continua
+    auditado em `audit_events`. O payload passa pela conferência de FORMA do
+    `croquito_core.events` — nada aninhado atravessa, que é como conteúdo viajaria.
+    """
+    occurred_at = datetime.now(UTC)
+    resolved_job_id = str(job_id) if job_id is not None else None
+    envelope = build_domain_event(
+        event_type=event_type,
+        tenant_id=principal.tenant_id,
+        occurred_at=occurred_at,
+        payload=payload,
+        job_id=resolved_job_id,
+    )
+    session.add(
+        DomainEventRecord(
+            id=str(envelope["event_id"]),
+            tenant_id=principal.tenant_id,
+            event_type=event_type,
+            job_id=resolved_job_id,
+            occurred_at=occurred_at,
+            payload_json=envelope["payload"],
+        )
+    )
+
+
+def _record_round_event(
+    session: Session,
+    *,
+    principal: Principal,
+    event_type: str,
+    action: str,
+    record: ValuationRoundRecord | EstimateRoundRecord,
+) -> None:
+    """Espelha em evento a ação já auditada de uma rodada de medição/orçamento.
+
+    O catálogo v1 não granulariza essas ações em tipos próprios de propósito: `action`
+    carrega o MESMO código estável que `audit_events` grava, e criar um tipo por ação é
+    evolução `.v2+`, guiada pelo consumo real do portal — publicar treze tipos que
+    ninguém lê é contrato que envelhece antes de ser usado.
+
+    `version` é o contador ÚNICO da cadeia da rodada (ADR-0028 D3) DEPOIS do ato; é ele
+    que dá ao consumidor a ordem causal dentro da rodada, que `occurred_at` sozinho não
+    garante.
+    """
+    _record_domain_event(
+        session,
+        principal=principal,
+        event_type=event_type,
+        payload={"action": action, "round_id": record.id, "version": record.version},
     )
 
 
@@ -3226,7 +3461,11 @@ def _require_idempotency(
     return idempotency_key
 
 
+_REQUEST_LOGGER = logging.getLogger("croquito_api.request")
+
+
 def create_app(settings: ApiSettings | None = None, database: Database | None = None) -> FastAPI:
+    configure_logging()
     runtime_settings = settings or ApiSettings.from_environment()
     runtime_database = database or Database(runtime_settings.database_url)
 
@@ -3310,8 +3549,28 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
     async def request_correlation(request: Request, call_next: Any) -> Any:
         request_id = request.headers.get("X-Request-ID") or str(new_uuid7())
         request.state.request_id = request_id
+        started_at = time.monotonic()
         response = await call_next(request)
+        duration_ms = (time.monotonic() - started_at) * 1000
         response.headers["X-Request-ID"] = request_id
+        # A rota é o TEMPLATE (`/v1/jobs/{job_id}/...`), nunca o path cru: o path resolvido
+        # carrega UUID de job/tenant e viraria conteúdo em log. Sem rota casada (404 antes do
+        # roteamento, ex. método inválido), não há `request.scope["route"]` — registramos um
+        # rótulo fixo em vez do path.
+        route = request.scope.get("route")
+        route_path = route.path if route is not None else "unmatched"
+        log_level = logging.WARNING if response.status_code >= 500 else logging.INFO
+        _REQUEST_LOGGER.log(
+            log_level,
+            "request_completed",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "route": route_path,
+                "status_code": response.status_code,
+                "duration_ms": round(duration_ms, 3),
+            },
+        )
         return response
 
     @application.exception_handler(StarletteHTTPException)
@@ -3890,6 +4149,19 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session.flush()
         session.add(job)
         session.flush()
+        session.add(
+            JobStageEventRecord(
+                id=str(new_uuid7()),
+                tenant_id=principal.tenant_id,
+                job_id=str(job_id),
+                from_stage=None,
+                to_stage=job.stage,
+                from_status=None,
+                to_status=job.status,
+                source="api",
+                created_at=now,
+            )
+        )
         if entitlement is not None:
             session.add(
                 AiProcessingAuthorizationRecord(
@@ -3921,6 +4193,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="job",
             resource_id=str(job_id),
             request_id=request.state.request_id,
+        )
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_JOB_CREATED,
+            job_id=job_id,
+            payload={"project_id": str(project_id), "stage": job.stage, "status": job.status},
         )
         if checksum_deferred:
             _record_audit(
@@ -3968,6 +4247,70 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             updated_at=job.updated_at,
         )
 
+    @application.get(
+        "/v1/jobs/{job_id}/metrics", response_model=JobMetricsResponse, tags=["metrics"]
+    )
+    async def get_job_metrics(
+        job_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> JobMetricsResponse:
+        """Cycle time, ato humano e custo de IA do job, derivados do que já está gravado.
+
+        Nada é calculado no worker nem persistido: é leitura sobre `job_stage_events`,
+        `review_decisions`, `chat_turns` e o lineage do pacote de revisão corrente.
+
+        O escopo de tenant é o mesmo das rotas vizinhas e mora no `where`: job de outro
+        tenant não é "sem permissão", é inexistente (`404`), e responder `403` diria ao
+        chamador que aquele id existe em algum lugar.
+        """
+        job = session.scalar(
+            select(JobRecord).where(
+                JobRecord.id == str(job_id), JobRecord.tenant_id == principal.tenant_id
+            )
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        return JobMetricsResponse.model_validate(compute_job_metrics(session, job))
+
+    @application.get("/v1/metrics/summary", response_model=MetricsSummaryResponse, tags=["metrics"])
+    async def get_metrics_summary(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        period_from: Annotated[str | None, Query(alias="from")] = None,
+        period_to: Annotated[str | None, Query(alias="to")] = None,
+    ) -> MetricsSummaryResponse:
+        """Agregado do tenant do JWT no período, recortado por `created_at`.
+
+        Os limites chegam como TEXTO e são convertidos aqui, e não declarados como
+        `datetime` no parâmetro, porque uma data malformada precisa sair como
+        `application/problem+json` com código estável — a validação nativa do FastAPI
+        responderia `422` no formato dela, fora do contrato de erro desta API.
+        """
+        try:
+            period_start = parse_period_bound(period_from, field="from")
+            period_end = parse_period_bound(period_to, field="to")
+        except MetricsPeriodError as error:
+            raise _problem(
+                "INVALID_METRICS_PERIOD",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Período inválido: use instantes ISO 8601 (UTC quando sem fuso).",
+            ) from error
+        if period_start is not None and period_end is not None and period_start > period_end:
+            raise _problem(
+                "INVALID_METRICS_PERIOD",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Período inválido: `from` é posterior a `to`.",
+            )
+        return MetricsSummaryResponse.model_validate(
+            compute_tenant_summary(
+                session,
+                tenant_id=principal.tenant_id,
+                period_start=period_start,
+                period_end=period_end,
+            )
+        )
+
     @application.get("/v1/jobs/{job_id}/review", response_model=ReviewResponse, tags=["review"])
     async def get_review(
         job_id: UUID,
@@ -4009,7 +4352,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         if job is None:
             raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
-        request_hash = _request_hash(payload)
+        request_hash = _request_hash(payload, exclude=TELEMETRY_PAYLOAD_FIELDS)
         operation = f"review.decisions:{job_id}"
         existing = _idempotent_response(
             session,
@@ -4124,6 +4467,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             solver_blockers_json=resolved.blockers,
             required_blocker_codes_json=current.required_blocker_codes_json,
             required_criteria_texts_json=current.required_criteria_texts_json,
+            # Touch time DESTE envio, e não o acumulado da folha: a revisão é a unidade
+            # do ato, e somar o acumulado a cada lote contaria o mesmo tempo de novo.
+            interaction_ms=payload.interaction_ms,
             created_by=principal.subject,
         )
         if scene is not None:
@@ -4187,6 +4533,23 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=next_review.id,
             request_id=request.state.request_id,
         )
+        # Contagens do LOTE desta request, e não do acumulado da revisão: o consumidor
+        # soma os eventos para chegar ao acumulado, e reafirmar o total a cada lote o
+        # faria contar duas vezes.
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_DECISIONS_RECORDED,
+            job_id=job_id,
+            payload={
+                "review_version": next_review.version,
+                "decisions_total": len(payload.decisions),
+                "confirmed": sum(1 for item in payload.decisions if item.action == "confirm"),
+                "corrected": sum(1 for item in payload.decisions if item.action == "correct"),
+                "rejected": sum(1 for item in payload.decisions if item.action == "reject"),
+                **_optional_interaction_ms(payload.interaction_ms),
+            },
+        )
         session.commit()
         return response
 
@@ -4217,7 +4580,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         if job is None:
             raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
-        request_hash = _request_hash(payload)
+        request_hash = _request_hash(payload, exclude=TELEMETRY_PAYLOAD_FIELDS)
         operation = f"review.rectifications:{job_id}"
         existing = _idempotent_response(
             session,
@@ -4395,6 +4758,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             solver_blockers_json=resolved.blockers,
             required_blocker_codes_json=current.required_blocker_codes_json,
             required_criteria_texts_json=current.required_criteria_texts_json,
+            # O touch time é do envio que criou ESTA revisão; o da revisão corrigida
+            # ficou na revisão dela, e não é herdado nem somado aqui.
+            interaction_ms=payload.interaction_ms,
             created_by=principal.subject,
         )
         if scene is not None:
@@ -4458,6 +4824,17 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="review_revision",
             resource_id=next_review.id,
             request_id=request.state.request_id,
+        )
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_RECTIFICATIONS_RECORDED,
+            job_id=job_id,
+            payload={
+                "review_version": next_review.version,
+                "rectifications_total": len(payload.rectifications),
+                **_optional_interaction_ms(payload.interaction_ms),
+            },
         )
         session.commit()
         return response
@@ -4627,6 +5004,19 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=next_review.id,
             request_id=request.state.request_id,
         )
+        # `chains_total` é o total DECLARADO que sobrou depois do ato (a retração diminui),
+        # e não quantas cadeias este ato mexeu: é o estado que o portal precisa refletir.
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_CHAINS_DECLARED,
+            job_id=job_id,
+            payload={
+                "review_version": next_review.version,
+                "action": payload.action,
+                "chains_total": len(declared_chains),
+            },
+        )
         session.commit()
         return response
 
@@ -4769,6 +5159,15 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="review_revision",
             resource_id=next_review.id,
             request_id=request.state.request_id,
+        )
+        # Só a versão: escala, rotação e âncoras descrevem o desenho do cliente e não têm
+        # o que fazer num barramento externo.
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_CALIBRATION_SET,
+            job_id=job_id,
+            payload={"review_version": next_review.version},
         )
         session.commit()
         return response
@@ -4986,6 +5385,18 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="review_revision",
             resource_id=next_review.id,
             request_id=request.state.request_id,
+        )
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_PROPOSALS_DECIDED,
+            job_id=job_id,
+            payload={
+                "review_version": next_review.version,
+                "proposals_total": 1,
+                "accepted": 1 if payload.action == "accept" else 0,
+                "rejected": 1 if payload.action == "reject" else 0,
+            },
         )
         session.commit()
         return response
@@ -5221,6 +5632,21 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="review_revision",
             resource_id=next_review.id,
             request_id=request.state.request_id,
+        )
+        # `batch` é o que o lote REALMENTE decidiu (proposta já decidida antes não entra),
+        # e não `payload.proposal_ids`: a contagem publicada precisa bater com as linhas de
+        # `proposal_decisions` gravadas logo acima.
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_REVIEW_PROPOSALS_DECIDED,
+            job_id=job_id,
+            payload={
+                "review_version": next_review.version,
+                "proposals_total": len(batch),
+                "accepted": len(batch) if payload.action == "accept" else 0,
+                "rejected": len(batch) if payload.action == "reject" else 0,
+            },
         )
         session.commit()
         return response
@@ -5834,6 +6260,18 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="scene_revision",
             resource_id=str(approved_scene.id),
             request_id=request.state.request_id,
+        )
+        # O PAPEL do aprovador, nunca o subject: quem aprovou é pessoa identificável, e o
+        # barramento externo recebe a qualificação profissional do ato, não a identidade.
+        _record_domain_event(
+            session,
+            principal=principal,
+            event_type=EVENT_SCENE_APPROVED,
+            job_id=job_id,
+            payload={
+                "scene_revision_id": str(approved_scene.id),
+                "approved_by_role": reviewer_role,
+            },
         )
         session.commit()
         return approved_scene
@@ -6807,6 +7245,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=str(round_id),
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_ROUND_CREATED",
+            record=record,
+        )
         session.commit()
         return response
 
@@ -6962,6 +7407,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_PLATE_ASSOCIATED",
+            record=record,
+        )
         session.commit()
         return response
 
@@ -7082,6 +7534,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="valuation_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_EXTRACTION_REQUESTED",
+            record=record,
         )
         # O intent é durável ANTES da fila, e nenhuma transação atravessa a publicação.
         session.commit()
@@ -7242,6 +7701,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_TAKEOFF_ITEM_DECIDED",
+            record=record,
+        )
         # A decisão fica durável ANTES da fila, e nenhuma transação atravessa a publicação.
         _commit_valuation_revision(session)
         _enqueue_takeoff_overlay_rerender(
@@ -7394,6 +7860,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="valuation_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_CODE_SUGGESTIONS_RECOMPUTED",
+            record=record,
         )
         _commit_valuation_revision(session)
         return response
@@ -7550,6 +8023,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_ITEM_CODE_DECIDED",
+            record=record,
+        )
         _commit_valuation_revision(session)
         return response
 
@@ -7659,6 +8139,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="valuation_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_CALC_BUILT",
+            record=record,
         )
         _commit_valuation_revision(session)
         return response
@@ -7791,6 +8278,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_APPROVED",
+            record=record,
+        )
         _commit_valuation_revision(session)
         return response
 
@@ -7904,6 +8398,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="BULLETIN_EXPORTED",
+            record=record,
+        )
         _commit_valuation_revision(session)
         return response
 
@@ -7984,6 +8485,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="valuation_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_AMENDMENT_DOSSIER_BUILT",
+            record=record,
         )
         _commit_valuation_revision(session)
         return response
@@ -8337,6 +8845,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=str(round_id),
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_ROUND_CREATED",
+            record=record,
+        )
         session.commit()
         return response
 
@@ -8487,6 +9002,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_TARGET_SET",
+            record=record,
         )
         session.commit()
         return response
@@ -8655,6 +9177,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_CATALOG_INSTALLED",
+            record=record,
+        )
         session.commit()
         return response
 
@@ -8718,6 +9247,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_CASCADE_REORDERED",
+            record=record,
         )
         session.commit()
         return response
@@ -8786,6 +9322,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_CASCADE_SOURCE_REMOVED",
+            record=record,
         )
         session.commit()
         return response
@@ -8856,6 +9399,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_PLATE_ASSOCIATED",
+            record=record,
         )
         session.commit()
         return response
@@ -8978,6 +9528,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_EXTRACTION_REQUESTED",
+            record=record,
         )
         # O intent é durável ANTES da fila, e nenhuma transação atravessa a publicação.
         session.commit()
@@ -9134,6 +9691,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_TAKEOFF_ITEM_DECIDED",
+            record=record,
+        )
         # A decisão fica durável ANTES da fila, e nenhuma transação atravessa a publicação.
         _commit_valuation_revision(session)
         _enqueue_estimate_overlay_rerender(
@@ -9284,6 +9848,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_CODE_SUGGESTIONS_RECOMPUTED",
+            record=record,
+        )
         _commit_valuation_revision(session)
         return response
 
@@ -9426,6 +9997,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_id=record.id,
             request_id=request.state.request_id,
         )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_ITEM_CODE_DECIDED",
+            record=record,
+        )
         _commit_valuation_revision(session)
         return response
 
@@ -9549,6 +10127,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             resource_type="estimate_round",
             resource_id=record.id,
             request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_BUILT",
+            record=record,
         )
         _commit_valuation_revision(session)
         return response

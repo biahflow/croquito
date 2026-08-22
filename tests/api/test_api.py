@@ -1,9 +1,10 @@
 import base64
 import hashlib
 import json
+import logging
 import math
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast, get_args
@@ -13,6 +14,7 @@ import pytest
 from botocore.exceptions import BotoCoreError
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm import Session as SaSession
 
 from croquito_api.config import ApiSettings
 from croquito_api.database import (
@@ -22,9 +24,11 @@ from croquito_api.database import (
     ChatSessionRecord,
     ChatTurnRecord,
     Database,
+    DomainEventRecord,
     ExportArtifactRecord,
     IdempotencyRecord,
     JobRecord,
+    JobStageEventRecord,
     ProjectRecord,
     ProposalDecisionRecord,
     ReviewDecisionRecord,
@@ -32,6 +36,8 @@ from croquito_api.database import (
     RevisionRecord,
     TraceSolveRecord,
     UploadRecord,
+    ValuationRoundRecord,
+    ValuationRoundRevisionRecord,
 )
 from croquito_api.main import UPLOAD_CONTENT_TYPES, PresignUploadRequest, create_app
 from croquito_core.ids import new_uuid7
@@ -57,6 +63,7 @@ from croquito_worker.review import (
     EvidenceRegion,
     HumanDecision,
     PixelBox,
+    ProviderLineage,
     ReadingStatus,
     ReviewPacket,
 )
@@ -421,6 +428,39 @@ def test_upload_and_job_are_tenant_scoped(tmp_path: Path, monkeypatch) -> None: 
     assert client.get(f"/v1/jobs/{job_id}", headers=_headers("tenant-a")).status_code == 200
     assert client.get(f"/v1/jobs/{job_id}", headers=_headers("tenant-b")).status_code == 404
     assert create.headers["X-Request-ID"]
+
+
+def test_job_creation_records_the_initial_stage_event(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """F-031 T1: a API grava o evento inicial de `job_stage_events` na criação do job.
+
+    `from_stage`/`from_status` são `None` porque nada existia antes; `source="api"`
+    distingue este evento das transições que o worker grava depois.
+    """
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    client = _client(tmp_path)
+    upload = _presign_and_put(client, filename="evento-inicial.pdf")
+
+    create = client.post(
+        "/v1/jobs",
+        headers=_headers("tenant-a"),
+        json={"upload_id": upload["upload_id"], "project_name": "Evento inicial"},
+    )
+
+    assert create.status_code == 201
+    job_id = create.json()["job_id"]
+    database = cast(Any, client.app).state.database
+    with database.sessions() as session:
+        events = session.query(JobStageEventRecord).filter_by(job_id=job_id).all()
+        assert len(events) == 1
+        event = events[0]
+        assert event.tenant_id == "tenant-a"
+        assert event.from_stage is None
+        assert event.from_status is None
+        assert event.to_stage == create.json()["stage"]
+        assert event.to_status == create.json()["status"]
+        assert event.source == "api"
+        assert event.failure_code is None
 
 
 def test_presign_assina_o_catalogo_json_da_rodada_de_medicao(tmp_path: Path) -> None:
@@ -4168,3 +4208,817 @@ def test_chat_polling_returns_the_answer_and_the_list_stays_lean(tmp_path: Path)
         client.get(f"/v1/jobs/{job_id}/chat-sessions", headers=_headers("tenant-b")).status_code
         == 404
     )
+
+
+def _domain_events(client: TestClient, *, event_type: str) -> list[DomainEventRecord]:
+    """A outbox lida direto do banco: o evento não aparece em resposta nenhuma."""
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions() as session:
+        return (
+            session.query(DomainEventRecord)
+            .filter_by(event_type=event_type)
+            .order_by(DomainEventRecord.created_at, DomainEventRecord.id)
+            .all()
+        )
+
+
+def test_criacao_de_job_publica_o_evento_de_job_criado(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    upload = _presign_and_put(client, idempotency_key="evt-presign")
+
+    created = client.post(
+        "/v1/jobs",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "evt-job"},
+        json={"upload_id": upload["upload_id"], "project_name": "Praça sintética"},
+    )
+
+    assert created.status_code == 201
+    evento = _domain_events(client, event_type="croquito.job.created.v1")[0]
+    assert evento.tenant_id == "tenant-a"
+    assert evento.job_id == created.json()["job_id"]
+    assert evento.payload_json == {
+        "project_id": created.json()["project_id"],
+        "stage": "VALIDATING",
+        "status": "UPLOADED",
+    }
+    # O nome do projeto é dado do cliente e NÃO viaja; só o id opaco.
+    assert "Praça sintética" not in json.dumps(evento.payload_json, ensure_ascii=False)
+    # Nasce pendente: a API grava a outbox e nunca publica do request path (ADR-0042).
+    assert evento.published_at is None
+
+
+def test_decisoes_de_leitura_publicam_as_contagens_do_lote(tmp_path: Path) -> None:
+    """As contagens são do LOTE desta request, e casam com o que foi decidido.
+
+    O consumidor SOMA os eventos para chegar ao acumulado da revisão; reafirmar o total
+    da revisão a cada lote faria a taxa de correção do portal contar duas vezes.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+
+    decided = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "evt-decisions"},
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": "rd_1111111111111111",
+                    "action": "confirm",
+                    "justification": "Evidência sintética revisada.",
+                    "association_proposal_id": "vp_1111111111111111",
+                },
+                {
+                    "reading_id": "rd_2222222222222222",
+                    "action": "correct",
+                    "justification": "Leitura corrigida contra a folha.",
+                    "association_proposal_id": "vp_2222222222222222",
+                    "raw_text": "21,75",
+                    "value_si": "21.75",
+                    "unit": "m",
+                    "kind": "height",
+                    "written_decimals": 2,
+                },
+                {
+                    "reading_id": "rd_3333333333333333",
+                    "action": "reject",
+                    "justification": "Marcação não é cota do desenho.",
+                },
+            ],
+        },
+    )
+
+    assert decided.status_code == 200
+    evento = _domain_events(client, event_type="croquito.review.decisions_recorded.v1")[0]
+    assert evento.job_id == str(job_id)
+    assert evento.payload_json == {
+        "review_version": decided.json()["version"],
+        "decisions_total": 3,
+        "confirmed": 1,
+        "corrected": 1,
+        "rejected": 1,
+    }
+    # Texto de cota é conteúdo e nunca sai: a correção viaja como CONTAGEM, não como valor.
+    assert "21,75" not in json.dumps(evento.payload_json, ensure_ascii=False)
+
+
+def test_evento_e_fato_commitam_juntos_ou_nenhum_dos_dois(tmp_path: Path) -> None:
+    """Falha no `commit` não deixa nem a revisão nem o evento — a outbox é transacional.
+
+    A injeção é no ÚNICO ponto que roda depois do `session.add` do evento: o próprio
+    commit. Falhar antes provaria só que nada foi tentado, e é justamente essa asserção
+    vazia que faria o teste passar com a co-transação quebrada.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    database = cast(Database, cast(Any, client.app).state.database)
+    monkeypatch = pytest.MonkeyPatch()
+
+    def _commit_que_falha(_self: SaSession) -> None:
+        raise RuntimeError("falha injetada no commit da request")
+
+    monkeypatch.setattr(SaSession, "commit", _commit_que_falha)
+    try:
+        with pytest.raises(RuntimeError, match="falha injetada"):
+            _confirm_solver_readings(client, job_id, base_version=1)
+    finally:
+        monkeypatch.undo()
+
+    with database.sessions() as session:
+        # Nem o fato (a revisão de leitura nova) nem o evento sobreviveram.
+        assert session.query(ReviewRevisionRecord).filter_by(job_id=str(job_id)).count() == 1
+        assert session.query(DomainEventRecord).count() == 0
+
+
+def test_declaracao_e_retratacao_de_cadeia_publicam_o_total_vigente(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, chain_readings=True)
+    assert _confirm_chain_readings(client, job_id).status_code == 200
+
+    declared = _declare_chain(client, job_id, base_version=2, key="evt-chain-declare")
+    assert declared.status_code == 200
+    chain_id = declared.json()["declared_chains"][0]["chain_id"]
+
+    retracted = client.post(
+        f"/v1/jobs/{job_id}/review/chains",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "evt-chain-retract"},
+        json={"base_version": 3, "action": "retract", "chain_id": chain_id},
+    )
+    assert retracted.status_code == 200
+
+    eventos = _domain_events(client, event_type="croquito.review.chains_declared.v1")
+    assert [evento.payload_json["action"] for evento in eventos] == ["declare", "retract"]
+    # O total é o ESTADO depois do ato, e não quantas cadeias o ato mexeu.
+    assert [evento.payload_json["chains_total"] for evento in eventos] == [1, 0]
+
+
+def test_aprovacao_publica_o_papel_profissional_e_nunca_a_pessoa(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    revision_id = client.get(f"/v1/jobs/{job_id}/review", headers=_headers("tenant-a")).json()[
+        "scene"
+    ]["id"]
+
+    approved = client.post(
+        f"/v1/jobs/{job_id}/approve",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "evt-approve"},
+        json=_approval_payload(revision_id, acknowledged_criteria=["ACC_GUA_001"]),
+    )
+
+    assert approved.status_code == 200
+    evento = _domain_events(client, event_type="croquito.scene.approved.v1")[0]
+    assert evento.payload_json == {
+        "scene_revision_id": approved.json()["id"],
+        "approved_by_role": "engineer",
+    }
+    # `reviewer` é o subject do JWT nas fixtures; identidade não atravessa a fronteira.
+    assert "reviewer" not in json.dumps(evento.payload_json)
+
+
+# --- F-031 T3: read-model de métricas -----------------------------------------------
+
+
+def _create_job_for_metrics(client: TestClient, *, tenant: str, key: str) -> str:
+    upload = _presign_and_put(
+        client, tenant=tenant, filename=f"{key}.pdf", idempotency_key=f"presign-{key}"
+    )
+    created = client.post(
+        "/v1/jobs",
+        headers={**_headers(tenant), "Idempotency-Key": f"job-{key}"},
+        json={"upload_id": upload["upload_id"], "project_name": f"Métricas {key}"},
+    )
+    assert created.status_code == 201
+    return str(created.json()["job_id"])
+
+
+def _metrics(client: TestClient, job_id: str, *, tenant: str = "tenant-a") -> dict[str, Any]:
+    response = client.get(f"/v1/jobs/{job_id}/metrics", headers=_headers(tenant))
+    assert response.status_code == 200
+    return cast(dict[str, Any], response.json())
+
+
+def test_metricas_de_job_recem_criado_tem_etapa_aberta_sem_duracao(tmp_path: Path) -> None:
+    """A etapa corrente não tem duração: ninguém sabe quando ela termina.
+
+    Um `0` aqui afirmaria que a etapa acabou instantaneamente, que é justamente o que não
+    aconteceu — o job acabou de nascer e continua nela.
+    """
+    client = _client(tmp_path)
+    job_id = _create_job_for_metrics(client, tenant="tenant-a", key="recem-criado")
+
+    body = _metrics(client, job_id)
+
+    assert body["job_id"] == job_id
+    assert body["cycle"]["total_ms"] == 0
+    assert body["cycle"]["stages"] == [
+        {"stage": "VALIDATING", "status": "UPLOADED", "duration_ms": None}
+    ]
+    assert body["human"]["decisions_total"] == 0
+    assert body["human"]["correction_rate"] is None
+    assert body["human"]["interaction_ms_total"] is None
+    assert body["automation"] == {"auto_association_rate": None, "review_rate": None}
+    assert body["ai_cost"] == {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "estimated_cost_usd": "0",
+    }
+
+
+def test_metricas_derivam_cycle_time_das_transicoes_consecutivas(tmp_path: Path) -> None:
+    """A duração de uma etapa é o intervalo até a transição SEGUINTE, e nada mais.
+
+    As transições são inseridas com carimbo declarado justamente para que a asserção seja
+    sobre a aritmética do read-model, e não sobre o relógio da máquina que roda o teste.
+    """
+    client = _client(tmp_path)
+    job_id = _create_job_for_metrics(client, tenant="tenant-a", key="cycle-time")
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions.begin() as session:
+        job = session.get(JobRecord, job_id)
+        assert job is not None
+        birth = job.created_at
+        for offset_ms, stage, job_status in (
+            (1_000, "RENDERING", "UPLOADED"),
+            (3_500, "REVIEWING", "REVIEW_REQUIRED"),
+        ):
+            session.add(
+                JobStageEventRecord(
+                    id=str(new_uuid7()),
+                    tenant_id="tenant-a",
+                    job_id=job_id,
+                    from_stage="VALIDATING",
+                    from_status="UPLOADED",
+                    to_stage=stage,
+                    to_status=job_status,
+                    source="worker",
+                    created_at=birth + timedelta(milliseconds=offset_ms),
+                )
+            )
+
+    cycle = _metrics(client, job_id)["cycle"]
+
+    assert cycle["stages"] == [
+        {"stage": "VALIDATING", "status": "UPLOADED", "duration_ms": 1_000},
+        {"stage": "RENDERING", "status": "UPLOADED", "duration_ms": 2_500},
+        {"stage": "REVIEWING", "status": "REVIEW_REQUIRED", "duration_ms": None},
+    ]
+    assert cycle["total_ms"] == 3_500
+
+
+def test_metricas_contam_atos_humanos_e_a_taxa_de_correcao(tmp_path: Path) -> None:
+    """Duas confirmações, uma correção e uma rejeição: a taxa é 1/4 e nada mais.
+
+    `decisions_total` é exatamente `confirmed + corrected + rejected` — manter a identidade
+    é o que permite conferir a conta de fora do sistema.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client, extra_reading=True))
+
+    decided = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "metrics-decisions"},
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": "rd_1111111111111111",
+                    "action": "confirm",
+                    "justification": "Evidência sintética revisada.",
+                    "association_proposal_id": "vp_1111111111111111",
+                },
+                {
+                    "reading_id": "rd_4444444444444444",
+                    "action": "confirm",
+                    "justification": "Detalhe lateral revisado na evidência.",
+                    "association_proposal_id": "vp_4444444444444444",
+                },
+                {
+                    "reading_id": "rd_2222222222222222",
+                    "action": "correct",
+                    "justification": "Leitura corrigida contra a folha.",
+                    "association_proposal_id": "vp_2222222222222222",
+                    "raw_text": "21,75",
+                    "value_si": "21.75",
+                    "unit": "m",
+                    "kind": "height",
+                    "written_decimals": 2,
+                },
+                {
+                    "reading_id": "rd_3333333333333333",
+                    "action": "reject",
+                    "justification": "Marcação não é cota do desenho.",
+                },
+            ],
+        },
+    )
+    assert decided.status_code == 200
+
+    human = _metrics(client, job_id)["human"]
+
+    assert human["decisions_total"] == 4
+    assert human["confirmed"] == 2
+    assert human["corrected"] == 1
+    assert human["rejected"] == 1
+    assert human["correction_rate"] == 0.25
+    assert human["rectifications"] == 0
+    assert human["review_revisions"] == 2
+
+
+def test_metricas_sem_decisao_nenhuma_declaram_taxa_ausente_e_nao_zero(tmp_path: Path) -> None:
+    """`correction_rate` nunca é `0.0` por ausência de denominador: divisão por zero não
+    vira número, vira `null`."""
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+
+    human = _metrics(client, job_id)["human"]
+
+    assert human["decisions_total"] == 0
+    assert human["corrected"] == 0
+    assert human["correction_rate"] is None
+
+
+def test_metricas_somam_o_custo_dos_turnos_de_conversa_do_job(tmp_path: Path) -> None:
+    """Turno que chamou provider entra na conta; turno enfileirado que não chamou, não."""
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions.begin() as session:
+        session.add(
+            ChatSessionRecord(
+                id="00000000-0000-7000-8000-000000000901",
+                tenant_id="tenant-a",
+                job_id=job_id,
+                base_review_revision_id="00000000-0000-7000-8000-000000000302",
+                created_by="reviewer",
+            )
+        )
+        session.flush()
+        for sequence, provider, tokens, cost in (
+            (1, "anthropic", (120, 45), "0.0102"),
+            (2, "openai", (80, 20), "0.0034"),
+            (3, None, (None, None), None),
+        ):
+            session.add(
+                ChatTurnRecord(
+                    id=f"00000000-0000-7000-8000-00000000091{sequence}",
+                    tenant_id="tenant-a",
+                    job_id=job_id,
+                    session_id="00000000-0000-7000-8000-000000000901",
+                    sequence=sequence,
+                    status="COMPLETED" if provider else "QUEUED",
+                    question_text="pergunta sintética",
+                    provider=provider,
+                    input_tokens=tokens[0],
+                    output_tokens=tokens[1],
+                    estimated_cost_usd=cost,
+                    requested_by="reviewer",
+                )
+            )
+
+    assert _metrics(client, job_id)["ai_cost"] == {
+        "calls": 2,
+        "input_tokens": 200,
+        "output_tokens": 65,
+        "estimated_cost_usd": "0.0136",
+    }
+
+
+def test_metricas_nao_multiplicam_o_custo_do_lineage_pelo_numero_de_leituras(
+    tmp_path: Path,
+) -> None:
+    """UMA chamada de provider produz o pacote INTEIRO e é anexada a CADA leitura.
+
+    Somar por leitura publicaria, numa folha de três cotas, três vezes o gasto real. Este
+    teste é o guarda dessa armadilha: o pacote tem a MESMA execução em todas as leituras e
+    o custo publicado tem de ser o de uma chamada só.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+    lineage = ProviderLineage(
+        provider="anthropic",
+        model_id="claude-sonnet-4",
+        prompt_id="measurement-extraction",
+        prompt_version="2.0.2",
+        prompt_hash="c" * 64,
+        schema_version="1.0.0",
+        input_digest="d" * 64,
+        latency_ms=4_200,
+        input_tokens=3_000,
+        output_tokens=600,
+        estimated_cost_usd=Decimal("0.2800"),
+    ).model_dump(mode="json")
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions.begin() as session:
+        review = session.get(ReviewRevisionRecord, "00000000-0000-7000-8000-000000000302")
+        assert review is not None
+        packet = dict(review.packet_json)
+        assert len(packet["readings"]) == 3
+        packet["readings"] = [
+            {**reading, "provider_lineage": [lineage]} for reading in packet["readings"]
+        ]
+        review.packet_json = packet
+
+    assert _metrics(client, job_id)["ai_cost"] == {
+        "calls": 1,
+        "input_tokens": 3_000,
+        "output_tokens": 600,
+        "estimated_cost_usd": "0.2800",
+    }
+
+
+def test_metricas_de_job_de_outro_tenant_nao_existem(tmp_path: Path) -> None:
+    """404 e não 403: responder "sem permissão" confirmaria que aquele id existe."""
+    client = _client(tmp_path)
+    job_id = _create_job_for_metrics(client, tenant="tenant-a", key="isolado")
+
+    alheio = client.get(f"/v1/jobs/{job_id}/metrics", headers=_headers("tenant-b"))
+
+    assert alheio.status_code == 404
+    assert alheio.json()["code"] == "NOT_FOUND"
+
+
+def test_resumo_de_metricas_agrega_somente_o_tenant_do_jwt(tmp_path: Path) -> None:
+    """O agregado do tenant-a não enxerga nada do tenant-b, e vice-versa."""
+    client = _client(tmp_path)
+    _create_job_for_metrics(client, tenant="tenant-a", key="resumo-a1")
+    _create_job_for_metrics(client, tenant="tenant-a", key="resumo-a2")
+    _create_job_for_metrics(client, tenant="tenant-b", key="resumo-b1")
+
+    resumo_a = client.get("/v1/metrics/summary", headers=_headers("tenant-a"))
+    resumo_b = client.get("/v1/metrics/summary", headers=_headers("tenant-b"))
+
+    assert resumo_a.status_code == 200
+    assert resumo_b.status_code == 200
+    assert resumo_a.json()["jobs_total"] == 2
+    assert resumo_b.json()["jobs_total"] == 1
+    assert resumo_a.json()["period"] == {"from": None, "to": None}
+    assert resumo_a.json()["jobs_completed"] == 0
+    assert resumo_a.json()["jobs_failed"] == 0
+    assert resumo_a.json()["avg_correction_rate"] is None
+    assert resumo_a.json()["jobs_with_decisions"] == 0
+    assert resumo_a.json()["valuation_rounds_total"] == 0
+    assert resumo_a.json()["estimate_rounds_total"] == 0
+
+
+def test_resumo_de_metricas_recorta_por_periodo_de_criacao(tmp_path: Path) -> None:
+    """O recorte é por `created_at` do job; fora da janela o job não entra na conta."""
+    client = _client(tmp_path)
+    _create_job_for_metrics(client, tenant="tenant-a", key="janela")
+    agora = datetime.now(UTC)
+
+    dentro = client.get(
+        "/v1/metrics/summary",
+        headers=_headers("tenant-a"),
+        params={
+            "from": (agora - timedelta(days=1)).isoformat(),
+            "to": (agora + timedelta(days=1)).isoformat(),
+        },
+    )
+    fora = client.get(
+        "/v1/metrics/summary",
+        headers=_headers("tenant-a"),
+        params={"from": (agora + timedelta(days=1)).isoformat()},
+    )
+
+    assert dentro.status_code == 200
+    assert dentro.json()["jobs_total"] == 1
+    assert dentro.json()["period"]["from"] is not None
+    assert fora.status_code == 200
+    assert fora.json()["jobs_total"] == 0
+
+
+def test_resumo_de_metricas_recusa_periodo_malformado_com_codigo_estavel(
+    tmp_path: Path,
+) -> None:
+    """Data ilegível e janela invertida saem como problem+json com o mesmo código."""
+    client = _client(tmp_path)
+
+    malformada = client.get(
+        "/v1/metrics/summary", headers=_headers("tenant-a"), params={"from": "ontem"}
+    )
+    invertida = client.get(
+        "/v1/metrics/summary",
+        headers=_headers("tenant-a"),
+        params={"from": "2026-08-21T00:00:00Z", "to": "2026-08-20T00:00:00Z"},
+    )
+
+    assert malformada.status_code == 422
+    assert malformada.json()["code"] == "INVALID_METRICS_PERIOD"
+    assert invertida.status_code == 422
+    assert invertida.json()["code"] == "INVALID_METRICS_PERIOD"
+
+
+def test_resumo_conta_rodadas_de_medicao_sem_duplicar_o_lineage_carregado_adiante(
+    tmp_path: Path,
+) -> None:
+    """A revisão append-only copia `extraction_lineage_json` da cabeça para a linha nova.
+
+    Somar revisão a revisão contaria a MESMA chamada paga tantas vezes quantas revisões a
+    rodada acumulou depois dela — e a rodada acumula uma por ato humano.
+    """
+    client = _client(tmp_path)
+    database = cast(Database, cast(Any, client.app).state.database)
+    execution = {
+        "provider": "anthropic",
+        "model_id": "claude-sonnet-4",
+        "prompt_version": "1.0.0",
+        "input_digest": "e" * 64,
+        "latency_ms": 9_100,
+        "input_tokens": 5_000,
+        "output_tokens": 900,
+        "estimated_cost_usd": "0.4200",
+    }
+    with database.sessions.begin() as session:
+        session.add(
+            UploadRecord(
+                id="upload-catalogo-metricas",
+                tenant_id="tenant-a",
+                object_key="tenants/tenant-a/uploads/catalogo.json",
+                filename="catalogo.json",
+                content_type="application/json",
+                size_bytes=1,
+                sha256="b" * 64,
+            )
+        )
+        session.flush()
+        session.add(
+            ValuationRoundRecord(
+                id="00000000-0000-7000-8000-0000000009b1",
+                tenant_id="tenant-a",
+                worksite_key="praca-sintetica",
+                worksite_name="PRACA SINTETICA",
+                reference_label="MEDICAO 01/2026",
+                period_number=1,
+                catalog_upload_id="upload-catalogo-metricas",
+                catalog_object_key="tenants/tenant-a/uploads/catalogo.json",
+                catalog_source_sha256="b" * 64,
+                catalog_summary_json={"entries": 1},
+                created_by="reviewer",
+            )
+        )
+        session.flush()
+        for version in (1, 2):
+            session.add(
+                ValuationRoundRevisionRecord(
+                    id=f"00000000-0000-7000-8000-0000000009c{version}",
+                    tenant_id="tenant-a",
+                    round_id="00000000-0000-7000-8000-0000000009b1",
+                    version=version,
+                    extraction_lineage_json={"execution": dict(execution)},
+                    created_by="valuation-extraction-v1",
+                )
+            )
+
+    resumo = client.get("/v1/metrics/summary", headers=_headers("tenant-a"))
+
+    assert resumo.status_code == 200
+    assert resumo.json()["valuation_rounds_total"] == 1
+    assert resumo.json()["estimate_rounds_total"] == 0
+    assert resumo.json()["rounds_ai_cost"] == {
+        "calls": 1,
+        "input_tokens": 5_000,
+        "output_tokens": 900,
+        "estimated_cost_usd": "0.4200",
+    }
+
+
+def test_request_correlation_logs_the_route_template_never_the_raw_path_with_the_id(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """F-031 T5: log de request usa a rota template — o UUID nunca aparece no valor
+    logado, `duration_ms` é numérico e `request_id` é o mesmo devolvido no header."""
+    client = _client(tmp_path)
+    job_id = str(new_uuid7())
+
+    with caplog.at_level(logging.INFO, logger="croquito_api.request"):
+        response = client.get(f"/v1/jobs/{job_id}", headers=_headers("tenant-a"))
+
+    assert response.status_code == 404
+    records = [r for r in caplog.records if r.name == "croquito_api.request"]
+    assert len(records) == 1
+    record = records[0]
+    assert record.route == "/v1/jobs/{job_id}"  # type: ignore[attr-defined]
+    assert job_id not in record.route  # type: ignore[attr-defined]
+    assert record.method == "GET"  # type: ignore[attr-defined]
+    assert record.status_code == 404  # type: ignore[attr-defined]
+    assert isinstance(record.duration_ms, float)  # type: ignore[attr-defined]
+    assert record.request_id == response.headers["X-Request-ID"]  # type: ignore[attr-defined]
+
+
+def test_create_app_called_repeatedly_does_not_duplicate_json_log_handlers(
+    tmp_path: Path,
+) -> None:
+    """`create_app()` chama `configure_logging()`; a suíte instancia vários apps no
+    mesmo processo, e isso nunca pode duplicar o handler do root logger."""
+    from croquito_core.logging_config import JsonLogFormatter
+
+    _client(tmp_path)
+    _client(tmp_path)
+
+    root = logging.getLogger()
+    json_handlers = [h for h in root.handlers if isinstance(h.formatter, JsonLogFormatter)]
+    assert len(json_handlers) == 1
+
+
+# --- F-031 T4: touch time autorrelatado pela tela ------------------------------------
+
+
+def _review_interaction_ms(client: TestClient, job_id: str) -> list[int | None]:
+    """Touch time gravado por revisão de leitura, na ordem das versões."""
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions() as session:
+        return list(
+            session.scalars(
+                select(ReviewRevisionRecord.interaction_ms)
+                .where(ReviewRevisionRecord.job_id == job_id)
+                .order_by(ReviewRevisionRecord.version)
+            )
+        )
+
+
+def _decisions_payload(base_version: int, reading_id: str, **batch: Any) -> dict[str, Any]:
+    return {
+        "base_version": base_version,
+        "decisions": [
+            {
+                "reading_id": reading_id,
+                "action": "confirm",
+                "justification": "Evidência sintética revisada.",
+                "association_proposal_id": f"vp_{reading_id[3:]}",
+            }
+        ],
+        **batch,
+    }
+
+
+def test_touch_time_do_lote_e_persistido_publicado_e_somado_nas_metricas(
+    tmp_path: Path,
+) -> None:
+    """O cronômetro da tela chega inteiro aos três lugares que o consomem.
+
+    A soma é sobre as revisões, e não sobre as decisões: dois envios de 4200 ms e 1800 ms
+    valem 6000 ms de sessão de revisão, independentemente de quantas leituras cada um
+    carregou.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+
+    primeiro = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-1"},
+        json=_decisions_payload(1, "rd_1111111111111111", interaction_ms=4_200),
+    )
+    segundo = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-2"},
+        json=_decisions_payload(2, "rd_2222222222222222", interaction_ms=1_800),
+    )
+
+    assert primeiro.status_code == 200
+    assert segundo.status_code == 200
+    assert _review_interaction_ms(client, job_id) == [None, 4_200, 1_800]
+
+    eventos = _domain_events(client, event_type="croquito.review.decisions_recorded.v1")
+    assert [evento.payload_json["interaction_ms"] for evento in eventos] == [4_200, 1_800]
+
+    assert _metrics(client, job_id)["human"]["interaction_ms_total"] == 6_000
+
+
+def test_touch_time_ausente_negativo_ou_absurdo_nunca_invalida_a_mutacao(
+    tmp_path: Path,
+) -> None:
+    """Telemetria não recusa ato humano: o que não é medida plausível vira ausência.
+
+    A chave do evento SOME em vez de sair `null`: o contrato marca `interaction_ms` como
+    opcional, e publicar `null` diria ao consumidor que a medição existe e vale nada.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client, extra_reading=True))
+
+    ausente = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-ausente"},
+        json=_decisions_payload(1, "rd_1111111111111111"),
+    )
+    negativo = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-negativo"},
+        json=_decisions_payload(2, "rd_2222222222222222", interaction_ms=-5),
+    )
+    # Uma semana num cronômetro de sessão de revisão é aba esquecida aberta, não trabalho.
+    absurdo = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-absurdo"},
+        json=_decisions_payload(3, "rd_4444444444444444", interaction_ms=7 * 24 * 3_600_000),
+    )
+    # Nem tipo errado: o cliente que mandar texto perde a telemetria, não a decisão.
+    texto = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-texto"},
+        json=_decisions_payload(4, "rd_3333333333333333", interaction_ms="quatro minutos"),
+    )
+
+    assert [ausente.status_code, negativo.status_code, absurdo.status_code, texto.status_code] == [
+        200,
+        200,
+        200,
+        200,
+    ]
+    assert _review_interaction_ms(client, job_id) == [None, None, None, None, None]
+    eventos = _domain_events(client, event_type="croquito.review.decisions_recorded.v1")
+    assert all("interaction_ms" not in evento.payload_json for evento in eventos)
+    assert _metrics(client, job_id)["human"]["interaction_ms_total"] is None
+
+
+def test_replay_idempotente_ignora_o_cronometro_e_preserva_o_valor_gravado(
+    tmp_path: Path,
+) -> None:
+    """O touch time não faz parte da identidade do comando.
+
+    Um replay legítimo repete a `Idempotency-Key` com o cronômetro necessariamente noutro
+    valor; se ele entrasse no hash da request, o repique responderia
+    `IDEMPOTENCY_KEY_REUSED` e a tela mostraria conflito onde só houve rede instável. O
+    que ficou gravado é o do envio que venceu — o replay não reescreve nada.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+    key = {**_headers("tenant-a"), "Idempotency-Key": "touch-replay"}
+
+    primeiro = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers=key,
+        json=_decisions_payload(1, "rd_1111111111111111", interaction_ms=4_200),
+    )
+    replay = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers=key,
+        json=_decisions_payload(1, "rd_1111111111111111", interaction_ms=9_100),
+    )
+
+    assert primeiro.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["review_id"] == primeiro.json()["review_id"]
+    assert _review_interaction_ms(client, job_id) == [None, 4_200]
+
+
+def test_replay_de_resposta_gravada_antes_do_campo_continua_valendo(tmp_path: Path) -> None:
+    """Compatibilidade para trás do registro de idempotência já gravado.
+
+    A linha antiga guarda o hash de um corpo que NÃO tinha `interaction_ms`. Se o campo
+    entrasse no hash, o mesmo comando repetido por um cliente novo deixaria de casar com
+    ela e a mutação seria refeita — duas revisões para um ato só, que é exatamente o que a
+    idempotência existe para impedir.
+    """
+    client = _client(tmp_path)
+    job_id = str(_seed_review_session(client))
+    corpo = _decisions_payload(1, "rd_1111111111111111")
+    key = {**_headers("tenant-a"), "Idempotency-Key": "touch-legado"}
+
+    gravado = client.post(f"/v1/jobs/{job_id}/review/decisions", headers=key, json=corpo)
+    com_campo = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers=key,
+        json={**corpo, "interaction_ms": 4_200},
+    )
+
+    assert gravado.status_code == 200
+    assert com_campo.status_code == 200
+    assert com_campo.json()["review_id"] == gravado.json()["review_id"]
+    assert _review_interaction_ms(client, job_id) == [None, None]
+
+
+def test_touch_time_da_correcao_declarada_e_gravado_na_revisao_que_a_recebeu(
+    tmp_path: Path,
+) -> None:
+    """A correção mede o próprio ato; o tempo da decisão corrigida fica onde estava."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    assert _confirm_width_with_the_wrong_reading(client, job_id).status_code == 200
+    previous_decision_id = _current_decision_id(client, job_id, "rd_1111111111111111")
+
+    rectified = client.post(
+        f"/v1/jobs/{job_id}/review/rectifications",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "touch-rectify"},
+        json={
+            **_rectification_payload(
+                2,
+                rectifies_decision_id=previous_decision_id,
+                raw_text="25,90",
+                value_si="25.90",
+                unit="m",
+                kind="width",
+            ),
+            "interaction_ms": 3_000,
+        },
+    )
+
+    assert rectified.status_code == 200
+    assert _review_interaction_ms(client, str(job_id)) == [None, None, 3_000]
+    evento = _domain_events(client, event_type="croquito.review.rectifications_recorded.v1")[0]
+    assert evento.payload_json == {
+        "review_version": rectified.json()["version"],
+        "rectifications_total": 1,
+        "interaction_ms": 3_000,
+    }
+    assert _metrics(client, str(job_id))["human"]["interaction_ms_total"] == 3_000

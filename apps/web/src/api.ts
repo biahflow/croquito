@@ -706,6 +706,26 @@ export function reviewDecisionBatchIssue(count: number): string | null {
 }
 
 /**
+ * Campo opcional de touch time do envio (F-031 T4).
+ *
+ * Ausente quer dizer "não medido", e é por isso que a chave SOME em vez de sair `null`:
+ * o cronômetro pode nunca ter começado. Medida implausível também não viaja — o servidor
+ * a descartaria de qualquer forma, e nenhuma mutação é recusada por causa dela.
+ */
+function touchTimeField(interactionMs?: number | null): {
+  interaction_ms?: number;
+} {
+  if (
+    typeof interactionMs !== "number" ||
+    !Number.isFinite(interactionMs) ||
+    interactionMs < 0
+  ) {
+    return {};
+  }
+  return { interaction_ms: Math.round(interactionMs) };
+}
+
+/**
  * Um envio, N decisões atômicas: a rota sempre recebeu uma lista, e cada item vira um
  * `HumanDecision` próprio no servidor. Uma `Idempotency-Key` e um `base_version` por
  * envio — o lote inteiro entra ou nada entra.
@@ -715,6 +735,7 @@ export async function submitReviewDecisions(
   jobId: string,
   baseVersion: number,
   decisions: ReviewDecision[],
+  interactionMs?: number | null,
 ): Promise<Review> {
   const issue = reviewDecisionBatchIssue(decisions.length);
   if (issue) {
@@ -726,7 +747,11 @@ export async function submitReviewDecisions(
       "Content-Type": "application/json",
       "Idempotency-Key": crypto.randomUUID(),
     },
-    body: JSON.stringify({ base_version: baseVersion, decisions }),
+    body: JSON.stringify({
+      base_version: baseVersion,
+      decisions,
+      ...touchTimeField(interactionMs),
+    }),
   });
 }
 
@@ -735,6 +760,7 @@ export async function submitReviewRectification(
   jobId: string,
   baseVersion: number,
   rectification: ReviewRectification,
+  interactionMs?: number | null,
 ): Promise<Review> {
   return apiJson<Review>(`/v1/jobs/${jobId}/review/rectifications`, accessToken, {
     method: "POST",
@@ -745,6 +771,7 @@ export async function submitReviewRectification(
     body: JSON.stringify({
       base_version: baseVersion,
       rectifications: [rectification],
+      ...touchTimeField(interactionMs),
     }),
   });
 }
