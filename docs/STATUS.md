@@ -832,6 +832,7 @@ primeiro dossiê de aditivo real depende da rodada da Toca homologada.
 | Curvas sem parâmetros | Alto | Spline aproximada e pontos de controle revisáveis |
 | Custo de duas IAs | Médio | Roteamento, métricas por página e budgets |
 | Dados processados globalmente | Alto | Minimização, entitlement contratual e contratos comerciais |
+| Cloudflare fora do Terraform | Médio | O CDN/proxy do host público **não é declarado como código**: o único provider em `infra/` é AWS. Ele decide cache e roteamento de borda de tudo o que o usuário vê, e nada disso é revisável nem versionado — foi o que deixou o tema do login servindo uma cópia de 19/08 por quase quatro dias (2026-08-22). Contraria o guardrail de infraestrutura declarada. Mitigado por ora no que estava ao alcance: `deploy/nginx.conf` fixa o cache dos estáticos do Keycloak em 5 min. Importar a zona para Terraform é trabalho próprio, ainda sem dono |
 
 ## Próximo marco
 

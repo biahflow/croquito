@@ -43,6 +43,29 @@ Responsável: Platform / Engineering
 - DXF mínimo reaberto/auditado.
 - Delete e lifecycle marker.
 
+### Mudou o tema do Keycloak? Confira o que o AR está servindo
+
+O Keycloak serve os estáticos do login em `/auth/resources/<versão>/...`, e aquele número
+acompanha a versão do **servidor**, não a do tema. Enquanto ele seguir na mesma versão, a
+URL do `croquito.css` é **idêntica** entre deploys — e um cache de borda que a considere
+imutável nunca volta a perguntar. Foi assim que o tema com o olho de senha dentro do campo
+ficou publicado por quase quatro dias sem chegar ao ar (2026-08-22).
+
+A fumaça **não pega** isso: ela prova que o login funciona, não como ele está pintado.
+
+`deploy/nginx.conf` limita esse cache a 5 minutos, mas a mitigação só vale a partir do
+deploy que a levar — e uma cópia já guardada na borda continua até expirar. Depois de um
+deploy que mexa no tema, confira:
+
+```bash
+curl -sSI https://croquito-hml.biahflow.ai/auth/resources/<versão>/login/croquito/css/croquito.css \
+  | grep -iE 'cache-control|age|last-modified|cf-cache-status'
+```
+
+`last-modified` anterior à sua mudança, ou `age` alto com `cf-cache-status: HIT`, significa
+cópia velha na borda: purgue o caminho no CDN. A versão em uso sai do `href` do CSS na
+página de login.
+
 ## Rollback
 
 - Aplicação: reverter task definition/bundle.
