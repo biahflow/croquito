@@ -57,8 +57,15 @@ tasks:
     validation: make check, make test, npm --workspace @croquito/web run test
     relative_effort: M
 
-parallel_groups: T2 e T3 podem correr juntas depois de T1 — tocam arquivos diferentes
-  (`App.tsx` e casca contra `plataforma/` e rotas de plataforma). Sem PARALLELISM_RISK.
+parallel_groups: T2 e T3 correm juntas depois de T1.
+
+PLAN_DEVIATION (2026-08-22, achado na revisão antes de despachar as duas): o plano dizia
+  "sem PARALLELISM_RISK", e estava errado — o escopo de T2 incluía o tipo `Me` em
+  `apps/web/src/plataforma/api.ts`, arquivo que T3 também edita para as funções de
+  entitlement. Resolução: o tipo (`Journey` + `Me.journeys`) saiu do escopo de T2 e foi
+  aplicado à parte, antes do despacho, de modo que T2 passa a possuir apenas `App.tsx` e
+  `App.test.tsx`, e T3 possui `plataforma/**` e as rotas. Sem isso as duas colidiriam no
+  mesmo arquivo. Impacto: nenhum no comportamento entregue.
 critical_path: T1 → T3 (a maior das duas dependentes).
 integration_strategy: commits separados por task na `main`, com revisão linha a linha entre
   eles; nenhuma task encerra com portão vermelho.

@@ -26,11 +26,13 @@ recalcular papel no navegador.
 4. **Lista vazia**: nenhuma aba, **mais** aviso escrito dizendo que a conta não tem jornada
    liberada e a quem pedir acesso. Reusar `app-alert` com `role="alert"`, já usado para o
    `sessionNotice` (`App.tsx` ~532-542). Tela muda sem explicação é o que não pode acontecer.
-5. **Tipo** da resposta de `/v1/me` em `plataforma/api.ts` (onde `Me` já vive).
 
 ## Out of scope
 
 - Qualquer arquivo em `services/` — o contrato vem pronto da T1.
+- **`apps/web/src/plataforma/api.ts`**: o tipo `Journey` e o campo `Me.journeys` já
+  existem lá (PLAN_DEVIATION registrada no plano). Importe; não edite o arquivo — ele
+  é da T3, que corre em paralelo.
 - Qualquer lógica de papel no navegador: a SPA não decide, ela renderiza.
 - **Guarda de rota**: quem digita a URL de uma jornada indisponível continua montando a
   jornada e lendo o `403` por extenso, exatamente como a Plataforma já faz

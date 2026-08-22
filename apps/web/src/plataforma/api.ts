@@ -32,10 +32,22 @@ export const PLATFORM_OPERATOR_ROLE = "platform_operator";
  * token: é a mesma superfície (`subject`, `tenant_id`, `roles`) que o backend usa para
  * decidir autorização.
  */
+/**
+ * As jornadas que o produto liga e desliga por ambiente e por tenant (F-034). A Plataforma
+ * não entra: ela é governada por papel e é onde a disponibilidade é administrada.
+ */
+export type Journey = "croqui" | "medicao" | "orcamento";
+
 export type Me = {
   subject: string;
   tenant_id: string;
   roles: string[];
+  /**
+   * Jornadas que este principal pode abrir, **já resolvidas pelo servidor** — ambiente,
+   * tenant e papel. A tela renderiza esta lista; ela não recalcula papel nem decide
+   * disponibilidade. Lista vazia é resposta legítima.
+   */
+  journeys: Journey[];
 };
 
 /**
