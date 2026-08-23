@@ -180,6 +180,12 @@ export type EstimateSummary = {
   cascade_origins: PriceOrigin[];
   target_amount: string | null;
   target_label: string | null;
+  /**
+   * O regime da rodada (ADR-0045), para o card dizê-lo antes de a pessoa abrir. `null` é a
+   * pré-licitação: a listagem não inventa um valor para a ausência, e o card sem selo é
+   * exatamente a rodada sem regime.
+   */
+  pricing_regime: PricingRegime | null;
   created_at: string;
   updated_at: string;
 };
@@ -516,6 +522,12 @@ export type CreateEstimateDraft = {
   /** Teto de verba, opcional: campo vazio é "sem teto", e sem teto nada muda (ADR-0040). */
   targetAmount?: string;
   targetLabel?: string;
+  /**
+   * Regime da rodada na ABERTURA (ADR-0045, F-033 revisão 2): a rodada pode nascer já
+   * declarada. O tipo é o único regime declarável, e a ausência é a pré-licitação — por
+   * isso o campo é opcional aqui e some do corpo quando não houver escolha.
+   */
+  pricingRegime?: PricingRegime;
 };
 
 export type CascadeOrderDraft = {

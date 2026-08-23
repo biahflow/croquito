@@ -73,15 +73,18 @@ import {
   AVISO_ACERVO_VAZIO,
   AVISO_BDI,
   AVISO_CANDIDATO_ADITIVO,
+  AVISO_CARD_SEM_REGIME,
   AVISO_CASCATA,
   AVISO_CASCATA_SOB_CONTRATO,
   AVISO_CASCATA_TRAVADA,
   AVISO_CONSUMO_COM_BDI,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
   AVISO_ORCAMENTO,
+  AVISO_ORCAMENTO_SEM_RODADA,
   AVISO_ORCAMENTO_SOB_CONTRATO,
   AVISO_PROCEDENCIA,
   AVISO_QUANTIDADE_AMBIGUA,
+  AVISO_REGIME_ABERTURA,
   AVISO_REGIME_MAO_UNICA,
   AVISO_SEM_PRECO,
   AVISO_TETO_ABERTURA,
@@ -109,6 +112,7 @@ import {
   opcaoDoAcervo,
   origensAceitasNaCascata,
   PERGUNTA_REGIME,
+  PERGUNTA_REGIME_ABERTURA,
   priceOriginSeloClass,
   priceSourceLabel,
   procedenciaDaFonte,
@@ -171,6 +175,10 @@ const EMPTY_ESTIMATE_FORM = {
   // Teto vazio é o padrão e é "sem teto": ele não pede justificativa e não muda o botão.
   tetoAmount: "",
   tetoLabel: "",
+  // Regime vazio é o padrão e é a PRÉ-LICITAÇÃO — que é a ausência do campo, não um valor
+  // (ADR-0045). Diferente do painel de declarar depois, escolher o padrão aqui não desliga
+  // o botão: abrir a rodada é o ato, e o regime é uma escolha dentro dele.
+  regime: "" as "" | PricingRegime,
 };
 
 /**
@@ -219,6 +227,33 @@ export function SeloRegime({
     >
       {SELO_REGIME}
     </span>
+  );
+}
+
+/**
+ * O selo do regime no CARD da lista (F-033, revisão 2, decisão 4): o terceiro lugar do
+ * MESMO selo, para a rodada dizer o regime antes de ser aberta.
+ *
+ * `pricing_regime` vem da listagem (`GET /v1/estimate-rounds`) e `null` é a pré-licitação:
+ * card sem selo é rodada sem regime. É o molde do `LinhaTetoDaRodada` — a peça some
+ * inteira quando não há o que dizer, em vez de virar "regime: —".
+ *
+ * O `<p>` é o que põe o selo na PRÓPRIA linha, como o mock da revisão 2 o desenha: a linha
+ * de cima é a identidade da obra, e o regime não disputa espaço com ela. Ele usa a margem
+ * que a folha da jornada já dá a todo parágrafo — nenhuma regra nova.
+ */
+export function SeloRegimeDaRodada({
+  regime,
+}: {
+  regime: PricingRegime | null;
+}) {
+  if (regime === null) {
+    return null;
+  }
+  return (
+    <p>
+      <SeloRegime variante="claro" />
+    </p>
   );
 }
 
@@ -1396,6 +1431,9 @@ export function OrcamentoApp({
         address: form.address,
         targetAmount: form.tetoAmount,
         targetLabel: form.tetoLabel,
+        // Pré-licitação é a ausência do campo: `undefined` não vira chave no corpo, e é
+        // assim que a rodada nasce sem regime, como sempre nasceu.
+        pricingRegime: form.regime === "" ? undefined : form.regime,
       });
       setForm(EMPTY_ESTIMATE_FORM);
       setToast("Orçamento aberto. A próxima etapa é instalar a cascata de fontes.");
@@ -1865,13 +1903,17 @@ export function OrcamentoApp({
     return (
       <div className="jornada-orcamento">
         <section className="painel" aria-label="Orçamento-base">
-          <span className="eyebrow">ORÇAMENTO-BASE · PRÉ-LICITAÇÃO</span>
+          {/* Sem sessão não há rodada, e sem rodada não há regime a afirmar: o sufixo do
+              momento só aparece dentro de uma rodada aberta (F-033, revisão 2, tela 2).
+              Veste CLARA porque este é o único eyebrow da jornada que vive sobre painel
+              branco, e o token do eyebrow é a tinta da topbar escura. */}
+          <span className="eyebrow eyebrow-claro">ORÇAMENTO-BASE</span>
           <h1>Entre para abrir um orçamento</h1>
           <p>
             O orçamento-base é autenticado e por tenant: cascata, prancha e decisões só são
             lidos com a sessão de quem decide.
           </p>
-          <p className="aviso-fixo">{AVISO_ORCAMENTO}</p>
+          <p className="aviso-fixo">{AVISO_ORCAMENTO_SEM_RODADA}</p>
         </section>
       </div>
     );
@@ -1882,10 +1924,12 @@ export function OrcamentoApp({
       <div className="jornada-orcamento">
         <header className="topbar">
           <div>
-            <span className="eyebrow">ORÇAMENTO-BASE · PRÉ-LICITAÇÃO</span>
+            {/* A recusa é de acesso ao tenant: nenhuma rodada foi lida, e o rótulo não
+                afirma o momento de uma rodada que ele não tem. */}
+            <span className="eyebrow">ORÇAMENTO-BASE</span>
             <h1>Orçamento-base</h1>
           </div>
-          <p className="aviso-fixo">{AVISO_ORCAMENTO}</p>
+          <p className="aviso-fixo">{AVISO_ORCAMENTO_SEM_RODADA}</p>
         </header>
         <main className="conteudo">
           <PainelSemAcesso detalhe={semAcesso} />
@@ -1901,13 +1945,15 @@ export function OrcamentoApp({
       <div className="jornada-orcamento">
         <header className="topbar">
           <div>
-            <span className="eyebrow">ORÇAMENTO-BASE · PRÉ-LICITAÇÃO</span>
+            {/* Nenhuma rodada aberta é justamente a tela que afirmava um regime sobre nada
+                (F-033, revisão 2): o momento é da rodada, e aqui não há rodada. */}
+            <span className="eyebrow">ORÇAMENTO-BASE</span>
             <h1>Nenhum orçamento aberto</h1>
             <p className="topbar-meta">
               Escolha um orçamento da lista ou abra um novo.
             </p>
           </div>
-          <p className="aviso-fixo">{AVISO_ORCAMENTO}</p>
+          <p className="aviso-fixo">{AVISO_ORCAMENTO_SEM_RODADA}</p>
         </header>
 
         {alertMessage === null ? null : (
@@ -1955,6 +2001,11 @@ export function OrcamentoApp({
                       <div>
                         <strong>{item.worksite_name}</strong>{" "}
                         <span className="mono">({item.worksite_key})</span>
+                        {/* Terceiro lugar do MESMO selo (decisão 4 da revisão 2): o card
+                            diz o regime antes de a pessoa abrir a rodada. Nenhuma pastilha
+                            nova é inventada, e rodada sem regime não ganha selo — a
+                            ausência é a pré-licitação, e ela não tem veste própria. */}
+                        <SeloRegimeDaRodada regime={item.pricing_regime} />
                         {/* `.dica`, e não `.topbar-meta`: a cor do `.topbar-meta` é a
                             tinta do topbar ESCURO (`--dark-ink-soft`) e some sobre a
                             superfície clara do painel. Defeito de legibilidade herdado da
@@ -1996,6 +2047,11 @@ export function OrcamentoApp({
                   ))}
                 </ul>
               )}
+              {/* Por que um card não tem selo, dito uma vez ao pé da lista: sem esta linha
+                  a ausência do selo leria como dado que faltou carregar. */}
+              {lista !== null && lista.length > 0 ? (
+                <p className="dica">{AVISO_CARD_SEM_REGIME}</p>
+              ) : null}
               {listaCursor === null ? null : (
                 <button
                   type="button"
@@ -2129,6 +2185,41 @@ export function OrcamentoApp({
                   />
                 </label>
                 <p className="dica">{AVISO_TETO_ABERTURA}</p>
+                {/* Regime da rodada na abertura (ADR-0045; F-033, revisão 2, tela 3). O
+                    campo tem o peso do Teto — pergunta antes, consequência e mão única
+                    depois —, porque o que a revisão 1 recusou foi a caixa ESCONDIDA, não
+                    declarar na abertura.
+
+                    Duas diferenças em relação ao painel de declarar depois, e as duas são
+                    de propósito: aqui a pré-licitação é o PADRÃO, e escolhê-la não desliga
+                    o botão — simplesmente não se manda o campo; e o ato desta tela é abrir
+                    a rodada, não declarar. */}
+                <label className="campo campo-regime">
+                  Regime
+                  <span className="campo-dica">{PERGUNTA_REGIME_ABERTURA}</span>
+                  <select
+                    value={form.regime}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        regime:
+                          event.target.value === "" ? "" : "contracted_demand",
+                      }))
+                    }
+                  >
+                    <option value="">{REGIME_OPCAO_PRE_LICITACAO}</option>
+                    <option value="contracted_demand">
+                      {REGIME_OPCAO_SOB_CONTRATO}
+                    </option>
+                  </select>
+                  <span className="campo-dica">
+                    <strong>{AVISO_REGIME_ABERTURA.destaque}</strong>
+                    {AVISO_REGIME_ABERTURA.texto}
+                  </span>
+                  {/* O que a declaração NÃO garante, nos DOIS lugares em que se declara: o
+                      caminho que virou principal não pode ser o que cala sobre a lacuna. */}
+                  <span className="campo-dica">{DICA_REGIME}</span>
+                </label>
                 <button
                   type="submit"
                   className="botao-primario"

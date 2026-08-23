@@ -15,12 +15,15 @@ import {
   SeloFonte,
   SeloProcedencia,
   SeloRegime,
+  SeloRegimeDaRodada,
   SemPrecoNaCascata,
   TelaAuditoriaReprovada,
 } from "./OrcamentoApp";
 import {
   AVISO_ACERVO_FILTRADO,
   AVISO_ORCAMENTO,
+  AVISO_ORCAMENTO_SEM_RODADA,
+  DICA_REGIME,
   origensAceitasNaCascata,
 } from "./labels";
 import type { ReferenceCatalogOption } from "./api";
@@ -45,16 +48,21 @@ describe("OrcamentoApp sem sessão", () => {
   });
 
   /**
-   * A linha fixa que declara o momento da jornada é decisão do pacote aprovado, e ela diz
-   * as duas coisas que a confusão medição × orçamento custou: de onde vem o preço, e até
-   * onde ele não vai.
+   * A linha fixa continua dizendo as duas coisas que a confusão medição × orçamento
+   * custou — de onde vem o preço e até onde ele não vai —, e para de dizer a terceira: sem
+   * sessão não há rodada, e sem rodada não há regime a afirmar (F-033, revisão 2, tela 2).
    */
-  it("declara o momento da jornada na linha fixa, inclusive sem sessão", () => {
+  it("declara de onde o preço vem sem afirmar o momento de uma rodada que não existe", () => {
     const html = renderToStaticMarkup(<OrcamentoApp session={null} />);
 
-    expect(html).toContain(AVISO_ORCAMENTO);
-    expect(html).toContain("pré-licitação");
-    expect(html).toContain("nenhum preço daqui alcança um boletim de medição");
+    expect(html).toContain(AVISO_ORCAMENTO_SEM_RODADA);
+    expect(html).toContain("Nenhum preço daqui alcança um boletim de medição");
+    expect(html).not.toContain(AVISO_ORCAMENTO);
+    expect(html).not.toContain("pré-licitação");
+    // Único eyebrow da jornada sobre painel branco: sem a veste clara ele herda a tinta da
+    // topbar escura e o rótulo fica ilegível — trocaria "afirma um regime sobre nada" por
+    // "não afirma nada porque ninguém vê".
+    expect(html).toContain("eyebrow eyebrow-claro");
   });
 });
 
@@ -121,6 +129,57 @@ describe("OrcamentoApp com sessão e sem orçamento aberto", () => {
     expect(html).not.toContain("R$");
     expect(html).not.toContain("BDI 25");
     expect(html).not.toContain("Praça do Exemplo");
+  });
+
+  /**
+   * A tela sem rodada não afirma o momento em lugar nenhum — nem na sobrescrita, nem na
+   * faixa âmbar (F-033, revisão 2, tela 2). Era aqui que o defeito morava: não existe
+   * rodada nesta tela, e mesmo assim ela dizia o regime de uma.
+   */
+  it("não afirma o momento onde não há rodada, nem no rótulo nem na faixa", () => {
+    const html = renderToStaticMarkup(
+      <OrcamentoApp session={sessao} roundId={null} />,
+    );
+
+    expect(html).toContain(">ORÇAMENTO-BASE<");
+    expect(html).toContain(AVISO_ORCAMENTO_SEM_RODADA);
+    expect(html).not.toContain("ORÇAMENTO-BASE · PRÉ-LICITAÇÃO");
+    expect(html).not.toContain(AVISO_ORCAMENTO);
+  });
+
+  /**
+   * A rodada pode nascer declarada (F-033, revisão 2, tela 3): o campo é visível, tem a
+   * pergunta antes e a consequência depois, e a lacuna que o produto NÃO fecha é dita aqui
+   * também — o caminho que virou principal não pode ser o que cala sobre ela.
+   */
+  it("oferece o regime na abertura, com a pergunta, a mão única e a lacuna", () => {
+    const html = renderToStaticMarkup(
+      <OrcamentoApp session={sessao} roundId={null} />,
+    );
+
+    expect(html).toContain("Regime");
+    expect(html).toContain("contrato guarda-chuva já licitado");
+    expect(html).toContain("Sob contrato, a cascata só aceita a tabela do contrato");
+    expect(html).toContain("a rodada não volta para pré-licitação");
+    expect(html).toContain(DICA_REGIME);
+  });
+
+  /**
+   * Pré-licitação é o PADRÃO da abertura, e escolhê-la não é um ato: diferente do painel de
+   * declarar depois, o botão continua ativo — simplesmente não se manda o campo.
+   */
+  it("nasce em pré-licitação, e o padrão não desliga o botão de abrir", () => {
+    const html = renderToStaticMarkup(
+      <OrcamentoApp session={sessao} roundId={null} />,
+    );
+
+    expect(html).toContain('<option value="" selected');
+    // A asserção é sobre O BOTÃO, não sobre a página: `not.toContain("disabled")` no HTML
+    // inteiro passaria a falhar no dia em que qualquer outro controle da tela nascesse
+    // desabilitado, e falharia por motivo alheio ao que este teste protege.
+    const botao = html.match(/<button type="submit"[^>]*>/)?.[0] ?? "";
+    expect(botao).not.toBe("");
+    expect(botao).not.toContain("disabled");
   });
 });
 
@@ -538,6 +597,25 @@ describe("SeloRegime", () => {
 });
 
 /**
+ * O selo no CARD da lista (F-033, revisão 2, decisão 4): o card diz o regime antes de a
+ * rodada ser aberta, e o silêncio também diz — card sem selo é rodada em pré-licitação.
+ */
+describe("SeloRegimeDaRodada", () => {
+  it("mostra o mesmo selo, na veste clara, quando a rodada tem regime", () => {
+    const html = renderToStaticMarkup(
+      <SeloRegimeDaRodada regime="contracted_demand" />,
+    );
+
+    expect(html).toContain("SOB CONTRATO LICITADO");
+    expect(html).toContain("selo-regime-claro");
+  });
+
+  it("sem regime não há selo nenhum: a ausência não vira 'regime: —'", () => {
+    expect(renderToStaticMarkup(<SeloRegimeDaRodada regime={null} />)).toBe("");
+  });
+});
+
+/**
  * Declarar o regime é ato próprio, com seletor e botão (decisão 4 do pacote aprovado) — e
  * mão única: o painel não oferece a volta para pré-licitação, que o servidor recusa com
  * `ESTIMATE_REGIME_IRREVERSIBLE`.
@@ -593,7 +671,11 @@ describe("PainelRegimeDaRodada", () => {
 
 /**
  * Rodada SEM regime é a tela de hoje, sem nenhuma peça nova (decisão 5 do pacote): ausência
- * não é um valor, é a falta dele — e nada no primeiro render fala de contrato.
+ * não é um valor, é a falta dele.
+ *
+ * Com a revisão 2 a abertura passou a OFERECER a escolha, e oferecer não é afirmar: o que
+ * nenhum destes renders pode conter continua sendo o selo, o candidato a aditivo e a frase
+ * que declara a rodada sob contrato licitado.
  */
 describe("rodada sem regime declarado", () => {
   const sessao = {

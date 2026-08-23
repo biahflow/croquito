@@ -80,6 +80,37 @@ describe("corpos das mutações", () => {
     expect(body).not.toHaveProperty("address");
   });
 
+  /**
+   * Regime na abertura (ADR-0045; F-033, revisão 2): a rodada nasce declarada quando a
+   * escolha foi feita, e o corpo carrega o único regime declarável.
+   */
+  it("abrir sob contrato leva o regime declarado no corpo", () => {
+    const body = createEstimateBody({
+      worksiteKey: "praca-do-exemplo",
+      worksiteName: "Praça do Exemplo",
+      referenceLabel: "ORÇAMENTO-BASE 2026",
+      pricingRegime: "contracted_demand",
+    });
+
+    expect(body.pricing_regime).toBe("contracted_demand");
+  });
+
+  /**
+   * Sem escolha, a chave não existe: ausência não é um valor, é a falta dele — e é da
+   * ausência que o servidor lê a pré-licitação. Mandar `pre_bid` aqui pediria a recusa
+   * `ESTIMATE_REGIME_IRREVERSIBLE` sobre uma rodada que sequer existe.
+   */
+  it("sem regime escolhido o corpo não carrega pricing_regime nenhum", () => {
+    const body = createEstimateBody({
+      worksiteKey: "praca-do-exemplo",
+      worksiteName: "Praça do Exemplo",
+      referenceLabel: "ORÇAMENTO-BASE 2026",
+    });
+
+    expect(body).not.toHaveProperty("pricing_regime");
+    expect(JSON.stringify(body)).not.toContain("pre_bid");
+  });
+
   it("a reordenação manda a lista completa, copiada e na ordem pedida", () => {
     const cascade = ["a".repeat(64), "b".repeat(64)];
     const body = cascadeOrderBody({ cascade, baseVersion: 5 });

@@ -2686,6 +2686,21 @@
             "title": "Extraction Status",
             "type": "string"
           },
+          "pricing_regime": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pre_bid",
+                  "contracted_demand"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Regime"
+          },
           "reference_label": {
             "title": "Reference Label",
             "type": "string"

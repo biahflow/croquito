@@ -96,6 +96,10 @@ export function tetoAmountError(value: string): string | null {
  * vez de ir torto: a tela já o recusou (`tetoAmountError`) e o botão não estava
  * disponível, então chegar aqui com ele significa que algo escapou, e mandar "0,00" numa
  * rodada nova gravaria uma ambiguidade que o ADR-0040 recusa.
+ *
+ * O regime segue a MESMA regra (ADR-0045, F-033 revisão 2): a chave só entra quando houve
+ * escolha. Ausência não é um valor, é a falta dele — e é da ausência que o servidor lê a
+ * pré-licitação, que continua sendo o padrão da abertura.
  */
 export function createEstimateBody(
   draft: CreateEstimateDraft,
@@ -108,6 +112,9 @@ export function createEstimateBody(
   const address = draft.address?.trim();
   if (address) {
     body.address = address;
+  }
+  if (draft.pricingRegime) {
+    body.pricing_regime = draft.pricingRegime;
   }
   return { ...body, ...targetFields(draft.targetAmount, draft.targetLabel) };
 }

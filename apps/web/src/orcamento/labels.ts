@@ -27,10 +27,25 @@ import type { TetoEstado } from "./teto";
  * A fronteira é a do [ADR-0027](docs/adr/0027-price-source-provenance-and-bid-boundary.md)
  * dita na tela, não só no código: em obra licitada o preço vem do contrato, e nada
  * montado aqui alcança um boletim de medição.
+ *
+ * Ele afirma o MOMENTO, e por isso só vale onde existe rodada em pré-licitação. Sem rodada
+ * quem fala é `AVISO_ORCAMENTO_SEM_RODADA`.
  */
 export const AVISO_ORCAMENTO =
   "Orçamento-base de pré-licitação; o preço vem da cascata declarada — nenhum preço " +
   "daqui alcança um boletim de medição.";
+
+/**
+ * A mesma linha fixa onde NÃO existe rodada nenhuma — sem sessão, sem acesso e sem
+ * orçamento aberto (F-033, revisão 2 do Design Approval Package, tela 2).
+ *
+ * Nas três telas o regime não existe para ser afirmado: não há rodada de que ele fosse o
+ * regime. A linha continua dizendo as duas coisas de sempre — de onde o preço vem e até
+ * onde ele não vai —, e para de dizer a terceira, que era a única que a tela não sabia.
+ */
+export const AVISO_ORCAMENTO_SEM_RODADA =
+  "O orçamento-base precifica pela cascata declarada na rodada. Nenhum preço daqui " +
+  "alcança um boletim de medição.";
 
 /* Regime da rodada (ADR-0045, F-033) --------------------------------------- */
 
@@ -76,14 +91,52 @@ export function origensAceitasNaCascata(origins: readonly string[]): string | nu
 /** O ato de declarar, no molde do teto: um seletor, um botão e o que ele decide. */
 export const PERGUNTA_REGIME = "Esta demanda corre sob contrato licitado?";
 
+/**
+ * O painel de declarar DEPOIS deixou de ser o único caminho e continua sendo um caminho
+ * (F-033, revisão 2, tela 5): quem abriu sem declarar corrige aqui. A frase diz onde a
+ * rodada está antes de pedir o ato, porque é essa a informação que faltava a quem chega
+ * neste painel sem ter passado pela abertura.
+ */
 export const DESCRICAO_REGIME =
-  "Declare quando a praça for orçada dentro de um contrato guarda-chuva já licitado. A " +
-  "partir daí a cascata só aceita a tabela do contrato.";
+  "Esta rodada foi aberta em pré-licitação. Declare aqui se ela for, na verdade, orçada " +
+  "dentro de um contrato guarda-chuva já licitado — a partir daí a cascata só aceita a " +
+  "tabela do contrato.";
+
+/* Regime na abertura da rodada (F-033, revisão 2, tela 3) ------------------- */
+
+/** A pergunta, antes do seletor: ela é a escolha inteira, com as duas saídas escritas. */
+export const PERGUNTA_REGIME_ABERTURA =
+  "a demanda corre dentro de um contrato guarda-chuva já licitado, ou é orçamento de " +
+  "pré-licitação?";
+
+/**
+ * A consequência e a mão única, ditas ANTES do clique — é isso que distingue o campo da
+ * "caixa de marcar escondida no formulário de abertura" que a revisão 1 recusou (decisão 2
+ * da revisão 2). O destaque é a regra que a escolha liga; o resto é o que ela custa.
+ */
+export const AVISO_REGIME_ABERTURA = {
+  destaque: "Sob contrato, a cascata só aceita a tabela do contrato",
+  texto:
+    ", e declarar é mão única: a rodada não volta para pré-licitação. Corrigir um engano " +
+    "é abrir outra rodada.",
+} as const;
+
+/**
+ * Por que um card da lista não tem selo. O silêncio também diz (decisão 4 da revisão 2), e
+ * dizer isso uma vez ao pé da lista evita que a ausência do selo leia como dado faltando.
+ */
+export const AVISO_CARD_SEM_REGIME =
+  "Rodada sem selo é rodada em pré-licitação: ausência não é um valor, é a falta dele.";
 
 /**
  * O que a declaração NÃO faz, dito antes do clique. Restringir a origem garante que o
  * preço veio do SCO; não garante que veio da tabela, data-base e desconto DAQUELE
  * contrato — a lacuna que o ADR-0045 nomeia e deixa aberta.
+ *
+ * Ela aparece nos DOIS lugares em que se declara: no campo da abertura e no painel de
+ * declarar depois. Não migrou de um para o outro — com a abertura virando o caminho
+ * principal, deixá-la só no painel faria o produto parar de dizer o que ele NÃO garante
+ * justamente no ato que virou o normal.
  */
 export const DICA_REGIME =
   "Restringir a origem não confere o contrato: o sistema garante que o preço veio do " +

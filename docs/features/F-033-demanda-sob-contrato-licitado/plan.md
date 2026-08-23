@@ -60,8 +60,53 @@ tasks:
     validation: npm --workspace @croquito/web run test, run check
     relative_effort: M
 
-parallel_groups: nenhum — T2 consome o bloco de estado que T1 publica.
-critical_path: T1 → T2.
+  - id: T3
+    role: builder
+    goal: a listagem de rodadas diz em que regime cada uma corre
+    scope: `pricing_regime` em `EstimateRoundSummary` e em `list_estimate_rounds`, API
+      Contract, snapshot de OpenAPI, teste no molde do teto cru.
+    out_of_scope: qualquer arquivo de `apps/web`; a criação da rodada, que já grava o
+      campo; migração — a coluna já existe em `EstimateRoundRecord`.
+    depends_on: []
+    validation: make check, make test
+    relative_effort: XS
+  - id: T4
+    role: builder
+    goal: o rótulo que não mente, o regime na abertura e o selo no card
+    scope: `apps/web/src/orcamento/` — rótulo neutro nas três telas sem rodada, faixa âmbar
+      nova para elas, campo Regime no formulário de abertura, selo no card da lista, copy
+      do painel de declarar depois, rótulos e testes.
+    out_of_scope: qualquer arquivo de `services/`; a tela COM rodada; reordenar os painéis
+      da aba Cascata.
+    depends_on: [T3]
+    validation: npm --workspace @croquito/web run test, npm run web:check, make check
+    relative_effort: M
+
+## Ampliação de 2026-08-22 — revisão 2 do pacote de design
+
+T3 e T4 nascem **depois** de T1 e T2 estarem no ar, da revisão 2 do
+[pacote de design](mock/README.md), aprovada por ato humano em 2026-08-22. Não é
+`PLAN_DEVIATION` de trabalho planejado: é escopo **novo**, registrado no escopo 6 do
+contrato, sobre um defeito que só a tela construída revelou — ela afirma um regime onde não
+há rodada.
+
+Duas descobertas do levantamento encurtaram o trabalho e estão fixadas nos contratos:
+
+- **Nenhuma migração.** `EstimateRoundRecord.pricing_regime` já existe (`database.py:788`),
+  e `POST /v1/estimate-rounds` já aceita e grava o campo. Do servidor, falta só **expor na
+  listagem** — daí T3 ser `XS`.
+- **A faixa âmbar também mente.** O levantamento afirmou que `AVISO_ORCAMENTO` já era
+  neutra; **não é** — ela diz "Orçamento-base **de pré-licitação**". Sem constante nova,
+  metade do defeito continuaria no ar depois da feature. Corrigido no contrato da T4.
+
+Uma **divergência deliberada do mock**, por decisão humana de 2026-08-22: `DICA_REGIME` —
+"restringir a origem não confere o contrato" — entra **também** no campo da abertura, e não
+só no painel de declarar. O mock não a mostra em lugar nenhum, e quem declarasse pela
+abertura nunca a leria; ela é a decisão 6 da revisão 1 e a decisão 6 do ADR-0045.
+
+parallel_groups: nenhum — T2 consome o bloco de estado que T1 publica, e T4 consome o campo
+  que T3 publica.
+critical_path: T1 → T2 (fatia 1) e T3 → T4 (revisão 2).
 integration_strategy: commits separados por task na `main`, com revisão linha a linha entre
   eles; nenhuma task encerra com portão vermelho.
 human_gates: nenhum aberto. ADR-0045 `Accepted` e Design Approval Package revisão 1 aprovado,

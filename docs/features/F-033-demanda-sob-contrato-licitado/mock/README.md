@@ -81,6 +81,65 @@ sem regime ainda pode chegar nela.
 | [`r2-04-dentro-da-rodada.png`](r2-04-dentro-da-rodada.png) | Dentro da rodada o sufixo volta — idêntico à revisão 1 |
 | [`r2-05-declarar-depois.png`](r2-05-declarar-depois.png) | O painel de declarar depois, que permanece |
 
+## Divergências apuradas na implementação (2026-08-22)
+
+Registradas para que a revisão 2 não seja lida como fiel ao que foi construído. Nenhuma
+muda o que foi aprovado; a primeira é acréscimo por decisão humana e as demais são
+fidelidade do mock ou consequência da tela real.
+
+1. **`DICA_REGIME` entra nos DOIS lugares** — no campo da abertura e no painel de declarar
+   depois. **Decisão humana de 2026-08-22, que diverge do mock**: a revisão 2 não a mostra
+   em lugar nenhum, e quem declarasse pela abertura nunca leria que restringir a origem
+   **não** confere o contrato. Ela é a decisão 6 da revisão 1 e a decisão 6 do
+   [ADR-0045](../../../adr/0045-terceiro-estado-demanda-sob-contrato.md): como a abertura
+   virou o caminho principal, o produto deixaria de dizer o que não garante justamente no
+   ato que virou o normal.
+
+2. **A faixa âmbar também mentia, e o mock não deixava isso claro.** Um levantamento
+   afirmou que `AVISO_ORCAMENTO` já era neutra; **não era** — ela dizia "Orçamento-base **de
+   pré-licitação**". Sem a constante nova (`AVISO_ORCAMENTO_SEM_RODADA`), o eyebrow ficaria
+   neutro e a faixa ao lado continuaria afirmando o momento. Metade do defeito teria
+   sobrevivido à feature.
+
+3. **O rótulo neutro nascia invisível na tela sem sessão.** Achado na revisão do diff: é o
+   único eyebrow da jornada que vive sobre painel **branco**, e `.eyebrow` usa
+   `--dark-ink-soft` — a tinta da topbar escura, contraste ~1,05:1. Entregar assim trocaria
+   "afirma um regime sobre nada" por "não afirma nada porque ninguém vê". Corrigido com a
+   veste `.eyebrow-claro`, pelo mesmo motivo que a revisão 1 corrigiu o `.topbar-meta`
+   (divergência 3 dela), e fixado por teste.
+
+4. **O campo do regime ficou depois do aviso do teto**, não antes. Aquele parágrafo explica
+   o **teto**; pôr o regime no meio separaria o campo da sua própria explicação. A ordem na
+   tela é a do mock: teto → regime → botão.
+
+5. **O selo do card saiu por componente próprio** (`SeloRegimeDaRodada`) em vez de
+   `<SeloRegime variante="claro" />` inline. Mesmo selo e mesmo comportamento; o componente
+   existe para o estado poder ser coberto por teste, no molde de `LinhaTetoDaRodada`. E ele
+   ganhou uma linha própria no card — inline, o selo caía ao lado da identidade da obra, e o
+   mock o desenha em linha separada.
+
+6. **Uma regra de CSS nova** (`.campo-regime`: filete e respiro acima do campo), para o
+   filete que o mock aprovado desenha. Só tokens existentes; nenhuma cor nova.
+
+7. **A opção do seletor diz "Demanda sob contrato"**, reusando a constante do painel, e não
+   "Demanda sob contrato licitado" como o mock escreve — as duas telas oferecem o mesmo ato
+   e passariam a chamá-lo por nomes diferentes.
+
+8. **A linha ao pé da lista perdeu a cauda meta** do mock ("— a mesma regra da revisão 1,
+   aplicada ao card"), que é anotação do pacote e não copy de produto.
+
+9. **Um teste foi reescrito, e ele afirmava o defeito.** `"declara o momento da jornada na
+   linha fixa, inclusive sem sessão"` exigia `toContain("pré-licitação")` na tela **sem
+   rodada** — exatamente o que esta revisão manda consertar. O novo exige o contrário
+   (`not.toContain`), e ficou mais estrito, não mais frouxo. O teste da tela **com** rodada
+   não foi tocado.
+
+## Achado preexistente, NÃO corrigido
+
+O FDD não tem seção sobre o regime da rodada — lacuna vinda da fatia 1 (T1/T2), não desta
+revisão. A disciplina de mudança do `AGENTS.md` pediria uma; escrevê-la aqui seria escopo
+alheio, e fica nomeada para quem fechar a feature.
+
 ## O que esta aprovação NÃO cobre
 
 - A copy final dos textos novos, que é proposta do agente.

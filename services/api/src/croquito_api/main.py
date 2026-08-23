@@ -1393,6 +1393,7 @@ class EstimateRoundSummary(ApiModel):
     cascade_origins: list[str]
     target_amount: str | None = None
     target_label: str | None = None
+    pricing_regime: Literal["pre_bid", "contracted_demand"] | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -9512,6 +9513,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     ],
                     target_amount=record.target_amount,
                     target_label=record.target_label,
+                    pricing_regime=record.pricing_regime,
                     created_at=record.created_at,
                     updated_at=record.updated_at,
                 )

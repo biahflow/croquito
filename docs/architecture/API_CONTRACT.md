@@ -1220,6 +1220,11 @@ Com teto declarado (ADR-0040), cada item ganha `target_amount`/`target_label` �
 textos crus da raiz da rodada, sem `consumed`/`remaining`/`over`: a listagem não busca a
 cabeça de cada rodada para derivar aquele bloco. Rodada sem teto devolve os dois `null`.
 
+Cada item também ganha `pricing_regime` (ADR-0045): `"contracted_demand"` quando a rodada
+declarou o regime, `null` quando não — a ausência **é** a pré-licitação, e a listagem não
+inventa um valor para ela. O campo está na raiz da rodada, então sai sem consulta extra,
+como `target_amount`/`target_label`.
+
 ### `GET /v1/estimate-rounds/{round_id}`
 
 Estado da rodada: `version`, cascata instalada (origem, digest, data-base, rótulo e

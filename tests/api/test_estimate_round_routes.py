@@ -750,6 +750,34 @@ def test_listagem_mostra_teto_cru_sem_consumo(tmp_path: Path) -> None:
     assert sem_teto_item["target_label"] is None
 
 
+def test_listagem_mostra_regime_declarado_ausencia_e_pre_licitacao(tmp_path: Path) -> None:
+    """A listagem devolve `pricing_regime` cru; ausência é a pré-licitação, sem valor inventado.
+
+    O regime está na raiz da rodada (ADR-0045), então sai sem buscar a cabeça de cada
+    rodada — a mesma razão pela qual `target_amount`/`target_label` não custam consulta
+    extra.
+    """
+    client = _client(tmp_path)
+    com_regime = _create_round(
+        client,
+        key="rodada-com-regime",
+        worksite_key="praca-sintetica-com-regime",
+        pricing_regime="contracted_demand",
+    )
+    sem_regime = _create_round(
+        client, key="rodada-sem-regime", worksite_key="praca-sintetica-sem-regime"
+    )
+
+    listagem = client.get("/v1/estimate-rounds", headers=_headers(key="listagem-regime"))
+
+    assert listagem.status_code == 200, listagem.text
+    items = {item["round_id"]: item for item in listagem.json()["items"]}
+    com_regime_item = items[com_regime["round_id"]]
+    assert com_regime_item["pricing_regime"] == "contracted_demand"
+    sem_regime_item = items[sem_regime["round_id"]]
+    assert sem_regime_item["pricing_regime"] is None
+
+
 def test_criar_rodada_sem_teto_o_bloco_fica_ausente_mesmo_com_orcamento_montado(
     tmp_path: Path,
 ) -> None:

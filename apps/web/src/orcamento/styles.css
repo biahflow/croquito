@@ -80,6 +80,16 @@ p {
   color: var(--dark-ink-soft);
 }
 
+/* O eyebrow nasceu para a topbar ESCURA, e `--dark-ink-soft` é quase branco. Sobre o painel
+   claro da tela sem sessão o contraste fica em ~1,05:1 — o rótulo existe no DOM e ninguém o
+   lê. É o mesmo defeito que a revisão 1 corrigiu no `.topbar-meta` (divergência 3 do
+   pacote), e a razão de corrigir aqui é a mesma: a revisão 2 existe para consertar o que
+   esta tela DIZ, e um rótulo invisível não conserta — troca "afirma um regime sobre nada"
+   por "não afirma nada porque ninguém vê". */
+.eyebrow-claro {
+  color: var(--ink-secondary);
+}
+
 .topbar-meta {
   margin: 4px 0 0;
   font-size: 0.85rem;
@@ -491,6 +501,15 @@ p {
   max-width: 22rem;
   color: var(--ink);
   background: var(--surface);
+}
+
+/* O campo do regime na abertura (F-033, revisão 2, tela 3) é o único do formulário que não
+   descreve a obra nem a verba: ele declara a regra sob a qual a rodada vai correr. O filete
+   é o que o mock aprovado usa para separá-lo do grupo do teto — token existente, nenhuma
+   cor nova. */
+.campo-regime {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 
 .campo-dica {
