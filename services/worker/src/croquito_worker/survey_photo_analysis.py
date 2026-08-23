@@ -31,6 +31,7 @@ export do levantamento (T11), em vez de acumular versões de uma análise da mes
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -54,6 +55,7 @@ ANALYSIS_SCHEMA: Final = "survey-photo-analysis/1"
 """Identidade do artefato gravado. Consumidor novo lê isto antes de qualquer campo."""
 
 IMAGE_MIME_PREFIX: Final = "image/"
+FIELD_EVIDENCE_READING_SCHEMA: Final = "field-evidence-reading/1"
 
 # --- Limiares da qualidade offline ---------------------------------------------------
 #
@@ -355,9 +357,7 @@ def build_photo_analysis_document(
 ) -> dict[str, Any]:
     """Monta o artefato de análise. Função pura: quem grava é o handler da fila."""
     output = provider.output
-    readings = (
-        [] if output is None else [reading.model_dump(mode="json") for reading in output.readings]
-    )
+    readings = field_photo_reading_documents(output)
     return {
         "schema": ANALYSIS_SCHEMA,
         "tenant_id": tenant_id,
@@ -374,6 +374,59 @@ def build_photo_analysis_document(
         # Rascunhos a revisar. Nada aqui está confirmado, associado a ponto/elemento do
         # levantamento, nem vira medida.
         "readings": readings,
+        "notes": [] if output is None else list(output.notes),
+        "lineage": _lineage(provider.execution),
+    }
+
+
+def field_photo_reading_documents(
+    output: FieldPhotoReadingsOutput | None,
+) -> list[dict[str, Any]]:
+    """Acrescenta identidade determinística sem pedir ao modelo que invente uma.
+
+    O identificador nasce do conteúdo validado e da posição. Reentregar a mesma mensagem
+    produz os mesmos ids, inclusive quando duas inscrições iguais aparecem na mesma foto.
+    """
+    if output is None:
+        return []
+    documents: list[dict[str, Any]] = []
+    for index, reading in enumerate(output.readings):
+        payload = reading.model_dump(mode="json")
+        canonical = json.dumps(
+            {"index": index, "reading": payload},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        payload["id"] = f"fpr_{hashlib.sha256(canonical.encode()).hexdigest()[:24]}"
+        documents.append(payload)
+    return documents
+
+
+def build_field_evidence_reading_document(
+    *,
+    tenant_id: str,
+    job_id: str,
+    origin: str,
+    evidence_id: str,
+    media: SurveyPhotoMedia,
+    quality: PhotoQuality,
+    provider: ProviderPassResult,
+) -> dict[str, Any]:
+    """Artefato de leitura pedida no job; rascunho sem medida ou geometria."""
+    output = provider.output
+    return {
+        "schema": FIELD_EVIDENCE_READING_SCHEMA,
+        "tenant_id": tenant_id,
+        "job_id": job_id,
+        "origin": origin,
+        "evidence_id": evidence_id,
+        "media": {"sha256": media.sha256, "mime_type": media.mime_type},
+        "quality": quality.as_document(),
+        "provider_pass": provider.outcome.value,
+        "provider_failure_code": provider.failure_code,
+        "provider_notes": list(provider.notes),
+        "readings": field_photo_reading_documents(output),
         "notes": [] if output is None else list(output.notes),
         "lineage": _lineage(provider.execution),
     }

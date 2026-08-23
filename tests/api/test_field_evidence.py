@@ -16,6 +16,10 @@ from croquito_api.config import ApiSettings
 from croquito_api.database import (
     AuditRecord,
     Database,
+    FieldEvidenceAnalysisRecord,
+    FieldPhotoValueConfirmationRecord,
+    IdempotencyRecord,
+    JobFieldPhotoRecord,
     JobRecord,
     JobSurveyLinkRecord,
     ProjectRecord,
@@ -24,7 +28,7 @@ from croquito_api.database import (
     UploadRecord,
 )
 from croquito_api.main import create_app
-from tests.fakes import FakeObjectStore
+from tests.fakes import FakeObjectStore, FakeQueue
 
 TENANT = "tenant-field-evidence"
 OTHER_TENANT = "tenant-other"
@@ -239,6 +243,39 @@ def _database(client: TestClient) -> Database:
     return cast(Database, cast(Any, client.app).state.database)
 
 
+def _store(client: TestClient) -> FakeObjectStore:
+    return cast(FakeObjectStore, cast(Any, client.app).state.artifact_store)
+
+
+def _queue(client: TestClient) -> FakeQueue:
+    queue = FakeQueue()
+    processing_queue = cast(Any, client.app).state.queue
+    processing_queue.queue_url = "http://localstack/queue"
+    processing_queue.client = queue
+    return queue
+
+
+def _presign_standalone(
+    client: TestClient,
+    *,
+    body: bytes = PHOTO,
+    mime_type: str = "image/jpeg",
+    base_version: int = 1,
+    key: str = "standalone-presign",
+) -> Any:
+    return client.post(
+        f"/v1/jobs/{JOB_ID}/field-evidence/photos/presign",
+        headers=_headers(key=key),
+        json={
+            "base_version": base_version,
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "mime_type": mime_type,
+            "byte_size": len(body),
+            "anchor_text": "Muro dos fundos, junto ao portão",
+        },
+    )
+
+
 def test_lista_somente_levantamentos_concluidos_do_tenant(tmp_path: Path) -> None:
     client = _client(tmp_path)
 
@@ -342,3 +379,215 @@ def test_papel_incorreto_e_recusado_antes_do_lookup(tmp_path: Path) -> None:
 
     assert response.status_code == 403
     assert response.json()["code"] == "FORBIDDEN"
+
+
+def test_foto_avulsa_exige_mime_fechado_e_nao_persiste_url_assinada(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    invalid = _presign_standalone(client, mime_type="application/pdf", key="bad-mime")
+    created = _presign_standalone(client)
+    replay = _presign_standalone(client)
+
+    assert invalid.status_code == 422
+    assert created.status_code == replay.status_code == 200
+    assert created.json()["photo_id"] == replay.json()["photo_id"]
+    assert created.json()["version"] == 2
+    assert created.json()["url"].endswith(
+        "?checksum=" + created.json()["headers"]["x-amz-checksum-sha256"]
+    )
+    with _database(client).sessions() as session:
+        photo = session.get(JobFieldPhotoRecord, created.json()["photo_id"])
+        assert photo is not None and photo.status == "PRESIGNED"
+        intent = session.scalar(
+            select(IdempotencyRecord).where(IdempotencyRecord.key == "standalone-presign")
+        )
+        assert intent is not None
+        serialized = json.dumps(intent.response_json)
+        assert "url" not in serialized
+        assert "storage.invalid" not in serialized
+
+
+def test_confirmacao_confere_digest_e_nao_dispara_analise(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    queue = _queue(client)
+    presign = _presign_standalone(client)
+    photo_id = presign.json()["photo_id"]
+    with _database(client).sessions() as session:
+        photo = session.get(JobFieldPhotoRecord, photo_id)
+        assert photo is not None
+        object_key = photo.object_key
+    _store(client).put_direct(object_key=object_key, body=PHOTO, content_type="image/jpeg")
+
+    confirmed = client.post(
+        f"/v1/jobs/{JOB_ID}/field-evidence/photos/{photo_id}/confirm",
+        headers=_headers(key="standalone-confirm"),
+        json={"base_version": 2},
+    )
+
+    assert confirmed.status_code == 200
+    assert confirmed.json() == {"photo_id": photo_id, "status": "CONFIRMED", "version": 3}
+    assert len(queue.messages) == 0
+    evidence = client.get(f"/v1/jobs/{JOB_ID}/field-evidence", headers=_headers())
+    assert evidence.status_code == 200
+    assert evidence.json()["photos"][0]["anchor_text"] == "Muro dos fundos, junto ao portão"
+    assert evidence.json()["photos"][0]["reading_status"] == "NOT_REQUESTED"
+
+
+def test_digest_divergente_nao_confirma_foto_avulsa(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    presign = _presign_standalone(client)
+    photo_id = presign.json()["photo_id"]
+    with _database(client).sessions() as session:
+        photo = session.get(JobFieldPhotoRecord, photo_id)
+        assert photo is not None
+        object_key = photo.object_key
+    corrupted = b"field evidence synthetic jpeh"
+    assert len(corrupted) == len(PHOTO)
+    _store(client).put_direct(object_key=object_key, body=corrupted, content_type="image/jpeg")
+
+    response = client.post(
+        f"/v1/jobs/{JOB_ID}/field-evidence/photos/{photo_id}/confirm",
+        headers=_headers(key="digest-mismatch"),
+        json={"base_version": 2},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "FIELD_PHOTO_DIGEST_MISMATCH"
+
+
+def test_leitura_so_e_enfileirada_por_pedido_explicito(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    queue = _queue(client)
+    presign = _presign_standalone(client)
+    photo_id = presign.json()["photo_id"]
+    with _database(client).sessions() as session:
+        photo = session.get(JobFieldPhotoRecord, photo_id)
+        assert photo is not None
+        object_key = photo.object_key
+    _store(client).put_direct(object_key=object_key, body=PHOTO, content_type="image/jpeg")
+    assert (
+        client.post(
+            f"/v1/jobs/{JOB_ID}/field-evidence/photos/{photo_id}/confirm",
+            headers=_headers(key="confirm-before-reading"),
+            json={"base_version": 2},
+        ).status_code
+        == 200
+    )
+    assert len(queue.messages) == 0
+
+    requested = client.post(
+        f"/v1/jobs/{JOB_ID}/field-evidence/photos/standalone/{photo_id}/reading",
+        headers=_headers(key="reading-1"),
+        json={"base_version": 3},
+    )
+    replay = client.post(
+        f"/v1/jobs/{JOB_ID}/field-evidence/photos/standalone/{photo_id}/reading",
+        headers=_headers(key="reading-1"),
+        json={"base_version": 3},
+    )
+
+    assert requested.status_code == replay.status_code == 202
+    assert requested.json()["version"] == 4
+    assert len(queue.messages) == 2  # at-least-once; o worker deduplica pela linha de estado
+    assert {json.loads(message["Body"])["command"] for message in queue.messages} == {
+        "analyze_field_evidence"
+    }
+
+
+def test_valor_so_pode_ser_confirmado_depois_da_leitura_e_correcao_e_append_only(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    presign = _presign_standalone(client)
+    photo_id = presign.json()["photo_id"]
+    with _database(client).sessions() as session:
+        photo = session.get(JobFieldPhotoRecord, photo_id)
+        assert photo is not None
+        object_key = photo.object_key
+    _store(client).put_direct(object_key=object_key, body=PHOTO, content_type="image/jpeg")
+    assert (
+        client.post(
+            f"/v1/jobs/{JOB_ID}/field-evidence/photos/{photo_id}/confirm",
+            headers=_headers(key="confirm-for-value"),
+            json={"base_version": 2},
+        ).status_code
+        == 200
+    )
+    value_path = f"/v1/jobs/{JOB_ID}/field-evidence/photos/standalone/{photo_id}/values"
+    too_early = client.post(
+        value_path,
+        headers=_headers(key="value-too-early"),
+        json={
+            "base_version": 3,
+            "source_reading_id": "fpr_reading",
+            "value_mm": 2450,
+            "kind": "length",
+            "raw_text": "2,45 m",
+        },
+    )
+    assert too_early.status_code == 409
+    with _database(client).sessions.begin() as session:
+        job = session.get(JobRecord, str(JOB_ID))
+        assert job is not None
+        state = FieldEvidenceAnalysisRecord(
+            id="00000000-0000-7000-8000-000000000904",
+            tenant_id=TENANT,
+            job_id=str(JOB_ID),
+            origin="standalone",
+            evidence_id=photo_id,
+            task="reading",
+            status="PROCESSED",
+            artifact_key=(
+                f"tenants/{TENANT}/jobs/{JOB_ID}/field-evidence/analysis/"
+                f"standalone/{photo_id}/reading.json"
+            ),
+            requested_by="reviewer",
+        )
+        session.add(state)
+    assert state.artifact_key is not None
+    _store(client).put_direct(
+        object_key=state.artifact_key,
+        body=json.dumps(
+            {"schema": "field-evidence-reading/1", "readings": [{"id": "fpr_reading"}]}
+        ).encode(),
+        content_type="application/json",
+    )
+    first = client.post(
+        value_path,
+        headers=_headers(key="value-first"),
+        json={
+            "base_version": 3,
+            "source_reading_id": "fpr_reading",
+            "value_mm": 2450,
+            "kind": "length",
+            "raw_text": "2,45 m",
+        },
+    )
+    correction = client.post(
+        value_path,
+        headers=_headers(key="value-correction"),
+        json={
+            "base_version": 4,
+            "source_reading_id": "fpr_reading",
+            "value_mm": 2470,
+            "kind": "length",
+            "raw_text": "2,47 m",
+        },
+    )
+
+    assert first.status_code == correction.status_code == 200
+    assert correction.json()["version"] == 5
+    with _database(client).sessions() as session:
+        rows = list(
+            session.scalars(
+                select(FieldPhotoValueConfirmationRecord).order_by(
+                    FieldPhotoValueConfirmationRecord.confirmed_at
+                )
+            )
+        )
+        assert [row.status for row in rows] == ["SUPERSEDED", "ACTIVE"]
+        assert rows[1].supersedes_confirmation_id == rows[0].id
+    evidence = client.get(f"/v1/jobs/{JOB_ID}/field-evidence", headers=_headers())
+    confirmed = evidence.json()["photos"][0]["confirmed_values"]
+    assert len(confirmed) == 1
+    assert confirmed[0]["value_mm"] == 2470

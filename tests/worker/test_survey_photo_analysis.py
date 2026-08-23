@@ -354,16 +354,17 @@ def test_com_entitlement_ativo_as_leituras_e_o_lineage_entram_no_artefato(
     assert (request.image_width_px, request.image_height_px) == (1024, 768)
     assert document["provider_pass"] == "done"
     assert document["provider_notes"] == []
-    assert document["readings"] == [
-        {
-            "raw_text": "PRAÇA MUNICIPAL — 12,00 m",
-            "kind_hint": "sign",
-            "value_hint": "12.00",
-            "unit_hint": "m",
-            "target_hint": "muro do fundo",
-            "confidence": "medium",
-        }
-    ]
+    assert len(document["readings"]) == 1
+    assert document["readings"][0] | {"id": "ignored"} == {
+        "id": "ignored",
+        "raw_text": "PRAÇA MUNICIPAL — 12,00 m",
+        "kind_hint": "sign",
+        "value_hint": "12.00",
+        "unit_hint": "m",
+        "target_hint": "muro do fundo",
+        "confidence": "medium",
+    }
+    assert document["readings"][0]["id"].startswith("fpr_")
     assert document["notes"] == ["Segunda placa cortada pela borda da foto; não transcrita."]
     lineage = document["lineage"]
     assert lineage["provider"] == "anthropic"

@@ -58,6 +58,7 @@ from croquito_api.database import (
     EstimateRoundRevisionRecord,
     ExportArtifactRecord,
     FieldEvidenceAnalysisRecord,
+    FieldPhotoValueConfirmationRecord,
     IdempotencyRecord,
     JobFieldPhotoRecord,
     JobRecord,
@@ -1856,6 +1857,16 @@ class FieldEvidenceMeasurement(ApiModel):
     created_at: datetime
 
 
+class FieldEvidenceConfirmedValue(ApiModel):
+    confirmation_id: UUID
+    source_reading_id: str
+    value_mm: int
+    kind: str
+    raw_text: str
+    confirmed_by: str
+    confirmed_at: datetime
+
+
 class FieldEvidencePhoto(ApiModel):
     evidence_id: str
     origin: Literal["survey", "standalone"]
@@ -1869,6 +1880,7 @@ class FieldEvidencePhoto(ApiModel):
     analysis: dict[str, Any] | None
     reading_status: str
     classification_status: str
+    confirmed_values: list[FieldEvidenceConfirmedValue]
 
 
 class LinkedSurveyEvidence(ApiModel):
@@ -1884,6 +1896,64 @@ class FieldEvidenceResponse(ApiModel):
     version: int
     surveys: list[LinkedSurveyEvidence]
     photos: list[FieldEvidencePhoto]
+
+
+class PresignJobFieldPhotoRequest(ApiModel):
+    base_version: int = Field(ge=1)
+    sha256: str = Field(pattern=SHA256_HEX_PATTERN)
+    mime_type: Literal["image/jpeg", "image/png", "image/webp"]
+    byte_size: int = Field(gt=0, le=25_000_000)
+    anchor_text: str = Field(min_length=1, max_length=500)
+
+
+class PresignJobFieldPhotoResponse(ApiModel):
+    photo_id: UUID
+    version: int
+    sha256: str
+    url: str
+    headers: dict[str, str]
+    expires_at: datetime
+
+
+class _PresignJobFieldPhotoIntent(ApiModel):
+    """Parte persistível da resposta; URL assinada é reconstruída a cada replay."""
+
+    photo_id: UUID
+    version: int
+
+
+class ConfirmJobFieldPhotoRequest(ApiModel):
+    base_version: int = Field(ge=1)
+
+
+class JobFieldPhotoStateResponse(ApiModel):
+    photo_id: UUID
+    status: str
+    version: int
+
+
+class RequestFieldPhotoAnalysisRequest(ApiModel):
+    base_version: int = Field(ge=1)
+
+
+class FieldPhotoAnalysisStateResponse(ApiModel):
+    analysis_id: UUID
+    task: Literal["reading", "classification"]
+    status: str
+    version: int
+
+
+class ConfirmFieldPhotoValueRequest(ApiModel):
+    base_version: int = Field(ge=1)
+    source_reading_id: str = Field(min_length=1, max_length=128)
+    value_mm: int = Field(ge=0, le=1_000_000_000)
+    kind: Literal["length", "diagonal", "width", "radius", "level", "drop", "height"]
+    raw_text: str = Field(min_length=1, max_length=200)
+
+
+class ConfirmFieldPhotoValueResponse(ApiModel):
+    confirmation: FieldEvidenceConfirmedValue
+    version: int
 
 
 #: O id do levantamento não é `UUID` no caminho de propósito: ele nasce no aparelho e o
@@ -2085,6 +2155,24 @@ class ProcessingQueue:
                     "command": "analyze_survey_photo",
                     "survey_id": survey_id,
                     "media_id": media_id,
+                    "tenant_id": tenant_id,
+                }
+            ),
+        )
+
+    def enqueue_field_evidence_analysis(
+        self, *, analysis_id: str, job_id: str, tenant_id: str
+    ) -> None:
+        """Publica uma análise pedida pelo revisor; o alvo é resolvido no worker."""
+        if self.queue_url is None:
+            return
+        self.client.send_message(
+            QueueUrl=self.queue_url,
+            MessageBody=json.dumps(
+                {
+                    "command": "analyze_field_evidence",
+                    "analysis_id": analysis_id,
+                    "job_id": job_id,
                     "tenant_id": tenant_id,
                 }
             ),
@@ -2545,6 +2633,26 @@ def _require_active_ai_entitlement(
     return entitlement
 
 
+def _require_job_ai_authorization(
+    session: Session, *, job: JobRecord, real_providers_enabled: bool
+) -> None:
+    """O snapshot do job continua obrigatório quando uma foto pode sair da plataforma."""
+    if not real_providers_enabled:
+        return
+    authorization = session.scalar(
+        select(AiProcessingAuthorizationRecord.id).where(
+            AiProcessingAuthorizationRecord.job_id == job.id,
+            AiProcessingAuthorizationRecord.tenant_id == job.tenant_id,
+        )
+    )
+    if authorization is None:
+        raise _problem(
+            "AI_PROCESSING_NOT_AUTHORIZED",
+            status.HTTP_403_FORBIDDEN,
+            "O job não possui autorização registrada para processamento externo.",
+        )
+
+
 def _entitled_journeys(
     database: Database, *, tenant_id: str, journeys: Collection[Journey]
 ) -> frozenset[Journey]:
@@ -2881,6 +2989,111 @@ def _field_analysis_state(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _FieldPhotoTarget:
+    origin: Literal["survey", "standalone"]
+    evidence_id: str
+    object_key: str
+    sha256: str
+    mime_type: str
+    byte_size: int
+
+
+def _load_field_photo_target(
+    session: Session,
+    *,
+    job: JobRecord,
+    origin: Literal["survey", "standalone"],
+    evidence_id: UUID,
+    require_confirmed: bool = True,
+) -> _FieldPhotoTarget:
+    """Resolve a foto escopada ao job; alvo alheio e inexistente são o mesmo `404`."""
+    identifier = str(evidence_id)
+    if origin == "standalone":
+        photo = session.scalar(
+            select(JobFieldPhotoRecord).where(
+                JobFieldPhotoRecord.id == identifier,
+                JobFieldPhotoRecord.job_id == job.id,
+                JobFieldPhotoRecord.tenant_id == job.tenant_id,
+            )
+        )
+        if photo is None or (require_confirmed and photo.status != "CONFIRMED"):
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Foto de campo não encontrada.")
+        return _FieldPhotoTarget(
+            origin=origin,
+            evidence_id=photo.id,
+            object_key=photo.object_key,
+            sha256=photo.sha256,
+            mime_type=photo.mime_type,
+            byte_size=photo.byte_size,
+        )
+
+    media_query = select(SurveyMediaRecord).where(
+        SurveyMediaRecord.id == identifier,
+        SurveyMediaRecord.tenant_id == job.tenant_id,
+        SurveyMediaRecord.mime_type.like("image/%"),
+    )
+    if require_confirmed:
+        media_query = media_query.where(SurveyMediaRecord.status == "CONFIRMED")
+    media = session.scalar(media_query)
+    linked = (
+        None
+        if media is None
+        else session.scalar(
+            select(JobSurveyLinkRecord.id).where(
+                JobSurveyLinkRecord.job_id == job.id,
+                JobSurveyLinkRecord.tenant_id == job.tenant_id,
+                JobSurveyLinkRecord.survey_id == media.survey_id,
+            )
+        )
+    )
+    if media is None or linked is None:
+        raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Foto de campo não encontrada.")
+    return _FieldPhotoTarget(
+        origin=origin,
+        evidence_id=media.id,
+        object_key=media.object_key,
+        sha256=media.sha256,
+        mime_type=media.mime_type,
+        byte_size=media.byte_size,
+    )
+
+
+def _field_analysis_object_key(*, job: JobRecord, origin: str, evidence_id: str, task: str) -> str:
+    return (
+        f"tenants/{job.tenant_id}/jobs/{job.id}/field-evidence/analysis/"
+        f"{origin}/{evidence_id}/{task}.json"
+    )
+
+
+def _confirmed_field_values(
+    session: Session, *, job: JobRecord, origin: str, evidence_id: str
+) -> list[FieldEvidenceConfirmedValue]:
+    records = session.scalars(
+        select(FieldPhotoValueConfirmationRecord)
+        .where(
+            FieldPhotoValueConfirmationRecord.tenant_id == job.tenant_id,
+            FieldPhotoValueConfirmationRecord.job_id == job.id,
+            FieldPhotoValueConfirmationRecord.origin == origin,
+            FieldPhotoValueConfirmationRecord.evidence_id == evidence_id,
+            FieldPhotoValueConfirmationRecord.status == "ACTIVE",
+        )
+        .order_by(FieldPhotoValueConfirmationRecord.confirmed_at)
+    )
+    return [
+        FieldEvidenceConfirmedValue(
+            confirmation_id=UUID(record.id),
+            source_reading_id=record.source_reading_id,
+            value_mm=record.value_mm,
+            kind=record.kind,
+            raw_text=record.raw_text,
+            confirmed_by=record.confirmed_by,
+            confirmed_at=record.confirmed_at,
+        )
+        for record in records
+    ]
+
+
 def _public_field_analysis(document: dict[str, Any] | None) -> dict[str, Any] | None:
     """Expõe só o resultado profissional; ids internos e tenant ficam no artefato."""
     if document is None:
@@ -3013,6 +3226,12 @@ def _field_evidence_response(
                         if classification_state is not None
                         else "NOT_REQUESTED"
                     ),
+                    confirmed_values=_confirmed_field_values(
+                        session,
+                        job=job,
+                        origin="survey",
+                        evidence_id=media.id,
+                    ),
                 )
             )
 
@@ -3073,6 +3292,12 @@ def _field_evidence_response(
                     classification_state.status
                     if classification_state is not None
                     else "NOT_REQUESTED"
+                ),
+                confirmed_values=_confirmed_field_values(
+                    session,
+                    job=job,
+                    origin="standalone",
+                    evidence_id=photo.id,
                 ),
             )
         )
@@ -12108,6 +12333,461 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             key=idempotency_key,
             request_hash=request_hash,
             response=response,
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/field-evidence/photos/presign",
+        response_model=PresignJobFieldPhotoResponse,
+        tags=["field-evidence"],
+    )
+    async def presign_job_field_photo(
+        job_id: UUID,
+        payload: PresignJobFieldPhotoRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> PresignJobFieldPhotoResponse:
+        """Cria metadado e uma URL nova sem persistir a credencial temporária."""
+        _reviewer_role(principal)
+        operation = f"field-evidence.photo-presign:{job_id}"
+        request_hash = _request_hash(payload)
+
+        def signed_response(
+            photo: JobFieldPhotoRecord, *, version: int
+        ) -> PresignJobFieldPhotoResponse:
+            checksum = base64.b64encode(bytes.fromhex(photo.sha256)).decode("ascii")
+            url = application.state.artifact_store.presign_upload(
+                object_key=photo.object_key,
+                checksum_sha256=checksum,
+                content_type=photo.mime_type,
+            )
+            headers = {"Content-Type": photo.mime_type}
+            if runtime_settings.storage_flavor == "s3":
+                headers["x-amz-checksum-sha256"] = checksum
+            return PresignJobFieldPhotoResponse(
+                photo_id=UUID(photo.id),
+                version=version,
+                sha256=photo.sha256,
+                url=url,
+                headers=headers,
+                expires_at=datetime.now(UTC) + timedelta(minutes=15),
+            )
+
+        replay = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            intent = _PresignJobFieldPhotoIntent.model_validate(replay)
+            photo = session.scalar(
+                select(JobFieldPhotoRecord).where(
+                    JobFieldPhotoRecord.id == str(intent.photo_id),
+                    JobFieldPhotoRecord.job_id == str(job_id),
+                    JobFieldPhotoRecord.tenant_id == principal.tenant_id,
+                )
+            )
+            if photo is None:  # pragma: no cover - retenção nunca separa intent e foto
+                raise _problem(
+                    "NOT_FOUND", status.HTTP_404_NOT_FOUND, "Foto de campo não encontrada."
+                )
+            return signed_response(photo, version=intent.version)
+
+        job = _load_job(session, job_id=job_id, tenant_id=principal.tenant_id)
+        photo = session.scalar(
+            select(JobFieldPhotoRecord).where(
+                JobFieldPhotoRecord.job_id == job.id,
+                JobFieldPhotoRecord.tenant_id == job.tenant_id,
+                JobFieldPhotoRecord.sha256 == payload.sha256,
+            )
+        )
+        if photo is None:
+            if job.version != payload.base_version:
+                raise _problem(
+                    "REVISION_CONFLICT",
+                    status.HTTP_409_CONFLICT,
+                    "A evidência de campo do job mudou; releia antes de anexar.",
+                )
+            photo = JobFieldPhotoRecord(
+                id=str(new_uuid7()),
+                tenant_id=job.tenant_id,
+                job_id=job.id,
+                sha256=payload.sha256,
+                mime_type=payload.mime_type,
+                byte_size=payload.byte_size,
+                object_key=(
+                    f"tenants/{job.tenant_id}/jobs/{job.id}/field-evidence/media/{payload.sha256}"
+                ),
+                anchor_text=payload.anchor_text,
+                status="PRESIGNED",
+                created_by=principal.subject,
+            )
+            session.add(photo)
+            job.version += 1
+            session.flush()
+            _record_audit(
+                session,
+                principal=principal,
+                action="JOB_FIELD_PHOTO_PRESIGNED",
+                resource_type="job_field_photo",
+                resource_id=photo.id,
+                request_id=request.state.request_id,
+            )
+        elif (
+            photo.mime_type != payload.mime_type
+            or photo.byte_size != payload.byte_size
+            or photo.anchor_text != payload.anchor_text
+        ):
+            raise _problem(
+                "FIELD_PHOTO_METADATA_MISMATCH",
+                status.HTTP_409_CONFLICT,
+                "O mesmo digest já foi declarado com metadados diferentes.",
+            )
+        intent = _PresignJobFieldPhotoIntent(photo_id=UUID(photo.id), version=job.version)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=intent,
+        )
+        session.commit()
+        return signed_response(photo, version=intent.version)
+
+    @application.post(
+        "/v1/jobs/{job_id}/field-evidence/photos/{photo_id}/confirm",
+        response_model=JobFieldPhotoStateResponse,
+        tags=["field-evidence"],
+    )
+    async def confirm_job_field_photo(
+        job_id: UUID,
+        photo_id: UUID,
+        payload: ConfirmJobFieldPhotoRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> JobFieldPhotoStateResponse:
+        """Publica a foto no painel só depois de conferir tipo, tamanho e digest."""
+        _reviewer_role(principal)
+        operation = f"field-evidence.photo-confirm:{job_id}:{photo_id}"
+        request_hash = _request_hash(payload)
+        replay = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            return JobFieldPhotoStateResponse.model_validate(replay)
+        job = _load_job(session, job_id=job_id, tenant_id=principal.tenant_id)
+        photo = session.scalar(
+            select(JobFieldPhotoRecord).where(
+                JobFieldPhotoRecord.id == str(photo_id),
+                JobFieldPhotoRecord.job_id == job.id,
+                JobFieldPhotoRecord.tenant_id == job.tenant_id,
+            )
+        )
+        if photo is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Foto não encontrada.")
+        if photo.status != "CONFIRMED":
+            if job.version != payload.base_version:
+                raise _problem(
+                    "REVISION_CONFLICT",
+                    status.HTTP_409_CONFLICT,
+                    "A evidência de campo do job mudou; releia antes de confirmar.",
+                )
+            uploaded = application.state.artifact_store.head_upload(object_key=photo.object_key)
+            raw = application.state.artifact_store.read_object(
+                object_key=photo.object_key, max_bytes=photo.byte_size
+            )
+            if (
+                uploaded is None
+                or uploaded.content_length != photo.byte_size
+                or uploaded.content_type.lower() != photo.mime_type
+                or raw is None
+                or len(raw) != photo.byte_size
+                or hashlib.sha256(raw).hexdigest() != photo.sha256
+            ):
+                raise _problem(
+                    "FIELD_PHOTO_DIGEST_MISMATCH",
+                    status.HTTP_409_CONFLICT,
+                    "Foto ausente, inválida ou com integridade divergente do declarado.",
+                )
+            photo.status = "CONFIRMED"
+            job.version += 1
+            _record_audit(
+                session,
+                principal=principal,
+                action="JOB_FIELD_PHOTO_CONFIRMED",
+                resource_type="job_field_photo",
+                resource_id=photo.id,
+                request_id=request.state.request_id,
+            )
+        response = JobFieldPhotoStateResponse(
+            photo_id=photo_id, status=photo.status, version=job.version
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/field-evidence/photos/{origin}/{evidence_id}/reading",
+        response_model=FieldPhotoAnalysisStateResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["field-evidence"],
+    )
+    async def request_field_photo_reading(
+        job_id: UUID,
+        origin: Literal["survey", "standalone"],
+        evidence_id: UUID,
+        payload: RequestFieldPhotoAnalysisRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> FieldPhotoAnalysisStateResponse:
+        """Enfileira leitura explícita; upload e vínculo jamais entram neste caminho."""
+        _reviewer_role(principal)
+        operation = f"field-evidence.reading:{job_id}:{origin}:{evidence_id}"
+        request_hash = _request_hash(payload)
+        replay = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            response = FieldPhotoAnalysisStateResponse.model_validate(replay)
+            state = session.get(FieldEvidenceAnalysisRecord, str(response.analysis_id))
+            if state is not None and state.status == "QUEUED":
+                try:
+                    application.state.queue.enqueue_field_evidence_analysis(
+                        analysis_id=state.id, job_id=str(job_id), tenant_id=principal.tenant_id
+                    )
+                except QUEUE_TRANSPORT_ERRORS as error:
+                    raise _problem(
+                        "PROCESSING_UNAVAILABLE",
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Leitura registrada; repita o mesmo comando para reenfileirar.",
+                    ) from error
+            return response
+
+        job = _load_job(session, job_id=job_id, tenant_id=principal.tenant_id)
+        _load_field_photo_target(session, job=job, origin=origin, evidence_id=evidence_id)
+        _require_active_ai_entitlement(
+            session,
+            principal,
+            real_providers_enabled=runtime_settings.real_providers_enabled,
+        )
+        _require_job_ai_authorization(
+            session, job=job, real_providers_enabled=runtime_settings.real_providers_enabled
+        )
+        analysis = _field_analysis_state(
+            session,
+            tenant_id=job.tenant_id,
+            job_id=job.id,
+            origin=origin,
+            evidence_id=str(evidence_id),
+            task="reading",
+        )
+        if analysis is None:
+            if job.version != payload.base_version:
+                raise _problem(
+                    "REVISION_CONFLICT",
+                    status.HTTP_409_CONFLICT,
+                    "A evidência de campo do job mudou; releia antes de solicitar análise.",
+                )
+            analysis = FieldEvidenceAnalysisRecord(
+                id=str(new_uuid7()),
+                tenant_id=job.tenant_id,
+                job_id=job.id,
+                origin=origin,
+                evidence_id=str(evidence_id),
+                task="reading",
+                status="QUEUED",
+                artifact_key=_field_analysis_object_key(
+                    job=job,
+                    origin=origin,
+                    evidence_id=str(evidence_id),
+                    task="reading",
+                ),
+                requested_by=principal.subject,
+            )
+            session.add(analysis)
+            job.version += 1
+            session.flush()
+            _record_audit(
+                session,
+                principal=principal,
+                action="FIELD_PHOTO_READING_REQUESTED",
+                resource_type="field_evidence_analysis",
+                resource_id=analysis.id,
+                request_id=request.state.request_id,
+            )
+        response = FieldPhotoAnalysisStateResponse(
+            analysis_id=UUID(analysis.id),
+            task="reading",
+            status=analysis.status,
+            version=job.version,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        session.commit()
+        try:
+            application.state.queue.enqueue_field_evidence_analysis(
+                analysis_id=analysis.id, job_id=job.id, tenant_id=job.tenant_id
+            )
+        except QUEUE_TRANSPORT_ERRORS as error:
+            raise _problem(
+                "PROCESSING_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Leitura registrada; repita o mesmo comando para reenfileirar.",
+            ) from error
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/field-evidence/photos/{origin}/{evidence_id}/values",
+        response_model=ConfirmFieldPhotoValueResponse,
+        tags=["field-evidence"],
+    )
+    async def confirm_field_photo_value(
+        job_id: UUID,
+        origin: Literal["survey", "standalone"],
+        evidence_id: UUID,
+        payload: ConfirmFieldPhotoValueRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ConfirmFieldPhotoValueResponse:
+        """Confirma ou corrige um rascunho; associação como testemunha é outro ato."""
+        _reviewer_role(principal)
+        operation = f"field-evidence.value:{job_id}:{origin}:{evidence_id}"
+        request_hash = _request_hash(payload)
+        replay = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            return ConfirmFieldPhotoValueResponse.model_validate(replay)
+        job = _load_job(session, job_id=job_id, tenant_id=principal.tenant_id)
+        _load_field_photo_target(session, job=job, origin=origin, evidence_id=evidence_id)
+        if job.version != payload.base_version:
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "A evidência de campo do job mudou; releia antes de confirmar a leitura.",
+            )
+        analysis = _field_analysis_state(
+            session,
+            tenant_id=job.tenant_id,
+            job_id=job.id,
+            origin=origin,
+            evidence_id=str(evidence_id),
+            task="reading",
+        )
+        document = (
+            _read_field_analysis(
+                application,
+                object_key=analysis.artifact_key,
+                tenant_id=job.tenant_id,
+            )
+            if analysis is not None
+            and analysis.status == "PROCESSED"
+            and analysis.artifact_key is not None
+            else None
+        )
+        readings = document.get("readings") if document is not None else None
+        if not isinstance(readings, list) or not any(
+            isinstance(reading, dict) and reading.get("id") == payload.source_reading_id
+            for reading in readings
+        ):
+            raise _problem(
+                "FIELD_PHOTO_READING_NOT_FOUND",
+                status.HTTP_409_CONFLICT,
+                "A leitura precisa existir no resultado processado antes da confirmação.",
+            )
+        previous = session.scalar(
+            select(FieldPhotoValueConfirmationRecord).where(
+                FieldPhotoValueConfirmationRecord.tenant_id == job.tenant_id,
+                FieldPhotoValueConfirmationRecord.job_id == job.id,
+                FieldPhotoValueConfirmationRecord.origin == origin,
+                FieldPhotoValueConfirmationRecord.evidence_id == str(evidence_id),
+                FieldPhotoValueConfirmationRecord.source_reading_id == payload.source_reading_id,
+                FieldPhotoValueConfirmationRecord.status == "ACTIVE",
+            )
+        )
+        if previous is not None:
+            previous.status = "SUPERSEDED"
+        confirmation = FieldPhotoValueConfirmationRecord(
+            id=str(new_uuid7()),
+            tenant_id=job.tenant_id,
+            job_id=job.id,
+            origin=origin,
+            evidence_id=str(evidence_id),
+            source_reading_id=payload.source_reading_id,
+            value_mm=payload.value_mm,
+            kind=payload.kind,
+            raw_text=payload.raw_text,
+            supersedes_confirmation_id=(previous.id if previous is not None else None),
+            status="ACTIVE",
+            confirmed_by=principal.subject,
+        )
+        session.add(confirmation)
+        job.version += 1
+        session.flush()
+        public_confirmation = FieldEvidenceConfirmedValue(
+            confirmation_id=UUID(confirmation.id),
+            source_reading_id=confirmation.source_reading_id,
+            value_mm=confirmation.value_mm,
+            kind=confirmation.kind,
+            raw_text=confirmation.raw_text,
+            confirmed_by=confirmation.confirmed_by,
+            confirmed_at=confirmation.confirmed_at,
+        )
+        response = ConfirmFieldPhotoValueResponse(
+            confirmation=public_confirmation, version=job.version
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="FIELD_PHOTO_VALUE_CONFIRMED",
+            resource_type="field_photo_value_confirmation",
+            resource_id=confirmation.id,
+            request_id=request.state.request_id,
         )
         session.commit()
         return response

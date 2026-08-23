@@ -1136,14 +1136,15 @@ class FieldEvidenceAnalysisRecord(Base):
 
 
 class FieldPhotoValueConfirmationRecord(Base):
-    """Confirmação append-only de um valor textual lido numa foto avulsa."""
+    """Confirmação append-only de um valor textual lido em qualquer foto da evidência."""
 
     __tablename__ = "field_photo_value_confirmations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(128), index=True)
     job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), index=True)
-    photo_id: Mapped[str] = mapped_column(ForeignKey("job_field_photo_records.id"), index=True)
+    origin: Mapped[str] = mapped_column(String(16))
+    evidence_id: Mapped[str] = mapped_column(String(36), index=True)
     source_reading_id: Mapped[str] = mapped_column(String(128))
     value_mm: Mapped[int] = mapped_column(Integer)
     kind: Mapped[str] = mapped_column(String(32))

@@ -48,6 +48,10 @@ COMMANDS: list[tuple[str, dict[str, str]]] = [
         {"survey_id": "survey-1", "media_id": "media-1", "tenant_id": "tenant-a"},
     ),
     (
+        "enqueue_field_evidence_analysis",
+        {"analysis_id": "analysis-1", "job_id": "job-1", "tenant_id": "tenant-a"},
+    ),
+    (
         "enqueue_survey_transcription",
         {"survey_id": "survey-1", "media_id": "media-2", "tenant_id": "tenant-a"},
     ),
@@ -98,6 +102,7 @@ def test_pubsub_publishes_the_same_bodies_as_sqs(
         "answer_chat_turn",
         "extract_valuation_plate",
         "analyze_survey_photo",
+        "analyze_field_evidence",
         "transcribe_survey_audio",
         "export_survey",
     ]

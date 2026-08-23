@@ -90,6 +90,7 @@ from croquito_worker.survey_photo_analysis import (
     SurveyPhotoMedia,
     analysis_counts,
     analyze_photo_quality,
+    build_field_evidence_reading_document,
     build_photo_analysis_document,
     photo_media,
     run_provider_pass,
@@ -1059,6 +1060,13 @@ class LocalQueueWorker:
         job_id = body.get("job_id")
         if not isinstance(job_id, str):
             raise UnroutableMessageError("Mensagem de processamento inválida")
+        if command == "analyze_field_evidence":
+            analysis_id = body.get("analysis_id")
+            if not isinstance(analysis_id, str):
+                raise UnroutableMessageError("Mensagem de evidência de campo inválida")
+            return self._handle_field_evidence_analysis(
+                analysis_id=analysis_id, job_id=job_id, tenant_id=tenant_id
+            )
         if command == "export_scene_package":
             export_id = body.get("export_id")
             if not isinstance(export_id, str):
@@ -2946,6 +2954,196 @@ class LocalQueueWorker:
                 **counts,
                 "bytes": written_bytes,
                 "duration_ms": duration_ms,
+            },
+        )
+        return 1
+
+    def _field_evidence_provider_pass(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        authorized: bool,
+        image_bytes: bytes,
+        quality: PhotoQuality,
+    ) -> ProviderPassResult:
+        """Mesmo leitor de foto, agora atrás dos dois portões do job."""
+        if self.provider_suite is None and not self.settings.real_providers_enabled:
+            return ProviderPassResult(outcome=ProviderPass.SKIPPED_DISABLED)
+        if not authorized:
+            return ProviderPassResult(outcome=ProviderPass.SKIPPED_NO_ENTITLEMENT)
+        suite = self.provider_suite
+        if suite is None:
+            suite = build_real_provider_suite(
+                raw_store=S3ProtectedRawResponseStore(
+                    client=self.s3_client,
+                    bucket=self.settings.artifact_bucket,
+                    tenant_id=tenant_id,
+                    scope="jobs",
+                    scope_id=job_id,
+                    sse=self.settings.storage_sse_enabled,
+                )
+            )
+        return run_provider_pass(
+            suite.anthropic, suite.openai, image_bytes=image_bytes, quality=quality
+        )
+
+    def _handle_field_evidence_analysis(
+        self, *, analysis_id: str, job_id: str, tenant_id: str
+    ) -> int:
+        """Executa uma leitura solicitada; duplicata processada é ack sem novo custo."""
+        started = time.monotonic()
+        now = datetime.now(UTC)
+        with self.engine.begin() as connection:
+            state = (
+                connection.execute(
+                    text(
+                        "SELECT id, origin, evidence_id, task, status, artifact_key "
+                        "FROM field_evidence_analyses WHERE id = :analysis_id "
+                        "AND job_id = :job_id AND tenant_id = :tenant_id"
+                    ),
+                    {
+                        "analysis_id": analysis_id,
+                        "job_id": job_id,
+                        "tenant_id": tenant_id,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if state is None:
+                raise SurveyPhotoAnalysisError(
+                    "FIELD_EVIDENCE_ANALYSIS_NOT_FOUND", "análise inexistente neste job"
+                )
+            if str(state["task"]) != "reading":
+                raise SurveyPhotoAnalysisError(
+                    "FIELD_EVIDENCE_TASK_UNSUPPORTED", "tarefa ainda não suportada"
+                )
+            if str(state["status"]) == "PROCESSED":
+                return 0
+            connection.execute(
+                text(
+                    "UPDATE field_evidence_analyses SET status = 'RUNNING', "
+                    "failure_code = NULL, updated_at = :updated_at "
+                    "WHERE id = :analysis_id AND tenant_id = :tenant_id"
+                ).bindparams(bindparam("updated_at", type_=DateTime(timezone=True))),
+                {"analysis_id": analysis_id, "tenant_id": tenant_id, "updated_at": now},
+            )
+            origin = str(state["origin"])
+            evidence_id = str(state["evidence_id"])
+            if origin == "standalone":
+                media_row = (
+                    connection.execute(
+                        text(
+                            "SELECT id, sha256, mime_type, byte_size, object_key, status "
+                            "FROM job_field_photo_records WHERE id = :evidence_id "
+                            "AND job_id = :job_id AND tenant_id = :tenant_id"
+                        ),
+                        {
+                            "evidence_id": evidence_id,
+                            "job_id": job_id,
+                            "tenant_id": tenant_id,
+                        },
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+            elif origin == "survey":
+                media_row = (
+                    connection.execute(
+                        text(
+                            "SELECT media.id, media.sha256, media.mime_type, media.byte_size, "
+                            "media.object_key, media.status FROM survey_media_records AS media "
+                            "JOIN job_survey_links AS link ON link.survey_id = media.survey_id "
+                            "AND link.tenant_id = media.tenant_id "
+                            "WHERE media.id = :evidence_id AND link.job_id = :job_id "
+                            "AND media.tenant_id = :tenant_id"
+                        ),
+                        {
+                            "evidence_id": evidence_id,
+                            "job_id": job_id,
+                            "tenant_id": tenant_id,
+                        },
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+            else:
+                raise SurveyPhotoAnalysisError(
+                    "FIELD_EVIDENCE_ORIGIN_INVALID", "origem da foto inválida"
+                )
+            entitlement = connection.execute(
+                text(
+                    "SELECT id FROM tenant_ai_processing_entitlements "
+                    "WHERE tenant_id = :tenant_id AND status = 'ACTIVE'"
+                ),
+                {"tenant_id": tenant_id},
+            ).scalar_one_or_none()
+            authorization = connection.execute(
+                text(
+                    "SELECT id FROM ai_processing_consents "
+                    "WHERE tenant_id = :tenant_id AND job_id = :job_id"
+                ),
+                {"tenant_id": tenant_id, "job_id": job_id},
+            ).scalar_one_or_none()
+        media = photo_media(media_row)
+        image_bytes = self._survey_photo_bytes(media)
+        if hashlib.sha256(image_bytes).hexdigest() != media.sha256:
+            raise SurveyPhotoAnalysisError(
+                "FIELD_PHOTO_DIGEST_MISMATCH", "bytes divergentes do digest confirmado"
+            )
+        quality = analyze_photo_quality(image_bytes)
+        provider = self._field_evidence_provider_pass(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            authorized=entitlement is not None and authorization is not None,
+            image_bytes=image_bytes,
+            quality=quality,
+        )
+        artifact_key = str(state["artifact_key"])
+        required_prefix = f"tenants/{tenant_id}/jobs/{job_id}/field-evidence/"
+        if not artifact_key.startswith(required_prefix) or ".." in artifact_key.split("/"):
+            raise SurveyPhotoAnalysisError(
+                "FIELD_EVIDENCE_ARTIFACT_KEY_INVALID", "chave do artefato fora do job"
+            )
+        document = build_field_evidence_reading_document(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            origin=origin,
+            evidence_id=evidence_id,
+            media=media,
+            quality=quality,
+            provider=provider,
+        )
+        written_bytes = self._put_survey_json(object_key=artifact_key, document=document)
+        finished = datetime.now(UTC)
+        with self.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE field_evidence_analyses SET status = 'PROCESSED', "
+                    "failure_code = NULL, updated_at = :updated_at "
+                    "WHERE id = :analysis_id AND job_id = :job_id AND tenant_id = :tenant_id"
+                ).bindparams(bindparam("updated_at", type_=DateTime(timezone=True))),
+                {
+                    "analysis_id": analysis_id,
+                    "job_id": job_id,
+                    "tenant_id": tenant_id,
+                    "updated_at": finished,
+                },
+            )
+        counts = analysis_counts(document)
+        logger.info(
+            "field_evidence_reading_completed",
+            extra={
+                "stage": "FIELD_EVIDENCE_READING",
+                "job_id": job_id,
+                "analysis_id": analysis_id,
+                "provider_pass": provider.outcome.value,
+                "readings": counts["readings"],
+                "notes": counts["notes"],
+                "findings": counts["findings"],
+                "bytes": written_bytes,
+                "duration_ms": int((time.monotonic() - started) * 1000),
             },
         )
         return 1

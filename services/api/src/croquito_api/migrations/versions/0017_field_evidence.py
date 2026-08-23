@@ -119,7 +119,8 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("tenant_id", sa.String(length=128), nullable=False),
         sa.Column("job_id", sa.String(length=36), nullable=False),
-        sa.Column("photo_id", sa.String(length=36), nullable=False),
+        sa.Column("origin", sa.String(length=16), nullable=False),
+        sa.Column("evidence_id", sa.String(length=36), nullable=False),
         sa.Column("source_reading_id", sa.String(length=128), nullable=False),
         sa.Column("value_mm", sa.Integer(), nullable=False),
         sa.Column("kind", sa.String(length=32), nullable=False),
@@ -129,7 +130,6 @@ def upgrade() -> None:
         sa.Column("confirmed_by", sa.String(length=128), nullable=False),
         sa.Column("confirmed_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["job_id"], ["jobs.id"]),
-        sa.ForeignKeyConstraint(["photo_id"], ["job_field_photo_records.id"]),
         sa.ForeignKeyConstraint(
             ["supersedes_confirmation_id"], ["field_photo_value_confirmations.id"]
         ),
@@ -146,9 +146,9 @@ def upgrade() -> None:
         ["job_id"],
     )
     op.create_index(
-        op.f("ix_field_photo_value_confirmations_photo_id"),
+        op.f("ix_field_photo_value_confirmations_evidence_id"),
         "field_photo_value_confirmations",
-        ["photo_id"],
+        ["evidence_id"],
     )
 
     op.add_column(

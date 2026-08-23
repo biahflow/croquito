@@ -187,6 +187,19 @@ class PubSubProcessingQueue:
             }
         )
 
+    def enqueue_field_evidence_analysis(
+        self, *, analysis_id: str, job_id: str, tenant_id: str
+    ) -> None:
+        """Análise explícita da evidência; corpo idêntico ao adaptador SQS."""
+        self._publish(
+            {
+                "command": "analyze_field_evidence",
+                "analysis_id": analysis_id,
+                "job_id": job_id,
+                "tenant_id": tenant_id,
+            }
+        )
+
     def enqueue_survey_transcription(
         self, *, survey_id: str, media_id: str, tenant_id: str
     ) -> None:

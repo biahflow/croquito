@@ -1611,6 +1611,49 @@ das análises e do resultado público existente. A URL nunca entra no banco, ide
 artefato ou auditoria. Mídia pendente e chave fora do prefixo do tenant são omitidas; job de
 outro tenant responde `404`.
 
+### `POST /v1/jobs/{job_id}/field-evidence/photos/presign`
+
+Entrada: `base_version`, `sha256`, `mime_type`, `byte_size` e `anchor_text`. Aceita somente
+`image/jpeg`, `image/png` e `image/webp`, até 25 MB. A âncora é texto declarado pelo revisor;
+o servidor nunca a converte numa âncora do levantamento ou da prancha. Exige papel de revisão
+e `Idempotency-Key`.
+
+A resposta traz `photo_id`, versão, digest, headers, expiração e URL de PUT. O registro de
+idempotência guarda somente `photo_id` e versão: em replay a API assina uma URL nova, portanto
+nenhuma credencial temporária entra no banco. O mesmo digest com MIME, tamanho ou âncora
+divergente responde `409 FIELD_PHOTO_METADATA_MISMATCH`.
+
+### `POST /v1/jobs/{job_id}/field-evidence/photos/{photo_id}/confirm`
+
+Entrada: `base_version`. Antes de publicar a foto, relê o objeto e confere MIME, tamanho e
+SHA-256 contra o metadado do presign. Ausência ou divergência responde
+`409 FIELD_PHOTO_DIGEST_MISMATCH`. A confirmação não enfileira análise nem chama provider;
+repeti-la é idempotente.
+
+### `POST /v1/jobs/{job_id}/field-evidence/photos/{origin}/{evidence_id}/reading`
+
+Entrada: `base_version`; `origin` é `survey` ou `standalone`. Registra e enfileira, com
+`202`, uma leitura `FIELD_PHOTO_READING` explicitamente pedida. Somente foto confirmada e
+efetivamente vinculada ao job é resolvida. Com providers reais ligados, os portões de
+entitlement ativo do tenant e snapshot de autorização do job são obrigatórios antes da
+fila; com a via paga desligada, o worker ainda publica a análise offline de qualidade e
+registra `skipped_disabled` sem chamada externa.
+
+O estado é uma cabeça única por `(job, origin, evidence_id, task)`. Reentrega depois de
+`PROCESSED` é reconhecida sem repetir provider. O resultado permanece rascunho, com ids
+determinísticos para as leituras; nunca contém `Measurement`, geometria, precisão, blocker
+ou associação.
+
+### `POST /v1/jobs/{job_id}/field-evidence/photos/{origin}/{evidence_id}/values`
+
+Confirma ou corrige uma leitura já processada. Entrada: `base_version`,
+`source_reading_id`, `value_mm`, `kind` e `raw_text`. O servidor verifica que o id existe no
+artefato de leitura da própria foto; sem isso responde `409 FIELD_PHOTO_READING_NOT_FOUND`.
+
+A confirmação é append-only: uma correção carimba a anterior como `SUPERSEDED` e cria nova
+linha `ACTIVE` que a referencia. Ela passa a aparecer em `GET .../field-evidence`, mas não
+vira testemunha nem toca a revisão; associá-la será outro ato, na rota de testemunhas.
+
 ### `POST /v1/surveys/{survey_id}/operations`
 
 Entrada: `device_id`, `survey` (o `SurveyPacket` consolidado) e `operations` (o lote do

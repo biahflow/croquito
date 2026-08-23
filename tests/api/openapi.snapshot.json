@@ -1327,6 +1327,89 @@
         "title": "CompletedSurveySummary",
         "type": "object"
       },
+      "ConfirmFieldPhotoValueRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "length",
+              "diagonal",
+              "width",
+              "radius",
+              "level",
+              "drop",
+              "height"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "raw_text": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Raw Text",
+            "type": "string"
+          },
+          "source_reading_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Source Reading Id",
+            "type": "string"
+          },
+          "value_mm": {
+            "maximum": 1000000000.0,
+            "minimum": 0.0,
+            "title": "Value Mm",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version",
+          "source_reading_id",
+          "value_mm",
+          "kind",
+          "raw_text"
+        ],
+        "title": "ConfirmFieldPhotoValueRequest",
+        "type": "object"
+      },
+      "ConfirmFieldPhotoValueResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmation": {
+            "$ref": "#/components/schemas/FieldEvidenceConfirmedValue"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "confirmation",
+          "version"
+        ],
+        "title": "ConfirmFieldPhotoValueResponse",
+        "type": "object"
+      },
+      "ConfirmJobFieldPhotoRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "ConfirmJobFieldPhotoRequest",
+        "type": "object"
+      },
       "Constraint": {
         "additionalProperties": false,
         "properties": {
@@ -3095,6 +3178,52 @@
         "title": "FieldEvidenceAnchor",
         "type": "object"
       },
+      "FieldEvidenceConfirmedValue": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmation_id": {
+            "format": "uuid",
+            "title": "Confirmation Id",
+            "type": "string"
+          },
+          "confirmed_at": {
+            "format": "date-time",
+            "title": "Confirmed At",
+            "type": "string"
+          },
+          "confirmed_by": {
+            "title": "Confirmed By",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "raw_text": {
+            "title": "Raw Text",
+            "type": "string"
+          },
+          "source_reading_id": {
+            "title": "Source Reading Id",
+            "type": "string"
+          },
+          "value_mm": {
+            "title": "Value Mm",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "confirmation_id",
+          "source_reading_id",
+          "value_mm",
+          "kind",
+          "raw_text",
+          "confirmed_by",
+          "confirmed_at"
+        ],
+        "title": "FieldEvidenceConfirmedValue",
+        "type": "object"
+      },
       "FieldEvidenceMeasurement": {
         "additionalProperties": false,
         "properties": {
@@ -3237,6 +3366,13 @@
             "title": "Classification Status",
             "type": "string"
           },
+          "confirmed_values": {
+            "items": {
+              "$ref": "#/components/schemas/FieldEvidenceConfirmedValue"
+            },
+            "title": "Confirmed Values",
+            "type": "array"
+          },
           "evidence_id": {
             "title": "Evidence Id",
             "type": "string"
@@ -3289,7 +3425,8 @@
           "url",
           "analysis",
           "reading_status",
-          "classification_status"
+          "classification_status",
+          "confirmed_values"
         ],
         "title": "FieldEvidencePhoto",
         "type": "object"
@@ -3328,6 +3465,40 @@
           "photos"
         ],
         "title": "FieldEvidenceResponse",
+        "type": "object"
+      },
+      "FieldPhotoAnalysisStateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "task": {
+            "enum": [
+              "reading",
+              "classification"
+            ],
+            "title": "Task",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "analysis_id",
+          "task",
+          "status",
+          "version"
+        ],
+        "title": "FieldPhotoAnalysisStateResponse",
         "type": "object"
       },
       "GpsFix": {
@@ -3632,6 +3803,31 @@
         ],
         "title": "IssueStatus",
         "type": "string"
+      },
+      "JobFieldPhotoStateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "photo_id": {
+            "format": "uuid",
+            "title": "Photo Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "photo_id",
+          "status",
+          "version"
+        ],
+        "title": "JobFieldPhotoStateResponse",
+        "type": "object"
       },
       "JobMetricsResponse": {
         "additionalProperties": false,
@@ -4623,6 +4819,95 @@
         ],
         "title": "Precision",
         "type": "string"
+      },
+      "PresignJobFieldPhotoRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "anchor_text": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Anchor Text",
+            "type": "string"
+          },
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "byte_size": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 25000000.0,
+            "title": "Byte Size",
+            "type": "integer"
+          },
+          "mime_type": {
+            "enum": [
+              "image/jpeg",
+              "image/png",
+              "image/webp"
+            ],
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "sha256",
+          "mime_type",
+          "byte_size",
+          "anchor_text"
+        ],
+        "title": "PresignJobFieldPhotoRequest",
+        "type": "object"
+      },
+      "PresignJobFieldPhotoResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
+          },
+          "photo_id": {
+            "format": "uuid",
+            "title": "Photo Id",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "photo_id",
+          "version",
+          "sha256",
+          "url",
+          "headers",
+          "expires_at"
+        ],
+        "title": "PresignJobFieldPhotoResponse",
+        "type": "object"
       },
       "PresignReferenceCatalogRequest": {
         "additionalProperties": false,
@@ -5650,6 +5935,21 @@
           "cascade"
         ],
         "title": "ReorderEstimateCascadeRequest",
+        "type": "object"
+      },
+      "RequestFieldPhotoAnalysisRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "RequestFieldPhotoAnalysisRequest",
         "type": "object"
       },
       "RequiredCriterion": {
@@ -10590,6 +10890,362 @@
           }
         ],
         "summary": "Get Field Evidence",
+        "tags": [
+          "field-evidence"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/field-evidence/photos/presign": {
+      "post": {
+        "description": "Cria metadado e uma URL nova sem persistir a credencial temporária.",
+        "operationId": "presign_job_field_photo_v1_jobs__job_id__field_evidence_photos_presign_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignJobFieldPhotoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignJobFieldPhotoResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Presign Job Field Photo",
+        "tags": [
+          "field-evidence"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/field-evidence/photos/{origin}/{evidence_id}/reading": {
+      "post": {
+        "description": "Enfileira leitura explícita; upload e vínculo jamais entram neste caminho.",
+        "operationId": "request_field_photo_reading_v1_jobs__job_id__field_evidence_photos__origin___evidence_id__reading_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "origin",
+            "required": true,
+            "schema": {
+              "enum": [
+                "survey",
+                "standalone"
+              ],
+              "title": "Origin",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidence_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Evidence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestFieldPhotoAnalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FieldPhotoAnalysisStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Request Field Photo Reading",
+        "tags": [
+          "field-evidence"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/field-evidence/photos/{origin}/{evidence_id}/values": {
+      "post": {
+        "description": "Confirma ou corrige um rascunho; associação como testemunha é outro ato.",
+        "operationId": "confirm_field_photo_value_v1_jobs__job_id__field_evidence_photos__origin___evidence_id__values_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "origin",
+            "required": true,
+            "schema": {
+              "enum": [
+                "survey",
+                "standalone"
+              ],
+              "title": "Origin",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidence_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Evidence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmFieldPhotoValueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmFieldPhotoValueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Confirm Field Photo Value",
+        "tags": [
+          "field-evidence"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/field-evidence/photos/{photo_id}/confirm": {
+      "post": {
+        "description": "Publica a foto no painel só depois de conferir tipo, tamanho e digest.",
+        "operationId": "confirm_job_field_photo_v1_jobs__job_id__field_evidence_photos__photo_id__confirm_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "photo_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Photo Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmJobFieldPhotoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobFieldPhotoStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Confirm Job Field Photo",
         "tags": [
           "field-evidence"
         ]
