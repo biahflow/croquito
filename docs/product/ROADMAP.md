@@ -2,9 +2,10 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-23 (F-036 e F-030 ganharam Feature Contract por seleção humana, as
-duas BLOCKED por decisão de arquitetura e Design Approval Package; estado da F-034
-reconciliado — as duas fatias já estavam na main desde 2026-08-22, e o contrato e esta tabela
+Última revisão: 2026-08-23 (F-034 **aceita por ato humano** — `DONE`; F-036 e F-030 ganharam
+Feature Contract por seleção humana e seguem `BLOCKED`, agora com os quatro artefatos de gate
+produzidos e pendentes de ato humano: ADR-0048, ADR-0049 e os dois Design Approval Packages;
+antes disso, estado da F-034 reconciliado — as duas fatias já estavam na main desde 2026-08-22, e o contrato e esta tabela
 seguiam em READY_FOR_PLANNING; o pacote de revisão dela foi escrito. Antes, em 2026-08-22:
 F-037 (acervo de catálogos, ADR-0047) e F-035 (aprovação do orçamento, ADR-0046) entregues;
 F-033 entregue — demanda sob contrato licitado sobre o ADR-0045; F-032 integrada à main com

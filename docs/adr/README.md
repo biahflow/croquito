@@ -2,7 +2,7 @@
 
 Status: Active index  
 Responsável: Architecture  
-Última revisão: 2026-08-18
+Última revisão: 2026-08-23
 
 ADRs registram decisões com **impacto durável em arquitetura, operação, segurança ou
 custo** — o que cobre decisões transversais, difíceis de reverter ou que afetam
@@ -67,6 +67,8 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0045](0045-terceiro-estado-demanda-sob-contrato.md) | Demanda sob contrato: o terceiro estado entre pré-licitação e medição | Accepted |
 | [0046](0046-aprovacao-do-orcamento-base.md) | O orçamento tem aprovação nominal própria, e publicar deixa de ser parte de montar | Accepted |
 | [0047](0047-acervo-de-catalogos-da-plataforma.md) | Catálogo de referência é dado da plataforma, sem dono e endereçado por digest | Accepted |
+| [0048](0048-consolidado-contratual-do-orcamento-assinado.md) | Sob demanda contratada, o orçamento assinado é o consolidado contratual da medição | Proposed |
+| [0049](0049-foto-de-campo-na-revisao-do-escritorio.md) | A foto de campo entra na revisão pelo job da prancha, e nunca no scene graph | Proposed |
 
 ## Processo
 

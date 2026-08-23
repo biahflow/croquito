@@ -169,23 +169,38 @@ Nenhuma delas é negociável e todas já são regra do sistema, não invenção 
 
 ## Unknowns
 
-Os três primeiros são decisão do ADR e **não** são resolvidos neste contrato.
+Os três primeiros foram levados ao
+[ADR-0049](../../adr/0049-foto-de-campo-na-revisao-do-escritorio.md), escrito em 2026-08-23 e
+ainda `Proposed`: enquanto ele não for aceito por ato humano, seguem sendo desconhecidos
+deste contrato. O que o ADR **propõe** para cada um está anotado abaixo.
 
 1. **Como o levantamento alcança a jornada do escritório.** `jobs.upload_id` é
    `NOT NULL` e `UNIQUE` (`database.py:77`): não existe job sem PDF. As saídas visíveis são
    criar um job de origem "campo" — o que exige mexer nessa coluna —, vincular o levantamento
    a um job de prancha que já existe, ou uma terceira forma que não seja job. `survey_export.py`
    já nomeou o problema e o deixou para cá.
+   → *ADR-0049 decisão 1*: vínculo a um job de prancha que já existe; `upload_id` continua
+   `NOT NULL UNIQUE`. Job sem PDF abriria a jornada de revisão vazia, porque `ReviewPacket` é
+   recorte de prancha.
 2. **Um levantamento vale para quantos jobs?** Uma praça levantada uma vez pode virar duas
    pranchas; e uma prancha pode cobrir dois levantamentos. A cardinalidade decide se o
    vínculo é coluna ou tabela.
+   → *ADR-0049 decisão 4*: muitos-para-muitos, em tabela própria, com quem vinculou e
+   quando — vincular é ato, não consequência.
 3. **A classificação entra no scene graph ou fica fora?** `attachments.json` é o precedente
    de "fora, de propósito". Entrar como `Issue`/observação dá visibilidade no lugar onde o
    revisor decide; ficar fora protege a cena de ruído que não é desenho.
+   → *ADR-0049 decisões 2 e 3*: fora — nada vindo de foto entra no `SceneRevision`, e o que o
+   humano conclui vira **nota de revisão**, que já existe
+   (`POST /v1/jobs/{job_id}/review/notes`). `Issue` foi recusado porque participa do portão de
+   exportação, e opinião de modelo sobre foto não pode chegar perto de decidir se um DXF sai.
 4. **Retenção.** O bucket tem expiração única por `artifact_retention_days`
    (`infra/main.tf:70`), então a foto do levantamento morre com o resto. A revisão pode
    acontecer depois disso, e uma evidência que some no meio do trabalho é pior do que uma
    que nunca esteve lá. Decisão de operação e custo, não de código.
+   → *ADR-0049 decisão 9*: mídia vinculada a um job não expira antes do job, por regra de
+   ciclo de vida **por prefixo** — e aplicá-la é ato humano de infraestrutura, com `plan`
+   revisado. Até lá a fragilidade permanece.
 5. **Qual modelo e qual prompt** para a fatia 3 — sai no plano dela, com o
    [protocolo de mudança de prompt](../../ai/PROMPT_CHANGE_PROTOCOL.md).
 
@@ -207,16 +222,20 @@ Os três primeiros são decisão do ADR e **não** são resolvidos neste contrat
 
 ## Human Gates
 
-1. **`ARCHITECTURE_DECISION_REQUIRED`** — ADR novo, precedendo o planejamento, decidindo os
-   Unknowns 1 a 3: como o levantamento entra na jornada do escritório dado que não existe job
-   sem PDF, qual a cardinalidade do vínculo, e se a classificação entra no scene graph.
-2. **`DESIGN_APPROVAL_REQUIRED`** — Design Approval Package da superfície nova na revisão,
-   precedendo o planejamento, conforme
+1. **`ARCHITECTURE_DECISION_REQUIRED`** — **artefato produzido, gate aberto**. O
+   [ADR-0049](../../adr/0049-foto-de-campo-na-revisao-do-escritorio.md) foi escrito em
+   2026-08-23 e está `Proposed`: ele decide como o levantamento entra na jornada do
+   escritório dado que não existe job sem PDF, a cardinalidade do vínculo, e que nada vindo
+   de foto entra no scene graph. **Aceitá-lo é ato humano.**
+2. **`DESIGN_APPROVAL_REQUIRED`** — **pacote produzido, gate aberto**. O
+   [Design Approval Package](mock/README.md) está na revisão 1, **pendente de aprovação
+   humana**, conforme
    [design-approval](../../engineering-os/workflows/design-approval.md). A fatia 1 já cria
    superfície: a foto na tela é valor visual novo, e não reuso de um mecanismo aprovado.
 
-Nenhum agente cumpre nenhum dos dois. A primeira rodada paga da fatia 3 é **ato humano de
-autorização de gasto**, separado e posterior.
+Produzir o artefato não é cumprir o gate. Nenhum agente aceita ADR nem aprova design,
+inclusive o que os escreveu. A primeira rodada paga da fatia 3 é **terceiro ato humano**, de
+autorização de gasto, separado e posterior aos dois.
 
 ## References
 

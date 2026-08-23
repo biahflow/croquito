@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-036 — abertura da medição a partir do orçamento assinado (revisão 1)</title>
+    <style>
+      /* Tokens copiados VERBATIM de apps/web/src/styles.css, bloco :root. Nenhum valor
+         novo de cor, tipografia ou raio é introduzido por este pacote. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --dark: #0e1116;
+        --dark-ink: #f2f4f7;
+        --dark-ink-soft: rgba(242, 244, 247, 0.72);
+        --dark-line: rgba(242, 244, 247, 0.12);
+
+        color: var(--ink);
+        background: var(--bg);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 28px;
+        background:
+          radial-gradient(circle at 8% 0%, rgba(0, 200, 119, 0.1), transparent 28rem),
+          var(--bg);
+      }
+
+      /* Andaime do pacote — NÃO faz parte do que se aprova. */
+      .folha {
+        max-width: 62rem;
+        margin: 0 auto;
+      }
+      .folha > header {
+        margin-bottom: 26px;
+      }
+      .folha > header h1 {
+        margin: 0 0 6px;
+        font-size: 1.3rem;
+      }
+      .folha > header p {
+        margin: 0;
+        max-width: 46rem;
+        color: var(--ink-secondary);
+        font-size: 0.9rem;
+        line-height: 1.5;
+      }
+      .estado {
+        margin: 0 0 30px;
+      }
+      .estado > figcaption {
+        margin: 0 0 8px;
+        font-size: 0.78rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--ink-secondary);
+      }
+      .estado > figcaption b {
+        display: block;
+        margin-top: 3px;
+        font-size: 0.85rem;
+        letter-spacing: 0;
+        text-transform: none;
+        color: var(--ink);
+        font-weight: 400;
+      }
+
+      /* --- Classes citadas de apps/web/src/medicao/styles.css --- */
+      button,
+      a {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+      h2 {
+        margin: 0 0 8px;
+        font-size: 1.1rem;
+      }
+      h3 {
+        margin: 16px 0 6px;
+        font-size: 0.98rem;
+      }
+      .painel {
+        padding: 18px 20px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .painel-cabecalho {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .formulario {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .campo {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 0.9rem;
+      }
+      .campo input,
+      .campo select {
+        padding: 8px 10px;
+        font: inherit;
+        border: 1px solid var(--muted);
+        border-radius: 6px;
+      }
+      .campo-dica {
+        font-size: 0.78rem;
+        color: var(--ink-secondary);
+      }
+      .acoes {
+        display: flex;
+        gap: 18px;
+        margin: 0;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+      .acoes label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .acoes-linha {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      .botao-primario,
+      .botao-secundario {
+        padding: 9px 16px;
+        border-radius: 6px;
+        border: 1px solid transparent;
+      }
+      .botao-primario {
+        color: var(--accent-ink);
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      .botao-secundario {
+        color: var(--accent-text);
+        background: var(--surface);
+        border-color: var(--accent-text);
+      }
+      .aviso-fixo {
+        max-width: 40rem;
+        margin: 0;
+        padding: 10px 14px;
+        font-size: 0.85rem;
+        color: #2a1a05;
+        background: #f6d99a;
+        border-left: 5px solid #b47512;
+        border-radius: 4px;
+      }
+      .aviso-inline {
+        margin-bottom: 12px;
+      }
+      .selo {
+        padding: 2px 8px;
+        font-size: 0.75rem;
+        border-radius: 999px;
+        border: 1px solid var(--muted);
+        background: var(--surface);
+        white-space: nowrap;
+      }
+      .selo-ok {
+        border-color: var(--accent-text);
+        color: var(--accent-text);
+      }
+      .selo-atencao {
+        border-color: #a02323;
+        color: #7a1212;
+      }
+      .selo-neutro {
+        border-color: #8a8f8b;
+        color: var(--ink-secondary);
+      }
+      .decisao-registrada {
+        padding: 12px;
+        background: var(--surface-subtle);
+        border-radius: 6px;
+      }
+      .campo-erro {
+        font-size: 0.85rem;
+        color: #7a1212;
+      }
+
+      /* --- Composição desta seção: só layout, sem cor nem tipografia novas --- */
+      .origem-lista {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .origem-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      .origem-item[data-escolhido="sim"] {
+        border-color: var(--accent-text);
+        background: var(--accent-soft);
+      }
+      .origem-corpo {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        font-size: 0.9rem;
+      }
+      .origem-titulo {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .origem-titulo strong {
+        font-weight: 600;
+      }
+      .digest {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.76rem;
+        color: var(--ink-secondary);
+      }
+      .procedencia {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+        margin: 0;
+        padding: 12px;
+        background: var(--surface-sunken);
+        border-radius: 6px;
+        font-size: 0.85rem;
+      }
+      .procedencia div {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .procedencia dt {
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-secondary);
+      }
+      .procedencia dd {
+        margin: 0;
+      }
+      .esqueleto {
+        height: 12px;
+        border-radius: 999px;
+        background: var(--surface-sunken);
+      }
+      .reservado {
+        margin-top: 16px;
+        padding: 14px;
+        border: 1px dashed var(--muted);
+        border-radius: 6px;
+        opacity: 0.62;
+      }
+      .reservado p {
+        margin: 6px 0 0;
+        font-size: 0.85rem;
+        color: var(--ink-secondary);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="folha">
+      <header>
+        <h1>F-036 — abrir a medição a partir do orçamento assinado</h1>
+        <p>
+          Design Approval Package, revisão 1. Seção "Abrir rodada nova" da jornada de medição
+          (<code>apps/web/src/medicao/MedicaoApp.tsx</code>), com a escolha de origem que a
+          feature acrescenta, e o painel da rodada declarando contra o que ela confere. Os
+          números são fictícios; a folha é a real.
+        </p>
+      </header>
+
+      <figure class="estado" id="estado-01">
+        <figcaption>
+          Estado 1 — normal
+          <b>Há orçamento assinado sob demanda contratada; o revisor escolhe a origem.</b>
+        </figcaption>
+        <section class="painel" aria-label="Abrir rodada nova">
+          <h2>Abrir rodada nova</h2>
+          <form class="formulario">
+            <fieldset class="acoes" style="border-color: var(--line)">
+              <legend class="campo-dica" style="padding: 0 6px">De onde vem o contratado</legend>
+              <label>
+                <input type="radio" name="origem" checked />
+                De um orçamento assinado
+              </label>
+              <label>
+                <input type="radio" name="origem" />
+                Do zero, com catálogo por upload
+              </label>
+            </fieldset>
+
+            <div class="campo">
+              <span>Orçamento assinado</span>
+              <ul class="origem-lista">
+                <li class="origem-item" data-escolhido="sim">
+                  <input type="radio" name="orcamento" checked aria-label="Praça Guaxindiba" />
+                  <span class="origem-corpo">
+                    <span class="origem-titulo">
+                      <strong>Praça Guaxindiba — demanda 2026/014</strong>
+                      <span class="selo selo-ok">Assinado</span>
+                      <span class="selo selo-neutro">Demanda sob contrato</span>
+                    </span>
+                    <span class="campo-dica"
+                      >Assinado por Ana Ribeiro (aprovador) em 22/08/2026 · 34 códigos ·
+                      R$ 418.902,17</span
+                    >
+                    <span class="digest">digest 9f2c1ae4…7bd0</span>
+                  </span>
+                </li>
+                <li class="origem-item">
+                  <input type="radio" name="orcamento" aria-label="Praça do Toca" />
+                  <span class="origem-corpo">
+                    <span class="origem-titulo">
+                      <strong>Praça do Toca — demanda 2026/011</strong>
+                      <span class="selo selo-ok">Assinado</span>
+                      <span class="selo selo-neutro">Demanda sob contrato</span>
+                    </span>
+                    <span class="campo-dica"
+                      >Assinado por Ana Ribeiro (aprovador) em 19/08/2026 · 21 códigos ·
+                      R$ 197.430,00</span
+                    >
+                    <span class="digest">digest 41b7de09…2c8a</span>
+                  </span>
+                </li>
+              </ul>
+            </div>
+
+            <dl class="procedencia">
+              <div>
+                <dt>Obra</dt>
+                <dd>Praça Guaxindiba</dd>
+              </div>
+              <div>
+                <dt>Catálogo</dt>
+                <dd>SCO 2026-06 (do orçamento)</dd>
+              </div>
+              <div>
+                <dt>Contratado</dt>
+                <dd>34 códigos · R$ 418.902,17</dd>
+              </div>
+              <div>
+                <dt>Saldo inicial</dt>
+                <dd>igual ao contratado</dd>
+              </div>
+            </dl>
+            <p class="campo-dica" style="margin: 0">
+              A obra, o catálogo e o contratado vêm do orçamento assinado e não são digitados
+              aqui. O que a rodada ainda precisa é o número da medição e a referência.
+            </p>
+
+            <label class="campo">
+              Número da medição
+              <input type="text" value="1" />
+            </label>
+            <label class="campo">
+              Referência
+              <input type="text" value="Medição 1 — agosto/2026" />
+            </label>
+
+            <div class="acoes-linha">
+              <button type="submit" class="botao-primario">Abrir rodada</button>
+            </div>
+          </form>
+
+          <div class="reservado">
+            <span class="selo selo-neutro">Reservado — não construído nesta feature</span>
+            <p>
+              <strong>Contrato</strong> — número, data-base e desconto do contrato guarda-chuva.
+              Restringir a origem do preço não confere <em>qual</em> contrato; fechar isso exige
+              o orçamento modelar contrato como entidade (lacuna 4 do ADR-0045). Torna-se real
+              quando essa feature existir.
+            </p>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-02">
+        <figcaption>
+          Estado 2 — vazio
+          <b>Nenhum orçamento assinado sob demanda contratada. A alternativa fica escrita.</b>
+        </figcaption>
+        <section class="painel" aria-label="Abrir rodada nova">
+          <h2>Abrir rodada nova</h2>
+          <form class="formulario">
+            <fieldset class="acoes" style="border-color: var(--line)">
+              <legend class="campo-dica" style="padding: 0 6px">De onde vem o contratado</legend>
+              <label>
+                <input type="radio" name="origem2" disabled />
+                De um orçamento assinado
+              </label>
+              <label>
+                <input type="radio" name="origem2" checked />
+                Do zero, com catálogo por upload
+              </label>
+            </fieldset>
+            <p class="campo-dica" style="margin: 0">
+              Nenhum orçamento assinado sob demanda contratada neste cliente. Uma medição
+              aberta do zero funciona como hoje — ela só não confere contra contratado nenhum,
+              e a rodada dirá isso.
+            </p>
+            <label class="campo">
+              Catálogo de preços (JSON)
+              <input type="file" />
+            </label>
+            <div class="acoes-linha">
+              <button type="submit" class="botao-primario">Abrir rodada</button>
+            </div>
+          </form>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-03">
+        <figcaption>
+          Estado 3 — carregando
+          <b>Lendo os orçamentos assinados. Nada é afirmado antes da resposta.</b>
+        </figcaption>
+        <section class="painel" aria-label="Abrir rodada nova">
+          <h2>Abrir rodada nova</h2>
+          <p class="campo-dica" style="margin: 0 0 12px">Lendo os orçamentos assinados…</p>
+          <div class="formulario" aria-hidden="true">
+            <div class="esqueleto" style="width: 62%"></div>
+            <div class="esqueleto" style="width: 88%"></div>
+            <div class="esqueleto" style="width: 44%"></div>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-04">
+        <figcaption>
+          Estado 4 — recusa do servidor
+          <b>Assinatura caduca: o orçamento foi remontado depois de assinado.</b>
+        </figcaption>
+        <section class="painel" aria-label="Abrir rodada nova">
+          <h2>Abrir rodada nova</h2>
+          <p class="aviso-fixo aviso-inline" role="alert">
+            Este orçamento foi remontado depois de assinado, então a assinatura está caduca e
+            não há conteúdo aprovado de onde tirar o contratado. Assine a versão atual para
+            abrir a medição a partir dela.
+          </p>
+          <ul class="origem-lista">
+            <li class="origem-item">
+              <input type="radio" name="orcamento4" disabled aria-label="Praça Guaxindiba" />
+              <span class="origem-corpo">
+                <span class="origem-titulo">
+                  <strong>Praça Guaxindiba — demanda 2026/014</strong>
+                  <span class="selo selo-atencao">Assinatura caduca</span>
+                </span>
+                <span class="campo-dica"
+                  >Assinado em 22/08/2026 e remontado em 23/08/2026 — o que foi assinado não é
+                  o que está montado.</span
+                >
+              </span>
+            </li>
+          </ul>
+          <p class="campo-erro" style="margin-top: 10px">
+            Nada foi gravado. A rodada não abriu.
+          </p>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-05">
+        <figcaption>
+          Estado 5 — sem papel
+          <b>Conta sem <code>orcamentista</code>: a seção não oferece o que ela não pode fazer.</b>
+        </figcaption>
+        <section class="painel" aria-label="Abrir rodada nova">
+          <h2>Abrir rodada nova</h2>
+          <p class="aviso-fixo aviso-inline" role="alert">
+            Abrir rodada de medição exige o papel <strong>orcamentista</strong>, que esta conta
+            não tem. Quem administra papéis é a pessoa responsável pelo cliente.
+          </p>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-06">
+        <figcaption>
+          Estado 6 — rodada aberta COM vínculo
+          <b>A rodada declara contra o que ela confere, e o digest é legível.</b>
+        </figcaption>
+        <section class="painel" aria-label="Rodada de medição">
+          <div class="painel-cabecalho">
+            <h2>Praça Guaxindiba — Medição 1</h2>
+            <span class="selo selo-ok">Confere contra o orçamento assinado</span>
+          </div>
+          <div class="decisao-registrada">
+            <p style="margin: 0 0 6px; font-size: 0.9rem">
+              O contratado desta medição vem do orçamento
+              <strong>Praça Guaxindiba — demanda 2026/014</strong>, assinado por Ana Ribeiro em
+              22/08/2026.
+            </p>
+            <p class="digest" style="margin: 0">digest do conteúdo assinado 9f2c1ae4…7bd0</p>
+          </div>
+          <dl class="procedencia" style="margin-top: 12px">
+            <div>
+              <dt>Contratado</dt>
+              <dd>34 códigos · R$ 418.902,17</dd>
+            </div>
+            <div>
+              <dt>Acumulado</dt>
+              <dd>R$ 0,00 (nenhuma medição anterior)</dd>
+            </div>
+            <div>
+              <dt>Saldo</dt>
+              <dd>R$ 418.902,17</dd>
+            </div>
+          </dl>
+          <p class="campo-dica" style="margin: 10px 0 0">
+            Código fora do contratado, quantidade acima do saldo ou preço diferente do assinado
+            recusam o fechamento desta medição.
+          </p>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-07">
+        <figcaption>
+          Estado 7 — rodada aberta SEM vínculo
+          <b>
+            O mesmo painel dizendo a verdade oposta. É a distinção que a decisão 9 do ADR-0048
+            exige que exista.
+          </b>
+        </figcaption>
+        <section class="painel" aria-label="Rodada de medição">
+          <div class="painel-cabecalho">
+            <h2>Praça Raul Campelo — Medição 3</h2>
+            <span class="selo selo-neutro">Sem contratado de origem</span>
+          </div>
+          <p class="aviso-fixo aviso-inline" role="alert" style="margin-top: 12px">
+            Esta rodada não foi aberta a partir de um orçamento assinado. Ela confere o boletim
+            contra o catálogo instalado, e <strong>não</strong> contra um contratado: saldo,
+            período e código fora do contrato não são verificados aqui.
+          </p>
+        </section>
+      </figure>
+    </div>
+  </body>
+</html>

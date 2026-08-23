@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-030 — a foto do levantamento na revisão do croqui (revisão 1)</title>
+    <style>
+      /* Tokens copiados VERBATIM de apps/web/src/styles.css, bloco :root. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --dark: #0e1116;
+        --dark-ink: #f2f4f7;
+
+        color: var(--ink);
+        background: var(--bg);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 28px;
+        background:
+          radial-gradient(circle at 8% 0%, rgba(0, 200, 119, 0.1), transparent 28rem),
+          var(--bg);
+      }
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      /* Andaime do pacote — NÃO faz parte do que se aprova. */
+      .folha {
+        max-width: 60rem;
+        margin: 0 auto;
+      }
+      .folha > header {
+        margin-bottom: 26px;
+      }
+      .folha > header h1 {
+        margin: 0 0 6px;
+        font-size: 21px;
+      }
+      .folha > header p {
+        max-width: 46rem;
+        color: var(--ink-secondary);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+      .estado {
+        margin: 0 0 30px;
+      }
+      .estado > figcaption {
+        margin: 0 0 8px;
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--ink-secondary);
+      }
+      .estado > figcaption b {
+        display: block;
+        margin-top: 3px;
+        font-size: 13px;
+        letter-spacing: 0;
+        text-transform: none;
+        color: var(--ink);
+        font-weight: 400;
+      }
+
+      /* --- Classes citadas de apps/web/src/styles.css --- */
+      .panel {
+        overflow: hidden;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        box-shadow: 0 8px 28px rgba(20, 24, 29, 0.05);
+      }
+      .panel-heading {
+        display: flex;
+        align-items: center;
+        min-height: 68px;
+        padding: 14px 16px;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--line);
+      }
+      .panel-body {
+        padding: 16px;
+      }
+      .eyebrow {
+        color: var(--ink-secondary);
+        font-size: 10px;
+        font-weight: 850;
+        letter-spacing: 0.13em;
+      }
+      .field-hint {
+        color: var(--ink-secondary);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .button {
+        min-height: 38px;
+        padding: 0 16px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        font-weight: 750;
+        font-size: 13px;
+        font-family: inherit;
+        cursor: pointer;
+      }
+      .button-primary {
+        color: var(--accent-ink);
+        background: var(--accent);
+        box-shadow: 0 5px 16px rgba(0, 116, 74, 0.22);
+      }
+      .button-secondary {
+        color: var(--accent-text);
+        background: var(--surface);
+        border-color: var(--accent-text);
+      }
+      .button:disabled {
+        cursor: not-allowed;
+        color: var(--muted);
+        background: var(--line);
+        box-shadow: none;
+      }
+      .ready {
+        padding: 5px 8px;
+        color: var(--accent-text);
+        background: var(--accent-soft);
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 850;
+      }
+      .blocked {
+        padding: 5px 8px;
+        color: #825320;
+        background: #fff0d2;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 850;
+      }
+      .neutro {
+        padding: 5px 8px;
+        color: var(--ink-secondary);
+        background: var(--surface-sunken);
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 850;
+      }
+      .app-alert {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 0;
+        padding: 10px 16px;
+        background: #fbeeec;
+        border-bottom: 1px solid #e0b4ad;
+        color: #7d2f26;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .app-status {
+        margin: 0;
+        padding: 10px 16px;
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+        color: var(--ink-secondary);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      /* --- Composição desta seção: layout sobre tokens existentes --- */
+      .fotos {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+        gap: 12px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .foto {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+      }
+      /* Marcador de foto: o pacote NÃO usa foto de cliente. O tijolo é sintético e diz
+         que é, para ninguém tomar a amostra por evidência real. */
+      .foto-amostra {
+        position: relative;
+        aspect-ratio: 4 / 3;
+        border-radius: 6px;
+        background:
+          repeating-linear-gradient(
+            135deg,
+            var(--surface-sunken),
+            var(--surface-sunken) 9px,
+            var(--surface-subtle) 9px,
+            var(--surface-subtle) 18px
+          );
+        border: 1px solid var(--line);
+      }
+      .foto-amostra span {
+        position: absolute;
+        inset: auto 6px 6px;
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .foto-meta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        font-size: 11px;
+      }
+      .ancora {
+        font-size: 12px;
+        font-weight: 650;
+      }
+      .leitura {
+        margin: 0;
+        padding: 8px;
+        background: var(--surface-sunken);
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .proposta {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 12px;
+        padding: 12px;
+        border: 1px solid var(--accent-line);
+        border-radius: 8px;
+        background: var(--accent-soft);
+      }
+      .proposta-cabecalho {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .lineage {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        color: var(--ink-secondary);
+      }
+      .acoes {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+      .esqueleto {
+        height: 12px;
+        border-radius: 999px;
+        background: var(--surface-sunken);
+      }
+      .reservado {
+        margin-top: 16px;
+        padding: 14px;
+        border: 1px dashed var(--muted);
+        border-radius: 8px;
+        opacity: 0.62;
+      }
+      .reservado p {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .vinculo-form {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: end;
+        margin-top: 10px;
+      }
+      .vinculo-form label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+      }
+      .vinculo-form select {
+        min-width: 260px;
+        min-height: 38px;
+        padding: 0 10px;
+        font: inherit;
+        font-size: 13px;
+        border: 1px solid var(--muted);
+        border-radius: 8px;
+        background: var(--surface);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="folha">
+      <header>
+        <h1>F-030 — a foto do levantamento na revisão do croqui</h1>
+        <p>
+          Design Approval Package, revisão 1. Painel "Evidência de campo" na jornada de revisão
+          (<code>apps/web/src/CroquiApp.tsx</code>), ao lado da decisão de leitura. As fotos
+          são <strong>amostras sintéticas</strong> — o pacote não usa imagem de cliente.
+        </p>
+      </header>
+
+      <figure class="estado" id="estado-01">
+        <figcaption>
+          Estado 1 — normal
+          <b>
+            Levantamento vinculado: fotos com a âncora que o campo registrou, qualidade apurada
+            e a leitura que o servidor já tinha.
+          </b>
+        </figcaption>
+        <section class="panel" aria-label="Evidência de campo">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">EVIDÊNCIA DE CAMPO</p>
+              <h2 style="font-size: 16px">Levantamento de 19/08/2026 · 6 fotos</h2>
+            </div>
+            <span class="ready">VINCULADO</span>
+          </div>
+          <div class="panel-body">
+            <p class="field-hint" style="margin-bottom: 12px">
+              A foto responde <strong>o que é</strong>. Ela não tem escala e não fornece
+              medida — nada daqui vira cota, entidade ou precisão.
+            </p>
+            <ul class="fotos">
+              <li class="foto">
+                <div class="foto-amostra"><span>amostra sintética</span></div>
+                <span class="ancora">Elemento: mureta oeste</span>
+                <span class="foto-meta">
+                  <span class="ready">NITIDEZ BOA</span>
+                  <span class="field-hint">3024×4032 · 19/08 14:12</span>
+                </span>
+              </li>
+              <li class="foto">
+                <div class="foto-amostra"><span>amostra sintética</span></div>
+                <span class="ancora">Ponto 7</span>
+                <span class="foto-meta">
+                  <span class="blocked">CONTRALUZ</span>
+                  <span class="field-hint">3024×4032 · 19/08 14:15</span>
+                </span>
+              </li>
+              <li class="foto">
+                <div class="foto-amostra"><span>amostra sintética</span></div>
+                <span class="ancora">Nota: "trecho já executado"</span>
+                <span class="foto-meta">
+                  <span class="ready">NITIDEZ BOA</span>
+                  <span class="field-hint">3024×4032 · 19/08 14:31</span>
+                </span>
+                <p class="leitura">
+                  <strong>Lido na foto:</strong> "PLACA OBRA 12,50 M" — leitura de texto escrito,
+                  não medida.
+                </p>
+              </li>
+            </ul>
+
+            <div class="reservado">
+              <span class="neutro">RESERVADO — NÃO CONSTRUÍDO NESTA FEATURE</span>
+              <p>
+                <strong>Nota de voz do técnico</strong>, com a transcrição ao lado da foto. O
+                áudio e a transcrição já existem na F-032; trazê-los para a revisão é feature
+                própria, e esta é sobre foto.
+              </p>
+            </div>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-02">
+        <figcaption>
+          Estado 2 — vazio
+          <b>Job sem levantamento vinculado. Vincular é ato, e a alternativa fica escrita.</b>
+        </figcaption>
+        <section class="panel" aria-label="Evidência de campo">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">EVIDÊNCIA DE CAMPO</p>
+              <h2 style="font-size: 16px">Nenhum levantamento vinculado</h2>
+            </div>
+            <span class="neutro">SEM VÍNCULO</span>
+          </div>
+          <div class="panel-body">
+            <p class="field-hint">
+              Esta prancha não está ligada a nenhum levantamento de campo. Vincular traz as
+              fotos que o técnico ancorou; sem isso, dá para subir fotos avulsas aqui mesmo.
+            </p>
+            <div class="vinculo-form">
+              <label>
+                Levantamento
+                <select>
+                  <option>Praça Guaxindiba — 19/08/2026 (6 fotos)</option>
+                  <option>Praça do Toca — 14/08/2026 (11 fotos)</option>
+                </select>
+              </label>
+              <button type="button" class="button button-primary">Vincular</button>
+              <button type="button" class="button button-secondary">Subir foto avulsa</button>
+            </div>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-03">
+        <figcaption>
+          Estado 3 — carregando
+          <b>Lendo o levantamento. Nem fotos, nem "não há fotos".</b>
+        </figcaption>
+        <section class="panel" aria-label="Evidência de campo">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">EVIDÊNCIA DE CAMPO</p>
+              <h2 style="font-size: 16px">Lendo o levantamento…</h2>
+            </div>
+          </div>
+          <div class="panel-body" aria-hidden="true">
+            <div class="esqueleto" style="width: 58%; margin-bottom: 10px"></div>
+            <div class="esqueleto" style="width: 84%; margin-bottom: 10px"></div>
+            <div class="esqueleto" style="width: 37%"></div>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-04">
+        <figcaption>
+          Estado 4 — sem análise
+          <b>
+            A foto chegou e a análise não existe, ou o passe pago não rodou. Estado honesto, não
+            erro.
+          </b>
+        </figcaption>
+        <section class="panel" aria-label="Evidência de campo">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">EVIDÊNCIA DE CAMPO</p>
+              <h2 style="font-size: 16px">Levantamento de 19/08/2026 · 2 fotos</h2>
+            </div>
+            <span class="ready">VINCULADO</span>
+          </div>
+          <div class="panel-body">
+            <ul class="fotos">
+              <li class="foto">
+                <div class="foto-amostra"><span>amostra sintética</span></div>
+                <span class="ancora">Ponto 3</span>
+                <span class="foto-meta">
+                  <span class="neutro">SEM ANÁLISE</span>
+                  <span class="field-hint">3024×4032 · 19/08 15:02</span>
+                </span>
+                <p class="leitura">
+                  A qualidade desta foto não foi apurada, e a leitura de texto não rodou — o
+                  processamento pago não está habilitado para este cliente.
+                </p>
+              </li>
+              <li class="foto">
+                <div class="foto-amostra"><span>amostra sintética</span></div>
+                <span class="ancora">Elemento: portão</span>
+                <span class="foto-meta">
+                  <span class="ready">NITIDEZ BOA</span>
+                  <span class="neutro">LEITURA PULADA</span>
+                </span>
+              </li>
+            </ul>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-05">
+        <figcaption>
+          Estado 5 — classificação por IA (fatia 3)
+          <b>Proposta com lineage, e o ato humano é o que a registra. Ela não decide nada.</b>
+        </figcaption>
+        <section class="panel" aria-label="Evidência de campo">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">EVIDÊNCIA DE CAMPO</p>
+              <h2 style="font-size: 16px">Elemento: mureta oeste</h2>
+            </div>
+            <span class="blocked">RASCUNHO</span>
+          </div>
+          <div class="panel-body">
+            <ul class="fotos" style="grid-template-columns: minmax(190px, 240px)">
+              <li class="foto">
+                <div class="foto-amostra"><span>amostra sintética</span></div>
+                <span class="foto-meta"><span class="ready">NITIDEZ BOA</span></span>
+              </li>
+            </ul>
+            <div class="proposta">
+              <div class="proposta-cabecalho">
+                <span class="blocked">PROPOSTA DA IA — A CONFIRMAR</span>
+                <strong style="font-size: 13px">Alambrado, não muro</strong>
+              </div>
+              <p class="field-hint" style="margin: 0">
+                A imagem mostra tela metálica com montantes aparentes. Isto é uma leitura do que
+                aparece na foto, não uma medida: nenhuma dimensão vem daqui.
+              </p>
+              <p class="lineage">
+                prompt field-photo-class@1.0.0 · modelo claude-opus-5 · custo estimado US$ 0,004
+              </p>
+              <div class="acoes">
+                <button type="button" class="button button-primary">
+                  Registrar como nota de revisão
+                </button>
+                <button type="button" class="button button-secondary">Descartar</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-06">
+        <figcaption>
+          Estado 6 — recusa do servidor
+          <b>Processamento de IA não habilitado: a causa é dita, e o caminho também.</b>
+        </figcaption>
+        <section class="panel" aria-label="Evidência de campo">
+          <p class="app-alert" role="alert">
+            <span>
+              A classificação por IA não está habilitada para este cliente. Ela depende de
+              autorização contratual de processamento, administrada por quem responde pela
+              plataforma. As fotos e a qualidade continuam disponíveis.
+            </span>
+          </p>
+          <div class="panel-body">
+            <p class="field-hint">
+              Nada foi cobrado e nada foi enviado para fora.
+            </p>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-07">
+        <figcaption>
+          Estado 7 — sem papel
+          <b>Conta sem papel de revisão: o painel inteiro é autenticado.</b>
+        </figcaption>
+        <section class="panel" aria-label="Evidência de campo">
+          <p class="app-status">
+            Ver a evidência de campo exige papel de revisão ou de campo, que esta conta não
+            tem.
+          </p>
+        </section>
+      </figure>
+    </div>
+  </body>
+</html>

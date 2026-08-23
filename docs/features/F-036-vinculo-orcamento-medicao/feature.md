@@ -96,17 +96,26 @@ a igualdade se sustenta, e é por isso que a feature nasce aqui em vez de nascer
 
 ### A tradução `Estimate` → `ContractWorkbook`
 
-Uma linha de consolidado por `EstimateLine`, sem agregação e sem número informado por
-humano:
+Uma linha de consolidado **por código**, com as quantidades somadas, e nenhum número
+informado por humano:
 
 ```text
-contract_quantity   = quantidade do orçamento assinado
+unit_price          = EstimateLine.unit_price      (nunca o preço com BDI)
+contract_quantity   = soma das quantidades assinadas daquele código
 amended_quantity    = a mesma (não há RE-RA antes da primeira medição)
-periods             = []           (nenhuma medição lançada)
+periods             = []           (nenhuma medição lançada; ver ADR-0048 decisão 8)
 accumulated_*       = 0
 balance_quantity    = contract_quantity
 source_sha256       = estimate_digest da aprovação
+group_label         = referência da rodada de orçamento (grupo único)
 ```
+
+**Agregar por código não é detalhe.** `Estimate.validate_lines` recusa `item_number`
+repetido, **não** código repetido: o mesmo serviço em dois trechos da prancha é itemizado
+duas vezes com o mesmo código SCO, e o consolidado tem chave única grupo+código. Copiar
+linha a linha quebraria na primeira prancha assim, que é o caso comum. Somar só é lícito
+porque a cascata do regime tem **uma fonte só** — preço ou unidade divergentes entre linhas
+do mesmo código recusam a abertura em vez de escolher uma delas.
 
 `source_sha256` deixa de ser o digest da própria medição — que é o que a fabricação usa hoje
 — e passa a ser o do conteúdo assinado. Quem encontrar o consolidado consegue dizer de onde
@@ -195,29 +204,39 @@ a rodada precisa dizer sob qual dos dois regimes de conferência ela está.
 
 ## Unknowns
 
-Os quatro primeiros são decisão do ADR e **não** são resolvidos neste contrato.
+Os quatro primeiros foram levados ao
+[ADR-0048](../../adr/0048-consolidado-contratual-do-orcamento-assinado.md), escrito em
+2026-08-23 e ainda `Proposed`: enquanto ele não for aceito por ato humano, seguem sendo
+desconhecidos deste contrato. O que o ADR **propõe** para cada um está anotado abaixo.
 
 1. **O preço do consolidado é `unit_price` ou `unit_price_with_bdi`?** O portão exige
    `BulletinLine.unit_price == ContractLine.unit_price`
    (`packages/valuation/src/croquito_valuation/models.py:540`), e o boletim precifica pelo
-   catálogo `sco` instalado, que é preço de fonte. Se o consolidado nascer com BDI, **toda**
-   linha dispara `LINE_PRICE_NOT_IN_CONTRACT` e o portão vira ruído; se nascer sem, o saldo
-   em dinheiro fica abaixo do que o contrato de fato paga. É a decisão mais consequente da
-   feature.
+   catálogo `sco` instalado. Se o consolidado nascer com BDI, **toda** linha dispara
+   `LINE_PRICE_NOT_IN_CONTRACT` e o portão vira ruído no primeiro uso. Era a decisão mais
+   consequente da feature.
+   → *ADR-0048 decisões 2 e 3*: `unit_price`, apoiado no fato de domínio declarado por ato
+   humano em 2026-08-23 — sob o regime, o `sco` instalado **é** a tabela contratual, com BDI
+   e desconto já embutidos. Daí decorre que declarar BDI numa rodada sob o regime é o erro
+   que o [ADR-0038](../../adr/0038-bdi-como-conceito-de-pre-licitacao.md) já nomeara noutro
+   lugar da cadeia, e passa a recusar.
 2. **O catálogo da medição precisa ser o mesmo objeto que precificou o orçamento?** Exigir o
    mesmo digest fecha a última folga — hoje nada impede medir com um catálogo `sco` diferente
-   daquele que orçou. Não exigir mantém a abertura simples e deixa a divergência aparecer
-   como `LINE_PRICE_NOT_IN_CONTRACT`, que é recusa tardia mas honesta. Amarrado ao Unknown 1.
+   daquele que orçou.
+   → *ADR-0048 decisão 2*: não é exigido como regra separada, porque a igualdade de preço
+   passa a valer por construção; um catálogo diferente aparece como
+   `LINE_PRICE_NOT_IN_CONTRACT`, que é recusa tardia mas honesta e agora **pode** disparar.
 3. **Qual `group_label`?** A chave de unicidade do consolidado é **grupo + código**
-   (`contract.py`), e o orçamento não tem grupo. Um grupo único sintético é honesto para a
-   primeira medição, mas `CODE_AMBIGUOUS_IN_CONTRACT` nunca dispararia — repetindo, em
-   pequeno, o defeito que esta feature veio corrigir.
+   (`contract.py`), e o orçamento não tem grupo.
+   → *ADR-0048 decisões 4 e 5*: grupo único rotulado com a referência da rodada, e a tradução
+   **agrega por código** — `Estimate` permite código repetido em itens diferentes. A inércia
+   que sobra (`CODE_AMBIGUOUS_IN_CONTRACT` não dispara nesta origem) fica declarada.
 4. **Quantas medições um orçamento sustenta?** A segunda precisa do acumulado da primeira.
-   Ou o consolidado gravado passa a receber os períodos lançados — e a medição ganha
-   histórico próprio —, ou da segunda em diante volta a valer o MAPÃO importado. São dois
-   produtos diferentes; o ADR escolhe um.
+   → *ADR-0048 decisão 8*: o consolidado da rodada vinculada deriva do orçamento assinado
+   **mais** as medições aprovadas das rodadas anteriores ligadas ao mesmo digest. Sem rodada
+   anterior o caso degenera no simples.
 5. **Onde o consolidado é gravado** — coluna na raiz da rodada ou na revisão. Forma, não
-   comportamento; sai no plano.
+   comportamento; sai no plano. O ADR não o decide de propósito.
 
 ## Risks
 
@@ -237,14 +256,18 @@ Os quatro primeiros são decisão do ADR e **não** são resolvidos neste contra
 
 ## Human Gates
 
-1. **`ARCHITECTURE_DECISION_REQUIRED`** — ADR novo, precedendo o planejamento. Ele refina a
-   fronteira do ADR-0027 decisão 6 ("sem contrato, sem saldo") para o caso `contracted_demand`
-   e decide os Unknowns 1 a 4. Sem ele, o Planner estaria decidindo arquitetura.
-2. **`DESIGN_APPROVAL_REQUIRED`** — Design Approval Package da superfície nova na abertura da
-   medição, precedendo o planejamento, conforme
+1. **`ARCHITECTURE_DECISION_REQUIRED`** — **artefato produzido, gate aberto**. O
+   [ADR-0048](../../adr/0048-consolidado-contratual-do-orcamento-assinado.md) foi escrito em
+   2026-08-23 e está `Proposed`: ele refina a fronteira do ADR-0027 decisão 6 ("sem contrato,
+   sem saldo") para o caso `contracted_demand` e propõe os Unknowns 1 a 4. **Aceitá-lo é ato
+   humano**, e nenhuma implementação irreversível o precede.
+2. **`DESIGN_APPROVAL_REQUIRED`** — **pacote produzido, gate aberto**. O
+   [Design Approval Package](mock/README.md) da superfície nova na abertura da medição está
+   na revisão 1, **pendente de aprovação humana**, conforme
    [design-approval](../../engineering-os/workflows/design-approval.md).
 
-Nenhum agente cumpre nenhum dos dois. Enquanto os dois não forem cumpridos, a feature
+Produzir o artefato não é cumprir o gate. Nenhum agente aceita ADR nem aprova design,
+inclusive o que os escreveu. Enquanto os dois não forem exercidos por ato humano, a feature
 permanece `BLOCKED`.
 
 ## References
