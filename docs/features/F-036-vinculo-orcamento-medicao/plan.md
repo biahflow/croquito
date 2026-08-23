@@ -86,6 +86,17 @@ PLAN_DEVIATION (2026-08-23, T2): a recusa de BDI sob o regime quebrou
   recusa **e** seguir com zero — a quebra é a consequência que o ADR-0048 declarou, não um
   teste a consertar.
 
+ACHADO PARA A T3 (2026-08-23, ao terminar a T4): `EstimateRoundSummary` **não diz se o
+  orçamento está assinado**. Ela traz `pricing_regime` e `stage`, e `stage` chega no máximo a
+  `estimate` — que é "montado", não "assinado". O Design Approval Package aprovado mostra o
+  selo **Assinado** na lista de origem (estado 1), então a tela não pode deduzir: ou a
+  listagem passa a contar, ou a tela oferece orçamento que o servidor vai recusar com
+  `ESTIMATE_ORIGIN_NOT_SIGNED`.
+
+  É lacuna da T2, não da T3: o dado é do servidor. A listagem já busca a cabeça de cada
+  rodada da página (`_estimate_round_heads`), então a informação está à mão e o custo é
+  aditivo. **Fazer isto abre a T3**, e vira `PLAN_DEVIATION` da T2 quando for feito.
+
 parallel_groups: T3 e T4 correm juntas depois de T2 — escopos disjuntos (`apps/web` × `tests/e2e`).
 critical_path: T1 → T2 → T3.
 integration_strategy: commits separados por task na `main`, com revisão linha a linha entre
