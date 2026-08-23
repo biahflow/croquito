@@ -1,7 +1,7 @@
 # F-034 — Evidência de execução
 
 feature_id: F-034
-status: `READY_FOR_HUMAN_REVIEW`
+status: `DONE` (entrega aceita por ato humano em 2026-08-23)
 data da execução: 2026-08-22
 data deste pacote: 2026-08-23
 
@@ -19,6 +19,7 @@ data deste pacote: 2026-08-23
 | Fatia 1 sem pacote próprio | Decisão humana registrada em `Split` do contrato: não introduz valor visual novo, e cita a aprovação da aba Plataforma (F-012) como procedência |
 | Declarar os estados por ambiente | **Pendente** — ato humano (§8) |
 | Merge e deploy | Cumprido: `5839c19` na `main`, deploy de HML verde |
+| **Aceite da entrega** | **Exercido por ato humano em 2026-08-23**, sobre este pacote |
 
 A aprovação da revisão 1 **não** cobriu: a copy final, o estado padrão de uma jornada quando
 o ambiente não declara nada, a fatia 1 e o nome das jornadas na tela. As **duas questões em

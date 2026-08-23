@@ -60,7 +60,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
 | F-030 | HIGH | BLOCKED | [Fotos do levantamento na jornada de revisão](../features/F-030-fotos-do-levantamento-na-revisao/feature.md) |
 | F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
-| F-034 | HIGH | READY_FOR_HUMAN_REVIEW | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
+| F-034 | HIGH | DONE | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
 | F-035 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
 | F-036 | HIGH | BLOCKED | [A medição do orçamento aprovado: consolidado contratual de origem](../features/F-036-vinculo-orcamento-medicao/feature.md) |
 | F-037 | HIGH | READY_FOR_HUMAN_REVIEW | [Acervo central de catálogos de preço](../features/F-037-acervo-de-catalogos/feature.md) |
@@ -380,9 +380,9 @@ jornadas disponíveis já resolvidas, e a tela renderiza o que recebeu em vez de
 reimplementar autorização. Dividida por decisão humana registrada — a fatia 1 não introduz
 valor visual novo; a fatia 2, administrar o entitlement na tela de Plataforma, é superfície
 nova e ficou `BLOCKED` até o Design Approval Package, **aprovado na mesma data**. **As duas
-fatias foram entregues em 2026-08-22** e a feature está `READY_FOR_HUMAN_REVIEW`; o
-mecanismo está no ar e **dormente**, porque nenhum ambiente declara ainda os estados de
-jornada. Contrato em [F-034](../features/F-034-disponibilidade-de-jornada/feature.md),
+fatias foram entregues em 2026-08-22** e a **entrega foi aceita por ato humano em
+2026-08-23**; o mecanismo está no ar e **dormente**, porque nenhum ambiente declara ainda os
+estados de jornada — declará-los é ato de operação, e o aceite não o substitui. Contrato em [F-034](../features/F-034-disponibilidade-de-jornada/feature.md),
 evidência em [evidence.md](../features/F-034-disponibilidade-de-jornada/evidence.md).
 
 F-035 e F-036 — aprovação do orçamento e sua ligação com a medição — nascem em 2026-08-22,

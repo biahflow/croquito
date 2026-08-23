@@ -2,12 +2,18 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
+> **Entrega aceita por ato humano em 2026-08-23**, sobre o pacote de revisão em
+> [evidence.md](evidence.md). O aceite cobre o que foi construído; **não** decide as duas
+> questões em aberto do pacote de design nem a copy, que seguem registradas como tais, e
+> **não** substitui o ato de operação que falta: declarar `CROQUITO_JOURNEY_*` nos ambientes
+> hospedados. Até que alguém o faça, o mecanismo está no ar e dormente.
+>
 > As **duas fatias foram entregues em 2026-08-22** — T1, T2 e T3 —, e estão na `main` desde
-> `5839c19`, com deploy de HML verde. O pacote de revisão está em
-> [evidence.md](evidence.md), montado em 2026-08-23: o estado deste contrato e o do roadmap
-> ficaram em `READY_FOR_PLANNING` depois da execução, e essa é a dívida que o pacote fecha.
+> `5839c19`, com deploy de HML verde. O pacote de revisão foi montado em 2026-08-23: o estado
+> deste contrato e o do roadmap ficaram em `READY_FOR_PLANNING` depois da execução, e essa
+> foi a dívida que o pacote fechou.
 >
 > O Design Approval Package da fatia 2 foi **aprovado por ato humano em 2026-08-22**
 > (revisão 1, registro em [mock/README.md](mock/README.md)), o que encerrou o único gate que
