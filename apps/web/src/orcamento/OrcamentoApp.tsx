@@ -17,8 +17,10 @@ import {
   installReferenceCatalog,
   listEstimates,
   listReferenceCatalogs,
+  postApproveEstimate,
   postBuildEstimate,
   postCodeDecision,
+  postExportEstimate,
   postSuggestionsRecompute,
   postRegime,
   postTakeoffDecision,
@@ -28,6 +30,7 @@ import {
   searchCascade,
   uploadCatalog,
   uploadPlateFile,
+  type ApprovalState,
   type CascadeEntry,
   type CascadeSearchResponse,
   type CatalogProvenance,
@@ -49,9 +52,12 @@ import { canMove, entryOfDigest, reorderedDigests } from "./cascata";
 import { derivarEtapas, etapaStatusLabel, type Etapa, type EtapaId } from "./etapas";
 import {
   describeError,
+  exportBlockedViolations,
   isAbortError,
   isForbidden,
+  isSelfApprovalForbidden,
   recusaDeMutacao,
+  SELF_APPROVAL_FORBIDDEN_CODE,
   workbookAuditFindings,
 } from "./errors";
 import {
@@ -71,6 +77,7 @@ import {
   AVISO_ACERVO_INDISPONIVEL,
   AVISO_ACERVO_NAO_LIDO,
   AVISO_ACERVO_VAZIO,
+  AVISO_ASSINAR_NAO_E_DESPACHAR,
   AVISO_BDI,
   AVISO_CANDIDATO_ADITIVO,
   AVISO_CARD_SEM_REGIME,
@@ -78,10 +85,13 @@ import {
   AVISO_CASCATA_SOB_CONTRATO,
   AVISO_CASCATA_TRAVADA,
   AVISO_CONSUMO_COM_BDI,
+  AVISO_DESPACHO_FAIL_CLOSED,
+  AVISO_IDENTIDADE_DA_SESSAO,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
   AVISO_ORCAMENTO,
   AVISO_ORCAMENTO_SEM_RODADA,
   AVISO_ORCAMENTO_SOB_CONTRATO,
+  AVISO_PLANILHA_ENDERECADA_PELO_DIGEST,
   AVISO_PROCEDENCIA,
   AVISO_QUANTIDADE_AMBIGUA,
   AVISO_REGIME_ABERTURA,
@@ -104,9 +114,13 @@ import {
   DICA_REGIME,
   DICA_TETO,
   DICA_TETO_DEMANDA,
+  errorMessage,
   extractionFailureMessage,
   extractionStatusLabel,
   itemStatusLabel,
+  MENSAGEM_APROVACAO_CADUCA,
+  MENSAGEM_ORCAMENTO_APROVADO,
+  MENSAGEM_ORCAMENTO_DESPACHADO,
   MENSAGEM_ORCAMENTO_MUDOU,
   OPCAO_TABELA_NAO_ESCOLHIDA,
   opcaoDoAcervo,
@@ -121,6 +135,7 @@ import {
   ROTULO_TABELA_DO_ACERVO,
   SELO_REGIME,
   stageLabel,
+  tituloDaAprovacao,
   tetoClasse,
   tetoEtiqueta,
   TITULO_ACERVO_VAZIO,
@@ -774,32 +789,431 @@ export function TelaAuditoriaReprovada({
         <h2>A auditoria reprovou a planilha — nada foi publicado</h2>
       </div>
       <p className="banner-erro" role="alert">
-        A planilha gerada não confere com o orçamento montado. O arquivo foi descartado, o
-        object store não recebeu nada e o orçamento continua exatamente como estava.
+        A conferência da planilha reprovou. <strong>Nada foi publicado</strong>: o arquivo
+        foi descartado, o object store não recebeu nada, a aprovação continua válida e o
+        orçamento não mudou.
       </p>
+      <ProgressoDoDespacho estado="reprovado" />
       {findings.length === 0 ? null : (
-        <ul className="confirmados-lista">
-          {findings.map((code) => (
-            <li key={code} className="digest">
-              {code}
-            </li>
-          ))}
-        </ul>
+        <div className="confirmados">
+          {/* Título próprio: sem ele os achados encostam na lista numerada dos passos e
+              leem como um quinto passo do despacho. */}
+          <h3>Divergências encontradas na reconferência</h3>
+          <ul className="confirmados-lista">
+            {findings.map((code) => (
+              <li key={code} className="digest">
+                {code}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <p className="dica">
         O portão é o mesmo da medição: o arquivo só é publicado depois de reaberto e
-        reconferido, e falha do auditor não publica nada. Refazer a montagem é seguro.
+        reconferido, e falha do auditor não publica nada. Despachar de novo é seguro.
       </p>
       {onDismiss === undefined ? null : (
         <div className="acoes-linha">
           <button type="button" className="botao-secundario" onClick={onDismiss}>
-            Voltar à montagem
+            Voltar à aprovação e despacho
           </button>
         </div>
       )}
     </section>
   );
 }
+
+/**
+ * O ato nominal de aprovação do orçamento (F-035, ADR-0046), em DOIS atos explícitos.
+ *
+ * A forma é a mesma da medição, deliberadamente (decisão 1 do pacote aprovado): duas
+ * assinaturas no mesmo produto têm de ler como assinatura. O que muda é a consequência, que
+ * aqui fala de DESPACHO. Três decisões do desenho vivem neste componente e não podem ser
+ * "simplificadas":
+ *
+ * - **a consequência vem antes do botão, e por extenso** — três frases fixas: publica o
+ *   nome de quem aprova, libera o despacho, vale só para este conteúdo exato;
+ * - **a identidade é mostrada, nunca digitável** — não existe campo de nome do aprovador
+ *   nesta tela, porque o servidor lê a identidade do token e recusa qualquer nome que venha
+ *   do cliente; um campo aqui prometeria um efeito que ele não tem;
+ * - **confirmar exige um segundo ato**, e o segundo passo REPETE a consequência em vez de
+ *   perguntar "tem certeza?".
+ *
+ * Enquanto grava, os dois botões ficam indisponíveis: repetir o clique não criaria
+ * aprovação nova (a mutação leva chave de idempotência), mas a tela também não pode sugerir
+ * que criaria.
+ */
+export function AtoDeAprovacao({
+  titulo,
+  identidade,
+  contentDigest,
+  confirmando,
+  gravando,
+  onAprovar,
+  onConfirmar,
+  onCancelar,
+}: {
+  titulo: string;
+  identidade: string;
+  /** Digest do CONTEÚDO que será assinado (`current_digest`), não o do documento gravado. */
+  contentDigest: string | null;
+  confirmando: boolean;
+  gravando: boolean;
+  onAprovar: () => void;
+  onConfirmar: () => void;
+  onCancelar: () => void;
+}) {
+  const digestCurto = shortDigest(contentDigest);
+  return (
+    <div className="ato">
+      <span className="ato-etiqueta">Ato nominal · orçamento</span>
+      <h3>{titulo}</h3>
+      {confirmando ? null : (
+        <>
+          <p>Antes de aprovar, o que aprovar faz:</p>
+          <ul className="ato-consequencia">
+            <li>
+              <strong>Publica o seu nome.</strong> A aprovação fica registrada
+              como sua, com data e hora, e é o que autoriza este orçamento a
+              sair.
+            </li>
+            <li>
+              <strong>Libera o despacho.</strong> Sem aprovação nominal válida,
+              a rota de despacho recusa — não é convenção, é recusa do servidor.
+              Nenhuma planilha é escrita antes da assinatura.
+            </li>
+            <li>
+              <strong>
+                Vale só para este orçamento, exatamente como ele está agora
+              </strong>{" "}
+              (
+              <span className="mono" title={contentDigest ?? undefined}>
+                sha256 {digestCurto}
+              </span>
+              ). Qualquer mudança depois disso derruba a aprovação e exige
+              aprovar de novo.
+            </li>
+          </ul>
+        </>
+      )}
+      <div className="ato-identidade">
+        <b>Você aprova como</b>
+        <span className="mono">{identidade}</span>
+        <p className="campo-dica">
+          Papel aprovador · identidade da sessão. {AVISO_IDENTIDADE_DA_SESSAO}
+        </p>
+      </div>
+      {confirmando ? (
+        <div className="ato-confirmacao">
+          <p>
+            <strong>Confirmar a aprovação nominal?</strong> O nome{" "}
+            <span className="mono">{identidade}</span> fica registrado como quem
+            aprovou este orçamento, no conteúdo{" "}
+            <span className="mono" title={contentDigest ?? undefined}>
+              sha256 {digestCurto}
+            </span>
+            , e o despacho da planilha fica liberado.
+          </p>
+          <div className="acoes-linha">
+            <button
+              type="button"
+              className="botao-primario"
+              onClick={onConfirmar}
+              disabled={gravando}
+            >
+              {gravando ? "Aprovando…" : "Confirmar aprovação nominal"}
+            </button>
+            <button
+              type="button"
+              className="botao-secundario"
+              onClick={onCancelar}
+              disabled={gravando}
+            >
+              Cancelar
+            </button>
+          </div>
+          {gravando ? (
+            <p className="dica" role="status">
+              Enquanto grava, os dois botões ficam indisponíveis: repetir o
+              clique não cria aprovação nova, porque o ato vai com chave de
+              idempotência.
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <div className="acoes-linha">
+          <button
+            type="button"
+            className="botao-primario"
+            onClick={onAprovar}
+            disabled={gravando}
+          >
+            Aprovar este orçamento
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Registro da aprovação: quem, quando e sobre qual conteúdo — e o estado CADUCO.
+ *
+ * `approved` e `stale` são lidos juntos, porque na aprovação caduca os dois valem ao mesmo
+ * tempo. O registro velho não é apagado: ele fica visível, marcado como caduco, porque foi
+ * um ato humano que aconteceu — e é essa diferença entre "caduca" e "nunca aprovada" que dá
+ * à tela a única saída correta, aprovar de novo. O digest não é enfeite de auditoria: é o
+ * vínculo que faz a aprovação caducar sozinha, e por isso os dois aparecem lado a lado.
+ *
+ * A marca do estado é a PALAVRA na etiqueta; o tracejado âmbar é redundância dela.
+ */
+export function RegistroDaAprovacao({ approval }: { approval: ApprovalState }) {
+  if (approval.approved_by === null && !approval.approved) {
+    return null;
+  }
+  const etiqueta = !approval.approved
+    ? "Decisão registrada sem aprovação"
+    : approval.stale
+      ? "Aprovação caduca"
+      : "Aprovada";
+  return (
+    <div className={`registro ${approval.stale ? "registro-caduca" : ""}`}>
+      <span className="registro-etiqueta">{etiqueta}</span>
+      <dl>
+        <dt>Quem aprovou</dt>
+        <dd>
+          <span className="mono">
+            {approval.approved_by ?? "não declarado"}
+          </span>{" "}
+          · papel aprovador
+        </dd>
+        <dt>Quando</dt>
+        <dd>
+          {approval.approved_at === null
+            ? "não declarado"
+            : formatTimestamp(approval.approved_at)}
+        </dd>
+        {approval.stale ? null : (
+          <>
+            <dt>Conteúdo aprovado</dt>
+            <dd>
+              <span
+                className="mono"
+                title={approval.approved_digest ?? undefined}
+              >
+                sha256 {shortDigest(approval.approved_digest)}
+              </span>{" "}
+              — igual ao do orçamento atual
+            </dd>
+          </>
+        )}
+      </dl>
+      {approval.stale ? (
+        <>
+          <div className="digest-par">
+            <div>
+              <b>Conteúdo aprovado</b>
+              <span
+                className="mono"
+                title={approval.approved_digest ?? undefined}
+              >
+                sha256 {shortDigest(approval.approved_digest)}
+              </span>
+              <p className="campo-dica">
+                o que foi assinado no ato registrado acima
+              </p>
+            </div>
+            <div>
+              <b>Conteúdo atual</b>
+              <span
+                className="mono"
+                title={approval.current_digest ?? undefined}
+              >
+                sha256 {shortDigest(approval.current_digest)}
+              </span>
+              <p className="campo-aviso">
+                o orçamento como está agora, depois da remontagem
+              </p>
+            </div>
+          </div>
+          <p className="digest">APPROVAL_CONTENT_MISMATCH</p>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Selo do estado do despacho da rodada. A palavra é a marca; a veste é redundância dela.
+ *
+ * Ele diz "DESPACHADO" sem data, e a ausência é declarada: nenhuma rota do orçamento
+ * devolve o instante do despacho — nem `GET .../estimate`, nem o estado da rodada —, e o
+ * `updated_at` da rodada é o último ato QUALQUER, não este. Carimbar aquela data aqui
+ * daria a um número que muda a cada mutação a aparência de registro de publicação.
+ */
+export function SeloDespacho({ despachado }: { despachado: boolean }) {
+  return (
+    <span className="selo-despacho">
+      {despachado ? "DESPACHADO" : "NÃO DESPACHADO"}
+    </span>
+  );
+}
+
+/** Os quatro passos do despacho, na ordem em que o servidor os executa. */
+const PASSOS_DO_DESPACHO = [
+  "portão de domínio: a assinatura confere com o conteúdo atual",
+  "planilha escrita em arquivo temporário",
+  "reaberta e reconferida centavo a centavo contra o orçamento",
+  "publicação",
+];
+
+/**
+ * Estado de cada passo, pelo que a tela REALMENTE sabe.
+ *
+ * Os quatro passos correm dentro de uma chamada só: enquanto ela está em voo, o cliente não
+ * observa em qual deles o servidor está, e fingir uma progressão seria inventar estado — a
+ * rendição aprovada mostra o terceiro passo "em curso", e essa é a única coisa dela que a
+ * tela não pode reproduzir sem mentir. O que se sabe com certeza é o DESFECHO: publicado
+ * significa os quatro feitos; auditoria reprovada significa que o arquivo foi montado e
+ * gravado, que a reconferência recusou e que a publicação não chegou a acontecer.
+ */
+function estadosDosPassos(
+  estado: "em-voo" | "publicado" | "reprovado",
+): string[] {
+  if (estado === "publicado") {
+    return ["concluído", "concluído", "concluído", "concluído"];
+  }
+  if (estado === "reprovado") {
+    return ["concluído", "concluído", "reprovado", "não iniciado"];
+  }
+  return ["no servidor", "no servidor", "no servidor", "no servidor"];
+}
+
+/**
+ * Progresso do despacho como LISTA ESCRITA de quatro passos, nunca como barra (decisão 6
+ * do pacote aprovado).
+ *
+ * Três dos quatro passos acontecem antes de existir arquivo publicado; uma barra sugeriria
+ * que o arquivo já está quase pronto quando ele ainda pode ser descartado no passo três.
+ */
+export function ProgressoDoDespacho({
+  estado,
+}: {
+  estado: "em-voo" | "publicado" | "reprovado";
+}) {
+  const estados = estadosDosPassos(estado);
+  return (
+    <>
+      <ol className="progresso">
+        {PASSOS_DO_DESPACHO.map((passo, index) => (
+          <li key={passo}>
+            <span className="passo-estado">{estados[index]}</span> — {passo}
+          </li>
+        ))}
+      </ol>
+      {estado === "em-voo" ? (
+        <p className="dica" role="status">
+          Os quatro passos correm no servidor, numa chamada só, e a tela não
+          observa em qual deles ele está. Nada é publicado antes do quarto
+          passo: se a reconferência do passo 3 falhar, o arquivo do passo 2 é
+          descartado.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * `403` da rota de ASSINATURA, que não é a falta de acesso à jornada.
+ *
+ * Quem chega aqui lê o orçamento inteiro — a leitura aceita `orcamentista` ou `aprovador`
+ * (ADR-0046, decisão 5) — e só não pode exercer o ato. Trocar isto pela tela de "sem acesso"
+ * esconderia a jornada de alguém que a enxerga, e mandaria a pessoa pedir um acesso que ela
+ * já tem.
+ *
+ * A tela não antecipa esta recusa desabilitando o botão: quem decide papel é o servidor, e
+ * a jornada é montada pela ROTA, não pelo papel. O desenho aprovado mostra o botão já
+ * desabilitado; isso exigiria a lista de papéis da sessão, que nenhuma rota do orçamento
+ * devolve.
+ */
+export function PainelSemPapelDeAprovador({
+  detalhe,
+}: {
+  detalhe?: string | null;
+}) {
+  return (
+    <div
+      className="violacoes"
+      aria-label="Assinatura recusada por falta de papel"
+    >
+      <p className="banner-erro" role="alert">
+        Aprovar exige o papel aprovador, e a sua sessão não o tem. Você vê o
+        orçamento e o estado da assinatura; assinar é de quem tem o papel. Nada
+        foi gravado — o orçamento segue como estava.
+      </p>
+      {detalhe ? <p className="digest">{detalhe}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * `403` da rota de DESPACHO, que também não é a falta de acesso à jornada.
+ *
+ * Desde a F-035 a leitura aceita `orcamentista` ou `aprovador` (ADR-0046, decisão 5), então
+ * quem só assina abre a jornada inteira e chega até aqui — e o despacho exige
+ * `orcamentista` (decisão 7). Mandar essa pessoa para a tela de "sem acesso" seria dizer
+ * que ela não pode ler o que ela acabou de ler, e apagaria a assinatura da vista.
+ */
+export function PainelSemPapelDeOrcamentista({
+  detalhe,
+}: {
+  detalhe?: string | null;
+}) {
+  return (
+    <div
+      className="violacoes"
+      aria-label="Despacho recusado por falta de papel"
+    >
+      <p className="banner-erro" role="alert">
+        Despachar exige o papel orcamentista, e a sua sessão não o tem. A
+        aprovação registrada continua valendo: o que falta é quem opere o envio.
+        Nada foi publicado — o orçamento segue como estava.
+      </p>
+      {detalhe ? <p className="digest">{detalhe}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * Auto-aprovação recusada (tela 6 do pacote aprovado): quem montou não assina.
+ *
+ * A frase EXPLICA a regra em vez de só negar, porque a primeira reação de quem é recusado
+ * é procurar o papel que falta — e aqui não falta papel nenhum: a comparação é de
+ * identidade contra quem montou, e acumular `orcamentista` e `aprovador` não contorna.
+ *
+ * O desenho aprovado nomeia quem montou ("montado por marina.gestora"). Nenhuma rota do
+ * orçamento devolve esse nome — nem a recusa, de propósito, para não transformar um `403`
+ * num diretório de usuários do tenant —, então a tela diz a regra sem o nome em vez de
+ * inventá-lo.
+ */
+export function PainelAutoAprovacaoRecusada({
+  detalhe,
+}: {
+  detalhe?: string | null;
+}) {
+  return (
+    <div
+      className="violacoes"
+      aria-label="Auto-aprovação recusada pelo servidor"
+    >
+      <p className="banner-erro" role="alert">
+        {errorMessage(SELF_APPROVAL_FORBIDDEN_CODE)}
+      </p>
+      {detalhe ? <p className="digest">{detalhe}</p> : null}
+    </div>
+  );
+}
+
 
 /**
  * Consumo do teto na "Prévia do orçamento", colado ao Total geral (ADR-0040, F-027).
@@ -1155,6 +1569,33 @@ export function OrcamentoApp({
   // BDI e montagem.
   const [bdiInput, setBdiInput] = useState("");
 
+  // Aprovação e despacho (F-035, ADR-0046). `confirmandoAprovacao` é o SEGUNDO ato
+  // explícito do desenho aprovado, não preferência de interface: o primeiro clique abre a
+  // consequência, o segundo assina.
+  const [confirmandoAprovacao, setConfirmandoAprovacao] = useState(false);
+  const [despachando, setDespachando] = useState(false);
+  // Violações abertas do portão de domínio do despacho. O servidor recusa por TODAS de uma
+  // vez, e mostrar só a primeira faria a orçamentista assinar de novo para tropeçar na
+  // seguinte.
+  const [violacoesDoDespacho, setViolacoesDoDespacho] = useState<
+    string[] | null
+  >(null);
+  // As duas recusas de `403` da assinatura, em estados SEPARADOS porque não significam a
+  // mesma coisa: uma é falta do papel `aprovador`, a outra é a segregação entre quem monta
+  // e quem assina — quem cai na segunda tem o papel e continua sem poder assinar este
+  // orçamento. Nenhuma das duas é a tela de "sem acesso": as duas leem a jornada inteira.
+  const [semPapelDeAprovador, setSemPapelDeAprovador] = useState<string | null>(
+    null,
+  );
+  const [autoAprovacaoRecusada, setAutoAprovacaoRecusada] = useState<
+    string | null
+  >(null);
+  // `403` do DESPACHO: falta do papel `orcamentista`. Também não é a tela de "sem acesso" —
+  // quem só tem `aprovador` lê a jornada inteira e assina; o que ele não faz é publicar.
+  const [semPapelDeOrcamentista, setSemPapelDeOrcamentista] = useState<
+    string | null
+  >(null);
+
   // Teto da verba da rodada (ADR-0040): parâmetro da rodada, editado na mesma etapa.
   const [tetoInput, setTetoInput] = useState("");
   const [tetoLabelInput, setTetoLabelInput] = useState("");
@@ -1395,6 +1836,13 @@ export function OrcamentoApp({
       setTabelaEscolhida("");
       setTabelaPropria(false);
       setAuditoriaReprovada(null);
+      // Os desfechos da assinatura são do orçamento que estava aberto; levá-los para o
+      // próximo faria uma recusa de outra rodada aparecer sobre esta.
+      setConfirmandoAprovacao(false);
+      setViolacoesDoDespacho(null);
+      setSemPapelDeAprovador(null);
+      setSemPapelDeOrcamentista(null);
+      setAutoAprovacaoRecusada(null);
       setRevisionConflict(false);
       setAlertMessage(null);
       onOpenEstimate?.(next);
@@ -1770,11 +2218,133 @@ export function OrcamentoApp({
       setEstimate(response);
       setAlertMessage(null);
       setRevisionConflict(false);
-      setToast("Orçamento montado e planilha publicada depois da auditoria.");
+      setToast(
+        "Orçamento montado. Nenhuma planilha foi publicada: despachar é ato próprio, na etapa “Aprovação e despacho”.",
+      );
       await carregarEstado();
     } catch (error) {
       registrarRecusa(error);
     } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /** Limpa os desfechos da etapa antes de um ato novo; nenhum deles expira sozinho. */
+  const limparDesfechosDaAprovacao = () => {
+    setViolacoesDoDespacho(null);
+    setSemPapelDeAprovador(null);
+    setSemPapelDeOrcamentista(null);
+    setAutoAprovacaoRecusada(null);
+    setAuditoriaReprovada(null);
+  };
+
+  /**
+   * Assina nominalmente o orçamento da cabeça (F-035, ADR-0046).
+   *
+   * A tela não decide autorização nenhuma aqui: ela pede, e o servidor responde. Os dois
+   * `403` possíveis têm desfecho próprio porque não significam a mesma coisa — falta do
+   * papel `aprovador` é uma coisa, e "quem montou não assina" é outra, que o papel não
+   * resolve. Nenhum dos dois é a tela de "sem acesso": quem chega aqui já leu o orçamento.
+   *
+   * O corpo é só `base_version`. A identidade não viaja, e é por isso que não existe campo
+   * de nome no ato.
+   */
+  const aprovarOrcamento = async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    limparDesfechosDaAprovacao();
+    try {
+      const response = await postApproveEstimate(token, orcamento, version);
+      aplicarVersao(response.version);
+      setEstimate(response);
+      setConfirmandoAprovacao(false);
+      setRevisionConflict(false);
+      setToast(MENSAGEM_ORCAMENTO_APROVADO);
+      await carregarEstado();
+    } catch (error) {
+      // As duas recusas de papel voltam ao PRIMEIRO passo do ato: repetir "Confirmar"
+      // colheria a mesma recusa, e deixar o âmbar aberto sugeriria que o ato ainda está
+      // ao alcance de mais um clique.
+      if (isSelfApprovalForbidden(error)) {
+        setConfirmandoAprovacao(false);
+        // `""` é "recusado, sem detalhe legível": `null` aqui significaria "não houve
+        // recusa", e a tela esconderia a única coisa que ela precisa dizer.
+        setAutoAprovacaoRecusada(error instanceof Error ? error.message : "");
+        return;
+      }
+      if (isForbidden(error)) {
+        setConfirmandoAprovacao(false);
+        setSemPapelDeAprovador(error instanceof Error ? error.message : "");
+        return;
+      }
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Despacha a planilha. A tela não decide nada aqui: ela pede, e os dois portões do
+   * servidor — o do domínio e o da auditoria de round-trip — decidem se existe arquivo.
+   *
+   * Cada desfecho tem forma própria porque eles não significam a mesma coisa: violação do
+   * portão é lista de motivos abertos (o servidor recusa por todos de uma vez), auditoria
+   * reprovada é tela com "nada foi publicado" por extenso, e `409` é o banner da rodada.
+   *
+   * A releitura depois do sucesso não é zelo: a URL assinada da planilha **só** existe na
+   * leitura, e sem ela a tela teria arquivo publicado e nenhum caminho para baixá-lo.
+   */
+  const despacharPlanilha = async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null) {
+      return;
+    }
+    setSubmitting(true);
+    setDespachando(true);
+    setAlertMessage(null);
+    limparDesfechosDaAprovacao();
+    try {
+      const response = await postExportEstimate(token, orcamento, version);
+      aplicarVersao(response.version);
+      setEstimate(
+        (await leituraObservacional(() => getEstimate(token, orcamento))) ??
+          response,
+      );
+      setRevisionConflict(false);
+      setToast(MENSAGEM_ORCAMENTO_DESPACHADO);
+      await carregarEstado();
+    } catch (error) {
+      // `403` aqui é falta do papel do DESPACHO, não falta de acesso à rodada: quem chegou
+      // até este botão leu a jornada inteira, e a tela de "sem acesso" apagaria a
+      // assinatura da vista para dizer o contrário.
+      if (isForbidden(error)) {
+        setSemPapelDeOrcamentista(error instanceof Error ? error.message : "");
+        return;
+      }
+      const violacoes = exportBlockedViolations(error);
+      if (violacoes.length > 0) {
+        setViolacoesDoDespacho(violacoes);
+        return;
+      }
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else if (recusa.auditoria) {
+        setAuditoriaReprovada(workbookAuditFindings(error));
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setDespachando(false);
       setSubmitting(false);
     }
   };
@@ -1896,6 +2466,22 @@ export function OrcamentoApp({
   // sem teto — nada a acrescentar à prévia nem à barra de etapas.
   const tetoDerivado = useMemo(() => derivarTeto(state), [state]);
   const tetoErroAbertura = tetoAmountError(form.tetoAmount);
+
+  // Identidade da sessão como a tela a MOSTRA no ato nominal. Ela não é campo e não entra
+  // no corpo da mutação: quem carimba é o servidor, lendo o subject do token.
+  const identidadeDaSessao =
+    session === null
+      ? ""
+      : (session.profile.preferred_username ?? session.profile.sub);
+  // O bloco de aprovação vem do documento já lido e, na falta dele, do estado da rodada: as
+  // duas leituras são do servidor e derivam a caducidade do mesmo par de digests. `null` é
+  // "não há orçamento legível na cabeça", que a etapa trata como "nada a assinar".
+  const aprovacao: ApprovalState | null =
+    estimate?.approval ?? state?.approval ?? null;
+  // `approved` e `stale` juntos, sempre: na aprovação caduca os dois valem, e ler só o
+  // primeiro ofereceria um despacho que a rota já sabe que vai recusar.
+  const aprovacaoValida =
+    aprovacao !== null && aprovacao.approved && !aprovacao.stale;
 
   // Sem sessão a jornada não chama nada e não inventa orçamento: quem tem a tela de
   // entrar é a casca (`App.tsx`), e as rotas do orçamento são autenticadas e por tenant.
@@ -3121,27 +3707,225 @@ export function OrcamentoApp({
             </section>
           </div>
         ) : (
-          <section className="painel" aria-label="Planilha do orçamento">
-            <div className="painel-cabecalho">
-              <h2>Planilha</h2>
-            </div>
-            {estimate === null ? (
-              <p className="dica">
-                Nenhum orçamento montado; não há planilha publicada nesta rodada.
-              </p>
-            ) : (
-              <>
-                {estimate.workbook_present ? (
-                  <p className="banner-sucesso" role="status">
-                    Planilha publicada: a auditoria reabriu o arquivo e o reconferiu antes
-                    de qualquer publicação.
+          <div className="coluna-empilhada">
+            {/*
+              A etapa "Aprovação e despacho" SUBSTITUIU "Planilha" (F-035, ADR-0046 e a
+              questão 1 do pacote aprovado): com a montagem deixando de publicar, a planilha
+              passa a nascer do despacho, e uma etapa sobre um arquivo que ainda não existe
+              não teria o que mostrar.
+            */}
+            <section
+              className="painel"
+              aria-label="Aprovação e despacho do orçamento"
+            >
+              <span className="eyebrow eyebrow-claro">
+                APROVAÇÃO E DESPACHO
+              </span>
+              {estimate === null || aprovacao === null ? (
+                <>
+                  <h2>Nada a aprovar nesta rodada</h2>
+                  <p className="dica">
+                    O orçamento desta rodada ainda não foi montado ou não foi
+                    lido. Monte-o na etapa “BDI e montagem”: aprovar decide
+                    sobre o orçamento que existe, e não há o que decidir antes
+                    dele.
                   </p>
-                ) : (
-                  <p className="banner-erro" role="alert">
-                    O orçamento está montado, mas nenhuma planilha aprovada pela auditoria
-                    foi publicada nesta rodada.
+                </>
+              ) : (
+                <>
+                  <h2>
+                    {despachando
+                      ? "Publicando a planilha"
+                      : tituloDaAprovacao(
+                          aprovacao.approved,
+                          aprovacao.stale,
+                          estimate.workbook_present,
+                        )}
+                  </h2>
+                  {/*
+                    A frase é do estado 1 do desenho — montado e ainda não assinado. Na
+                    caducidade ela não entra: ali o assunto é o que MUDOU depois da
+                    assinatura, e repetir "foi montado e conferido" empurraria o registro
+                    caduco para baixo com uma frase que já não é a notícia.
+                  */}
+                  {aprovacao.approved || aprovacao.stale ? null : (
+                    <p>
+                      O orçamento foi montado e conferido pelo domínio. A
+                      planilha ainda não foi publicada: publicar é ato próprio,
+                      e depende da assinatura.
+                    </p>
+                  )}
+                  {/* A palavra é a marca do estado; a veste é redundância dela. */}
+                  <SeloDespacho despachado={estimate.workbook_present} />
+                  <p
+                    className="dica"
+                    title={aprovacao.current_digest ?? undefined}
+                  >
+                    Total {formatMoneyText(estimate.total_amount)} · BDI{" "}
+                    {formatPercentText(estimate.bdi_percent)} · conteúdo{" "}
+                    <span className="mono">
+                      sha256 {shortDigest(aprovacao.current_digest)}
+                    </span>
                   </p>
-                )}
+
+                  {aprovacao.stale ? (
+                    <p className="banner-erro" role="alert">
+                      {MENSAGEM_APROVACAO_CADUCA}
+                    </p>
+                  ) : null}
+
+                  <RegistroDaAprovacao approval={aprovacao} />
+
+                  {autoAprovacaoRecusada === null ? null : (
+                    <PainelAutoAprovacaoRecusada
+                      detalhe={autoAprovacaoRecusada}
+                    />
+                  )}
+
+                  {semPapelDeAprovador === null ? null : (
+                    <PainelSemPapelDeAprovador detalhe={semPapelDeAprovador} />
+                  )}
+
+                  {semPapelDeOrcamentista === null ? null : (
+                    <PainelSemPapelDeOrcamentista
+                      detalhe={semPapelDeOrcamentista}
+                    />
+                  )}
+
+                  {violacoesDoDespacho === null ? null : (
+                    <section
+                      className="violacoes"
+                      aria-label="Motivos abertos do portão de despacho"
+                    >
+                      <h3>O portão de despacho recusou — nada foi publicado</h3>
+                      {violacoesDoDespacho.map((code) => (
+                        <div key={code}>
+                          <p className="banner-erro" role="alert">
+                            {errorMessage(code)}
+                          </p>
+                          <p className="digest">{code}</p>
+                        </div>
+                      ))}
+                    </section>
+                  )}
+
+                  {aprovacaoValida ? null : (
+                    <AtoDeAprovacao
+                      titulo={`Aprovar o orçamento${
+                        state === null ? "" : ` de ${state.worksite_name}`
+                      }`}
+                      identidade={identidadeDaSessao}
+                      contentDigest={aprovacao.current_digest}
+                      confirmando={confirmandoAprovacao}
+                      gravando={submitting}
+                      onAprovar={() => setConfirmandoAprovacao(true)}
+                      onConfirmar={() => void aprovarOrcamento()}
+                      onCancelar={() => setConfirmandoAprovacao(false)}
+                    />
+                  )}
+
+                  {aprovacaoValida ? (
+                    <section
+                      className="despacho"
+                      aria-label="Despacho da planilha"
+                    >
+                      <h3>Despacho da planilha</h3>
+                      {estimate.workbook_present ? (
+                        <>
+                          <div className="acoes-linha">
+                            {estimate.workbook_url ? (
+                              <a
+                                className="botao-primario"
+                                href={estimate.workbook_url}
+                                download="orcamento.xlsx"
+                              >
+                                Baixar planilha
+                              </a>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="botao-secundario"
+                              onClick={() => void despacharPlanilha()}
+                              disabled={submitting || version === null}
+                            >
+                              {despachando
+                                ? "Despachando…"
+                                : "Despachar de novo"}
+                            </button>
+                          </div>
+                          <p
+                            className="digest"
+                            title={estimate.workbook_sha256 ?? undefined}
+                          >
+                            planilha · sha256{" "}
+                            {shortDigest(estimate.workbook_sha256)}
+                          </p>
+                          {/* O hint da tela 9 é este, e só este: o que o digest no
+                              endereço do arquivo garante. Os dois avisos de ANTES do
+                              clique não se repetem depois dele. */}
+                          <p className="dica">
+                            {AVISO_PLANILHA_ENDERECADA_PELO_DIGEST}
+                          </p>
+                          {estimate.workbook_url ? null : (
+                            <p className="dica">
+                              O link de download não veio nesta leitura;
+                              recarregue o estado atual para pedir uma URL
+                              assinada nova.
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <p>Nenhuma planilha publicada nesta rodada.</p>
+                          <div className="acoes-linha">
+                            <button
+                              type="button"
+                              className="botao-primario"
+                              onClick={() => void despacharPlanilha()}
+                              disabled={submitting || version === null}
+                            >
+                              {despachando
+                                ? "Despachando…"
+                                : "Despachar: publicar a planilha"}
+                            </button>
+                          </div>
+                        </>
+                      )}
+                      {despachando ? (
+                        <ProgressoDoDespacho estado="em-voo" />
+                      ) : null}
+                      {estimate.workbook_present ? null : (
+                        <>
+                          <p className="dica">
+                            {AVISO_ASSINAR_NAO_E_DESPACHAR}
+                          </p>
+                          <p className="dica">{AVISO_DESPACHO_FAIL_CLOSED}</p>
+                        </>
+                      )}
+                    </section>
+                  ) : (
+                    <p className="dica">
+                      Despachar é o passo depois de aprovar: sem aprovação
+                      nominal válida o botão de publicar a planilha não aparece
+                      aqui, e a rota recusaria de qualquer forma. A defesa é do
+                      servidor; esta tela só a espelha.
+                    </p>
+                  )}
+                </>
+              )}
+            </section>
+
+            {/*
+              O desenho aprovado não mostra a tabela, porque ele desenha o ATO. Ela fica: é
+              o único lugar da jornada onde as linhas precificadas aparecem, e assinar sem
+              poder ler o que se assina seria carimbo. Ela vem DEPOIS do ato, como conteúdo
+              da assinatura e não como o assunto da etapa.
+            */}
+            {estimate === null ? null : (
+              <section className="painel" aria-label="Linhas do orçamento">
+                <div className="painel-cabecalho">
+                  <h2>Linhas do orçamento</h2>
+                </div>
                 <table className="tabela">
                   <caption>
                     Linhas do orçamento como o servidor as recomputou; a tela não soma.
@@ -3211,23 +3995,11 @@ export function OrcamentoApp({
                 )}
 
                 <p className="digest" title={estimate.estimate_sha256}>
-                  orçamento {shortDigest(estimate.estimate_sha256)} · planilha{" "}
-                  {shortDigest(estimate.workbook_sha256)}
+                  documento gravado {shortDigest(estimate.estimate_sha256)}
                 </p>
-                {estimate.workbook_url ? (
-                  <div className="acoes-linha">
-                    <a
-                      className="botao-primario"
-                      href={estimate.workbook_url}
-                      download="orcamento.xlsx"
-                    >
-                      Baixar planilha
-                    </a>
-                  </div>
-                ) : null}
-              </>
+              </section>
             )}
-          </section>
+          </div>
         )}
       </main>
     </div>

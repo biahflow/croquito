@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   assignmentStatusLabel,
   AVISO_ACERVO_FILTRADO,
+  DESCRICAO_MONTAGEM,
   errorMessage,
   opcaoDoAcervo,
   origensAceitasNaCascata,
   priceOriginLabel,
   priceOriginSeloClass,
   procedenciaDaFonte,
+  tituloDaAprovacao,
 } from "./labels";
 
 describe("priceOriginLabel", () => {
@@ -204,5 +206,44 @@ describe("recusas do acervo", () => {
 
     expect(frase).toContain("nunca as duas");
     expect(frase).toContain("nada foi instalado");
+  });
+});
+
+/**
+ * O título da etapa lê `aprovado` e `caduca` JUNTOS, com a caducidade PRIMEIRO (F-035,
+ * ADR-0046). É o mesmo par que o resumo da etapa lê, e pela mesma razão: na aprovação
+ * caduca os dois valem ao mesmo tempo, e ler só o primeiro anunciaria "Orçamento aprovado"
+ * sobre um orçamento que o despacho já vai recusar.
+ */
+describe("tituloDaAprovacao", () => {
+  it("a caducidade vence a aprovação, mesmo com a planilha já despachada", () => {
+    expect(tituloDaAprovacao(true, true, false)).toBe(
+      "O orçamento mudou depois de aprovado",
+    );
+    expect(tituloDaAprovacao(true, true, true)).toBe(
+      "O orçamento mudou depois de aprovado",
+    );
+  });
+
+  it("sem assinatura, o título diz o que falta", () => {
+    expect(tituloDaAprovacao(false, false, false)).toBe(
+      "Orçamento montado, aguardando aprovação nominal",
+    );
+  });
+
+  /** Assinar e despachar são atos diferentes, e o título não os funde. */
+  it("aprovado e despachado são estados distintos no título", () => {
+    expect(tituloDaAprovacao(true, false, false)).toBe("Orçamento aprovado");
+    expect(tituloDaAprovacao(true, false, true)).toBe(
+      "Orçamento aprovado e despachado",
+    );
+  });
+});
+
+/** A montagem deixou de publicar (ADR-0046, decisão 2), e a copy não pode prometer arquivo. */
+describe("copy da montagem depois da quebra declarada", () => {
+  it("não promete planilha, e aponta a etapa que publica", () => {
+    expect(DESCRICAO_MONTAGEM).toContain("não publica planilha nenhuma");
+    expect(DESCRICAO_MONTAGEM).toContain("Aprovação e despacho");
   });
 });

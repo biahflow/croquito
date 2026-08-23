@@ -14,8 +14,10 @@ import {
   installReferenceCatalog,
   listEstimates,
   listReferenceCatalogs,
+  postApproveEstimate,
   postBuildEstimate,
   postCodeDecision,
+  postExportEstimate,
   postRegime,
   postSuggestionsRecompute,
   postTakeoffDecision,
@@ -339,6 +341,84 @@ describe("BDI da montagem", () => {
     );
 
     expect(chamadas).toHaveLength(0);
+  });
+});
+
+/**
+ * Aprovação nominal e despacho (F-035, ADR-0046): dois atos, duas rotas, dois papéis.
+ *
+ * O oráculo aqui é o que SAIU no `fetch`: a rota certa, a chave de idempotência e um corpo
+ * que carrega SÓ a guarda de concorrência. A identidade não viaja — e é justamente por não
+ * viajar que o ato é nominal de verdade, com o nome vindo do token.
+ */
+describe("aprovação e despacho do orçamento", () => {
+  it("aprovar cita a rota de assinatura e manda só base_version", async () => {
+    await postApproveEstimate(TOKEN, ROUND, 12);
+
+    expect(chamadas).toHaveLength(1);
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/estimate-rounds/${ROUND}/estimate/approve`,
+    );
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(headersDaChamada()).toHaveProperty("Idempotency-Key");
+    expect(corpoDaChamada()).toEqual({ base_version: 12 });
+  });
+
+  it("despachar cita a rota de exportação e manda só base_version", async () => {
+    await postExportEstimate(TOKEN, ROUND, 13);
+
+    expect(chamadas).toHaveLength(1);
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/estimate-rounds/${ROUND}/estimate/export`,
+    );
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(headersDaChamada()).toHaveProperty("Idempotency-Key");
+    expect(corpoDaChamada()).toEqual({ base_version: 13 });
+  });
+
+  /**
+   * O servidor recusa com `422` qualquer corpo que traga identidade. A tela não depende
+   * dessa recusa: o corpo não tem por onde carregá-la, e é isso que este teste fixa.
+   */
+  it("nenhum campo de identidade sai no corpo dos dois atos", async () => {
+    await postApproveEstimate(TOKEN, ROUND, 12);
+    await postExportEstimate(TOKEN, ROUND, 13);
+
+    for (const indice of [0, 1]) {
+      const corpo = corpoDaChamada(indice);
+      expect(Object.keys(corpo)).toEqual(["base_version"]);
+      for (const campo of [
+        "approver_id",
+        "approver_role",
+        "decided_at",
+        "decision_id",
+        "note",
+      ]) {
+        expect(corpo).not.toHaveProperty(campo);
+      }
+    }
+  });
+
+  /** Cada chamada leva chave PRÓPRIA: aprovar de novo é ato novo, não repetição do anterior. */
+  it("aprovar de novo leva chave de idempotência nova", async () => {
+    await postApproveEstimate(TOKEN, ROUND, 12);
+    await postApproveEstimate(TOKEN, ROUND, 13);
+
+    expect(headersDaChamada(0)["Idempotency-Key"]).not.toBe(
+      headersDaChamada(1)["Idempotency-Key"],
+    );
+  });
+
+  /**
+   * A montagem deixou de publicar (ADR-0046, decisão 2): ela não pode, por engano, chamar
+   * a rota de despacho — a quebra declarada é exatamente essa separação.
+   */
+  it("montar não chama a rota de despacho", async () => {
+    await postBuildEstimate(TOKEN, ROUND, "25,00", 11);
+
+    expect(chamadas.map((call) => call.url)).toEqual([
+      `${BASE}/v1/estimate-rounds/${ROUND}/estimate`,
+    ]);
   });
 });
 

@@ -24,6 +24,16 @@ export const FORBIDDEN_CODE = "FORBIDDEN";
 export const WORKBOOK_AUDIT_FAILED_CODE = "ESTIMATE_WORKBOOK_AUDIT_FAILED";
 
 /**
+ * Quem montou o orçamento não o assina (ADR-0046, decisão 6). É `403`, como a falta de
+ * papel, e **não** é a falta de papel: a comparação é de identidade, e acumular
+ * `orcamentista` e `aprovador` no mesmo token não contorna.
+ */
+export const SELF_APPROVAL_FORBIDDEN_CODE = "ESTIMATE_SELF_APPROVAL_FORBIDDEN";
+
+/** Portão de domínio do despacho: viaja em `details.code` do `DOMAIN_VALIDATION_FAILED`. */
+export const EXPORT_BLOCKED_CODE = "ESTIMATE_EXPORT_BLOCKED";
+
+/**
  * O orçamento avançou depois desta leitura. Não é falha: é o sinal de recarregar antes de
  * refazer o ato — outra aba, outra pessoa ou o worker mexeram na rodada.
  */
@@ -32,13 +42,28 @@ export function isRevisionConflict(error: unknown): boolean {
 }
 
 /**
+ * Recusa de auto-aprovação (ADR-0046, decisão 6). Ela precisa de teste próprio ANTES de
+ * `isForbidden`: as duas são `403`, e tratá-la como falta de autorização trocaria "quem
+ * montou não assina" por "sua conta não tem acesso a esta jornada" — a pessoa sairia
+ * procurando um papel que ela já tem.
+ */
+export function isSelfApprovalForbidden(error: unknown): boolean {
+  return error instanceof ApiError && error.code === SELF_APPROVAL_FORBIDDEN_CODE;
+}
+
+/**
  * `403` da rota. A jornada é montada pela ROTA, não pelo papel: quem chega por link
  * direto sem autorização precisa ler o motivo, e o motivo é o que o backend respondeu —
  * barrar no cliente trocaria uma frase legível por uma tela em branco.
+ *
+ * A auto-aprovação fica de fora explicitamente, e não por ordem de chamada em quem usa: ela
+ * é `403` por segregação de função, não por falta de papel, e quem a lesse como falta de
+ * autorização esconderia a jornada inteira de alguém que a enxerga.
  */
 export function isForbidden(error: unknown): boolean {
   return (
     error instanceof ApiError &&
+    !isSelfApprovalForbidden(error) &&
     (error.code === FORBIDDEN_CODE || error.status === 403)
   );
 }
@@ -67,6 +92,32 @@ export function workbookAuditFindings(error: unknown): string[] {
     return [];
   }
   return codes.filter((code): code is string => typeof code === "string");
+}
+
+/**
+ * Violações abertas do portão de domínio do despacho, na ordem em que o servidor as mandou.
+ *
+ * O portão recusa por TODAS de uma vez (`Estimate.export_errors`), e a lista inteira viaja
+ * em `details.errors` do `ESTIMATE_EXPORT_BLOCKED`. Mostrar só a primeira faria a
+ * orçamentista assinar de novo para tropeçar na seguinte.
+ *
+ * Cada violação é um código puro (`ESTIMATE_NOT_APPROVED`, `ESTIMATE_APPROVAL_REJECTED`,
+ * `APPROVAL_CONTENT_MISMATCH`), sem os dois-pontos e as partes que o portão da medição
+ * carrega: saldo, período e contrato não existem deste lado da fronteira do ADR-0027, e
+ * inventar aqui um formato composto seria descrever um detalhe que a rota não manda.
+ *
+ * Recusa que não é do portão — ou envelope sem a lista — devolve vazio, nunca uma violação
+ * inventada.
+ */
+export function exportBlockedViolations(error: unknown): string[] {
+  if (!(error instanceof ApiError) || orcamentoErrorCode(error) !== EXPORT_BLOCKED_CODE) {
+    return [];
+  }
+  const errors = error.details.errors;
+  if (!Array.isArray(errors)) {
+    return [];
+  }
+  return errors.filter((code): code is string => typeof code === "string");
 }
 
 /**

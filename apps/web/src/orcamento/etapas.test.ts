@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { CascadeEntry, EstimateState } from "./api";
+import type { ApprovalState, CascadeEntry, EstimateState } from "./api";
 import { derivarEtapas, etapaStatusLabel, type EtapaId } from "./etapas";
 
 function fonte(overrides: Partial<CascadeEntry> = {}): CascadeEntry {
@@ -163,7 +163,7 @@ describe("prancha e leitura automática da legenda", () => {
   });
 });
 
-describe("revisão, códigos, montagem e planilha", () => {
+describe("revisão, códigos, montagem e aprovação", () => {
   const base = {
     cascade: [fonte()],
     plate: { present: true, source_sha256: "c".repeat(64), page_count: 1 },
@@ -253,53 +253,163 @@ describe("revisão, códigos, montagem e planilha", () => {
     },
   });
 
-  it("com tudo decidido, a montagem abre e a planilha ainda não existe", () => {
+  it("com tudo decidido, a montagem abre e não há o que aprovar", () => {
     const jornada = derivarEtapas(prontoParaMontar);
 
     expect(jornada.etapaAtiva).toBe("montagem");
     expect(etapa(prontoParaMontar, "codigos").status).toBe("done");
     expect(etapa(prontoParaMontar, "montagem").status).toBe("available");
-    expect(etapa(prontoParaMontar, "planilha").status).toBe("blocked");
-    expect(etapa(prontoParaMontar, "planilha").blockedReason).toContain(
+    expect(etapa(prontoParaMontar, "aprovacao").status).toBe("blocked");
+    expect(etapa(prontoParaMontar, "aprovacao").blockedReason).toContain(
       "ainda não foi montado",
     );
   });
+});
 
-  /**
-   * `estimate.present` e `workbook_present` são campos DISTINTOS do estado, e a diferença
-   * entre eles é o portão: auditoria reprovada não publica planilha nenhuma.
-   */
-  it("orçamento montado sem planilha aprovada não conclui a etapa da planilha", () => {
+/**
+ * A etapa "Aprovação e despacho" SUBSTITUIU "Planilha" (F-035, ADR-0046): com a montagem
+ * deixando de publicar, a planilha nasce do despacho, e uma etapa sobre um arquivo que ainda
+ * não existe não teria o que mostrar.
+ */
+describe("aprovação e despacho", () => {
+  const base = {
+    cascade: [fonte()],
+    plate: { present: true, source_sha256: "c".repeat(64), page_count: 1 },
+    takeoff: {
+      present: true,
+      items: 4,
+      proposed: 0,
+      ambiguous: 0,
+      confirmed: 3,
+      rejected: 1,
+      pending: 0,
+      review_status: "complete" as const,
+    },
+    codes: {
+      suggestions_present: true,
+      suggestions_sha256: "d".repeat(64),
+      assignments_present: true,
+      assignments_sha256: "e".repeat(64),
+      confirmed: 3,
+      rejected: 0,
+      pending: 0,
+    },
+  };
+
+  const montado = {
+    present: true,
+    estimate_sha256: "f".repeat(64),
+    workbook_present: false,
+    workbook_sha256: null,
+  };
+
+  const despachado = {
+    present: true,
+    estimate_sha256: "f".repeat(64),
+    workbook_present: true,
+    workbook_sha256: "0".repeat(64),
+  };
+
+  function aprovacao(overrides: Partial<ApprovalState> = {}): ApprovalState {
+    return {
+      approved: true,
+      approved_by: "marina.gestora",
+      approved_at: "2026-08-22T15:41:00Z",
+      approved_digest: "9".repeat(64),
+      current_digest: "9".repeat(64),
+      stale: false,
+      ...overrides,
+    };
+  }
+
+  it("a barra tem seis etapas e “Planilha” não é uma delas", () => {
+    const titulos = derivarEtapas(
+      estado({ ...base, estimate: montado, approval: aprovacao() }),
+    ).etapas.map((item) => item.title);
+
+    expect(titulos).toHaveLength(6);
+    expect(titulos).toContain("Aprovação e despacho");
+    expect(titulos).not.toContain("Planilha");
+  });
+
+  it("montado e não assinado abre a etapa e diz que falta a assinatura", () => {
     const state = estado({
-      ...prontoParaMontar,
-      estimate: {
-        present: true,
-        estimate_sha256: "f".repeat(64),
-        workbook_present: false,
-        workbook_sha256: null,
-      },
+      ...base,
+      estimate: montado,
+      approval: aprovacao({
+        approved: false,
+        approved_by: null,
+        approved_at: null,
+        approved_digest: null,
+      }),
     });
 
     expect(etapa(state, "montagem").status).toBe("done");
-    expect(etapa(state, "planilha").status).toBe("blocked");
-    expect(etapa(state, "planilha").blockedReason).toContain(
-      "nenhuma planilha aprovada pela auditoria",
+    expect(etapa(state, "aprovacao").status).toBe("available");
+    expect(etapa(state, "aprovacao").summary).toBe(
+      "Orçamento montado, aguardando aprovação nominal.",
+    );
+    expect(derivarEtapas(state).etapaAtiva).toBe("aprovacao");
+  });
+
+  /**
+   * O caso que obriga a leitura conjunta: `approved` e `stale` valem ao mesmo tempo. Um
+   * resumo que lesse só `approved` diria "aprovado" sobre um orçamento que o despacho já vai
+   * recusar com `APPROVAL_CONTENT_MISMATCH`.
+   */
+  it("aprovação caduca é perguntada ANTES de aprovada, e não fecha a etapa", () => {
+    const state = estado({
+      ...base,
+      estimate: despachado,
+      approval: aprovacao({ current_digest: "2".repeat(64), stale: true }),
+    });
+
+    const passo = etapa(state, "aprovacao");
+    expect(passo.summary).toContain("Aprovação caduca");
+    expect(passo.summary).toContain("aprove o orçamento atual");
+    expect(passo.status).toBe("available");
+  });
+
+  it("aprovado e não despachado não conclui a etapa", () => {
+    const state = estado({ ...base, estimate: montado, approval: aprovacao() });
+
+    expect(etapa(state, "aprovacao").summary).toBe(
+      "Orçamento aprovado; a planilha ainda não foi despachada.",
+    );
+    expect(etapa(state, "aprovacao").status).toBe("available");
+  });
+
+  it("aprovado e despachado fecha a jornada na etapa nova", () => {
+    const state = estado({ ...base, estimate: despachado, approval: aprovacao() });
+
+    expect(etapa(state, "aprovacao").status).toBe("done");
+    expect(etapa(state, "aprovacao").summary).toBe(
+      "Orçamento aprovado e planilha despachada nesta rodada.",
+    );
+    expect(derivarEtapas(state).etapaAtiva).toBe("aprovacao");
+  });
+
+  /**
+   * A chave só some quando o orçamento gravado deixou de validar no domínio. Declarar a
+   * ausência é a única resposta honesta: "aguardando aprovação" afirmaria sobre uma
+   * assinatura que a tela não leu.
+   */
+  it("orçamento montado sem o bloco de aprovação declara a ausência da leitura", () => {
+    const state = estado({ ...base, estimate: montado });
+
+    expect(etapa(state, "aprovacao").status).toBe("available");
+    expect(etapa(state, "aprovacao").summary).toContain(
+      "estado da assinatura não veio nesta leitura",
     );
   });
 
-  it("com a planilha publicada, a jornada fecha na planilha", () => {
-    const state = estado({
-      ...prontoParaMontar,
-      estimate: {
-        present: true,
-        estimate_sha256: "f".repeat(64),
-        workbook_present: true,
-        workbook_sha256: "0".repeat(64),
-      },
-    });
+  it("sem orçamento montado, a etapa fica bloqueada e não inventa assinatura", () => {
+    const state = estado({ ...base });
 
-    expect(etapa(state, "planilha").status).toBe("done");
-    expect(derivarEtapas(state).etapaAtiva).toBe("planilha");
+    expect(etapa(state, "aprovacao").status).toBe("blocked");
+    expect(etapa(state, "aprovacao").summary).toBe(
+      "Nada a aprovar: o orçamento ainda não foi montado.",
+    );
   });
 });
 

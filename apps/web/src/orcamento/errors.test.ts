@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../api";
 import {
   describeError,
+  exportBlockedViolations,
   isAbortError,
   isForbidden,
+  isSelfApprovalForbidden,
   isWorkbookAuditFailure,
   orcamentoErrorCode,
   recusaDeMutacao,
@@ -41,6 +43,13 @@ describe("tradução dos códigos novos do orçamento", () => {
     ["ROUND_STAGE_NOT_READY", "conclua a etapa anterior"],
     ["ESTIMATE_WORKBOOK_AUDIT_FAILED", "nada foi publicado"],
     ["REVISION_CONFLICT", "recarregue o estado atual"],
+    // Aprovação nominal (F-035, ADR-0046).
+    ["ESTIMATE_SELF_APPROVAL_FORBIDDEN", "não pode aprová-lo"],
+    ["ESTIMATE_APPROVAL_AUTHOR_UNKNOWN", "não registra quem o montou"],
+    ["ESTIMATE_EXPORT_BLOCKED", "nada foi publicado"],
+    ["ESTIMATE_NOT_APPROVED", "aprovação nominal válida"],
+    ["ESTIMATE_APPROVAL_REJECTED", "é de recusa"],
+    ["APPROVAL_CONTENT_MISMATCH", "mudou depois da aprovação"],
   ];
 
   for (const [code, trecho] of casos) {
@@ -71,8 +80,9 @@ describe("tradução dos códigos novos do orçamento", () => {
 });
 
 /**
- * O `403` da jornada não nomeia papel: qual papel autoriza o orçamento é decisão humana
- * ainda aberta (Design Approval Package), e a frase não pode fingir que ela foi tomada.
+ * O `403` GENÉRICO não nomeia papel, e desde a F-035 o motivo mudou: já não é decisão em
+ * aberto (ADR-0046 fixou os papéis), é que este código chega de qualquer rota da jornada —
+ * nomear um papel aqui acertaria numa rota e mentiria nas outras.
  */
 describe("403 sem nome de papel", () => {
   it("é reconhecido pelo código e pelo status", () => {
@@ -88,6 +98,65 @@ describe("403 sem nome de papel", () => {
     expect(frase.toLowerCase()).not.toContain("orcamentista");
     expect(frase.toLowerCase()).not.toContain("platform_operator");
     expect(frase.toLowerCase()).not.toContain("revisor");
+  });
+});
+
+/**
+ * A auto-aprovação é `403` e **não** é falta de autorização (ADR-0046, decisão 6). Tratá-la
+ * como falta de papel esconderia a jornada inteira de quem a enxerga, e mandaria a pessoa
+ * procurar um papel que ela já tem — a comparação é de identidade contra quem montou.
+ */
+describe("auto-aprovação recusada", () => {
+  const erro = apiError(
+    "ESTIMATE_SELF_APPROVAL_FORBIDDEN",
+    403,
+    "quem montou o orçamento não pode aprová-lo; a assinatura é de outra pessoa",
+  );
+
+  it("tem classificação própria e NÃO é lida como falta de acesso", () => {
+    expect(isSelfApprovalForbidden(erro)).toBe(true);
+    expect(isForbidden(erro)).toBe(false);
+    // Um `403` qualquer continua sendo falta de acesso; só este código sai da regra.
+    expect(isSelfApprovalForbidden(apiError("FORBIDDEN", 403))).toBe(false);
+  });
+
+  it("a frase explica a regra e diz que acumular papéis não contorna", () => {
+    const frase = describeError(erro);
+
+    expect(frase).toContain("Acumular os dois papéis");
+    expect(frase).toContain("identidade");
+    expect(frase).toContain("Nada foi gravado");
+  });
+});
+
+/**
+ * O portão de despacho recusa por TODAS as violações de uma vez, e a lista inteira viaja em
+ * `details.errors`. Mostrar só a primeira faria a orçamentista assinar de novo para
+ * tropeçar na seguinte.
+ */
+describe("portão de despacho recusado", () => {
+  const erro = apiError("DOMAIN_VALIDATION_FAILED", 422, "recusado", {
+    code: "ESTIMATE_EXPORT_BLOCKED",
+    errors: ["ESTIMATE_NOT_APPROVED", "APPROVAL_CONTENT_MISMATCH"],
+  });
+
+  it("devolve todas as violações, na ordem em que o servidor as mandou", () => {
+    expect(exportBlockedViolations(erro)).toEqual([
+      "ESTIMATE_NOT_APPROVED",
+      "APPROVAL_CONTENT_MISMATCH",
+    ]);
+  });
+
+  it("recusa que não é do portão, ou envelope sem lista, não fabrica violação", () => {
+    expect(
+      exportBlockedViolations(
+        apiError("DOMAIN_VALIDATION_FAILED", 422, null, {
+          code: "ESTIMATE_EXPORT_BLOCKED",
+        }),
+      ),
+    ).toEqual([]);
+    expect(exportBlockedViolations(apiError("REVISION_CONFLICT", 409))).toEqual([]);
+    expect(exportBlockedViolations(new Error("rede caiu"))).toEqual([]);
   });
 });
 

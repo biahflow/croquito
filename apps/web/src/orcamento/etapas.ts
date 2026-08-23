@@ -1,6 +1,11 @@
 /**
  * Jornada do orçamento-base: cascata → prancha → revisão do takeoff → códigos → BDI e
- * montagem → planilha.
+ * montagem → aprovação e despacho.
+ *
+ * A última etapa SUBSTITUIU "Planilha" na F-035 (ADR-0046, e a questão 1 do pacote de
+ * design aprovado em 2026-08-22), não foi acrescentada depois dela: com a montagem
+ * deixando de publicar, a planilha passa a nascer do despacho, e uma etapa sobre um arquivo
+ * que ainda não existe não teria o que mostrar.
  *
  * A máquina de estados real é da API, e é ela quem recusa: cascata vazia e etapa fora de
  * ordem (`ROUND_STAGE_NOT_READY`), segunda prancha (`ROUND_PLATE_ALREADY_PRESENT`),
@@ -23,6 +28,7 @@
 
 import { extractionFailureMessage } from "./labels";
 import type {
+  ApprovalState,
   EstimateState,
   EstimateStateExtraction,
   EstimateStatePlate,
@@ -34,7 +40,7 @@ export type EtapaId =
   | "revisao"
   | "codigos"
   | "montagem"
-  | "planilha";
+  | "aprovacao";
 
 export type EtapaStatus = "blocked" | "available" | "done";
 
@@ -60,7 +66,7 @@ const ETAPA_ORDER: EtapaId[] = [
   "revisao",
   "codigos",
   "montagem",
-  "planilha",
+  "aprovacao",
 ];
 
 const ETAPA_TITLES: Record<EtapaId, string> = {
@@ -69,7 +75,7 @@ const ETAPA_TITLES: Record<EtapaId, string> = {
   revisao: "Revisão do takeoff",
   codigos: "Códigos",
   montagem: "BDI e montagem",
-  planilha: "Planilha",
+  aprovacao: "Aprovação e despacho",
 };
 
 const STATUS_LABELS: Record<EtapaStatus, string> = {
@@ -128,6 +134,43 @@ function pranchaSummarySemTakeoff(
         ? "Prancha enviada; a leitura automática ainda não foi disparada."
         : "Nenhuma prancha enviada neste orçamento.";
   }
+}
+
+/** Resumo curto da etapa nova enquanto ainda não há o que assinar. */
+const SEM_ORCAMENTO_A_APROVAR = "Nada a aprovar: o orçamento ainda não foi montado.";
+
+/**
+ * Orçamento montado cujo bloco de aprovação não veio na leitura.
+ *
+ * O bloco só some quando o documento gravado deixou de validar no domínio
+ * (`approval_state` devolve dicionário vazio nesse caso). Declarar a ausência é a única
+ * resposta honesta: dizer "aguardando aprovação" afirmaria sobre uma assinatura que a tela
+ * não leu, e dizer "aprovado" seria pior ainda.
+ */
+const SEM_LEITURA_DA_APROVACAO =
+  "Orçamento montado, e o estado da assinatura não veio nesta leitura; recarregue o estado atual.";
+
+/**
+ * Resumo da etapa "Aprovação e despacho" a partir do bloco de aprovação do servidor.
+ *
+ * `approved` e `stale` são lidos JUNTOS: na aprovação caduca os dois valem ao mesmo tempo,
+ * e um resumo que lesse só `approved` diria "aprovado" sobre um orçamento que o despacho já
+ * vai recusar. A ordem das perguntas é a do desenho aprovado — caduca primeiro, porque ela
+ * é o estado que exige ato humano.
+ */
+function resumoDaAprovacao(
+  approval: ApprovalState,
+  workbookPresent: boolean,
+): string {
+  if (approval.stale) {
+    return "Aprovação caduca: o orçamento mudou depois de aprovado; aprove o orçamento atual.";
+  }
+  if (!approval.approved) {
+    return "Orçamento montado, aguardando aprovação nominal.";
+  }
+  return workbookPresent
+    ? "Orçamento aprovado e planilha despachada nesta rodada."
+    : "Orçamento aprovado; a planilha ainda não foi despachada.";
 }
 
 /** Motivo do bloqueio das etapas seguintes enquanto não há takeoff. */
@@ -201,10 +244,10 @@ export function derivarEtapas(state: EstimateState | null): Jornada {
         blockedReason: motivo,
       },
       {
-        id: "planilha",
-        title: ETAPA_TITLES.planilha,
+        id: "aprovacao",
+        title: ETAPA_TITLES.aprovacao,
         status: "blocked",
-        summary: "Planilha ainda não publicada.",
+        summary: SEM_ORCAMENTO_A_APROVAR,
         blockedReason: motivo,
       },
     ];
@@ -289,21 +332,37 @@ export function derivarEtapas(state: EstimateState | null): Jornada {
     montagem.status = "done";
   }
 
-  const planilha: Etapa = {
-    id: "planilha",
-    title: ETAPA_TITLES.planilha,
-    status: state.estimate.workbook_present ? "done" : "blocked",
-    summary: state.estimate.workbook_present
-      ? "Planilha publicada; a auditoria reabriu o arquivo e o aprovou."
-      : "Planilha ainda não publicada.",
+  // Aprovação e despacho: a etapa só existe sobre orçamento montado, e só fica "concluída"
+  // quando há planilha despachada — assinar é metade do fechamento, e a jornada não declara
+  // pronto o que ainda não entregou o arquivo.
+  const aprovacao: Etapa = {
+    id: "aprovacao",
+    title: ETAPA_TITLES.aprovacao,
+    status: "available",
+    summary: SEM_ORCAMENTO_A_APROVAR,
   };
-  if (!state.estimate.workbook_present) {
-    planilha.blockedReason = state.estimate.present
-      ? "o orçamento está montado, mas nenhuma planilha aprovada pela auditoria foi publicada"
-      : "o orçamento ainda não foi montado na etapa BDI e montagem";
+  if (montagem.status === "blocked" || !state.estimate.present) {
+    aprovacao.status = "blocked";
+    aprovacao.blockedReason =
+      montagem.blockedReason ??
+      "o orçamento ainda não foi montado na etapa BDI e montagem";
+  } else {
+    const approval = state.approval;
+    aprovacao.summary =
+      approval === undefined
+        ? SEM_LEITURA_DA_APROVACAO
+        : resumoDaAprovacao(approval, state.estimate.workbook_present);
+    if (
+      approval !== undefined &&
+      approval.approved &&
+      !approval.stale &&
+      state.estimate.workbook_present
+    ) {
+      aprovacao.status = "done";
+    }
   }
 
-  const etapas = [cascata, prancha, revisao, codigos, montagem, planilha];
+  const etapas = [cascata, prancha, revisao, codigos, montagem, aprovacao];
   // A ativa é a primeira em aberto. Com tudo concluído (ou o que resta bloqueado), fica
   // na última alcançável em vez de abrir uma etapa bloqueada.
   const aberta = etapas.find((etapa) => etapa.status === "available");

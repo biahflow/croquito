@@ -1017,5 +1017,209 @@ p {
   font-weight: 700;
 }
 
+/*
+ * Aprovação nominal e despacho (F-035, ADR-0046).
+ *
+ * As peças abaixo são cópia deliberada de `medicao/styles.css`, aprovada no pacote da
+ * F-028 e citada verbatim no pacote da F-035 (decisão 1): duas assinaturas no mesmo produto
+ * têm de LER como assinatura, e inventar uma forma nova aqui faria a mesma responsabilidade
+ * parecer duas coisas diferentes. É cópia e não import porque as duas jornadas só
+ * compartilham o transporte — cada uma tem folha própria, como `formatarInstante` já é
+ * cópia e não import.
+ */
+
+.violacoes,
+.despacho {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/* O ATO. Aprovação nominal não pode ter o peso visual de um botão de rodapé: ela tem bloco
+   próprio, borda de duas linhas no verde escuro e a consequência dita ANTES do botão. */
+.ato {
+  margin-top: 20px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 2px solid var(--accent-text);
+  border-radius: 8px;
+}
+
+.ato-etiqueta {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.ato h3 {
+  margin: 10px 0 4px;
+  font-size: 1.15rem;
+}
+
+.ato-consequencia {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.ato-consequencia li {
+  max-width: 84ch;
+  margin-bottom: 6px;
+  line-height: 1.45;
+}
+
+/* Identidade de quem aprova: mostrada, nunca digitável. */
+.ato-identidade {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--accent-text);
+  border-radius: 6px;
+}
+
+.ato-identidade b {
+  display: block;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.ato-identidade .mono {
+  font-size: 1rem;
+}
+
+/* Segundo ato explícito: o clique que confirma fica sobre o âmbar de atenção, com a
+   consequência repetida — não é um "tem certeza?" vazio. */
+.ato-confirmacao {
+  margin-top: 14px;
+  padding: 12px 14px;
+  color: #3c2708;
+  background: #fbe6c2;
+  border-left: 5px solid #b47512;
+  border-radius: 6px;
+}
+
+/* Registro da aprovação: quem, quando e sobre qual conteúdo. */
+.registro {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-left: 5px solid var(--accent-text);
+  border-radius: 6px;
+}
+
+.registro dl {
+  display: grid;
+  grid-template-columns: 13rem 1fr;
+  gap: 6px 16px;
+  margin: 10px 0 0;
+}
+
+.registro dt {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.registro dd {
+  margin: 0;
+}
+
+/* Aprovação que caducou: tracejado âmbar E a etiqueta escrita — quem não distingue a cor
+   lê a palavra. */
+.registro-caduca {
+  background: var(--surface);
+  border: 2px dashed #b47512;
+}
+
+.registro-etiqueta {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  background: var(--surface);
+  border: 1px solid var(--accent-text);
+  border-radius: 999px;
+}
+
+.registro-caduca .registro-etiqueta {
+  color: #6b3a06;
+  background: #fbe6c2;
+  border-color: #b47512;
+}
+
+/* Os dois digests lado a lado: o vínculo que fez a aprovação caducar, visível. */
+.digest-par {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.digest-par > div {
+  padding: 10px 12px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.digest-par b {
+  display: block;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+/* Despacho em curso: passo a passo escrito, sem animação. Três dos quatro passos acontecem
+   antes de existir arquivo publicado, e barra esconderia isso. */
+.progresso {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.progresso li {
+  margin-bottom: 6px;
+  max-width: 84ch;
+}
+
+.passo-estado {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+/*
+ * Selo do estado do despacho — o ÚNICO valor visual novo do pacote da F-035, e ele não
+ * traz cor nova: reusa `--surface-sunken` e `--ink-secondary`. É selo de estado da RODADA,
+ * e por isso lê como o selo do regime (F-033) e não como os selos de origem de preço, que
+ * são preenchidos.
+ */
+.selo-despacho {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 5px 9px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--ink-secondary);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
 /* Fecha o `.jornada-orcamento` aberto no topo do arquivo. */
 }

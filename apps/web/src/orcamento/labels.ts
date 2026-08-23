@@ -307,10 +307,78 @@ export const DESCRICAO_CALCULO_SHORTLIST =
   "Nenhum provider é chamado: a shortlist é calculada só pelo braço lexical, sobre a " +
   "cascata inteira e na ordem instalada.";
 
-/** O que a montagem faz, dito antes do clique que grava planilha no servidor. */
+/**
+ * O que a montagem faz, dito antes do clique. Desde a F-035 ela só MONTA: a planilha
+ * deixou de nascer aqui, e prometê-la neste texto seria descrever a rota anterior.
+ */
 export const DESCRICAO_MONTAGEM =
-  "Montar grava o orçamento na rodada e publica a planilha — depois de a auditoria " +
-  "reabrir o arquivo e reconferi-lo. Auditoria reprovada não publica nada.";
+  "Montar grava o orçamento na rodada e não publica planilha nenhuma. Publicar é ato " +
+  "próprio, na etapa “Aprovação e despacho”, e depende da assinatura.";
+
+/* Aprovação nominal e despacho (F-035, ADR-0046) ---------------------------- */
+
+/**
+ * A aprovação caduca dita por extenso (`APPROVAL_CONTENT_MISMATCH` derivado na leitura).
+ *
+ * Ela não é falha do ato: alguém assinou, e o orçamento mudou depois. A frase diz as duas
+ * coisas que a orçamentista precisa saber — nada foi despachado, e a única saída é aprovar
+ * de novo. Não existe "despachar assim mesmo", e o texto não pode sugerir que exista.
+ */
+export const MENSAGEM_APROVACAO_CADUCA =
+  "O orçamento mudou depois de aprovado, e a aprovação não vale mais. Nada foi despachado, " +
+  "e nada será despachado até o orçamento atual ser aprovado de novo.";
+
+/** Aprovação registrada e válida: o que ela destrava, sem prometer arquivo nenhum. */
+export const MENSAGEM_ORCAMENTO_APROVADO =
+  "Orçamento aprovado. O despacho da planilha está liberado nesta rodada.";
+
+/** Despacho concluído: o que passou a existir, e o que continua sendo do servidor. */
+export const MENSAGEM_ORCAMENTO_DESPACHADO =
+  "Planilha despachada: a auditoria reabriu o arquivo e o reconferiu antes de publicar.";
+
+/**
+ * O que o clique de despachar faz, dito antes do clique. Três dos quatro passos acontecem
+ * antes de existir arquivo publicado, e é por isso que o progresso é lista escrita.
+ */
+export const AVISO_DESPACHO_FAIL_CLOSED =
+  "O arquivo é montado, gravado, reaberto e reconferido centavo a centavo antes de ser " +
+  "publicado. Se a reconferência achar qualquer divergência, nada é publicado.";
+
+/** Por que assinar e despachar não são o mesmo ato, dito ao lado dos dois botões. */
+export const AVISO_ASSINAR_NAO_E_DESPACHAR =
+  "Despachar exige o papel orcamentista. Assinar é assumir o conteúdo; despachar é operar " +
+  "o envio — o produto não funde os dois só porque acontecem em sequência.";
+
+/** Por que não há campo de nome no ato nominal. A identidade é mostrada, nunca digitada. */
+export const AVISO_IDENTIDADE_DA_SESSAO =
+  "Não existe campo de nome nesta tela: quem aprova é quem entrou, e o servidor lê a " +
+  "identidade do token e recusa qualquer nome que venha do cliente.";
+
+/** O arquivo é endereçado pelo digest: despachar de novo não sobrescreve o anterior. */
+export const AVISO_PLANILHA_ENDERECADA_PELO_DIGEST =
+  "O arquivo é endereçado pelo digest: despachar de novo nunca sobrescreve a planilha que " +
+  "uma revisão anterior ainda referencia.";
+
+/**
+ * O título da etapa "Aprovação e despacho", pelos dois campos lidos JUNTOS.
+ *
+ * A caducidade é perguntada PRIMEIRO, como no resumo da etapa: na aprovação caduca
+ * `aprovado` e `caduca` valem ao mesmo tempo, e um título que lesse só o primeiro diria
+ * "Orçamento aprovado" sobre um orçamento que o despacho já vai recusar.
+ */
+export function tituloDaAprovacao(
+  aprovado: boolean,
+  caduca: boolean,
+  despachado: boolean,
+): string {
+  if (caduca) {
+    return "O orçamento mudou depois de aprovado";
+  }
+  if (!aprovado) {
+    return "Orçamento montado, aguardando aprovação nominal";
+  }
+  return despachado ? "Orçamento aprovado e despachado" : "Orçamento aprovado";
+}
 
 /* Teto de verba da rodada (ADR-0040) ---------------------------------------- */
 
@@ -562,9 +630,12 @@ const ERROR_MESSAGES: LookupTable = {
   REVISION_CONFLICT:
     "O orçamento mudou depois desta leitura; recarregue o estado atual antes de refazer o ato.",
   NOT_FOUND: "Este orçamento não existe ou não pertence ao seu tenant.",
-  // O 403 NÃO nomeia papel: qual papel autoriza esta jornada é decisão humana ainda
-  // aberta (Design Approval Package, "questões em aberto"), e o texto não pode fingir
-  // que ela foi tomada.
+  // O 403 genérico NÃO nomeia papel, e desde a F-035 o motivo mudou: já não é decisão em
+  // aberto (ADR-0046 fixou `orcamentista` para a cadeia e o despacho, `aprovador` para a
+  // assinatura, e a leitura aceita os dois), é que este código chega de QUALQUER rota da
+  // jornada — nomear um papel aqui acertaria numa rota e mentiria nas outras. Quem tem
+  // papel próprio a nomear é a assinatura, e ela tem código próprio
+  // (`ESTIMATE_SELF_APPROVAL_FORBIDDEN`) ou tela própria.
   FORBIDDEN:
     "Sua conta não tem o papel que autoriza a jornada de orçamento neste tenant. Peça a quem administra o acesso da sua organização.",
   IDEMPOTENCY_KEY_REUSED:
@@ -704,9 +775,25 @@ const ERROR_MESSAGES: LookupTable = {
     "A lista de itens sem preço não corresponde aos itens confirmados sem código na cascata.",
   ESTIMATE_QUANTITY_SCALE_UNSUPPORTED:
     "A escala da quantidade informada não é suportada pelo cálculo do orçamento.",
+  // Aprovação nominal (F-035, ADR-0046). As duas primeiras são `403`/`409` da própria
+  // rota de assinatura; as demais chegam no portão de domínio do despacho.
+  ESTIMATE_SELF_APPROVAL_FORBIDDEN:
+    "Quem montou este orçamento não pode aprová-lo: a assinatura tem de vir de outra pessoa com o papel aprovador. Acumular os dois papéis no mesmo acesso não muda essa regra, porque a comparação é de identidade e não de papel. Nada foi gravado — o orçamento segue montado e não assinado.",
+  ESTIMATE_APPROVAL_AUTHOR_UNKNOWN:
+    "Este orçamento não registra quem o montou, e sem isso não há contra quem conferir a segregação entre montar e assinar. Remonte o orçamento na etapa “BDI e montagem” antes de aprovar.",
+  // Portão de domínio do despacho: o servidor recusa por TODAS as violações de uma vez, e a
+  // lista inteira chega em `details.errors` do `ESTIMATE_EXPORT_BLOCKED`.
+  ESTIMATE_EXPORT_BLOCKED:
+    "O portão de despacho recusou este orçamento; nada foi publicado. Os motivos abertos estão listados abaixo.",
+  ESTIMATE_NOT_APPROVED:
+    "Este orçamento não tem aprovação nominal válida. Despachar é o passo depois de aprovar: aprove o orçamento e a planilha fica liberada.",
+  ESTIMATE_APPROVAL_REJECTED:
+    "A decisão registrada para este orçamento é de recusa, não de aprovação; orçamento recusado não é despachado.",
+  APPROVAL_CONTENT_MISMATCH:
+    "O orçamento mudou depois da aprovação. A aprovação registrada vale para o conteúdo aprovado, não para o atual — aprove o orçamento atual.",
   // Planilha: o portão fail-closed do ADR-0038.
   ESTIMATE_WORKBOOK_AUDIT_FAILED:
-    "A auditoria recusou a planilha e nada foi publicado. O arquivo gerado foi descartado; o orçamento continua como estava.",
+    "A auditoria recusou a planilha e nada foi publicado. O arquivo gerado foi descartado; a aprovação continua válida e o orçamento não mudou.",
 };
 
 /**

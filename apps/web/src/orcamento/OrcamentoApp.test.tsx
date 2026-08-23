@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { User } from "oidc-client-ts";
 
 import {
+  AtoDeAprovacao,
   BannerOrcamentoMudou,
   BlocoConsumoDoTeto,
   FaixaTetoEstourado,
@@ -10,8 +11,14 @@ import {
   OrcamentoApp,
   PainelEscolhaDeFonte,
   PainelRegimeDaRodada,
+  PainelAutoAprovacaoRecusada,
   PainelSemAcesso,
+  PainelSemPapelDeAprovador,
+  PainelSemPapelDeOrcamentista,
   PainelTetoDaVerba,
+  ProgressoDoDespacho,
+  RegistroDaAprovacao,
+  SeloDespacho,
   SeloFonte,
   SeloProcedencia,
   SeloRegime,
@@ -273,9 +280,8 @@ describe("TelaAuditoriaReprovada", () => {
       <TelaAuditoriaReprovada findings={["CELL_VALUE_MISMATCH"]} />,
     );
 
-    expect(html).toContain("nada foi publicado");
-    expect(html).toContain("O arquivo foi descartado");
-    expect(html).toContain("o orçamento continua exatamente como estava");
+    expect(html).toContain("Nada foi publicado");
+    expect(html).toContain("o arquivo foi descartado");
     expect(html).toContain("CELL_VALUE_MISMATCH");
     expect(html).toContain('role="alert"');
     // Nenhum valor de célula: preço e quantidade do cliente não saem em mensagem de erro.
@@ -284,11 +290,29 @@ describe("TelaAuditoriaReprovada", () => {
     expect(html).not.toContain("encontrado");
   });
 
+  /**
+   * A faixa afirma por extenso as duas coisas que a auditoria reprovada NÃO desfez
+   * (F-035, tela 8 do pacote aprovado): a aprovação continua válida e o orçamento não
+   * mudou. Sem isso, "reprovou" pareceria ter derrubado a assinatura junto.
+   */
+  it("declara que a aprovação continua válida e que o orçamento não mudou", () => {
+    const html = renderToStaticMarkup(<TelaAuditoriaReprovada findings={[]} />);
+
+    expect(html).toContain("a aprovação continua válida");
+    expect(html).toContain("o orçamento não mudou");
+  });
+
+  /**
+   * O progresso é lista ESCRITA de quatro passos, e no desfecho reprovado ela diz onde
+   * parou: o arquivo foi gravado, a reconferência recusou e a publicação não aconteceu.
+   */
   it("sem lista de achados, continua sendo a tela — e não fabrica achado", () => {
     const html = renderToStaticMarkup(<TelaAuditoriaReprovada findings={[]} />);
 
-    expect(html).toContain("nada foi publicado");
-    expect(html).not.toContain("<li");
+    expect(html).toContain("Nada foi publicado");
+    expect(html).toContain("reprovado");
+    expect(html).toContain("não iniciado");
+    expect(html).not.toContain("CELL_VALUE_MISMATCH");
   });
 });
 
@@ -909,5 +933,252 @@ describe("PainelEscolhaDeFonte", () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain("não pôde ser lida agora");
     expect(html).toContain("Enviar arquivo");
+  });
+});
+/**
+ * O ato nominal (F-035, ADR-0046), em dois passos explícitos e sem campo de nome.
+ *
+ * Estes testes fixam o que o pacote de design aprovado decidiu e o que não pode ser
+ * "simplificado" depois: a consequência dita ANTES do botão, a identidade mostrada e nunca
+ * digitável, e o segundo passo repetindo a consequência em vez de perguntar "tem certeza?".
+ */
+describe("AtoDeAprovacao", () => {
+  const props = {
+    titulo: "Aprovar o orçamento de Praça do Exemplo",
+    identidade: "marina.gestora",
+    contentDigest: "9c41ab7" + "0".repeat(57),
+    gravando: false,
+    onAprovar: () => {},
+    onConfirmar: () => {},
+    onCancelar: () => {},
+  };
+
+  it("primeiro passo: as três consequências antes do botão", () => {
+    const html = renderToStaticMarkup(
+      <AtoDeAprovacao {...props} confirmando={false} />,
+    );
+
+    expect(html).toContain("Antes de aprovar, o que aprovar faz");
+    expect(html).toContain("Publica o seu nome");
+    expect(html).toContain("Libera o despacho");
+    expect(html).toContain("Vale só para este orçamento");
+    expect(html).toContain("Aprovar este orçamento");
+    // O segundo passo ainda não aconteceu: nada de confirmação nesta tela.
+    expect(html).not.toContain("Confirmar aprovação nominal");
+  });
+
+  /**
+   * A identidade é MOSTRADA, nunca digitável (decisão 3 do pacote): um campo de nome
+   * prometeria um efeito que ele não tem, porque o servidor lê o subject do token e recusa
+   * qualquer nome vindo do cliente.
+   */
+  it("mostra a identidade da sessão e não oferece campo de nome", () => {
+    const html = renderToStaticMarkup(
+      <AtoDeAprovacao {...props} confirmando={false} />,
+    );
+
+    expect(html).toContain("Você aprova como");
+    expect(html).toContain("marina.gestora");
+    expect(html).toContain("recusa qualquer nome que venha do cliente");
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("<textarea");
+  });
+
+  it("segundo passo repete a consequência sobre o âmbar, com saída de cancelar", () => {
+    const html = renderToStaticMarkup(
+      <AtoDeAprovacao {...props} confirmando={true} />,
+    );
+
+    expect(html).toContain("ato-confirmacao");
+    expect(html).toContain("Confirmar a aprovação nominal?");
+    expect(html).toContain("o despacho da planilha fica liberado");
+    expect(html).toContain("Cancelar");
+    // Não é "tem certeza?" vazio: o nome e o conteúdo assinado aparecem de novo.
+    expect(html).toContain("marina.gestora");
+    expect(html).toContain("sha256 9c41ab7");
+  });
+
+  it("enquanto grava, os dois botões ficam indisponíveis e a tela diz por quê", () => {
+    const html = renderToStaticMarkup(
+      <AtoDeAprovacao {...props} confirmando={true} gravando={true} />,
+    );
+
+    expect(html).toContain("disabled");
+    expect(html).toContain("chave de idempotência");
+  });
+});
+
+/**
+ * O registro é quem, quando e sobre qual conteúdo — e na caducidade os DOIS digests lado a
+ * lado, com a PALAVRA marcando o estado. Cor nunca é o único indicador.
+ */
+describe("RegistroDaAprovacao", () => {
+  const aprovada = {
+    approved: true,
+    approved_by: "marina.gestora",
+    approved_at: "2026-08-22T18:41:00Z",
+    approved_digest: "9c41ab7" + "0".repeat(57),
+    current_digest: "9c41ab7" + "0".repeat(57),
+    stale: false,
+  };
+
+  it("aprovação válida traz quem, quando e o conteúdo assinado", () => {
+    const html = renderToStaticMarkup(
+      <RegistroDaAprovacao approval={aprovada} />,
+    );
+
+    expect(html).toContain("Aprovada");
+    expect(html).toContain("Quem aprovou");
+    expect(html).toContain("marina.gestora");
+    expect(html).toContain("Quando");
+    expect(html).toContain("igual ao do orçamento atual");
+    // Um digest só: não há o que comparar enquanto o conteúdo não mudou.
+    expect(html).not.toContain("digest-par");
+  });
+
+  it("na caducidade, a PALAVRA marca o estado e os dois digests aparecem", () => {
+    const html = renderToStaticMarkup(
+      <RegistroDaAprovacao
+        approval={{
+          ...aprovada,
+          current_digest: "2e77d04" + "0".repeat(57),
+          stale: true,
+        }}
+      />,
+    );
+
+    expect(html).toContain("Aprovação caduca");
+    expect(html).toContain("digest-par");
+    expect(html).toContain("Conteúdo aprovado");
+    expect(html).toContain("Conteúdo atual");
+    expect(html).toContain("sha256 9c41ab7");
+    expect(html).toContain("sha256 2e77d04");
+    // O registro velho NÃO some: quem assinou continua nomeado.
+    expect(html).toContain("marina.gestora");
+    // O tracejado âmbar é redundância da palavra, não a marca sozinha.
+    expect(html).toContain("registro-caduca");
+  });
+
+  it("sem ato nenhum registrado, não inventa registro", () => {
+    const html = renderToStaticMarkup(
+      <RegistroDaAprovacao
+        approval={{
+          approved: false,
+          approved_by: null,
+          approved_at: null,
+          approved_digest: null,
+          current_digest: "9c41ab7" + "0".repeat(57),
+          stale: false,
+        }}
+      />,
+    );
+
+    expect(html).toBe("");
+  });
+});
+
+/**
+ * O selo do despacho é o único valor visual novo do pacote. Ele diz a palavra e NÃO diz
+ * data: nenhuma rota do orçamento devolve o instante do despacho, e carimbar o `updated_at`
+ * da rodada daria a um número que muda a cada mutação a aparência de registro de publicação.
+ */
+describe("SeloDespacho", () => {
+  it("declara os dois estados por extenso", () => {
+    expect(renderToStaticMarkup(<SeloDespacho despachado={false} />)).toContain(
+      "NÃO DESPACHADO",
+    );
+    expect(renderToStaticMarkup(<SeloDespacho despachado={true} />)).toContain(
+      "DESPACHADO",
+    );
+  });
+
+  it("não carimba data que o servidor não devolve", () => {
+    const html = renderToStaticMarkup(<SeloDespacho despachado={true} />);
+
+    expect(html).not.toContain("EM ");
+    expect(html).not.toMatch(/\d{2}\/\d{2}\/\d{4}/);
+  });
+});
+
+/**
+ * O despacho é passo a passo ESCRITO, nunca barra (decisão 6 do pacote): três dos quatro
+ * passos acontecem antes de existir arquivo publicado.
+ */
+describe("ProgressoDoDespacho", () => {
+  it("são quatro passos nomeados, e o portão de domínio é o primeiro", () => {
+    const html = renderToStaticMarkup(<ProgressoDoDespacho estado="em-voo" />);
+
+    expect(html).toContain("portão de domínio");
+    expect(html).toContain("arquivo temporário");
+    expect(html).toContain("reconferida centavo a centavo");
+    expect(html).toContain("publicação");
+    // Nada de barra: nenhum `progress` e nenhuma percentagem.
+    expect(html).not.toContain("<progress");
+    expect(html).not.toContain("%");
+  });
+
+  /**
+   * Em voo, a tela não observa em qual passo o servidor está — e não finge que observa.
+   * É a única coisa da rendição aprovada que não pode ser reproduzida sem inventar estado.
+   */
+  it("em voo, nenhum passo é declarado concluído", () => {
+    const html = renderToStaticMarkup(<ProgressoDoDespacho estado="em-voo" />);
+
+    expect(html).toContain("no servidor");
+    expect(html).not.toContain("concluído");
+    expect(html).toContain("Nada é publicado antes do quarto passo");
+  });
+
+  it("reprovado diz onde parou: gravado, recusado na reconferência, não publicado", () => {
+    const html = renderToStaticMarkup(
+      <ProgressoDoDespacho estado="reprovado" />,
+    );
+
+    expect(html).toContain("reprovado");
+    expect(html).toContain("não iniciado");
+  });
+});
+
+/**
+ * O `403` da assinatura não é a tela de "sem acesso": quem chega aqui lê o orçamento
+ * inteiro (a leitura aceita `orcamentista` ou `aprovador`) e só não exerce o ato.
+ */
+/**
+ * O `403` do DESPACHO também não é a tela de "sem acesso": desde a F-035 quem só tem
+ * `aprovador` lê a jornada inteira e assina — o que falta é quem opere o envio.
+ */
+describe("PainelSemPapelDeOrcamentista", () => {
+  it("nomeia o papel do despacho e preserva a assinatura já registrada", () => {
+    const html = renderToStaticMarkup(<PainelSemPapelDeOrcamentista />);
+
+    expect(html).toContain("papel orcamentista");
+    expect(html).toContain("A aprovação registrada continua valendo");
+    expect(html).toContain("Nada foi publicado");
+    expect(html).not.toContain("Sem acesso ao orçamento");
+  });
+});
+
+describe("PainelAutoAprovacaoRecusada", () => {
+  it("explica a regra em vez de só negar, e não nomeia quem montou", () => {
+    const html = renderToStaticMarkup(<PainelAutoAprovacaoRecusada />);
+
+    expect(html).toContain("Acumular os dois papéis");
+    expect(html).toContain("identidade e não de papel");
+    expect(html).toContain("Nada foi gravado");
+    expect(html).toContain('role="alert"');
+    // O nome de quem montou não viaja na recusa, e a tela não o fabrica.
+    expect(html).not.toContain("montado por");
+  });
+});
+
+describe("PainelSemPapelDeAprovador", () => {
+  it("nomeia o papel que falta e diz que nada foi gravado", () => {
+    const html = renderToStaticMarkup(<PainelSemPapelDeAprovador />);
+
+    expect(html).toContain("papel aprovador");
+    expect(html).toContain("Nada foi gravado");
+    expect(html).toContain('role="alert"');
+    // Não é a tela de sem acesso à jornada: ela continua sendo lida.
+    expect(html).not.toContain("Sem acesso ao orçamento");
   });
 });

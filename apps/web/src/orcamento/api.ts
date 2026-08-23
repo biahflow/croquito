@@ -328,8 +328,9 @@ export type EstimateStatePlate = {
 
 /**
  * O orçamento montado, como o estado da rodada o declara. `workbook_present` é a planilha
- * publicada — ela só existe depois de a auditoria de round-trip aprovar o arquivo, porque
- * auditoria reprovada não publica nada (ADR-0038).
+ * publicada — desde a F-035 ela só existe depois do DESPACHO (`POST .../estimate/export`),
+ * e o despacho só acontece atrás do portão de aprovação e da auditoria de round-trip.
+ * Montar não publica mais nada (ADR-0046, decisão 2).
  */
 export type EstimateStateEstimate = {
   present: boolean;
@@ -338,8 +339,49 @@ export type EstimateStateEstimate = {
   workbook_sha256: string | null;
 };
 
+/**
+ * Aprovação nominal do orçamento-base (ADR-0046), como o servidor a DERIVA na leitura.
+ *
+ * Dois campos precisam ser lidos JUNTOS, e é por isso que eles vêm no mesmo bloco.
+ * `approved` diz que houve ato de aprovação (a decisão `confirm`); `stale` diz que o
+ * conteúdo mudou depois dele. Na aprovação **caduca** os dois valem ao mesmo tempo — houve
+ * assinatura, e ela não cobre mais o que está na tela —, então uma tela que lesse só
+ * `approved` ofereceria um despacho que a rota já vai recusar com
+ * `APPROVAL_CONTENT_MISMATCH`.
+ *
+ * `stale` nunca é gravado: ele é a relação entre `approved_digest` (o conteúdo que foi
+ * assinado) e `current_digest` (o que está gravado agora), calculada na leitura. Os dois
+ * digests viajam para a tela poder mostrá-los lado a lado, como o desenho aprovado pede.
+ *
+ * Cópia deliberada da forma do irmão da medição (`medicao/api.ts`), e não import: as
+ * jornadas compartilham o transporte, nunca se importam entre si.
+ */
+export type ApprovalState = {
+  approved: boolean;
+  /** Subject do JWT de quem aprovou; identidade nunca vem do cliente. */
+  approved_by: string | null;
+  approved_at: string | null;
+  approved_digest: string | null;
+  current_digest: string | null;
+  stale: boolean;
+};
+
+/**
+ * O bloco `{approval}` do estado da rodada, no padrão do teto e do regime: a chave só
+ * aparece quando há orçamento LEGÍVEL na cabeça.
+ *
+ * A ausência é significado, não omissão. Rodada sem orçamento montado — ou com um
+ * orçamento que não revalida mais — não traz o bloco, e devolver `approval: null` faria a
+ * tela ter de distinguir "não há orçamento" de "há orçamento sem assinatura", que é
+ * justamente o que `approved: false` já diz.
+ */
+export type EstimateApprovalState = {
+  approval?: ApprovalState;
+};
+
 export type EstimateState = EstimateTargetState &
-  EstimateRegimeState & {
+  EstimateRegimeState &
+  EstimateApprovalState & {
     round_id: string;
     version: number;
     status: string;
@@ -490,6 +532,10 @@ export type CodesResponse = {
  *
  * `workbook_url` só existe na leitura (`GET`), montada na hora: a forma que o registro de
  * idempotência guarda no banco não carrega URL assinada.
+ *
+ * `approval` vem SEMPRE — aqui já existe orçamento, e "sem assinatura" é `approved: false`,
+ * não ausência de bloco. É o contrário do estado da rodada, onde a chave some justamente
+ * porque pode não haver orçamento nenhum.
  */
 export type EstimateResponse = EstimateTargetState & {
   round_id: string;
@@ -504,6 +550,7 @@ export type EstimateResponse = EstimateTargetState & {
   workbook_present: boolean;
   workbook_sha256: string | null;
   workbook_url?: string | null;
+  approval: ApprovalState;
 };
 
 type PresignedUpload = {
@@ -1005,9 +1052,8 @@ export function postCodeDecision(
 }
 
 /**
- * Monta o orçamento-base e publica a planilha, nesta ordem e atrás do mesmo portão: o
- * `.xlsx` é gravado, reaberto e reconferido centavo a centavo, e auditoria reprovada
- * (`500 ESTIMATE_WORKBOOK_AUDIT_FAILED`) não publica nada.
+ * Monta o orçamento-base — e **só** monta (ADR-0046, decisão 2). Nenhuma planilha nasce
+ * daqui desde a F-035: publicar é `postExportEstimate`, atrás do portão de aprovação.
  *
  * `bdi_percent` é o percentual ÚNICO do orçamento inteiro e viaja como texto. Corpo que
  * não é decimal exato não sai daqui: `buildEstimateBody` devolve `null` e a recusa é da
@@ -1032,6 +1078,56 @@ export function postBuildEstimate(
     );
   }
   return post<EstimateResponse>(roundPath(roundId, "/estimate"), accessToken, body);
+}
+
+/**
+ * Aprovação nominal do orçamento da cabeça (ADR-0046). Papel exigido: `aprovador`.
+ *
+ * O corpo é SÓ a guarda de concorrência. Quem aprova é o subject do JWT e o instante é o
+ * relógio do servidor: não existe campo de nome do aprovador nesta jornada, e o servidor
+ * recusa (`422`) qualquer corpo que traga `approver_id`, `approver_role`, `decided_at` ou
+ * `decision_id`. A tela MOSTRA a identidade da sessão; ela nunca a digita nem a envia.
+ *
+ * Quem montou não assina: o mesmo subject devolve `403 ESTIMATE_SELF_APPROVAL_FORBIDDEN`
+ * mesmo com os dois papéis no token, porque a comparação é de identidade e não de papel.
+ *
+ * Aprovar de novo é o caminho normal da aprovação caduca, não um erro: cada chamada é uma
+ * revisão nova da cadeia append-only, e o histórico guarda as duas assinaturas.
+ */
+export function postApproveEstimate(
+  accessToken: string,
+  roundId: string,
+  baseVersion: number,
+): Promise<EstimateResponse> {
+  return post<EstimateResponse>(
+    roundPath(roundId, "/estimate/approve"),
+    accessToken,
+    versionBody(baseVersion),
+  );
+}
+
+/**
+ * Despacha a planilha do orçamento depois dos dois portões do servidor. Papel exigido:
+ * `orcamentista` — assinar é assumir o conteúdo, despachar é operar o envio.
+ *
+ * Não há nada a escolher aqui: nem formato, nem layout, nem "despachar assim mesmo". O
+ * orçamento é o da cabeça, o layout é o da prefeitura e a aprovação válida é precondição.
+ * Sem ela a rota recusa com `ESTIMATE_EXPORT_BLOCKED` e **nada é escrito**, nem em arquivo
+ * temporário; auditoria de round-trip reprovada é `ESTIMATE_WORKBOOK_AUDIT_FAILED` e
+ * também não publica nada.
+ *
+ * A resposta não traz `workbook_url`: a URL assinada só sai na leitura (`getEstimate`).
+ */
+export function postExportEstimate(
+  accessToken: string,
+  roundId: string,
+  baseVersion: number,
+): Promise<EstimateResponse> {
+  return post<EstimateResponse>(
+    roundPath(roundId, "/estimate/export"),
+    accessToken,
+    versionBody(baseVersion),
+  );
 }
 
 /** Orçamento gravado, revalidado pelo servidor na leitura, com a URL assinada da planilha. */
