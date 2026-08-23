@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Pendente de aprovação**  
+Status: **Approved (2026-08-23)**  
 Date: 2026-08-23  
 Produced by: agente (Claude Code)
 
@@ -10,19 +10,20 @@ Produced by: agente (Claude Code)
 > artefato é evidência para um gate humano. Não é implementação e não deve ser copiado para
 > código de aplicação.
 >
-> **Produzir o pacote não é aprová-lo.** Nenhum agente aprova design, inclusive o que o
-> produziu. Enquanto não houver registro de aprovação humana abaixo, a
-> [F-036](../feature.md) permanece `BLOCKED`.
+> **Aprovado por ato humano em 2026-08-23**, registrado abaixo. Nenhum agente aprova design,
+> inclusive o que o produziu; o que segue é a transcrição da decisão humana. Com este gate e o
+> [ADR-0048](../../../adr/0048-consolidado-contratual-do-orcamento-assinado.md) aceito, a
+> [F-036](../feature.md) sai de `BLOCKED`.
 
 ## Registro de aprovação
 
 | Campo | Valor |
 | --- | --- |
-| O que se pede aprovar | a composição visual da revisão 1 — os sete estados capturados e as seis decisões listadas em "Decisões que este pacote carrega" |
-| Aprovado por | — |
-| Data | — |
-| Revisão | 1 |
-| Explicitamente **não** coberto | a copy final; os números fictícios das capturas; qualquer regra de autorização; e as decisões do [ADR-0048](../../../adr/0048-consolidado-contratual-do-orcamento-assinado.md), que são gate próprio e ainda `Proposed` |
+| O que foi aprovado | a composição visual da revisão 1 — os sete estados capturados e as seis decisões listadas em "Decisões que este pacote carrega" |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-23 |
+| Revisão aprovada | 1 |
+| Explicitamente **não** coberto | a copy final; os números fictícios das capturas; qualquer regra de autorização; e as decisões do [ADR-0048](../../../adr/0048-consolidado-contratual-do-orcamento-assinado.md), que foram gate próprio, exercido em separado na mesma data |
 
 Aprovar esta revisão não aprova a seguinte: pacote materialmente alterado é revisão nova e
 precisa de registro próprio.
@@ -104,7 +105,7 @@ construído aqui.
 - **A copy final.** Os textos são proposta do agente, não linguagem estabelecida do produto.
 - **Os números.** Praças, valores, nomes e digests são fictícios e servem para dar forma.
 - **As decisões do ADR-0048** — preço sem BDI, agregação por código, grupo único, período.
-  São gate próprio, e o ADR está `Proposed`.
+  Foram gate próprio, aceito por ato humano separado na mesma data.
 - **Qualquer regra de autorização**: a tela mostra e oferece; quem recusa é o servidor.
 
 ## Questões em aberto
@@ -115,3 +116,9 @@ construído aqui.
 2. O painel da rodada vinculada deve mostrar **saldo por código** já na abertura, ou só o
    total? O mock mostra só o total — a tabela por código existe na etapa do boletim, e
    repeti-la aqui duplicaria a leitura antes de haver o que comparar.
+
+## Transcrição do ato
+
+Aprovação dada por Daniel Campos em 2026-08-23, depois de o pacote e as capturas serem
+entregues. Aprovar esta revisão não aprova a seguinte, e não decide as duas questões em
+aberto acima — elas seguem em aberto.

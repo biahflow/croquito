@@ -1,7 +1,7 @@
 # ADR-0049: A evidência de campo entra na revisão pelo job da prancha; foto não mede e medida de trena não é cota
 
-Status: Proposed  
-Data: 2026-08-23  
+Status: Accepted  
+Data: 2026-08-23 (aceito por ato humano na mesma data)  
 Responsável: Product / Engineering
 
 ## Contexto

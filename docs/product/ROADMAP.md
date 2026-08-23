@@ -61,11 +61,11 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
 | F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
-| F-030 | HIGH | BLOCKED | [O levantamento de campo na jornada de revisão: a foto e a medida](../features/F-030-levantamento-de-campo-na-revisao/feature.md) |
+| F-030 | HIGH | READY_FOR_PLANNING | [O levantamento de campo na jornada de revisão: a foto e a medida](../features/F-030-levantamento-de-campo-na-revisao/feature.md) |
 | F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | DONE | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
 | F-035 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
-| F-036 | HIGH | BLOCKED | [A medição do orçamento aprovado: consolidado contratual de origem](../features/F-036-vinculo-orcamento-medicao/feature.md) |
+| F-036 | HIGH | READY_FOR_PLANNING | [A medição do orçamento aprovado: consolidado contratual de origem](../features/F-036-vinculo-orcamento-medicao/feature.md) |
 | F-037 | HIGH | READY_FOR_HUMAN_REVIEW | [Acervo central de catálogos de preço](../features/F-037-acervo-de-catalogos/feature.md) |
 | F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 | F-031 | MEDIUM | READY_FOR_HUMAN_REVIEW | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — branch isolada `feat/f-031-value-events`, não integra no MVP |
@@ -414,9 +414,12 @@ recusados, com motivo escrito, o PDF como documento de evidência e a síntese d
 é a fonte da cota, e testemunharia a si mesmo), o segundo por criar um segundo modelo
 geométrico ao lado do `SceneRevision`.
 
-`BLOCKED` por dois gates que precedem o planejamento: a decisão de arquitetura (não existe
-job sem PDF hoje — `jobs.upload_id` é `NOT NULL UNIQUE`) e o Design Approval Package, que a
-ampliação levou à **revisão 2**. Contrato em
+Os dois gates foram **cumpridos em 2026-08-23**: o
+[ADR-0049](../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md) foi **aceito** — o
+vínculo é ao job da prancha, porque não existe job sem PDF (`jobs.upload_id` é
+`NOT NULL UNIQUE`) — e o Design Approval Package foi **aprovado na revisão 2**, que é a que a
+ampliação produziu. A feature está `READY_FOR_PLANNING`; a primeira rodada paga da fatia 3
+segue como ato humano à parte. Contrato em
 [F-030](../features/F-030-levantamento-de-campo-na-revisao/feature.md).
 
 F-033 — demanda sob contrato licitado — nasce em 2026-08-21, numa conversa de operação
@@ -500,10 +503,11 @@ Duas decisões humanas de 2026-08-23 fixaram o recorte: o vínculo entrega **con
 contratual**, não só referência de auditoria; e vale **apenas** sob o regime
 `contracted_demand` da F-033, o único em que não há licitação nem deságio entre o orçamento
 e o contrato — fora dele, chamar orçamento de contrato seria mentira, e a fronteira do
-ADR-0027 continua de pé. A feature está `BLOCKED` por dois gates humanos que precedem o
-planejamento: a decisão de arquitetura que refina aquela fronteira e decide o preço do
-consolidado (com BDI ou sem), e o Design Approval Package da superfície nova na abertura da
-medição. Contrato em
+ADR-0027 continua de pé. Os dois gates humanos que precediam o planejamento foram **cumpridos em
+2026-08-23**, em atos separados: o [ADR-0048](../adr/0048-consolidado-contratual-do-orcamento-assinado.md)
+foi **aceito** — ele fixa o preço do consolidado sem BDI, a agregação por código e a recusa de
+BDI sob o regime, que é um erro de dinheiro existente hoje — e o Design Approval Package foi
+**aprovado** (revisão 1). A feature está `READY_FOR_PLANNING`. Contrato em
 [F-036](../features/F-036-vinculo-orcamento-medicao/feature.md).
 
 F-037 — acervo central de catálogos de preço — nasce em 2026-08-22, na mesma conversa, quando

@@ -1,7 +1,7 @@
 # ADR-0048: Sob demanda contratada, o orçamento assinado é o consolidado contratual da medição
 
-Status: Proposed  
-Data: 2026-08-23  
+Status: Accepted  
+Data: 2026-08-23 (aceito por ato humano na mesma data)  
 Responsável: Product / Engineering
 
 ## Contexto

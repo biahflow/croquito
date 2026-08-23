@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 2  
-Status: **Pendente de aprovação**  
+Status: **Approved (2026-08-23)**  
 Date: 2026-08-23  
 Produced by: agente (Claude Code)
 
@@ -10,9 +10,10 @@ Produced by: agente (Claude Code)
 > artefato é evidência para um gate humano. Não é implementação e não deve ser copiado para
 > código de aplicação.
 >
-> **Produzir o pacote não é aprová-lo.** Nenhum agente aprova design, inclusive o que o
-> produziu. Enquanto não houver registro de aprovação humana abaixo, a
-> [F-030](../feature.md) permanece `BLOCKED`.
+> **Aprovado por ato humano em 2026-08-23**, registrado abaixo — a **revisão 2**, não a 1, que
+> nunca chegou a ser aprovada. Nenhum agente aprova design, inclusive o que o produziu. Com
+> este gate e o [ADR-0049](../../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md)
+> aceito, a [F-030](../feature.md) sai de `BLOCKED`.
 
 ## O que mudou da revisão 1 para a 2
 
@@ -28,11 +29,11 @@ com valor lido na foto a confirmar (7). Os sete estados da revisão 1 permanecem
 
 | Campo | Valor |
 | --- | --- |
-| O que se pede aprovar | a composição visual da revisão 2 — os dez estados capturados e as nove decisões listadas em "Decisões que este pacote carrega" |
-| Aprovado por | — |
-| Data | — |
-| Revisão | 2 |
-| Explicitamente **não** coberto | a copy final; as amostras sintéticas no lugar das fotos; os números, nomes e datas das capturas; o nome do prompt e do modelo; e as decisões do [ADR-0049](../../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md), que são gate próprio e ainda `Proposed` |
+| O que foi aprovado | a composição visual da revisão 2 — os dez estados capturados e as nove decisões listadas em "Decisões que este pacote carrega" |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-23 |
+| Revisão aprovada | 2 |
+| Explicitamente **não** coberto | a copy final; as amostras sintéticas no lugar das fotos; os números, nomes e datas das capturas; o nome do prompt e do modelo; e as decisões do [ADR-0049](../../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md), que foram gate próprio, exercido em separado na mesma data |
 
 Aprovar esta revisão não aprova a seguinte: pacote materialmente alterado é revisão nova e
 precisa de registro próprio.
@@ -135,7 +136,8 @@ para a revisão é feature própria e está declarado fora de escopo desta.
 - **As fotos.** As amostras são sintéticas de propósito; como a foto real se apresenta em
   tamanho, corte e ampliação não está decidido aqui.
 - **As decisões do ADR-0049** — vínculo pelo job da prancha, nada no scene graph, conclusão
-  como nota de revisão, classificação sob demanda. São gate próprio, e o ADR está `Proposed`.
+  como nota de revisão, classificação sob demanda. Foram gate próprio, aceito por ato humano
+  separado na mesma data.
 - **O nome do prompt, do modelo e o custo** que aparecem no lineage da captura: são
   ilustração da forma, não escolha de roteamento.
 - **Qualquer regra de autorização**: a tela mostra e oferece; quem recusa é o servidor.
@@ -150,3 +152,9 @@ para a revisão é feature própria e está declarado fora de escopo desta.
    a foto cuja âncora o técnico errou — que é justamente a que o escritório precisa ver.
 3. Uma leitura pode ter **mais de uma testemunha**? O mock mostra uma. Duas trenas do mesmo
    trecho é caso real, e a tela teria de escolher entre empilhá-las ou resumir a faixa.
+
+## Transcrição do ato
+
+Aprovação dada por Daniel Campos em 2026-08-23, sobre a **revisão 2** — a revisão 1 cobria só
+a foto e foi superada pela ampliação da feature na mesma data. Aprovar esta revisão não aprova
+a seguinte, e não decide as três questões em aberto acima.

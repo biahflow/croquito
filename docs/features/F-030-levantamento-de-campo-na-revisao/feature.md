@@ -2,7 +2,7 @@
 
 ## Status
 
-`BLOCKED`
+`READY_FOR_PLANNING`
 
 > Selecionada por decisão humana de 2026-08-23, saindo de `READY_FOR_SPEC`. Estava registrada
 > sem contrato desde 2026-08-21, quando nasceu por seleção humana na sessão da
@@ -17,8 +17,10 @@
 > Duas escolhas humanas de 2026-08-23 já fixadas: as fotos chegam **pelos dois caminhos**
 > (vínculo com o levantamento e upload avulso), e a **classificação por IA entra**.
 >
-> Dois gates humanos precedem o planejamento e são o que a mantém `BLOCKED`. Ver
-> **Human Gates**.
+> **Os dois gates humanos foram cumpridos em 2026-08-23**, em atos separados: o
+> [ADR-0049](../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md) foi **aceito** e o
+> **Design Approval Package** foi **aprovado na revisão 2** — a 1 cobria só a foto e foi
+> superada pela ampliação. Ver **Human Gates**.
 
 ## Classification
 
@@ -223,27 +225,26 @@ Nenhuma é negociável, e todas já são regra do sistema:
 
 ## Unknowns
 
-Os três primeiros foram levados ao
-[ADR-0049](../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md), escrito em
-2026-08-23 e ainda `Proposed`: enquanto ele não for aceito por ato humano, seguem sendo
-desconhecidos deste contrato. O que o ADR **propõe** está anotado abaixo.
+Os três primeiros foram **decididos** pelo
+[ADR-0049](../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md), aceito por ato
+humano em 2026-08-23. Ficam registrados com a pergunta original e o que a decisão respondeu.
 
 1. **Como o levantamento alcança a jornada do escritório.** `jobs.upload_id` é `NOT NULL` e
    `UNIQUE` (`database.py:77`): não existe job sem PDF.
-   → *ADR-0049 decisões 1 e 11*: vínculo a um job de prancha que já existe, em tabela
+   → **Decidido** — ADR-0049, decisões 1 e 11: vínculo a um job de prancha que já existe, em tabela
    muitos-para-muitos. Job sem PDF abriria a revisão vazia, porque `ReviewPacket` é recorte de
    prancha.
 2. **O que a medida de campo pode fazer com a cota.** Corroborar? Confirmar? Bloquear?
-   → *ADR-0049 decisões 4, 5 e 6*: testemunha observacional, associada por ato humano
+   → **Decidido** — ADR-0049, decisões 4, 5 e 6: testemunha observacional, associada por ato humano
    explícito, e divergência é **aviso** que não entra em `blockers`. Confirmação automática
    por tolerância foi explicitamente rejeitada.
 3. **A classificação entra no scene graph ou fica fora?**
-   → *ADR-0049 decisões 2 e 3*: fora — e o que o humano conclui vira **nota de revisão**, que
+   → **Decidido** — ADR-0049, decisões 2 e 3: fora — e o que o humano conclui vira **nota de revisão**, que
    já existe. `Issue` foi recusado porque participa do portão de exportação.
 4. **Retenção.** O bucket tem expiração única por `artifact_retention_days`
    (`infra/main.tf:70`), então a evidência morre com o resto, e a revisão pode acontecer
    depois.
-   → *ADR-0049 decisão 14*: regra por prefixo, e **aplicá-la é ato humano de
+   → **Decidido** — ADR-0049, decisão 15: regra por prefixo, e **aplicá-la é ato humano de
    infraestrutura**. Até lá a fragilidade permanece.
 5. **O valor de cada tolerância de divergência** — sai da calibração com dado real, não deste
    contrato nem do ADR. Até existir, mostra-se a diferença sem classificá-la.
@@ -275,17 +276,16 @@ desconhecidos deste contrato. O que o ADR **propõe** está anotado abaixo.
 
 ## Human Gates
 
-1. **`ARCHITECTURE_DECISION_REQUIRED`** — **artefato produzido, gate aberto**. O
-   [ADR-0049](../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md) foi escrito em
-   2026-08-23 e está `Proposed`. **Aceitá-lo é ato humano.**
-2. **`DESIGN_APPROVAL_REQUIRED`** — **pacote produzido, gate aberto**. O
-   [Design Approval Package](mock/README.md) está na **revisão 2** — a revisão 1 cobria só a
-   foto e foi materialmente alterada pela ampliação —, **pendente de aprovação humana**,
+1. **`ARCHITECTURE_DECISION_REQUIRED`** — ✅ **cumprido em 2026-08-23**. O
+   [ADR-0049](../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md) foi **aceito por
+   ato humano**.
+2. **`DESIGN_APPROVAL_REQUIRED`** — ✅ **cumprido em 2026-08-23**. O
+   [Design Approval Package](mock/README.md) foi **aprovado na revisão 2** — a revisão 1 cobria
+   só a foto e foi materialmente alterada pela ampliação, então nunca chegou a ser aprovada —,
    conforme [design-approval](../../engineering-os/workflows/design-approval.md).
 
-Produzir o artefato não é cumprir o gate. Nenhum agente aceita ADR nem aprova design,
-inclusive o que os escreveu. A primeira rodada paga da fatia 3 é **terceiro ato humano**, de
-autorização de gasto, separado e posterior aos dois.
+A **primeira rodada paga da fatia 3 continua sendo um terceiro ato humano**, de autorização de
+gasto, separado e posterior a estes dois. Ele **não** foi exercido aqui.
 
 ## References
 
