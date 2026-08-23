@@ -2,7 +2,9 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-23 (**F-036 `DONE`** — o orçamento assinado vira o contratado da
+Última revisão: 2026-08-23 (**F-009 e F-012 `DONE`** — ADR-0035/0036 e entregas aceitos por
+ato humano após merges, infraestrutura aplicada e rodadas reais no HML; antes: **F-036
+`DONE`** — o orçamento assinado vira o contratado da
 medição, e seis guardrails que não podiam disparar passam a poder; entrega aceita por ato
 humano.
 Antes: faixa F-011..F-019 auditada contra o código: **F-011 encerrada
@@ -16,7 +18,7 @@ F-037 (acervo de catálogos, ADR-0047) e F-035 (aprovação do orçamento, ADR-0
 F-033 entregue — demanda sob contrato licitado sobre o ADR-0045; F-032 integrada à main com
 a fatia de sincronização completa; antes: F-029 aberta com contrato,
 absorvendo a fatia 2 da F-023; F-021 e F-022 abertas com contrato, ADR-0037 `Proposed`;
-F-012 documentada com ADR-0036 `Proposed`; inventário
+F-012 documentada; inventário
 F-013..F-017 aberto; F-018/F-019 abertas; F-020 aberta com contrato)
 
 ## Uso no ciclo de engenharia
@@ -43,10 +45,10 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-006 | HIGH | DONE | [Conserto e verificação da homologação em GCP](../features/F-006-hml-conserto/feature.md) |
 | F-007 | HIGH | READY_FOR_HUMAN_REVIEW | [Porta de entrada: tela de login com marca](../features/F-007-tela-de-login/feature.md) |
 | F-008 | HIGH | BLOCKED | [Ciclo de vida de conta: convite, recuperação de senha e Google](../features/F-008-ciclo-de-vida-de-conta/feature.md) |
-| F-009 | HIGH | READY_FOR_REVIEW | [Suite hospedada de providers: OpenAI + Anthropic direto, sem AWS](../features/F-009-suite-hospedada-sem-aws/feature.md) |
+| F-009 | HIGH | DONE | [Suite hospedada de providers: OpenAI + Anthropic direto, sem AWS](../features/F-009-suite-hospedada-sem-aws/feature.md) |
 | F-010 | HIGH | READY_FOR_HUMAN_REVIEW | [Revisão assistida em lote — fatia 1: anotações sugeridas](../features/F-010-revisao-assistida-lote/feature.md) |
 | F-011 | — | DONE | [Jornada guiada da revisão](../features/F-011-jornada-guiada-da-revisao/feature.md) — já entregue quando foi registrada |
-| F-012 | HIGH | READY_FOR_REVIEW | [Operação SaaS da autorização de IA](../features/F-012-operacao-saas-autorizacao-ia/feature.md) |
+| F-012 | HIGH | DONE | [Operação SaaS da autorização de IA](../features/F-012-operacao-saas-autorizacao-ia/feature.md) |
 | F-013 | A DEFINIR | READY_FOR_SPEC | UI de membros do tenant, depende de F-008 (a definir em contrato) |
 | F-014 | A DEFINIR | READY_FOR_SPEC | Entidade tenant e onboarding self-service (a definir em contrato) |
 | F-015 | A DEFINIR | READY_FOR_SPEC | Recriar job a partir de upload já usado (`jobs.upload_id` é `UNIQUE`) — a definir em contrato |
@@ -146,15 +148,18 @@ repositório, e a chamada de OCR do Textract no pacote de revisão era código m
 aprovou explicitamente, na mesma data: chamada paga de provider, envio do documento a serviço
 externo, suite sem AWS (Anthropic primário, OpenAI fallback), braço de OCR determinístico via
 Cloud Vision, teto de US$ 5 por rodada e allowlist por env var. A prioridade é `HIGH`. A decisão
-técnica é o [ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md), `Proposed` —
-aceitação segue como ato humano. As tarefas T1, T2, T3 e T5 do
+técnica é o [ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md), **aceito por
+ato humano em 2026-08-23**. As tarefas T1, T2, T3 e T5 do
 [plano](../features/F-009-suite-hospedada-sem-aws/plan.md) estão completas; T4 (esta
 documentação) fecha a implementação. A infraestrutura em `biahflow/infra` está APLICADA
 (PRs #14 e #15 mesclados, apply verde, secrets com valor write-only, Vision API habilitada,
-retenção de 7 dias no bucket). O que resta não é código: aceite do ADR; papel
-`platform_operator` e entitlement do tenant; digest do PDF autorizado na allowlist; e o
-próprio merge/deploy. Contrato em
-[feature.md](../features/F-009-suite-hospedada-sem-aws/feature.md).
+retenção de 7 dias no bucket), e o PR #19 integrou a implementação na `main` (`8333956`). A
+V12 exerceu os dois braços; as V14–V17 exerceram o caminho real com Anthropic e OCR. O braço
+OpenAI foi desligado depois da V12 por decisão operacional, sem remover a capacidade entregue.
+A allowlist hospedada foi removida pela F-012. Entrega aceita por ato humano em 2026-08-23;
+F-009 está `DONE`. Contrato e evidência em
+[feature.md](../features/F-009-suite-hospedada-sem-aws/feature.md) e
+[evidence.md](../features/F-009-suite-hospedada-sem-aws/evidence.md).
 
 F-010 — revisão assistida em lote — nasce em 2026-08-19, por seleção humana, na mesma conversa
 da F-009: leitura com tripla concordância (os dois LLMs concordam, o OCR determinístico
@@ -194,7 +199,8 @@ os dois rituais manuais que a ativação da suite hospedada deixou — entitleme
 token pescado do DevTools, e allowlist de digest por env var exigindo um redeploy por documento
 — com a diretriz literal "isso já nasce com a visão de SaaS, não posso ter esses
 gargalos/travas". A prioridade é `HIGH`. A decisão técnica é o
-[ADR-0036](../adr/0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md), `Proposed`:
+[ADR-0036](../adr/0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md), **aceito por
+ato humano em 2026-08-23**:
 o gate de envio a provider pago no caminho hospedado passa a ser integralmente entitlement
 contratual ativo do tenant + consent por job + teto de custo por invocação + kill switch, sem
 segunda barreira por documento; a allowlist por digest permanece intocada no caminho offline de
@@ -204,10 +210,12 @@ saiu do worker e do deploy do HML (T1); `GET /v1/me` e os dois GETs de plataform
 (`/v1/platform/tenants`, `/v1/platform/tenants/{id}/ai-processing-entitlement`) existem, com
 snapshot OpenAPI atualizado (T2); a jornada "Plataforma" entrou na SPA — botão condicional ao
 papel `platform_operator`, `?plataforma=` fazendo round-trip pelo login, lista de tenants com
-ativação/desativação inline e Idempotency-Key nas mutações (T3); e esta documentação fecha a
-implementação (T4). O que resta não é código: aceite do ADR-0036 e o próprio merge, que é
-deploy. Contrato em
-[feature.md](../features/F-012-operacao-saas-autorizacao-ia/feature.md).
+ativação/desativação inline e Idempotency-Key nas mutações (T3); e a documentação fecha a
+implementação (T4). O PR #20 integrou a entrega na `main` (`345fd2c`), e o caminho hospedado
+foi exercitado nas rodadas reais posteriores. Entrega aceita por ato humano em 2026-08-23;
+F-012 está `DONE`. Contrato e evidência em
+[feature.md](../features/F-012-operacao-saas-autorizacao-ia/feature.md) e
+[evidence.md](../features/F-012-operacao-saas-autorizacao-ia/evidence.md).
 
 A F-012 também abriu um inventário de gargalos SaaS ainda sem Feature Contract, registrado
 aqui como o registro canônico até a especificação de cada item, todos nascidos em 2026-08-19,

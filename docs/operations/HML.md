@@ -260,7 +260,7 @@ autenticada do Pub/Sub, e a prova de vida dele é o job andar.
 ## Providers de IA
 
 Status real: descrito em [ADR-0035](../adr/0035-suite-hospedada-openai-anthropic-direto.md)
-(`Proposed`) e implementado pela [F-009](../features/F-009-suite-hospedada-sem-aws/feature.md).
+(`Accepted`) e implementado pela [F-009](../features/F-009-suite-hospedada-sem-aws/feature.md).
 A suite hospedada é Anthropic (braço primário) + OpenAI (reserva/contraparte) + o braço `ocr`
 (sempre ligado quando a suite real é construída, hoje Cloud Vision; Document AI monta no lugar
 dele quando `CROQUITO_DOCAI_PROCESSOR` está definido —
@@ -268,7 +268,7 @@ dele quando `CROQUITO_DOCAI_PROCESSOR` está definido —
 AWS nunca rodou neste ambiente. Roteamento, fallback e semântica de falha em
 [Model Routing](../ai/MODEL_ROUTING.md). O gate de autorização por documento (D6 do ADR-0035)
 foi revisto pela [F-012](../features/F-012-operacao-saas-autorizacao-ia/feature.md)
-([ADR-0036](../adr/0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md), `Proposed`):
+([ADR-0036](../adr/0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md), `Accepted`):
 a allowlist por digest saiu do caminho hospedado e o gate passou a ser só entitlement + consent
 + teto + kill switch, ativado pela jornada Plataforma em vez de curl.
 

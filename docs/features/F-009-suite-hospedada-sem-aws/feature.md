@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_REVIEW`
+`DONE`
 
 > Selecionada, especificada e autorizada por decisões humanas de 2026-08-19, na mesma
 > conversa que diagnosticou o upload real parado em `JOB_NOT_READY` no HML. O usuário
@@ -10,14 +10,11 @@
 > externo, suite sem AWS (Anthropic primário, OpenAI fallback), braço de OCR
 > determinístico via Cloud Vision, teto de US$ 5 por rodada e allowlist por env var.
 >
-> Implementação completa: T1, T2, T3 e T5 estão `BUILD_COMPLETE`; T4 (esta
-> documentação — ADR-0035, Model Routing, runbook do HML, ROADMAP) fecha a
-> integração. A infraestrutura em `biahflow/infra` está APLICADA (PRs
-> [#14](https://github.com/biahflow/infra/pull/14) e
-> [#15](https://github.com/biahflow/infra/pull/15) mesclados, apply verde, secrets com
-> valor write-only, Vision API habilitada). O que resta não é código: aceite do
-> ADR-0035 (`Proposed`), papel `platform_operator` e entitlement do tenant, digest do
-> PDF autorizado na allowlist, e o merge/deploy em `biahflow/croquito`.
+> Implementação integrada na `main` pelo merge `8333956`, infraestrutura aplicada e caminho
+> real exercitado no HML nas rodadas V12 e V14–V17. A allowlist hospedada original foi
+> removida pela F-012; o braço OpenAI foi desligado depois da V12 por decisão operacional,
+> sem remover a capacidade de fallback. O ADR-0035 e a entrega foram aceitos por ato humano
+> em 2026-08-23. Evidência em [evidence.md](evidence.md).
 
 ## Priority
 
@@ -97,14 +94,14 @@ AI; Document AI (registrado como escalada do OCR se o eval reprovar); default
 
 ## Human Gates
 
-Aprovação do ADR-0035; PR no repo `biahflow/infra` (o `plan` roda no PR e o merge
-aplica pela esteira — não há apply manual); valores dos segredos; role
-`platform_operator` e entitlement do tenant; digest na allowlist; merge (= deploy);
-re-upload do PDF.
+Todos os gates da feature foram exercidos: ADR-0035 aceito, PRs de infraestrutura aplicados,
+segredos configurados, merge/deploy concluído e uploads reais processados no HML. O
+entitlement passou a ser operado pela F-012 e a allowlist hospedada deixou de existir.
 
 ## References
 
 - [Plano de execução](plan.md)
+- [Evidência de execução](evidence.md)
 - [ADR-0002 — arquitetura AWS gerenciada](../../adr/0002-aws-managed-architecture.md)
   (revisitado parcialmente pelo ADR-0035)
 - [ADR-0025 — homologação em GCP Cloud Run](../../adr/0025-homologacao-em-gcp-cloud-run.md)

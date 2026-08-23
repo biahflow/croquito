@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_REVIEW`
+`DONE`
 
 > Selecionada e aprovada por decisões humanas de 2026-08-19, na sequência imediata da
 > F-009: o usuário vetou os dois rituais manuais que a ativação deixou — entitlement
@@ -12,6 +12,10 @@
 > plano: sem allowlist documental, qualquer PDF de tenant com entitlement ATIVO sai
 > para provider — consentimento 100% contratual, com teto por invocação e kill
 > switch.
+>
+> Implementação integrada na `main` pelo merge `345fd2c`, depois da F-009 (`8333956`), e
+> exercitada no ambiente que processou as rodadas reais V12 e V14–V17. O ADR-0036 e a entrega
+> foram aceitos por ato humano em 2026-08-23. Evidência em [evidence.md](evidence.md).
 
 ## Priority
 
@@ -81,12 +85,13 @@ BFF; mudanças no PUT do entitlement; caminhos valuation/eval offline.
 
 ## Human Gates
 
-Merge do PR #19 da F-009 (pré-requisito, com aceite do ADR-0035); aceite do
-ADR-0036; merge desta feature (= deploy).
+Todos os gates da feature foram exercidos: F-009 integrada e aceita, ADR-0036 aceito e merge
+da F-012 concluído pelo PR #20.
 
 ## References
 
 - [Plano de execução](plan.md)
+- [Evidência de execução](evidence.md)
 - [F-009](../F-009-suite-hospedada-sem-aws/feature.md)
 - [ADR-0035](../../adr/0035-suite-hospedada-openai-anthropic-direto.md)
 - [Operação do HML](../../operations/HML.md)

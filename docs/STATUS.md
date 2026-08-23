@@ -2,9 +2,9 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-19 (F-012 documentada — operação SaaS da autorização de IA, ADR-0036
-`Proposed`, implementação completa; F-009 documentada — suite hospedada de providers sem AWS,
-ADR-0035 `Proposed`, implementação completa; medição migrada para a API `/v1`, F-003; F-006
+Última revisão: 2026-08-23 (F-009 e F-012 `DONE` — ADR-0035/0036 e entregas aceitos por ato
+humano após merges, infraestrutura aplicada e rodadas reais no HML; medição migrada para a
+API `/v1`, F-003; F-006
 concluída após os atos humanos de homologação; F-007 e F-008 abertas, com os ADR-0032 e
 ADR-0033 aceitos)
 
@@ -814,7 +814,8 @@ primeiro dossiê de aditivo real depende da rodada da Toca homologada.
 - OCR auxiliar: Cloud Vision por padrão; Document AI monta no lugar dele por
   `CROQUITO_DOCAI_PROCESSOR`, escalada nomeada em
   [ADR-0037](adr/0037-document-ai-como-braco-de-ocr.md), que revisa D3 do
-  [ADR-0035](adr/0035-suite-hospedada-openai-anthropic-direto.md) (ambos `Proposed`).
+  [ADR-0035](adr/0035-suite-hospedada-openai-anthropic-direto.md) (`Accepted`; o ADR-0037
+  permanece `Proposed`).
 - Step Functions e Fargate no lugar de Celery/Redis.
 - Scene graph canônico entre extração e DXF.
 - DXF R2018 em metros; DWG fora do MVP.
@@ -1025,19 +1026,18 @@ reserva e contraparte da comparação dupla, com notas `PROVIDER_FALLBACK_*` sem
 nunca silenciosamente) e `ocr` (Cloud Vision `document text detection`, corroborando cada
 leitura com `READING_n_OCR_CONFIRMED`/`_OCR_EVIDENCE_MISSING`; `make ocr-eval` mede recall
 100% e zero falso-confirmado na fixture sintética). A decisão técnica é o
-[ADR-0035](adr/0035-suite-hospedada-openai-anthropic-direto.md), `Proposed` — aceitação segue
-como ato humano. As tarefas de implementação (T1, T2, T3, T5) estão completas e o deploy do HML
-(flag, segredos das duas chaves, teto de US$ 5 por rodada e allowlist por digest) está
-preparado, sem nenhum `apply` executado por agente. A infraestrutura em `biahflow/infra` tem
-dois PRs: #14 (mesclado, mas cujo primeiro `apply` falhou com 403 ao tentar habilitar
-`vision.googleapis.com`) e #15 (concede a permissão que faltava à conta de deploy, aguardando
-merge). O que resta não é código: aceite do ADR, merge/reexecução do apply em `biahflow/infra`,
-valores dos dois segredos, papel `platform_operator` e entitlement do tenant, digest do PDF
-autorizado na allowlist, e o merge/deploy em `biahflow/croquito`.
+[ADR-0035](adr/0035-suite-hospedada-openai-anthropic-direto.md), **aceito por ato humano em
+2026-08-23**. As tarefas T1–T5 estão completas, o PR #19 integrou a entrega na `main`
+(`8333956`) e a infraestrutura dos PRs `biahflow/infra#14/#15` foi aplicada: secrets com valor
+write-only, Vision API habilitada e retenção de sete dias. A V12 exerceu os dois braços; as
+V14–V17 exerceram o caminho real com Anthropic e OCR. O braço OpenAI foi desligado depois da
+V12 por decisão operacional, sem remover a capacidade de fallback. A entrega foi aceita por
+ato humano em 2026-08-23; F-009 está `DONE`. Evidência em
+[evidence.md](features/F-009-suite-hospedada-sem-aws/evidence.md).
 
 **Atualização (F-012, 2026-08-19):** a allowlist por digest citada acima como pendência foi
-removida do caminho hospedado — o parágrafo seguinte registra a decisão e o que resta é só o
-entitlement por tenant, agora ativável pela jornada "Plataforma" em vez de curl.
+removida do caminho hospedado; o entitlement por tenant passou a ser ativável pela jornada
+"Plataforma" em vez de curl.
 
 Na primeira revisão da porta de entrada com a F-009 pronta, o usuário vetou os dois rituais
 manuais que a ativação da suite hospedada deixava: entitlement por curl com token pescado do
@@ -1045,7 +1045,7 @@ DevTools, e allowlist de digest por env var exigindo um redeploy por documento �
 literal "isso já nasce com a visão de SaaS, não posso ter esses gargalos/travas". Nasceu a
 [F-012](features/F-012-operacao-saas-autorizacao-ia/feature.md), prioridade `HIGH`. A decisão
 técnica é o [ADR-0036](adr/0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md),
-`Proposed`: o gate de envio de documento a provider pago no caminho hospedado passa a ser
+**aceito por ato humano em 2026-08-23**: o gate de envio de documento a provider pago no caminho hospedado passa a ser
 integralmente entitlement contratual ativo do tenant + consent por job + teto de custo por
 invocação + kill switch — sem segunda barreira por documento. A allowlist por digest
 (`LocalWorkerSettings.ai_extraction_allowed_digests`, o parse de
@@ -1063,8 +1063,10 @@ nunca ativado); nenhum dos dois muda o `PUT` existente. A SPA ganhou a jornada "
 `agreement_reference` e `Idempotency-Key`, e um formulário cobre o tenant que só existe no
 Keycloak (sem pegada no banco). O runbook de ativação do HML perdeu os passos de digest e
 redeploy por documento; o que fica é Keycloak (papel e tenant), ativação pela tela, upload pela
-SPA e o kill switch como rollback. O que resta não é código: aceite do ADR-0036 e o merge, que
-é deploy. A F-012 também abriu um inventário de gargalos SaaS ainda sem contrato — UI de
+SPA e o kill switch como rollback. O PR #20 integrou a entrega na `main` (`345fd2c`), e a
+entrega foi aceita por ato humano em 2026-08-23; F-012 está `DONE`. Evidência em
+[evidence.md](features/F-012-operacao-saas-autorizacao-ia/evidence.md). A F-012 também abriu um
+inventário de gargalos SaaS ainda sem contrato — UI de
 membros do tenant (F-013, depende do convite da F-008), entidade tenant e onboarding
 self-service (F-014), recriar o job de upload existente (F-015), rotação de chaves de provider
 (F-016) e custo agregado por tenant com trilha de auditoria na tela (F-017) — registrado no

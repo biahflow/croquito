@@ -1,6 +1,6 @@
 # ADR-0036: Autorização de IA contratual, sem allowlist documental por digest
 
-Status: Proposed
+Status: Accepted
 Data: 2026-08-19
 Responsável: Engineering
 

@@ -1,6 +1,6 @@
 # ADR-0035: Suite hospedada de providers — OpenAI e Anthropic diretos, sem AWS
 
-Status: Proposed
+Status: Accepted
 Data: 2026-08-19
 Responsável: Engineering / AI Engineering
 
