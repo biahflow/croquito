@@ -69,6 +69,17 @@ def main() -> int:
         action="store_true",
         help="RODADA PAGA: chama os fornecedores reais; exige chaves, teto e aprovação humana",
     )
+    field_classification_eval = subcommands.add_parser(
+        "field-photo-classification-eval",
+        help="eval da classificação de campo (offline; --live faz seis chamadas pagas)",
+    )
+    field_classification_eval.add_argument("--output", type=Path, required=True)
+    field_classification_eval.add_argument("--corpus", type=Path, default=None)
+    field_classification_eval.add_argument(
+        "--live",
+        action="store_true",
+        help="RODADA PAGA ÚNICA: exige corpus externo com exatamente seis fotos",
+    )
     review_artifacts_command = subcommands.add_parser(
         "review-artifacts",
         help="valida um review packet e gera overlay ligado à imagem",
@@ -849,6 +860,41 @@ def main() -> int:
             )
         )
         return 0 if vision_report.passed else 1
+    if args.command == "field-photo-classification-eval":
+        from croquito_worker.field_photo_classification_eval import (
+            run_live_classification_eval,
+            run_offline_classification_eval,
+        )
+
+        if args.live:
+            if args.corpus is None:
+                raise SystemExit("--corpus é obrigatório com --live")
+            classification_report, classification_report_path = run_live_classification_eval(
+                args.corpus, args.output
+            )
+        else:
+            if args.corpus is not None:
+                raise SystemExit("--corpus só é aceito com --live")
+            classification_report, classification_report_path = run_offline_classification_eval(
+                args.output
+            )
+        print(
+            json.dumps(
+                {
+                    "mode": classification_report.mode,
+                    "candidate": classification_report.candidate,
+                    "passed": classification_report.passed,
+                    "schema_lineage_valid": classification_report.schema_lineage_valid_count,
+                    "non_geometric": classification_report.non_geometric_count,
+                    "correct": classification_report.correct_count,
+                    "high_confidence_errors": (classification_report.high_confidence_error_count),
+                    "estimated_cost_usd": str(classification_report.estimated_cost_usd),
+                    "report": str(classification_report_path),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0 if classification_report.passed else 1
     if args.command == "ocr-eval":
         from croquito_worker.ocr_eval import run_ocr_corroboration_eval
 

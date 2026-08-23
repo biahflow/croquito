@@ -2526,6 +2526,12 @@ _NULLED_PAYLOADS: dict[PromptTask, dict[str, object]] = {
         ],
         "notes": None,
     },
+    PromptTask.FIELD_PHOTO_CLASSIFICATION: {
+        "category": "MURO",
+        "description": "Muro de alvenaria visível.",
+        "topology_notes": ["Portão junto ao muro."],
+        "confidence": "medium",
+    },
 }
 
 
@@ -2645,6 +2651,7 @@ TASKS_WITH_OWN_PROMPT_BRANCH = frozenset(
         PromptTask.SCO_REFINEMENT,
         PromptTask.REVIEW_CHAT,
         PromptTask.FIELD_PHOTO_READING,
+        PromptTask.FIELD_PHOTO_CLASSIFICATION,
         PromptTask.AUDIO_TRANSCRIPTION,
     }
 )
@@ -2695,6 +2702,7 @@ def test_prompt_hashes_of_existing_tasks_are_frozen() -> None:
         # e é o único template em português — o que se pede é transcrição literal do que
         # está escrito em português na praça.
         "field-photo-reading": "field-photo-reading@1.0.0",
+        "field-photo-classification": "field-photo-classification@1.0.0",
         # Primeira tarefa de FALA (F-032 T13): nasce em 1.0.0 e é a única cujo template não é
         # enviado ao fornecedor — ele versiona a POLÍTICA de transcrição (idioma pedido,
         # ausência de viés, temperatura), que é o que muda o resultado numa API de fala.
@@ -2718,6 +2726,16 @@ def test_geometry_prompt_forbids_measurement_and_regularisation() -> None:
     # polyline, nunca duas lines retas nem uma reta achatada.
     assert "vertices trace the step" in template
     assert "never flatten" in template
+
+
+def test_field_photo_classification_prompt_is_non_geometric_and_human_reviewed() -> None:
+    template = _prompt_template(PromptTask.FIELD_PHOTO_CLASSIFICATION)
+
+    assert "categorias permitidas" in template
+    assert "UNKNOWN" in template
+    assert "nunca devolva medida" in template
+    assert "nunca probabilidade" in template
+    assert "rascunho para conclusão humana" in template
 
 
 def test_geometry_element_requires_vertices_for_a_polyline() -> None:

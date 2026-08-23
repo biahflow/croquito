@@ -1673,6 +1673,22 @@ O estado é uma cabeça única por `(job, origin, evidence_id, task)`. Reentrega
 determinísticos para as leituras; nunca contém `Measurement`, geometria, precisão, blocker
 ou associação.
 
+### `POST /v1/jobs/{job_id}/field-evidence/photos/{origin}/{evidence_id}/classification`
+
+Entrada: `base_version`; `origin` é `survey` ou `standalone`. Registra e enfileira, com
+`202`, uma `FIELD_PHOTO_CLASSIFICATION` somente por ato explícito. O endpoint falha fechado
+antes da fila quando providers reais estão desligados, o tenant não possui entitlement ativo
+ou o job não possui snapshot de autorização. Upload, confirmação e vínculo nunca chamam esta
+rota.
+
+O único braço é Anthropic `claude-opus-5`; não existe fallback OpenAI. Uma resposta válida
+nasce `DRAFT` e carrega categoria controlada (`MURO | ALAMBRADO | PORTAO | PATAMAR |
+EQUIPAMENTOS | DETALHES | UNKNOWN`), descrição curta, observações topológicas não geométricas,
+confiança ordinal e lineage de prompt/schema/provider/modelo. O schema não possui medida,
+dimensão, coordenada, geometria, precisão probabilística, blocker, entidade nem autoridade para
+alterar a cena. O `GET .../field-evidence` expõe o rascunho e seu estado separadamente da
+leitura textual.
+
 ### `POST /v1/jobs/{job_id}/field-evidence/photos/{origin}/{evidence_id}/values`
 
 Confirma ou corrige uma leitura já processada. Entrada: `base_version`,

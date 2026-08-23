@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from croquito_api.config import ApiSettings
 from croquito_api.database import (
+    AiProcessingAuthorizationRecord,
     AuditRecord,
     Database,
     FieldEvidenceAnalysisRecord,
@@ -25,6 +26,7 @@ from croquito_api.database import (
     ProjectRecord,
     SurveyMediaRecord,
     SurveyRecord,
+    TenantAiProcessingEntitlementRecord,
     UploadRecord,
 )
 from croquito_api.main import create_app
@@ -218,7 +220,10 @@ def _seed(database: Database, store: FakeObjectStore) -> None:
     )
 
 
-def _client(tmp_path: Path) -> TestClient:
+def _client(
+    tmp_path: Path, *, real_providers_enabled: bool = False, authorized: bool = False
+) -> TestClient:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     database = Database(f"sqlite+pysqlite:///{tmp_path / 'field-evidence.db'}")
     database.create_schema()
     settings = ApiSettings(
@@ -231,11 +236,40 @@ def _client(tmp_path: Path) -> TestClient:
         oidc_audience=None,
         web_origin="http://localhost:5173",
         allow_test_tokens=True,
+        real_providers_enabled=real_providers_enabled,
     )
     application = create_app(settings=settings, database=database)
     store = FakeObjectStore()
     application.state.artifact_store = store
     _seed(database, store)
+    if authorized:
+        with database.sessions.begin() as session:
+            session.add(
+                TenantAiProcessingEntitlementRecord(
+                    id=f"entitlement-{tmp_path.name}",
+                    tenant_id=TENANT,
+                    status="ACTIVE",
+                    agreement_reference="contract-f030",
+                    authorized_by="operator",
+                    authorized_at=NOW,
+                )
+            )
+            session.flush()
+            session.add(
+                AiProcessingAuthorizationRecord(
+                    id=f"authorization-{tmp_path.name}",
+                    tenant_id=TENANT,
+                    job_id=str(JOB_ID),
+                    accepted_by="operator",
+                    notice_version="contractual-entitlement-v1",
+                    providers_json=["anthropic"],
+                    global_processing=True,
+                    retention_days=7,
+                    authorization_source="contract",
+                    entitlement_id=f"entitlement-{tmp_path.name}",
+                    agreement_reference="contract-f030",
+                )
+            )
     return TestClient(application)
 
 
@@ -364,6 +398,7 @@ def test_leitura_retorna_ancora_medida_confirmada_e_url_temporaria(tmp_path: Pat
     assert photo["url"].endswith("?temporary=true")
     assert photo["reading_status"] == "PROCESSED"
     assert photo["classification_status"] == "NOT_REQUESTED"
+    assert photo["classification"] is None
     assert photo["analysis"]["notes"] == ["sem cota legível"]
     assert "tenant_id" not in photo["analysis"]
     assert "survey_id" not in photo["analysis"]
@@ -492,6 +527,82 @@ def test_leitura_so_e_enfileirada_por_pedido_explicito(tmp_path: Path) -> None:
     assert {json.loads(message["Body"])["command"] for message in queue.messages} == {
         "analyze_field_evidence"
     }
+
+
+def test_classificacao_exige_provider_e_entitlement_antes_de_enfileirar(tmp_path: Path) -> None:
+    disabled = _client(tmp_path / "disabled")
+    assert (
+        disabled.post(
+            f"/v1/jobs/{JOB_ID}/field-evidence/surveys/{SURVEY_ID}",
+            headers=_headers(key="link-class-disabled"),
+            json={"base_version": 1},
+        ).status_code
+        == 200
+    )
+    path = (
+        f"/v1/jobs/{JOB_ID}/field-evidence/photos/survey/"
+        "00000000-0000-7000-8000-000000000903/classification"
+    )
+    unavailable = disabled.post(
+        path,
+        headers=_headers(key="classification-disabled"),
+        json={"base_version": 2},
+    )
+    assert unavailable.status_code == 503
+    assert unavailable.json()["code"] == "PROVIDER_UNAVAILABLE"
+
+    enabled = _client(tmp_path / "enabled", real_providers_enabled=True)
+    assert (
+        enabled.post(
+            f"/v1/jobs/{JOB_ID}/field-evidence/surveys/{SURVEY_ID}",
+            headers=_headers(key="link-class-enabled"),
+            json={"base_version": 1},
+        ).status_code
+        == 200
+    )
+    forbidden = enabled.post(
+        path,
+        headers=_headers(key="classification-no-entitlement"),
+        json={"base_version": 2},
+    )
+    assert forbidden.status_code == 403
+    assert forbidden.json()["code"] == "AI_PROCESSING_NOT_AUTHORIZED"
+    assert len(_queue(enabled).messages) == 0
+
+    authorized = _client(tmp_path / "authorized", real_providers_enabled=True, authorized=True)
+    queue = _queue(authorized)
+    assert (
+        authorized.post(
+            f"/v1/jobs/{JOB_ID}/field-evidence/surveys/{SURVEY_ID}",
+            headers=_headers(key="link-class-authorized"),
+            json={"base_version": 1},
+        ).status_code
+        == 200
+    )
+    accepted = authorized.post(
+        path,
+        headers=_headers(key="classification-authorized"),
+        json={"base_version": 2},
+    )
+    replay = authorized.post(
+        path,
+        headers=_headers(key="classification-authorized"),
+        json={"base_version": 2},
+    )
+    assert accepted.status_code == replay.status_code == 202
+    assert accepted.json()["task"] == "classification"
+    assert accepted.json()["status"] == "QUEUED"
+    assert accepted.json()["version"] == 3
+    assert len(queue.messages) == 2
+    with _database(authorized).sessions() as session:
+        state = session.scalar(
+            select(FieldEvidenceAnalysisRecord).where(
+                FieldEvidenceAnalysisRecord.task == "classification"
+            )
+        )
+        assert state is not None
+        assert state.artifact_key is not None
+        assert state.artifact_key.endswith("/classification.json")
 
 
 def test_valor_so_pode_ser_confirmado_depois_da_leitura_e_correcao_e_append_only(

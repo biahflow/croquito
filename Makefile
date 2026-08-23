@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: docs setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval ocr-eval solver-eval association-eval association-calibration transcription-eval extraction-eval extraction-eval-degrau valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
+.PHONY: docs setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval ocr-eval solver-eval association-eval association-calibration transcription-eval field-photo-classification-eval extraction-eval extraction-eval-degrau valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
 
 setup:
 	uv sync --all-groups
@@ -120,6 +120,13 @@ association-calibration:
 #     --corpus <caminho>/corpus.json --live
 transcription-eval:
 	uv run croquito-demo transcription-eval --output output/transcription-eval
+
+# Offline por padrão. A rodada real exige `LIVE=1 CORPUS=<fora-do-git>/corpus.json`,
+# `CROQUITO_OPENAI_ARM_ENABLED=false`, teto 5.00 e reserva 0.75; o runner chama cada uma
+# das seis fotos uma única vez, sem retry e sem fallback.
+field-photo-classification-eval:
+	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run croquito-demo field-photo-classification-eval \
+	  --output output/field-photo-classification-eval $(if $(LIVE),--live --corpus "$(CORPUS)",)
 
 valuation-demo:
 	uv run croquito-valuation demo --output output/valuation-demo

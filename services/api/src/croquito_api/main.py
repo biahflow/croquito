@@ -1923,6 +1923,7 @@ class FieldEvidencePhoto(ApiModel):
     captured_at: datetime
     url: str
     analysis: dict[str, Any] | None
+    classification: dict[str, Any] | None
     reading_status: str
     classification_status: str
     confirmed_values: list[FieldEvidenceConfirmedValue]
@@ -3249,6 +3250,16 @@ def _field_evidence_response(
                     tenant_id=job.tenant_id,
                 )
             )
+            classification = _public_field_analysis(
+                _read_field_analysis(
+                    application,
+                    object_key=classification_state.artifact_key,
+                    tenant_id=job.tenant_id,
+                )
+                if classification_state is not None
+                and classification_state.artifact_key is not None
+                else None
+            )
             photos.append(
                 FieldEvidencePhoto(
                     evidence_id=media.id,
@@ -3261,6 +3272,7 @@ def _field_evidence_response(
                     captured_at=captured_at or media.created_at,
                     url=url,
                     analysis=analysis,
+                    classification=classification,
                     reading_status=(
                         reading_state.status
                         if reading_state is not None
@@ -3320,6 +3332,15 @@ def _field_evidence_response(
             if reading_state is not None and reading_state.artifact_key is not None
             else None
         )
+        classification = _public_field_analysis(
+            _read_field_analysis(
+                application,
+                object_key=classification_state.artifact_key,
+                tenant_id=job.tenant_id,
+            )
+            if classification_state is not None and classification_state.artifact_key is not None
+            else None
+        )
         photos.append(
             FieldEvidencePhoto(
                 evidence_id=photo.id,
@@ -3332,6 +3353,7 @@ def _field_evidence_response(
                 captured_at=photo.created_at,
                 url=url,
                 analysis=analysis,
+                classification=classification,
                 reading_status=(reading_state.status if reading_state else "NOT_REQUESTED"),
                 classification_status=(
                     classification_state.status
@@ -12948,6 +12970,130 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 "PROCESSING_UNAVAILABLE",
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Leitura registrada; repita o mesmo comando para reenfileirar.",
+            ) from error
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/field-evidence/photos/{origin}/{evidence_id}/classification",
+        response_model=FieldPhotoAnalysisStateResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["field-evidence"],
+    )
+    async def request_field_photo_classification(
+        job_id: UUID,
+        origin: Literal["survey", "standalone"],
+        evidence_id: UUID,
+        payload: RequestFieldPhotoAnalysisRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> FieldPhotoAnalysisStateResponse:
+        """Enfileira classificação explícita; o único resultado possível é rascunho."""
+        _reviewer_role(principal)
+        if not runtime_settings.real_providers_enabled:
+            raise _problem(
+                "PROVIDER_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Classificação visual por IA está desabilitada neste ambiente.",
+            )
+        operation = f"field-evidence.classification:{job_id}:{origin}:{evidence_id}"
+        request_hash = _request_hash(payload)
+        replay = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            response = FieldPhotoAnalysisStateResponse.model_validate(replay)
+            state = session.get(FieldEvidenceAnalysisRecord, str(response.analysis_id))
+            if state is not None and state.status == "QUEUED":
+                try:
+                    application.state.queue.enqueue_field_evidence_analysis(
+                        analysis_id=state.id,
+                        job_id=str(job_id),
+                        tenant_id=principal.tenant_id,
+                    )
+                except QUEUE_TRANSPORT_ERRORS as error:
+                    raise _problem(
+                        "PROCESSING_UNAVAILABLE",
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Classificação registrada; repita o mesmo comando para reenfileirar.",
+                    ) from error
+            return response
+
+        job = _load_job(session, job_id=job_id, tenant_id=principal.tenant_id)
+        _load_field_photo_target(session, job=job, origin=origin, evidence_id=evidence_id)
+        _require_active_ai_entitlement(session, principal, real_providers_enabled=True)
+        _require_job_ai_authorization(session, job=job, real_providers_enabled=True)
+        analysis = _field_analysis_state(
+            session,
+            tenant_id=job.tenant_id,
+            job_id=job.id,
+            origin=origin,
+            evidence_id=str(evidence_id),
+            task="classification",
+        )
+        if analysis is None:
+            if job.version != payload.base_version:
+                raise _problem(
+                    "REVISION_CONFLICT",
+                    status.HTTP_409_CONFLICT,
+                    "A evidência de campo do job mudou; releia antes de solicitar análise.",
+                )
+            analysis = FieldEvidenceAnalysisRecord(
+                id=str(new_uuid7()),
+                tenant_id=job.tenant_id,
+                job_id=job.id,
+                origin=origin,
+                evidence_id=str(evidence_id),
+                task="classification",
+                status="QUEUED",
+                artifact_key=_field_analysis_object_key(
+                    job=job,
+                    origin=origin,
+                    evidence_id=str(evidence_id),
+                    task="classification",
+                ),
+                requested_by=principal.subject,
+            )
+            session.add(analysis)
+            job.version += 1
+            session.flush()
+            _record_audit(
+                session,
+                principal=principal,
+                action="FIELD_PHOTO_CLASSIFICATION_REQUESTED",
+                resource_type="field_evidence_analysis",
+                resource_id=analysis.id,
+                request_id=request.state.request_id,
+            )
+        response = FieldPhotoAnalysisStateResponse(
+            analysis_id=UUID(analysis.id),
+            task="classification",
+            status=analysis.status,
+            version=job.version,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        session.commit()
+        try:
+            application.state.queue.enqueue_field_evidence_analysis(
+                analysis_id=analysis.id, job_id=job.id, tenant_id=job.tenant_id
+            )
+        except QUEUE_TRANSPORT_ERRORS as error:
+            raise _problem(
+                "PROCESSING_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Classificação registrada; repita o mesmo comando para reenfileirar.",
             ) from error
         return response
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,8 +20,16 @@ from croquito_api.database import (
     UploadRecord,
 )
 from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
+from croquito_worker.providers import (
+    FieldPhotoClassificationOutput,
+    ProviderExecution,
+    ProviderName,
+    ProviderRequest,
+    ProviderSuite,
+    ProviderUsage,
+)
 from tests.fakes import FakeObjectStore, FakeQueue
-from tests.worker.test_survey_photo_analysis import CountingAdapter, _suite, sharp_photo
+from tests.worker.test_survey_photo_analysis import CountingAdapter, sharp_photo
 
 TENANT = "tenant-field-worker"
 JOB_ID = "00000000-0000-7000-8000-000000000911"
@@ -28,12 +37,14 @@ PHOTO_ID = "00000000-0000-7000-8000-000000000912"
 ANALYSIS_ID = "00000000-0000-7000-8000-000000000913"
 
 
-def _seed(tmp_path: Path, *, authorized: bool = False) -> tuple[str, FakeObjectStore, str]:
+def _seed(
+    tmp_path: Path, *, authorized: bool = False, task: str = "reading"
+) -> tuple[str, FakeObjectStore, str]:
     image = sharp_photo()
     digest = hashlib.sha256(image).hexdigest()
     media_key = f"tenants/{TENANT}/jobs/{JOB_ID}/field-evidence/media/{digest}"
     artifact_key = (
-        f"tenants/{TENANT}/jobs/{JOB_ID}/field-evidence/analysis/standalone/{PHOTO_ID}/reading.json"
+        f"tenants/{TENANT}/jobs/{JOB_ID}/field-evidence/analysis/standalone/{PHOTO_ID}/{task}.json"
     )
     database_url = f"sqlite+pysqlite:///{tmp_path / 'field-worker.db'}"
     database = Database(database_url)
@@ -95,7 +106,7 @@ def _seed(tmp_path: Path, *, authorized: bool = False) -> tuple[str, FakeObjectS
                 job_id=JOB_ID,
                 origin="standalone",
                 evidence_id=PHOTO_ID,
-                task="reading",
+                task=task,
                 status="QUEUED",
                 artifact_key=artifact_key,
                 requested_by="reviewer",
@@ -134,7 +145,10 @@ def _seed(tmp_path: Path, *, authorized: bool = False) -> tuple[str, FakeObjectS
 
 
 def _worker(
-    database_url: str, store: FakeObjectStore, *, primary: CountingAdapter | None = None
+    database_url: str,
+    store: FakeObjectStore,
+    *,
+    primary: CountingAdapter | ClassificationAdapter | None = None,
 ) -> LocalQueueWorker:
     worker = LocalQueueWorker(
         LocalWorkerSettings(
@@ -143,11 +157,35 @@ def _worker(
             aws_region="sa-east-1",
             aws_endpoint_url="http://localstack",
         ),
-        provider_suite=(_suite(primary) if primary is not None else None),
+        provider_suite=(ProviderSuite(anthropic=primary) if primary is not None else None),
     )
     worker.client = FakeQueue()
     worker.s3_client = store
     return worker
+
+
+class ClassificationAdapter:
+    """Provider sintético estrito; nenhum teste desta suíte acessa a rede."""
+
+    def __init__(self) -> None:
+        self.calls: list[ProviderRequest] = []
+
+    def execute(self, request: ProviderRequest) -> ProviderExecution:
+        self.calls.append(request)
+        return ProviderExecution(
+            provider=ProviderName.ANTHROPIC,
+            model_id="claude-opus-5",
+            prompt=request.prompt,
+            input_digest=request.image_sha256,
+            latency_ms=3,
+            usage=ProviderUsage(estimated_cost_usd=Decimal("0.75")),
+            output=FieldPhotoClassificationOutput(
+                category="MURO",
+                description="Muro de alvenaria visível.",
+                topology_notes=["Portão junto ao muro."],
+                confidence="high",
+            ),
+        )
 
 
 def _message(**overrides: Any) -> dict[str, Any]:
@@ -206,3 +244,40 @@ def test_sem_snapshot_do_job_adapter_injetado_nao_recebe_foto(tmp_path: Path) ->
     document = cast(dict[str, Any], json.loads(store.body(artifact_key)))
     assert document["provider_pass"] == "skipped_no_entitlement"
     assert primary.calls == []
+
+
+def test_classificacao_nasce_rascunho_sem_medida_geometria_ou_fallback(tmp_path: Path) -> None:
+    database_url, store, artifact_key = _seed(tmp_path, authorized=True, task="classification")
+    primary = ClassificationAdapter()
+    worker = _worker(database_url, store, primary=primary)
+
+    assert worker.dispatch(_message()) == 1
+
+    document = cast(dict[str, Any], json.loads(store.body(artifact_key)))
+    assert document["schema"] == "field-evidence-classification/1"
+    assert document["classification"] == {
+        "category": "MURO",
+        "description": "Muro de alvenaria visível.",
+        "topology_notes": ["Portão junto ao muro."],
+        "confidence": "high",
+    }
+    assert document["lineage"]["model_id"] == "claude-opus-5"
+    assert len(primary.calls) == 1
+    assert not {
+        "measurement",
+        "measurements",
+        "geometry",
+        "entity",
+        "entities",
+        "precision",
+        "blocker",
+        "blockers",
+    } & set(document)
+    database = Database(database_url)
+    with database.sessions() as session:
+        state = session.get(FieldEvidenceAnalysisRecord, ANALYSIS_ID)
+        assert state is not None and state.status == "DRAFT"
+
+    # Estado terminal: reentrega não escolhe resultado melhor nem custa outra chamada.
+    assert worker.dispatch(_message()) == 0
+    assert len(primary.calls) == 1

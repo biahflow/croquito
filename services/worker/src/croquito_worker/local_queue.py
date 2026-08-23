@@ -83,6 +83,7 @@ from croquito_worker.survey_export import (
     survey_scene_object_key,
 )
 from croquito_worker.survey_photo_analysis import (
+    ClassificationPassResult,
     PhotoQuality,
     ProviderPass,
     ProviderPassResult,
@@ -90,9 +91,11 @@ from croquito_worker.survey_photo_analysis import (
     SurveyPhotoMedia,
     analysis_counts,
     analyze_photo_quality,
+    build_field_evidence_classification_document,
     build_field_evidence_reading_document,
     build_photo_analysis_document,
     photo_media,
+    run_classification_pass,
     run_provider_pass,
     survey_analysis_object_key,
 )
@@ -2993,10 +2996,38 @@ class LocalQueueWorker:
             suite.anthropic, suite.openai, image_bytes=image_bytes, quality=quality
         )
 
+    def _field_evidence_classification_pass(
+        self,
+        *,
+        tenant_id: str,
+        job_id: str,
+        authorized: bool,
+        image_bytes: bytes,
+        quality: PhotoQuality,
+    ) -> ClassificationPassResult:
+        """Classificação usa só Anthropic; OpenAI nunca é reserva desta tarefa."""
+        if self.provider_suite is None and not self.settings.real_providers_enabled:
+            return ClassificationPassResult(outcome=ProviderPass.SKIPPED_DISABLED)
+        if not authorized:
+            return ClassificationPassResult(outcome=ProviderPass.SKIPPED_NO_ENTITLEMENT)
+        suite = self.provider_suite
+        if suite is None:
+            suite = build_real_provider_suite(
+                raw_store=S3ProtectedRawResponseStore(
+                    client=self.s3_client,
+                    bucket=self.settings.artifact_bucket,
+                    tenant_id=tenant_id,
+                    scope="jobs",
+                    scope_id=job_id,
+                    sse=self.settings.storage_sse_enabled,
+                )
+            )
+        return run_classification_pass(suite.anthropic, image_bytes=image_bytes, quality=quality)
+
     def _handle_field_evidence_analysis(
         self, *, analysis_id: str, job_id: str, tenant_id: str
     ) -> int:
-        """Executa uma leitura solicitada; duplicata processada é ack sem novo custo."""
+        """Executa leitura ou classificação solicitada; estado terminal não chama de novo."""
         started = time.monotonic()
         now = datetime.now(UTC)
         with self.engine.begin() as connection:
@@ -3020,11 +3051,19 @@ class LocalQueueWorker:
                 raise SurveyPhotoAnalysisError(
                     "FIELD_EVIDENCE_ANALYSIS_NOT_FOUND", "análise inexistente neste job"
                 )
-            if str(state["task"]) != "reading":
+            task = str(state["task"])
+            if task not in {"reading", "classification"}:
                 raise SurveyPhotoAnalysisError(
-                    "FIELD_EVIDENCE_TASK_UNSUPPORTED", "tarefa ainda não suportada"
+                    "FIELD_EVIDENCE_TASK_UNSUPPORTED", "tarefa de evidência não suportada"
                 )
-            if str(state["status"]) == "PROCESSED":
+            if str(state["status"]) in {
+                "PROCESSED",
+                "DRAFT",
+                "SKIPPED_DISABLED",
+                "SKIPPED_NO_ENTITLEMENT",
+                "FAILED_TRANSIENT",
+                "FAILED_PERMANENT",
+            }:
                 return 0
             connection.execute(
                 text(
@@ -3098,52 +3137,89 @@ class LocalQueueWorker:
                 "FIELD_PHOTO_DIGEST_MISMATCH", "bytes divergentes do digest confirmado"
             )
         quality = analyze_photo_quality(image_bytes)
-        provider = self._field_evidence_provider_pass(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            authorized=entitlement is not None and authorization is not None,
-            image_bytes=image_bytes,
-            quality=quality,
-        )
         artifact_key = str(state["artifact_key"])
         required_prefix = f"tenants/{tenant_id}/jobs/{job_id}/field-evidence/"
         if not artifact_key.startswith(required_prefix) or ".." in artifact_key.split("/"):
             raise SurveyPhotoAnalysisError(
                 "FIELD_EVIDENCE_ARTIFACT_KEY_INVALID", "chave do artefato fora do job"
             )
-        document = build_field_evidence_reading_document(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            origin=origin,
-            evidence_id=evidence_id,
-            media=media,
-            quality=quality,
-            provider=provider,
-        )
+        authorized = entitlement is not None and authorization is not None
+        if task == "classification":
+            classification_provider = self._field_evidence_classification_pass(
+                tenant_id=tenant_id,
+                job_id=job_id,
+                authorized=authorized,
+                image_bytes=image_bytes,
+                quality=quality,
+            )
+            document = build_field_evidence_classification_document(
+                tenant_id=tenant_id,
+                job_id=job_id,
+                origin=origin,
+                evidence_id=evidence_id,
+                media=media,
+                quality=quality,
+                provider=classification_provider,
+            )
+            provider_outcome = classification_provider.outcome
+        else:
+            reading_provider = self._field_evidence_provider_pass(
+                tenant_id=tenant_id,
+                job_id=job_id,
+                authorized=authorized,
+                image_bytes=image_bytes,
+                quality=quality,
+            )
+            document = build_field_evidence_reading_document(
+                tenant_id=tenant_id,
+                job_id=job_id,
+                origin=origin,
+                evidence_id=evidence_id,
+                media=media,
+                quality=quality,
+                provider=reading_provider,
+            )
+            provider_outcome = reading_provider.outcome
         written_bytes = self._put_survey_json(object_key=artifact_key, document=document)
         finished = datetime.now(UTC)
+        final_status = (
+            "DRAFT"
+            if task == "classification" and provider_outcome is ProviderPass.DONE
+            else ("PROCESSED" if task == "reading" else provider_outcome.value.upper())
+        )
+        failure_code = document.get("provider_failure_code")
         with self.engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE field_evidence_analyses SET status = 'PROCESSED', "
-                    "failure_code = NULL, updated_at = :updated_at "
+                    "UPDATE field_evidence_analyses SET status = :status, "
+                    "failure_code = :failure_code, updated_at = :updated_at "
                     "WHERE id = :analysis_id AND job_id = :job_id AND tenant_id = :tenant_id"
                 ).bindparams(bindparam("updated_at", type_=DateTime(timezone=True))),
                 {
                     "analysis_id": analysis_id,
                     "job_id": job_id,
                     "tenant_id": tenant_id,
+                    "status": final_status,
+                    "failure_code": failure_code,
                     "updated_at": finished,
                 },
             )
-        counts = analysis_counts(document)
+        counts = (
+            analysis_counts(document)
+            if task == "reading"
+            else {
+                "readings": 0,
+                "notes": len((document.get("classification") or {}).get("topology_notes", [])),
+                "findings": len(document["quality"]["findings"]),
+            }
+        )
         logger.info(
-            "field_evidence_reading_completed",
+            "field_evidence_analysis_completed",
             extra={
-                "stage": "FIELD_EVIDENCE_READING",
+                "stage": f"FIELD_EVIDENCE_{task.upper()}",
                 "job_id": job_id,
                 "analysis_id": analysis_id,
-                "provider_pass": provider.outcome.value,
+                "provider_pass": provider_outcome.value,
                 "readings": counts["readings"],
                 "notes": counts["notes"],
                 "findings": counts["findings"],

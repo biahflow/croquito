@@ -3362,6 +3362,18 @@
             "title": "Captured At",
             "type": "string"
           },
+          "classification": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification"
+          },
           "classification_status": {
             "title": "Classification Status",
             "type": "string"
@@ -3424,6 +3436,7 @@
           "captured_at",
           "url",
           "analysis",
+          "classification",
           "reading_status",
           "classification_status",
           "confirmed_values"
@@ -11142,6 +11155,104 @@
           }
         ],
         "summary": "Presign Job Field Photo",
+        "tags": [
+          "field-evidence"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/field-evidence/photos/{origin}/{evidence_id}/classification": {
+      "post": {
+        "description": "Enfileira classificação explícita; o único resultado possível é rascunho.",
+        "operationId": "request_field_photo_classification_v1_jobs__job_id__field_evidence_photos__origin___evidence_id__classification_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "origin",
+            "required": true,
+            "schema": {
+              "enum": [
+                "survey",
+                "standalone"
+              ],
+              "title": "Origin",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidence_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Evidence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestFieldPhotoAnalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FieldPhotoAnalysisStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Request Field Photo Classification",
         "tags": [
           "field-evidence"
         ]

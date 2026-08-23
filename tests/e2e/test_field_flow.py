@@ -588,16 +588,17 @@ def test_field_survey_chain_end_to_end(tmp_path: Path) -> None:
     assert analysis["provider_pass"] == "done"
     assert analysis["quality"]["width_px"] == 1024
     assert analysis["quality"]["height_px"] == 768
-    assert analysis["readings"] == [
-        {
-            "raw_text": "PRAÇA MUNICIPAL — 12,00 m",
-            "kind_hint": "sign",
-            "value_hint": "12.00",
-            "unit_hint": "m",
-            "target_hint": "muro do fundo",
-            "confidence": "medium",
-        }
-    ]
+    assert len(analysis["readings"]) == 1
+    reading = analysis["readings"][0]
+    assert reading.pop("id").startswith("fpr_")
+    assert reading == {
+        "raw_text": "PRAÇA MUNICIPAL — 12,00 m",
+        "kind_hint": "sign",
+        "value_hint": "12.00",
+        "unit_hint": "m",
+        "target_hint": "muro do fundo",
+        "confidence": "medium",
+    }
 
     transcript = json.loads(storage.body(_transcript_key(TENANT_A, SURVEY_A, AUDIO_SHA256)))
     assert transcript["status"] == "draft"

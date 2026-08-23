@@ -41,6 +41,7 @@ import cv2
 import numpy as np
 
 from croquito_worker.providers import (
+    FieldPhotoClassificationOutput,
     FieldPhotoReadingsOutput,
     PromptTask,
     ProviderAdapter,
@@ -56,6 +57,7 @@ ANALYSIS_SCHEMA: Final = "survey-photo-analysis/1"
 
 IMAGE_MIME_PREFIX: Final = "image/"
 FIELD_EVIDENCE_READING_SCHEMA: Final = "field-evidence-reading/1"
+FIELD_EVIDENCE_CLASSIFICATION_SCHEMA: Final = "field-evidence-classification/1"
 
 # --- Limiares da qualidade offline ---------------------------------------------------
 #
@@ -193,6 +195,22 @@ class ProviderPassResult:
             return None
         output = self.execution.output
         return output if isinstance(output, FieldPhotoReadingsOutput) else None
+
+
+@dataclass(frozen=True, slots=True)
+class ClassificationPassResult:
+    """Passe Anthropic da classificação; não existe braço OpenAI nesta tarefa."""
+
+    outcome: ProviderPass
+    execution: ProviderExecution | None = None
+    failure_code: str | None = None
+
+    @property
+    def output(self) -> FieldPhotoClassificationOutput | None:
+        if self.execution is None:
+            return None
+        output = self.execution.output
+        return output if isinstance(output, FieldPhotoClassificationOutput) else None
 
 
 def survey_analysis_object_key(*, tenant_id: str, survey_id: str, sha256: str) -> str:
@@ -333,6 +351,37 @@ def run_provider_pass(
     return ProviderPassResult(outcome=ProviderPass.DONE, execution=execution, notes=notes)
 
 
+def run_classification_pass(
+    primary: ProviderAdapter,
+    *,
+    image_bytes: bytes,
+    quality: PhotoQuality,
+) -> ClassificationPassResult:
+    """Classifica uma foto exatamente no braço Anthropic, sem fallback nem medida."""
+    request = build_request(
+        PromptTask.FIELD_PHOTO_CLASSIFICATION,
+        image_bytes=image_bytes,
+        image_sha256=hashlib.sha256(image_bytes).hexdigest(),
+        image_width_px=quality.width_px,
+        image_height_px=quality.height_px,
+    )
+    try:
+        execution = primary.execute(request)
+    except ProviderExecutionError as error:
+        outcome = (
+            ProviderPass.FAILED_TRANSIENT
+            if error.code in _TRANSIENT_FAILURES
+            else ProviderPass.FAILED_PERMANENT
+        )
+        return ClassificationPassResult(outcome=outcome, failure_code=error.code.value)
+    if not isinstance(execution.output, FieldPhotoClassificationOutput):
+        return ClassificationPassResult(
+            outcome=ProviderPass.FAILED_PERMANENT,
+            failure_code=ProviderFailureCode.INVALID_SCHEMA.value,
+        )
+    return ClassificationPassResult(outcome=ProviderPass.DONE, execution=execution)
+
+
 def _lineage(execution: ProviderExecution | None) -> dict[str, Any] | None:
     """Lineage da chamada sem a saída: quem respondeu, sob qual prompt, a que custo.
 
@@ -428,6 +477,36 @@ def build_field_evidence_reading_document(
         "provider_notes": list(provider.notes),
         "readings": field_photo_reading_documents(output),
         "notes": [] if output is None else list(output.notes),
+        "lineage": _lineage(provider.execution),
+    }
+
+
+def build_field_evidence_classification_document(
+    *,
+    tenant_id: str,
+    job_id: str,
+    origin: str,
+    evidence_id: str,
+    media: SurveyPhotoMedia,
+    quality: PhotoQuality,
+    provider: ClassificationPassResult,
+) -> dict[str, Any]:
+    """Artefato de classificação em rascunho, fora da cena e sem campos geométricos."""
+    output = provider.output
+    classification = None
+    if output is not None:
+        classification = output.model_dump(mode="json", exclude={"task"})
+    return {
+        "schema": FIELD_EVIDENCE_CLASSIFICATION_SCHEMA,
+        "tenant_id": tenant_id,
+        "job_id": job_id,
+        "origin": origin,
+        "evidence_id": evidence_id,
+        "media": {"sha256": media.sha256, "mime_type": media.mime_type},
+        "quality": quality.as_document(),
+        "provider_pass": provider.outcome.value,
+        "provider_failure_code": provider.failure_code,
+        "classification": classification,
         "lineage": _lineage(provider.execution),
     }
 

@@ -2,9 +2,8 @@
 
 Status: Accepted for MVP  
 Responsável: AI Engineering / Platform  
-Última revisão: 2026-08-21 (tarefa `audio-transcription` — transcrição da nota de voz de
-campo, F-032 T13 — acrescentada às rotas padrão, com primário × reserva **pendentes de
-rodada paga**; na mesma data entrou `field-photo-reading`, F-032 T14)
+Última revisão: 2026-08-23 (`field-photo-classification@1.0.0`, F-030 T6, adicionada como
+rota Anthropic sem fallback; rodada real pendente do corpus humano)
 
 ## Rotas padrão
 
@@ -19,7 +18,20 @@ Bedrock nem Textract — o caminho AWS nunca rodou no ambiente publicado (GCP,
 | Extração — braço reserva/contraparte (opcional) | OpenAI `gpt-5.6-terra` (`CROQUITO_OPENAI_MODEL`), ligado/desligado por `CROQUITO_OPENAI_ARM_ENABLED` | contraparte da comparação dupla de medida; assume por fallback quando o braço primário falha de forma permanente em survey/geometria |
 | OCR auxiliar | Google Cloud Vision, `document text detection` (`GcpVisionOcrAdapter`, `ProviderName.GCP_VISION`) por padrão; Google Document AI (`GcpDocumentAiOcrAdapter`, `ProviderName.GCP_DOCUMENT_AI`) quando `CROQUITO_DOCAI_PROCESSOR` está definido — escalada nomeada em [ADR-0037](../adr/0037-document-ai-como-braco-de-ocr.md) | corrobora cada leitura de medida extraída; uma chamada por documento, não por leitura |
 | Leitura de foto de campo (`field-photo-reading`, F-032) — mesmos braços de visão | primário Anthropic `claude-opus-5`; reserva OpenAI `gpt-5.6-terra` quando o braço está ligado | uma chamada por foto confirmada, depois do passe offline de qualidade; transcreve só o que está ESCRITO na foto (placa, anotação, visor), sem coordenada e sem medida derivada |
+| Classificação visual de campo (`field-photo-classification`, F-030) | somente Anthropic `claude-opus-5`; sem fallback OpenAI | uma chamada por foto e somente sob pedido explícito; categoria fechada, descrição e topologia não geométrica em rascunho, nunca medida, cena ou decisão humana |
 | Transcrição de nota de voz (`audio-transcription`, F-032) — braço próprio, fornecedor próprio | primário **provisório** Groq `whisper-large-v3-turbo` (`CROQUITO_GROQ_TRANSCRIPTION_MODEL`), escolhido por `CROQUITO_TRANSCRIPTION_PRIMARY` (default `groq`); reserva DESLIGADO por default (`CROQUITO_TRANSCRIPTION_FALLBACK`, default `none`; aceita `openai`, que usa `CROQUITO_OPENAI_TRANSCRIPTION_MODEL`, default `whisper-1`) | uma chamada por nota de voz confirmada; produz RASCUNHO (`status: "draft"`) num artefato próprio, sem medida estruturada e sem confirmar nada |
+
+A tarefa `field-photo-classification` nasce em `field-photo-classification@1.0.0`. Seu
+schema admite somente `MURO | ALAMBRADO | PORTAO | PATAMAR | EQUIPAMENTOS | DETALHES |
+UNKNOWN`, descrição curta, observações topológicas não geométricas e confiança ordinal. Ela
+não participa da estratégia geral de fallback: o candidato aprovado para a rodada é
+Anthropic `claude-opus-5`, e o runner usa o braço direto sem retry para garantir uma única
+chamada por item. O protocolo é `make field-photo-classification-eval` offline e, após o gate
+humano do corpus, `make field-photo-classification-eval LIVE=1 CORPUS=<fora-do-git>/corpus.json`
+com OpenAI explicitamente desligado, reserva de US$ 0,75 por chamada e teto absoluto de
+US$ 5,00. São seis fotos próprias, 6/6 schema e lineage, 6/6 sem inferência geométrica,
+categoria correta em ao menos 5/6 e zero erro com confiança alta; a rodada não é repetida
+para escolher resultado melhor.
 
 A tarefa `field-photo-reading` nasce em `field-photo-reading@1.0.0` e é a única com template em
 português — o que se pede é transcrição literal do que está escrito em português na praça, e
