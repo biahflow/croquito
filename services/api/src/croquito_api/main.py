@@ -741,6 +741,37 @@ class ReviewChainCommand(ApiModel):
     chain_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class FieldWitnessSource(ApiModel):
+    type: Literal["survey_measurement", "photo_reading"]
+    source_id: str = Field(min_length=1, max_length=128)
+    survey_id: str | None = Field(default=None, min_length=1, max_length=36)
+
+    @model_validator(mode="after")
+    def validate_source(self) -> FieldWitnessSource:
+        if self.type == "survey_measurement" and self.survey_id is None:
+            raise ValueError("medida do app exige survey_id")
+        if self.type == "photo_reading" and self.survey_id is not None:
+            raise ValueError("leitura de foto não aceita survey_id")
+        return self
+
+
+class ReviewWitnessCommand(ApiModel):
+    base_version: int = Field(ge=1)
+    action: Literal["associate", "retract"]
+    reading_id: str | None = Field(default=None, pattern=r"^rd_[a-f0-9]{16}$")
+    source: FieldWitnessSource | None = None
+    witness_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_action(self) -> ReviewWitnessCommand:
+        if self.action == "associate":
+            if self.reading_id is None or self.source is None or self.witness_id is not None:
+                raise ValueError("associação exige reading_id e source, sem witness_id")
+        elif self.witness_id is None or self.reading_id is not None or self.source is not None:
+            raise ValueError("retração exige somente witness_id")
+        return self
+
+
 class ProposalCalibrationAnchorRequest(ApiModel):
     proposal_id: str = Field(pattern=r"^vp_[a-f0-9]{16}$")
     # Opcional: sem isto o ajuste escolhe a aresta métrica, porque as quatro arestas de
@@ -878,6 +909,19 @@ class ShadowDecisionResponse(ApiModel):
     auto_choices: list[ShadowChoiceResponse]
 
 
+class FieldWitnessResponse(ApiModel):
+    witness_id: UUID
+    reading_id: str
+    source_type: Literal["survey_measurement", "photo_reading"]
+    source_id: str
+    survey_id: str | None = None
+    reading_value_mm: Decimal
+    source_value_mm: Decimal
+    difference_mm: Decimal
+    associated_by: str
+    associated_at: datetime
+
+
 class ReviewResponse(ApiModel):
     job_id: UUID
     review_id: UUID
@@ -913,6 +957,7 @@ class ReviewResponse(ApiModel):
     confidence_shadow: list[ShadowDecisionResponse] = Field(default_factory=list)
     auto_association_rate: float | None = None
     review_rate: float | None = None
+    field_witnesses: list[FieldWitnessResponse] = Field(default_factory=list)
     scene: SceneRevision | None = None
     preview_urls: dict[str, str] = Field(default_factory=dict)
 
@@ -3944,6 +3989,82 @@ def _latest_scene(session: Session, *, job_id: UUID, tenant_id: str) -> Revision
     )
 
 
+def _carried_field_review_context(record: ReviewRevisionRecord) -> dict[str, Any]:
+    """Campos laterais da F-030 que toda revisão sucessora preserva verbatim."""
+    return {
+        "field_witnesses_json": list(record.field_witnesses_json),
+        "field_observations_json": list(record.field_observations_json),
+    }
+
+
+def _confirmed_reading_value_mm(reading: DimensionReading) -> Decimal:
+    if reading.status is not ReadingStatus.CONFIRMED or reading.value_si is None:
+        raise _problem(
+            "FIELD_WITNESS_READING_NOT_CONFIRMED",
+            status.HTTP_409_CONFLICT,
+            "A leitura da prancha precisa estar confirmada antes de receber testemunha.",
+        )
+    return reading.value_si * Decimal(1000) if reading.unit is UnitCode.METRE else reading.value_si
+
+
+def _resolve_field_witness_source(
+    session: Session,
+    *,
+    job: JobRecord,
+    source: FieldWitnessSource,
+) -> tuple[Decimal, str | None]:
+    """Resolve valor e procedência no servidor; nenhum número vem do comando."""
+    if source.type == "photo_reading":
+        try:
+            confirmation_id = str(UUID(source.source_id))
+        except ValueError as error:
+            raise _problem(
+                "FIELD_WITNESS_SOURCE_NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Leitura confirmada da foto não encontrada.",
+            ) from error
+        confirmation = session.scalar(
+            select(FieldPhotoValueConfirmationRecord).where(
+                FieldPhotoValueConfirmationRecord.id == confirmation_id,
+                FieldPhotoValueConfirmationRecord.tenant_id == job.tenant_id,
+                FieldPhotoValueConfirmationRecord.job_id == job.id,
+                FieldPhotoValueConfirmationRecord.status == "ACTIVE",
+            )
+        )
+        if confirmation is None:
+            raise _problem(
+                "FIELD_WITNESS_SOURCE_NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Leitura confirmada da foto não encontrada.",
+            )
+        return Decimal(confirmation.value_mm), None
+
+    assert source.survey_id is not None
+    linked = session.scalar(
+        select(JobSurveyLinkRecord.id).where(
+            JobSurveyLinkRecord.tenant_id == job.tenant_id,
+            JobSurveyLinkRecord.job_id == job.id,
+            JobSurveyLinkRecord.survey_id == source.survey_id,
+        )
+    )
+    if linked is None:
+        raise _problem(
+            "FIELD_WITNESS_SOURCE_NOT_FOUND",
+            status.HTTP_404_NOT_FOUND,
+            "Medida confirmada do levantamento não encontrada.",
+        )
+    survey = _load_survey(session, survey_id=source.survey_id, tenant_id=job.tenant_id)
+    packet = SurveyPacket.model_validate(survey.snapshot_json)
+    measurement = next((item for item in packet.measurements if item.id == source.source_id), None)
+    if measurement is None or measurement.status is not FieldMeasurementStatus.CONFIRMED:
+        raise _problem(
+            "FIELD_WITNESS_SOURCE_NOT_CONFIRMED",
+            status.HTTP_409_CONFLICT,
+            "A medida do levantamento precisa estar confirmada.",
+        )
+    return Decimal(measurement.value_mm), survey.id
+
+
 def _calibration_response(value: dict[str, Any] | None) -> ProposalCalibrationResponse | None:
     return ProposalCalibrationResponse.model_validate(value) if value is not None else None
 
@@ -4440,6 +4561,9 @@ def _review_response(
         confidence_shadow=confidence.confidence_shadow,
         auto_association_rate=confidence.auto_association_rate,
         review_rate=confidence.review_rate,
+        field_witnesses=[
+            FieldWitnessResponse.model_validate(value) for value in record.field_witnesses_json
+        ],
         scene=scene,
         preview_urls=_preview_urls(
             application,
@@ -5983,6 +6107,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=selected_associations,
             declared_chains_json=current.declared_chains_json,
+            **_carried_field_review_context(current),
             confidence_shadow_json=confidence_shadow_json(
                 reviewed_packet, associations, current.declared_chains_json
             ),
@@ -6271,6 +6396,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=selected_associations,
             declared_chains_json=current.declared_chains_json,
+            **_carried_field_review_context(current),
             confidence_shadow_json=confidence_shadow_json(
                 rectified_packet, associations, current.declared_chains_json
             ),
@@ -6485,6 +6611,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=declared_chains,
+            **_carried_field_review_context(current),
             # A cadeia declarada é sinal de confiança de leitura: declarar ou retratar
             # muda o shadow, então ele é recomputado sobre a lista NOVA.
             confidence_shadow_json=confidence_shadow_json(
@@ -6542,6 +6669,158 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 "action": payload.action,
                 "chains_total": len(declared_chains),
             },
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/review/witnesses",
+        response_model=ReviewResponse,
+        tags=["review"],
+    )
+    async def mutate_review_witnesses(
+        job_id: UUID,
+        payload: ReviewWitnessCommand,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReviewResponse:
+        """Associa ou retrata observação de campo sem tocar cena, solver ou blockers."""
+        _reviewer_role(principal)
+        operation = f"review.field-witnesses:{job_id}"
+        request_hash = _request_hash(payload)
+        replay = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            return ReviewResponse.model_validate(replay)
+        job = _load_job(session, job_id=job_id, tenant_id=principal.tenant_id)
+        current = _latest_review(session, job_id=job_id, tenant_id=principal.tenant_id)
+        if current is None:
+            raise _problem(
+                "JOB_NOT_READY",
+                status.HTTP_409_CONFLICT,
+                "Pacote de revisão ainda não está disponível.",
+            )
+        if current.version != payload.base_version:
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Existe uma revisão de leitura mais recente.",
+            )
+        witnesses = [dict(value) for value in current.field_witnesses_json]
+        if payload.action == "associate":
+            assert payload.reading_id is not None and payload.source is not None
+            packet = ReviewPacket.model_validate(current.packet_json)
+            reading = next(
+                (item for item in packet.readings if item.id == payload.reading_id), None
+            )
+            if reading is None:
+                raise _problem(
+                    "FIELD_WITNESS_READING_NOT_FOUND",
+                    status.HTTP_404_NOT_FOUND,
+                    "Leitura da prancha não encontrada nesta revisão.",
+                )
+            reading_value_mm = _confirmed_reading_value_mm(reading)
+            source_value_mm, survey_id = _resolve_field_witness_source(
+                session, job=job, source=payload.source
+            )
+            if any(
+                value.get("reading_id") == payload.reading_id
+                and value.get("source_type") == payload.source.type
+                and value.get("source_id") == payload.source.source_id
+                and value.get("survey_id") == survey_id
+                for value in witnesses
+            ):
+                raise _problem(
+                    "FIELD_WITNESS_ALREADY_ASSOCIATED",
+                    status.HTTP_409_CONFLICT,
+                    "Esta testemunha já está associada à leitura.",
+                )
+            witness = FieldWitnessResponse(
+                witness_id=new_uuid7(),
+                reading_id=payload.reading_id,
+                source_type=payload.source.type,
+                source_id=payload.source.source_id,
+                survey_id=survey_id,
+                reading_value_mm=reading_value_mm,
+                source_value_mm=source_value_mm,
+                difference_mm=source_value_mm - reading_value_mm,
+                associated_by=principal.subject,
+                associated_at=datetime.now(UTC),
+            )
+            witnesses.append(witness.model_dump(mode="json"))
+            audit_action = "FIELD_WITNESS_ASSOCIATED"
+        else:
+            assert payload.witness_id is not None
+            remaining = [
+                value for value in witnesses if value.get("witness_id") != str(payload.witness_id)
+            ]
+            if len(remaining) == len(witnesses):
+                raise _problem(
+                    "FIELD_WITNESS_NOT_FOUND",
+                    status.HTTP_404_NOT_FOUND,
+                    "Testemunha não encontrada nesta revisão.",
+                )
+            witnesses = remaining
+            audit_action = "FIELD_WITNESS_RETRACTED"
+
+        next_review = ReviewRevisionRecord(
+            id=str(new_uuid7()),
+            tenant_id=current.tenant_id,
+            job_id=current.job_id,
+            version=current.version + 1,
+            parent_review_id=current.id,
+            packet_json=current.packet_json,
+            associations_json=current.associations_json,
+            proposals_json=current.proposals_json,
+            selected_associations_json=current.selected_associations_json,
+            declared_chains_json=current.declared_chains_json,
+            confidence_shadow_json=current.confidence_shadow_json,
+            field_witnesses_json=witnesses,
+            field_observations_json=current.field_observations_json,
+            calibration_json=current.calibration_json,
+            proposal_decisions_json=current.proposal_decisions_json,
+            trace_acceptance_json=current.trace_acceptance_json,
+            evidence_refs_json=current.evidence_refs_json,
+            solver_request_json=current.solver_request_json,
+            solver_blockers_json=current.solver_blockers_json,
+            required_blocker_codes_json=current.required_blocker_codes_json,
+            required_criteria_texts_json=current.required_criteria_texts_json,
+            scene_revision_id=current.scene_revision_id,
+            created_by=principal.subject,
+        )
+        session.add(next_review)
+        try:
+            session.flush()
+        except IntegrityError as error:
+            session.rollback()
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Uma atualização concorrente criou nova revisão.",
+            ) from error
+        response = _review_response(application, session, next_review)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action=audit_action,
+            resource_type="review_revision",
+            resource_id=next_review.id,
+            request_id=request.state.request_id,
         )
         session.commit()
         return response
@@ -6648,6 +6927,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
+            **_carried_field_review_context(current),
             confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=calibration.model_dump(mode="json"),
             proposal_decisions_json=current.proposal_decisions_json,
@@ -6847,6 +7127,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
+            **_carried_field_review_context(current),
             confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=decisions,
@@ -7093,6 +7374,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
+            **_carried_field_review_context(current),
             confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=decisions,
@@ -7266,6 +7548,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
+            **_carried_field_review_context(current),
             confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
@@ -7395,6 +7678,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
+            **_carried_field_review_context(current),
             confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,

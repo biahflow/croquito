@@ -3501,6 +3501,118 @@
         "title": "FieldPhotoAnalysisStateResponse",
         "type": "object"
       },
+      "FieldWitnessResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "associated_at": {
+            "format": "date-time",
+            "title": "Associated At",
+            "type": "string"
+          },
+          "associated_by": {
+            "title": "Associated By",
+            "type": "string"
+          },
+          "difference_mm": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Difference Mm",
+            "type": "string"
+          },
+          "reading_id": {
+            "title": "Reading Id",
+            "type": "string"
+          },
+          "reading_value_mm": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Reading Value Mm",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_type": {
+            "enum": [
+              "survey_measurement",
+              "photo_reading"
+            ],
+            "title": "Source Type",
+            "type": "string"
+          },
+          "source_value_mm": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Source Value Mm",
+            "type": "string"
+          },
+          "survey_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Survey Id"
+          },
+          "witness_id": {
+            "format": "uuid",
+            "title": "Witness Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "witness_id",
+          "reading_id",
+          "source_type",
+          "source_id",
+          "reading_value_mm",
+          "source_value_mm",
+          "difference_mm",
+          "associated_by",
+          "associated_at"
+        ],
+        "title": "FieldWitnessResponse",
+        "type": "object"
+      },
+      "FieldWitnessSource": {
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Source Id",
+            "type": "string"
+          },
+          "survey_id": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Survey Id"
+          },
+          "type": {
+            "enum": [
+              "survey_measurement",
+              "photo_reading"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "source_id"
+        ],
+        "title": "FieldWitnessSource",
+        "type": "object"
+      },
       "GpsFix": {
         "additionalProperties": false,
         "description": "Espelho de `GpsFix` — referência geográfica, nunca medição.",
@@ -6354,6 +6466,13 @@
             "title": "Declared Chains",
             "type": "array"
           },
+          "field_witnesses": {
+            "items": {
+              "$ref": "#/components/schemas/FieldWitnessResponse"
+            },
+            "title": "Field Witnesses",
+            "type": "array"
+          },
           "issues": {
             "items": {
               "$ref": "#/components/schemas/Issue"
@@ -6463,6 +6582,64 @@
           "blockers"
         ],
         "title": "ReviewResponse",
+        "type": "object"
+      },
+      "ReviewWitnessCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "associate",
+              "retract"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "reading_id": {
+            "anyOf": [
+              {
+                "pattern": "^rd_[a-f0-9]{16}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reading Id"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FieldWitnessSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "witness_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Witness Id"
+          }
+        },
+        "required": [
+          "base_version",
+          "action"
+        ],
+        "title": "ReviewWitnessCommand",
         "type": "object"
       },
       "SceneRevision": {
@@ -12107,6 +12284,81 @@
           }
         ],
         "summary": "Rectify Review Decisions",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/review/witnesses": {
+      "post": {
+        "description": "Associa ou retrata observação de campo sem tocar cena, solver ou blockers.",
+        "operationId": "mutate_review_witnesses_v1_jobs__job_id__review_witnesses_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewWitnessCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mutate Review Witnesses",
         "tags": [
           "review"
         ]

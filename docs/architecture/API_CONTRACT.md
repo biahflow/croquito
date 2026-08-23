@@ -335,6 +335,12 @@ OBSERVACIONAIS: nenhum decide leitura, seleciona associação, entra em `blocker
 issue ou toca a exportação. A associação que vale continua sendo a explícita em
 `selected_associations`, e ela só nasce de ato humano.
 
+`field_witnesses` traz as testemunhas que o revisor associou explicitamente às leituras.
+Cada item declara alvo, origem, valor da cota, valor observado, diferença assinada em
+milímetros, autoria e instante. A diferença é somente um número: não há `status`,
+`agrees`, tolerância escondida nem alerta. Várias testemunhas podem apontar para a mesma
+leitura e aparecem como itens separados.
+
 - Cada candidato de `associations.candidates` carrega `association_confidence` (0–1,
   "sei a qual segmento esta cota pertence?") e `orientation_alignment` (`number | null`;
   `null` quando o candidato não tem direção própria — círculo, contorno).
@@ -605,6 +611,29 @@ cadeia não pode ser montada — menos de duas parcelas, leitura repetida, total
 parcela de si mesmo ou leitura ainda não confirmada), `404 CHAIN_NOT_FOUND` (retração
 de cadeia inexistente), `409 REVISION_CONFLICT`, `403 FORBIDDEN`, `404 NOT_FOUND` e
 `409 JOB_NOT_READY`.
+
+### `POST /v1/jobs/{job_id}/review/witnesses`
+
+Associa ou retrata uma testemunha observacional. Entrada comum: `base_version` e `action`.
+Para `associate`, exige `reading_id` e `source`; para `retract`, somente `witness_id`.
+
+`source.type="survey_measurement"` exige `survey_id` e `source_id`; o servidor resolve no
+levantamento vinculado e aceita apenas `Measurement.status=confirmed`.
+`source.type="photo_reading"` exige como `source_id` o id de uma confirmação humana
+`ACTIVE` da própria foto. Nenhum dos dois formatos aceita valor do cliente: o servidor
+resolve a observação e calcula `difference_mm = source_value_mm - reading_value_mm`.
+
+A leitura-alvo também precisa estar confirmada. Confirmar uma leitura de foto e associá-la
+como testemunha permanecem atos distintos, cada qual com versão e idempotência próprias.
+O comando cria somente uma `ReviewRevision` nova, preservando pacote, associações, cena,
+precisão, blockers, solver e exportação verbatim. Não existe associação por igualdade de
+valor, `kind`, rótulo, âncora ou proximidade.
+
+Várias fontes coexistem na mesma leitura. Retratar remove apenas a testemunha citada da
+cabeça corrente; a revisão anterior preserva o ato no histórico. Erros nomeados incluem
+`FIELD_WITNESS_READING_NOT_CONFIRMED`, `FIELD_WITNESS_SOURCE_NOT_CONFIRMED`,
+`FIELD_WITNESS_SOURCE_NOT_FOUND`, `FIELD_WITNESS_ALREADY_ASSOCIATED` e
+`FIELD_WITNESS_NOT_FOUND`.
 
 ### Calibração e decisões de proposta
 

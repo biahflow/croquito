@@ -259,6 +259,8 @@ def insert_next_review_revision(
         # de propostas não decide nada sobre cotas, e perder a declaração aqui apagaria em
         # silêncio o que uma pessoa afirmou.
         "declared_chains_json": json_column(base_review["declared_chains_json"]),
+        "field_witnesses_json": json_column(base_review["field_witnesses_json"]),
+        "field_observations_json": json_column(base_review["field_observations_json"]),
         "calibration_json": calibration_json,
         "proposal_decisions_json": json_column(base_review["proposal_decisions_json"]),
         "trace_acceptance_json": json_column(base_review["trace_acceptance_json"]),
@@ -276,7 +278,7 @@ def insert_next_review_revision(
             "INSERT INTO review_revisions "
             "(id, tenant_id, job_id, version, parent_review_id, packet_json, "
             "associations_json, proposals_json, selected_associations_json, "
-            "declared_chains_json, "
+            "declared_chains_json, field_witnesses_json, field_observations_json, "
             "calibration_json, proposal_decisions_json, trace_acceptance_json, "
             "evidence_refs_json, solver_request_json, solver_blockers_json, "
             "required_blocker_codes_json, required_criteria_texts_json, "
@@ -285,6 +287,8 @@ def insert_next_review_revision(
             f"{expressions['packet_json']}, {expressions['associations_json']}, "
             f"{expressions['proposals_json']}, {expressions['selected_associations_json']}, "
             f"{expressions['declared_chains_json']}, "
+            f"{expressions['field_witnesses_json']}, "
+            f"{expressions['field_observations_json']}, "
             f"{expressions['calibration_json']}, {expressions['proposal_decisions_json']}, "
             f"{expressions['trace_acceptance_json']}, {expressions['evidence_refs_json']}, "
             f"{expressions['solver_request_json']}, {expressions['solver_blockers_json']}, "

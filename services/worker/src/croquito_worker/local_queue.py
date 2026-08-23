@@ -1721,6 +1721,8 @@ class LocalQueueWorker:
             # A cadeia declarada é ato humano sobre cotas, e o traçado não decide cota
             # nenhuma: viaja verbatim. A conferência é refeita na leitura, contra o pacote.
             "declared_chains_json": _json_column(base_review["declared_chains_json"]),
+            "field_witnesses_json": _json_column(base_review["field_witnesses_json"]),
+            "field_observations_json": _json_column(base_review["field_observations_json"]),
             "calibration_json": _json_column(base_review["calibration_json"]),
             "proposal_decisions_json": _json_column(base_review["proposal_decisions_json"]),
             "trace_acceptance_json": trace_acceptance,
@@ -1743,7 +1745,7 @@ class LocalQueueWorker:
                 "INSERT INTO review_revisions "
                 "(id, tenant_id, job_id, version, parent_review_id, packet_json, "
                 "associations_json, proposals_json, selected_associations_json, "
-                "declared_chains_json, "
+                "declared_chains_json, field_witnesses_json, field_observations_json, "
                 "calibration_json, proposal_decisions_json, trace_acceptance_json, "
                 "evidence_refs_json, solver_request_json, solver_blockers_json, "
                 "required_blocker_codes_json, required_criteria_texts_json, "
@@ -1753,6 +1755,8 @@ class LocalQueueWorker:
                 f"{expressions['proposals_json']}, "
                 f"{expressions['selected_associations_json']}, "
                 f"{expressions['declared_chains_json']}, "
+                f"{expressions['field_witnesses_json']}, "
+                f"{expressions['field_observations_json']}, "
                 f"{expressions['calibration_json']}, "
                 f"{expressions['proposal_decisions_json']}, "
                 f"{expressions['trace_acceptance_json']}, "
@@ -1810,7 +1814,8 @@ class LocalQueueWorker:
                 connection.execute(
                     text(
                         "SELECT id, version, packet_json, associations_json, proposals_json, "
-                        "selected_associations_json, declared_chains_json, calibration_json, "
+                        "selected_associations_json, declared_chains_json, "
+                        "field_witnesses_json, field_observations_json, calibration_json, "
                         "proposal_decisions_json, "
                         "evidence_refs_json, solver_request_json, solver_blockers_json, "
                         "required_blocker_codes_json, required_criteria_texts_json "
