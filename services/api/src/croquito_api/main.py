@@ -57,9 +57,12 @@ from croquito_api.database import (
     EstimateRoundRecord,
     EstimateRoundRevisionRecord,
     ExportArtifactRecord,
+    FieldEvidenceAnalysisRecord,
     IdempotencyRecord,
+    JobFieldPhotoRecord,
     JobRecord,
     JobStageEventRecord,
+    JobSurveyLinkRecord,
     ProjectRecord,
     ProposalDecisionRecord,
     ReferenceCatalogRecord,
@@ -154,6 +157,7 @@ from croquito_core.events import (
     EVENT_VALUATION_ACTION_RECORDED,
     build_domain_event,
 )
+from croquito_core.field import MeasurementStatus as FieldMeasurementStatus
 from croquito_core.field import SurveyOperation, SurveyPacket, SurveyStatus
 from croquito_core.ids import new_uuid7
 from croquito_core.logging_config import configure_logging
@@ -1726,6 +1730,7 @@ SURVEY_ORDER_REF_MAX_LENGTH: Final = 200
 #: Teto de operações por lote. Não é regra de negócio: é a guarda contra um corpo sem
 #: limite, e o app divide o outbox em lotes bem menores que isto.
 SURVEY_OPERATIONS_BATCH_LIMIT: Final = 2000
+FIELD_EVIDENCE_ANALYSIS_MAX_BYTES: Final = 2_000_000
 
 
 class SubmitSurveyOperationsRequest(ApiModel):
@@ -1802,6 +1807,83 @@ class CompleteSurveyRequest(ApiModel):
     """Conclusão do levantamento sob a mesma guarda otimista das revisões de leitura."""
 
     base_version: int = Field(ge=1)
+
+
+class CompletedSurveySummary(ApiModel):
+    survey_id: str
+    name: str
+    order_ref: str | None
+    version: int
+    photo_count: int
+    confirmed_measurement_count: int
+    completed_at: datetime
+
+
+class CompletedSurveyPage(ApiModel):
+    items: list[CompletedSurveySummary]
+    next_cursor: str | None = None
+
+
+class MutateJobSurveyLinkRequest(ApiModel):
+    """Guarda otimista da evidência do job; identidade vem do JWT."""
+
+    base_version: int = Field(ge=1)
+
+
+class JobSurveyLinkResponse(ApiModel):
+    job_id: UUID
+    survey_id: str
+    linked: bool
+    version: int
+
+
+class FieldEvidenceAnchor(ApiModel):
+    kind: Literal["point", "element", "note"]
+    ref_id: str
+
+
+class FieldEvidenceMeasurement(ApiModel):
+    source_id: str
+    survey_id: str
+    value_mm: int
+    kind: str
+    instrument: str
+    from_point_id: str | None
+    to_point_id: str | None
+    second_from_point_id: str | None
+    second_to_point_id: str | None
+    element_id: str | None
+    created_at: datetime
+
+
+class FieldEvidencePhoto(ApiModel):
+    evidence_id: str
+    origin: Literal["survey", "standalone"]
+    survey_id: str | None
+    sha256: str
+    mime_type: str
+    anchors: list[FieldEvidenceAnchor]
+    anchor_text: str | None
+    captured_at: datetime
+    url: str
+    analysis: dict[str, Any] | None
+    reading_status: str
+    classification_status: str
+
+
+class LinkedSurveyEvidence(ApiModel):
+    survey_id: str
+    name: str
+    linked_by: str
+    linked_at: datetime
+    measurements: list[FieldEvidenceMeasurement]
+
+
+class FieldEvidenceResponse(ApiModel):
+    job_id: UUID
+    version: int
+    surveys: list[LinkedSurveyEvidence]
+    photos: list[FieldEvidencePhoto]
 
 
 #: O id do levantamento não é `UUID` no caminho de propósito: ele nasce no aparelho e o
@@ -2729,6 +2811,276 @@ def _validate_survey_batch(survey_id: str, payload: SubmitSurveyOperationsReques
         )
 
 
+def _load_job(session: Session, *, job_id: UUID, tenant_id: str) -> JobRecord:
+    """Job do tenant, ou `404`; ids alheios nunca revelam existência."""
+    record = session.scalar(
+        select(JobRecord).where(JobRecord.id == str(job_id), JobRecord.tenant_id == tenant_id)
+    )
+    if record is None:
+        raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+    return record
+
+
+def _read_field_analysis(
+    application: FastAPI, *, object_key: str, tenant_id: str
+) -> dict[str, Any] | None:
+    """Lê artefato pequeno sem aceitar chave fora do prefixo nem expor payload em log."""
+    if not object_key.startswith(f"tenants/{tenant_id}/") or ".." in object_key.split("/"):
+        return None
+    raw = application.state.artifact_store.read_object(
+        object_key=object_key, max_bytes=FIELD_EVIDENCE_ANALYSIS_MAX_BYTES
+    )
+    if raw is None or len(raw) > FIELD_EVIDENCE_ANALYSIS_MAX_BYTES:
+        return None
+    try:
+        document = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return cast(dict[str, Any], document) if isinstance(document, dict) else None
+
+
+def _field_anchor_payload(
+    packet: SurveyPacket, sha256: str
+) -> tuple[list[FieldEvidenceAnchor], datetime | None]:
+    anchors: list[FieldEvidenceAnchor] = []
+    captured_at: datetime | None = None
+    for anchor in packet.media_anchors:
+        if anchor.media_ref.sha256 != sha256:
+            continue
+        captured_at = (
+            anchor.created_at if captured_at is None else min(captured_at, anchor.created_at)
+        )
+        anchor_refs: tuple[tuple[Literal["point", "element", "note"], str | None], ...] = (
+            ("point", anchor.point_id),
+            ("element", anchor.element_id),
+            ("note", anchor.note_id),
+        )
+        for kind, ref_id in anchor_refs:
+            if ref_id is not None:
+                anchors.append(FieldEvidenceAnchor(kind=kind, ref_id=ref_id))
+    return anchors, captured_at
+
+
+def _field_analysis_state(
+    session: Session,
+    *,
+    tenant_id: str,
+    job_id: str,
+    origin: Literal["survey", "standalone"],
+    evidence_id: str,
+    task: Literal["reading", "classification"],
+) -> FieldEvidenceAnalysisRecord | None:
+    return session.scalar(
+        select(FieldEvidenceAnalysisRecord).where(
+            FieldEvidenceAnalysisRecord.tenant_id == tenant_id,
+            FieldEvidenceAnalysisRecord.job_id == job_id,
+            FieldEvidenceAnalysisRecord.origin == origin,
+            FieldEvidenceAnalysisRecord.evidence_id == evidence_id,
+            FieldEvidenceAnalysisRecord.task == task,
+        )
+    )
+
+
+def _public_field_analysis(document: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Expõe só o resultado profissional; ids internos e tenant ficam no artefato."""
+    if document is None:
+        return None
+    allowed = {
+        "quality",
+        "provider_pass",
+        "provider_failure_code",
+        "provider_notes",
+        "readings",
+        "notes",
+        "classification",
+        "lineage",
+        "schema",
+    }
+    return {key: value for key, value in document.items() if key in allowed}
+
+
+def _field_evidence_response(
+    application: FastAPI,
+    session: Session,
+    *,
+    job: JobRecord,
+) -> FieldEvidenceResponse:
+    links = list(
+        session.scalars(
+            select(JobSurveyLinkRecord)
+            .where(
+                JobSurveyLinkRecord.job_id == job.id,
+                JobSurveyLinkRecord.tenant_id == job.tenant_id,
+            )
+            .order_by(JobSurveyLinkRecord.linked_at, JobSurveyLinkRecord.survey_id)
+        )
+    )
+    surveys: list[LinkedSurveyEvidence] = []
+    photos: list[FieldEvidencePhoto] = []
+    store: ArtifactStore = application.state.artifact_store
+    for link in links:
+        survey = session.scalar(
+            select(SurveyRecord).where(
+                SurveyRecord.id == link.survey_id,
+                SurveyRecord.tenant_id == job.tenant_id,
+            )
+        )
+        if survey is None:  # pragma: no cover - FK composta protege a linha
+            continue
+        packet = SurveyPacket.model_validate(survey.snapshot_json)
+        measurements = [
+            FieldEvidenceMeasurement(
+                source_id=measurement.id,
+                survey_id=survey.id,
+                value_mm=measurement.value_mm,
+                kind=measurement.kind.value,
+                instrument=measurement.instrument,
+                from_point_id=measurement.from_point_id,
+                to_point_id=measurement.to_point_id,
+                second_from_point_id=measurement.second_from_point_id,
+                second_to_point_id=measurement.second_to_point_id,
+                element_id=measurement.element_id,
+                created_at=measurement.created_at,
+            )
+            for measurement in packet.measurements
+            if measurement.status is FieldMeasurementStatus.CONFIRMED
+        ]
+        surveys.append(
+            LinkedSurveyEvidence(
+                survey_id=survey.id,
+                name=survey.name,
+                linked_by=link.linked_by,
+                linked_at=link.linked_at,
+                measurements=measurements,
+            )
+        )
+        for media in _survey_media_rows(session, survey_id=survey.id, tenant_id=job.tenant_id):
+            if media.status != "CONFIRMED" or not media.mime_type.startswith("image/"):
+                continue
+            url = signed_artifact_url(store, object_key=media.object_key, tenant_id=job.tenant_id)
+            if url is None:
+                continue
+            anchors, captured_at = _field_anchor_payload(packet, media.sha256)
+            analysis_key = (
+                f"tenants/{job.tenant_id}/surveys/{survey.id}/analysis/{media.sha256}.json"
+            )
+            reading_state = _field_analysis_state(
+                session,
+                tenant_id=job.tenant_id,
+                job_id=job.id,
+                origin="survey",
+                evidence_id=media.id,
+                task="reading",
+            )
+            classification_state = _field_analysis_state(
+                session,
+                tenant_id=job.tenant_id,
+                job_id=job.id,
+                origin="survey",
+                evidence_id=media.id,
+                task="classification",
+            )
+            analysis = _public_field_analysis(
+                _read_field_analysis(
+                    application,
+                    object_key=(
+                        reading_state.artifact_key
+                        if reading_state is not None and reading_state.artifact_key is not None
+                        else analysis_key
+                    ),
+                    tenant_id=job.tenant_id,
+                )
+            )
+            photos.append(
+                FieldEvidencePhoto(
+                    evidence_id=media.id,
+                    origin="survey",
+                    survey_id=survey.id,
+                    sha256=media.sha256,
+                    mime_type=media.mime_type,
+                    anchors=anchors,
+                    anchor_text=None,
+                    captured_at=captured_at or media.created_at,
+                    url=url,
+                    analysis=analysis,
+                    reading_status=(
+                        reading_state.status
+                        if reading_state is not None
+                        else ("PROCESSED" if analysis is not None else "NOT_REQUESTED")
+                    ),
+                    classification_status=(
+                        classification_state.status
+                        if classification_state is not None
+                        else "NOT_REQUESTED"
+                    ),
+                )
+            )
+
+    standalone = list(
+        session.scalars(
+            select(JobFieldPhotoRecord)
+            .where(
+                JobFieldPhotoRecord.job_id == job.id,
+                JobFieldPhotoRecord.tenant_id == job.tenant_id,
+                JobFieldPhotoRecord.status == "CONFIRMED",
+            )
+            .order_by(JobFieldPhotoRecord.created_at, JobFieldPhotoRecord.id)
+        )
+    )
+    for photo in standalone:
+        url = signed_artifact_url(store, object_key=photo.object_key, tenant_id=job.tenant_id)
+        if url is None:
+            continue
+        reading_state = _field_analysis_state(
+            session,
+            tenant_id=job.tenant_id,
+            job_id=job.id,
+            origin="standalone",
+            evidence_id=photo.id,
+            task="reading",
+        )
+        classification_state = _field_analysis_state(
+            session,
+            tenant_id=job.tenant_id,
+            job_id=job.id,
+            origin="standalone",
+            evidence_id=photo.id,
+            task="classification",
+        )
+        analysis = _public_field_analysis(
+            _read_field_analysis(
+                application,
+                object_key=reading_state.artifact_key,
+                tenant_id=job.tenant_id,
+            )
+            if reading_state is not None and reading_state.artifact_key is not None
+            else None
+        )
+        photos.append(
+            FieldEvidencePhoto(
+                evidence_id=photo.id,
+                origin="standalone",
+                survey_id=None,
+                sha256=photo.sha256,
+                mime_type=photo.mime_type,
+                anchors=[],
+                anchor_text=photo.anchor_text,
+                captured_at=photo.created_at,
+                url=url,
+                analysis=analysis,
+                reading_status=(reading_state.status if reading_state else "NOT_REQUESTED"),
+                classification_status=(
+                    classification_state.status
+                    if classification_state is not None
+                    else "NOT_REQUESTED"
+                ),
+            )
+        )
+    return FieldEvidenceResponse(
+        job_id=UUID(job.id), version=job.version, surveys=surveys, photos=photos
+    )
+
+
 def _round_refusal_problem(refusal: RoundRefusal) -> HTTPException:
     """Traduz a precondição da rodada no problem+json de sempre, sem inventar formato."""
     return _problem(refusal.code, refusal.http_status, refusal.detail, refusal.details)
@@ -2840,7 +3192,9 @@ def _valuation_round_heads(
     return {record.round_id: record for record in records}
 
 
-def _encode_round_cursor(record: ValuationRoundRecord | EstimateRoundRecord) -> str:
+def _encode_round_cursor(
+    record: ValuationRoundRecord | EstimateRoundRecord | SurveyRecord,
+) -> str:
     """Cursor opaco sobre `(created_at, id)` — a mesma chave do índice da listagem.
 
     Serve as duas raízes de rodada porque o cursor depende só de `created_at` e `id`, que
@@ -11526,6 +11880,237 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             tenant_id=principal.tenant_id,
         )
         return {**payload, "workbook_url": workbook_url}
+
+    @application.get("/v1/surveys", response_model=CompletedSurveyPage, tags=["surveys"])
+    async def list_completed_surveys(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        cursor: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    ) -> CompletedSurveyPage:
+        """Levantamentos concluídos que o escritório pode escolher para um job."""
+        _reviewer_role(principal)
+        query = select(SurveyRecord).where(
+            SurveyRecord.tenant_id == principal.tenant_id,
+            SurveyRecord.status == "COMPLETED",
+        )
+        if cursor is not None:
+            created_at, identifier = _decode_round_cursor(cursor)
+            query = query.where(
+                or_(
+                    SurveyRecord.created_at < created_at,
+                    and_(
+                        SurveyRecord.created_at == created_at,
+                        SurveyRecord.id < identifier,
+                    ),
+                )
+            )
+        records = list(
+            session.scalars(
+                query.order_by(SurveyRecord.created_at.desc(), SurveyRecord.id.desc()).limit(
+                    limit + 1
+                )
+            )
+        )
+        page = records[:limit]
+        items: list[CompletedSurveySummary] = []
+        for record in page:
+            packet = SurveyPacket.model_validate(record.snapshot_json)
+            photo_count = session.scalar(
+                select(func.count(SurveyMediaRecord.id)).where(
+                    SurveyMediaRecord.tenant_id == principal.tenant_id,
+                    SurveyMediaRecord.survey_id == record.id,
+                    SurveyMediaRecord.status == "CONFIRMED",
+                    SurveyMediaRecord.mime_type.like("image/%"),
+                )
+            )
+            items.append(
+                CompletedSurveySummary(
+                    survey_id=record.id,
+                    name=record.name,
+                    order_ref=record.order_ref,
+                    version=record.version,
+                    photo_count=int(photo_count or 0),
+                    confirmed_measurement_count=sum(
+                        measurement.status is FieldMeasurementStatus.CONFIRMED
+                        for measurement in packet.measurements
+                    ),
+                    completed_at=record.updated_at,
+                )
+            )
+        return CompletedSurveyPage(
+            items=items,
+            next_cursor=(_encode_round_cursor(page[-1]) if len(records) > limit and page else None),
+        )
+
+    @application.get(
+        "/v1/jobs/{job_id}/field-evidence",
+        response_model=FieldEvidenceResponse,
+        tags=["field-evidence"],
+    )
+    async def get_field_evidence(
+        job_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> FieldEvidenceResponse:
+        _reviewer_role(principal)
+        job = _load_job(session, job_id=job_id, tenant_id=principal.tenant_id)
+        return _field_evidence_response(application, session, job=job)
+
+    @application.post(
+        "/v1/jobs/{job_id}/field-evidence/surveys/{survey_id}",
+        response_model=JobSurveyLinkResponse,
+        tags=["field-evidence"],
+    )
+    async def link_survey_to_job(
+        job_id: UUID,
+        survey_id: SurveyIdPath,
+        payload: MutateJobSurveyLinkRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> JobSurveyLinkResponse:
+        _reviewer_role(principal)
+        operation = f"field-evidence.link-survey:{job_id}:{survey_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return JobSurveyLinkResponse.model_validate(existing)
+        job = _load_job(session, job_id=job_id, tenant_id=principal.tenant_id)
+        survey = _load_survey(session, survey_id=survey_id, tenant_id=principal.tenant_id)
+        if survey.status != "COMPLETED":
+            raise _problem(
+                "SURVEY_NOT_COMPLETED",
+                status.HTTP_409_CONFLICT,
+                "Somente levantamento concluído pode ser vinculado à revisão.",
+            )
+        link = session.scalar(
+            select(JobSurveyLinkRecord).where(
+                JobSurveyLinkRecord.tenant_id == principal.tenant_id,
+                JobSurveyLinkRecord.job_id == job.id,
+                JobSurveyLinkRecord.survey_id == survey_id,
+            )
+        )
+        if link is None:
+            if job.version != payload.base_version:
+                raise _problem(
+                    "REVISION_CONFLICT",
+                    status.HTTP_409_CONFLICT,
+                    "A evidência de campo do job mudou; releia antes de vincular.",
+                )
+            link = JobSurveyLinkRecord(
+                id=str(new_uuid7()),
+                tenant_id=principal.tenant_id,
+                job_id=job.id,
+                survey_id=survey.id,
+                linked_by=principal.subject,
+            )
+            session.add(link)
+            job.version += 1
+            try:
+                session.flush()
+            except IntegrityError as error:
+                session.rollback()
+                raise _problem(
+                    "REVISION_CONFLICT",
+                    status.HTTP_409_CONFLICT,
+                    "Um vínculo concorrente mudou a evidência do job.",
+                ) from error
+            _record_audit(
+                session,
+                principal=principal,
+                action="JOB_SURVEY_LINKED",
+                resource_type="job_survey_link",
+                resource_id=link.id,
+                request_id=request.state.request_id,
+            )
+        response = JobSurveyLinkResponse(
+            job_id=job_id, survey_id=survey_id, linked=True, version=job.version
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/field-evidence/surveys/{survey_id}/unlink",
+        response_model=JobSurveyLinkResponse,
+        tags=["field-evidence"],
+    )
+    async def unlink_survey_from_job(
+        job_id: UUID,
+        survey_id: SurveyIdPath,
+        payload: MutateJobSurveyLinkRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> JobSurveyLinkResponse:
+        _reviewer_role(principal)
+        operation = f"field-evidence.unlink-survey:{job_id}:{survey_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return JobSurveyLinkResponse.model_validate(existing)
+        job = _load_job(session, job_id=job_id, tenant_id=principal.tenant_id)
+        link = session.scalar(
+            select(JobSurveyLinkRecord).where(
+                JobSurveyLinkRecord.tenant_id == principal.tenant_id,
+                JobSurveyLinkRecord.job_id == job.id,
+                JobSurveyLinkRecord.survey_id == survey_id,
+            )
+        )
+        if link is not None:
+            if job.version != payload.base_version:
+                raise _problem(
+                    "REVISION_CONFLICT",
+                    status.HTTP_409_CONFLICT,
+                    "A evidência de campo do job mudou; releia antes de desvincular.",
+                )
+            resource_id = link.id
+            session.delete(link)
+            job.version += 1
+            session.flush()
+            _record_audit(
+                session,
+                principal=principal,
+                action="JOB_SURVEY_UNLINKED",
+                resource_type="job_survey_link",
+                resource_id=resource_id,
+                request_id=request.state.request_id,
+            )
+        response = JobSurveyLinkResponse(
+            job_id=job_id, survey_id=survey_id, linked=False, version=job.version
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        session.commit()
+        return response
 
     @application.post(
         "/v1/surveys/{survey_id}/operations",

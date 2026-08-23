@@ -1577,6 +1577,40 @@ veio do campo mas não escreve nele. `tenant_id` vem sempre do JWT.
 O `survey_id` é gerado pelo aparelho antes de existir rede, e por isso não é UUID
 obrigatório no caminho — é o identificador que o app já persistiu localmente.
 
+### `GET /v1/surveys`
+
+Lista paginada, em ordem decrescente de criação, somente dos levantamentos `COMPLETED` do
+tenant. Exige papel de revisão do escritório. Cada item traz identidade, ordem de origem,
+versão, instante de conclusão e as contagens de fotos confirmadas e medidas confirmadas;
+não traz coordenadas, notas, chave de objeto nem URL. `cursor` é opaco e `limit` aceita de
+1 a 100.
+
+### `POST /v1/jobs/{job_id}/field-evidence/surveys/{survey_id}`
+
+Vincula um levantamento concluído ao job. Entrada: `base_version`, referida ao contador de
+evidência do job; exige papel de revisão e `Idempotency-Key`. O vínculo é muitos-para-muitos,
+tem autoria e instante próprios e avança a versão uma vez. Repetir um vínculo que já existe
+é sucesso sem novo avanço. Survey aberto responde `409 SURVEY_NOT_COMPLETED`; concorrência,
+`409 REVISION_CONFLICT`; job ou survey de outro tenant, `404`.
+
+### `POST /v1/jobs/{job_id}/field-evidence/surveys/{survey_id}/unlink`
+
+Retrata o vínculo, sem apagar o levantamento nem seus arquivos. Tem os mesmos portões de
+papel, tenant, idempotência e versão da associação; repetir uma retração já efetiva é sucesso
+sem novo avanço.
+
+### `GET /v1/jobs/{job_id}/field-evidence`
+
+Retorna a versão corrente da evidência, os levantamentos vinculados, somente suas medidas
+`confirmed` e as fotos confirmadas das duas origens (`survey` e `standalone`). Fotos de
+levantamento preservam as âncoras declaradas pelo app; foto avulsa preserva o texto digitado
+pelo revisor. O servidor não cruza os dois tipos de âncora nem infere associação.
+
+Cada foto traz uma URL privada assinada, criada somente para esta resposta, além do estado
+das análises e do resultado público existente. A URL nunca entra no banco, idempotência,
+artefato ou auditoria. Mídia pendente e chave fora do prefixo do tenant são omitidas; job de
+outro tenant responde `404`.
+
 ### `POST /v1/surveys/{survey_id}/operations`
 
 Entrada: `device_id`, `survey` (o `SurveyPacket` consolidado) e `operations` (o lote do

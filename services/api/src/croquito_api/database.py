@@ -353,6 +353,18 @@ class ReviewRevisionRecord(Base):
     `server_default` (migração `0007`) porque o caminho de escrita do worker lista as
     colunas uma a uma: sem ele, um INSERT que não conhece esta coluna quebraria.
     """
+    field_witnesses_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'")
+    )
+    """Testemunhas observacionais associadas explicitamente às leituras (F-030).
+
+    Nunca entram em ``packet_json``, na cena ou em blockers. O ``server_default`` mantém
+    writers da imagem anterior compatíveis durante o deploy rolante da migration ``0017``.
+    """
+    field_observations_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'")
+    )
+    """Conclusões humanas sobre fotos, versionadas com a revisão e fora da cena."""
     calibration_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     proposal_decisions_json: Mapped[list[dict[str, Any]] | None] = mapped_column(
         JSON, nullable=True
@@ -1033,6 +1045,115 @@ class SurveyMediaRecord(Base):
     status: Mapped[str] = mapped_column(String(16), default="PRESIGNED")
     """``PRESIGNED`` | ``CONFIRMED``. A transição é o que publica o comando de análise."""
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class JobSurveyLinkRecord(Base):
+    """Vínculo auditável muitos-para-muitos entre a prancha e o levantamento (F-030)."""
+
+    __tablename__ = "job_survey_links"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "survey_id"],
+            ["survey_records.tenant_id", "survey_records.id"],
+            name="fk_job_survey_links_survey",
+        ),
+        UniqueConstraint("tenant_id", "job_id", "survey_id", name="uq_job_survey_link"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), index=True)
+    survey_id: Mapped[str] = mapped_column(String(36), index=True)
+    linked_by: Mapped[str] = mapped_column(String(128))
+    linked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class JobFieldPhotoRecord(Base):
+    """Foto avulsa do job; bytes e análises continuam no object storage."""
+
+    __tablename__ = "job_field_photo_records"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "job_id", "sha256", name="uq_job_field_photo_digest"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), index=True)
+    sha256: Mapped[str] = mapped_column(String(64))
+    mime_type: Mapped[str] = mapped_column(String(100))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    object_key: Mapped[str] = mapped_column(String(512), unique=True)
+    anchor_text: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(16), default="PRESIGNED")
+    created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class FieldEvidenceAnalysisRecord(Base):
+    """Estado durável de uma análise explícita, comum às duas origens de foto.
+
+    ``evidence_id`` aponta para uma linha de mídia de levantamento ou de foto avulsa,
+    conforme ``origin``. Não há FK polimórfica: o servidor resolve a origem e o tenant
+    antes de criar a linha, e o índice único impede duas cabeças para a mesma tarefa.
+    """
+
+    __tablename__ = "field_evidence_analyses"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "job_id",
+            "origin",
+            "evidence_id",
+            "task",
+            name="uq_field_evidence_analysis_target",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), index=True)
+    origin: Mapped[str] = mapped_column(String(16))
+    evidence_id: Mapped[str] = mapped_column(String(36), index=True)
+    task: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32), default="QUEUED")
+    artifact_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    requested_by: Mapped[str] = mapped_column(String(128))
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class FieldPhotoValueConfirmationRecord(Base):
+    """Confirmação append-only de um valor textual lido numa foto avulsa."""
+
+    __tablename__ = "field_photo_value_confirmations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), index=True)
+    photo_id: Mapped[str] = mapped_column(ForeignKey("job_field_photo_records.id"), index=True)
+    source_reading_id: Mapped[str] = mapped_column(String(128))
+    value_mm: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(32))
+    raw_text: Mapped[str] = mapped_column(Text)
+    supersedes_confirmation_id: Mapped[str | None] = mapped_column(
+        ForeignKey("field_photo_value_confirmations.id"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
+    confirmed_by: Mapped[str] = mapped_column(String(128))
+    confirmed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 

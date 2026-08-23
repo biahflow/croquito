@@ -1247,6 +1247,86 @@
         "title": "CompleteSurveyRequest",
         "type": "object"
       },
+      "CompletedSurveyPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CompletedSurveySummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CompletedSurveyPage",
+        "type": "object"
+      },
+      "CompletedSurveySummary": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "title": "Completed At",
+            "type": "string"
+          },
+          "confirmed_measurement_count": {
+            "title": "Confirmed Measurement Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "order_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Ref"
+          },
+          "photo_count": {
+            "title": "Photo Count",
+            "type": "integer"
+          },
+          "survey_id": {
+            "title": "Survey Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "survey_id",
+          "name",
+          "order_ref",
+          "version",
+          "photo_count",
+          "confirmed_measurement_count",
+          "completed_at"
+        ],
+        "title": "CompletedSurveySummary",
+        "type": "object"
+      },
       "Constraint": {
         "additionalProperties": false,
         "properties": {
@@ -2991,6 +3071,265 @@
         "title": "ExportEstimateRequest",
         "type": "object"
       },
+      "FieldEvidenceAnchor": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "point",
+              "element",
+              "note"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "ref_id": {
+            "title": "Ref Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref_id"
+        ],
+        "title": "FieldEvidenceAnchor",
+        "type": "object"
+      },
+      "FieldEvidenceMeasurement": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "element_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Id"
+          },
+          "from_point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Point Id"
+          },
+          "instrument": {
+            "title": "Instrument",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "second_from_point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second From Point Id"
+          },
+          "second_to_point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second To Point Id"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "survey_id": {
+            "title": "Survey Id",
+            "type": "string"
+          },
+          "to_point_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Point Id"
+          },
+          "value_mm": {
+            "title": "Value Mm",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_id",
+          "survey_id",
+          "value_mm",
+          "kind",
+          "instrument",
+          "from_point_id",
+          "to_point_id",
+          "second_from_point_id",
+          "second_to_point_id",
+          "element_id",
+          "created_at"
+        ],
+        "title": "FieldEvidenceMeasurement",
+        "type": "object"
+      },
+      "FieldEvidencePhoto": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis"
+          },
+          "anchor_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Text"
+          },
+          "anchors": {
+            "items": {
+              "$ref": "#/components/schemas/FieldEvidenceAnchor"
+            },
+            "title": "Anchors",
+            "type": "array"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "classification_status": {
+            "title": "Classification Status",
+            "type": "string"
+          },
+          "evidence_id": {
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "mime_type": {
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "survey",
+              "standalone"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "reading_status": {
+            "title": "Reading Status",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "survey_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Survey Id"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "origin",
+          "survey_id",
+          "sha256",
+          "mime_type",
+          "anchors",
+          "anchor_text",
+          "captured_at",
+          "url",
+          "analysis",
+          "reading_status",
+          "classification_status"
+        ],
+        "title": "FieldEvidencePhoto",
+        "type": "object"
+      },
+      "FieldEvidenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "photos": {
+            "items": {
+              "$ref": "#/components/schemas/FieldEvidencePhoto"
+            },
+            "title": "Photos",
+            "type": "array"
+          },
+          "surveys": {
+            "items": {
+              "$ref": "#/components/schemas/LinkedSurveyEvidence"
+            },
+            "title": "Surveys",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "version",
+          "surveys",
+          "photos"
+        ],
+        "title": "FieldEvidenceResponse",
+        "type": "object"
+      },
       "GpsFix": {
         "additionalProperties": false,
         "description": "Espelho de `GpsFix` — referência geográfica, nunca medição.",
@@ -3396,6 +3735,36 @@
         "title": "JobResponse",
         "type": "object"
       },
+      "JobSurveyLinkResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "linked": {
+            "title": "Linked",
+            "type": "boolean"
+          },
+          "survey_id": {
+            "title": "Survey Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "job_id",
+          "survey_id",
+          "linked",
+          "version"
+        ],
+        "title": "JobSurveyLinkResponse",
+        "type": "object"
+      },
       "JourneyAvailabilityResponse": {
         "additionalProperties": false,
         "description": "Estado declarado de uma jornada neste ambiente — leitura, nunca escrita.\n\nMudar o estado é alterar configuração de ambiente e publicar, e por isso não existe\nrota para escrevê-lo: a tela mostra o estado para ninguém procurar um interruptor\nque não existe.",
@@ -3586,6 +3955,44 @@
           "end"
         ],
         "title": "LineGeometry",
+        "type": "object"
+      },
+      "LinkedSurveyEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "linked_at": {
+            "format": "date-time",
+            "title": "Linked At",
+            "type": "string"
+          },
+          "linked_by": {
+            "title": "Linked By",
+            "type": "string"
+          },
+          "measurements": {
+            "items": {
+              "$ref": "#/components/schemas/FieldEvidenceMeasurement"
+            },
+            "title": "Measurements",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "survey_id": {
+            "title": "Survey Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "survey_id",
+          "name",
+          "linked_by",
+          "linked_at",
+          "measurements"
+        ],
+        "title": "LinkedSurveyEvidence",
         "type": "object"
       },
       "MeResponse": {
@@ -3852,6 +4259,22 @@
           "rounds_ai_cost"
         ],
         "title": "MetricsSummaryResponse",
+        "type": "object"
+      },
+      "MutateJobSurveyLinkRequest": {
+        "additionalProperties": false,
+        "description": "Guarda otimista da evidência do job; identidade vem do JWT.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "MutateJobSurveyLinkRequest",
         "type": "object"
       },
       "ObservationNote": {
@@ -10124,6 +10547,224 @@
         ]
       }
     },
+    "/v1/jobs/{job_id}/field-evidence": {
+      "get": {
+        "operationId": "get_field_evidence_v1_jobs__job_id__field_evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FieldEvidenceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Field Evidence",
+        "tags": [
+          "field-evidence"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/field-evidence/surveys/{survey_id}": {
+      "post": {
+        "operationId": "link_survey_to_job_v1_jobs__job_id__field_evidence_surveys__survey_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "maxLength": 36,
+              "minLength": 1,
+              "title": "Survey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MutateJobSurveyLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSurveyLinkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Link Survey To Job",
+        "tags": [
+          "field-evidence"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/field-evidence/surveys/{survey_id}/unlink": {
+      "post": {
+        "operationId": "unlink_survey_from_job_v1_jobs__job_id__field_evidence_surveys__survey_id__unlink_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "survey_id",
+            "required": true,
+            "schema": {
+              "maxLength": 36,
+              "minLength": 1,
+              "title": "Survey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MutateJobSurveyLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSurveyLinkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unlink Survey From Job",
+        "tags": [
+          "field-evidence"
+        ]
+      }
+    },
     "/v1/jobs/{job_id}/metrics": {
       "get": {
         "description": "Cycle time, ato humano e custo de IA do job, derivados do que já está gravado.\n\nNada é calculado no worker nem persistido: é leitura sobre `job_stage_events`,\n`review_decisions`, `chat_turns` e o lineage do pacote de revisão corrente.\n\nO escopo de tenant é o mesmo das rotas vizinhas e mora no `where`: job de outro\ntenant não é \"sem permissão\", é inexistente (`404`), e responder `403` diria ao\nchamador que aquele id existe em algum lugar.",
@@ -11718,6 +12359,73 @@
         "summary": "Scene Schema",
         "tags": [
           "meta"
+        ]
+      }
+    },
+    "/v1/surveys": {
+      "get": {
+        "description": "Levantamentos concluídos que o escritório pode escolher para um job.",
+        "operationId": "list_completed_surveys_v1_surveys_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompletedSurveyPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Completed Surveys",
+        "tags": [
+          "surveys"
         ]
       }
     },

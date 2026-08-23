@@ -382,6 +382,12 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
             "survey_records",
             "survey_operation_records",
             "survey_media_records",
+            # `0017` (F-030): vínculo da evidência ao job, fotos avulsas, estado comum
+            # das análises explícitas e confirmações humanas append-only.
+            "job_survey_links",
+            "job_field_photo_records",
+            "field_evidence_analyses",
+            "field_photo_value_confirmations",
             "job_stage_events",
             "domain_events",
             # `0014` (F-037): acervo de catálogos da plataforma. É a ÚNICA tabela sem
