@@ -86,6 +86,16 @@ PLAN_DEVIATION (2026-08-23, T2): a recusa de BDI sob o regime quebrou
   recusa **e** seguir com zero — a quebra é a consequência que o ADR-0048 declarou, não um
   teste a consertar.
 
+PLAN_DEVIATION (2026-08-23, T3 fazendo trabalho de T2): nasceu a rota
+  `GET /v1/valuation-origins`, que o plano não previa. O achado abaixo mostrou que a tela não
+  tinha como saber quais orçamentos podem originar uma medição. A rota mora sob a jornada da
+  **medição**, e não sob `/v1/estimate-rounds`, por duas razões concretas: a listagem do
+  orçamento é paginada por cursor, e "mostre os assinados" viraria varrer páginas do lado do
+  cliente; e prefixo é jornada — um tenant com o orçamento `disabled` e a medição `enabled`
+  levaria `403 JOURNEY_UNAVAILABLE` numa tela de medição. O teste
+  `test_toda_rota_v1_publicada_esta_classificada` (F-034) obrigou a classificar o prefixo
+  novo, que é exatamente o que ele existe para fazer.
+
 ACHADO PARA A T3 (2026-08-23, ao terminar a T4): `EstimateRoundSummary` **não diz se o
   orçamento está assinado**. Ela traz `pricing_regime` e `stage`, e `stage` chega no máximo a
   `estimate` — que é "montado", não "assinado". O Design Approval Package aprovado mostra o

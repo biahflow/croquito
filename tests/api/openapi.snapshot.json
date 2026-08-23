@@ -7067,6 +7067,104 @@
         "title": "ValuationExtractionResponse",
         "type": "object"
       },
+      "ValuationOriginSummary": {
+        "additionalProperties": false,
+        "description": "Um orçamento que pode originar uma medição, com o estado da assinatura declarado.\n\n`signature` sai por extenso em vez de um booleano porque os três estados levam a atos\ndiferentes: `signed` abre a medição, `stale` pede assinar a versão atual, e `unsigned`\npede assinar. Um `approved: false` não distinguiria os dois últimos, e é justamente a\ndistinção que o desenho aprovado mostra.\n\n`total_amount` e `code_count` são o que a lista precisa para a pessoa reconhecer o\norçamento sem abri-lo. Vêm do conteúdo montado, e não de coluna: o orçamento é\nrecomputado na leitura, e servir um total gravado faria um documento adulterado no banco\npassar por bom.",
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "code_count": {
+            "title": "Code Count",
+            "type": "integer"
+          },
+          "estimate_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate Digest"
+          },
+          "reference_label": {
+            "title": "Reference Label",
+            "type": "string"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "signature": {
+            "enum": [
+              "signed",
+              "stale",
+              "unsigned"
+            ],
+            "title": "Signature",
+            "type": "string"
+          },
+          "total_amount": {
+            "title": "Total Amount",
+            "type": "string"
+          },
+          "worksite_name": {
+            "title": "Worksite Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "round_id",
+          "worksite_name",
+          "reference_label",
+          "signature",
+          "code_count",
+          "total_amount"
+        ],
+        "title": "ValuationOriginSummary",
+        "type": "object"
+      },
+      "ValuationOriginsResponse": {
+        "additionalProperties": false,
+        "description": "Os orçamentos elegíveis, do mais recente para o mais antigo.\n\nSem cursor, ao contrário da listagem de rodadas: a lista já nasce filtrada pelo regime e\npela montagem, e paginar uma escolha que cabe na tela custaria mais do que resolve. Se um\ntenant chegar a ter mais orçamentos sob contrato do que cabe numa escolha, o problema é de\ndesenho da tela, não de transporte.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ValuationOriginSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ValuationOriginsResponse",
+        "type": "object"
+      },
       "ValuationPlateResponse": {
         "additionalProperties": false,
         "description": "Metadados da prancha; a imagem sai por URL assinada e nunca pelo request path (D5).",
@@ -12022,6 +12120,33 @@
         "summary": "Presign Upload",
         "tags": [
           "uploads"
+        ]
+      }
+    },
+    "/v1/valuation-origins": {
+      "get": {
+        "description": "Orçamentos que podem originar uma medição (F-036, ADR-0048).\n\nMora sob a jornada da MEDIÇÃO, e não sob `/v1/estimate-rounds`, por duas razões que\nnão são de gosto: a listagem do orçamento é paginada por cursor, e \"mostre os\nassinados\" viraria varrer páginas do lado do cliente; e prefixo é jornada — um tenant\ncom o orçamento `disabled` e a medição `enabled` receberia `403 JOURNEY_UNAVAILABLE`\nnuma tela de medição (F-034).\n\nA lista traz também as **não assinadas** sob o regime, com o estado por extenso. Não\né ruído: quem procura um orçamento que sabe existir precisa encontrá-lo e ler o\nmotivo de ele não servir ainda, em vez de concluir que ele sumiu.\n\nLeitura tolerante: orçamento que não revalida sai da lista em vez de derrubar a tela,\na mesma regra que `round_state_payload` já segue. Quem recusa de verdade é a abertura\nda rodada, que revalida o conteúdo antes de gravar o consolidado.",
+        "operationId": "list_valuation_origins_v1_valuation_origins_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationOriginsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Valuation Origins",
+        "tags": [
+          "valuation"
         ]
       }
     },

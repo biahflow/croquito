@@ -378,3 +378,90 @@ def test_sem_origem_nenhuma_recusa(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 422, response.text
+
+
+# --- GET /v1/valuation-origins ----------------------------------------------------------
+
+
+def _origins(client: TestClient, *, key: str = "origens") -> Any:
+    return client.get("/v1/valuation-origins", headers=_headers(key=key))
+
+
+def test_a_lista_de_origens_traz_o_orcamento_assinado_com_o_que_a_tela_precisa(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    estimate_round_id = _seed_estimate_round(client, document=_signed(_estimate()))
+
+    response = _origins(client)
+
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    assert len(items) == 1
+    item = items[0]
+    assert item["round_id"] == estimate_round_id
+    assert item["signature"] == "signed"
+    assert item["worksite_name"] == "PRACA ORCADA SINTETICA"
+    assert item["reference_label"] == "DEMANDA 2026/014"
+    assert item["approved_by"] == "aprovador-sintetico"
+    assert item["code_count"] == 1
+    assert item["total_amount"] == "600.00"
+    assert item["estimate_digest"] is not None
+
+
+def test_assinatura_caduca_aparece_na_lista_com_o_estado_por_extenso(tmp_path: Path) -> None:
+    """Esconder faria a pessoa procurar um orçamento que ela sabe existir."""
+    client = _client(tmp_path)
+    signed = _signed(_estimate())
+    signed["approval"]["estimate_digest"] = "d" * 64
+    _seed_estimate_round(client, document=signed)
+
+    items = _origins(client).json()["items"]
+
+    assert [item["signature"] for item in items] == ["stale"]
+
+
+def test_orcamento_montado_e_nao_assinado_aparece_como_unsigned(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    _seed_estimate_round(client, document=_estimate().model_dump(mode="json"))
+
+    items = _origins(client).json()["items"]
+
+    assert [item["signature"] for item in items] == ["unsigned"]
+    assert items[0]["approved_by"] is None
+
+
+def test_rodada_sem_orcamento_montado_nao_e_oferecida_como_origem(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    _seed_estimate_round(client, document=None)
+
+    assert _origins(client).json()["items"] == []
+
+
+def test_orcamento_fora_do_regime_nao_e_oferecido_como_origem(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    _seed_estimate_round(client, document=_signed(_estimate()), regime=None)
+
+    assert _origins(client).json()["items"] == []
+
+
+def test_a_lista_de_origens_nao_vaza_orcamento_de_outro_tenant(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    _seed_estimate_round(client, document=_signed(_estimate()), tenant="outro-tenant")
+
+    assert _origins(client).json()["items"] == []
+
+
+def test_ler_origens_exige_papel_de_medicao(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    _seed_estimate_round(client, document=_signed(_estimate()))
+
+    response = client.get(
+        "/v1/valuation-origins",
+        headers={
+            "Authorization": f"Bearer test:{_TENANT}:alguem:engineer",
+            "Idempotency-Key": "origens-sem-papel",
+        },
+    )
+
+    assert response.status_code == 403, response.text

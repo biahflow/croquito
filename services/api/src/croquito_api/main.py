@@ -1204,6 +1204,44 @@ class ValuationRoundPage(ApiModel):
     next_cursor: str | None = None
 
 
+class ValuationOriginSummary(ApiModel):
+    """Um orçamento que pode originar uma medição, com o estado da assinatura declarado.
+
+    `signature` sai por extenso em vez de um booleano porque os três estados levam a atos
+    diferentes: `signed` abre a medição, `stale` pede assinar a versão atual, e `unsigned`
+    pede assinar. Um `approved: false` não distinguiria os dois últimos, e é justamente a
+    distinção que o desenho aprovado mostra.
+
+    `total_amount` e `code_count` são o que a lista precisa para a pessoa reconhecer o
+    orçamento sem abri-lo. Vêm do conteúdo montado, e não de coluna: o orçamento é
+    recomputado na leitura, e servir um total gravado faria um documento adulterado no banco
+    passar por bom.
+    """
+
+    round_id: UUID
+    worksite_name: str
+    reference_label: str
+    signature: Literal["signed", "stale", "unsigned"]
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    #: Digest do conteúdo ASSINADO; é ele que a medição guarda como "medi contra o quê".
+    estimate_digest: str | None = None
+    code_count: int
+    total_amount: str
+
+
+class ValuationOriginsResponse(ApiModel):
+    """Os orçamentos elegíveis, do mais recente para o mais antigo.
+
+    Sem cursor, ao contrário da listagem de rodadas: a lista já nasce filtrada pelo regime e
+    pela montagem, e paginar uma escolha que cabe na tela custaria mais do que resolve. Se um
+    tenant chegar a ter mais orçamentos sob contrato do que cabe numa escolha, o problema é de
+    desenho da tela, não de transporte.
+    """
+
+    items: list[ValuationOriginSummary]
+
+
 class AssociatePlateRequest(ApiModel):
     upload_id: UUID
     base_version: int = Field(ge=1)
@@ -8227,6 +8265,76 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             ],
             next_cursor=_encode_round_cursor(page[-1]) if len(records) > limit and page else None,
         )
+
+    @application.get(
+        "/v1/valuation-origins",
+        response_model=ValuationOriginsResponse,
+        tags=["valuation"],
+    )
+    async def list_valuation_origins(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ValuationOriginsResponse:
+        """Orçamentos que podem originar uma medição (F-036, ADR-0048).
+
+        Mora sob a jornada da MEDIÇÃO, e não sob `/v1/estimate-rounds`, por duas razões que
+        não são de gosto: a listagem do orçamento é paginada por cursor, e "mostre os
+        assinados" viraria varrer páginas do lado do cliente; e prefixo é jornada — um tenant
+        com o orçamento `disabled` e a medição `enabled` receberia `403 JOURNEY_UNAVAILABLE`
+        numa tela de medição (F-034).
+
+        A lista traz também as **não assinadas** sob o regime, com o estado por extenso. Não
+        é ruído: quem procura um orçamento que sabe existir precisa encontrá-lo e ler o
+        motivo de ele não servir ainda, em vez de concluir que ele sumiu.
+
+        Leitura tolerante: orçamento que não revalida sai da lista em vez de derrubar a tela,
+        a mesma regra que `round_state_payload` já segue. Quem recusa de verdade é a abertura
+        da rodada, que revalida o conteúdo antes de gravar o consolidado.
+        """
+        _require_valuation_reviewer(principal)
+        records = list(
+            session.scalars(
+                select(EstimateRoundRecord)
+                .where(
+                    EstimateRoundRecord.tenant_id == principal.tenant_id,
+                    EstimateRoundRecord.pricing_regime == estimate_rounds.REGIME_CONTRACTED_DEMAND,
+                )
+                .order_by(EstimateRoundRecord.created_at.desc(), EstimateRoundRecord.id.desc())
+            )
+        )
+        heads = _estimate_round_heads(
+            session,
+            tenant_id=principal.tenant_id,
+            round_ids=[record.id for record in records],
+        )
+        items: list[ValuationOriginSummary] = []
+        for record in records:
+            estimate = estimate_rounds.readable_estimate(heads.get(record.id))
+            if estimate is None:
+                # Rodada sob o regime que ainda não tem orçamento montado: não há o que
+                # assinar nem o que herdar, e listá-la ofereceria uma origem inexistente.
+                continue
+            approval = estimate_rounds.approval_payload(estimate)
+            if not approval["approved"]:
+                signature: Literal["signed", "stale", "unsigned"] = "unsigned"
+            elif approval["stale"]:
+                signature = "stale"
+            else:
+                signature = "signed"
+            items.append(
+                ValuationOriginSummary(
+                    round_id=UUID(record.id),
+                    worksite_name=record.worksite_name,
+                    reference_label=record.reference_label,
+                    signature=signature,
+                    approved_by=approval["approved_by"],
+                    approved_at=approval["approved_at"],
+                    estimate_digest=approval["approved_digest"],
+                    code_count=len(estimate.lines),
+                    total_amount=str(estimate.total_amount),
+                )
+            )
+        return ValuationOriginsResponse(items=items)
 
     @application.get(
         "/v1/valuation-rounds/{round_id}",

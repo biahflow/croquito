@@ -70,6 +70,10 @@ JOURNEY_ROUTE_PREFIXES: Final[Mapping[str, Journey]] = {
     "/v1/uploads": "croqui",
     "/v1/projects": "croqui",
     "/v1/valuation-rounds": "medicao",
+    # A escolha da origem de uma medição é pergunta da MEDIÇÃO, e por isso mora aqui. Pô-la
+    # sob `/v1/estimate-rounds` faria um tenant com o orçamento `disabled` e a medição
+    # `enabled` levar `403` numa tela de medição (F-036).
+    "/v1/valuation-origins": "medicao",
     "/v1/estimate-rounds": "orcamento",
 }
 
