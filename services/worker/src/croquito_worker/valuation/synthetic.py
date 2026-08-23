@@ -40,6 +40,7 @@ from croquito_valuation.calc import CalcBlockPlan, CalcBuildResult, CalcPlan, It
 from croquito_valuation.catalog import parse_money
 from croquito_valuation.contract import ContractWorkbook
 from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.estimate import Estimate, EstimateApproval, EstimateApproverDecision
 from croquito_valuation.models import (
     BulletinLine,
     CalcBlock,
@@ -832,6 +833,38 @@ def build_synthetic_approval(valuation: Valuation) -> Valuation:
     payload = valuation.model_dump()
     payload["approval"] = approval.model_dump()
     return Valuation.model_validate(payload)
+
+
+SYNTHETIC_ESTIMATE_APPROVER_ID: Final = "aprovador-sintetico"
+"""Quem assina o orçamento sintético. É deliberadamente DIFERENTE de
+`SYNTHETIC_REVIEWER_ID`, que monta a cadeia: na cadeia real quem aprova o orçamento não é
+quem o montou (ADR-0046, decisão 5), e a fixture não desmente a regra."""
+
+
+def build_synthetic_estimate_approval(estimate: Estimate) -> Estimate:
+    """Devolve o orçamento com a aprovação nominal sintética amarrada ao digest do conteúdo.
+
+    Espelho de `build_synthetic_approval` na outra margem da fronteira, com o tipo próprio
+    do orçamento (ADR-0046, decisão 4) — nada aqui empresta o vocabulário da medição.
+
+    A decisão é fixa (id, aprovador e horário) para que a demonstração continue
+    determinística; qualquer edição posterior do orçamento muda o digest e torna a
+    aprovação caduca no portão de exportação.
+    """
+    approval = EstimateApproval(
+        decision=EstimateApproverDecision(
+            decision_id="ed_9a8b7c6d5e4f3a2b",
+            action="confirm",
+            approver_id=SYNTHETIC_ESTIMATE_APPROVER_ID,
+            approver_role="aprovador",
+            decided_at=datetime(2026, 4, 30, 12, 0, tzinfo=UTC),
+            note="orçamento-base sintético conferido antes do despacho",
+        ),
+        estimate_digest=estimate.content_digest(),
+    )
+    payload = estimate.model_dump()
+    payload["approval"] = approval.model_dump()
+    return Estimate.model_validate(payload)
 
 
 # ---------------------------------------------------------------------------------------

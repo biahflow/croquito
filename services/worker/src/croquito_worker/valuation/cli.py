@@ -199,6 +199,7 @@ from croquito_worker.valuation.synthetic import (
     build_demo_takeoff_decisions,
     build_synthetic_approval,
     build_synthetic_catalog_workbook,
+    build_synthetic_estimate_approval,
     build_synthetic_multi_valuation,
     build_synthetic_previous_mapao,
 )
@@ -366,7 +367,11 @@ class ValuationCompositionImportResult:
 
 @dataclass(frozen=True, slots=True)
 class BuildEstimateResult:
-    """Orçamento-base de uma obra montado sobre a cascata, sem contrato e sem aprovação."""
+    """Orçamento-base de uma obra montado sobre a cascata, sem contrato e ainda não assinado.
+
+    Montar não é aprovar (ADR-0046): `build-estimate` devolve o orçamento sem `approval`, e
+    é a aprovação nominal — ato próprio — que abre o portão de exportação.
+    """
 
     estimate: Estimate
     estimate_path: Path
@@ -1025,7 +1030,14 @@ def run_export_estimate_workbook(
     aprovada — o mesmo desenho de `run_export_valuation` (ADR-0038): nome temporário,
     auditoria de round-trip e só então `os.replace`; falha do auditor não publica nada e
     o pendente é removido no `finally`.
+
+    O portão de aprovação do DOMÍNIO corre aqui, antes de qualquer escrita (ADR-0046,
+    decisão 3): orçamento sem aprovação nominal válida não vira arquivo nenhum, nem
+    temporário. É o que faz o CLI obedecer à mesma regra que a API, em vez de haver duas
+    verdades sobre o mesmo artefato. Ao contrário do irmão da medição, o portão daqui não
+    recebe contrato: saldo e período não existem deste lado da fronteira.
     """
+    estimate.ensure_exportable()
     output_dir.mkdir(parents=True, exist_ok=True)
     pending_path = output_dir / _PENDING_ESTIMATE_WORKBOOK_FILENAME
     workbook_path = output_dir / ESTIMATE_WORKBOOK_FILENAME
@@ -1788,7 +1800,12 @@ def run_estimate_demo(output_dir: Path) -> EstimateDemoResult:
     Catálogo SCO sintético (planilha) + catálogo EMOP sintético (.DBF, pelo importador
     real) + composição manual compilada → prancha sintética → extração da legenda →
     revisão do orçamentista → shortlist lexical sobre a cascata → confirmação de código
-    citando a fonte de cada item → orçamento-base auditável.
+    citando a fonte de cada item → orçamento-base → aprovação nominal sintética → portão de
+    exportação → planilha auditada.
+
+    A aprovação não é enfeite da demonstração: desde o ADR-0046 o portão do domínio recusa
+    despachar orçamento sem assinatura, e é o mesmo portão que a API invoca. Quem assina é
+    o aprovador sintético, que não é o orçamentista que montou.
 
     Determinística de ponta a ponta: os digests das três fontes e o da imagem da prancha se
     repetem a cada execução, e as decisões humanas sintéticas têm data fixa. O único digest
@@ -1859,11 +1876,12 @@ def run_estimate_demo(output_dir: Path) -> EstimateDemoResult:
         address=SYNTHETIC_ESTIMATE_WORKSITE_ADDRESS,
         calc_plan=calc_plan,
     )
+    estimate = build_synthetic_estimate_approval(result.estimate)
     estimate_path = output_dir / ESTIMATE_FILENAME
-    atomic_write_text(estimate_path, _document(result.estimate))
+    atomic_write_text(estimate_path, _document(estimate))
 
     workbook_path, workbook_audit = run_export_estimate_workbook(
-        result.estimate, default_template(), output_dir
+        estimate, default_template(), output_dir
     )
     workbook_audit_path = output_dir / ESTIMATE_WORKBOOK_AUDIT_FILENAME
     atomic_write_text(workbook_audit_path, _serialize(workbook_audit.model_dump(mode="json")))
@@ -1881,7 +1899,7 @@ def run_estimate_demo(output_dir: Path) -> EstimateDemoResult:
         assignments=assignments,
         calc_plan_path=calc_plan_path,
         compositions_path=compositions_path,
-        estimate=result.estimate,
+        estimate=estimate,
         estimate_path=estimate_path,
         workbook_path=workbook_path,
         workbook_audit=workbook_audit,

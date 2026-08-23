@@ -20,21 +20,29 @@ Três coisas definem o `Estimate` e nenhuma delas é opcional:
    `unpriced_item_ids` — é a lista de candidatos a composição nova, e não vira linha com
    preço aproximado de item parecido.
 
-O que este módulo **não** tem, de propósito: contrato, saldo, período e aprovação. Nada
-disso existe antes da licitação, e o `Estimate` não passa — nem tenta passar — pelo portão
-de exportação da medição (`Valuation.ensure_exportable`). O portão daqui é o de sempre:
-tudo recomputado na construção e revalidado na leitura.
+O que este módulo **não** tem, de propósito: contrato, saldo e período. Nada disso existe
+antes da licitação, e o `Estimate` não passa — nem tenta passar — pelo portão de exportação
+da medição (`Valuation.ensure_exportable`), que recebe o contrato por parâmetro.
+
+Aprovação, essa existe, e é **própria** (ADR-0046): `Estimate.approval` é nominal, amarrada
+por digest ao conteúdo exato assinado, e o portão daqui — `export_errors()` /
+`ensure_exportable()` — não recebe contrato nenhum, que é o que mantém a fronteira do
+ADR-0027 de pé: saldo, período e código no contrato não têm como entrar por ele. Fora o
+portão, a regra é a de sempre: tudo recomputado na construção e revalidado na leitura.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from typing import Final, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from croquito_valuation.assignment import CodeAssignmentSet, ensure_price_cascade
 from croquito_valuation.calc import CalcPlan, build_calc_blocks
@@ -56,7 +64,7 @@ from croquito_valuation.rounding import money_trunc, quantity_round
 from croquito_valuation.sco import SCO_CODE_PATTERN
 from croquito_valuation.takeoff import TakeoffItem, TakeoffPacket
 
-ESTIMATE_SCHEMA_VERSION: Final = "2.1.0"
+ESTIMATE_SCHEMA_VERSION: Final = "2.2.0"
 
 _ITEM_ID_PATTERN: Final = r"^ti_[a-f0-9]{16}$"
 
@@ -152,11 +160,57 @@ class EstimateLine(ValuationContractModel):
         return self
 
 
+class EstimateApproverDecision(ValuationContractModel):
+    """Decisão humana rastreável de quem aprova o orçamento-base.
+
+    Duplicação local deliberada da FORMA de `ReviewerDecision` (ADR-0046, decisão 4), não
+    reuso dele: lá o papel é `Literal["orcamentista"]` e ampliá-lo faria um papel do
+    orçamento aparecer no vocabulário da medição. Aqui o papel é `aprovador` — na cadeia
+    real quem assina o orçamento não é quem o montou (decisão 5) — e o prefixo do id é
+    próprio. O que se repete é a forma, não o significado.
+    """
+
+    decision_id: str = Field(pattern=r"^ed_[a-f0-9]{16}$")
+    action: Literal["confirm", "reject"]
+    approver_id: str = Field(min_length=1, max_length=120)
+    approver_role: Literal["aprovador"]
+    decided_at: datetime
+    note: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @field_validator("decided_at")
+    @classmethod
+    def validate_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValuationValidationError(
+                "ESTIMATE_DECISION_TIMESTAMP_NAIVE",
+                "decisão do aprovador exige data e hora com fuso horário",
+                {"decided_at": value.isoformat()},
+            )
+        return value
+
+
+class EstimateApproval(ValuationContractModel):
+    """Aprovação nominal amarrada por digest ao conteúdo exato aprovado.
+
+    Aprovar um conteúdo e despachar outro é o erro que este modelo existe para impedir: o
+    digest é recomputado no portão e qualquer edição posterior do orçamento torna a
+    aprovação caduca em vez de silenciosamente válida.
+    """
+
+    decision: EstimateApproverDecision
+    estimate_digest: str = Field(pattern=SHA256_PATTERN)
+
+
 class Estimate(ValuationContractModel):
     """Orçamento-base de uma obra, amarrado à prancha e à cascata que o precificou.
 
-    Sem período, sem contrato, sem saldo e sem aprovação: nenhum desses conceitos existe
-    antes da licitação. A memória de cálculo é a MESMA do boletim (`CalcSheet`, montada por
+    Sem período, sem contrato e sem saldo: nenhum desses conceitos existe antes da
+    licitação. Aprovação existe e é própria (`approval`, ADR-0046): nominal, amarrada por
+    digest ao conteúdo exato assinado, com portão de exportação
+    (`export_errors()`/`ensure_exportable()`) que **não** recebe contrato — é a assinatura
+    sem contrato que mantém a fronteira do ADR-0027 de pé.
+
+    A memória de cálculo é a MESMA do boletim (`CalcSheet`, montada por
     `build_calc_blocks`), e a relação 1:1 entre linha e memória é validada como na medição —
     quantidade que diverge da memória recusa.
 
@@ -167,7 +221,7 @@ class Estimate(ValuationContractModel):
     nunca o percentual aplicado ao total geral (decisão 4).
     """
 
-    schema_version: Literal["2.1.0"] = ESTIMATE_SCHEMA_VERSION
+    schema_version: Literal["2.2.0"] = ESTIMATE_SCHEMA_VERSION
     worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
     worksite_name: str = Field(min_length=1, max_length=120)
     address: str | None = Field(default=None, min_length=1, max_length=200)
@@ -183,6 +237,7 @@ class Estimate(ValuationContractModel):
     total_amount_without_bdi: ExactDecimal = Field(ge=0)
     total_amount: ExactDecimal = Field(ge=0)
     safety_notes: list[str] = Field(min_length=2)
+    approval: EstimateApproval | None = None
 
     @property
     def expected_total_amount(self) -> Decimal:
@@ -341,6 +396,48 @@ class Estimate(ValuationContractModel):
                     },
                 )
         return self
+
+    def content_digest(self) -> str:
+        """SHA-256 do conteúdo canônico do orçamento, sem a aprovação que o referencia.
+
+        Excluir `approval` do cálculo é o que faz assinar não mudar o que foi assinado: o
+        digest gravado no ato continua conferindo com o do orçamento logo depois dele.
+        """
+        payload = json.dumps(
+            self.model_dump(mode="json", exclude={"approval"}),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def export_errors(self) -> list[str]:
+        """Violações que impedem despachar o orçamento, no formato `CODE`.
+
+        Sem `ContractWorkbook`, ao contrário do portão da medição (ADR-0046, decisão 3):
+        saldo, período e código no contrato não existem deste lado da fronteira, e é a
+        assinatura sem contrato que impede esses códigos de entrarem aqui por cópia.
+        """
+        errors: list[str] = []
+        approval = self.approval
+        if approval is None:
+            errors.append("ESTIMATE_NOT_APPROVED")
+        else:
+            if approval.decision.action == "reject":
+                errors.append("ESTIMATE_APPROVAL_REJECTED")
+            if approval.estimate_digest != self.content_digest():
+                errors.append("APPROVAL_CONTENT_MISMATCH")
+        return errors
+
+    def ensure_exportable(self) -> None:
+        """Portão de exportação: com qualquer violação aberta, nada é publicado."""
+        errors = self.export_errors()
+        if errors:
+            raise ValuationValidationError(
+                "ESTIMATE_EXPORT_BLOCKED",
+                "orçamento possui violações abertas e não pode ser exportado",
+                {"errors": errors},
+            )
 
 
 @dataclass(frozen=True, slots=True)

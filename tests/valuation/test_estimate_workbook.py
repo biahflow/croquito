@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from croquito_valuation.canonical import canonicalize_workbook
+from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.estimate import CatalogSource, Estimate, EstimateLine
 from croquito_valuation.estimate_workbook import (
     EstimateAuditFinding,
@@ -26,6 +27,7 @@ from croquito_valuation.estimate_workbook import (
 from croquito_valuation.models import CalcBlock, CalcOperand, CalcRecipe, CalcSheet, PriceOrigin
 from croquito_valuation.template import WorkbookTemplate, default_template
 from croquito_worker.valuation import cli
+from croquito_worker.valuation.synthetic import build_synthetic_estimate_approval
 from tests.valuation.builders import tamper_cell
 
 _WORKSITE_KEY = "praca-sintetica-orcamento-t2"
@@ -258,8 +260,12 @@ def test_export_gate_does_not_publish_when_the_audit_is_divergent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """O mesmo desenho de `run_export_valuation`: auditoria divergente não publica nada,
-    e o pendente não sobra no diretório."""
-    estimate = _build_estimate()
+    e o pendente não sobra no diretório.
+
+    O orçamento entra assinado porque desde o ADR-0046 o portão do domínio corre antes da
+    escrita; o que este teste isola é o OUTRO lado do risco, o do auditor.
+    """
+    estimate = build_synthetic_estimate_approval(_build_estimate())
     template = default_template()
     layout = template.estimate
     assert layout is not None
@@ -288,3 +294,19 @@ def test_export_gate_does_not_publish_when_the_audit_is_divergent(
     assert audit.status == "divergent"
     assert not (output_dir / cli.ESTIMATE_WORKBOOK_FILENAME).exists()
     assert not (output_dir / cli._PENDING_ESTIMATE_WORKBOOK_FILENAME).exists()
+
+
+def test_the_export_refuses_an_unsigned_estimate_before_writing_anything(tmp_path: Path) -> None:
+    """O portão do domínio corre antes de qualquer escrita: nem o pendente nasce.
+
+    O CLI obedece à mesma regra que a API porque a regra é do `Estimate`, não da rota
+    (ADR-0046, decisão 3).
+    """
+    output_dir = tmp_path / "orcamento-sem-assinatura"
+
+    with pytest.raises(ValuationValidationError) as raised:
+        cli.run_export_estimate_workbook(_build_estimate(), default_template(), output_dir)
+
+    assert raised.value.code == "ESTIMATE_EXPORT_BLOCKED"
+    assert raised.value.details["errors"] == ["ESTIMATE_NOT_APPROVED"]
+    assert not output_dir.exists()

@@ -1,5 +1,16 @@
 {
   "address": "RUA SINTETICA 400 — BAIRRO SINTETICO",
+  "approval": {
+    "decision": {
+      "action": "confirm",
+      "approver_id": "aprovador-sintetico",
+      "approver_role": "aprovador",
+      "decided_at": "2026-04-30T12:00:00Z",
+      "decision_id": "ed_9a8b7c6d5e4f3a2b",
+      "note": "orçamento-base sintético conferido antes do despacho"
+    },
+    "estimate_digest": "<sha256:orcamento-conteudo>"
+  },
   "bdi_percent": "25.00",
   "calc_sheets": [
     {
@@ -208,7 +219,7 @@
     "Cada linha declara a origem, o catálogo e a data-base do preço; conferir a data-base antes de usar o valor.",
     "Item confirmado sem preço em nenhuma fonte fica declarado em unpriced_item_ids; ele exige composição nova, nunca preço de item parecido."
   ],
-  "schema_version": "2.1.0",
+  "schema_version": "2.2.0",
   "source_pdf_sha256": "<sha256:prancha-pdf>",
   "total_amount": "71516.83",
   "total_amount_without_bdi": "57221.26",

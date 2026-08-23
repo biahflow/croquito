@@ -40,6 +40,7 @@ from pathlib import Path
 from croquito_valuation.canonical import canonicalize_workbook
 from croquito_valuation.template import default_template
 from croquito_worker.valuation.cli import EstimateDemoResult, run_estimate_demo, run_valuation_demo
+from croquito_worker.valuation.synthetic import SYNTHETIC_TAKEOFF_REVIEWER
 from tests.valuation.builders import build_fixture, write_fixture_workbook
 
 GOLDEN_PATH = Path(__file__).parent / "golden" / "valuation-demo.canonical.json"
@@ -67,6 +68,12 @@ def canonical_estimate(result: EstimateDemoResult) -> dict[str, object]:
             for catalog in result.cascade
         },
     }
+    approval = result.estimate.approval
+    if approval is not None:
+        # O digest assinado é o do conteúdo, que embute o do PDF — e aquele não se repete
+        # entre execuções. O rótulo fixa o PAPEL; que ele confira com o conteúdo é o que o
+        # teste do artefato da demo assere, não este.
+        labels[approval.estimate_digest] = "<sha256:orcamento-conteudo>"
     text = result.estimate.model_dump_json()
     for digest, label in labels.items():
         text = text.replace(digest, label)
@@ -188,6 +195,24 @@ def test_estimate_demo_canonical_matches_the_versioned_golden(tmp_path: Path) ->
     assert canonical_estimate(result) == json.loads(
         GOLDEN_ESTIMATE_PATH.read_text(encoding="utf-8")
     )
+
+
+def test_the_estimate_demo_publishes_only_what_the_approval_authorizes(tmp_path: Path) -> None:
+    """A cadeia offline do orçamento passou a fechar com assinatura, como a da medição.
+
+    O `estimate.json` publicado é o MESMO artefato que o portão autorizou: o digest gravado
+    na aprovação confere com o conteúdo, e quem assinou não é quem montou (ADR-0046).
+    """
+    result = run_estimate_demo(tmp_path / "estimate-demo")
+
+    payload = json.loads(result.estimate_path.read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == "2.2.0"
+    assert payload["approval"]["estimate_digest"] == result.estimate.content_digest()
+    assert payload["approval"]["decision"]["approver_role"] == "aprovador"
+    assert payload["approval"]["decision"]["approver_id"] != SYNTHETIC_TAKEOFF_REVIEWER
+    assert result.estimate.export_errors() == []
+    assert result.workbook_path is not None, result.workbook_audit.findings
 
 
 def test_the_estimate_golden_carries_the_three_price_origins_and_the_unpriced_item() -> None:

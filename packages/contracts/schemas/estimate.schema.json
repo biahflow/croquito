@@ -163,6 +163,84 @@
       "title": "CatalogSource",
       "type": "object"
     },
+    "EstimateApproval": {
+      "additionalProperties": false,
+      "description": "Aprovação nominal amarrada por digest ao conteúdo exato aprovado.\n\nAprovar um conteúdo e despachar outro é o erro que este modelo existe para impedir: o\ndigest é recomputado no portão e qualquer edição posterior do orçamento torna a\naprovação caduca em vez de silenciosamente válida.",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/EstimateApproverDecision"
+        },
+        "estimate_digest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Estimate Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision",
+        "estimate_digest"
+      ],
+      "title": "EstimateApproval",
+      "type": "object"
+    },
+    "EstimateApproverDecision": {
+      "additionalProperties": false,
+      "description": "Decisão humana rastreável de quem aprova o orçamento-base.\n\nDuplicação local deliberada da FORMA de `ReviewerDecision` (ADR-0046, decisão 4), não\nreuso dele: lá o papel é `Literal[\"orcamentista\"]` e ampliá-lo faria um papel do\norçamento aparecer no vocabulário da medição. Aqui o papel é `aprovador` — na cadeia\nreal quem assina o orçamento não é quem o montou (decisão 5) — e o prefixo do id é\npróprio. O que se repete é a forma, não o significado.",
+      "properties": {
+        "action": {
+          "enum": [
+            "confirm",
+            "reject"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "approver_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Approver Id",
+          "type": "string"
+        },
+        "approver_role": {
+          "const": "aprovador",
+          "title": "Approver Role",
+          "type": "string"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        },
+        "decision_id": {
+          "pattern": "^ed_[a-f0-9]{16}$",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "decision_id",
+        "action",
+        "approver_id",
+        "approver_role",
+        "decided_at"
+      ],
+      "title": "EstimateApproverDecision",
+      "type": "object"
+    },
     "EstimateLine": {
       "additionalProperties": false,
       "description": "Linha do orçamento-base: preço, quantidade e a fonte de onde o preço veio.\n\nEspelho de `BulletinLine` com a diferença que dá nome ao módulo: o boletim só tem preço\nde contrato e por isso não precisa dizer de onde ele veio; aqui a fonte é parte da\nlinha, e o código obedece à forma da origem dela. `unit_price` é o preço de fonte, sem\nBDI; `unit_price_with_bdi` é o preço com o percentual do orçamento aplicado e truncado\nno centavo (ADR-0038, decisão 3) — é ele, não `unit_price`, que o total recomputa.",
@@ -260,9 +338,9 @@
       "type": "string"
     }
   },
-  "$id": "https://schemas.croquito.local/valuation/estimate/2.1.0.json",
+  "$id": "https://schemas.croquito.local/valuation/estimate/2.2.0.json",
   "additionalProperties": false,
-  "description": "Orçamento-base de uma obra, amarrado à prancha e à cascata que o precificou.\n\nSem período, sem contrato, sem saldo e sem aprovação: nenhum desses conceitos existe\nantes da licitação. A memória de cálculo é a MESMA do boletim (`CalcSheet`, montada por\n`build_calc_blocks`), e a relação 1:1 entre linha e memória é validada como na medição —\nquantidade que diverge da memória recusa.\n\n`bdi_percent` é o BDI do orçamento inteiro (ADR-0038): percentual único, nunca por\nlinha nem por grupo. `total_amount` já embute o BDI (é a soma dos `total` das linhas,\nque recomputam sobre `unit_price_with_bdi`); `total_amount_without_bdi` é a mesma soma\nsem o percentual, para quem for imprimir a diferença entre os dois totais truncados —\nnunca o percentual aplicado ao total geral (decisão 4).",
+  "description": "Orçamento-base de uma obra, amarrado à prancha e à cascata que o precificou.\n\nSem período, sem contrato e sem saldo: nenhum desses conceitos existe antes da\nlicitação. Aprovação existe e é própria (`approval`, ADR-0046): nominal, amarrada por\ndigest ao conteúdo exato assinado, com portão de exportação\n(`export_errors()`/`ensure_exportable()`) que **não** recebe contrato — é a assinatura\nsem contrato que mantém a fronteira do ADR-0027 de pé.\n\nA memória de cálculo é a MESMA do boletim (`CalcSheet`, montada por\n`build_calc_blocks`), e a relação 1:1 entre linha e memória é validada como na medição —\nquantidade que diverge da memória recusa.\n\n`bdi_percent` é o BDI do orçamento inteiro (ADR-0038): percentual único, nunca por\nlinha nem por grupo. `total_amount` já embute o BDI (é a soma dos `total` das linhas,\nque recomputam sobre `unit_price_with_bdi`); `total_amount_without_bdi` é a mesma soma\nsem o percentual, para quem for imprimir a diferença entre os dois totais truncados —\nnunca o percentual aplicado ao total geral (decisão 4).",
   "properties": {
     "address": {
       "anyOf": [
@@ -277,6 +355,17 @@
       ],
       "default": null,
       "title": "Address"
+    },
+    "approval": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EstimateApproval"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "bdi_percent": {
       "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -332,8 +421,8 @@
       "type": "array"
     },
     "schema_version": {
-      "const": "2.1.0",
-      "default": "2.1.0",
+      "const": "2.2.0",
+      "default": "2.2.0",
       "title": "Schema Version",
       "type": "string"
     },

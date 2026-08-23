@@ -1,6 +1,13 @@
 /* Arquivo gerado. Edite os modelos Pydantic e execute `make contracts`. */
 
 export type Address = string | null;
+export type Action = "confirm" | "reject";
+export type ApproverId = string;
+export type ApproverRole = "aprovador";
+export type DecidedAt = string;
+export type DecisionId = string;
+export type Note = string | null;
+export type EstimateDigest = string;
 export type BdiPercent = string;
 /**
  * @minItems 1
@@ -77,7 +84,7 @@ export type PlateId = string;
  * @minItems 2
  */
 export type SafetyNotes = [string, string, ...string[]];
-export type SchemaVersion = "2.1.0";
+export type SchemaVersion = "2.2.0";
 export type SourcePdfSha256 = string;
 export type TotalAmount = string;
 export type TotalAmountWithoutBdi = string;
@@ -88,8 +95,13 @@ export type WorksiteName = string;
 /**
  * Orçamento-base de uma obra, amarrado à prancha e à cascata que o precificou.
  *
- * Sem período, sem contrato, sem saldo e sem aprovação: nenhum desses conceitos existe
- * antes da licitação. A memória de cálculo é a MESMA do boletim (`CalcSheet`, montada por
+ * Sem período, sem contrato e sem saldo: nenhum desses conceitos existe antes da
+ * licitação. Aprovação existe e é própria (`approval`, ADR-0046): nominal, amarrada por
+ * digest ao conteúdo exato assinado, com portão de exportação
+ * (`export_errors()`/`ensure_exportable()`) que **não** recebe contrato — é a assinatura
+ * sem contrato que mantém a fronteira do ADR-0027 de pé.
+ *
+ * A memória de cálculo é a MESMA do boletim (`CalcSheet`, montada por
  * `build_calc_blocks`), e a relação 1:1 entre linha e memória é validada como na medição —
  * quantidade que diverge da memória recusa.
  *
@@ -101,6 +113,7 @@ export type WorksiteName = string;
  */
 export interface CroquitoEstimate {
   address?: Address;
+  approval?: EstimateApproval | null;
   bdi_percent: BdiPercent;
   calc_sheets: CalcSheets;
   cascade: Cascade;
@@ -116,6 +129,34 @@ export interface CroquitoEstimate {
   unpriced_item_ids?: UnpricedItemIds;
   worksite_key: WorksiteKey1;
   worksite_name: WorksiteName;
+}
+/**
+ * Aprovação nominal amarrada por digest ao conteúdo exato aprovado.
+ *
+ * Aprovar um conteúdo e despachar outro é o erro que este modelo existe para impedir: o
+ * digest é recomputado no portão e qualquer edição posterior do orçamento torna a
+ * aprovação caduca em vez de silenciosamente válida.
+ */
+export interface EstimateApproval {
+  decision: EstimateApproverDecision;
+  estimate_digest: EstimateDigest;
+}
+/**
+ * Decisão humana rastreável de quem aprova o orçamento-base.
+ *
+ * Duplicação local deliberada da FORMA de `ReviewerDecision` (ADR-0046, decisão 4), não
+ * reuso dele: lá o papel é `Literal["orcamentista"]` e ampliá-lo faria um papel do
+ * orçamento aparecer no vocabulário da medição. Aqui o papel é `aprovador` — na cadeia
+ * real quem assina o orçamento não é quem o montou (decisão 5) — e o prefixo do id é
+ * próprio. O que se repete é a forma, não o significado.
+ */
+export interface EstimateApproverDecision {
+  action: Action;
+  approver_id: ApproverId;
+  approver_role: ApproverRole;
+  decided_at: DecidedAt;
+  decision_id: DecisionId;
+  note?: Note;
 }
 /**
  * Memória de cálculo de um item do boletim de uma obra.
