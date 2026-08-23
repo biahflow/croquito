@@ -672,10 +672,17 @@ class ValuationRoundRecord(Base):
     """Contador ÚNICO de toda a cadeia da rodada (D3): takeoff, códigos, boletim e dossiê
     pertencem à mesma cadeia causal, e só ato humano o incrementa. Artefato derivado
     persistido sem decisão humana não avança esta versão."""
-    catalog_upload_id: Mapped[str] = mapped_column(ForeignKey("uploads.id"))
+    catalog_upload_id: Mapped[str | None] = mapped_column(ForeignKey("uploads.id"), nullable=True)
+    """Upload do cliente que trouxe o catálogo, quando houve um.
+
+    `NULL` desde a F-036: a rodada aberta a partir de um orçamento assinado instala o
+    catálogo que o orçamento usou, e esse arquivo pode ter vindo do **acervo da plataforma**
+    (F-037), onde não existe upload do cliente para citar. É proveniência, não conteúdo — o
+    que a rodada precisa para LER o catálogo são as duas colunas abaixo, que seguem
+    obrigatórias."""
     catalog_object_key: Mapped[str] = mapped_column(String(512))
     catalog_source_sha256: Mapped[str] = mapped_column(String(64))
-    """O catálogo é instalado na CRIAÇÃO e é imutável na rodada, por isso as três colunas
+    """O catálogo é instalado na CRIAÇÃO e é imutável na rodada, por isso estas duas colunas
     são obrigatórias: trocar de catálogo é abrir rodada nova (API Contract, "Medição de
     obra").  Isso NÃO torna morto o código `CATALOG_REQUIRED` do ADR-0028 D4 — ele nomeia a
     precondição de o catálogo INSTALADO não estar utilizável agora (objeto fora do store,
@@ -686,6 +693,25 @@ class ValuationRoundRecord(Base):
     catalog_summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     """Resumo pequeno do catálogo instalado (contagem de entradas, referência); o catálogo
     inteiro fica no object store e nunca nesta coluna."""
+
+    estimate_round_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    """Rodada de ORÇAMENTO de origem (F-036, ADR-0048). Sem chave estrangeira, pelo mesmo
+    motivo que esta tabela não tem FK para ``projects``: a fronteira do contexto delimitado
+    (ADR-0016) vale também no modelo relacional."""
+    estimate_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """Digest do conteúdo **assinado** contra o qual esta obra é medida. É ele, e não o id da
+    rodada, que responde "medi contra o quê": remontar o orçamento depois torna a assinatura
+    caduca e não alcança medição já aberta (ADR-0048, decisão 6)."""
+    contract_workbook_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    """Consolidado contratual derivado do orçamento assinado, gravado na abertura e imutável
+    na rodada — como o catálogo instalado (ADR-0048, decisão 7).
+
+    ``None`` nas três colunas é o estado de sempre: rodada aberta sem orçamento de origem, que
+    continua conferindo o boletim contra o consolidado FABRICADO por
+    ``bulletin_export_contract``, com os seis guardrails inertes que aquele docstring declara.
+    A distinção entre os dois regimes de conferência é visível na leitura da rodada, e é
+    exigência da decisão 9 do ADR-0048 — as duas não podem parecer iguais."""
+
     plate_upload_id: Mapped[str | None] = mapped_column(ForeignKey("uploads.id"), nullable=True)
     plate_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     plate_source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)

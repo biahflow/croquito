@@ -113,6 +113,7 @@ ESTIMATE_SELF_APPROVAL_FORBIDDEN: Final = "ESTIMATE_SELF_APPROVAL_FORBIDDEN"
 ESTIMATE_APPROVAL_AUTHOR_UNKNOWN: Final = "ESTIMATE_APPROVAL_AUTHOR_UNKNOWN"
 
 REGIME_CONTRACTED_DEMAND: Final = "contracted_demand"
+ESTIMATE_BDI_FORBIDDEN_UNDER_REGIME: Final = "ESTIMATE_BDI_FORBIDDEN_UNDER_REGIME"
 """Único regime GRAVÁVEL (ADR-0045): a demanda orçada dentro de contrato já licitado.
 
 Não há constante para "pré-licitação" porque ela não é um valor: é a ausência de regime.
@@ -223,6 +224,25 @@ def cascade_origin_forbidden(origin: str) -> RoundRefusal:
         "a rodada corre sob contrato licitado e só aceita preço da tabela contratual; "
         "um preço desta fonte seria recusado na medição, sobre serviço já executado",
         {"origin": origin, "allowed_origins": list(REGIME_ALLOWED_ORIGINS)},
+    )
+
+
+def bdi_forbidden_under_regime(bdi_percent: Decimal) -> RoundRefusal:
+    """Sob demanda contratada o preço da tabela JÁ embute o BDI; aplicá-lo de novo é erro.
+
+    É a mesma razão que o [ADR-0038](../../../docs/adr/0038-bdi-como-conceito-de-pre-licitacao.md)
+    usou para manter o BDI fora da medição — "o preço contratado já embute BDI; aplicá-lo de
+    novo é erro de domínio" —, aplicada agora ao orçamento que corre sob o regime. A F-033
+    restringiu a cascata a `sco` sem tocar no BDI, e o defeito ficou aberto até o ADR-0048.
+
+    Recusa em vez de zerar em silêncio: o número que o orçamentista digitou é uma declaração,
+    e corrigi-la por baixo faria o total mudar sem que ninguém soubesse por quê.
+    """
+    return RoundRefusal(
+        422,
+        ESTIMATE_BDI_FORBIDDEN_UNDER_REGIME,
+        "sob demanda contratada o preço da tabela contratual já embute o BDI; declare zero",
+        {"bdi_percent": str(bdi_percent)},
     )
 
 

@@ -181,9 +181,16 @@ from croquito_valuation.assignment import (
     apply_code_assignments_over_cascade,
 )
 from croquito_valuation.calc import build_worksite_valuation
+from croquito_valuation.contract import ContractWorkbook
+from croquito_valuation.contract_from_estimate import build_contract_from_estimate
 from croquito_valuation.errors import ValuationValidationError, valuation_errors
 from croquito_valuation.estimate import Estimate, build_worksite_estimate
-from croquito_valuation.models import WORKSITE_KEY_PATTERN, PriceCatalog, Valuation
+from croquito_valuation.models import (
+    WORKSITE_KEY_PATTERN,
+    PriceCatalog,
+    PriceOrigin,
+    Valuation,
+)
 from croquito_valuation.takeoff import (
     TakeoffDecisionBatch,
     TakeoffDecisionInput,
@@ -1121,15 +1128,54 @@ class CreateValuationRoundRequest(ApiModel):
     (`WORKSITE_KEY_PATTERN`) porque a chave é IMUTÁVEL na rodada: aceitá-la livre aqui faria
     uma rodada nascer válida com `PRAÇA X` e só quebrar no `POST /calc`, dezenas de decisões
     depois, quando já não há o que corrigir sem abrir rodada nova.
+
+    **Duas origens, uma de cada vez (F-036, ADR-0048)**:
+
+    - `catalog_upload_id` — o caminho de sempre. A obra e o catálogo são declarados aqui, e a
+      rodada não terá contratado contra o que conferir;
+    - `estimate_round_id` — a rodada nasce de um orçamento **assinado** sob o regime
+      `contracted_demand`. Obra, catálogo e contratado vêm do conteúdo assinado, e por isso
+      `worksite_key`, `worksite_name` e `address` são **recusados** neste caminho: aceitá-los
+      abriria a porta para a rodada declarar uma obra diferente da que foi orçada, e nenhum
+      número do consolidado é informado por humano.
     """
 
-    worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
-    worksite_name: str = Field(min_length=1, max_length=120)
-    catalog_upload_id: UUID
+    worksite_key: str | None = Field(default=None, pattern=WORKSITE_KEY_PATTERN)
+    worksite_name: str | None = Field(default=None, min_length=1, max_length=120)
+    catalog_upload_id: UUID | None = None
+    estimate_round_id: UUID | None = None
     reference_label: str = Field(min_length=1, max_length=120)
     period_number: int = Field(ge=1, le=999)
     address: str | None = Field(default=None, min_length=1, max_length=200)
     contract_label: str | None = Field(default=None, min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_origin(self) -> CreateValuationRoundRequest:
+        """Exatamente uma origem, e os campos da obra só existem na origem que os define."""
+        from_upload = self.catalog_upload_id is not None
+        from_estimate = self.estimate_round_id is not None
+        if from_upload == from_estimate:
+            raise ValueError(
+                "informe exatamente uma origem: catalog_upload_id OU estimate_round_id"
+            )
+        if from_estimate:
+            declared = [
+                name
+                for name, value in (
+                    ("worksite_key", self.worksite_key),
+                    ("worksite_name", self.worksite_name),
+                    ("address", self.address),
+                )
+                if value is not None
+            ]
+            if declared:
+                raise ValueError(
+                    "obra e endereço vêm do orçamento assinado e não são declarados aqui: "
+                    + ", ".join(declared)
+                )
+        elif self.worksite_key is None or self.worksite_name is None:
+            raise ValueError("worksite_key e worksite_name são obrigatórios sem orçamento")
+        return self
 
 
 class ValuationRoundResponse(ApiModel):
@@ -2923,6 +2969,202 @@ def _install_catalog(
         "entries": len(catalog.entries),
     }
     return catalog, summary
+
+
+@dataclass(frozen=True, slots=True)
+class _ValuationOrigin:
+    """De onde a rodada de medição nasceu, já resolvido (F-036, ADR-0048).
+
+    As duas origens produzem o MESMO objeto, e é isso que mantém a criação da rodada com um
+    caminho só de gravação: o que muda é de onde a obra, o catálogo e o contratado vieram —
+    não o que a rodada é depois de aberta.
+    """
+
+    worksite_key: str
+    worksite_name: str
+    address: str | None
+    catalog_upload_id: str | None
+    catalog_object_key: str
+    catalog_source_sha256: str
+    catalog_summary: dict[str, Any]
+    estimate_round_id: str | None
+    estimate_digest: str | None
+    contract_workbook_json: dict[str, Any] | None
+    upload: UploadRecord | None
+    """O registro de upload a marcar `VERIFIED`, quando a origem foi um upload do cliente."""
+
+
+def _origin_from_signed_estimate(
+    session: Session,
+    application: FastAPI,
+    *,
+    estimate_round_id: UUID,
+    principal: Principal,
+) -> _ValuationOrigin:
+    """Obra, catálogo e contratado derivados de um orçamento **assinado** sob o regime.
+
+    A ordem das recusas importa e é deliberada:
+
+    1. a rodada existe e é do tenant — senão `404`, indistinguível de rodada alheia;
+    2. o regime é `contracted_demand` — fora dele, chamar o orçamento de contratado seria
+       mentira, porque entre ele e o contrato existiriam a licitação e o deságio
+       (ADR-0048, decisão 1);
+    3. há orçamento montado na cabeça;
+    4. a assinatura é válida — quem recusa é `ensure_exportable()` dentro da tradução, que
+       já sabe distinguir nunca assinado, rejeitado e caduco por remontagem.
+
+    Inverter 2 e 3 faria uma rodada sem orçamento e sem regime recusar por motivo diferente
+    conforme o que estivesse faltando primeiro.
+    """
+    record = estimate_rounds.load_round(
+        session, round_id=str(estimate_round_id), tenant_id=principal.tenant_id
+    )
+    if record is None:
+        raise _problem(
+            "NOT_FOUND", status.HTTP_404_NOT_FOUND, "Rodada de orçamento não encontrada."
+        )
+    if record.pricing_regime != estimate_rounds.REGIME_CONTRACTED_DEMAND:
+        raise _problem(
+            "ESTIMATE_ORIGIN_REGIME_REQUIRED",
+            status.HTTP_409_CONFLICT,
+            "Só orçamento sob demanda contratada vira contratado da medição: fora desse "
+            "regime existem a licitação e o deságio entre o orçamento e o contrato.",
+        )
+    revision = estimate_rounds.head_revision(
+        session, round_id=record.id, tenant_id=principal.tenant_id
+    )
+    document = estimate_rounds.require_document(
+        revision,
+        "estimate_json",
+        stage=estimate_rounds.STAGE_ESTIMATE,
+        detail="a rodada de orçamento ainda não tem orçamento montado",
+    )
+    try:
+        estimate = Estimate.model_validate(dict(document))
+    except ValidationError as error:
+        raise _valuation_model_problem(error) from error
+
+    try:
+        contract = build_contract_from_estimate(
+            estimate,
+            group_label=record.reference_label,
+            source_label=f"orçamento assinado: {record.reference_label}",
+        )
+    except ValuationValidationError as error:
+        # `ensure_exportable()` recusa com `ESTIMATE_EXPORT_BLOCKED` e a lista de violações;
+        # aqui o código é próprio porque a condição é outra: não é "não posso despachar", é
+        # "não posso abrir medição contra isto".
+        raise _problem(
+            "ESTIMATE_ORIGIN_NOT_SIGNED",
+            status.HTTP_409_CONFLICT,
+            "O orçamento não tem assinatura válida: sem conteúdo aprovado não há contratado "
+            "de onde abrir a medição.",
+            {"errors": error.details.get("errors", [error.code])},
+        ) from error
+
+    cascade = estimate_rounds.cascade_entries(record)
+    installed = next((entry for entry in cascade if entry.origin == PriceOrigin.SCO.value), None)
+    if installed is None:
+        raise _problem(
+            "CATALOG_REQUIRED",
+            status.HTTP_409_CONFLICT,
+            "A rodada de orçamento não tem a tabela contratual instalada.",
+        )
+    _catalog, summary = _install_catalog(
+        application,
+        object_key=installed.object_key,
+        object_sha256=installed.object_sha256,
+        unreadable_code="CATALOG_REQUIRED",
+    )
+    approval = estimate.approval
+    # A tradução acima já recusou o caso `None`; a asserção é para o type checker.
+    assert approval is not None
+    return _ValuationOrigin(
+        worksite_key=estimate.worksite_key,
+        worksite_name=estimate.worksite_name,
+        address=estimate.address,
+        # O arquivo pode ter vindo do acervo da plataforma, onde não há upload do cliente a
+        # citar; `catalog_object_key` e `catalog_source_sha256` é que dizem o que ler.
+        catalog_upload_id=installed.upload_id,
+        catalog_object_key=installed.object_key,
+        catalog_source_sha256=installed.object_sha256,
+        catalog_summary=summary,
+        estimate_round_id=record.id,
+        estimate_digest=approval.estimate_digest,
+        contract_workbook_json=contract.model_dump(mode="json"),
+        upload=None,
+    )
+
+
+def _export_contract_for(record: ValuationRoundRecord, valuation: Valuation) -> ContractWorkbook:
+    """O consolidado que o portão recebe: o gravado, se a rodada tem origem assinada.
+
+    Sem vínculo, cai no `bulletin_export_contract` de sempre — o consolidado FABRICADO a
+    partir da própria medição, com os seis guardrails inertes que o docstring dele declara.
+    Removê-lo quebraria toda rodada aberta sem orçamento de origem, e é por isso que os dois
+    convivem (ADR-0048, decisão 9); o que não pode é as duas rodadas parecerem iguais, e é a
+    leitura da rodada que as distingue.
+
+    Consolidado gravado que não revalida é falha de ambiente, não do ato corrente: ele foi
+    escrito pela abertura da rodada e é imutável desde então.
+    """
+    stored = record.contract_workbook_json
+    if stored is None:
+        return bulletin_export_contract(valuation)
+    try:
+        return ContractWorkbook.model_validate(dict(stored))
+    except ValidationError as error:
+        raise _valuation_model_problem(error) from error
+
+
+def _resolve_valuation_origin(
+    session: Session,
+    application: FastAPI,
+    *,
+    payload: CreateValuationRoundRequest,
+    principal: Principal,
+    storage_flavor: str,
+) -> _ValuationOrigin:
+    """As duas portas da criação da rodada; o contrato já garantiu que só uma foi usada."""
+    if payload.estimate_round_id is not None:
+        return _origin_from_signed_estimate(
+            session,
+            application,
+            estimate_round_id=payload.estimate_round_id,
+            principal=principal,
+        )
+
+    # Caminho de sempre: obra declarada e catálogo por upload, sem contratado a conferir.
+    assert payload.catalog_upload_id is not None
+    assert payload.worksite_key is not None
+    assert payload.worksite_name is not None
+    upload = _require_valuation_upload(
+        session,
+        application,
+        upload_id=payload.catalog_upload_id,
+        principal=principal,
+        content_type=CATALOG_CONTENT_TYPE,
+        storage_flavor=storage_flavor,
+    )
+    _catalog, summary = _install_catalog(
+        application,
+        object_key=upload.object_key,
+        object_sha256=upload.sha256.lower(),
+        unreadable_code="INVALID_UPLOAD",
+    )
+    return _ValuationOrigin(
+        worksite_key=payload.worksite_key,
+        worksite_name=payload.worksite_name,
+        address=payload.address,
+        catalog_upload_id=str(payload.catalog_upload_id),
+        catalog_object_key=upload.object_key,
+        catalog_source_sha256=upload.sha256.lower(),
+        catalog_summary=summary,
+        estimate_round_id=None,
+        estimate_digest=None,
+        contract_workbook_json=None,
+        upload=upload,
+    )
 
 
 def _catalog_source(payload: InstallEstimateCatalogRequest) -> tuple[str, UUID]:
@@ -7849,19 +8091,12 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         if existing is not None:
             return ValuationRoundResponse.model_validate(existing)
 
-        upload = _require_valuation_upload(
+        origin = _resolve_valuation_origin(
             session,
             application,
-            upload_id=payload.catalog_upload_id,
+            payload=payload,
             principal=principal,
-            content_type=CATALOG_CONTENT_TYPE,
             storage_flavor=runtime_settings.storage_flavor,
-        )
-        _catalog, summary = _install_catalog(
-            application,
-            object_key=upload.object_key,
-            object_sha256=upload.sha256.lower(),
-            unreadable_code="INVALID_UPLOAD",
         )
 
         now = datetime.now(UTC)
@@ -7869,24 +8104,28 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         record = ValuationRoundRecord(
             id=str(round_id),
             tenant_id=principal.tenant_id,
-            worksite_key=payload.worksite_key,
-            worksite_name=payload.worksite_name,
+            worksite_key=origin.worksite_key,
+            worksite_name=origin.worksite_name,
             reference_label=payload.reference_label,
             period_number=payload.period_number,
-            address=payload.address,
+            address=origin.address,
             contract_label=payload.contract_label,
             status="OPEN",
             version=1,
-            catalog_upload_id=str(payload.catalog_upload_id),
-            catalog_object_key=upload.object_key,
-            catalog_source_sha256=upload.sha256.lower(),
-            catalog_summary_json=summary,
+            catalog_upload_id=origin.catalog_upload_id,
+            catalog_object_key=origin.catalog_object_key,
+            catalog_source_sha256=origin.catalog_source_sha256,
+            catalog_summary_json=origin.catalog_summary,
+            estimate_round_id=origin.estimate_round_id,
+            estimate_digest=origin.estimate_digest,
+            contract_workbook_json=origin.contract_workbook_json,
             extraction_status="idle",
             created_by=principal.subject,
             created_at=now,
             updated_at=now,
         )
-        upload.status = "VERIFIED"
+        if origin.upload is not None:
+            origin.upload.status = "VERIFIED"
         session.add(record)
         response = ValuationRoundResponse(
             round_id=round_id,
@@ -9012,7 +9251,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         valuation = _revalidated_bulletin(document)
         # Portão do domínio ANTES de qualquer render: nada é escrito, nem em disco temporário,
         # para uma medição que não pode ser publicada.
-        valuation.ensure_exportable(bulletin_export_contract(valuation))
+        valuation.ensure_exportable(_export_contract_for(record, valuation))
 
         catalog = _round_catalog(record)
         # Portão fail-closed: grava, reabre e audita ANTES de qualquer publicação.
@@ -10832,6 +11071,8 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         estimate_rounds.require_base_version(record, payload.base_version)
         bdi_percent = estimate_rounds.parse_bdi_percent(payload.bdi_percent)
+        if record.pricing_regime == estimate_rounds.REGIME_CONTRACTED_DEMAND and bdi_percent != 0:
+            raise estimate_rounds.bdi_forbidden_under_regime(bdi_percent)
         cascade = _estimate_cascade(record)
         revision = estimate_rounds.head_revision(
             session, round_id=record.id, tenant_id=principal.tenant_id

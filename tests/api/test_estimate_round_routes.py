@@ -2934,3 +2934,91 @@ def test_procedencia_que_o_registro_nao_sustenta_recusa_a_leitura(tmp_path: Path
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "CATALOG_REQUIRED"
+
+
+def _round_under_regime_ready_for_estimate(client: TestClient) -> dict[str, Any]:
+    """Rodada sob demanda contratada, com SCO só e um item confirmado.
+
+    Sob o regime a cascata é restrita a `sco` na instalação (F-033), então este caminho não
+    pode reusar `_round_ready_for_estimate`, que instala EMOP também. O regime é declarado
+    ANTES de instalar, que é a ordem que a jornada real segue.
+    """
+    created = _create_round(client)
+    round_id = created["round_id"]
+    regime = client.post(
+        f"/v1/estimate-rounds/{round_id}/regime",
+        headers=_headers(key="regime-bdi"),
+        json={"base_version": 1, "pricing_regime": "contracted_demand"},
+    )
+    assert regime.status_code == 200, regime.text
+    sco = _install_catalog(
+        client, round_id, origin=PriceOrigin.SCO, base_version=regime.json()["version"]
+    )
+    assert sco.status_code == 201, sco.text
+    published = _publish_takeoff(client, round_id, _takeoff_packet())
+    decided = _confirm_takeoff_item(
+        client, round_id, item_id=_ITEM_FIRST, base_version=published["version"], key="takeoff-r"
+    )
+    assert decided.status_code == 200, decided.text
+    confirmed = _confirm_code(
+        client,
+        round_id,
+        item_id=_ITEM_FIRST,
+        code=_SCO_CODE,
+        catalog_sha256=sco.json()["cascade"][0]["source_sha256"],
+        base_version=decided.json()["version"],
+        key="codigo-regime",
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    return {"round_id": round_id, "version": confirmed.json()["version"]}
+
+
+def test_sob_demanda_contratada_o_bdi_declarado_recusa(tmp_path: Path) -> None:
+    """O preço da tabela contratual já embute o BDI; aplicá-lo de novo é erro de domínio.
+
+    É a mesma razão que o ADR-0038 usou para manter o BDI fora da medição. A F-033
+    restringiu a cascata sem tocar no BDI, e o defeito ficou aberto até o ADR-0048.
+    """
+    client = _client(tmp_path)
+    state = _round_under_regime_ready_for_estimate(client)
+
+    recusa = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="montagem-bdi-proibido"),
+        json={"base_version": state["version"], "bdi_percent": "25.00"},
+    )
+
+    assert recusa.status_code == 422, recusa.text
+    assert recusa.json()["code"] == "ESTIMATE_BDI_FORBIDDEN_UNDER_REGIME"
+
+
+def test_sob_demanda_contratada_o_bdi_zero_monta(tmp_path: Path) -> None:
+    """A recusa é do BDI declarado, não da montagem: com zero a cadeia segue igual."""
+    client = _client(tmp_path)
+    state = _round_under_regime_ready_for_estimate(client)
+
+    montagem = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="montagem-bdi-zero"),
+        json={"base_version": state["version"], "bdi_percent": "0"},
+    )
+
+    assert montagem.status_code == 200, montagem.text
+    linhas = montagem.json()["estimate"]["lines"]
+    assert linhas, montagem.text
+    for linha in linhas:
+        assert linha["unit_price"] == linha["unit_price_with_bdi"]
+
+
+def test_fora_do_regime_o_bdi_continua_obrigatorio(tmp_path: Path) -> None:
+    """Rodada de pré-licitação não muda: a recusa é do regime, não do produto inteiro."""
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+
+    montagem = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="montagem-pre-licitacao"),
+        json={"base_version": state["version"], "bdi_percent": "25.00"},
+    )
+
+    assert montagem.status_code == 200, montagem.text

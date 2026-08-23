@@ -1,7 +1,7 @@
 # ADR-0050: A correção humana de forma é proposta derivada, num conjunto de proveniência própria
 
-Status: Proposed  
-Data: 2026-08-23  
+Status: Accepted  
+Data: 2026-08-23 (aceito por ato humano na mesma data)  
 Responsável: Product / Engineering
 
 ## Contexto

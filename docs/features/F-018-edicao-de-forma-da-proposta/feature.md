@@ -9,7 +9,9 @@
 > escolhidas por serem as que melhoram a geometria das cotas, na mesma linha da
 > [F-030](../F-030-levantamento-de-campo-na-revisao/feature.md).
 >
-> Dois gates humanos precedem o planejamento. Ver **Human Gates**.
+> O gate de arquitetura foi **cumprido em 2026-08-23** — o
+> [ADR-0050](../../adr/0050-correcao-humana-de-forma-como-proposta-derivada.md) foi aceito.
+> Falta o **Design Approval Package**, e é ele que a mantém `BLOCKED`.
 
 ## Classification
 
@@ -168,9 +170,9 @@ Os dois primeiros são decisão do ADR.
 
 ## Human Gates
 
-1. **`ARCHITECTURE_DECISION_REQUIRED`** — **artefato produzido, gate aberto**. O
-   [ADR-0050](../../adr/0050-correcao-humana-de-forma-como-proposta-derivada.md) foi escrito
-   em 2026-08-23 e está `Proposed`: decide os Unknowns 1 e 2. **Aceitá-lo é ato humano.**
+1. **`ARCHITECTURE_DECISION_REQUIRED`** — ✅ **cumprido em 2026-08-23**. O
+   [ADR-0050](../../adr/0050-correcao-humana-de-forma-como-proposta-derivada.md) foi **aceito
+   por ato humano**: decide os Unknowns 1 e 2.
 2. **`DESIGN_APPROVAL_REQUIRED`** — Design Approval Package da interação de edição, com os
    estados de arrasto, união, erro e concorrência, conforme
    [design-approval](../../engineering-os/workflows/design-approval.md).

@@ -1774,7 +1774,7 @@
       },
       "CreateValuationRoundRequest": {
         "additionalProperties": false,
-        "description": "Rodada nova: a obra, o catálogo instalado e os rótulos que o boletim exige.\n\n`period_number`, `address` e `contract_label` são atributos da RODADA (decisão humana de\n2026-08-17): nenhuma rota do contrato os recebia e sem eles o boletim não fecha. O\ncarimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`, `decided_at` e\n`decision_id` são recusados pelo `extra=\"forbid\"` do `ApiModel`, não por lista negra.\n\n`worksite_key` repete o padrão que o domínio exige de `WorksiteBulletin`\n(`WORKSITE_KEY_PATTERN`) porque a chave é IMUTÁVEL na rodada: aceitá-la livre aqui faria\numa rodada nascer válida com `PRAÇA X` e só quebrar no `POST /calc`, dezenas de decisões\ndepois, quando já não há o que corrigir sem abrir rodada nova.",
+        "description": "Rodada nova: a obra, o catálogo instalado e os rótulos que o boletim exige.\n\n`period_number`, `address` e `contract_label` são atributos da RODADA (decisão humana de\n2026-08-17): nenhuma rota do contrato os recebia e sem eles o boletim não fecha. O\ncarimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`, `decided_at` e\n`decision_id` são recusados pelo `extra=\"forbid\"` do `ApiModel`, não por lista negra.\n\n`worksite_key` repete o padrão que o domínio exige de `WorksiteBulletin`\n(`WORKSITE_KEY_PATTERN`) porque a chave é IMUTÁVEL na rodada: aceitá-la livre aqui faria\numa rodada nascer válida com `PRAÇA X` e só quebrar no `POST /calc`, dezenas de decisões\ndepois, quando já não há o que corrigir sem abrir rodada nova.\n\n**Duas origens, uma de cada vez (F-036, ADR-0048)**:\n\n- `catalog_upload_id` — o caminho de sempre. A obra e o catálogo são declarados aqui, e a\n  rodada não terá contratado contra o que conferir;\n- `estimate_round_id` — a rodada nasce de um orçamento **assinado** sob o regime\n  `contracted_demand`. Obra, catálogo e contratado vêm do conteúdo assinado, e por isso\n  `worksite_key`, `worksite_name` e `address` são **recusados** neste caminho: aceitá-los\n  abriria a porta para a rodada declarar uma obra diferente da que foi orçada, e nenhum\n  número do consolidado é informado por humano.",
         "properties": {
           "address": {
             "anyOf": [
@@ -1790,9 +1790,16 @@
             "title": "Address"
           },
           "catalog_upload_id": {
-            "format": "uuid",
-            "title": "Catalog Upload Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Upload Id"
           },
           "contract_label": {
             "anyOf": [
@@ -1807,6 +1814,18 @@
             ],
             "title": "Contract Label"
           },
+          "estimate_round_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate Round Id"
+          },
           "period_number": {
             "maximum": 999.0,
             "minimum": 1.0,
@@ -1820,21 +1839,32 @@
             "type": "string"
           },
           "worksite_key": {
-            "pattern": "^[a-z0-9][a-z0-9-]{2,63}$",
-            "title": "Worksite Key",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^[a-z0-9][a-z0-9-]{2,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worksite Key"
           },
           "worksite_name": {
-            "maxLength": 120,
-            "minLength": 1,
-            "title": "Worksite Name",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worksite Name"
           }
         },
         "required": [
-          "worksite_key",
-          "worksite_name",
-          "catalog_upload_id",
           "reference_label",
           "period_number"
         ],

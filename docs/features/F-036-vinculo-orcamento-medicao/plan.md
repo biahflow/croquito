@@ -70,6 +70,22 @@ tasks:
     relative_effort: M
     validation: make test
 
+PLAN_DEVIATION (2026-08-23, T2): o plano não previa mexer em `valuation_rounds.catalog_upload_id`,
+  e foi preciso. A coluna é `NOT NULL`, e um orçamento cuja tabela contratual veio do **acervo
+  da plataforma** (F-037) não tem upload do cliente para citar — a rodada nascida dele não
+  teria o que gravar ali. A coluna passa a ser `NULL`-able na migração `0016`. O docstring
+  dela já previa o caso: "se um dia a rodada precisar nascer sem catálogo, é decisão de
+  contrato". Impacto: nenhum no comportamento existente; `catalog_object_key` e
+  `catalog_source_sha256`, que são o que a rodada usa para LER o catálogo, seguem
+  obrigatórias, então nenhuma rodada nasce sem catálogo. O que deixou de ser obrigatório é a
+  proveniência do upload.
+
+PLAN_DEVIATION (2026-08-23, T2): a recusa de BDI sob o regime quebrou
+  `tests/e2e/test_estimate_rounds_v1.py::test_estimate_round_contracted_demand_regime_through_v1_api`,
+  que montava com 25% sobre preço que já embutia BDI. O e2e foi atualizado para provar a
+  recusa **e** seguir com zero — a quebra é a consequência que o ADR-0048 declarou, não um
+  teste a consertar.
+
 parallel_groups: T3 e T4 correm juntas depois de T2 — escopos disjuntos (`apps/web` × `tests/e2e`).
 critical_path: T1 → T2 → T3.
 integration_strategy: commits separados por task na `main`, com revisão linha a linha entre

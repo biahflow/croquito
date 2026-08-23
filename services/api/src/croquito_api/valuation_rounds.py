@@ -1028,6 +1028,29 @@ def _artifact_digests(revision: ValuationRoundRevisionRecord | None) -> dict[str
     return digests
 
 
+def _contracted_state(round_record: ValuationRoundRecord) -> dict[str, Any]:
+    """O regime de conferência da rodada, e o que ele custa quando não há origem assinada.
+
+    `signed` é o único caso em que os seis guardrails contratuais podem disparar. `none` é o
+    estado de sempre, e ele é DECLARADO em vez de deduzido pela ausência de um campo: quem lê
+    a rodada precisa saber que ali não se confere saldo, e não descobrir isso por omissão.
+
+    A contagem de linhas e o total não revalidam o consolidado — é leitura de estado, e um
+    consolidado ilegível não pode derrubar a tela inteira. Quem revalida é o portão de
+    exportação, que é onde a resposta importa.
+    """
+    stored = round_record.contract_workbook_json
+    if round_record.estimate_round_id is None or stored is None:
+        return {"origin": "none", "estimate_round_id": None, "estimate_digest": None}
+    lines = stored.get("lines")
+    return {
+        "origin": "signed_estimate",
+        "estimate_round_id": round_record.estimate_round_id,
+        "estimate_digest": round_record.estimate_digest,
+        "code_count": len(lines) if isinstance(lines, list) else None,
+    }
+
+
 def round_state_payload(
     round_record: ValuationRoundRecord,
     revision: ValuationRoundRevisionRecord | None,
@@ -1099,6 +1122,11 @@ def round_state_payload(
             "source_sha256": round_record.catalog_source_sha256,
             "summary": dict(round_record.catalog_summary_json or {}),
         },
+        # Contra o que esta rodada confere (F-036, ADR-0048 decisão 9). Rodada com vínculo e
+        # rodada sem vínculo têm garantias diferentes e não podem parecer iguais na tela: sem
+        # `estimate_round_id` o consolidado é FABRICADO a partir da própria medição, e saldo,
+        # período e código fora do contrato não são verificados.
+        "contracted": _contracted_state(round_record),
         "artifacts": digests,
         "plate": {
             "present": round_record.plate_object_key is not None,

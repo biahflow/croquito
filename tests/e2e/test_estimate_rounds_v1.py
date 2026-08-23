@@ -1126,13 +1126,25 @@ def test_estimate_round_contracted_demand_regime_through_v1_api(
     round_after_codes = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers()).json()
     assert round_after_codes["regime"]["amendment_candidates"] == 1
 
-    # 6. `POST .../estimate`: monta — as cinco linhas de preço vêm todas do SCO, e o gramado
+    # 6. `POST .../estimate`: BDI declarado RECUSA sob o regime (F-036, ADR-0048 decisão 3).
+    # O preço da tabela contratual já embute o BDI, e aplicá-lo de novo é o erro de domínio
+    # que o ADR-0038 nomeou ao manter o BDI fora da medição. Até a F-036 este e2e montava com
+    # 25% sobre preço que já os continha, e o total saía inflado.
+    recusado = client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate",
+        headers=_headers("orcamento-regime-bdi-e2e"),
+        json={"base_version": version, "bdi_percent": BDI_PERCENT},
+    )
+    assert recusado.status_code == 422, recusado.text
+    assert recusado.json()["code"] == "ESTIMATE_BDI_FORBIDDEN_UNDER_REGIME"
+
+    # Com zero, a cadeia segue igual: as cinco linhas de preço vêm todas do SCO, e o gramado
     # sai como único item sem preço (critério central desta feature). A planilha ainda não
     # existe: desde a F-035 ela só nasce do despacho, depois da assinatura.
     built = client.post(
         f"/v1/estimate-rounds/{round_id}/estimate",
         headers=_headers("orcamento-regime-e2e"),
-        json={"base_version": version, "bdi_percent": BDI_PERCENT},
+        json={"base_version": version, "bdi_percent": "0"},
     )
     assert built.status_code == 200, built.text
     built_body = built.json()
