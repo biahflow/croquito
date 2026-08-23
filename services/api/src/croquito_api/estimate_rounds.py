@@ -227,6 +227,39 @@ def cascade_origin_forbidden(origin: str) -> RoundRefusal:
     )
 
 
+def bdi_required() -> RoundRefusal:
+    """Fora do regime o BDI é obrigatório: assumir zero inventaria a decisão da planilha."""
+    return RoundRefusal(
+        422,
+        ESTIMATE_BDI_INVALID,
+        "o BDI do orçamento é obrigatório fora da demanda contratada",
+        {},
+    )
+
+
+def resolve_bdi_percent(raw: str | None, *, regime: str | None) -> Decimal:
+    """O BDI do orçamento, com a regra do regime aplicada num lugar só.
+
+    Sob demanda contratada a tabela contratual já embute o BDI, então:
+
+    - **ausente** vale zero, e é o caminho normal — pedir que alguém digite um número que só
+      pode ser zero é fricção sem informação;
+    - **declarado não-zero** recusa, porque é a duplicação que o ADR-0048 decisão 3 fecha.
+      Zerar em silêncio um número que o orçamentista escreveu mudaria o total sem que
+      ninguém soubesse por quê.
+
+    Fora do regime nada muda: o BDI continua obrigatório.
+    """
+    if raw is None:
+        if regime == REGIME_CONTRACTED_DEMAND:
+            return Decimal("0")
+        raise bdi_required()
+    percent = parse_bdi_percent(raw)
+    if regime == REGIME_CONTRACTED_DEMAND and percent != 0:
+        raise bdi_forbidden_under_regime(percent)
+    return percent
+
+
 def bdi_forbidden_under_regime(bdi_percent: Decimal) -> RoundRefusal:
     """Sob demanda contratada o preço da tabela JÁ embute o BDI; aplicá-lo de novo é erro.
 

@@ -1576,7 +1576,14 @@ class BuildEstimateRequest(ApiModel):
     """
 
     base_version: int = Field(ge=1)
-    bdi_percent: str = Field(min_length=1, max_length=12)
+    bdi_percent: str | None = Field(default=None, min_length=1, max_length=12)
+    """Opcional **só** sob demanda contratada, onde a ausência vale zero (F-036).
+
+    Sob o regime a tabela contratual já embute o BDI, então o único valor lícito é zero — e
+    exigir que alguém digite um número que só pode ser zero é fricção sem informação. Fora do
+    regime ele continua obrigatório: um orçamento de pré-licitação sem BDI declarado é
+    orçamento incompleto, e assumir zero ali seria inventar a decisão mais consequente da
+    planilha."""
 
 
 class ApproveEstimateRequest(ApiModel):
@@ -11070,9 +11077,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         estimate_rounds.require_base_version(record, payload.base_version)
-        bdi_percent = estimate_rounds.parse_bdi_percent(payload.bdi_percent)
-        if record.pricing_regime == estimate_rounds.REGIME_CONTRACTED_DEMAND and bdi_percent != 0:
-            raise estimate_rounds.bdi_forbidden_under_regime(bdi_percent)
+        bdi_percent = estimate_rounds.resolve_bdi_percent(
+            payload.bdi_percent, regime=record.pricing_regime
+        )
         cascade = _estimate_cascade(record)
         revision = estimate_rounds.head_revision(
             session, round_id=record.id, tenant_id=principal.tenant_id

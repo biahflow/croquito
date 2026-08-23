@@ -1138,13 +1138,14 @@ def test_estimate_round_contracted_demand_regime_through_v1_api(
     assert recusado.status_code == 422, recusado.text
     assert recusado.json()["code"] == "ESTIMATE_BDI_FORBIDDEN_UNDER_REGIME"
 
-    # Com zero, a cadeia segue igual: as cinco linhas de preço vêm todas do SCO, e o gramado
-    # sai como único item sem preço (critério central desta feature). A planilha ainda não
-    # existe: desde a F-035 ela só nasce do despacho, depois da assinatura.
+    # Omitindo o BDI a cadeia segue igual, e é o caminho normal sob o regime: as cinco linhas
+    # de preço vêm todas do SCO, e o gramado sai como único item sem preço (critério central
+    # desta feature). A planilha ainda não existe: desde a F-035 ela só nasce do despacho,
+    # depois da assinatura.
     built = client.post(
         f"/v1/estimate-rounds/{round_id}/estimate",
         headers=_headers("orcamento-regime-e2e"),
-        json={"base_version": version, "bdi_percent": "0"},
+        json={"base_version": version},
     )
     assert built.status_code == 200, built.text
     built_body = built.json()

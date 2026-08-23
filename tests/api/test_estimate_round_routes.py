@@ -3022,3 +3022,33 @@ def test_fora_do_regime_o_bdi_continua_obrigatorio(tmp_path: Path) -> None:
     )
 
     assert montagem.status_code == 200, montagem.text
+
+
+def test_sob_demanda_contratada_o_bdi_pode_ser_omitido(tmp_path: Path) -> None:
+    """A ausência vale zero: pedir um número que só pode ser zero é fricção sem informação."""
+    client = _client(tmp_path)
+    state = _round_under_regime_ready_for_estimate(client)
+
+    montagem = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="montagem-bdi-ausente"),
+        json={"base_version": state["version"]},
+    )
+
+    assert montagem.status_code == 200, montagem.text
+    assert montagem.json()["bdi_percent"] == "0"
+
+
+def test_fora_do_regime_omitir_o_bdi_recusa(tmp_path: Path) -> None:
+    """Assumir zero na pré-licitação inventaria a decisão mais consequente da planilha."""
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+
+    recusa = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="montagem-sem-bdi"),
+        json={"base_version": state["version"]},
+    )
+
+    assert recusa.status_code == 422, recusa.text
+    assert recusa.json()["code"] == "ESTIMATE_BDI_INVALID"

@@ -223,12 +223,21 @@ def test_banco_anterior_ao_runner_e_carimbado(schema_url: str) -> None:
     # aplicada pelo `upgrade` DEPOIS do carimbo, da mesma natureza dos `CREATE TABLE` que
     # o teste já tolera. O que a adoção continua não podendo emitir é `DROP` ou `ALTER`
     # que remova, retipe ou renomeie o que já existe.
+    #
+    # `DROP NOT NULL` entrou na lista tolerada com a `0016` (F-036), e pela mesma razão que
+    # `ADD COLUMN`: ele **afrouxa** uma restrição, e não remove, retipa nem renomeia coluna
+    # nenhuma. Toda linha existente já satisfaz o `NOT NULL` que sai, e todo código anterior
+    # continua escrevendo o valor que sempre escreveu — é exatamente o passo "expand" do
+    # expand/contract. O que continua proibido é o oposto: `SET NOT NULL` numa coluna que
+    # pode ter nulo derruba a adoção de um banco real, e `TYPE`/`RENAME` reescrevem o que já
+    # existe.
     ddl = [statement for statement in recorded if statement.startswith(_DDL_VERBS)]
+    aditivo = (" add column ", " drop not null")
     destrutivo = [
         statement
         for statement in ddl
         if statement.startswith("drop ")
-        or (statement.startswith("alter ") and " add column " not in statement)
+        or (statement.startswith("alter ") and not any(marker in statement for marker in aditivo))
     ]
     assert destrutivo == []
     created = {

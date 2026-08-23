@@ -690,15 +690,21 @@
             "type": "integer"
           },
           "bdi_percent": {
-            "maxLength": 12,
-            "minLength": 1,
-            "title": "Bdi Percent",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 12,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bdi Percent"
           }
         },
         "required": [
-          "base_version",
-          "bdi_percent"
+          "base_version"
         ],
         "title": "BuildEstimateRequest",
         "type": "object"
