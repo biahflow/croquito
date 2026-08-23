@@ -2,10 +2,12 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-22 (F-033 e F-034 entregues e em READY_FOR_HUMAN_REVIEW —
-demanda sob contrato licitado sobre o ADR-0045, e disponibilidade de jornada por ambiente e
-por tenant; F-032 integrada à main com a fatia de sincronização completa; F-030 registrada
-sem contrato — fotos do levantamento na revisão; antes: F-029 aberta com contrato,
+Última revisão: 2026-08-23 (estado da F-034 reconciliado — as duas fatias já estavam na
+main desde 2026-08-22, e o contrato e esta tabela seguiam em READY_FOR_PLANNING; o pacote de
+revisão dela foi escrito. Antes, em 2026-08-22: F-037 (acervo de catálogos, ADR-0047) e
+F-035 (aprovação do orçamento, ADR-0046) entregues; F-033 entregue — demanda sob contrato
+licitado sobre o ADR-0045; F-032 integrada à main com a fatia de sincronização completa;
+F-030 e F-036 registradas sem contrato; antes: F-029 aberta com contrato,
 absorvendo a fatia 2 da F-023; F-021 e F-022 abertas com contrato, ADR-0037 `Proposed`;
 F-012 documentada com ADR-0036 `Proposed`; inventário
 F-013..F-017 aberto; F-018/F-019 abertas; F-020 aberta com contrato)
@@ -57,7 +59,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
 | F-030 | A DEFINIR | READY_FOR_SPEC | Fotos do levantamento na jornada de revisão (a definir em contrato) |
 | F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
-| F-034 | HIGH | READY_FOR_PLANNING | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
+| F-034 | HIGH | READY_FOR_HUMAN_REVIEW | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
 | F-035 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
 | F-036 | A DEFINIR | READY_FOR_SPEC | Vínculo entre orçamento aprovado e rodada de medição (a definir em contrato) |
 | F-037 | HIGH | READY_FOR_HUMAN_REVIEW | [Acervo central de catálogos de preço](../features/F-037-acervo-de-catalogos/feature.md) |
@@ -364,10 +366,13 @@ feature aplica o par às jornadas, com três estados por ambiente (`enabled`, `p
 `disabled`), entitlement por tenant consultado só em `pilot`, e a resolução das três
 perguntas (ambiente, tenant, pessoa) feita no servidor: `GET /v1/me` passa a devolver as
 jornadas disponíveis já resolvidas, e a tela renderiza o que recebeu em vez de
-reimplementar autorização. Dividida por decisão humana registrada: a fatia 1 não introduz
-valor visual novo e está `READY_FOR_PLANNING`; a fatia 2 — administrar o entitlement na
-tela de Plataforma — é superfície nova e fica `BLOCKED` até o Design Approval Package.
-Contrato em [F-034](../features/F-034-disponibilidade-de-jornada/feature.md).
+reimplementar autorização. Dividida por decisão humana registrada — a fatia 1 não introduz
+valor visual novo; a fatia 2, administrar o entitlement na tela de Plataforma, é superfície
+nova e ficou `BLOCKED` até o Design Approval Package, **aprovado na mesma data**. **As duas
+fatias foram entregues em 2026-08-22** e a feature está `READY_FOR_HUMAN_REVIEW`; o
+mecanismo está no ar e **dormente**, porque nenhum ambiente declara ainda os estados de
+jornada. Contrato em [F-034](../features/F-034-disponibilidade-de-jornada/feature.md),
+evidência em [evidence.md](../features/F-034-disponibilidade-de-jornada/evidence.md).
 
 F-035 e F-036 — aprovação do orçamento e sua ligação com a medição — nascem em 2026-08-22,
 de uma conversa de alinhamento sobre a cadeia real, quando ficou visível uma **assimetria**:

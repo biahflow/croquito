@@ -2,11 +2,16 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_HUMAN_REVIEW`
 
-> As **duas fatias** são planejáveis. O Design Approval Package da fatia 2 foi
-> **aprovado por ato humano em 2026-08-22** (revisão 1, registro em
-> [mock/README.md](mock/README.md)), o que encerrou o único gate que a bloqueava.
+> As **duas fatias foram entregues em 2026-08-22** — T1, T2 e T3 —, e estão na `main` desde
+> `5839c19`, com deploy de HML verde. O pacote de revisão está em
+> [evidence.md](evidence.md), montado em 2026-08-23: o estado deste contrato e o do roadmap
+> ficaram em `READY_FOR_PLANNING` depois da execução, e essa é a dívida que o pacote fecha.
+>
+> O Design Approval Package da fatia 2 foi **aprovado por ato humano em 2026-08-22**
+> (revisão 1, registro em [mock/README.md](mock/README.md)), o que encerrou o único gate que
+> a bloqueava.
 >
 > Nasce em 2026-08-22, de uma pergunta de operação: como impedir que um módulo ainda
 > imaturo — hoje o Croqui — chegue a homologação, e como, mais adiante, liberá-lo para um
@@ -106,8 +111,12 @@ dividir para que trabalho sem superfície prossiga com o gate aberto:
   planejamento sem pacote próprio, citando aquela aprovação como procedência.
 - **Fatia 2** — a seção de administração por tenant na tela de Plataforma. Superfície nova,
   `DESIGN_APPROVAL_REQUIRED`. O pacote foi produzido e **aprovado em 2026-08-22**
-  (revisão 1): a fatia saiu de `BLOCKED` e está planejável. A implementação deve
-  corresponder à revisão aprovada; divergir dela é revisão nova, com registro próprio.
+  (revisão 1): a fatia saiu de `BLOCKED` e foi planejada e entregue na mesma data. A
+  implementação corresponde à revisão aprovada; divergir dela é revisão nova, com registro
+  próprio.
+
+As duas fatias foram entregues em 2026-08-22 — a divisão continua registrada porque foi ela
+que permitiu a fatia 1 andar enquanto o gate da fatia 2 estava aberto.
 
 Se a leitura da fatia 1 for contestada, ela volta para trás do gate — a decisão está
 registrada aqui justamente para poder ser contestada.
@@ -150,15 +159,22 @@ registrada aqui justamente para poder ser contestada.
 
 ## Unknowns
 
-1. **Padrão do estado quando o ambiente não declara nada.** A proposta é `enabled` para
-   todas, para que nenhum ambiente existente mude de comportamento ao subir esta feature,
-   e que os ambientes hospedados declarem explicitamente. É a única escolha que não exige
-   configurar tudo antes de fazer deploy, mas é fail-open: um módulo novo nasce visível a
-   menos que alguém o declare. **Decisão humana pendente.**
-2. **Quem é a fonte da lista de jornadas** — configuração de ambiente por jornada, ou uma
-   lista única. Detalhe de forma, não de comportamento; sai no plano.
-3. Se `disabled` deve devolver `404` em vez de `403`, para não revelar que a jornada
-   existe. Depende de a existência do módulo ser ou não informação sensível.
+Os três foram resolvidos antes ou durante a execução. Ficam registrados com o que os
+fechou, porque o 1 é reversível e vale saber que ele foi uma escolha, não um acidente.
+
+1. **Padrão do estado quando o ambiente não declara nada.** ✅ **Decidido por ato humano em
+   2026-08-22: `enabled` para todas.** É a única escolha que não muda o comportamento de
+   nenhum ambiente existente ao subir a feature — os hospedados declaram explicitamente. É
+   **fail-open**, e assumidamente: um módulo novo nasce visível a menos que alguém o
+   declare. Registrado nas premissas do [plano](plan.md) e reversível sem custo de dado.
+2. **Quem é a fonte da lista de jornadas.** ✅ Resolvido no plano, como previsto: uma
+   variável por jornada (`CROQUITO_JOURNEY_CROQUI`, `_MEDICAO`, `_ORCAMENTO`), com valor
+   inválido recusando na subida da API.
+3. **Se `disabled` deve devolver `404` em vez de `403`.** ✅ **Descartado** nas premissas do
+   plano: a existência das jornadas já é pública no produto, e trocar o código esconderia a
+   causa de quem depura. `403 JOURNEY_UNAVAILABLE` é a resposta, e ela é **a mesma** para
+   `disabled` e para piloto sem entitlement — quem não faz parte do piloto não descobre que
+   ele existe pela diferença de mensagem.
 
 ## Risks
 
