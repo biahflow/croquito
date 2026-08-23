@@ -27,9 +27,16 @@ usa (`legend_fixture_adapter` sobre a MESMA prancha sintética). O portão de am
 rota (`CROQUITO_AI_MAX_ESTIMATED_COST_USD` + `CROQUITO_ANTHROPIC_API_KEY`) é freio de
 config, não chamada de rede, e é isso — e só isso — que o `monkeypatch` do teste declara.
 
+Desde a F-035 (ADR-0046) a planilha NÃO nasce da montagem, e a cadeia tem três atos:
+`POST .../estimate` monta, `POST .../estimate/approve` assina com o papel `aprovador` e
+`POST .../estimate/export` despacha com o `orcamentista`. É por isso que este arquivo tem
+DOIS subjects e não um: quem montou não assina, e a recusa compara IDENTIDADE — acumular os
+dois papéis no mesmo token não contorna.
+
 Toda mutação manda `Idempotency-Key` e o `base_version` corrente. O único acesso direto ao
 object store neste arquivo é para reler a planilha PUBLICADA (a URL assinada da fixture não
-é buscável por HTTP) e conferir seu digest contra o que a API declarou.
+é buscável por HTTP) e conferir seu digest contra o que a API declarou — e, no teste do
+portão de despacho, para provar que uma recusa não escreveu nada.
 """
 
 from __future__ import annotations
@@ -41,6 +48,7 @@ from typing import Any, Final, Literal, cast
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import Response
 
 from croquito_api.config import ApiSettings
 from croquito_api.database import Database
@@ -81,6 +89,15 @@ TENANT: Final = "tenant-estimate-v1-e2e"
 QUEUE_URL: Final = "http://localstack/queue"
 SUBJECT: Final = "orcamentista-estimate-v1-e2e"
 ROLE: Final = "orcamentista"
+
+APPROVER_SUBJECT: Final = "aprovadora-estimate-v1-e2e"
+"""Quem ASSINA, e deliberadamente outra pessoa que não a que monta.
+
+A recusa de auto-aprovação compara identidade contra quem montou (ADR-0046, decisão 6), e
+uma fixture de subject único não teria como exercer "outra pessoa assina" — provaria a
+cadeia com o único token que ela nunca pode aceitar."""
+
+APPROVER_ROLE: Final = "aprovador"
 _ANTHROPIC_KEY_ENV: Final = "CROQUITO_ANTHROPIC_API_KEY"
 
 REFERENCE_LABEL: Final = "ORCAMENTO V1 E2E 01/2026"
@@ -88,11 +105,58 @@ ADDRESS: Final = "RUA SINTETICA ORCAMENTO V1, S/N"
 BDI_PERCENT: Final = "25.00"
 
 
-def _headers(key: str | None = None, *, tenant: str = TENANT, roles: str = ROLE) -> dict[str, str]:
-    headers = {"Authorization": f"Bearer test:{tenant}:{SUBJECT}:{roles}"}
+def _headers(
+    key: str | None = None,
+    *,
+    tenant: str = TENANT,
+    roles: str = ROLE,
+    subject: str = SUBJECT,
+) -> dict[str, str]:
+    """Token sintético de quem MONTA, salvo quando o teste pede outro subject ou papel."""
+    headers = {"Authorization": f"Bearer test:{tenant}:{subject}:{roles}"}
     if key is not None:
         headers["Idempotency-Key"] = key
     return headers
+
+
+def _approve_estimate(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    key: str,
+    subject: str = APPROVER_SUBJECT,
+    roles: str = APPROVER_ROLE,
+) -> Response:
+    """Assina o orçamento da cabeça: o corpo é SÓ `base_version`, a identidade é do JWT."""
+    return cast(
+        Response,
+        client.post(
+            f"/v1/estimate-rounds/{round_id}/estimate/approve",
+            headers=_headers(key, roles=roles, subject=subject),
+            json={"base_version": base_version},
+        ),
+    )
+
+
+def _export_estimate(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    key: str,
+    subject: str = SUBJECT,
+    roles: str = ROLE,
+) -> Response:
+    """Despacha a planilha: ato do `orcamentista`, atrás do portão de aprovação."""
+    return cast(
+        Response,
+        client.post(
+            f"/v1/estimate-rounds/{round_id}/estimate/export",
+            headers=_headers(key, roles=roles, subject=subject),
+            json={"base_version": base_version},
+        ),
+    )
 
 
 def _presign_and_put(
@@ -431,7 +495,9 @@ def test_estimate_round_full_chain_through_v1_api(
     assert unchanged_after_stale["version"] == version
     assert unchanged_after_stale["estimate"]["present"] is False
 
-    # 7. `POST .../estimate` com o `base_version` correto: monta, audita e publica.
+    # 7. `POST .../estimate` com o `base_version` correto: monta — e **só** monta. Desde a
+    # F-035 (ADR-0046) a planilha não nasce daqui, e é esse instante — orçamento pronto e
+    # ainda sem circular — que a assinatura nominal existe para ocupar.
     built = client.post(
         f"/v1/estimate-rounds/{round_id}/estimate",
         headers=_headers("orcamento-v1-e2e"),
@@ -441,7 +507,9 @@ def test_estimate_round_full_chain_through_v1_api(
     built_body = built.json()
     version = built_body["version"]
     assert built_body["bdi_percent"] == BDI_PERCENT
-    assert built_body["workbook_present"] is True
+    assert built_body["workbook_present"] is False
+    assert built_body["approval"]["approved"] is False
+    assert built_body["approval"]["stale"] is False
     # Retrocompatibilidade (F-027 T3): rodada sem teto declarado não ganha o bloco
     # derivado do teto de verba (ADR-0040) — nem `target`, nem `consumed`/`remaining`/`over`.
     for absent_key in ("target", "consumed", "remaining", "over"):
@@ -468,18 +536,50 @@ def test_estimate_round_full_chain_through_v1_api(
     assert sinapi_line.code == "0009012"
     assert sinapi_line.catalog_sha256 == sinapi_catalog.source_sha256
 
+    # 7b. Assinar e despachar, os dois atos que a F-035 pôs entre o orçamento montado e a
+    # planilha publicada. Quem assina é OUTRA pessoa, com o papel `aprovador`; quem despacha
+    # é o orçamentista que montou.
+    approved = _approve_estimate(client, round_id, base_version=version, key="assinatura-v1-e2e")
+    assert approved.status_code == 200, approved.text
+    approved_body = approved.json()
+    version = approved_body["version"]
+    approval = approved_body["approval"]
+    assert approval["approved"] is True
+    assert approval["approved_by"] == APPROVER_SUBJECT
+    assert approval["stale"] is False
+    assert approval["approved_digest"] == approval["current_digest"]
+    # Assinar não muda o que foi assinado: o digest do CONTEÚDO é o mesmo da montagem.
+    assert approval["current_digest"] == built_body["approval"]["current_digest"]
+    assert approved_body["workbook_present"] is False
+
+    exported = _export_estimate(client, round_id, base_version=version, key="despacho-v1-e2e")
+    assert exported.status_code == 200, exported.text
+    exported_body = exported.json()
+    version = exported_body["version"]
+    assert exported_body["workbook_present"] is True
+    # Despachar não altera o orçamento: o documento gravado é o mesmo que a assinatura
+    # produziu, e só a referência do arquivo entra na revisão nova.
+    assert exported_body["estimate_sha256"] == approved_body["estimate_sha256"]
+
     # 8. `GET .../estimate`: auditoria ok, planilha publicada — a URL assinada da fixture
     # não é buscável por HTTP, então a conferência lê o BLOB diretamente do object store,
-    # pela mesma chave que a API deriva do digest do orçamento.
+    # pela mesma chave que a API deriva do digest do CONTEÚDO do orçamento (que exclui a
+    # aprovação, e por isso não mudou desde a montagem).
     read = client.get(f"/v1/estimate-rounds/{round_id}/estimate", headers=_headers()).json()
-    assert read["estimate_sha256"] == built_body["estimate_sha256"]
+    assert read["estimate_sha256"] == exported_body["estimate_sha256"]
+    # A assinatura entra no DOCUMENTO e muda o digest dele; o do conteúdo segue intacto.
+    assert read["estimate_sha256"] != built_body["estimate_sha256"]
+    assert read["approval"]["current_digest"] == built_body["approval"]["current_digest"]
+    assert read["approval"]["stale"] is False
     assert read["workbook_present"] is True
     assert read["workbook_url"] is not None
     for absent_key in ("target", "consumed", "remaining", "over"):
         assert absent_key not in read
 
     object_key = estimate_workbook_key(
-        tenant_id=TENANT, round_id=str(round_id), estimate_sha256=read["estimate_sha256"]
+        tenant_id=TENANT,
+        round_id=str(round_id),
+        estimate_sha256=read["approval"]["current_digest"],
     )
     workbook_bytes = storage.body(object_key)
     assert hashlib.sha256(workbook_bytes).hexdigest() == read["workbook_sha256"]
@@ -487,6 +587,8 @@ def test_estimate_round_full_chain_through_v1_api(
     workbook_path = tmp_path / "orcamento-publicado.xlsx"
     workbook_path.write_bytes(workbook_bytes)
 
+    # A auditoria compara a planilha com o orçamento MONTADO, e não com o assinado, porque a
+    # igualdade dos dois digests de conteúdo acima já provou que são o mesmo conteúdo.
     audit = audit_estimate_workbook(workbook_path, estimate, template)
     assert audit.status == "ok"
     assert audit.findings == []
@@ -1024,8 +1126,9 @@ def test_estimate_round_contracted_demand_regime_through_v1_api(
     round_after_codes = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers()).json()
     assert round_after_codes["regime"]["amendment_candidates"] == 1
 
-    # 6. `POST .../estimate`: monta, audita e publica — as cinco linhas de preço vêm todas
-    # do SCO, e o gramado sai como único item sem preço (critério central desta feature).
+    # 6. `POST .../estimate`: monta — as cinco linhas de preço vêm todas do SCO, e o gramado
+    # sai como único item sem preço (critério central desta feature). A planilha ainda não
+    # existe: desde a F-035 ela só nasce do despacho, depois da assinatura.
     built = client.post(
         f"/v1/estimate-rounds/{round_id}/estimate",
         headers=_headers("orcamento-regime-e2e"),
@@ -1034,22 +1137,43 @@ def test_estimate_round_contracted_demand_regime_through_v1_api(
     assert built.status_code == 200, built.text
     built_body = built.json()
     version = built_body["version"]
-    assert built_body["workbook_present"] is True
+    assert built_body["workbook_present"] is False
+    assert built_body["approval"]["approved"] is False
 
     estimate = Estimate.model_validate(built_body["estimate"])
     assert len(estimate.lines) == len(regime_code_decisions) - 1
     assert all(line.price_origin == PriceOrigin.SCO for line in estimate.lines)
     assert estimate.unpriced_item_ids == [lawn_item_id]
 
+    # 6b. Assina com o papel `aprovador` (outra pessoa) e despacha com o `orcamentista`: o
+    # regime não muda a cadeia de aprovação, e a cadeia de aprovação não muda o regime.
+    approved = _approve_estimate(
+        client, round_id, base_version=version, key="assinatura-regime-e2e"
+    )
+    assert approved.status_code == 200, approved.text
+    approved_body = approved.json()
+    version = approved_body["version"]
+    assert approved_body["approval"]["approved_by"] == APPROVER_SUBJECT
+    assert approved_body["approval"]["stale"] is False
+
+    exported = _export_estimate(client, round_id, base_version=version, key="despacho-regime-e2e")
+    assert exported.status_code == 200, exported.text
+    exported_body = exported.json()
+    version = exported_body["version"]
+    assert exported_body["workbook_present"] is True
+
     # 7. `GET .../estimate`: lê o BLOB publicado do object store (a URL assinada da fixture
     # não é buscável por HTTP) e confere a planilha canônica — TODA linha de preço cita
     # `sco` na coluna FONTE (critério 5 da feature: a cadeia inteira sob o regime chega à
     # planilha citando só a tabela contratual).
     read = client.get(f"/v1/estimate-rounds/{round_id}/estimate", headers=_headers()).json()
-    assert read["estimate_sha256"] == built_body["estimate_sha256"]
+    assert read["estimate_sha256"] == exported_body["estimate_sha256"]
+    assert read["approval"]["current_digest"] == built_body["approval"]["current_digest"]
 
     object_key = estimate_workbook_key(
-        tenant_id=TENANT, round_id=str(round_id), estimate_sha256=read["estimate_sha256"]
+        tenant_id=TENANT,
+        round_id=str(round_id),
+        estimate_sha256=read["approval"]["current_digest"],
     )
     workbook_bytes = storage.body(object_key)
     assert hashlib.sha256(workbook_bytes).hexdigest() == read["workbook_sha256"]
@@ -1073,3 +1197,316 @@ def test_estimate_round_contracted_demand_regime_through_v1_api(
         source_cell = cells[f"{columns.source.letter}{row}"]["value"]
         assert isinstance(source_cell, str), row
         assert "SCO" in source_cell, row
+
+
+def test_estimate_dispatch_gate_through_v1_api(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stack: tuple[TestClient, FakeObjectStore, FakeQueue, str],
+) -> None:
+    """O portão do despacho pela cadeia REAL `/v1` (F-035, ADR-0046), com DOIS tokens.
+
+    Réplica enxuta de `test_estimate_round_full_chain_through_v1_api` até o orçamento
+    montado — sem repetir as asserções de cascata e de planilha que aquele teste já faz —,
+    desta vez para provar o que só a cadeia inteira prova, e a rota isolada em
+    `tests/api/test_estimate_round_routes.py` não vê:
+
+    1. despachar sem assinatura recusa e **nada é escrito** — conferido no object store, não
+       no código de status: um portão que recusa depois de gravar já publicou;
+    2. assinar e despachar são atos de papéis diferentes, exercidos aqui com tokens
+       diferentes na MESMA cadeia — e nem acumular os dois papéis deixa quem montou assinar,
+       porque a comparação é de identidade;
+    3. remontar depois de assinado leva a assinatura adiante CADUCA, e o despacho recusa com
+       `APPROVAL_CONTENT_MISMATCH` até um ato novo de aprovação.
+
+    Como o teste-molde, a extração paga entra pelo `legend_fixture_adapter` sobre a mesma
+    prancha sintética: nada aqui sai do processo.
+    """
+    client, storage, queue, database_url = stack
+
+    plate = render_synthetic_plate(tmp_path / "plate-source")
+    monkeypatch.setenv(AI_BUDGET_ENV, "1.50")
+    monkeypatch.setenv(_ANTHROPIC_KEY_ENV, "chave-de-teste-nunca-usada")
+    worker = LocalQueueWorker(
+        LocalWorkerSettings(
+            database_url=database_url,
+            queue_url=QUEUE_URL,
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            artifact_bucket="croquito-estimate-v1-e2e",
+        ),
+        valuation_extraction_adapter=legend_fixture_adapter(plate),
+    )
+    worker.client = queue
+    worker.s3_client = storage
+
+    template = default_template()
+    previous_mapao_path = build_synthetic_previous_mapao(tmp_path / "previous-mapao-portao.xlsx")
+    sco_catalog = read_price_catalog(
+        previous_mapao_path,
+        template,
+        source_label=SYNTHETIC_CONTRACT_SOURCE_LABEL,
+        reference_month=SYNTHETIC_REFERENCE_MONTH,
+    )
+    dbf_path = write_emop_dbf(tmp_path / "emop-sintetico-portao.dbf")
+    emop_catalog, _emop_notes = read_emop_catalog_with_report(dbf_path, emop_fixture_layout())
+    composition_set = build_synthetic_composition_set()
+    composition_catalog = compile_compositions(
+        composition_set,
+        source_sha256=hashlib.sha256(composition_set.model_dump_json().encode("utf-8")).hexdigest(),
+    )
+    cascade = (sco_catalog, emop_catalog, composition_catalog)
+
+    # 1. Rodada, cascata de três fontes, prancha e extração — o trecho da cadeia que este
+    # teste precisa ter percorrido para chegar ao orçamento montado.
+    created = client.post(
+        "/v1/estimate-rounds",
+        headers=_headers("rodada-portao-e2e"),
+        json={
+            "worksite_key": "praca-sintetica-portao-e2e",
+            "worksite_name": SYNTHETIC_ESTIMATE_WORKSITE_NAME,
+            "reference_label": "ORCAMENTO V1 PORTAO E2E 01/2026",
+            "address": ADDRESS,
+        },
+    )
+    assert created.status_code == 201, created.text
+    round_id = created.json()["round_id"]
+    version = created.json()["version"]
+
+    for index, catalog in enumerate(cascade):
+        upload = _presign_and_put(
+            client,
+            storage,
+            filename=f"catalogo-portao-{catalog.origin.value}.json",
+            content_type="application/json",
+            payload=_catalog_upload_bytes(catalog),
+            key=f"presign-catalogo-portao-{index}",
+        )
+        installed = client.post(
+            f"/v1/estimate-rounds/{round_id}/catalogs",
+            headers=_headers(f"instala-catalogo-portao-{index}"),
+            json={"upload_id": upload["upload_id"], "base_version": version},
+        )
+        assert installed.status_code == 201, installed.text
+        version = installed.json()["version"]
+
+    plate_upload = _presign_and_put(
+        client,
+        storage,
+        filename="prancha-portao.pdf",
+        content_type="application/pdf",
+        payload=plate.pdf_path.read_bytes(),
+        key="presign-prancha-portao",
+    )
+    associated = client.post(
+        f"/v1/estimate-rounds/{round_id}/plate",
+        headers=_headers("prancha-associada-portao"),
+        json={"upload_id": plate_upload["upload_id"], "base_version": version},
+    )
+    assert associated.status_code == 200, associated.text
+    version = associated.json()["version"]
+
+    extraction = client.post(
+        f"/v1/estimate-rounds/{round_id}/plate/extractions",
+        headers=_headers("extracao-portao-e2e"),
+        json={"base_version": version},
+    )
+    assert extraction.status_code == 202, extraction.text
+
+    assert _drain(worker) == 1
+
+    round_after_extraction = client.get(
+        f"/v1/estimate-rounds/{round_id}", headers=_headers()
+    ).json()
+    assert round_after_extraction["extraction"]["status"] == "done"
+    version = round_after_extraction["version"]
+    # Sem orçamento na cabeça, o bloco de aprovação nem aparece: ausência não é um valor.
+    assert "approval" not in round_after_extraction
+
+    # 2. Takeoff revisado e código decidido, pelos mesmos helpers do teste-molde.
+    takeoff = client.get(f"/v1/estimate-rounds/{round_id}/takeoff", headers=_headers()).json()
+    packet = _packet_from_takeoff_response(takeoff)
+
+    takeoff_decisions = build_demo_takeoff_decisions(packet).decisions
+    for index, decision in enumerate(takeoff_decisions):
+        response = client.post(
+            f"/v1/estimate-rounds/{round_id}/takeoff/decisions",
+            headers=_headers(f"decisao-takeoff-portao-{index}"),
+            json={
+                "base_version": version,
+                "item_id": decision.item_id,
+                "action": decision.action,
+                "quantity": None if decision.quantity is None else str(decision.quantity),
+                "unit": decision.unit,
+                "note": decision.note,
+            },
+        )
+        assert response.status_code == 200, response.text
+        version = response.json()["version"]
+
+    assert _drain(worker) == len(takeoff_decisions)
+
+    final_takeoff = client.get(f"/v1/estimate-rounds/{round_id}/takeoff", headers=_headers()).json()
+    final_packet = _packet_from_takeoff_response(final_takeoff)
+
+    for index, assignment in enumerate(
+        build_demo_estimate_assignments(final_packet, list(cascade)).assignments
+    ):
+        response = client.post(
+            f"/v1/estimate-rounds/{round_id}/code-assignments/decisions",
+            headers=_headers(f"decisao-codigo-portao-{index}"),
+            json={
+                "base_version": version,
+                "item_id": assignment.item_id,
+                "action": assignment.action,
+                "code": assignment.code,
+                "catalog_sha256": assignment.catalog_sha256,
+                "note": assignment.note,
+            },
+        )
+        assert response.status_code == 200, response.text
+        version = response.json()["version"]
+
+    # 3. Monta. A partir daqui o teste é só sobre o portão, e o object store é a testemunha:
+    # tudo o que for recusado tem de deixá-lo exatamente como está agora.
+    built = client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate",
+        headers=_headers("orcamento-portao-e2e"),
+        json={"base_version": version, "bdi_percent": BDI_PERCENT},
+    )
+    assert built.status_code == 200, built.text
+    version = built.json()["version"]
+    assert built.json()["workbook_present"] is False
+    objects_after_build = set(storage.objects)
+
+    # 4. Despachar sem assinatura recusa pelo portão do DOMÍNIO — e nada é escrito.
+    unsigned = _export_estimate(
+        client, round_id, base_version=version, key="despacho-sem-assinatura"
+    )
+    assert unsigned.status_code == 422, unsigned.text
+    detail = unsigned.json()["detail"]
+    assert detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detail["details"]["code"] == "ESTIMATE_EXPORT_BLOCKED"
+    assert detail["details"]["errors"] == ["ESTIMATE_NOT_APPROVED"]
+    assert set(storage.objects) == objects_after_build
+    after_refusal = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers()).json()
+    assert after_refusal["version"] == version
+    assert after_refusal["approval"]["approved"] is False
+    assert after_refusal["estimate"]["workbook_present"] is False
+
+    # 5. Assinar é do papel `aprovador`, e é de OUTRA pessoa. O token que montou recusa duas
+    # vezes, por dois motivos diferentes: sem o papel, é `403 FORBIDDEN`; com os dois papéis,
+    # é a segregação por identidade que recusa (ADR-0046, decisão 6).
+    without_role = _approve_estimate(
+        client,
+        round_id,
+        base_version=version,
+        key="assinatura-sem-papel",
+        subject=SUBJECT,
+        roles=ROLE,
+    )
+    assert without_role.status_code == 403, without_role.text
+    assert without_role.json()["detail"]["code"] == "FORBIDDEN"
+
+    self_approval = _approve_estimate(
+        client,
+        round_id,
+        base_version=version,
+        key="auto-aprovacao",
+        subject=SUBJECT,
+        roles=f"{ROLE},{APPROVER_ROLE}",
+    )
+    assert self_approval.status_code == 403, self_approval.text
+    assert self_approval.json()["detail"]["code"] == "ESTIMATE_SELF_APPROVAL_FORBIDDEN"
+    # A recusa não devolve quem montou: seria um diretório de usuários do tenant.
+    assert SUBJECT not in self_approval.text
+
+    approved = _approve_estimate(client, round_id, base_version=version, key="assinatura-portao")
+    assert approved.status_code == 200, approved.text
+    version = approved.json()["version"]
+    approval = approved.json()["approval"]
+    assert approval["approved"] is True
+    assert approval["approved_by"] == APPROVER_SUBJECT
+    assert approval["stale"] is False
+    assert set(storage.objects) == objects_after_build  # assinar também não publica nada
+
+    # 6. Despachar é do `orcamentista`: o token que assinou não despacha.
+    wrong_dispatcher = _export_estimate(
+        client,
+        round_id,
+        base_version=version,
+        key="despacho-do-aprovador",
+        subject=APPROVER_SUBJECT,
+        roles=APPROVER_ROLE,
+    )
+    assert wrong_dispatcher.status_code == 403, wrong_dispatcher.text
+    assert wrong_dispatcher.json()["detail"]["code"] == "FORBIDDEN"
+    assert set(storage.objects) == objects_after_build
+
+    dispatched = _export_estimate(client, round_id, base_version=version, key="despacho-portao")
+    assert dispatched.status_code == 200, dispatched.text
+    version = dispatched.json()["version"]
+    assert dispatched.json()["workbook_present"] is True
+
+    published_key = estimate_workbook_key(
+        tenant_id=TENANT, round_id=str(round_id), estimate_sha256=approval["current_digest"]
+    )
+    assert set(storage.objects) - objects_after_build == {published_key}
+    assert (
+        hashlib.sha256(storage.body(published_key)).hexdigest()
+        == dispatched.json()["workbook_sha256"]
+    )
+
+    # 7. A caducidade pela cadeia: remontar com outro BDI leva a assinatura adiante, agora
+    # apontando para o conteúdo antigo — e o despacho recusa até um ato novo. Preservar não é
+    # aprovar: é o que mantém visível que alguém assinou algo que mudou depois.
+    objects_after_dispatch = set(storage.objects)
+    rebuilt = client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate",
+        headers=_headers("remontagem-portao"),
+        json={"base_version": version, "bdi_percent": "30.00"},
+    )
+    assert rebuilt.status_code == 200, rebuilt.text
+    version = rebuilt.json()["version"]
+    stale_approval = rebuilt.json()["approval"]
+    assert stale_approval["approved"] is True
+    assert stale_approval["stale"] is True
+    assert stale_approval["approved_by"] == APPROVER_SUBJECT
+    assert stale_approval["approved_digest"] == approval["approved_digest"]
+    assert stale_approval["current_digest"] != approval["current_digest"]
+
+    stale_dispatch = _export_estimate(client, round_id, base_version=version, key="despacho-caduco")
+    assert stale_dispatch.status_code == 422, stale_dispatch.text
+    assert stale_dispatch.json()["detail"]["details"]["errors"] == ["APPROVAL_CONTENT_MISMATCH"]
+    assert set(storage.objects) == objects_after_dispatch
+
+    state_while_stale = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers()).json()
+    assert state_while_stale["approval"]["stale"] is True
+    assert state_while_stale["version"] == version
+
+    # 8. O ato novo destrava, e a planilha nova mora noutro endereço: cada revisão continua
+    # apontando para o arquivo do conteúdo que ela publicou.
+    approved_again = _approve_estimate(
+        client, round_id, base_version=version, key="assinatura-portao-2"
+    )
+    assert approved_again.status_code == 200, approved_again.text
+    version = approved_again.json()["version"]
+    assert approved_again.json()["approval"]["stale"] is False
+
+    dispatched_again = _export_estimate(
+        client, round_id, base_version=version, key="despacho-portao-2"
+    )
+    assert dispatched_again.status_code == 200, dispatched_again.text
+    assert dispatched_again.json()["workbook_present"] is True
+
+    republished_key = estimate_workbook_key(
+        tenant_id=TENANT,
+        round_id=str(round_id),
+        estimate_sha256=stale_approval["current_digest"],
+    )
+    assert set(storage.objects) - objects_after_dispatch == {republished_key}
+    assert republished_key != published_key
+
+    final_read = client.get(f"/v1/estimate-rounds/{round_id}/estimate", headers=_headers()).json()
+    assert final_read["approval"]["stale"] is False
+    assert final_read["workbook_url"] is not None

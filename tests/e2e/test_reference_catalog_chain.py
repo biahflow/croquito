@@ -26,6 +26,11 @@ Dois testes, cada um provando um par de critérios da task:
    coluna FONTE na planilha; a única diferença é a `provenance` da entrada da cascata
    (escopo 2).
 
+Desde a F-035 (ADR-0046) chegar à planilha exige três atos e dois papéis — montar, assinar
+com o `aprovador` e despachar com o `orcamentista` —, e as duas cadeias daqui passam por
+eles. A equivalência que este arquivo prova é anterior a isso e continua sendo sobre preço:
+a assinatura é a mesma nos dois caminhos e não toca linha, total nem coluna FONTE.
+
 O portão de ambiente da extração (`CROQUITO_AI_MAX_ESTIMATED_COST_USD` +
 `CROQUITO_ANTHROPIC_API_KEY`) é freio de config, não chamada de rede: quem responde é
 `legend_fixture_adapter` sobre a MESMA prancha sintética, offline. O único acesso direto ao
@@ -90,6 +95,15 @@ TENANT_TOCA: Final = "tenant-toca"
 
 ROLE: Final = "orcamentista"
 PLATFORM_ROLE: Final = "platform_operator"
+
+SUBJECT: Final = "pessoa-sintetica"
+"""Quem percorre a cadeia e MONTA o orçamento, em todo tenant."""
+
+APPROVER_SUBJECT: Final = "aprovadora-sintetica"
+"""Quem assina, e nunca quem montou (ADR-0046, decisão 6): a recusa de auto-aprovação compara
+identidade, e um subject só não teria como levar estas cadeias até a planilha."""
+
+APPROVER_ROLE: Final = "aprovador"
 _ANTHROPIC_KEY_ENV: Final = "CROQUITO_ANTHROPIC_API_KEY"
 
 ADDRESS: Final = "RUA SINTETICA DO ACERVO, S/N"
@@ -191,11 +205,43 @@ def _build_cascade(workdir: Path) -> _Cascade:
 # --- helpers de requisição ------------------------------------------------------------------
 
 
-def _headers(key: str | None = None, *, tenant: str, roles: str = ROLE) -> dict[str, str]:
-    headers = {"Authorization": f"Bearer test:{tenant}:pessoa-sintetica:{roles}"}
+def _headers(
+    key: str | None = None, *, tenant: str, roles: str = ROLE, subject: str = SUBJECT
+) -> dict[str, str]:
+    headers = {"Authorization": f"Bearer test:{tenant}:{subject}:{roles}"}
     if key is not None:
         headers["Idempotency-Key"] = key
     return headers
+
+
+def _approve_and_export(
+    stack: _Stack, round_id: str, *, base_version: int, tenant: str, prefix: str
+) -> tuple[Response, Response]:
+    """Assina e despacha o orçamento da cabeça (F-035): os dois atos entre montar e publicar.
+
+    Vêm juntos porque nenhum dos dois é a variável sob teste aqui — a assinatura é idêntica
+    nos dois caminhos de instalação, e o que este arquivo compara continua sendo o preço.
+    Separá-los em dois helpers só faria cada cadeia repetir a mesma sequência duas vezes.
+    """
+    approved = stack.client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate/approve",
+        headers=_headers(
+            f"{prefix}-assinatura", tenant=tenant, roles=APPROVER_ROLE, subject=APPROVER_SUBJECT
+        ),
+        json={"base_version": base_version},
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["approval"]["approved_by"] == APPROVER_SUBJECT
+    assert approved.json()["approval"]["stale"] is False
+
+    exported = stack.client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate/export",
+        headers=_headers(f"{prefix}-despacho", tenant=tenant),
+        json={"base_version": approved.json()["version"]},
+    )
+    assert exported.status_code == 200, exported.text
+    assert exported.json()["workbook_present"] is True
+    return approved, exported
 
 
 def _catalog_upload_bytes(catalog: PriceCatalog) -> bytes:
@@ -490,16 +536,21 @@ def _create_round(
 
 
 def _published_workbook(
-    stack: _Stack, *, tenant: str, round_id: str, estimate_sha256: str, workbook_sha256: str
+    stack: _Stack, *, tenant: str, round_id: str, content_digest: str, workbook_sha256: str
 ) -> bytes:
     """Relê do object store o `.xlsx` que a rodada publicou, pela chave derivada do digest.
 
     É o único acesso direto ao store nestes testes, e ele é sobre um objeto de OUTRO
     prefixo: a planilha mora sob `tenants/`, é da rodada e tem URL assinada — o que a
     fixture não sabe fazer é buscá-la por HTTP.
+
+    O digest que endereça o arquivo é o do CONTEÚDO do orçamento (`approval.current_digest`),
+    que exclui a aprovação, e não o `estimate_sha256` do documento gravado: desde a F-035 os
+    dois divergem assim que alguém assina, e assinar não muda o endereço da planilha do que
+    foi assinado.
     """
     workbook_bytes = stack.storage.body(
-        estimate_workbook_key(tenant_id=tenant, round_id=round_id, estimate_sha256=estimate_sha256)
+        estimate_workbook_key(tenant_id=tenant, round_id=round_id, estimate_sha256=content_digest)
     )
     assert hashlib.sha256(workbook_bytes).hexdigest() == workbook_sha256
     return workbook_bytes
@@ -537,10 +588,11 @@ def test_reference_catalog_serves_two_tenants_through_v1_api(
     UMA linha depois de as duas cadeias terem fechado.
 
     Junto vem o escopo 4, que é uma recusa e não um recurso: nenhuma resposta desta cadeia —
-    publicação, escolha, instalação, estado da rodada, decisões, montagem, leitura — carrega
-    o prefixo do objeto do acervo. A `workbook_url` do `GET .../estimate` continua saindo, e
-    é outro objeto: a planilha DESTA rodada, sob o prefixo do tenant. O que a asserção veda é
-    o endereço de `platform/reference-catalogs/`, que nenhuma rota assina (ADR-0047 decisão 6).
+    publicação, escolha, instalação, estado da rodada, decisões, montagem, assinatura,
+    despacho, leitura — carrega o prefixo do objeto do acervo. A `workbook_url` do
+    `GET .../estimate` continua saindo, e é outro objeto: a planilha DESTA rodada, sob o
+    prefixo do tenant. O que a asserção veda é o endereço de `platform/reference-catalogs/`,
+    que nenhuma rota assina (ADR-0047 decisão 6).
     """
     plate = render_synthetic_plate(tmp_path / "plate-source")
     monkeypatch.setenv(AI_BUDGET_ENV, "1.50")
@@ -659,8 +711,9 @@ def test_reference_catalog_serves_two_tenants_through_v1_api(
             collected=collected,
         )
 
-        # 2f. Monta, audita e publica a planilha — o fim da cadeia que a escolha do acervo
-        # abriu.
+        # 2f. Monta, assina e despacha — o fim da cadeia que a escolha do acervo abriu.
+        # Desde a F-035 a planilha não nasce da montagem, e os dois atos que faltam entram
+        # aqui inteiros: é a cadeia REAL que este arquivo se propõe a percorrer.
         built = stack.client.post(
             f"/v1/estimate-rounds/{round_id}/estimate",
             headers=_headers(f"{prefix}-orcamento", tenant=tenant),
@@ -668,7 +721,16 @@ def test_reference_catalog_serves_two_tenants_through_v1_api(
         )
         assert built.status_code == 200, built.text
         collected.append(built)
-        assert built.json()["workbook_present"] is True
+        assert built.json()["workbook_present"] is False
+
+        approved, exported = _approve_and_export(
+            stack,
+            round_id,
+            base_version=built.json()["version"],
+            tenant=tenant,
+            prefix=prefix,
+        )
+        collected.extend((approved, exported))
 
         estimate = Estimate.model_validate(built.json()["estimate"])
         assert any(line.price_origin is PriceOrigin.SCO for line in estimate.lines)
@@ -824,8 +886,22 @@ def test_reference_catalog_and_tenant_upload_produce_the_same_estimate(
         )
         assert built.status_code == 200, built.text
         body = built.json()
-        assert body["workbook_present"] is True
+        assert body["workbook_present"] is False
         estimate = Estimate.model_validate(body["estimate"])
+
+        # Assinar e despachar são idênticos nos dois ambientes, e é isso que os mantém fora
+        # da comparação: o que o teste isola continua sendo o caminho de instalação do SCO.
+        approved, exported = _approve_and_export(
+            stack,
+            round_id,
+            base_version=body["version"],
+            tenant=TENANT_SCALLE,
+            prefix=name,
+        )
+        collected.extend((approved, exported))
+        # Assinar não muda o conteúdo orçado: o digest que endereça a planilha é o mesmo da
+        # montagem, e é por ele que a planilha publicada é encontrada.
+        assert approved.json()["approval"]["current_digest"] == body["approval"]["current_digest"]
 
         # A planilha publicada, relida do store e gravada em disco para auditoria.
         workbook_path = tmp_path / f"orcamento-{name}.xlsx"
@@ -834,8 +910,8 @@ def test_reference_catalog_and_tenant_upload_produce_the_same_estimate(
                 stack,
                 tenant=TENANT_SCALLE,
                 round_id=round_id,
-                estimate_sha256=body["estimate_sha256"],
-                workbook_sha256=body["workbook_sha256"],
+                content_digest=body["approval"]["current_digest"],
+                workbook_sha256=exported.json()["workbook_sha256"],
             )
         )
 
