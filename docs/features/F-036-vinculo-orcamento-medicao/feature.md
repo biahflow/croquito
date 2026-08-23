@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_HUMAN_REVIEW`
 
 > Selecionada por decisão humana de 2026-08-23, saindo de `READY_FOR_SPEC`, logo depois de a
 > [F-035](../F-035-aprovacao-do-orcamento/feature.md) trazer a aprovação do orçamento para
@@ -13,8 +13,10 @@
 > ele refina a fronteira que o
 > [ADR-0027](../../adr/0027-price-source-provenance-and-bid-boundary.md) decisão 6 desenhou,
 > sem substituí-lo — e o **Design Approval Package** foi **aprovado**, revisão 1
-> ([mock/README.md](mock/README.md)). Com os dois cumpridos, a feature está planejável, e a
-> implementação deve corresponder à revisão aprovada.
+> ([mock/README.md](mock/README.md)). Com os dois cumpridos, a feature foi planejada e
+> **executada na mesma data** — T1 a T4 —, e o pacote de revisão está em
+> [evidence.md](evidence.md). A implementação corresponde à revisão aprovada, com **três
+> divergências registradas** em [mock/README.md](mock/README.md).
 >
 > Duas escolhas humanas de 2026-08-23 já fixaram o recorte e estão em `Scope`: o vínculo
 > entrega **consolidado contratual**, não só referência de auditoria; e vale **apenas** para
