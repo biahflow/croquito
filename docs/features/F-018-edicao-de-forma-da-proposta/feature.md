@@ -168,8 +168,9 @@ Os dois primeiros são decisão do ADR.
 
 ## Human Gates
 
-1. **`ARCHITECTURE_DECISION_REQUIRED`** — ADR novo, precedendo o planejamento: decide os
-   Unknowns 1 e 2, que tocam o modelo de proposta e a proveniência do scene graph.
+1. **`ARCHITECTURE_DECISION_REQUIRED`** — **artefato produzido, gate aberto**. O
+   [ADR-0050](../../adr/0050-correcao-humana-de-forma-como-proposta-derivada.md) foi escrito
+   em 2026-08-23 e está `Proposed`: decide os Unknowns 1 e 2. **Aceitá-lo é ato humano.**
 2. **`DESIGN_APPROVAL_REQUIRED`** — Design Approval Package da interação de edição, com os
    estados de arrasto, união, erro e concorrência, conforme
    [design-approval](../../engineering-os/workflows/design-approval.md).
