@@ -59,7 +59,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
 | F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
-| F-030 | HIGH | BLOCKED | [Fotos do levantamento na jornada de revisão](../features/F-030-fotos-do-levantamento-na-revisao/feature.md) |
+| F-030 | HIGH | BLOCKED | [O levantamento de campo na jornada de revisão: a foto e a medida](../features/F-030-levantamento-de-campo-na-revisao/feature.md) |
 | F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | DONE | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
 | F-035 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
@@ -350,10 +350,25 @@ escritório. O que falta é preciso e menor — a mídia não tem URL para o esc
 artefato de análise é **escrito e nunca lido** por nenhuma rota, e nada liga um job ao
 levantamento (`survey_export.py` já nomeava a F-030 como quem fecharia isso). Duas
 decisões humanas de 2026-08-23: as fotos chegam pelos **dois** caminhos (vínculo e upload
-avulso) e a **classificação por IA entra**, em três fatias — ver, subir, classificar.
+avulso) e a **classificação por IA entra**.
+
+E então uma pergunta mudou o recorte: *as fotos ajudam a identificar melhor as cotas?* Não —
+foto não tem escala. Mas a pergunta expôs que o levantamento produz **duas** coisas, e a
+outra, a **medida de trena**, toca a cota diretamente: ela é testemunha independente da
+prancha, e o que ela tem de valioso é poder **discordar**. Estava presa no mesmo lugar que a
+foto. Por decisão humana a feature absorveu as duas, em três fatias — ver, testemunhar,
+classificar —, e o **levantamento legado** (sem app, que é de onde vieram Guaxindiba, Toca e
+Raul Campelo) passou a ser atendido desde a primeira: o upload avulso vira porta principal, e
+o número medido chega escrito na foto do visor da trena, que o passe pago já lê. Ficaram
+recusados, com motivo escrito, o PDF como documento de evidência e a síntese de
+`SurveyPacket` a partir do croqui legado — o primeiro por **circularidade** (o croqui legado
+é a fonte da cota, e testemunharia a si mesmo), o segundo por criar um segundo modelo
+geométrico ao lado do `SceneRevision`.
+
 `BLOCKED` por dois gates que precedem o planejamento: a decisão de arquitetura (não existe
-job sem PDF hoje — `jobs.upload_id` é `NOT NULL UNIQUE`) e o Design Approval Package.
-Contrato em [F-030](../features/F-030-fotos-do-levantamento-na-revisao/feature.md).
+job sem PDF hoje — `jobs.upload_id` é `NOT NULL UNIQUE`) e o Design Approval Package, que a
+ampliação levou à **revisão 2**. Contrato em
+[F-030](../features/F-030-levantamento-de-campo-na-revisao/feature.md).
 
 F-033 — demanda sob contrato licitado — nasce em 2026-08-21, numa conversa de operação
 em que se mapeou a cadeia real das praças (levantamento → DXF → prancha → orçamento →

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>F-030 — a foto do levantamento na revisão do croqui (revisão 1)</title>
+    <title>F-030 — a evidência de campo na revisão do croqui (revisão 2)</title>
     <style>
       /* Tokens copiados VERBATIM de apps/web/src/styles.css, bloco :root. */
       :root {
@@ -277,6 +277,44 @@
         flex-wrap: wrap;
         margin-top: 4px;
       }
+      .testemunha {
+        display: grid;
+        gap: 8px;
+        margin-top: 12px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-subtle);
+      }
+      .confronto {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+        align-items: end;
+      }
+      .valor {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .valor b {
+        font-size: 20px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .valor span {
+        font-size: 10px;
+        font-weight: 850;
+        letter-spacing: 0.13em;
+        color: var(--ink-secondary);
+      }
+      .diferenca {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding-left: 18px;
+        border-left: 1px solid var(--line);
+      }
       .esqueleto {
         height: 12px;
         border-radius: 999px;
@@ -322,11 +360,14 @@
   <body>
     <div class="folha">
       <header>
-        <h1>F-030 — a foto do levantamento na revisão do croqui</h1>
+        <h1>F-030 — a evidência de campo na revisão do croqui</h1>
         <p>
-          Design Approval Package, revisão 1. Painel "Evidência de campo" na jornada de revisão
-          (<code>apps/web/src/CroquiApp.tsx</code>), ao lado da decisão de leitura. As fotos
-          são <strong>amostras sintéticas</strong> — o pacote não usa imagem de cliente.
+          Design Approval Package, <strong>revisão 2</strong>. Painel "Evidência de campo" na
+          jornada de revisão (<code>apps/web/src/CroquiApp.tsx</code>), ao lado da decisão de
+          leitura. A revisão 1 cobria só a foto; esta acrescenta a <strong>testemunha</strong>
+          — o valor medido em campo ao lado da cota da prancha — e o caminho do levantamento
+          <strong>legado</strong>, sem app. As fotos são <strong>amostras sintéticas</strong>:
+          o pacote não usa imagem de cliente.
         </p>
       </header>
 
@@ -490,9 +531,126 @@
         </section>
       </figure>
 
+
       <figure class="estado" id="estado-05">
         <figcaption>
-          Estado 5 — classificação por IA (fatia 3)
+          Estado 5 — testemunha ao lado da cota
+          <b>
+            A trena mediu o mesmo trecho. Os dois números aparecem com a origem de cada um
+            escrita, e a diferença é mostrada sem ser classificada.
+          </b>
+        </figcaption>
+        <section class="panel" aria-label="Leitura de cota">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">LEITURA DA PRANCHA</p>
+              <h2 style="font-size: 16px">Cota 12 — trecho da mureta oeste</h2>
+            </div>
+            <span class="ready">CONFIRMADA</span>
+          </div>
+          <div class="panel-body">
+            <div class="testemunha">
+              <p class="eyebrow">TESTEMUNHA DE CAMPO</p>
+              <div class="confronto">
+                <span class="valor"><span>COTA DA PRANCHA</span><b>19,75 m</b></span>
+                <span class="valor"><span>TRENA EM CAMPO</span><b>19,78 m</b></span>
+                <span class="diferenca">
+                  <span class="eyebrow">DIFERENÇA</span>
+                  <b style="font-size: 15px">0,03 m</b>
+                </span>
+              </div>
+              <p class="field-hint" style="margin: 0">
+                Medida por Marcos Lima em 19/08/2026, trena a laser, confirmada no aparelho.
+                Associada a esta leitura por Ana Ribeiro em 23/08/2026. A testemunha
+                <strong>não confirma</strong> a cota: quem confirma é quem revisa.
+              </p>
+            </div>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-06">
+        <figcaption>
+          Estado 6 — testemunha discordando
+          <b>
+            É o caso que hoje ninguém vê. Aviso, nunca veto: não entra em blockers e não impede
+            exportação.
+          </b>
+        </figcaption>
+        <section class="panel" aria-label="Leitura de cota">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">LEITURA DA PRANCHA</p>
+              <h2 style="font-size: 16px">Cota 7 — recuo frontal</h2>
+            </div>
+            <span class="blocked">TESTEMUNHA DISCORDA</span>
+          </div>
+          <div class="panel-body">
+            <div class="testemunha" style="border-color: #e0b4ad; background: #fbeeec">
+              <p class="eyebrow">TESTEMUNHA DE CAMPO</p>
+              <div class="confronto">
+                <span class="valor"><span>COTA DA PRANCHA</span><b>19,75 m</b></span>
+                <span class="valor"><span>TRENA EM CAMPO</span><b>12,40 m</b></span>
+                <span class="diferenca">
+                  <span class="eyebrow">DIFERENÇA</span>
+                  <b style="font-size: 15px">7,35 m</b>
+                </span>
+              </div>
+              <p class="field-hint" style="margin: 0; color: #7d2f26">
+                A prancha e o campo discordam neste trecho. Isto é um aviso para quem revisa —
+                ele não bloqueia a exportação e não decide qual dos dois está certo.
+              </p>
+            </div>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-07">
+        <figcaption>
+          Estado 7 — legado, sem app
+          <b>
+            Levantamento antigo: a medida chega escrita na foto. O valor lido pela máquina é
+            rascunho até alguém confirmá-lo — e só então pode virar testemunha.
+          </b>
+        </figcaption>
+        <section class="panel" aria-label="Evidência de campo">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">EVIDÊNCIA DE CAMPO</p>
+              <h2 style="font-size: 16px">Foto avulsa · sem levantamento no app</h2>
+            </div>
+            <span class="neutro">LEGADO</span>
+          </div>
+          <div class="panel-body">
+            <ul class="fotos" style="grid-template-columns: minmax(190px, 240px)">
+              <li class="foto">
+                <div class="foto-amostra"><span>amostra sintética</span></div>
+                <span class="ancora">Âncora declarada: recuo frontal</span>
+                <span class="foto-meta"><span class="ready">NITIDEZ BOA</span></span>
+              </li>
+            </ul>
+            <div class="testemunha">
+              <p class="eyebrow">VALOR LIDO NA FOTO — A CONFIRMAR</p>
+              <div class="confronto">
+                <span class="valor"><span>VISOR DA TRENA</span><b>12,40 m</b></span>
+              </div>
+              <p class="field-hint" style="margin: 0">
+                Número lido por máquina no visor da trena fotografado. Ele
+                <strong>não é testemunha ainda</strong>: confirmar o valor é um ato, associá-lo
+                a uma cota é outro.
+              </p>
+              <div class="acoes">
+                <button type="button" class="button button-primary">Confirmar o valor</button>
+                <button type="button" class="button button-secondary">Corrigir</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-08">
+        <figcaption>
+          Estado 8 — classificação por IA (fatia 3)
           <b>Proposta com lineage, e o ato humano é o que a registra. Ela não decide nada.</b>
         </figcaption>
         <section class="panel" aria-label="Evidência de campo">
@@ -533,9 +691,9 @@
         </section>
       </figure>
 
-      <figure class="estado" id="estado-06">
+      <figure class="estado" id="estado-09">
         <figcaption>
-          Estado 6 — recusa do servidor
+          Estado 9 — recusa do servidor
           <b>Processamento de IA não habilitado: a causa é dita, e o caminho também.</b>
         </figcaption>
         <section class="panel" aria-label="Evidência de campo">
@@ -554,9 +712,9 @@
         </section>
       </figure>
 
-      <figure class="estado" id="estado-07">
+      <figure class="estado" id="estado-10">
         <figcaption>
-          Estado 7 — sem papel
+          Estado 10 — sem papel
           <b>Conta sem papel de revisão: o painel inteiro é autenticado.</b>
         </figcaption>
         <section class="panel" aria-label="Evidência de campo">
