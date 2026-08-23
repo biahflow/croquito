@@ -958,11 +958,41 @@ Regras que valem em toda a seção:
   código de domínio (`TAKEOFF_*`, `CALC_*`, `ASSIGNMENT_*`, `AMENDMENT_DOSSIER_*`,
   `CATALOG_*`) em `details`. A API não republica o vocabulário do domínio.
 
+### `GET /v1/valuation-origins`
+
+Orçamentos que podem originar uma medição (F-036,
+[ADR-0048](../adr/0048-consolidado-contratual-do-orcamento-assinado.md)). Devolve as rodadas
+de orçamento do tenant sob o regime `contracted_demand` que já têm orçamento montado, cada
+uma com `signature` (`signed` | `stale` | `unsigned`), `approved_by`, `approved_at`,
+`estimate_digest`, `code_count` e `total_amount`.
+
+Mora sob a jornada da **medição**, e não sob `/v1/estimate-rounds`, por duas razões: a
+listagem do orçamento é paginada por cursor, e "mostre os assinados" viraria varrer páginas
+do lado do cliente; e prefixo é jornada — um tenant com o orçamento `disabled` e a medição
+`enabled` levaria `403 JOURNEY_UNAVAILABLE` numa tela de medição.
+
+A lista traz também as **não assinadas**: quem procura um orçamento que sabe existir precisa
+achá-lo e ler por que ele não serve ainda. Leitura tolerante — orçamento que não revalida sai
+da lista em vez de derrubar a tela; quem recusa de verdade é a abertura da rodada.
+
 ### `POST /v1/valuation-rounds`
 
-Entrada: `worksite_key`, `worksite_name`, `catalog_upload_id`, `reference_label`,
-`period_number`, `address` (opcional), `contract_label` (opcional).  
+Entrada, em **uma de duas origens** (F-036, ADR-0048), exatamente uma por pedido:
+
+- **catálogo por upload**: `worksite_key`, `worksite_name`, `catalog_upload_id`, mais
+  `address` (opcional);
+- **orçamento assinado**: `estimate_round_id`. A obra, o catálogo e o contratado vêm do
+  conteúdo **assinado**, e por isso `worksite_key`, `worksite_name` e `address` são
+  **recusados** neste caminho — aceitá-los abriria a porta para a rodada medir uma praça
+  diferente da que foi orçada, e nenhum número do consolidado é informado por humano.
+
+Em ambas: `reference_label`, `period_number` e `contract_label` (opcional).  
 Saída: `round_id`, `version=1`, `status`, `created_at`.
+
+Erros da origem por orçamento: `409 ESTIMATE_ORIGIN_REGIME_REQUIRED` (fora da demanda
+contratada existem a licitação e o deságio entre o orçamento e o contrato) e
+`409 ESTIMATE_ORIGIN_NOT_SIGNED` (assinatura ausente, rejeitada ou caduca por remontagem).
+Rodada de orçamento de outro tenant é `404`, indistinguível de ausente.
 
 `worksite_key` segue `WORKSITE_KEY_PATTERN` (`^[a-z0-9][a-z0-9-]{2,63}$`), o mesmo padrão
 que o domínio exige de `WorksiteBulletin`: a chave é imutável na rodada e aceitá-la livre
@@ -984,6 +1014,13 @@ Estado da rodada: `version`, catálogo instalado, etapas (prancha, extração, t
 boletim, dossiê) por presença e digest de artefato, e o estado da extração paga
 (`idle`, `queued`, `running`, `done`, `failed`). É por aqui que o cliente acompanha o
 comando assíncrono da extração.
+
+Traz também `contracted`, o **regime de conferência** da rodada (ADR-0048, decisão 9):
+`origin` (`none` | `signed_estimate`), `estimate_round_id`, `estimate_digest` e, com origem
+assinada, `code_count`. Rodada sem origem assinada continua conferindo o boletim contra o
+consolidado **fabricado** a partir da própria medição, com saldo, período e código fora do
+contrato não verificados — e isso é declarado, não deduzido da ausência de um campo: as duas
+rodadas não podem parecer iguais.
 
 ### `POST /v1/valuation-rounds/{round_id}/plate`
 

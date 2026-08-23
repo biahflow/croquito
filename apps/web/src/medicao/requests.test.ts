@@ -155,6 +155,42 @@ describe("createRoundBody", () => {
       contract_label: "Contrato 05/2024",
     });
   });
+
+  /**
+   * A obra NÃO vai no corpo quando a origem é o orçamento assinado, e a omissão é a regra:
+   * ela vem do conteúdo aprovado e o servidor recusa quem a declarar. Aceitá-la abriria a
+   * porta para a rodada medir uma praça diferente da que foi orçada (F-036, ADR-0048).
+   */
+  it("na origem por orçamento assinado, a obra e o endereço não são declarados", () => {
+    const body = createRoundBody({
+      worksiteKey: "praca-que-nao-deve-ir",
+      worksiteName: "Praça que não deve ir",
+      estimateRoundId: "0197f2a0-0000-7000-8000-0000000000cc",
+      periodNumber: "1",
+      referenceLabel: "1ª MEDIÇÃO",
+      address: "Rua que não deve ir, 100",
+    });
+
+    expect(body).toEqual({
+      estimate_round_id: "0197f2a0-0000-7000-8000-0000000000cc",
+      period_number: 1,
+      reference_label: "1ª MEDIÇÃO",
+    });
+  });
+
+  it("na origem por orçamento, o rótulo do contrato continua sendo da rodada", () => {
+    const body = createRoundBody({
+      worksiteKey: "",
+      worksiteName: "",
+      estimateRoundId: "0197f2a0-0000-7000-8000-0000000000cc",
+      periodNumber: "2",
+      referenceLabel: "2ª MEDIÇÃO",
+      contractLabel: "Contrato 05/2024",
+    });
+
+    expect(body.contract_label).toBe("Contrato 05/2024");
+    expect(body.worksite_key).toBeUndefined();
+  });
 });
 
 describe("codeSearchTerm", () => {

@@ -1,14 +1,16 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { User } from "oidc-client-ts";
-import type { ApprovalState, OverlayResponse } from "./api";
+import type { ApprovalState, OverlayResponse, ValuationOrigin } from "./api";
 import {
   AtoDeAprovacao,
   BannerRodadaMudou,
   MedicaoApp,
+  OrigemDoOrcamento,
   OverlayDoTakeoff,
   PainelSemAcesso,
   ProgressoExportacao,
+  RegimeDeConferencia,
   RegistroDaAprovacao,
   TelaAuditoriaReprovada,
 } from "./MedicaoApp";
@@ -394,5 +396,160 @@ describe("BannerRodadaMudou", () => {
     // Nada do vocabulário do servidor de arquivos: a guarda é de VERSÃO da rodada.
     expect(html).not.toContain("digest");
     expect(html).not.toContain("arquivos");
+  });
+});
+
+
+/**
+ * A escolha da origem da rodada (F-036, ADR-0048).
+ *
+ * O que estes testes protegem é a distinção entre três estados que a tela não pode
+ * confundir: "ainda não li", "não há" e "há, mas não serve ainda".
+ */
+describe("OrigemDoOrcamento", () => {
+  const assinado: ValuationOrigin = {
+    round_id: "0197f2a0-0000-7000-8000-0000000000c1",
+    worksite_name: "PRACA SINTETICA OESTE",
+    reference_label: "DEMANDA 2026/014",
+    signature: "signed",
+    approved_by: "aprovadora-sintetica",
+    approved_at: "2026-08-22T12:00:00+00:00",
+    estimate_digest: "9".repeat(64),
+    code_count: 34,
+    total_amount: "418902.17",
+  };
+
+  it("antes da primeira resposta não afirma nem lista nem ausência", () => {
+    const html = renderToStaticMarkup(
+      <OrigemDoOrcamento origens={null} escolhida={null} onEscolher={() => {}} />,
+    );
+
+    expect(html).toContain("Lendo os orçamentos assinados");
+    expect(html).not.toContain("Nenhum orçamento assinado");
+  });
+
+  it("sem orçamento assinado, diz a ausência e nomeia a alternativa", () => {
+    const html = renderToStaticMarkup(
+      <OrigemDoOrcamento origens={[]} escolhida={null} onEscolher={() => {}} />,
+    );
+
+    expect(html).toContain("Nenhum orçamento assinado sob demanda contratada");
+    expect(html).toContain("não confere contra contratado nenhum");
+  });
+
+  it("mostra quem assinou, quantos códigos e o total, com o digest abreviado", () => {
+    const html = renderToStaticMarkup(
+      <OrigemDoOrcamento
+        origens={[assinado]}
+        escolhida={null}
+        onEscolher={() => {}}
+      />,
+    );
+
+    expect(html).toContain("PRACA SINTETICA OESTE");
+    expect(html).toContain("Assinado por aprovadora-sintetica");
+    expect(html).toContain("34 códigos");
+    expect(html).toContain("Assinado");
+    expect(html).toContain("digest");
+    // O digest aparece abreviado, nunca por extenso na linha.
+    expect(html).not.toContain("9".repeat(64));
+  });
+
+  /**
+   * Esconder faria a pessoa procurar um orçamento que ela sabe existir. Ele aparece, com o
+   * motivo por extenso, e o rádio recusa a escolha.
+   */
+  it("assinatura caduca aparece com o motivo e não pode ser escolhida", () => {
+    const html = renderToStaticMarkup(
+      <OrigemDoOrcamento
+        origens={[{ ...assinado, signature: "stale" }]}
+        escolhida={null}
+        onEscolher={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Assinatura caduca");
+    expect(html).toContain("Assine a versão atual");
+    expect(html).toContain("disabled");
+  });
+
+  it("orçamento sem assinatura aparece com o motivo próprio", () => {
+    const html = renderToStaticMarkup(
+      <OrigemDoOrcamento
+        origens={[
+          { ...assinado, signature: "unsigned", approved_by: null, estimate_digest: null },
+        ]}
+        escolhida={null}
+        onEscolher={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Sem assinatura");
+    expect(html).toContain("Ainda não foi assinado");
+    expect(html).not.toContain("Assinado por");
+  });
+
+  /**
+   * A procedência só existe depois da escolha, e ela é LIDA: obra, catálogo e contratado
+   * aparecem como fato do orçamento, nunca como campo a preencher.
+   */
+  it("escolhido, mostra a procedência e diz que ela não é digitada", () => {
+    const html = renderToStaticMarkup(
+      <OrigemDoOrcamento
+        origens={[assinado]}
+        escolhida={assinado.round_id}
+        onEscolher={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Contratado");
+    expect(html).toContain("Saldo inicial");
+    expect(html).toContain("igual ao contratado");
+    expect(html).toContain("não são digitados");
+    expect(html).not.toContain("<input type=\"text\"");
+  });
+});
+
+
+/**
+ * Decisão 9 do ADR-0048: rodada com vínculo e rodada sem vínculo têm garantias diferentes e
+ * NÃO podem parecer iguais. Os dois testes abaixo leem o mesmo lugar da tela e exigem que
+ * ele diga coisas opostas.
+ */
+describe("RegimeDeConferencia", () => {
+  it("com origem assinada, nomeia o que passa a ser recusado", () => {
+    const html = renderToStaticMarkup(
+      <RegimeDeConferencia
+        contracted={{
+          origin: "signed_estimate",
+          estimate_round_id: "0197f2a0-0000-7000-8000-0000000000c1",
+          estimate_digest: "9".repeat(64),
+          code_count: 34,
+        }}
+      />,
+    );
+
+    expect(html).toContain("Confere contra o orçamento assinado");
+    expect(html).toContain("34 códigos");
+    expect(html).toContain("acima do saldo");
+    expect(html).toContain("digest do conteúdo assinado");
+    expect(html).not.toContain("9".repeat(64) + "<");
+  });
+
+  it("sem origem assinada, declara o que NÃO é verificado", () => {
+    const html = renderToStaticMarkup(
+      <RegimeDeConferencia
+        contracted={{
+          origin: "none",
+          estimate_round_id: null,
+          estimate_digest: null,
+        }}
+      />,
+    );
+
+    expect(html).toContain("Sem contratado de origem");
+    expect(html).toContain("não são verificados aqui");
+    expect(html).toContain('role="alert"');
+    expect(html).not.toContain("Confere contra o orçamento assinado");
   });
 });

@@ -117,6 +117,32 @@ construído aqui.
    total? O mock mostra só o total — a tabela por código existe na etapa do boletim, e
    repeti-la aqui duplicaria a leitura antes de haver o que comparar.
 
+## Divergências entre a revisão aprovada e o que foi construído
+
+Conferidas estado a estado na T3 (2026-08-23), com as capturas ao lado da tela. Três, e as
+duas primeiras têm a mesma raiz — **o mock desenhou dado que nenhuma rota devolve**:
+
+1. **A procedência não nomeia o catálogo.** O estado 1 desenha "SCO 2026-06 (do orçamento)";
+   a tela mostra "o mesmo do orçamento". `GET /v1/valuation-origins` devolve o que identifica
+   o orçamento (obra, referência, assinatura, códigos, total), não a data-base do catálogo
+   dele. Trazer o rótulo exigiria abrir cada orçamento na listagem, e a tela preferiu dizer
+   a verdade curta a inventar a longa.
+
+2. **A recusa de assinatura caduca aparece NO ITEM, não numa faixa no topo.** O estado 4
+   desenha a faixa `.aviso-fixo` acima da lista. O construído põe o motivo dentro do próprio
+   item, com o rádio desabilitado, e reserva a faixa do topo para a recusa que vem do
+   servidor. A razão é de leitura: a faixa no topo fala de "este orçamento" sem dizer qual,
+   e com mais de um item na lista ela deixa de identificar o seu alvo.
+
+3. **O padrão da escolha segue o dado, não a captura.** O estado 1 mostra "De um orçamento
+   assinado" marcado. A tela nasce em "do zero" e só troca quando existe ao menos um
+   orçamento **assinado** — que é exatamente o que o estado 2 do próprio pacote desenha, com
+   a opção desabilitada. As duas capturas juntas descrevem um comportamento condicional que
+   nenhuma delas mostra sozinha.
+
+Nenhuma delas muda a composição visual aprovada: são o mesmo layout, os mesmos selos e os
+mesmos tokens. Se alguma for contestada, é revisão nova do pacote, com registro próprio.
+
 ## Transcrição do ato
 
 Aprovação dada por Daniel Campos em 2026-08-23, depois de o pacote e as capturas serem

@@ -1056,5 +1056,94 @@ p {
   color: var(--ink-secondary);
 }
 
+/* Origem da rodada ---------------------------------------------------------------- */
+/* F-036: escolher entre abrir do zero e abrir de um orçamento assinado. As três
+   composições abaixo são as únicas coisas novas do pacote de design aprovado, e todas
+   montam sobre tokens que já existem — nenhuma cor, tipografia ou raio novo. */
+
+.origem-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.origem-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+/* O escolhido usa o par verde que a folha já tem para o aceite; a borda muda junto do
+   fundo, para que a escolha não dependa só de preenchimento. */
+.origem-item[data-escolhido="sim"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-text);
+}
+
+/* Origem indisponível continua LEGÍVEL: quem procura um orçamento que sabe existir
+   precisa achá-lo e ler o motivo, e um item apagado demais some da leitura. */
+.origem-item[data-disponivel="nao"] {
+  opacity: 0.72;
+}
+
+.origem-corpo {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.9rem;
+}
+
+.origem-titulo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Digest em monoespaçada: é identificador para conferir caractere a caractere, e a
+   proporcional embaralha 0/O e 1/l justamente onde isso importa. */
+.digest {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.76rem;
+  color: var(--ink-secondary);
+}
+
+/* O que veio do orçamento assinado, LIDO e não digitado: é a tradução visual da regra de
+   que nenhum número do consolidado é informado por humano. */
+.procedencia {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 0;
+  padding: 12px;
+  background: var(--surface-sunken);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.procedencia div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.procedencia dt {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.procedencia dd {
+  margin: 0;
+}
+
 /* Fecha o `.jornada-medicao` aberto no topo do arquivo. */
 }

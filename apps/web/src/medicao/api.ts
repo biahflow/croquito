@@ -198,6 +198,14 @@ export type RoundStateBulletin = {
   approval: ApprovalState;
 };
 
+/** O regime de conferência da rodada; sem origem assinada, saldo e período não são checados. */
+export type RoundStateContracted = {
+  origin: "none" | "signed_estimate";
+  estimate_round_id: string | null;
+  estimate_digest: string | null;
+  code_count?: number | null;
+};
+
 export type RoundState = {
   round_id: string;
   version: number;
@@ -220,6 +228,14 @@ export type RoundState = {
       entries?: number;
     };
   };
+  /**
+   * Contra o que esta rodada confere (F-036, ADR-0048 decisão 9).
+   *
+   * `origin: "none"` é o estado de sempre e vem DECLARADO, não deduzido da ausência de um
+   * campo: quem lê a rodada precisa saber que ali não se confere saldo, e não descobrir isso
+   * por omissão. As duas rodadas não podem parecer iguais.
+   */
+  contracted: RoundStateContracted;
   artifacts: Record<string, string>;
   plate: RoundStatePlate;
   extraction: RoundStateExtraction;
@@ -383,10 +399,40 @@ type PresignedUpload = {
   expires_at: string;
 };
 
+/**
+ * Estado da assinatura de um orçamento que pode originar uma medição (F-036).
+ *
+ * Três estados por extenso, e não um booleano, porque cada um leva a um ato diferente:
+ * `signed` abre a medição, `stale` pede assinar a versão atual, `unsigned` pede assinar.
+ */
+export type OriginSignature = "signed" | "stale" | "unsigned";
+
+/** Um orçamento oferecido como origem, como `GET /v1/valuation-origins` o devolve. */
+export type ValuationOrigin = {
+  round_id: string;
+  worksite_name: string;
+  reference_label: string;
+  signature: OriginSignature;
+  approved_by: string | null;
+  approved_at: string | null;
+  /** Digest do conteúdo ASSINADO; a tela mostra abreviado, o servidor guarda inteiro. */
+  estimate_digest: string | null;
+  code_count: number;
+  total_amount: string;
+};
+
+/**
+ * O rascunho da rodada nova, nas duas origens (F-036, ADR-0048).
+ *
+ * `catalogUploadId` e `estimateRoundId` são exclusivos, e a obra só existe na primeira: na
+ * origem assinada ela vem do conteúdo aprovado, e o servidor **recusa** declará-la — aceitar
+ * abriria a porta para medir uma praça diferente da que foi orçada.
+ */
 export type CreateRoundDraft = {
   worksiteKey: string;
   worksiteName: string;
-  catalogUploadId: string;
+  catalogUploadId?: string;
+  estimateRoundId?: string;
   referenceLabel: string;
   periodNumber: string;
   address?: string;
@@ -533,6 +579,21 @@ export function createRound(
     "/v1/valuation-rounds",
     accessToken,
     createRoundBody(draft),
+  );
+}
+
+/**
+ * Orçamentos que podem originar uma medição.
+ *
+ * Mora sob a jornada da MEDIÇÃO (`/v1/valuation-origins`), e não sob a do orçamento: um
+ * tenant com o orçamento indisponível e a medição liberada continua abrindo medição.
+ */
+export function listValuationOrigins(
+  accessToken: string,
+): Promise<{ items: ValuationOrigin[] }> {
+  return apiJson<{ items: ValuationOrigin[] }>(
+    "/v1/valuation-origins",
+    accessToken,
   );
 }
 

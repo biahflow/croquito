@@ -140,6 +140,36 @@ export function stageLabel(stage: string): string {
   return STAGE_LABELS[stage] ?? stage;
 }
 
+/**
+ * Estado da assinatura de um orçamento oferecido como origem (F-036).
+ *
+ * Texto dentro da pastilha, e não só cor: é a regra do design system, e aqui ela tem peso
+ * extra porque a diferença entre "caduca" e "sem assinatura" muda o próximo ato.
+ */
+const ORIGIN_SIGNATURE_LABELS: LookupTable = {
+  signed: "Assinado",
+  stale: "Assinatura caduca",
+  unsigned: "Sem assinatura",
+};
+
+export function originSignatureLabel(signature: string): string {
+  return ORIGIN_SIGNATURE_LABELS[signature] ?? signature;
+}
+
+/** Por que este orçamento não serve ainda, na língua de quem vai resolver. */
+const ORIGIN_SIGNATURE_HINTS: LookupTable = {
+  stale:
+    "Foi remontado depois de assinado, então a assinatura não vale para o conteúdo atual. " +
+    "Assine a versão atual para abrir a medição a partir dela.",
+  unsigned:
+    "Ainda não foi assinado. Sem conteúdo aprovado não há contratado de onde abrir a " +
+    "medição.",
+};
+
+export function originSignatureHint(signature: string): string | null {
+  return ORIGIN_SIGNATURE_HINTS[signature] ?? null;
+}
+
 /** Estado da leitura automática da legenda, por extenso. */
 const EXTRACTION_STATUS_LABELS: LookupTable = {
   idle: "não disparada",
@@ -220,6 +250,11 @@ const ERROR_MESSAGES: LookupTable = {
     "O seu usuário não tem o papel de orçamentista neste ambiente. Peça a quem administra o ambiente antes de decidir.",
   IDEMPOTENCY_KEY_REUSED:
     "Esta chave de idempotência já foi usada com outro conteúdo; recarregue o estado e refaça o ato.",
+  // Abertura a partir de orçamento assinado (F-036, ADR-0048).
+  ESTIMATE_ORIGIN_REGIME_REQUIRED:
+    "Só orçamento sob demanda contratada vira contratado da medição: fora desse regime existem a licitação e o deságio entre o orçamento e o contrato.",
+  ESTIMATE_ORIGIN_NOT_SIGNED:
+    "Este orçamento não tem assinatura válida; sem conteúdo aprovado não há contratado de onde abrir a medição.",
   // Etapas da rodada: a cadeia tem ordem, e sair dela é caminho normal do orçamentista.
   ROUND_STAGE_NOT_READY:
     "Esta etapa ainda não está disponível nesta rodada; conclua a etapa anterior antes de continuar.",

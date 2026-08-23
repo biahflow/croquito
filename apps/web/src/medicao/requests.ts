@@ -49,22 +49,35 @@ export function worksiteKeyError(value: string): string | null {
 }
 
 /**
- * Corpo do `POST /v1/valuation-rounds`. `period_number` é o único inteiro do contrato; o
- * catálogo entra pelo `upload_id` do presign, nunca embutido no JSON.
+ * Corpo do `POST /v1/valuation-rounds`, nas DUAS origens (F-036, ADR-0048).
+ *
+ * `period_number` é o único inteiro do contrato. Na origem por upload, o catálogo entra pelo
+ * `upload_id` do presign, nunca embutido no JSON.
+ *
+ * Na origem por **orçamento assinado**, a obra e o endereço **não vão no corpo** — e a
+ * omissão é a regra, não uma economia: eles vêm do conteúdo aprovado, e o servidor recusa
+ * quem os declarar. Aceitá-los abriria a porta para a rodada medir uma praça diferente da
+ * que foi orçada, e nenhum número do consolidado é informado por humano.
  */
 export function createRoundBody(
   draft: CreateRoundDraft,
 ): Record<string, string | number> {
   const body: Record<string, string | number> = {
-    worksite_key: draft.worksiteKey.trim(),
-    worksite_name: draft.worksiteName.trim(),
-    catalog_upload_id: draft.catalogUploadId,
     reference_label: draft.referenceLabel.trim(),
     period_number: Number(draft.periodNumber.trim()),
   };
-  const address = draft.address?.trim();
-  if (address) {
-    body.address = address;
+  if (draft.estimateRoundId) {
+    body.estimate_round_id = draft.estimateRoundId;
+  } else {
+    body.worksite_key = draft.worksiteKey.trim();
+    body.worksite_name = draft.worksiteName.trim();
+    if (draft.catalogUploadId) {
+      body.catalog_upload_id = draft.catalogUploadId;
+    }
+    const address = draft.address?.trim();
+    if (address) {
+      body.address = address;
+    }
   }
   const contractLabel = draft.contractLabel?.trim();
   if (contractLabel) {

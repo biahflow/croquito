@@ -46,6 +46,11 @@ function estado(overrides: {
     contract_label: null,
     revision_id: "0197f2a0-0000-7000-8000-0000000000f1",
     revision_version: 1,
+    contracted: {
+      origin: "none",
+      estimate_round_id: null,
+      estimate_digest: null,
+    },
     catalog: {
       source_sha256: "c".repeat(64),
       summary: { source_label: "CATALOGO SINTETICO", entries: 5 },

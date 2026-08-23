@@ -24,6 +24,7 @@ import {
   getTakeoff,
   getTakeoffOverlay,
   listRounds,
+  listValuationOrigins,
   postApprove,
   postBulletinExport,
   postCalcBuild,
@@ -46,6 +47,7 @@ import {
   type SuggestionsResponse,
   type TakeoffItem,
   type TakeoffResponse,
+  type ValuationOrigin,
 } from "./api";
 import { signOut } from "../auth";
 import { BUSCA_DEBOUNCE_MS, consultaIncremental, resumoDaBusca } from "./busca";
@@ -90,6 +92,8 @@ import {
   MENSAGEM_MEDICAO_APROVADA,
   MENSAGEM_RODADA_MUDOU,
   MENSAGEM_SEM_ACESSO,
+  originSignatureHint,
+  originSignatureLabel,
   recipeLabel,
   stageLabel,
   unitLabel,
@@ -156,6 +160,171 @@ const EMPTY_ROUND_FORM = {
   address: "",
   contractLabel: "",
 };
+
+/**
+ * A escolha do orçamento assinado que vai originar a medição (F-036, ADR-0048).
+ *
+ * Três estados, e nenhum deles inventa o outro: `null` é "ainda lendo", lista vazia é "não
+ * há", e a lista traz também os orçamentos que ainda não servem — com o motivo por extenso,
+ * porque quem procura um orçamento que sabe existir precisa achá-lo e entender.
+ *
+ * Obra, catálogo e contratado aparecem como procedência LIDA, nunca como campo: é a tradução
+ * visual da regra de que nenhum número do consolidado é informado por humano.
+ */
+export function OrigemDoOrcamento({
+  origens,
+  escolhida,
+  onEscolher,
+}: {
+  origens: ValuationOrigin[] | null;
+  escolhida: string | null;
+  onEscolher: (roundId: string) => void;
+}) {
+  if (origens === null) {
+    return <p className="campo-dica">Lendo os orçamentos assinados…</p>;
+  }
+  if (origens.length === 0) {
+    return (
+      <p className="campo-dica">
+        Nenhum orçamento assinado sob demanda contratada neste cliente. Uma medição aberta
+        do zero funciona como hoje — ela só não confere contra contratado nenhum, e a rodada
+        dirá isso.
+      </p>
+    );
+  }
+  const selecionada = origens.find((origem) => origem.round_id === escolhida) ?? null;
+  return (
+    <>
+      <div className="campo">
+        <span>Orçamento assinado</span>
+        <ul className="origem-lista">
+          {origens.map((origem) => {
+            const disponivel = origem.signature === "signed";
+            const motivo = originSignatureHint(origem.signature);
+            return (
+              <li
+                key={origem.round_id}
+                className="origem-item"
+                data-escolhido={origem.round_id === escolhida ? "sim" : "nao"}
+                data-disponivel={disponivel ? "sim" : "nao"}
+              >
+                <input
+                  type="radio"
+                  name="orcamento-de-origem"
+                  checked={origem.round_id === escolhida}
+                  disabled={!disponivel}
+                  onChange={() => onEscolher(origem.round_id)}
+                  aria-label={`${origem.worksite_name} — ${origem.reference_label}`}
+                />
+                <span className="origem-corpo">
+                  <span className="origem-titulo">
+                    <strong>
+                      {origem.worksite_name} — {origem.reference_label}
+                    </strong>
+                    <span
+                      className={`selo ${disponivel ? "selo-ok" : "selo-atencao"}`}
+                    >
+                      {originSignatureLabel(origem.signature)}
+                    </span>
+                    <span className="selo selo-neutro">Demanda sob contrato</span>
+                  </span>
+                  <span className="campo-dica">
+                    {origem.approved_by === null
+                      ? `${origem.code_count} códigos · ${formatMoneyText(origem.total_amount)}`
+                      : `Assinado por ${origem.approved_by}${
+                          origem.approved_at === null
+                            ? ""
+                            : ` em ${formatTimestamp(origem.approved_at)}`
+                        } · ${origem.code_count} códigos · ${formatMoneyText(origem.total_amount)}`}
+                  </span>
+                  {origem.estimate_digest === null ? null : (
+                    <span className="digest">
+                      digest {shortDigest(origem.estimate_digest)}
+                    </span>
+                  )}
+                  {motivo === null ? null : (
+                    <span className="campo-aviso">{motivo}</span>
+                  )}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      {selecionada === null ? null : (
+        <>
+          <dl className="procedencia">
+            <div>
+              <dt>Obra</dt>
+              <dd>{selecionada.worksite_name}</dd>
+            </div>
+            <div>
+              <dt>Catálogo</dt>
+              <dd>o mesmo do orçamento</dd>
+            </div>
+            <div>
+              <dt>Contratado</dt>
+              <dd>
+                {selecionada.code_count} códigos ·{" "}
+                {formatMoneyText(selecionada.total_amount)}
+              </dd>
+            </div>
+            <div>
+              <dt>Saldo inicial</dt>
+              <dd>igual ao contratado</dd>
+            </div>
+          </dl>
+          <p className="campo-dica">
+            A obra, o catálogo e o contratado vêm do orçamento assinado e não são digitados
+            aqui. O que a rodada ainda precisa é o número da medição e a referência.
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * Contra o que esta rodada confere (F-036, ADR-0048 decisão 9).
+ *
+ * As duas variantes são o MESMO lugar da tela dizendo coisas opostas, e é essa a exigência
+ * do ADR: rodada com vínculo e rodada sem vínculo têm garantias diferentes e não podem
+ * parecer iguais. A ausência de contratado é DECLARADA, não deduzida de um campo que some —
+ * quem lê precisa saber que ali não se confere saldo, e não descobrir isso por omissão.
+ */
+export function RegimeDeConferencia({
+  contracted,
+}: {
+  contracted: RoundState["contracted"];
+}) {
+  if (contracted.origin !== "signed_estimate") {
+    return (
+      <p className="aviso-fixo aviso-inline" role="alert">
+        <span className="selo selo-neutro">Sem contratado de origem</span> Esta rodada não
+        foi aberta a partir de um orçamento assinado. Ela confere o boletim contra o catálogo
+        instalado, e não contra um contratado: saldo, período e código fora do contrato não
+        são verificados aqui.
+      </p>
+    );
+  }
+  const codigos = contracted.code_count;
+  return (
+    <div className="decisao-registrada">
+      <p>
+        <span className="selo selo-ok">Confere contra o orçamento assinado</span> O
+        contratado desta medição vem de um orçamento assinado
+        {codigos === undefined || codigos === null ? "" : `, com ${codigos} códigos`}. Código
+        fora do contratado, quantidade acima do saldo ou preço diferente do assinado recusam
+        o fechamento desta medição.
+      </p>
+      {contracted.estimate_digest === null ? null : (
+        <p className="digest" title={contracted.estimate_digest}>
+          digest do conteúdo assinado {shortDigest(contracted.estimate_digest)}
+        </p>
+      )}
+    </div>
+  );
+}
 
 /**
  * Leitura OBSERVACIONAL: a falha dela não derruba o carregamento da rodada.
@@ -901,6 +1070,15 @@ export function MedicaoApp({
   const [rounds, setRounds] = useState<RoundSummary[] | null>(null);
   const [roundsCursor, setRoundsCursor] = useState<string | null>(null);
   const [roundForm, setRoundForm] = useState(EMPTY_ROUND_FORM);
+  // `null` é "ainda não li", e lista vazia é "não há orçamento assinado". Tratar os dois
+  // como o mesmo faria a tela afirmar ausência antes de saber.
+  const [origens, setOrigens] = useState<ValuationOrigin[] | null>(null);
+  const [origemEscolhida, setOrigemEscolhida] = useState<string | null>(null);
+  // Nasce em "do zero", que é o caminho que sempre existiu, e só vira a origem por
+  // orçamento quando existe pelo menos um ASSINADO para escolher. O padrão segue o dado, e
+  // não o otimismo: sem orçamento assinado, oferecer essa origem como padrão esconderia o
+  // único caminho que funciona.
+  const [origemDoOrcamento, setOrigemDoOrcamento] = useState(false);
   const [catalogFile, setCatalogFile] = useState<File | null>(null);
 
   // Prancha (upload e leitura automática).
@@ -980,6 +1158,29 @@ export function MedicaoApp({
       current === null ? current : { ...current, version: proxima },
     );
   }, []);
+
+  /**
+   * Orçamentos que podem originar uma medição (F-036).
+   *
+   * Observacional: a falha aqui NÃO derruba a listagem de rodadas. Sem a lista, a tela cai
+   * na origem por upload, que é o caminho que sempre existiu — perder a comodidade é melhor
+   * que perder a jornada.
+   */
+  const carregarOrigens = useCallback(async () => {
+    const token = tokenDaSessao();
+    if (token === null) {
+      return;
+    }
+    try {
+      const resposta = await listValuationOrigins(token);
+      setOrigens(resposta.items);
+      if (resposta.items.some((origem) => origem.signature === "signed")) {
+        setOrigemDoOrcamento(true);
+      }
+    } catch {
+      setOrigens([]);
+    }
+  }, [tokenDaSessao]);
 
   const carregarRodadas = useCallback(async () => {
     const token = tokenDaSessao();
@@ -1077,10 +1278,11 @@ export function MedicaoApp({
     }
     if (rodada === "") {
       void carregarRodadas();
+      void carregarOrigens();
       return;
     }
     void carregarEstado();
-  }, [autenticado, rodada, carregarEstado, carregarRodadas]);
+  }, [autenticado, rodada, carregarEstado, carregarRodadas, carregarOrigens]);
 
   const abrirRodada = (proxima: string) => {
     setState(null);
@@ -1112,17 +1314,36 @@ export function MedicaoApp({
    */
   const criarRodada = async () => {
     const token = tokenDaSessao();
-    if (token === null || catalogFile === null) {
-      return;
-    }
-    const keyErro = worksiteKeyError(roundForm.worksiteKey);
-    if (keyErro !== null) {
-      setAlertMessage(keyErro);
+    if (token === null) {
       return;
     }
     setSubmitting(true);
     setAlertMessage(null);
     try {
+      if (origemDoOrcamento) {
+        if (origemEscolhida === null) {
+          return;
+        }
+        // Obra, catálogo e contratado vêm do conteúdo assinado; declará-los aqui é recusado
+        // pelo servidor, e é por isso que o corpo não os leva.
+        const created = await createRound(token, {
+          ...roundForm,
+          estimateRoundId: origemEscolhida,
+        });
+        setRoundForm(EMPTY_ROUND_FORM);
+        setOrigemEscolhida(null);
+        setToast("Rodada aberta com o contratado do orçamento assinado.");
+        abrirRodada(created.round_id);
+        return;
+      }
+      if (catalogFile === null) {
+        return;
+      }
+      const keyErro = worksiteKeyError(roundForm.worksiteKey);
+      if (keyErro !== null) {
+        setAlertMessage(keyErro);
+        return;
+      }
       const catalogUploadId = await uploadCatalog(token, catalogFile);
       const created = await createRound(token, {
         ...roundForm,
@@ -2020,6 +2241,40 @@ export function MedicaoApp({
                 void criarRodada();
               }}
             >
+              <fieldset className="acoes">
+                <legend className="campo-dica">De onde vem o contratado</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="origem-da-rodada"
+                    checked={origemDoOrcamento}
+                    disabled={
+                      origens !== null &&
+                      !origens.some((origem) => origem.signature === "signed")
+                    }
+                    onChange={() => setOrigemDoOrcamento(true)}
+                  />
+                  De um orçamento assinado
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="origem-da-rodada"
+                    checked={!origemDoOrcamento}
+                    onChange={() => setOrigemDoOrcamento(false)}
+                  />
+                  Do zero, com catálogo por upload
+                </label>
+              </fieldset>
+              {origemDoOrcamento ? (
+                <OrigemDoOrcamento
+                  origens={origens}
+                  escolhida={origemEscolhida}
+                  onEscolher={setOrigemEscolhida}
+                />
+              ) : null}
+              {origemDoOrcamento ? null : (
+                <>
               <p>
                 O catálogo de preços é instalado na criação e é imutável na rodada: trocar
                 de catálogo é abrir outra rodada.
@@ -2069,6 +2324,8 @@ export function MedicaoApp({
                   required
                 />
               </label>
+                </>
+              )}
               <label className="campo">
                 Número da medição
                 <input
@@ -2101,6 +2358,8 @@ export function MedicaoApp({
                   required
                 />
               </label>
+              {origemDoOrcamento ? null : (
+                <>
               <label className="campo">
                 Endereço (opcional)
                 <input
@@ -2127,10 +2386,17 @@ export function MedicaoApp({
                   }
                 />
               </label>
+                </>
+              )}
               <button
                 type="submit"
                 className="botao-primario"
-                disabled={submitting || catalogFile === null}
+                disabled={
+                  submitting ||
+                  (origemDoOrcamento
+                    ? origemEscolhida === null
+                    : catalogFile === null)
+                }
               >
                 {submitting ? "Abrindo…" : "Abrir rodada"}
               </button>
@@ -2301,6 +2567,7 @@ export function MedicaoApp({
                     sha256 {shortDigest(state.catalog.source_sha256)}
                   </span>
                 </p>
+                <RegimeDeConferencia contracted={state.contracted} />
                 <p>
                   Prancha: {state.plate.present ? "enviada" : "ausente"} · leitura da
                   legenda: {extractionStatusLabel(state.extraction.status)}
