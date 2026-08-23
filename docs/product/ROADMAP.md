@@ -2,8 +2,9 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-23 (**F-036 executada** — o orçamento assinado vira o contratado da
-medição, e seis guardrails que não podiam disparar passam a poder; `READY_FOR_HUMAN_REVIEW`.
+Última revisão: 2026-08-23 (**F-036 `DONE`** — o orçamento assinado vira o contratado da
+medição, e seis guardrails que não podiam disparar passam a poder; entrega aceita por ato
+humano.
 Antes: faixa F-011..F-019 auditada contra o código: **F-011 encerrada
 `DONE`** por já estar entregue quando foi registrada, F-015 e F-017 encolhidas ao que de fato
 sobrou, e **F-018 e F-019 ganharam Feature Contract**; F-034 **aceita por ato humano** — `DONE`; F-036 e F-030 ganharam
@@ -67,7 +68,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | DONE | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
 | F-035 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
-| F-036 | HIGH | READY_FOR_HUMAN_REVIEW | [A medição do orçamento aprovado: consolidado contratual de origem](../features/F-036-vinculo-orcamento-medicao/feature.md) |
+| F-036 | HIGH | DONE | [A medição do orçamento aprovado: consolidado contratual de origem](../features/F-036-vinculo-orcamento-medicao/feature.md) |
 | F-037 | HIGH | READY_FOR_HUMAN_REVIEW | [Acervo central de catálogos de preço](../features/F-037-acervo-de-catalogos/feature.md) |
 | F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 | F-031 | MEDIUM | READY_FOR_HUMAN_REVIEW | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — branch isolada `feat/f-031-value-events`, não integra no MVP |
@@ -489,8 +490,9 @@ planejamento foram cumpridos em 2026-08-22, em atos separados: o
 [ADR-0046](../adr/0046-aprovacao-do-orcamento-base.md) foi **aceito** — ele autoriza o
 orçamento a ter aprovação própria contra a leitura literal da decisão 6 do ADR-0027 — e o
 Design Approval Package foi **aprovado** (revisão 1). A feature foi **executada na mesma data**, das quatro tasks à tela, e
-está `READY_FOR_HUMAN_REVIEW`: cinco dos seis guardrails passam a disparar com teste próprio, o
-sexto tem teste que prova a inércia declarada, e a cadeia orçamento → medição fecha no e2e.
+teve a **entrega aceita por ato humano em 2026-08-23**: cinco dos seis guardrails passam a
+disparar com teste próprio, o sexto tem teste que prova a inércia declarada, e a cadeia
+orçamento → medição fecha no e2e. Faltam merge, deploy e a migração `0016` no hospedado.
 Evidência em [evidence.md](../features/F-036-vinculo-orcamento-medicao/evidence.md).
 Contrato em [F-035](../features/F-035-aprovacao-do-orcamento/feature.md).
 
@@ -513,8 +515,9 @@ ADR-0027 continua de pé. Os dois gates humanos que precediam o planejamento for
 foi **aceito** — ele fixa o preço do consolidado sem BDI, a agregação por código e a recusa de
 BDI sob o regime, que é um erro de dinheiro existente hoje — e o Design Approval Package foi
 **aprovado** (revisão 1). A feature foi **executada na mesma data**, das quatro tasks à tela, e
-está `READY_FOR_HUMAN_REVIEW`: cinco dos seis guardrails passam a disparar com teste próprio, o
-sexto tem teste que prova a inércia declarada, e a cadeia orçamento → medição fecha no e2e.
+teve a **entrega aceita por ato humano em 2026-08-23**: cinco dos seis guardrails passam a
+disparar com teste próprio, o sexto tem teste que prova a inércia declarada, e a cadeia
+orçamento → medição fecha no e2e. Faltam merge, deploy e a migração `0016` no hospedado.
 Evidência em [evidence.md](../features/F-036-vinculo-orcamento-medicao/evidence.md). Contrato em
 [F-036](../features/F-036-vinculo-orcamento-medicao/feature.md).
 

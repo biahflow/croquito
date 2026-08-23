@@ -1,7 +1,7 @@
 # F-036 — Evidência de execução
 
 feature_id: F-036  
-status: `READY_FOR_HUMAN_REVIEW`  
+status: `DONE` (entrega aceita por ato humano em 2026-08-23)  
 data: 2026-08-23
 
 ## 1. Gates humanos
@@ -12,6 +12,7 @@ data: 2026-08-23
 | **ADR-0048** | **Aceito por ato humano em 2026-08-23** ([ADR-0048](../../adr/0048-consolidado-contratual-do-orcamento-assinado.md), `Accepted`) |
 | **Design Approval Package** | **Aprovado por ato humano em 2026-08-23**, revisão 1 ([mock/README.md](mock/README.md)) |
 | Migração `0016` no hospedado | **Pendente** — ato de deploy, aplicada pelo job de banco antes da API |
+| **Aceite da entrega** | **Exercido por ato humano em 2026-08-23**, sobre este pacote |
 | Merge e deploy | **Pendente** |
 | Primeira medição real a partir de orçamento assinado | **Pendente** — ato do usuário, pós-deploy |
 
@@ -151,7 +152,7 @@ nenhuma delas o mostre sozinha. Nenhuma muda a composição visual aprovada.
 
 ## 12. Decisões humanas pendentes
 
-1. **Aceitar a entrega** (este pacote) — é o gate que move a feature para `DONE`.
+1. ~~Aceitar a entrega~~ — ✅ **exercido em 2026-08-23**.
 2. **Confirmar as três divergências do pacote de design** (§9).
 3. **Confirmar os códigos de recusa criados na execução**, que o ADR nomeava sem fixar:
    `ESTIMATE_ORIGIN_REGIME_REQUIRED` → `409`, `ESTIMATE_ORIGIN_NOT_SIGNED` → `409`,
