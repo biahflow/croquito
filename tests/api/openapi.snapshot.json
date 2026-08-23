@@ -265,6 +265,22 @@
         "title": "AppliedSpanOut",
         "type": "object"
       },
+      "ApproveEstimateRequest": {
+        "additionalProperties": false,
+        "description": "Aprovação nominal do orçamento-base: o corpo é SÓ a guarda de concorrência (F-035).\n\nNenhum campo de identidade existe aqui, e a ausência é o desenho. `approver_id`,\n`approver_role`, `decided_at` e `decision_id` são carimbo do servidor — o nome que o\norçamento publica é o do subject do JWT, e um campo de \"nome do aprovador\" no corpo\nfaria do ato nominal um campo de texto, assinável em nome de outra pessoa. Quem recusa\nqualquer um deles com `422` é o `extra=\"forbid\"` do `ApiModel`, não uma lista negra.\n\nA observação (`note` do `EstimateApproverDecision`) também não entra, pelo mesmo motivo\ndo irmão da medição: o que ela significaria numa aprovação — ressalva? condição? — é\ndecisão de produto que ninguém tomou, e um campo livre gravado junto de um ato nominal\npareceria ter efeito jurídico sem tê-lo.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "ApproveEstimateRequest",
+        "type": "object"
+      },
       "ApproveRequest": {
         "additionalProperties": false,
         "description": "Mirrors the SceneApproval contract: every verification is stated, never inferred.",
@@ -2921,6 +2937,22 @@
           "base_version"
         ],
         "title": "ExportBulletinRequest",
+        "type": "object"
+      },
+      "ExportEstimateRequest": {
+        "additionalProperties": false,
+        "description": "Despacho da planilha do orçamento: espelho de `ApproveEstimateRequest`.\n\nNão há nada a escolher no despacho — nem formato, nem layout, nem \"exportar assim\nmesmo\". O orçamento publicado é o da cabeça da rodada, o layout é o da prefeitura\n(`default_template()`) e a aprovação válida é precondição, não opção.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "ExportEstimateRequest",
         "type": "object"
       },
       "GpsFix": {
@@ -8565,7 +8597,7 @@
         ]
       },
       "post": {
-        "description": "Monta o orçamento-base, audita a planilha e só então publica as duas coisas.\n\nA ordem é o portão. O `Estimate` é montado pelo domínio, a planilha é gravada num\narquivo temporário, reaberta e reconferida centavo a centavo, e só um relatório\naprovado deixa os bytes irem ao object store e a revisão nascer — auditoria\nreprovada não publica nada (ADR-0038). O `.xlsx` é endereçado pelo digest do\norçamento, de modo que uma montagem nova nunca sobrescreve a planilha que uma\nrevisão anterior ainda referencia.\n\nTrês precondições recusam com `409 ROUND_STAGE_NOT_READY`, porque as três são ORDEM\nda cadeia e não invariante violada: cascata vazia, takeoff ainda não revisado por\ninteiro e nenhuma decisão de código registrada. Confirmação sem fonte citada, código\nfora do catálogo citado e item confirmado sem decisão continuam sendo `422\nDOMAIN_VALIDATION_FAILED` com o código `ESTIMATE_*`/`ASSIGNMENT_*` do domínio.\n\nA identidade da obra vem da RODADA; o corpo carrega só a guarda de concorrência e o\nBDI.",
+        "description": "Monta o orçamento-base — e **só** monta. Publicar virou ato próprio (ADR-0046).\n\nAté a F-035 esta rota montava, auditava e publicava o `.xlsx` num ato só, e por isso\num orçamento nascia despachável: não existia o instante em que ele estava pronto e\nainda não circulava, logo não havia o que aprovar \"antes do despacho\". A auditoria e\na publicação saíram daqui para `POST .../estimate/export`, exatamente como `calc` faz\nna medição — monta e não publica. **É quebra declarada de contrato de rota**: quem\nconsumia a resposta esperando planilha publicada precisa mudar.\n\nGrava também QUEM montou, em coluna própria da revisão. `created_by` não serviria\npara isso: ele é de quem fez o último ato, e depois de uma aprovação já não é quem\nmontou — e é contra quem montou que a rota de aprovação compara o `sub` do JWT.\n\nA aprovação anterior é levada ADIANTE, já caduca (`carry_approval_forward`): ela\ncontinua apontando para o digest antigo, o despacho a recusa com\n`APPROVAL_CONTENT_MISMATCH`, e a leitura mostra os dois digests lado a lado.\nDescartá-la apagaria em silêncio o fato de que alguém assinou.\n\nTrês precondições recusam com `409 ROUND_STAGE_NOT_READY`, porque as três são ORDEM\nda cadeia e não invariante violada: cascata vazia, takeoff ainda não revisado por\ninteiro e nenhuma decisão de código registrada. Confirmação sem fonte citada, código\nfora do catálogo citado e item confirmado sem decisão continuam sendo `422\nDOMAIN_VALIDATION_FAILED` com o código `ESTIMATE_*`/`ASSIGNMENT_*` do domínio.\n\nA identidade da obra vem da RODADA; o corpo carrega só a guarda de concorrência e o\nBDI.",
         "operationId": "build_estimate_v1_estimate_rounds__round_id__estimate_post",
         "parameters": [
           {
@@ -8635,6 +8667,160 @@
           }
         ],
         "summary": "Build Estimate",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/estimate/approve": {
+      "post": {
+        "description": "Assina nominalmente o orçamento da cabeça, amarrando o ato ao digest do conteúdo.\n\nEste é o ato que o portão de despacho cobra. Ele não recalcula, não confere preço e\nnão decide nada sobre o orçamento: registra QUEM assumiu o orçamento como está,\nQUANDO e SOBRE QUAL conteúdo — e é essa terceira parte que impede a assinatura de\nsobreviver a uma mudança do que foi assinado.\n\nO papel é `aprovador`, e não `orcamentista` (ADR-0046, decisão 5): na cadeia real\nquem assina o orçamento não é quem o montou. A recusa de **auto-aprovação** fecha o\nburaco que sobraria: acumular os dois papéis no mesmo token não contorna, porque a\ncomparação é de IDENTIDADE contra quem montou (`estimate_built_by`), não de papel.\nSem ela o papel novo seria cerimônia.\n\nA identidade é do JWT e só dele (critério 4 da F-035). O corpo carrega apenas\n`base_version`, e `ApproveEstimateRequest` documenta por que não existe campo de nome\nnem de observação. A revisão nova AVANÇA `version`, porque assinar é ato humano\ndeliberado e a próxima decisão do orçamentista tem de partir do que ele viu assinado.\n\nOrçamento ainda não montado é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem;\norçamento que não revalida é `422`, pela mesma razão do `GET`: ninguém assina um\nartefato que o domínio recusa.\n\nAssinar de novo é o caminho normal da aprovação caduca do desenho aprovado, e não um\nerro: o ato é idempotente por conteúdo (mesmo aprovador, mesmo digest e mesmo\ninstante produzem o mesmo `decision_id`), mas cada chamada é uma revisão nova da\ncadeia append-only — o histórico guarda as duas assinaturas, que é o que um registro\nde aprovação existe para fazer.",
+        "operationId": "approve_estimate_round_v1_estimate_rounds__round_id__estimate_approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveEstimateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Approve Estimate Round V1 Estimate Rounds  Round Id  Estimate Approve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Approve Estimate Round",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/estimate/export": {
+      "post": {
+        "description": "Publica o `.xlsx` do orçamento: portão do domínio, auditoria e só então o store.\n\nA ordem **é** o portão, e é o coração da F-035. Primeiro `Estimate.ensure_exportable`,\nque é a regra do DOMÍNIO e não uma cópia dela aqui — é o que faz `croquito-valuation`\nobedecer à mesma regra que esta rota, em vez de haver duas verdades sobre o mesmo\nartefato. Orçamento sem assinatura, com assinatura de recusa ou com assinatura que\nnão confere com o conteúdo atual sai como `422 DOMAIN_VALIDATION_FAILED` com\n`details.code = ESTIMATE_EXPORT_BLOCKED` e a lista de violações em `details.errors`.\n**Nada é escrito antes disso** — nem em disco temporário, nem no object store.\n\nDepois a planilha é escrita num arquivo temporário, reaberta e reconferida centavo a\ncentavo, e só um laudo aprovado deixa os bytes subirem e a revisão nascer. Auditoria\nreprovada é `500 ESTIMATE_WORKBOOK_AUDIT_FAILED`, com os códigos dos achados e nunca\nos valores divergentes, e não publica nada.\n\nO portão daqui **não recebe contrato**, ao contrário do irmão da medição (ADR-0046,\ndecisão 3): saldo, período e código no contrato não existem deste lado da fronteira\ndo ADR-0027, e é a assinatura sem contrato que impede esses códigos de entrarem aqui.\n\nDespachar exige `orcamentista`, não `aprovador` (decisão 7): assinar é assumir o\nconteúdo, despachar é operar o envio, e o produto não funde os dois só porque\nacontecem em sequência.\n\nO `.xlsx` é endereçado pelo `content_digest()` — que exclui a aprovação —, e não pelo\ndigest do documento gravado: assinar não muda o conteúdo orçado, e não pode mudar o\nendereço da planilha dele. A exportação NÃO altera o orçamento: a revisão nova carrega\no mesmo `estimate_json` da cabeça e acrescenta só a referência e o digest do `.xlsx`.\n`version` avança porque publicar é ato humano deliberado.",
+        "operationId": "export_estimate_workbook_v1_estimate_rounds__round_id__estimate_export_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportEstimateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Export Estimate Workbook V1 Estimate Rounds  Round Id  Estimate Export Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Estimate Workbook",
         "tags": [
           "estimate"
         ]

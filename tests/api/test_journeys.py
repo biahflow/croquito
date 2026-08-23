@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from croquito_api.config import ApiSettings, JourneyAvailabilitySettings
 from croquito_api.database import Database, TenantJourneyEntitlementRecord
 from croquito_api.journeys import (
+    ESTIMATE_APPROVER_ROLE,
     JOURNEY_ROLES,
     JOURNEY_ROUTE_PREFIXES,
     JOURNEYLESS_ROUTE_PREFIXES,
@@ -175,13 +176,18 @@ def test_pilot_journeys_lista_so_o_que_precisa_de_consulta() -> None:
 
 
 def test_papeis_da_jornada_espelham_os_portoes_que_as_rotas_ja_aplicam() -> None:
-    """Drift guard: esta feature NÃO muda quem autoriza o quê.
+    """Drift guard: quem ABRE a jornada é exatamente quem alguma rota dela deixa entrar.
 
-    `medicao` e `orcamento` usam o mesmo papel que `_require_valuation_reviewer` exige, cuja
-    fonte é o worker; `croqui` usa os três papéis profissionais de `_reviewer_role`.
+    `medicao` tem um papel só, o de `_require_valuation_reviewer`, cuja fonte é o worker;
+    `croqui` usa os três papéis profissionais de `_reviewer_role`.
+
+    `orcamento` tem DOIS desde a F-035: `_require_estimate_reader` deixa o `aprovador` ler as
+    rotas do orçamento, porque quem assina precisa ver o que assina. Abrir a jornada não é
+    poder mutá-la — quem cobra isso rota a rota é
+    `test_com_so_o_papel_aprovador_a_leitura_passa_e_toda_mutacao_recusa`.
     """
     assert JOURNEY_ROLES["medicao"] == frozenset({REVIEWER_ROLE})
-    assert JOURNEY_ROLES["orcamento"] == frozenset({REVIEWER_ROLE})
+    assert JOURNEY_ROLES["orcamento"] == frozenset({REVIEWER_ROLE, ESTIMATE_APPROVER_ROLE})
     assert JOURNEY_ROLES["croqui"] == frozenset({"engineer", "architect", "domain_reviewer"})
 
 

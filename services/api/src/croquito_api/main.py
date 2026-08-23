@@ -78,6 +78,7 @@ from croquito_api.database import (
 )
 from croquito_api.journeys import (
     CROQUI_REVIEWER_ROLES,
+    ESTIMATE_APPROVER_ROLE,
     JOURNEYS,
     Journey,
     JourneyAvailability,
@@ -1532,6 +1533,35 @@ class BuildEstimateRequest(ApiModel):
     bdi_percent: str = Field(min_length=1, max_length=12)
 
 
+class ApproveEstimateRequest(ApiModel):
+    """Aprovação nominal do orçamento-base: o corpo é SÓ a guarda de concorrência (F-035).
+
+    Nenhum campo de identidade existe aqui, e a ausência é o desenho. `approver_id`,
+    `approver_role`, `decided_at` e `decision_id` são carimbo do servidor — o nome que o
+    orçamento publica é o do subject do JWT, e um campo de "nome do aprovador" no corpo
+    faria do ato nominal um campo de texto, assinável em nome de outra pessoa. Quem recusa
+    qualquer um deles com `422` é o `extra="forbid"` do `ApiModel`, não uma lista negra.
+
+    A observação (`note` do `EstimateApproverDecision`) também não entra, pelo mesmo motivo
+    do irmão da medição: o que ela significaria numa aprovação — ressalva? condição? — é
+    decisão de produto que ninguém tomou, e um campo livre gravado junto de um ato nominal
+    pareceria ter efeito jurídico sem tê-lo.
+    """
+
+    base_version: int = Field(ge=1)
+
+
+class ExportEstimateRequest(ApiModel):
+    """Despacho da planilha do orçamento: espelho de `ApproveEstimateRequest`.
+
+    Não há nada a escolher no despacho — nem formato, nem layout, nem "exportar assim
+    mesmo". O orçamento publicado é o da cabeça da rodada, o layout é o da prefeitura
+    (`default_template()`) e a aprovação válida é precondição, não opção.
+    """
+
+    base_version: int = Field(ge=1)
+
+
 class SetEstimateTargetRequest(ApiModel):
     """Declara ou edita o teto de verba da rodada (ADR-0040): valor exato + rótulo opcional.
 
@@ -2394,6 +2424,41 @@ def _require_valuation_reviewer(principal: Principal) -> str:
             f"Papel {VALUATION_REVIEWER_ROLE} é obrigatório nas rotas de medição.",
         )
     return VALUATION_REVIEWER_ROLE
+
+
+def _require_estimate_approver(principal: Principal) -> None:
+    """Papel `aprovador`, exigido só na rota que ASSINA o orçamento (ADR-0046, decisão 5).
+
+    Ele não substitui `orcamentista` em lugar nenhum: a mutação da cadeia e o despacho
+    continuam sendo do orçamentista, e este papel abre exatamente um ato. Como em
+    `_require_valuation_reviewer`, a checagem vem antes de qualquer lookup — quem não tem o
+    papel não descobre, pela diferença entre `403` e `404`, se uma rodada existe.
+    """
+    if not principal.has_role(ESTIMATE_APPROVER_ROLE):
+        raise _problem(
+            "FORBIDDEN",
+            status.HTTP_403_FORBIDDEN,
+            f"Papel {ESTIMATE_APPROVER_ROLE} é obrigatório para aprovar o orçamento.",
+        )
+
+
+def _require_estimate_reader(principal: Principal) -> None:
+    """Leitura das rotas do orçamento: quem monta ou quem assina.
+
+    O aprovador precisa ABRIR a jornada para ver o que assina (ADR-0046, decisão 5) — uma
+    assinatura dada sobre um orçamento que a pessoa não pôde ler seria carimbo, não ato. Ler
+    não é mutar: toda mutação da cadeia segue em `_require_valuation_reviewer`, e é o teste
+    irmão de `test_sem_o_papel_toda_rota_recusa_antes_do_lookup` que impede uma delas de
+    afrouxar por engano ao ganhar este papel.
+    """
+    if principal.has_role(VALUATION_REVIEWER_ROLE) or principal.has_role(ESTIMATE_APPROVER_ROLE):
+        return
+    raise _problem(
+        "FORBIDDEN",
+        status.HTTP_403_FORBIDDEN,
+        f"Papel {VALUATION_REVIEWER_ROLE} ou {ESTIMATE_APPROVER_ROLE} é obrigatório "
+        "nas rotas de orçamento.",
+    )
 
 
 def _require_field_technician(principal: Principal) -> None:
@@ -9124,11 +9189,16 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
     # -- Orçamento-base de obra (F-020, ADR-0038) ---------------------------------------
     #
-    # Espelho de `/v1/valuation-rounds*`, com a mesma disciplina — papel `orcamentista`
-    # como primeira linha de todo handler (inclusive de leitura), `Idempotency-Key` em
-    # todo POST, `base_version` em toda mutação e `problem+json` com código estável. O que
-    # muda é a fronteira do ADR-0027: aqui há CASCATA de fontes de preço e BDI, e não há
-    # contrato, período, saldo nem aprovação.
+    # Espelho de `/v1/valuation-rounds*`, com a mesma disciplina — papel como primeira linha
+    # de todo handler (inclusive de leitura), `Idempotency-Key` em todo POST, `base_version`
+    # em toda mutação e `problem+json` com código estável. O que muda é a fronteira do
+    # ADR-0027: aqui há CASCATA de fontes de preço e BDI, e não há contrato, período nem
+    # saldo.
+    #
+    # Aprovação existe e é PRÓPRIA desde a F-035 (ADR-0046), e por isso o papel não é um só:
+    # a LEITURA aceita `orcamentista` ou `aprovador` (`_require_estimate_reader`), a mutação
+    # da cadeia e o despacho continuam exigindo `orcamentista`, e só `.../estimate/approve`
+    # exige `aprovador`.
 
     def _load_estimate_round(
         session: Session, *, round_id: UUID, tenant_id: str
@@ -9303,6 +9373,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         idempotência guarda no banco, e gravar uma URL assinada seria persistir uma
         credencial de leitura num lugar que ninguém trata como segredo. Ela sai só no `GET`,
         montada na hora.
+
+        O bloco de aprovação é derivado do orçamento REVALIDADO que a rota já tem em mãos, e
+        não relido da revisão: as duas leituras responderiam a mesma coisa no caminho feliz,
+        e usar a que a rota acabou de validar é o que faz a resposta do ato de assinar já
+        sair com a aprovação que ele mesmo escreveu.
         """
         digests = {} if revision is None else dict(revision.artifact_digests_json or {})
         return {
@@ -9316,6 +9391,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             "unpriced_item_ids": list(estimate.unpriced_item_ids),
             "workbook_present": estimate_rounds.estimate_workbook_ref(revision) is not None,
             "workbook_sha256": digests.get(estimate_rounds.ESTIMATE_WORKBOOK_DIGEST),
+            "approval": estimate_rounds.approval_payload(estimate),
             **estimate_rounds.target_state(record, revision),
         }
 
@@ -9467,7 +9543,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         cursor: str | None = None,
     ) -> EstimateRoundPage:
         """Rodadas do tenant, da mais recente para a mais antiga, com cursor opaco."""
-        _require_valuation_reviewer(principal)
+        _require_estimate_reader(principal)
         query = select(EstimateRoundRecord).where(
             EstimateRoundRecord.tenant_id == principal.tenant_id
         )
@@ -9533,7 +9609,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
     ) -> dict[str, Any]:
         """Estado da rodada por etapa, com a cascata na ordem que decide a precificação."""
-        _require_valuation_reviewer(principal)
+        _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = estimate_rounds.head_revision(
             session, round_id=record.id, tenant_id=principal.tenant_id
@@ -9719,7 +9795,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         entitlement por tenant e não há tenant a comparar. O papel é exigido antes de
         qualquer lookup, e a rodada continua sendo do tenant — rodada alheia é `404`.
         """
-        _require_valuation_reviewer(principal)
+        _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         published = session.scalars(
             select(ReferenceCatalogRecord).where(ReferenceCatalogRecord.status == STATUS_AVAILABLE)
@@ -10114,7 +10190,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
     ) -> ValuationPlateResponse:
         """Metadados e URL assinada da página promovida; a URL não vai para log nem auditoria."""
-        _require_valuation_reviewer(principal)
+        _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = estimate_rounds.head_revision(
             session, round_id=record.id, tenant_id=principal.tenant_id
@@ -10249,7 +10325,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
     ) -> dict[str, Any]:
         """Pacote de takeoff da rodada, com a âncora de evidência de cada item."""
-        _require_valuation_reviewer(principal)
+        _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = estimate_rounds.head_revision(
             session, round_id=record.id, tenant_id=principal.tenant_id
@@ -10267,7 +10343,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
     ) -> ValuationTakeoffOverlayResponse:
         """URL assinada do overlay e a idade dele; overlay vencido é `200`, nunca erro."""
-        _require_valuation_reviewer(principal)
+        _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = estimate_rounds.head_revision(
             session, round_id=record.id, tenant_id=principal.tenant_id
@@ -10417,7 +10493,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         derivado, e se um `GET` movesse o token de concorrência, a próxima decisão do
         orçamentista levaria `409` por algo que ele não fez.
         """
-        _require_valuation_reviewer(principal)
+        _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = estimate_rounds.head_revision(
             session, round_id=record.id, tenant_id=principal.tenant_id
@@ -10572,7 +10648,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         devolver `503` acrescentaria superfície que não existe — o motivo do braço ausente
         continua viajando em `semantic_notes`, e a busca nunca degrada em silêncio.
         """
-        _require_valuation_reviewer(principal)
+        _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         return {
             "round_id": record.id,
@@ -10591,7 +10667,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
     ) -> dict[str, Any]:
         """Decisões de código da rodada e os itens confirmados que ainda esperam por uma."""
-        _require_valuation_reviewer(principal)
+        _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = estimate_rounds.head_revision(
             session, round_id=record.id, tenant_id=principal.tenant_id
@@ -10713,14 +10789,23 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
         idempotency_key: Annotated[str, Depends(_require_idempotency)],
     ) -> dict[str, Any]:
-        """Monta o orçamento-base, audita a planilha e só então publica as duas coisas.
+        """Monta o orçamento-base — e **só** monta. Publicar virou ato próprio (ADR-0046).
 
-        A ordem é o portão. O `Estimate` é montado pelo domínio, a planilha é gravada num
-        arquivo temporário, reaberta e reconferida centavo a centavo, e só um relatório
-        aprovado deixa os bytes irem ao object store e a revisão nascer — auditoria
-        reprovada não publica nada (ADR-0038). O `.xlsx` é endereçado pelo digest do
-        orçamento, de modo que uma montagem nova nunca sobrescreve a planilha que uma
-        revisão anterior ainda referencia.
+        Até a F-035 esta rota montava, auditava e publicava o `.xlsx` num ato só, e por isso
+        um orçamento nascia despachável: não existia o instante em que ele estava pronto e
+        ainda não circulava, logo não havia o que aprovar "antes do despacho". A auditoria e
+        a publicação saíram daqui para `POST .../estimate/export`, exatamente como `calc` faz
+        na medição — monta e não publica. **É quebra declarada de contrato de rota**: quem
+        consumia a resposta esperando planilha publicada precisa mudar.
+
+        Grava também QUEM montou, em coluna própria da revisão. `created_by` não serviria
+        para isso: ele é de quem fez o último ato, e depois de uma aprovação já não é quem
+        montou — e é contra quem montou que a rota de aprovação compara o `sub` do JWT.
+
+        A aprovação anterior é levada ADIANTE, já caduca (`carry_approval_forward`): ela
+        continua apontando para o digest antigo, o despacho a recusa com
+        `APPROVAL_CONTENT_MISMATCH`, e a leitura mostra os dois digests lado a lado.
+        Descartá-la apagaria em silêncio o fato de que alguém assinou.
 
         Três precondições recusam com `409 ROUND_STAGE_NOT_READY`, porque as três são ORDEM
         da cadeia e não invariante violada: cascata vazia, takeoff ainda não revisado por
@@ -10765,46 +10850,18 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             calc_plan=None,
         )
 
-        document = built.estimate.model_dump(mode="json")
-        estimate_sha256 = document_digest(document)
-        # Portão fail-closed: grava, reabre e audita ANTES de qualquer publicação.
-        rendered = estimate_rounds.render_estimate_workbook(built.estimate, default_template())
-        object_key = estimate_rounds.estimate_workbook_key(
-            tenant_id=principal.tenant_id,
-            round_id=record.id,
-            estimate_sha256=estimate_sha256,
+        estimate = estimate_rounds.carry_approval_forward(
+            built.estimate, estimate_rounds.readable_estimate(revision)
         )
-        # O objeto sobe ANTES do commit: uma revisão que referenciasse um objeto ainda
-        # ausente seria um estado que nenhuma leitura conseguiria servir. O contrário —
-        # objeto no store sem revisão que o cite — é inerte, porque a chave é derivada do
-        # conteúdo e nada o alcança sem a revisão.
-        application.state.artifact_store.write_object(
-            object_key=object_key,
-            body=rendered.body,
-            content_type=estimate_rounds.ESTIMATE_WORKBOOK_CONTENT_TYPE,
-        )
-        head_refs = {} if revision is None else dict(revision.artifact_refs_json or {})
-        head_digests = {} if revision is None else dict(revision.artifact_digests_json or {})
+        document = estimate.model_dump(mode="json")
         new_revision = estimate_rounds.append_revision(
             session,
             round_record=record,
             created_by=principal.subject,
-            changes={
-                "estimate_json": document,
-                "artifact_refs_json": {
-                    **head_refs,
-                    estimate_rounds.ESTIMATE_WORKBOOK_REF: object_key,
-                },
-                "artifact_digests_json": {
-                    **head_digests,
-                    estimate_rounds.ESTIMATE_WORKBOOK_DIGEST: rendered.audit.workbook_sha256,
-                },
-            },
+            changes={"estimate_json": document, "estimate_built_by": principal.subject},
         )
         record.updated_at = datetime.now(UTC)
-        response = _estimate_payload(
-            record, new_revision, document=document, estimate=built.estimate
-        )
+        response = _estimate_payload(record, new_revision, document=document, estimate=estimate)
         _store_idempotent_response(
             session,
             principal=principal,
@@ -10831,6 +10888,251 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         _commit_valuation_revision(session)
         return response
 
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/estimate/approve",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def approve_estimate_round(
+        round_id: UUID,
+        payload: ApproveEstimateRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Assina nominalmente o orçamento da cabeça, amarrando o ato ao digest do conteúdo.
+
+        Este é o ato que o portão de despacho cobra. Ele não recalcula, não confere preço e
+        não decide nada sobre o orçamento: registra QUEM assumiu o orçamento como está,
+        QUANDO e SOBRE QUAL conteúdo — e é essa terceira parte que impede a assinatura de
+        sobreviver a uma mudança do que foi assinado.
+
+        O papel é `aprovador`, e não `orcamentista` (ADR-0046, decisão 5): na cadeia real
+        quem assina o orçamento não é quem o montou. A recusa de **auto-aprovação** fecha o
+        buraco que sobraria: acumular os dois papéis no mesmo token não contorna, porque a
+        comparação é de IDENTIDADE contra quem montou (`estimate_built_by`), não de papel.
+        Sem ela o papel novo seria cerimônia.
+
+        A identidade é do JWT e só dele (critério 4 da F-035). O corpo carrega apenas
+        `base_version`, e `ApproveEstimateRequest` documenta por que não existe campo de nome
+        nem de observação. A revisão nova AVANÇA `version`, porque assinar é ato humano
+        deliberado e a próxima decisão do orçamentista tem de partir do que ele viu assinado.
+
+        Orçamento ainda não montado é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem;
+        orçamento que não revalida é `422`, pela mesma razão do `GET`: ninguém assina um
+        artefato que o domínio recusa.
+
+        Assinar de novo é o caminho normal da aprovação caduca do desenho aprovado, e não um
+        erro: o ato é idempotente por conteúdo (mesmo aprovador, mesmo digest e mesmo
+        instante produzem o mesmo `decision_id`), mas cada chamada é uma revisão nova da
+        cadeia append-only — o histórico guarda as duas assinaturas, que é o que um registro
+        de aprovação existe para fazer.
+        """
+        _require_estimate_approver(principal)
+        operation = f"estimate-rounds.estimate-approve:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        document = estimate_rounds.require_document(
+            revision,
+            "estimate_json",
+            stage=estimate_rounds.STAGE_ESTIMATE,
+            detail="a rodada ainda não tem orçamento montado",
+        )
+        built_by = estimate_rounds.estimate_built_by(revision)
+        if built_by is None:
+            raise estimate_rounds.approval_missing_author()
+        if built_by == principal.subject:
+            raise estimate_rounds.self_approval_forbidden()
+        approved = estimate_rounds.approve_estimate(
+            _revalidated_estimate(document),
+            approver_id=principal.subject,
+            decided_at=datetime.now(UTC),
+        )
+
+        approved_document = approved.model_dump(mode="json")
+        new_revision = estimate_rounds.append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"estimate_json": approved_document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _estimate_payload(
+            record, new_revision, document=approved_document, estimate=approved
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_APPROVED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_APPROVED",
+            record=record,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/estimate/export",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def export_estimate_workbook(
+        round_id: UUID,
+        payload: ExportEstimateRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Publica o `.xlsx` do orçamento: portão do domínio, auditoria e só então o store.
+
+        A ordem **é** o portão, e é o coração da F-035. Primeiro `Estimate.ensure_exportable`,
+        que é a regra do DOMÍNIO e não uma cópia dela aqui — é o que faz `croquito-valuation`
+        obedecer à mesma regra que esta rota, em vez de haver duas verdades sobre o mesmo
+        artefato. Orçamento sem assinatura, com assinatura de recusa ou com assinatura que
+        não confere com o conteúdo atual sai como `422 DOMAIN_VALIDATION_FAILED` com
+        `details.code = ESTIMATE_EXPORT_BLOCKED` e a lista de violações em `details.errors`.
+        **Nada é escrito antes disso** — nem em disco temporário, nem no object store.
+
+        Depois a planilha é escrita num arquivo temporário, reaberta e reconferida centavo a
+        centavo, e só um laudo aprovado deixa os bytes subirem e a revisão nascer. Auditoria
+        reprovada é `500 ESTIMATE_WORKBOOK_AUDIT_FAILED`, com os códigos dos achados e nunca
+        os valores divergentes, e não publica nada.
+
+        O portão daqui **não recebe contrato**, ao contrário do irmão da medição (ADR-0046,
+        decisão 3): saldo, período e código no contrato não existem deste lado da fronteira
+        do ADR-0027, e é a assinatura sem contrato que impede esses códigos de entrarem aqui.
+
+        Despachar exige `orcamentista`, não `aprovador` (decisão 7): assinar é assumir o
+        conteúdo, despachar é operar o envio, e o produto não funde os dois só porque
+        acontecem em sequência.
+
+        O `.xlsx` é endereçado pelo `content_digest()` — que exclui a aprovação —, e não pelo
+        digest do documento gravado: assinar não muda o conteúdo orçado, e não pode mudar o
+        endereço da planilha dele. A exportação NÃO altera o orçamento: a revisão nova carrega
+        o mesmo `estimate_json` da cabeça e acrescenta só a referência e o digest do `.xlsx`.
+        `version` avança porque publicar é ato humano deliberado.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.estimate-export:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        document = estimate_rounds.require_document(
+            revision,
+            "estimate_json",
+            stage=estimate_rounds.STAGE_ESTIMATE,
+            detail="a rodada ainda não tem orçamento montado",
+        )
+        estimate = _revalidated_estimate(document)
+        # Portão do domínio ANTES de qualquer render: nada é escrito, nem em disco temporário,
+        # para um orçamento que não pode ser despachado.
+        estimate.ensure_exportable()
+
+        # Portão fail-closed: grava, reabre e audita ANTES de qualquer publicação.
+        rendered = estimate_rounds.render_estimate_workbook(estimate, default_template())
+        object_key = estimate_rounds.estimate_workbook_key(
+            tenant_id=principal.tenant_id,
+            round_id=record.id,
+            estimate_sha256=estimate.content_digest(),
+        )
+        # O objeto sobe ANTES do commit: uma revisão que referenciasse um objeto ainda
+        # ausente seria um estado que nenhuma leitura conseguiria servir. O contrário —
+        # objeto no store sem revisão que o cite — é inerte, porque a chave é derivada do
+        # conteúdo e nada o alcança sem a revisão.
+        application.state.artifact_store.write_object(
+            object_key=object_key,
+            body=rendered.body,
+            content_type=estimate_rounds.ESTIMATE_WORKBOOK_CONTENT_TYPE,
+        )
+        head_refs = {} if revision is None else dict(revision.artifact_refs_json or {})
+        head_digests = {} if revision is None else dict(revision.artifact_digests_json or {})
+        new_revision = estimate_rounds.append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={
+                "artifact_refs_json": {
+                    **head_refs,
+                    estimate_rounds.ESTIMATE_WORKBOOK_REF: object_key,
+                },
+                "artifact_digests_json": {
+                    **head_digests,
+                    estimate_rounds.ESTIMATE_WORKBOOK_DIGEST: rendered.audit.workbook_sha256,
+                },
+            },
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _estimate_payload(record, new_revision, document=document, estimate=estimate)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_WORKBOOK_EXPORTED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_WORKBOOK_EXPORTED",
+            record=record,
+        )
+        _commit_valuation_revision(session)
+        return response
+
     @application.get(
         "/v1/estimate-rounds/{round_id}/estimate",
         response_model=dict[str, Any],
@@ -10848,7 +11150,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         URL é montada aqui e agora, depois de conferido o prefixo do tenant, e nunca é
         gravada nem registrada em log ou auditoria.
         """
-        _require_valuation_reviewer(principal)
+        _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = estimate_rounds.head_revision(
             session, round_id=record.id, tenant_id=principal.tenant_id

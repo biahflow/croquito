@@ -16,6 +16,16 @@ que só existem deste lado do ADR-0027:
   revisão e não devolve valor nenhum do cliente na mensagem de erro;
 - **URL assinada**: sai só no `GET`, depois de conferido o prefixo do tenant, e nunca é
   gravada no registro de idempotência nem em auditoria.
+
+Desde a F-035 (ADR-0046), montar deixou de publicar e a cadeia tem três atos —
+`estimate` → `estimate/approve` → `estimate/export` —, o que acrescenta três invariantes:
+
+- **o portão de despacho é do DOMÍNIO** e corre antes de qualquer escrita: sem assinatura
+  válida nada vai ao object store, nem a arquivo temporário;
+- **quem montou não assina**, e a recusa compara IDENTIDADE, não papel — acumular
+  `orcamentista` e `aprovador` no mesmo token não contorna;
+- **o papel novo lê e não muta**: as 10 leituras aceitam os dois papéis, as 13 mutações da
+  cadeia continuam exigindo `orcamentista`, e só `approve` exige `aprovador`.
 """
 
 from __future__ import annotations
@@ -25,7 +35,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -67,6 +77,16 @@ _ITEM_FIRST = "ti_00000000000000b1"
 _ITEM_SECOND = "ti_00000000000000b2"
 _IMAGE_DIGEST = "a" * 64
 
+_BUILDER_SUBJECT = "orcamentista-sintetica"
+"""Quem monta o orçamento em todo teste que não fala de assinatura."""
+
+_APPROVER_SUBJECT = "aprovadora-sintetica"
+"""Quem assina. É deliberadamente OUTRA pessoa: na cadeia real quem aprova o orçamento não é
+quem o montou (ADR-0046, decisão 5), e a fixture não desmente a regra."""
+
+_APPROVER_ROLES = "aprovador"
+_BOTH_ROLES = "orcamentista,aprovador"
+
 
 # --- montagem ---------------------------------------------------------------------------
 
@@ -96,9 +116,16 @@ def _headers(
     roles: str = "orcamentista",
     *,
     key: str = "estimate-request-001",
+    subject: str = _BUILDER_SUBJECT,
 ) -> dict[str, str]:
+    """Token sintético do orçamentista que MONTA, salvo quando o teste pede outro subject.
+
+    `subject` é parâmetro desde a F-035: a recusa de auto-aprovação compara identidade, e um
+    token com subject fixo não teria como exercer "outra pessoa assina". O default continua
+    sendo quem montava antes, para não reescrever os testes que não falam de assinatura.
+    """
     return {
-        "Authorization": f"Bearer test:{tenant}:orcamentista-sintetica:{roles}",
+        "Authorization": f"Bearer test:{tenant}:{subject}:{roles}",
         "Idempotency-Key": key,
     }
 
@@ -510,19 +537,15 @@ def test_a_rodada_nasce_sem_cascata_e_com_versao_um(tmp_path: Path) -> None:
         assert record.address == "RUA SINTETICA, S/N"
 
 
-def test_sem_o_papel_toda_rota_recusa_antes_do_lookup(tmp_path: Path) -> None:
-    """`403` inclusive na LEITURA e inclusive para rodada inexistente.
+def _read_paths(round_id: str) -> list[str]:
+    """As 10 LEITURAS de `/v1/estimate-rounds`, com rodada existente e inexistente.
 
-    É o que impede alguém sem o papel de descobrir, pela diferença entre `403` e `404`, o
-    que existe no tenant vizinho.
+    Fonte única dos dois testes de papel: uma lista por teste deixaria o teste do papel novo
+    cobrir menos rotas que o antigo sem ninguém perceber, que é exatamente como uma rota
+    escapa de um portão.
     """
-    client = _client(tmp_path)
-    created = _create_round(client)
-    round_id = created["round_id"]
     ghost = uuid4()
-    headers = _headers(roles="engineer", key="sem-papel")
-
-    reads = [
+    return [
         "/v1/estimate-rounds",
         f"/v1/estimate-rounds/{round_id}",
         f"/v1/estimate-rounds/{ghost}",
@@ -536,12 +559,15 @@ def test_sem_o_papel_toda_rota_recusa_antes_do_lookup(tmp_path: Path) -> None:
         f"/v1/estimate-rounds/{round_id}/code-assignments",
         f"/v1/estimate-rounds/{round_id}/estimate",
     ]
-    for path in reads:
-        response = client.get(path, headers=headers)
-        assert response.status_code == 403, path
-        assert response.json()["detail"]["code"] == "FORBIDDEN", path
 
-    writes: list[tuple[str, dict[str, Any]]] = [
+
+def _write_paths(round_id: str) -> list[tuple[str, dict[str, Any]]]:
+    """As 13 MUTAÇÕES que exigem `orcamentista`, com um corpo mínimo válido de schema.
+
+    `.../estimate/approve` fica de fora porque é a única mutação que NÃO exige este papel
+    (ADR-0046, decisão 5); ela é conferida à parte em cada teste de papel.
+    """
+    return [
         ("/v1/estimate-rounds", _round_payload()),
         (
             f"/v1/estimate-rounds/{round_id}/catalogs",
@@ -573,6 +599,7 @@ def test_sem_o_papel_toda_rota_recusa_antes_do_lookup(tmp_path: Path) -> None:
             },
         ),
         (f"/v1/estimate-rounds/{round_id}/estimate", {"base_version": 1, "bdi_percent": "25.00"}),
+        (f"/v1/estimate-rounds/{round_id}/estimate/export", {"base_version": 1}),
         (
             f"/v1/estimate-rounds/{round_id}/target",
             {"base_version": 1, "target_amount": "10000.00"},
@@ -582,10 +609,109 @@ def test_sem_o_papel_toda_rota_recusa_antes_do_lookup(tmp_path: Path) -> None:
             {"base_version": 1, "pricing_regime": "contracted_demand"},
         ),
     ]
-    for path, payload in writes:
+
+
+def _template(path: str, round_id: str) -> str:
+    """`/v1/estimate-rounds/<uuid>/estimate` -> `/v1/estimate-rounds/{round_id}/estimate`."""
+    segments = []
+    for segment in path.split("?", 1)[0].split("/"):
+        try:
+            UUID(segment)
+        except ValueError:
+            segments.append(segment)
+        else:
+            segments.append("{round_id}")
+    return "/".join(segments)
+
+
+def test_os_testes_de_papel_percorrem_toda_a_superficie_de_estimate_rounds(
+    tmp_path: Path,
+) -> None:
+    """Drift guard dos dois testes de papel: rota nova entra nas listas, ou este teste cai.
+
+    Sem ele, uma rota acrescentada depois nasceria fora dos dois testes e ninguém veria: o
+    portão dela não seria conferido nem para quem não tem papel nenhum, nem para o
+    `aprovador`. É o mesmo mecanismo de `unclassified_v1_paths` em `journeys.py` — cobrar a
+    classificação em vez de confiar em quem escreve a rota lembrar da lista.
+    """
+    client = _client(tmp_path)
+    round_id = str(new_uuid7())
+    exposed = {
+        (method, route.path)
+        for route in cast(Any, client.app).routes
+        if getattr(route, "path", "").startswith("/v1/estimate-rounds")
+        for method in getattr(route, "methods", set())
+    }
+
+    covered = {("GET", _template(path, round_id)) for path in _read_paths(round_id)}
+    covered |= {("POST", _template(path, round_id)) for path, _ in _write_paths(round_id)}
+    # A única mutação fora de `_write_paths`, porque é a única que não exige `orcamentista`.
+    covered.add(("POST", "/v1/estimate-rounds/{round_id}/estimate/approve"))
+
+    assert exposed == covered
+
+
+def test_sem_o_papel_toda_rota_recusa_antes_do_lookup(tmp_path: Path) -> None:
+    """`403` inclusive na LEITURA e inclusive para rodada inexistente.
+
+    É o que impede alguém sem o papel de descobrir, pela diferença entre `403` e `404`, o
+    que existe no tenant vizinho.
+    """
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    headers = _headers(roles="engineer", key="sem-papel")
+
+    for path in _read_paths(round_id):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 403, path
+        assert response.json()["detail"]["code"] == "FORBIDDEN", path
+
+    for path, payload in _write_paths(round_id):
         response = client.post(path, headers=headers, json=payload)
         assert response.status_code == 403, path
         assert response.json()["detail"]["code"] == "FORBIDDEN", path
+
+    aprovacao = client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate/approve",
+        headers=headers,
+        json={"base_version": 1},
+    )
+    assert aprovacao.status_code == 403
+    assert aprovacao.json()["detail"]["code"] == "FORBIDDEN"
+
+
+def test_com_so_o_papel_aprovador_a_leitura_passa_e_toda_mutacao_recusa(tmp_path: Path) -> None:
+    """Critério 6 da F-035, e o maior risco da entrega: dar leitura sem afrouxar mutação.
+
+    O aprovador precisa ABRIR a jornada para ver o que assina (ADR-0046, decisão 5) — mas
+    ler não é mutar. Este teste percorre as MESMAS 22 rotas do irmão acima mais as duas que a
+    F-035 acrescentou, e é ele que reprova se uma mutação passar a aceitar o papel novo por
+    engano. `.../estimate/approve` é a única exceção, e recusa aqui por outra causa: sem
+    orçamento montado, ela é ordem da cadeia (`409`), nunca `403`.
+    """
+    client = _client(tmp_path)
+    created = _create_round(client)
+    round_id = created["round_id"]
+    headers = _headers(roles=_APPROVER_ROLES, key="so-aprovador", subject=_APPROVER_SUBJECT)
+
+    for path in _read_paths(round_id):
+        response = client.get(path, headers=headers)
+        assert response.status_code != 403, path
+        assert response.status_code in {200, 404, 409, 422}, (path, response.text)
+
+    for path, payload in _write_paths(round_id):
+        response = client.post(path, headers=headers, json=payload)
+        assert response.status_code == 403, path
+        assert response.json()["detail"]["code"] == "FORBIDDEN", path
+
+    aprovacao = client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate/approve",
+        headers=headers,
+        json={"base_version": 1},
+    )
+    assert aprovacao.status_code == 409, aprovacao.text
+    assert aprovacao.json()["detail"]["code"] == "ROUND_STAGE_NOT_READY"
 
 
 def test_rodada_de_outro_tenant_e_404_e_nunca_403(tmp_path: Path) -> None:
@@ -1748,6 +1874,15 @@ def _revisions_with(client: TestClient, column: str) -> list[EstimateRoundRevisi
     return [revision for revision in _revisions(client) if getattr(revision, column) is not None]
 
 
+def _estimate_documents(client: TestClient) -> list[dict[str, Any]]:
+    """Os `estimate_json` gravados na cadeia, na ordem em que nasceram."""
+    return [
+        document
+        for revision in _revisions(client)
+        if isinstance(document := revision.estimate_json, dict)
+    ]
+
+
 def _round_ready_for_estimate(
     client: TestClient, *, sco_from_acervo: bool = False
 ) -> dict[str, Any]:
@@ -1785,16 +1920,52 @@ def _round_ready_for_estimate(
     return {**state, "version": second.json()["version"], "digests": digests}
 
 
-def test_o_caminho_feliz_publica_orcamento_e_planilha_auditada(tmp_path: Path) -> None:
+def _build_estimate(
+    client: TestClient, round_id: str, *, base_version: int, key: str, bdi: str = "25.00"
+) -> Any:
+    return client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate",
+        headers=_headers(key=key),
+        json={"base_version": base_version, "bdi_percent": bdi},
+    )
+
+
+def _approve_estimate(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    key: str,
+    subject: str = _APPROVER_SUBJECT,
+    roles: str = _APPROVER_ROLES,
+) -> Any:
+    return client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate/approve",
+        headers=_headers(roles=roles, key=key, subject=subject),
+        json={"base_version": base_version},
+    )
+
+
+def _export_estimate(client: TestClient, round_id: str, *, base_version: int, key: str) -> Any:
+    return client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate/export",
+        headers=_headers(key=key),
+        json={"base_version": base_version},
+    )
+
+
+def test_montar_grava_o_orcamento_e_nao_publica_planilha_nenhuma(tmp_path: Path) -> None:
+    """A quebra declarada da F-035: montar deixou de despachar.
+
+    Um orçamento não nasce mais despachável — é esse instante, entre pronto e publicado, que
+    a aprovação nominal existe para ocupar.
+    """
     client = _client(tmp_path)
     state = _round_ready_for_estimate(client)
     round_id = state["round_id"]
+    objects_before = set(_store(client).objects)
 
-    response = client.post(
-        f"/v1/estimate-rounds/{round_id}/estimate",
-        headers=_headers(key="montagem"),
-        json={"base_version": state["version"], "bdi_percent": "25.00"},
-    )
+    response = _build_estimate(client, round_id, base_version=state["version"], key="montagem")
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -1806,8 +1977,11 @@ def test_o_caminho_feliz_publica_orcamento_e_planilha_auditada(tmp_path: Path) -
     assert body["total_amount_without_bdi"] == "900.00"
     assert body["total_amount"] == "1125.00"
     assert [line["price_origin"] for line in body["estimate"]["lines"]] == ["sco", "emop"]
-    assert body["workbook_present"] is True
-    # A resposta gravada no registro de idempotência jamais carrega URL assinada.
+    assert body["workbook_present"] is False
+    assert body["approval"]["approved"] is False
+    assert body["approval"]["stale"] is False
+    # Nada foi ao object store, e a resposta guardada na idempotência não carrega URL.
+    assert set(_store(client).objects) == objects_before
     assert "workbook_url" not in body
     with _database(client).sessions() as session:
         stored = session.scalars(
@@ -1820,17 +1994,63 @@ def test_o_caminho_feliz_publica_orcamento_e_planilha_auditada(tmp_path: Path) -
 
     revisions = _revisions_with(client, "estimate_json")
     assert len(revisions) == 1
-    object_key = revisions[0].artifact_refs_json[estimate_rounds.ESTIMATE_WORKBOOK_REF]
+    assert estimate_rounds.ESTIMATE_WORKBOOK_REF not in revisions[0].artifact_refs_json
+    # Quem montou fica gravado em coluna própria: `created_by` é de quem fez o ÚLTIMO ato.
+    assert revisions[0].estimate_built_by == _BUILDER_SUBJECT
+
+    leitura = client.get(
+        f"/v1/estimate-rounds/{round_id}/estimate", headers=_headers(key="leitura")
+    )
+    assert leitura.status_code == 200, leitura.text
+    assert leitura.json()["workbook_url"] is None
+
+
+def test_a_cadeia_completa_monta_assina_e_so_entao_publica(tmp_path: Path) -> None:
+    """Montar → assinar → despachar, e a planilha só existe depois do terceiro ato."""
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    round_id = state["round_id"]
+
+    montagem = _build_estimate(client, round_id, base_version=state["version"], key="montagem")
+    assert montagem.status_code == 200, montagem.text
+
+    assinatura = _approve_estimate(
+        client, round_id, base_version=montagem.json()["version"], key="assinatura"
+    )
+    assert assinatura.status_code == 200, assinatura.text
+    approval = assinatura.json()["approval"]
+    assert approval["approved"] is True
+    assert approval["approved_by"] == _APPROVER_SUBJECT
+    assert approval["stale"] is False
+    assert approval["approved_digest"] == approval["current_digest"]
+    # Assinar não muda o que foi assinado: o digest do conteúdo é o mesmo de antes do ato.
+    assert approval["current_digest"] == montagem.json()["approval"]["current_digest"]
+    assert assinatura.json()["workbook_present"] is False
+
+    despacho = _export_estimate(
+        client, round_id, base_version=assinatura.json()["version"], key="despacho"
+    )
+    assert despacho.status_code == 200, despacho.text
+    assert despacho.json()["workbook_present"] is True
+    assert "workbook_url" not in despacho.json()
+
+    revisions = _revisions_with(client, "estimate_json")
+    assert [revision.estimate_built_by for revision in revisions] == [_BUILDER_SUBJECT] * 3
+    head = revisions[-1]
+    object_key = head.artifact_refs_json[estimate_rounds.ESTIMATE_WORKBOOK_REF]
     assert object_key.startswith(f"tenants/{_TENANT}/estimate-rounds/{round_id}/estimate/")
+    # O endereço é o `content_digest()` — que exclui a aprovação —, e não o digest do
+    # documento gravado: assinar não pode mudar o endereço da planilha do que foi assinado.
+    assert object_key.endswith(f"/{approval['current_digest']}.xlsx")
     published = _store(client).objects[object_key]
     assert published.content_type == estimate_rounds.ESTIMATE_WORKBOOK_CONTENT_TYPE
     assert (
         hashlib.sha256(published.body).hexdigest()
-        == revisions[0].artifact_digests_json[estimate_rounds.ESTIMATE_WORKBOOK_DIGEST]
+        == head.artifact_digests_json[estimate_rounds.ESTIMATE_WORKBOOK_DIGEST]
     )
 
     leitura = client.get(
-        f"/v1/estimate-rounds/{round_id}/estimate", headers=_headers(key="leitura")
+        f"/v1/estimate-rounds/{round_id}/estimate", headers=_headers(key="leitura-final")
     )
     assert leitura.status_code == 200, leitura.text
     assert leitura.json()["workbook_url"] == f"https://storage.invalid/{object_key}?temporary=true"
@@ -1840,19 +2060,203 @@ def test_o_caminho_feliz_publica_orcamento_e_planilha_auditada(tmp_path: Path) -
         audits = session.scalars(
             select(AuditRecord).where(AuditRecord.resource_type == "estimate_round")
         ).all()
-        assert [audit.action for audit in audits][-1] == "ESTIMATE_BUILT"
+        assert [audit.action for audit in audits][-3:] == [
+            "ESTIMATE_BUILT",
+            "ESTIMATE_APPROVED",
+            "ESTIMATE_WORKBOOK_EXPORTED",
+        ]
         # URL assinada nunca entra em auditoria.
         assert all("storage.invalid" not in str(audit.metadata_json) for audit in audits)
 
 
-def test_o_estado_da_rodada_declara_cascata_orcamento_e_planilha(tmp_path: Path) -> None:
+def test_despachar_sem_assinatura_recusa_e_nao_escreve_nada(tmp_path: Path) -> None:
+    """Critério 2 da F-035: o portão do DOMÍNIO corre antes de qualquer escrita.
+
+    Sem ele, o CLI exigiria assinatura e a rota não, e passariam a existir duas verdades
+    sobre o mesmo artefato.
+    """
     client = _client(tmp_path)
     state = _round_ready_for_estimate(client)
     round_id = state["round_id"]
-    montagem = client.post(
-        f"/v1/estimate-rounds/{round_id}/estimate",
-        headers=_headers(key="montagem-estado"),
-        json={"base_version": state["version"], "bdi_percent": "25.00"},
+    montagem = _build_estimate(client, round_id, base_version=state["version"], key="montagem")
+    assert montagem.status_code == 200, montagem.text
+    objects_before = set(_store(client).objects)
+
+    response = _export_estimate(
+        client, round_id, base_version=montagem.json()["version"], key="despacho-sem-assinar"
+    )
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detail["details"]["code"] == "ESTIMATE_EXPORT_BLOCKED"
+    assert detail["details"]["errors"] == ["ESTIMATE_NOT_APPROVED"]
+    assert set(_store(client).objects) == objects_before
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        assert record.version == montagem.json()["version"]
+
+
+def test_quem_montou_nao_assina_nem_acumulando_os_dois_papeis(tmp_path: Path) -> None:
+    """Critério 3 da F-035, sem molde na medição: a segregação compara IDENTIDADE.
+
+    Se ela comparasse papel, bastaria atribuir os dois a uma pessoa para a segregação
+    evaporar sem deixar rastro — e o papel novo seria cerimônia.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    round_id = state["round_id"]
+    montagem = _build_estimate(client, round_id, base_version=state["version"], key="montagem")
+    assert montagem.status_code == 200, montagem.text
+    base_version = montagem.json()["version"]
+
+    response = _approve_estimate(
+        client,
+        round_id,
+        base_version=base_version,
+        key="auto-aprovacao",
+        subject=_BUILDER_SUBJECT,
+        roles=_BOTH_ROLES,
+    )
+
+    assert response.status_code == 403, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "ESTIMATE_SELF_APPROVAL_FORBIDDEN"
+    # A recusa não devolve quem montou: seria um diretório de usuários do tenant.
+    assert _BUILDER_SUBJECT not in response.text
+    assert _revisions_with(client, "estimate_json")[-1].estimate_json is not None
+    leitura = client.get(
+        f"/v1/estimate-rounds/{round_id}/estimate", headers=_headers(key="leitura-recusa")
+    )
+    assert leitura.json()["approval"]["approved"] is False
+
+    # A mesma pessoa com os dois papéis DESPACHA sem problema — o que ela não pode é assinar.
+    outra = _approve_estimate(client, round_id, base_version=base_version, key="assinatura-outra")
+    assert outra.status_code == 200, outra.text
+
+
+def test_corpo_com_identidade_recusa_antes_de_qualquer_lookup(tmp_path: Path) -> None:
+    """Critério 4 da F-035: identidade é carimbo do servidor, e `extra=forbid` a recusa."""
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    round_id = state["round_id"]
+    montagem = _build_estimate(client, round_id, base_version=state["version"], key="montagem")
+    assert montagem.status_code == 200, montagem.text
+
+    response = client.post(
+        f"/v1/estimate-rounds/{round_id}/estimate/approve",
+        headers=_headers(roles=_APPROVER_ROLES, key="corpo-com-nome", subject=_APPROVER_SUBJECT),
+        json={
+            "base_version": montagem.json()["version"],
+            "approver_id": "quem-eu-quiser",
+            "decided_at": "2026-08-22T12:00:00+00:00",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert _estimate_documents(client)[-1]["approval"] is None
+
+
+def test_remontar_caduca_a_assinatura_e_o_despacho_recusa_ate_ato_novo(tmp_path: Path) -> None:
+    """Critério 5 da F-035: a assinatura anterior é levada adiante, caduca e legível.
+
+    Descartá-la apagaria em silêncio o fato de que alguém assinou.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    round_id = state["round_id"]
+    montagem = _build_estimate(client, round_id, base_version=state["version"], key="montagem")
+    assinatura = _approve_estimate(
+        client, round_id, base_version=montagem.json()["version"], key="assinatura"
+    )
+    assert assinatura.status_code == 200, assinatura.text
+    assinado_em = assinatura.json()["approval"]["approved_digest"]
+
+    remontagem = _build_estimate(
+        client, round_id, base_version=assinatura.json()["version"], key="remontagem", bdi="30.00"
+    )
+    assert remontagem.status_code == 200, remontagem.text
+    caduca = remontagem.json()["approval"]
+    assert caduca["approved"] is True
+    assert caduca["stale"] is True
+    assert caduca["approved_by"] == _APPROVER_SUBJECT
+    assert caduca["approved_digest"] == assinado_em
+    assert caduca["current_digest"] != assinado_em
+
+    despacho = _export_estimate(
+        client, round_id, base_version=remontagem.json()["version"], key="despacho-caduco"
+    )
+    assert despacho.status_code == 422, despacho.text
+    assert despacho.json()["detail"]["details"]["errors"] == ["APPROVAL_CONTENT_MISMATCH"]
+
+    estado = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers(key="estado-caduco"))
+    assert estado.json()["approval"]["stale"] is True
+
+    de_novo = _approve_estimate(
+        client, round_id, base_version=remontagem.json()["version"], key="assinatura-2"
+    )
+    assert de_novo.status_code == 200, de_novo.text
+    assert de_novo.json()["approval"]["stale"] is False
+    publicado = _export_estimate(
+        client, round_id, base_version=de_novo.json()["version"], key="despacho-2"
+    )
+    assert publicado.status_code == 200, publicado.text
+    # As duas assinaturas continuam legíveis na cadeia append-only.
+    assinaturas = [
+        document["approval"]["decision"]["decision_id"]
+        for document in _estimate_documents(client)
+        if document["approval"] is not None
+    ]
+    assert len(set(assinaturas)) == 2
+
+
+def test_aprovar_exige_orcamento_montado_e_autor_registrado(tmp_path: Path) -> None:
+    """Sem orçamento, é ordem da cadeia; sem autor gravado, não há contra quem conferir."""
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    round_id = state["round_id"]
+
+    sem_orcamento = _approve_estimate(
+        client, round_id, base_version=state["version"], key="assinar-sem-montar"
+    )
+    assert sem_orcamento.status_code == 409, sem_orcamento.text
+    assert sem_orcamento.json()["detail"]["code"] == "ROUND_STAGE_NOT_READY"
+    assert sem_orcamento.json()["detail"]["details"]["stage"] == "estimate"
+
+    montagem = _build_estimate(client, round_id, base_version=state["version"], key="montagem")
+    assert montagem.status_code == 200, montagem.text
+    # Revisão anterior a esta feature: orçamento gravado sem registro de quem o montou.
+    with _database(client).sessions() as session:
+        revision = session.scalar(
+            select(EstimateRoundRevisionRecord)
+            .where(EstimateRoundRevisionRecord.round_id == round_id)
+            .order_by(EstimateRoundRevisionRecord.version.desc())
+            .limit(1)
+        )
+        assert revision is not None
+        revision.estimate_built_by = None
+        session.commit()
+
+    sem_autor = _approve_estimate(
+        client, round_id, base_version=montagem.json()["version"], key="assinar-sem-autor"
+    )
+    assert sem_autor.status_code == 409, sem_autor.text
+    assert sem_autor.json()["detail"]["code"] == "ESTIMATE_APPROVAL_AUTHOR_UNKNOWN"
+
+
+def test_o_estado_da_rodada_declara_cascata_orcamento_e_aprovacao(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    round_id = state["round_id"]
+
+    antes = client.get(f"/v1/estimate-rounds/{round_id}", headers=_headers(key="estado-vazio"))
+    assert antes.status_code == 200, antes.text
+    # Sem orçamento legível, o bloco não aparece: ausência não é um valor.
+    assert "approval" not in antes.json()
+
+    montagem = _build_estimate(
+        client, round_id, base_version=state["version"], key="montagem-estado"
     )
     assert montagem.status_code == 200, montagem.text
 
@@ -1862,7 +2266,8 @@ def test_o_estado_da_rodada_declara_cascata_orcamento_e_planilha(tmp_path: Path)
     body = response.json()
     assert [entry["origin"] for entry in body["cascade"]] == ["sco", "emop"]
     assert body["estimate"]["present"] is True
-    assert body["estimate"]["workbook_present"] is True
+    assert body["estimate"]["workbook_present"] is False
+    assert body["approval"]["approved"] is False
     assert body["codes"]["confirmed"] == 2
     assert body["reviewer_role"] == "orcamentista"
 
@@ -1935,6 +2340,12 @@ def test_auditoria_divergente_nao_publica_nada(
     client = _client(tmp_path)
     state = _round_ready_for_estimate(client)
     round_id = state["round_id"]
+    montagem = _build_estimate(client, round_id, base_version=state["version"], key="montagem")
+    assert montagem.status_code == 200, montagem.text
+    assinatura = _approve_estimate(
+        client, round_id, base_version=montagem.json()["version"], key="assinatura"
+    )
+    assert assinatura.status_code == 200, assinatura.text
     objects_before = set(_store(client).objects)
 
     def _divergent(*_args: Any, **_kwargs: Any) -> EstimateAuditReport:
@@ -1959,10 +2370,8 @@ def test_auditoria_divergente_nao_publica_nada(
 
     monkeypatch.setattr(estimate_rounds, "audit_estimate_workbook", _divergent)
 
-    response = client.post(
-        f"/v1/estimate-rounds/{round_id}/estimate",
-        headers=_headers(key="auditoria-ruim"),
-        json={"base_version": state["version"], "bdi_percent": "25.00"},
+    response = _export_estimate(
+        client, round_id, base_version=assinatura.json()["version"], key="auditoria-ruim"
     )
 
     assert response.status_code == 500
@@ -1971,11 +2380,11 @@ def test_auditoria_divergente_nao_publica_nada(
     assert detail["details"]["finding_codes"] == ["CELL_VALUE_MISMATCH"]
     assert "9999.99" not in response.text and "1125.00" not in response.text
     assert set(_store(client).objects) == objects_before
-    assert not _revisions_with(client, "estimate_json")
+    assert estimate_rounds.ESTIMATE_WORKBOOK_REF not in _revisions(client)[-1].artifact_refs_json
     with _database(client).sessions() as session:
         record = session.get(EstimateRoundRecord, round_id)
         assert record is not None
-        assert record.version == state["version"]
+        assert record.version == assinatura.json()["version"]
 
 
 # --- prancha e extração ------------------------------------------------------------------

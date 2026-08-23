@@ -44,12 +44,23 @@ CROQUI_REVIEWER_ROLES: Final[tuple[str, ...]] = ("engineer", "architect", "domai
 #: se os dois divergirem.
 VALUATION_REVIEWER_ROLE: Final = "orcamentista"
 
-#: Papéis que abrem cada jornada. Espelha o portão que cada rota já aplica hoje — esta
-#: feature NÃO muda quem autoriza o quê, ela só lê a mesma regra antes.
+#: Quem ASSINA o orçamento-base, e nunca quem o montou (ADR-0046, decisão 5). Na cadeia real
+#: a assinatura é do gestor, do lado da prefeitura, e o nome do papel nomeia o ATO e não o
+#: cargo, para não presumir que todo tenant tenha "gestor" na sua estrutura. É papel próprio
+#: do orçamento: a medição não o conhece, porque lá quem mede e quem assina são a mesma
+#: função profissional.
+ESTIMATE_APPROVER_ROLE: Final = "aprovador"
+
+#: Papéis que abrem cada jornada. Espelha o portão que cada rota já aplica hoje.
+#:
+#: `orcamento` tem DOIS porque a F-035 separou assinar de montar: o aprovador precisa abrir a
+#: jornada para ver o que assina, e sem isso o papel novo não alcançaria a tela onde o ato
+#: acontece. Abrir a jornada não é poder mutá-la — cada rota continua exigindo o seu papel, e
+#: a mutação da cadeia segue exclusiva do `orcamentista`.
 JOURNEY_ROLES: Final[Mapping[Journey, frozenset[str]]] = {
     "croqui": frozenset(CROQUI_REVIEWER_ROLES),
     "medicao": frozenset({VALUATION_REVIEWER_ROLE}),
-    "orcamento": frozenset({VALUATION_REVIEWER_ROLE}),
+    "orcamento": frozenset({VALUATION_REVIEWER_ROLE, ESTIMATE_APPROVER_ROLE}),
 }
 
 #: Prefixo de rota -> jornada dona. O portão entra UMA vez, por prefixo, e não nas 57 rotas:

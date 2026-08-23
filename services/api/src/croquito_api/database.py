@@ -861,6 +861,19 @@ class EstimateRoundRevisionRecord(Base):
     code_assignments_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     estimate_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     """O `Estimate` montado: linhas com proveniência, BDI declarado e memória de cálculo."""
+    estimate_built_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    """Subject de quem MONTOU o orçamento da cabeça, carregado adiante pelos atos seguintes.
+
+    Não é ``created_by``, e a diferença é a razão de a coluna existir (ADR-0046, decisão 6):
+    ``created_by`` é de quem fez o ÚLTIMO ato, então depois de uma aprovação ele já não é
+    quem montou — e é exatamente contra quem montou que a rota de aprovação compara o
+    ``sub`` do JWT para recusar auto-aprovação. Descobrir o autor comparando a revisão com a
+    pai seria arqueologia numa cadeia append-only, que a mesma decisão recusou.
+
+    ``NULL`` é "a rodada ainda não tem orçamento montado" — e também toda revisão anterior a
+    esta coluna, cuja montagem não registrou autor. Aprovar essas exige remontar; nada aqui
+    inventa um autor que ninguém gravou.
+    """
     extraction_lineage_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     artifact_refs_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     """Chaves de objeto sob o prefixo do tenant (prancha, overlay, planilha publicada);

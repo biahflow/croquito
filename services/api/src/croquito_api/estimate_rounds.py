@@ -22,17 +22,25 @@ que o orçamentista vê na etapa seguinte — sem que nada seja recalculado esco
 origem só entra uma vez: duas fontes da mesma origem fariam "o preço veio da EMOP" deixar
 de identificar de qual arquivo ele veio (`ESTIMATE_CASCADE_ORIGIN_DUPLICATE`).
 
-O que este contexto NÃO tem, de propósito: contrato, saldo, período e aprovação. Nada
-disso existe antes da licitação, e o `Estimate` não passa — nem tenta passar — pelo portão
-de exportação da medição.
+O que este contexto NÃO tem, de propósito: contrato, saldo e período. Nada disso existe
+antes da licitação, e o `Estimate` não passa — nem tenta passar — pelo portão de exportação
+da medição, que recebe o contrato por parâmetro.
+
+Aprovação, essa existe e é PRÓPRIA (ADR-0046): montar não publica mais nada, assinar é ato
+nominal do papel `aprovador` e despachar é ato do `orcamentista` atrás do portão do domínio
+(`Estimate.ensure_exportable()`). É a assinatura sem contrato que mantém a fronteira do
+ADR-0027 de pé — saldo, período e código no contrato não têm por onde entrar aqui.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Final
@@ -42,6 +50,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from croquito_api.database import EstimateRoundRecord, EstimateRoundRevisionRecord
+from croquito_api.journeys import ESTIMATE_APPROVER_ROLE
 from croquito_api.valuation_rounds import (
     SEMANTIC_ARM_ABSENT,
     STAGE_CODE_ASSIGNMENTS,
@@ -65,7 +74,7 @@ from croquito_valuation.assignment import (
 )
 from croquito_valuation.catalog import default_domain_synonyms, default_legend_noise
 from croquito_valuation.errors import ValuationValidationError
-from croquito_valuation.estimate import Estimate
+from croquito_valuation.estimate import Estimate, EstimateApproval, EstimateApproverDecision
 from croquito_valuation.estimate_workbook import (
     EstimateAuditReport,
     audit_estimate_workbook,
@@ -100,6 +109,8 @@ ESTIMATE_CASCADE_ORIGIN_FORBIDDEN: Final = "ESTIMATE_CASCADE_ORIGIN_FORBIDDEN"
 ESTIMATE_CATALOG_SOURCE_INVALID: Final = "ESTIMATE_CATALOG_SOURCE_INVALID"
 ESTIMATE_REGIME_CASCADE_DIRTY: Final = "ESTIMATE_REGIME_CASCADE_DIRTY"
 ESTIMATE_REGIME_IRREVERSIBLE: Final = "ESTIMATE_REGIME_IRREVERSIBLE"
+ESTIMATE_SELF_APPROVAL_FORBIDDEN: Final = "ESTIMATE_SELF_APPROVAL_FORBIDDEN"
+ESTIMATE_APPROVAL_AUTHOR_UNKNOWN: Final = "ESTIMATE_APPROVAL_AUTHOR_UNKNOWN"
 
 REGIME_CONTRACTED_DEMAND: Final = "contracted_demand"
 """Único regime GRAVÁVEL (ADR-0045): a demanda orçada dentro de contrato já licitado.
@@ -149,7 +160,19 @@ REVISION_DOCUMENT_COLUMNS: Final[tuple[str, ...]] = (
 REVISION_MAP_COLUMNS: Final[tuple[str, ...]] = ("artifact_refs_json", "artifact_digests_json")
 """Colunas de mapa; ausentes são `{}`, nunca `NULL` (é o default da coluna)."""
 
-REVISION_COLUMNS: Final[tuple[str, ...]] = REVISION_DOCUMENT_COLUMNS + REVISION_MAP_COLUMNS
+REVISION_SCALAR_COLUMNS: Final[tuple[str, ...]] = ("estimate_built_by",)
+"""Colunas ESCALARES carregadas adiante; ausentes são `NULL`.
+
+Terceira categoria, e não um apêndice das duas anteriores (F-035, ADR-0046 decisão 6).
+`estimate_built_by` é um `str | None`: não é artefato JSON — `_artifact_digests` percorre
+`REVISION_DOCUMENT_COLUMNS` e publicaria um digest de identidade no estado da rodada, e
+`require_document` passaria a aceitar o nome de uma coluna que não guarda documento — nem é
+mapa, cujo default `{}` não faz sentido para um escalar. O que ela compartilha com as duas é
+só o carregamento adiante do `append_revision`, e é exatamente isso que a lista declara."""
+
+REVISION_COLUMNS: Final[tuple[str, ...]] = (
+    REVISION_DOCUMENT_COLUMNS + REVISION_MAP_COLUMNS + REVISION_SCALAR_COLUMNS
+)
 
 _CASCADE_ENTRY_FIELDS: Final[tuple[str, ...]] = (
     "object_key",
@@ -378,6 +401,12 @@ def append_revision(
     O valor carregado da cabeça é copiado em profundidade de propósito: duas linhas ORM
     apontando para o mesmo `dict` compartilhariam mutação e destruiriam a imutabilidade que
     a tabela existe para garantir.
+
+    São TRÊS categorias de coluna, não duas: documento (`NULL` quando ausente), mapa (`{}`
+    quando ausente) e escalar (`NULL` quando ausente). A terceira nasceu com
+    `estimate_built_by` (ADR-0046, decisão 6) porque um `str | None` não é artefato nem
+    mapa; o que ele compartilha com os outros é só ser carregado adiante quando o ato não o
+    muda, que é o que faz "quem montou" sobreviver a uma aprovação e a uma exportação.
     """
     unknown = sorted(set(changes) - set(REVISION_COLUMNS))
     if unknown:
@@ -1069,6 +1098,199 @@ def search_round_cascade(cascade: Sequence[PriceCatalog], query: str, limit: int
     return payload
 
 
+# --- aprovação nominal --------------------------------------------------------------------
+
+
+APPROVAL_ACTION: Final = "confirm"
+"""A única decisão que a rota de aprovação escreve.
+
+`EstimateApproverDecision` aceita `reject` como o irmão da medição, e a recusa registrada
+continua sem existir no produto pelo mesmo motivo de lá: ninguém decidiu o que ela destrava
+na tela, e o Design Approval Package da F-035 não a desenha. Nada é escrito como reservado.
+"""
+
+
+def _approval_decision_id(*, approver_id: str, decided_at: datetime, estimate_digest: str) -> str:
+    """Id determinístico do ato, no molde de `_approval_decision_id` da medição (prefixo
+    `ed_`).
+
+    Deriva do que o ato É — quem assinou, quando, sobre qual conteúdo —, e não de um contador
+    ou de um relógio próprio: dois processos que registrassem o mesmo ato produziriam o mesmo
+    id, e um id que muda sem o ato mudar não identifica nada.
+    """
+    canonical = json.dumps(
+        {
+            "action": APPROVAL_ACTION,
+            "approver_id": approver_id,
+            "approver_role": ESTIMATE_APPROVER_ROLE,
+            "decided_at": decided_at.isoformat(),
+            "estimate_digest": estimate_digest,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"ed_{hashlib.sha256(canonical.encode()).hexdigest()[:16]}"
+
+
+def approve_estimate(estimate: Estimate, *, approver_id: str, decided_at: datetime) -> Estimate:
+    """O MESMO orçamento com a aprovação nominal embutida, amarrada por digest ao conteúdo.
+
+    O vínculo é o `content_digest()` do próprio domínio, que exclui `approval` do cálculo:
+    assinar não muda o que foi assinado, e por isso o digest gravado continua conferindo com
+    o do orçamento depois do ato. Qualquer ato POSTERIOR que remonte o orçamento faz os dois
+    divergirem, e é o portão de exportação — nunca esta função — que lê essa divergência como
+    `APPROVAL_CONTENT_MISMATCH`.
+
+    Identidade e instante são do SERVIDOR: `approver_id` é o subject do JWT e `decided_at` é
+    o relógio do processo. Nenhum dos dois viaja no corpo (critério 4 da F-035), e por isso
+    esta função os recebe por parâmetro nomeado em vez de aceitar uma decisão pronta.
+
+    A cópia não revalida o orçamento de propósito: quem entra aqui já foi revalidado pela
+    leitura (`Estimate.model_validate`), o único campo que muda é `approval`, e nenhuma
+    invariante de linha, BDI ou memória de cálculo depende dele.
+    """
+    estimate_digest = estimate.content_digest()
+    approval = EstimateApproval(
+        decision=EstimateApproverDecision(
+            decision_id=_approval_decision_id(
+                approver_id=approver_id,
+                decided_at=decided_at,
+                estimate_digest=estimate_digest,
+            ),
+            action=APPROVAL_ACTION,
+            approver_id=approver_id,
+            approver_role=ESTIMATE_APPROVER_ROLE,
+            decided_at=decided_at,
+        ),
+        estimate_digest=estimate_digest,
+    )
+    return estimate.model_copy(update={"approval": approval})
+
+
+def approval_payload(estimate: Estimate) -> dict[str, Any]:
+    """O bloco de aprovação que a tela lê, com a caducidade DERIVADA na leitura.
+
+    `stale` nunca é gravado, pela mesma razão da medição: ele é a relação entre dois digests
+    que só existe no instante da leitura. Aprovação caduca é o estado que o desenho aprovado
+    da F-035 mostra por extenso — os dois digests lado a lado e uma única saída, aprovar de
+    novo —, e escondê-lo faria a tela oferecer um despacho que a rota já sabe que vai recusar
+    com `APPROVAL_CONTENT_MISMATCH`.
+    """
+    approval = estimate.approval
+    current_digest = estimate.content_digest()
+    if approval is None:
+        return {
+            "approved": False,
+            "approved_by": None,
+            "approved_at": None,
+            "approved_digest": None,
+            "current_digest": current_digest,
+            "stale": False,
+        }
+    return {
+        "approved": approval.decision.action == APPROVAL_ACTION,
+        "approved_by": approval.decision.approver_id,
+        "approved_at": approval.decision.decided_at.isoformat(),
+        "approved_digest": approval.estimate_digest,
+        "current_digest": current_digest,
+        "stale": approval.estimate_digest != current_digest,
+    }
+
+
+def approval_state(estimate: Estimate | None) -> dict[str, Any]:
+    """Bloco `{approval}` no estado da rodada, no padrão de `target_state`/`regime_state`.
+
+    Sem orçamento legível na cabeça, o dicionário volta VAZIO — a chave não aparece, como o
+    teto ausente não aparece. Ausência não é um valor, e devolver `"approval": null` faria a
+    tela ter de distinguir "não há orçamento" de "há orçamento sem assinatura", que é
+    justamente o que `approved: false` já diz.
+    """
+    if estimate is None:
+        return {}
+    return {"approval": approval_payload(estimate)}
+
+
+def readable_estimate(revision: EstimateRoundRevisionRecord | None) -> Estimate | None:
+    """O orçamento gravado, ou `None` quando ele não existe **ou não valida mais**.
+
+    Espelha `readable_valuation`: o estado por etapa não pode derrubar a tela inteira por
+    causa de um artefato que deixou de validar, e quem SERVE o orçamento (`GET .../estimate`)
+    não passa por aqui — lá, artefato ilegível é `422`, porque ninguém lê orçamento que o
+    domínio não valida.
+    """
+    if revision is None or revision.estimate_json is None:
+        return None
+    try:
+        return Estimate.model_validate(dict(revision.estimate_json))
+    except (ValuationValidationError, ValidationError):
+        return None
+
+
+def carry_approval_forward(estimate: Estimate, previous: Estimate | None) -> Estimate:
+    """Leva a aprovação anterior adiante no orçamento recém-montado. Preservar NÃO é aprovar.
+
+    A aprovação carregada continua apontando para o digest ANTIGO, e o orçamento novo tem
+    outro conteúdo — ele nasce, portanto, CADUCO por construção, e o portão de exportação o
+    recusa com `APPROVAL_CONTENT_MISMATCH`. Em momento algum ela autoriza o conteúdo novo: o
+    que ela faz é manter visível que uma aprovação existiu e deixou de cobrir o que está na
+    tela (ADR-0046, decisão 8).
+
+    Descartá-la seria perder essa informação em silêncio. Quem remontasse depois de assinar
+    veria "não aprovado", como se ninguém nunca tivesse assinado, e a tela não teria como
+    oferecer a única saída correta — aprovar de novo, ciente de que o conteúdo mudou.
+
+    Nada disso é decisão do DOMÍNIO: `build_worksite_estimate` continua montando orçamento
+    sem aprovação nenhuma, que é o certo para uma função que só sabe calcular. Quem tem a
+    revisão anterior em mãos, e portanto pode responder "houve aprovação antes?", é a rota.
+    """
+    if previous is None or previous.approval is None:
+        return estimate
+    return estimate.model_copy(update={"approval": previous.approval})
+
+
+def estimate_built_by(revision: EstimateRoundRevisionRecord | None) -> str | None:
+    """Quem montou o orçamento da cabeça, ou `None` quando ninguém o montou."""
+    if revision is None:
+        return None
+    author = revision.estimate_built_by
+    return author if isinstance(author, str) and author else None
+
+
+def self_approval_forbidden() -> RoundRefusal:
+    """Quem montou o orçamento não o assina (ADR-0046, decisão 6).
+
+    A recusa compara IDENTIDADE, não papel: acumular `orcamentista` e `aprovador` no mesmo
+    token não contorna, porque sem isso o papel novo seria cerimônia — bastaria atribuir os
+    dois a uma pessoa para a segregação evaporar sem deixar rastro.
+
+    O detalhe não diz quem montou. Devolver o subject de outra pessoa transformaria uma
+    recusa de autorização num diretório de usuários do tenant.
+    """
+    return RoundRefusal(
+        403,
+        ESTIMATE_SELF_APPROVAL_FORBIDDEN,
+        "quem montou o orçamento não pode aprová-lo; a assinatura é de outra pessoa",
+        {},
+    )
+
+
+def approval_missing_author() -> RoundRefusal:
+    """Orçamento montado sem registro de autor: não há contra quem conferir a segregação.
+
+    É o caso de uma rodada montada antes desta feature, cuja revisão não tem
+    `estimate_built_by`. Recusar fechado é a única resposta honesta — aprovar assumindo que
+    o autor é outra pessoa seria justamente a auto-aprovação silenciosa que a decisão 6
+    proíbe. A saída é remontar o orçamento, que é ato normal da jornada.
+    """
+    return RoundRefusal(
+        409,
+        ESTIMATE_APPROVAL_AUTHOR_UNKNOWN,
+        "o orçamento da cabeça não registra quem o montou; remonte antes de aprovar",
+        {},
+    )
+
+
 # --- planilha publicada -------------------------------------------------------------------
 
 
@@ -1110,6 +1332,12 @@ def estimate_workbook_key(*, tenant_id: str, round_id: str, estimate_sha256: str
     sobrescrever a planilha que a revisão anterior ainda referencia: cada revisão aponta
     para o arquivo do orçamento que ela gravou, e uma URL assinada emitida antes continua
     servindo exatamente o que foi auditado quando foi emitida.
+
+    O digest que entra aqui é o `content_digest()` do domínio, que EXCLUI a aprovação, e não
+    o digest do documento gravado (F-035): a planilha é do conteúdo orçado, e assinar não
+    muda esse conteúdo. Com o digest do documento, aprovar mudaria o endereço da mesma
+    planilha, e o `.xlsx` publicado depois da assinatura deixaria de ser endereçável pelo que
+    foi assinado.
     """
     return f"tenants/{tenant_id}/estimate-rounds/{round_id}/estimate/{estimate_sha256}.xlsx"
 
@@ -1213,6 +1441,11 @@ def round_state_payload(
     A etapa entra por PRESENÇA e digest; revalidar o orçamento é papel de quem o serve. Um
     orçamento ilegível não pode derrubar a tela inteira antes de o orçamentista sequer
     chegar nele.
+
+    O bloco de aprovação é a única coisa aqui que precisa LER o orçamento, porque o vínculo
+    da assinatura é um digest do conteúdo e não uma coluna. A leitura é a tolerante
+    (`readable_estimate`): artefato que não valida sai como bloco AUSENTE, e não derruba o
+    estado da rodada.
     """
     packet = takeoff_packet_of(revision)
     assignments = assignments_of(revision)
@@ -1281,6 +1514,7 @@ def round_state_payload(
             "workbook_present": estimate_workbook_ref(revision) is not None,
             "workbook_sha256": digests.get(ESTIMATE_WORKBOOK_DIGEST),
         },
+        **approval_state(readable_estimate(revision)),
         **target_state(round_record, revision),
         **regime_state(round_record, assignments),
         "created_at": round_record.created_at.isoformat(),
