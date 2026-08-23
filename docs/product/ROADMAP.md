@@ -2,12 +2,13 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-23 (estado da F-034 reconciliado — as duas fatias já estavam na
-main desde 2026-08-22, e o contrato e esta tabela seguiam em READY_FOR_PLANNING; o pacote de
-revisão dela foi escrito. Antes, em 2026-08-22: F-037 (acervo de catálogos, ADR-0047) e
-F-035 (aprovação do orçamento, ADR-0046) entregues; F-033 entregue — demanda sob contrato
-licitado sobre o ADR-0045; F-032 integrada à main com a fatia de sincronização completa;
-F-030 e F-036 registradas sem contrato; antes: F-029 aberta com contrato,
+Última revisão: 2026-08-23 (F-036 e F-030 ganharam Feature Contract por seleção humana, as
+duas BLOCKED por decisão de arquitetura e Design Approval Package; estado da F-034
+reconciliado — as duas fatias já estavam na main desde 2026-08-22, e o contrato e esta tabela
+seguiam em READY_FOR_PLANNING; o pacote de revisão dela foi escrito. Antes, em 2026-08-22:
+F-037 (acervo de catálogos, ADR-0047) e F-035 (aprovação do orçamento, ADR-0046) entregues;
+F-033 entregue — demanda sob contrato licitado sobre o ADR-0045; F-032 integrada à main com
+a fatia de sincronização completa; antes: F-029 aberta com contrato,
 absorvendo a fatia 2 da F-023; F-021 e F-022 abertas com contrato, ADR-0037 `Proposed`;
 F-012 documentada com ADR-0036 `Proposed`; inventário
 F-013..F-017 aberto; F-018/F-019 abertas; F-020 aberta com contrato)
@@ -57,7 +58,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
 | F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
-| F-030 | A DEFINIR | READY_FOR_SPEC | Fotos do levantamento na jornada de revisão (a definir em contrato) |
+| F-030 | HIGH | BLOCKED | [Fotos do levantamento na jornada de revisão](../features/F-030-fotos-do-levantamento-na-revisao/feature.md) |
 | F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | READY_FOR_HUMAN_REVIEW | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
 | F-035 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
@@ -338,10 +339,20 @@ F-030 — fotos do levantamento na jornada de revisão — nasce na mesma sessã
 2026-08-21, por seleção humana: o levantamento de campo produz fotos junto do croqui,
 e a jornada de upload/revisão só recebe o PDF. Foto resolve "o que é" (muro ×
 alambrado, portão × detalhe) e corrobora topologia via provider multimodal, mas não
-fornece medida (sem escala) — por isso não entra no score determinístico da F-029. É
-`INTERFACE_CHANGE` (upload + storage + retenção + chamada paga) e exigirá Design
-Approval Package antes do planejamento. Ainda sem Feature Contract: esta linha é o
-registro canônico até a especificação, e a prioridade é decisão humana pendente.
+fornece medida (sem escala) — por isso não entra no score determinístico da F-029.
+
+Ganhou contrato em 2026-08-23, por seleção humana, e a especificação corrigiu o tamanho
+que este parágrafo supunha. "Upload + storage + retenção + chamada paga" descrevia quatro
+coisas, e a F-032 já entregou três: a foto chega com digest e **já ancorada**, o worker
+a analisa (`survey_photo_analysis.py`) e `GET /v1/surveys/{id}` já lê com papel de
+escritório. O que falta é preciso e menor — a mídia não tem URL para o escritório, o
+artefato de análise é **escrito e nunca lido** por nenhuma rota, e nada liga um job ao
+levantamento (`survey_export.py` já nomeava a F-030 como quem fecharia isso). Duas
+decisões humanas de 2026-08-23: as fotos chegam pelos **dois** caminhos (vínculo e upload
+avulso) e a **classificação por IA entra**, em três fatias — ver, subir, classificar.
+`BLOCKED` por dois gates que precedem o planejamento: a decisão de arquitetura (não existe
+job sem PDF hoje — `jobs.upload_id` é `NOT NULL UNIQUE`) e o Design Approval Package.
+Contrato em [F-030](../features/F-030-fotos-do-levantamento-na-revisao/feature.md).
 
 F-033 — demanda sob contrato licitado — nasce em 2026-08-21, numa conversa de operação
 em que se mapeou a cadeia real das praças (levantamento → DXF → prancha → orçamento →
@@ -464,9 +475,9 @@ aprovado pelo usuário na mesma data e executa em branch/worktree própria
 (`f-032-app-levantamento-campo`), sem tocar a homologação. O ID salta de F-028 para
 F-032 nesta tabela porque F-029, F-030 e F-031 foram reivindicados por sessões
 paralelas ainda não integradas à main (F-029/F-030 no checkout de trabalho;
-F-031 — eventos de valor — na branch `feat/f-031-value-events`); relação direta com a
-futura F-030: o app de campo produz as fotos já ancoradas à geometria que aquela
-jornada consumirá.
+F-031 — eventos de valor — na branch `feat/f-031-value-events`, desde então integradas);
+relação direta com a F-030: o app de campo produz as fotos já ancoradas à geometria que
+aquela jornada consome, e é dessa entrega que o contrato da F-030 parte.
 
 ## Agora — MVP privado
 
