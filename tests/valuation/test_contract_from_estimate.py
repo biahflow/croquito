@@ -23,11 +23,14 @@ from croquito_valuation.estimate import (
     EstimateLine,
 )
 from croquito_valuation.models import (
+    BulletinLine,
     CalcBlock,
     CalcOperand,
     CalcRecipe,
     CalcSheet,
     PriceOrigin,
+    Valuation,
+    WorksiteBulletin,
 )
 from croquito_valuation.rounding import money_trunc
 
@@ -321,3 +324,123 @@ def test_o_consolidado_produzido_sobrevive_a_revalidacao() -> None:
 
     assert [line.code for line in revalidated.lines] == [_CODE, _OTHER_CODE]
     assert revalidated.next_period_number == 1
+
+
+# --- Os seis guardrails deixam de ser inertes ------------------------------------------
+#
+# A F-036 existe para isto: com o consolidado FABRICADO da `/v1` estes códigos não podiam
+# disparar, porque a rodada não tinha o fato que os alimenta. Cada teste abaixo mede um
+# deles contra um consolidado de ORIGEM ASSINADA — e todos falhariam antes desta feature,
+# porque `bulletin_export_contract` monta o contrato a partir da própria medição.
+
+
+def _bulletin_line(
+    *, code: str = _CODE, quantity: str, unit: str = "m2", unit_price: Decimal = _UNIT_PRICE
+) -> BulletinLine:
+    amount = Decimal(quantity)
+    return BulletinLine(
+        item_number="1",
+        code=code,
+        description="PISO INTERTRAVADO SINTETICO 6CM",
+        unit=unit,
+        unit_price=unit_price,
+        quantity=amount,
+        total=money_trunc(amount * unit_price),
+    )
+
+
+def _valuation(line: BulletinLine, *, period_number: int = 1) -> Valuation:
+    bulletin = WorksiteBulletin(
+        worksite_key=_WORKSITE_KEY,
+        worksite_name="PRACA SINTETICA PORTAO",
+        lines=[line],
+        total_amount=line.total,
+    )
+    return Valuation(
+        period_number=period_number,
+        reference_label="Medição sintética",
+        bulletins=[bulletin],
+        calc_sheets=[_calc_sheet("1", line.quantity)],
+    )
+
+
+def _contract_of(quantity: str = "12.00") -> ContractWorkbook:
+    return _build(_approved(_estimate([_line(item_number="1", quantity=quantity)])))
+
+
+def test_medir_acima_do_contratado_dispara_balance_exceeded() -> None:
+    contract = _contract_of("12.00")
+
+    errors = _valuation(_bulletin_line(quantity="20.00")).export_errors(contract)
+
+    assert any(error.startswith("BALANCE_EXCEEDED") for error in errors), errors
+
+
+def test_medir_dentro_do_contratado_nao_dispara_saldo() -> None:
+    """O guardrail que acende também precisa saber ficar quieto."""
+    contract = _contract_of("12.00")
+
+    errors = _valuation(_bulletin_line(quantity="8.00")).export_errors(contract)
+
+    assert not any(error.startswith("BALANCE_EXCEEDED") for error in errors), errors
+
+
+def test_medir_codigo_fora_do_orcamento_dispara_code_not_in_contract() -> None:
+    contract = _contract_of()
+
+    errors = _valuation(_bulletin_line(code=_OTHER_CODE, quantity="1.00")).export_errors(contract)
+
+    assert any(error.startswith("CODE_NOT_IN_CONTRACT") for error in errors), errors
+
+
+def test_medir_por_preco_diferente_do_assinado_dispara_line_price() -> None:
+    contract = _contract_of()
+
+    errors = _valuation(_bulletin_line(quantity="1.00", unit_price=Decimal("99.00"))).export_errors(
+        contract
+    )
+
+    assert any(error.startswith("LINE_PRICE_NOT_IN_CONTRACT") for error in errors), errors
+
+
+def test_medir_em_unidade_diferente_da_assinada_dispara_line_unit() -> None:
+    contract = _contract_of()
+
+    errors = _valuation(_bulletin_line(quantity="1.00", unit="m")).export_errors(contract)
+
+    assert any(error.startswith("LINE_UNIT_NOT_IN_CONTRACT") for error in errors), errors
+
+
+def test_medicao_fora_da_sequencia_dispara_period_not_sequential() -> None:
+    """Sem período lançado, a próxima é a 1; abrir como 3 é pular medição."""
+    contract = _contract_of()
+
+    errors = _valuation(_bulletin_line(quantity="1.00"), period_number=3).export_errors(contract)
+
+    assert any(error.startswith("PERIOD_NOT_SEQUENTIAL") for error in errors), errors
+
+
+def test_o_sexto_guardrail_continua_inerte_e_isso_esta_declarado() -> None:
+    """`CODE_AMBIGUOUS_IN_CONTRACT` não pode disparar nesta origem, e é decisão (ADR-0048, 5).
+
+    Ele exige o mesmo código em DOIS grupos do consolidado, e o consolidado derivado de um
+    orçamento tem grupo único porque o orçamento não modela grupo. Um guardrail que nunca
+    dispara é honesto quando declarado; o perigoso é o que finge conferir — então o teste
+    prova a inércia em vez de deixá-la implícita na prosa do ADR.
+    """
+    contract = _build(
+        _approved(
+            _estimate(
+                [
+                    _line(item_number="1", quantity="5.00"),
+                    _line(item_number="2", code=_OTHER_CODE, quantity="2.00"),
+                ]
+            )
+        )
+    )
+
+    assert len({line.group_label for line in contract.lines}) == 1
+
+    errors = _valuation(_bulletin_line(quantity="1.00")).export_errors(contract)
+
+    assert not any(error.startswith("CODE_AMBIGUOUS_IN_CONTRACT") for error in errors), errors

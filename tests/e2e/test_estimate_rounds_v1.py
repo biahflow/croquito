@@ -1198,6 +1198,32 @@ def test_estimate_round_contracted_demand_regime_through_v1_api(
     assert audit.status == "ok"
     assert audit.findings == []
 
+    # 8. F-036: a medição nasce do orçamento ASSINADO, e é aqui que a cadeia inteira fecha —
+    # o documento que desce para a empresa passa a ser o contratado contra o qual a obra é
+    # medida. Obra e endereço vêm do conteúdo assinado; declará-los aqui recusa.
+    medicao = client.post(
+        "/v1/valuation-rounds",
+        headers=_headers("medicao-do-orcamento-e2e"),
+        json={
+            "estimate_round_id": str(round_id),
+            "reference_label": "Medição 1 — e2e",
+            "period_number": 1,
+        },
+    )
+    assert medicao.status_code == 201, medicao.text
+
+    estado = client.get(
+        f"/v1/valuation-rounds/{medicao.json()['round_id']}",
+        headers=_headers("estado-medicao-e2e"),
+    )
+    assert estado.status_code == 200, estado.text
+    contratado = estado.json()["contracted"]
+    assert contratado["origin"] == "signed_estimate"
+    assert contratado["estimate_round_id"] == str(round_id)
+    # O digest é o do conteúdo assinado, e é ele que responde "medi contra o quê".
+    assert contratado["estimate_digest"] == read["approval"]["current_digest"]
+    assert contratado["code_count"] == len(estimate.lines)
+
     layout = template.estimate
     assert layout is not None
     columns = layout.columns
