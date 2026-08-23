@@ -2,7 +2,9 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-23 (F-034 **aceita por ato humano** — `DONE`; F-036 e F-030 ganharam
+Última revisão: 2026-08-23 (faixa F-011..F-019 auditada contra o código: **F-011 encerrada
+`DONE`** por já estar entregue quando foi registrada, F-015 e F-017 encolhidas ao que de fato
+sobrou, e **F-018 e F-019 ganharam Feature Contract**; F-034 **aceita por ato humano** — `DONE`; F-036 e F-030 ganharam
 Feature Contract por seleção humana e seguem `BLOCKED`, agora com os quatro artefatos de gate
 produzidos e pendentes de ato humano: ADR-0048, ADR-0049 e os dois Design Approval Packages;
 antes disso, estado da F-034 reconciliado — as duas fatias já estavam na main desde 2026-08-22, e o contrato e esta tabela
@@ -40,15 +42,15 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-008 | HIGH | BLOCKED | [Ciclo de vida de conta: convite, recuperação de senha e Google](../features/F-008-ciclo-de-vida-de-conta/feature.md) |
 | F-009 | HIGH | READY_FOR_REVIEW | [Suite hospedada de providers: OpenAI + Anthropic direto, sem AWS](../features/F-009-suite-hospedada-sem-aws/feature.md) |
 | F-010 | HIGH | READY_FOR_HUMAN_REVIEW | [Revisão assistida em lote — fatia 1: anotações sugeridas](../features/F-010-revisao-assistida-lote/feature.md) |
-| F-011 | A DEFINIR | READY_FOR_SPEC | Jornada guiada da revisão (a definir em contrato) |
+| F-011 | — | DONE | [Jornada guiada da revisão](../features/F-011-jornada-guiada-da-revisao/feature.md) — já entregue quando foi registrada |
 | F-012 | HIGH | READY_FOR_REVIEW | [Operação SaaS da autorização de IA](../features/F-012-operacao-saas-autorizacao-ia/feature.md) |
 | F-013 | A DEFINIR | READY_FOR_SPEC | UI de membros do tenant, depende de F-008 (a definir em contrato) |
 | F-014 | A DEFINIR | READY_FOR_SPEC | Entidade tenant e onboarding self-service (a definir em contrato) |
-| F-015 | A DEFINIR | READY_FOR_SPEC | Recriar o job de upload existente (a definir em contrato) |
+| F-015 | A DEFINIR | READY_FOR_SPEC | Recriar job a partir de upload já usado (`jobs.upload_id` é `UNIQUE`) — a definir em contrato |
 | F-016 | A DEFINIR | READY_FOR_SPEC | Rotação de chaves e segredos de provider (a definir em contrato) |
-| F-017 | A DEFINIR | READY_FOR_SPEC | Custo agregado por tenant e trilha de auditoria do entitlement na tela (a definir em contrato) |
-| F-018 | A DEFINIR | READY_FOR_SPEC | Edição de forma da proposta na UI da revisão — corrigir vértice/recuo manualmente (a definir em contrato) |
-| F-019 | A DEFINIR | READY_FOR_SPEC | Preview visual da cena resolvida na revisão (a definir em contrato) |
+| F-017 | A DEFINIR | READY_FOR_SPEC | Trilha de auditoria do entitlement na tela — o custo por tenant já saiu na F-031 (a definir em contrato) |
+| F-018 | HIGH | BLOCKED | [Corrigir a forma da proposta na tela, sem rerodar o provider](../features/F-018-edicao-de-forma-da-proposta/feature.md) |
+| F-019 | HIGH | BLOCKED | [Ver a cena resolvida antes de exportar](../features/F-019-preview-da-cena-resolvida/feature.md) |
 | F-020 | HIGH | READY_FOR_HUMAN_REVIEW | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
 | F-021 | HIGH | READY_FOR_HUMAN_REVIEW | [Nota pré-classificada na decisão da leitura](../features/F-021-nota-pre-classificada/feature.md) |
 | F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |
@@ -161,12 +163,22 @@ da F-009 (upload real corroborado por OCR) para calibrar os limiares de concord�
 Feature Contract: esta linha é o registro canônico até a especificação, e a prioridade é decisão
 humana pendente.
 
-F-011 — jornada guiada da revisão — nasce em 2026-08-19, por seleção humana, na primeira revisão
-da porta nova: o responsável quer a experiência da revisão como **jornada guiada** — a próxima
-tarefa só habilita quando a atual é cumprida, no lugar do formulário aberto de hoje. É mudança de
-UX transversal à jornada da revisão (`INTERFACE_CHANGE` na classificação da camada pinada:
-exigirá Design Approval Package antes do planejamento). Ainda sem Feature Contract: esta linha é
-o registro canônico até a especificação, e a prioridade é decisão humana pendente. **Renumerada
+F-011 — jornada guiada da revisão — **`DONE` por ato humano em 2026-08-23, sem nunca ter tido
+Feature Contract, porque o que ela pedia já existia quando foi registrada.** Nasceu em
+2026-08-19, por seleção humana, na primeira revisão da porta nova: o responsável queria a
+experiência da revisão como jornada guiada, a próxima tarefa habilitando só quando a atual é
+cumprida. A auditoria de 2026-08-23 encontrou isso no ar: `apps/web/src/journey.ts` deriva
+quatro etapas — Decisões → Traçado → Aprovação → Exportação —, `JourneyStepStatus` tem
+`blocked` com o motivo em língua de obra ("faltam 3 leituras por decidir"), `activeStep` nunca
+cai numa etapa bloqueada, e `CroquiApp.tsx` mostra uma etapa por vez. O `deriveJourney` entrou
+na tela em **2026-08-17** (`01e5340`, F-003 T14–T16), dois dias **antes** do registro desta
+linha.
+
+Fica a lição, que é a mesma já registrada noutro lugar: **conferir se o artefato existe antes
+de propor**. O item consumiu um ID e apareceu por quatro dias como trabalho aberto sem sê-lo.
+O que permanece de aberto, e é outra coisa: dentro da etapa *Decisões* a tela ainda mostra
+todas as cotas de uma vez. Isso não foi pedido aqui e não vira feature sem seleção humana
+nova. **Renumerada
 de F-009 para F-011 nesta revisão do roadmap**: a mesma data de nascimento produziu três itens
 candidatos a numeração (esta jornada guiada, a suite hospedada sem AWS e a revisão assistida em
 lote) e as duas primeiras entradas colidiram no ID `F-009` — a suite hospedada já tinha Feature
@@ -204,6 +216,24 @@ existente, sem exigir digest nem allowlist; **F-016** rotação de chaves e segr
 tela de plataforma. F-008 permanece `BLOCKED`: o que a impede é a decisão do usuário sobre
 provedor de e-mail e domínio remetente, não código.
 
+**Auditoria de 2026-08-23 contra o código**, que encolheu duas destas linhas — o inventário foi
+escrito em 2026-08-19 e o produto andou:
+
+- **F-015** perdeu metade da premissa. A allowlist **já saiu** do caminho hospedado: `authorize_page`
+  só existe hoje em `services/worker/src/croquito_worker/extraction_eval.py`, que é o caminho
+  offline de eval que o ADR-0036 preservou de propósito. O que resta é real e tem trava
+  concreta: `jobs.upload_id` é `ForeignKey` **`UNIQUE`**, então um upload já usado não gera
+  outro job — e é justamente essa coluna que o [ADR-0049](../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md)
+  decidiu manter como está.
+- **F-017** teve a metade do custo entregue pela [F-031](../features/F-031-value-events/feature.md):
+  `GET /v1/metrics/summary` já devolve `ai_cost` e `rounds_ai_cost` do tenant. Resta a **trilha
+  de auditoria do entitlement na tela**, que o Design Approval Package da
+  [F-034](../features/F-034-disponibilidade-de-jornada/feature.md) desenhou como bloco
+  **reservado** citando esta feature pelo nome.
+- **F-013**, **F-014** e **F-016** seguem intactas e verificadas: não existe tabela `tenants`
+  (o `tenant_id` vive no JWT e como coluna nas tabelas de domínio), não há UI de membros, e não
+  há mecanismo de rotação de segredo de provider.
+
 F-018 — edição de forma da proposta na UI da revisão — nasce em 2026-08-19, por seleção
 humana, na primeira revisão real em nuvem do Guaxindiba V3: o muro com recuo 4,80→3,30
 chegou fragmentado da extração paga (duas `line` retas sob `geometry-extraction@2.0.1`), e
@@ -215,14 +245,33 @@ feature, registrado aqui por não ter destino melhor ainda: quando uma leitura c
 é aplicada, a issue correspondente nasce apenas `warning` e a cena permanece exportável com
 a entidade `exact` que ela contradiz — candidato a trabalho no portão de exportação
 (`SceneRevision.export_errors()`), com a decisão de virar bloqueio como ato humano pendente.
-Ainda sem Feature Contract: esta linha é o registro canônico até a especificação, e a
-prioridade é decisão humana pendente.
+**Ganhou contrato em 2026-08-23**, por seleção humana, com prioridade `HIGH`. A
+especificação fixou o que impedia a feature de ser "deixar editar": proposta é observação de
+máquina, e observação não se adultera. A edição **cria proposta nova**, de origem humana,
+derivada das originais, que permanecem intactas — mesmo princípio do
+[ADR-0019](../adr/0019-proposal-refresh-creates-a-new-review-revision.md). Sem isso a
+comparação entre o que o modelo viu e o que a pessoa corrigiu, que é o insumo de toda melhoria
+de prompt, some na primeira correção. Três operações: mover vértice, inserir/remover vértice e
+**unir fragmentos** — esta última é a que resolve o caso do Guaxindiba. Precisão não sobe pela
+edição: forma desenhada à mão nunca vira `exact`. `BLOCKED` por dois gates que precedem o
+planejamento (decisão de arquitetura sobre o modelo da proposta de origem humana, e Design
+Approval Package). Contrato em
+[F-018](../features/F-018-edicao-de-forma-da-proposta/feature.md).
 
 F-019 — preview visual da cena resolvida na revisão — nasce na mesma rodada, 2026-08-19, por
 seleção humana: hoje o resultado do traçado só aparece como texto residual (resíduos,
-blockers) na tela de revisão, sem a geometria resolvida visível antes do export. Ainda sem
-Feature Contract: esta linha é o registro canônico até a especificação, e a prioridade é
-decisão humana pendente.
+blockers) na tela de revisão, sem a geometria resolvida visível antes do export. A pessoa
+aprova uma cena que nunca viu; a primeira imagem da geometria é o render do DXF, **depois** da
+aprovação que ela deveria informar.
+
+**Ganhou contrato em 2026-08-23**, por seleção humana, com prioridade `HIGH`. A especificação
+achou que a cena está a uma chamada de distância: `GET /v1/jobs/{job_id}/scene` já existe e os
+tipos já estão publicados em `@croquito/contracts` — a SPA simplesmente não busca a rota.
+Falta desenhar, no cliente, sem render no servidor. É a única feature aberta nesta rodada com
+**um** gate só: não cria rota, não muda modelo e não toca o portão de exportação, então não
+exige decisão de arquitetura. Cumprido o Design Approval Package, vai direto a
+`READY_FOR_PLANNING`. Contrato em
+[F-019](../features/F-019-preview-da-cena-resolvida/feature.md).
 
 F-020 — jornada web do orçamento-base — nasce em 2026-08-19, por seleção humana, numa sessão
 de revisão visual em que o usuário perguntou se "Medição" era o orçamento. Não era: são dois
