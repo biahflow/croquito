@@ -1,7 +1,7 @@
 # Design Approval Package — F-030, a evidência de campo na revisão do croqui
 
 Classification: INTERFACE_CHANGE  
-Revision: 2  
+Revision: 3
 Status: **Approved (2026-08-23)**  
 Date: 2026-08-23  
 Produced by: agente (Claude Code)
@@ -10,10 +10,22 @@ Produced by: agente (Claude Code)
 > artefato é evidência para um gate humano. Não é implementação e não deve ser copiado para
 > código de aplicação.
 >
-> **Aprovado por ato humano em 2026-08-23**, registrado abaixo — a **revisão 2**, não a 1, que
-> nunca chegou a ser aprovada. Nenhum agente aprova design, inclusive o que o produziu. Com
+> **Aprovado por ato humano em 2026-08-23**, registrado abaixo — a **revisão 3** incorpora as
+> escolhas finais feitas na autorização de implementação. Nenhum agente aprova design. Com
 > este gate e o [ADR-0049](../../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md)
 > aceito, a [F-030](../feature.md) sai de `BLOCKED`.
+
+## O que mudou na revisão 3
+
+A autorização de implementação de 2026-08-23 fechou as três questões que a revisão 2 havia
+deixado abertas e corrigiu a divergência visual antes de haver tolerância calibrada:
+
+- a miniatura abre modal dentro da revisão e oferece “abrir original”;
+- todas as fotos aparecem por padrão, com filtro manual pela âncora declarada;
+- uma leitura aceita várias testemunhas, empilhadas com origem e diferença próprias;
+- a diferença é neutra: não há “concorda”, “discorda” ou cor de alerta sem limiar por `kind`;
+- a classificação usa categoria fechada mais descrição e o ato humano vira observação fora
+  da cena.
 
 ## O que mudou da revisão 1 para a 2
 
@@ -22,17 +34,17 @@ A revisão 1 cobria **só a foto**, e nunca chegou a ser aprovada. Uma decisão 
 caminho do **levantamento legado**, sem app. Isso é alteração material, e por isso é revisão
 nova, e não uma correção da anterior.
 
-Três estados entraram: testemunha ao lado da cota (5), testemunha discordando (6) e legado
-com valor lido na foto a confirmar (7). Os sete estados da revisão 1 permanecem, renumerados.
+Três estados entraram: testemunha ao lado da cota (5), múltiplas testemunhas (6) e legado com
+valor lido na foto a confirmar (7). Os sete estados da revisão 1 permanecem, renumerados.
 
 ## Registro de aprovação
 
 | Campo | Valor |
 | --- | --- |
-| O que foi aprovado | a composição visual da revisão 2 — os dez estados capturados e as nove decisões listadas em "Decisões que este pacote carrega" |
+| O que foi aprovado | a composição visual da revisão 3 e as decisões listadas em "Decisões que este pacote carrega" |
 | Aprovado por | Daniel Campos |
 | Data | 2026-08-23 |
-| Revisão aprovada | 2 |
+| Revisão aprovada | 3 |
 | Explicitamente **não** coberto | a copy final; as amostras sintéticas no lugar das fotos; os números, nomes e datas das capturas; o nome do prompt e do modelo; e as decisões do [ADR-0049](../../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md), que foram gate próprio, exercido em separado na mesma data |
 
 Aprovar esta revisão não aprova a seguinte: pacote materialmente alterado é revisão nova e
@@ -45,11 +57,12 @@ precisa de registro próprio.
 | [`foto-na-revisao.html`](foto-na-revisao.html) | A rendição autocontida. Abre no navegador sem build, sem rede e sem servidor. |
 | [`00-pagina-inteira.png`](00-pagina-inteira.png) | Todos os estados numa imagem |
 | [`01-normal.png`](01-normal.png) | Levantamento vinculado: fotos com âncora, qualidade e leitura |
+| [`01b-modal.png`](01b-modal.png) | Modal de foto, preservando a revisão e oferecendo o original |
 | [`02-vazio.png`](02-vazio.png) | Job sem levantamento vinculado, com o ato de vincular |
 | [`03-carregando.png`](03-carregando.png) | Leitura em curso |
 | [`04-sem-analise.png`](04-sem-analise.png) | Foto sem análise, e leitura paga pulada |
 | [`05-testemunha.png`](05-testemunha.png) | A trena ao lado da cota, com a diferença mostrada e não classificada |
-| [`06-testemunha-discorda.png`](06-testemunha-discorda.png) | Prancha e campo discordando — aviso, nunca veto |
+| [`06-testemunhas-multiplas.png`](06-testemunhas-multiplas.png) | Duas testemunhas empilhadas, cada uma com diferença neutra |
 | [`07-legado.png`](07-legado.png) | Legado sem app: valor lido no visor da trena, a confirmar |
 | [`08-proposta-da-ia.png`](08-proposta-da-ia.png) | Classificação da fatia 3 como rascunho, com lineage |
 | [`09-recusa.png`](09-recusa.png) | Recusa: processamento de IA não habilitado |
@@ -78,15 +91,14 @@ alguém pudesse tomar por evidência real.
 6. **A testemunha aparece como confronto de dois números, com a origem de cada um por
    extenso** — `COTA DA PRANCHA` e `TRENA EM CAMPO` —, e a diferença ao lado, separada por
    um filete. Sem os rótulos, os dois números pareceriam duas leituras da mesma coisa.
-7. **A discordância veste a faixa de erro do sistema (`.app-alert`), e a concordância não
-   veste nada.** É deliberado: o caso que precisa de atenção é o que ninguém vê hoje. Mas o
-   texto diz, dentro do próprio bloco, que é aviso e não veto — a veste chama, a frase
-   delimita.
+7. **A diferença é estritamente neutra enquanto não existe tolerância calibrada.** Nenhum
+   valor veste concordância, discordância ou alerta; cada testemunha mostra apenas os dois
+   valores, sua origem e a diferença aritmética.
 8. **No legado, confirmar o valor e associá-lo são dois botões em dois momentos.** O estado 7
    mostra só o primeiro. Um botão único faria um número lido por máquina virar testemunha sem
    ninguém olhar.
 9. **Cor nunca é o único indicador.** `NITIDEZ BOA`, `CONTRALUZ`, `SEM ANÁLISE`,
-   `LEITURA PULADA`, `RASCUNHO`, `LEGADO` e `TESTEMUNHA DISCORDA` são texto dentro da
+   `LEITURA PULADA`, `RASCUNHO` e `LEGADO` são texto dentro da
    pastilha, e o bloco reservado é tracejado **e** rotulado.
 
 ## Procedência de cada valor visual
@@ -116,14 +128,13 @@ tokens existentes e sem cor nova —
   as duas pastilhas existentes são "positivo" e "atenção", e ausência não é nenhuma das duas;
 - o **bloco de testemunha** (`.testemunha`), que é o `--surface-subtle` já usado em resumo,
   com os números em `font-variant-numeric: tabular-nums` para que 19,75 e 12,40 alinhem
-  coluna a coluna. Na variante de discordância ele reusa os valores da `.app-alert`
-  (`#fbeeec` e `#e0b4ad`), sem cor nova.
+  coluna a coluna; testemunhas múltiplas repetem o mesmo bloco sem hierarquia entre fontes.
 
 ## Fronteira entre entregue e reservado
 
-**Entregue**: os estados 1 a 10 — ver as fotos ancoradas com qualidade e leitura, vincular um
-levantamento, subir foto avulsa, a testemunha de campo ao lado da cota (concordando e
-discordando), o caminho do legado, a classificação por IA como rascunho, e os estados de
+**Entregue**: os estados 1 a 10 e 1b — ver as fotos ancoradas com qualidade e leitura, ampliar
+em modal e abrir o original, vincular um levantamento, subir foto avulsa, testemunhas de campo
+empilhadas com diferença neutra, o caminho do legado, a classificação por IA como rascunho e os estados de
 vazio, carregando, sem análise, recusa e sem papel.
 
 **Reservado** (traço tracejado e opacidade reduzida, no estado 1): a **nota de voz do técnico
@@ -144,17 +155,11 @@ para a revisão é feature própria e está declarado fora de escopo desta.
 
 ## Questões em aberto
 
-1. A foto deve **ampliar** ao ser clicada, dentro da revisão, ou abrir em aba nova? O mock
-   não decide — mostra a miniatura. Ampliar dentro mantém o contexto da decisão; abrir fora
-   dá tela cheia sem construir visualizador.
-2. As fotos devem ser **filtráveis pela âncora** (só as do elemento que estou revisando)?
-   O mock lista todas do levantamento. Filtrar aproxima a evidência da decisão, mas esconde
-   a foto cuja âncora o técnico errou — que é justamente a que o escritório precisa ver.
-3. Uma leitura pode ter **mais de uma testemunha**? O mock mostra uma. Duas trenas do mesmo
-   trecho é caso real, e a tela teria de escolher entre empilhá-las ou resumir a faixa.
+Nenhuma questão de interação permanece aberta para a construção. Copy e imagens de exemplo
+continuam não canônicas; o comportamento aprovado é o descrito acima.
 
 ## Transcrição do ato
 
-Aprovação dada por Daniel Campos em 2026-08-23, sobre a **revisão 2** — a revisão 1 cobria só
-a foto e foi superada pela ampliação da feature na mesma data. Aprovar esta revisão não aprova
-a seguinte, e não decide as três questões em aberto acima.
+Aprovação dada por Daniel Campos em 2026-08-23. A revisão 2 foi aprovada primeiro; a
+autorização posterior de implementação aprovou a revisão 3 com modal + original, filtro
+manual, múltiplas testemunhas, diferença neutra e observação fora da cena.

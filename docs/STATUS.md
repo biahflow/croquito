@@ -2,7 +2,9 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-23 (F-009 e F-012 `DONE` — ADR-0035/0036 e entregas aceitos por ato
+Última revisão: 2026-08-23 (F-030 `READY_FOR_BUILD` — ADR-0049 e Design Approval Package
+revisão 3 aprovados, plano autorizado e oito Task Contracts publicados; F-009 e F-012 `DONE`
+— ADR-0035/0036 e entregas aceitos por ato
 humano após merges, infraestrutura aplicada e rodadas reais no HML; medição migrada para a
 API `/v1`, F-003; F-006
 concluída após os atos humanos de homologação; F-007 e F-008 abertas, com os ADR-0032 e
@@ -11,6 +13,20 @@ ADR-0033 aceitos)
 > Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
 > trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
 > lifecycle e evidências está no [Project Context](engineering/PROJECT_CONTEXT.md).
+
+## Trabalho atual — F-030
+
+A [F-030](features/F-030-levantamento-de-campo-na-revisao/feature.md) está
+`READY_FOR_BUILD`. Ela leva à revisão do escritório fotos vinculadas ou avulsas, medidas de
+campo como testemunhas observacionais e classificação visual por IA sob demanda. O
+[ADR-0049](adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md) e o Design Approval
+Package revisão 3 estão aceitos; as oito tasks e a ordem
+`T1 → T2 → (T3, T4, T6) → (T5, T7) → T8` estão contratadas.
+
+A primeira rodada real exige seis fotos próprias rotuladas, mantidas fora do Git, e tem teto
+absoluto de US$ 5,00. Ela só ocorre depois da eval offline e dos testes determinísticos. O
+rollout é exclusivamente em HML; produção e `DONE` permanecem fora de escopo até o aceite
+humano posterior.
 
 ## Marco atual
 

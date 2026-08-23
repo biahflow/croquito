@@ -89,9 +89,11 @@ Duas consequências para o desenho:
    mandar mídia, notas, GPS e waivers para `attachments.json` "para não entrar na cena como
    se fosse desenho".
 
-3. **O que o humano conclui da foto vira nota de revisão, que já existe.**
-   `POST /v1/jobs/{job_id}/review/notes` é o registro de "isto é alambrado, não muro": ato
-   humano, rastreável, no vocabulário que a revisão já tem.
+3. **O que o humano conclui da foto vira observação da revisão, fora da cena.** A inspeção
+   feita durante o planejamento da F-030 mostrou que `POST /v1/jobs/{job_id}/review/notes`
+   cria uma anotação dentro da `SceneRevision`; portanto ele não serve para esta decisão sem
+   violar D2. A F-030 cria `POST /v1/jobs/{job_id}/review/field-observations` e persiste o
+   ato no snapshot versionado da revisão, sem entidade, camada ou alteração geométrica.
 
 4. **A medida de campo entra como TESTEMUNHA da leitura, nunca como leitura.** Ela é
    observacional do começo ao fim: não confirma cota, não promove precisão, não vira
@@ -136,7 +138,8 @@ Duas consequências para o desenho:
    [ADR-0036](0036-autorizacao-de-ia-contratual-sem-allowlist-documental.md)), teto de custo
    declarado, lineage de prompt e modelo por proposta, e eval com gate antes da primeira
    rodada paga ([ADR-0009](0009-golden-dataset-and-evaluation-gates.md)). Ela propõe **o que
-   é**; nunca propõe quanto mede.
+   é** em categoria fechada (`MURO`, `ALAMBRADO`, `PORTAO`, `PATAMAR`, `EQUIPAMENTOS`,
+   `DETALHES`, `UNKNOWN`) mais descrição curta livre; nunca propõe quanto mede.
 
 10. **`vision.py` não roda sobre foto de praça.** A razão já está escrita em
     `survey_photo_analysis.py`: Hough e contorno adaptativo foram calibrados para tinta sobre
@@ -167,6 +170,23 @@ Duas consequências para o desenho:
     ciclo de vida única por `artifact_retention_days` (`infra/main.tf:70`), e a revisão pode
     acontecer depois disso. A regra passa a ser por prefixo, e **aplicá-la é ato humano de
     infraestrutura**, com `plan` revisado.
+
+16. **Uma leitura pode carregar várias testemunhas.** Cada associação continua sendo ato
+    humano separado, com origem, autoria e instante próprios. A tela as empilha e calcula a
+    diferença de cada uma; não resume uma faixa nem escolhe uma testemunha vencedora.
+
+## Emenda 1 — decisões de execução da F-030 (2026-08-23)
+
+Aceita por ato humano na autorização de implementação da F-030. Corrige a referência
+incorreta de D3 ao endpoint de nota da cena e fixa as decisões que o Design Approval Package
+revisão 2 havia deixado abertas:
+
+- foto amplia em modal dentro da revisão, com ação secundária para abrir o original;
+- todas as fotos aparecem por padrão e o filtro por âncora é manual, sem associação inferida;
+- múltiplas testemunhas são permitidas e exibidas separadamente;
+- enquanto as tolerâncias por `kind` não forem calibradas, a tela mostra somente os dois
+  valores e a diferença, sem `concorda`, `discorda` ou veste de alerta;
+- a observação humana sobre classificação fica fora da `SceneRevision`.
 
 ## Alternativas
 

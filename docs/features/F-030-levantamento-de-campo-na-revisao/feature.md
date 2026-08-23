@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_BUILD`
 
 > Selecionada por decisão humana de 2026-08-23, saindo de `READY_FOR_SPEC`. Estava registrada
 > sem contrato desde 2026-08-21, quando nasceu por seleção humana na sessão da
@@ -19,8 +19,13 @@
 >
 > **Os dois gates humanos foram cumpridos em 2026-08-23**, em atos separados: o
 > [ADR-0049](../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md) foi **aceito** e o
-> **Design Approval Package** foi **aprovado na revisão 2** — a 1 cobria só a foto e foi
-> superada pela ampliação. Ver **Human Gates**.
+> **Design Approval Package** foi **aprovado na revisão 3** — a revisão 2 foi a primeira
+> aprovada e a autorização de implementação incorporou as decisões finais. Ver **Human Gates**.
+>
+> O plano foi aprovado para execução no mesmo dia. A emenda 1 do ADR-0049 e a revisão 3 do
+> Design Approval Package registram as decisões finais de interação, cardinalidade,
+> observação fora da cena e divergência sem classificação. Os oito Task Contracts estão em
+> [tasks/](tasks/).
 
 ## Classification
 
@@ -141,7 +146,8 @@ Nenhuma é negociável, e todas já são regra do sistema:
   proposta e cota: "proximidade em pixels nunca é associação implícita".
 - **Divergência é aviso, nunca veto.** Não entra em `blockers` e não impede exportação —
   mesmo tratamento que `suggested_chains` e `declared_chains` já recebem.
-- **Classificação é observação, nunca decisão.** Nasce rascunho a confirmar por humano.
+- **Classificação é observação, nunca decisão.** Nasce rascunho a confirmar por humano e a
+  conclusão fica no snapshot da revisão, fora da `SceneRevision`.
 - **Fora do score determinístico da F-029** — decisão registrada no roadmap em 2026-08-21.
 - **`vision.py` não roda sobre foto de praça.** O motivo está escrito em
   `survey_photo_analysis.py`.
@@ -239,8 +245,9 @@ humano em 2026-08-23. Ficam registrados com a pergunta original e o que a decis�
    explícito, e divergência é **aviso** que não entra em `blockers`. Confirmação automática
    por tolerância foi explicitamente rejeitada.
 3. **A classificação entra no scene graph ou fica fora?**
-   → **Decidido** — ADR-0049, decisões 2 e 3: fora — e o que o humano conclui vira **nota de revisão**, que
-   já existe. `Issue` foi recusado porque participa do portão de exportação.
+   → **Decidido** — ADR-0049, decisões 2 e 3 e emenda 1: fora — e o que o humano conclui vira
+   **observação versionada da revisão**, em rota própria. `Issue` foi recusado porque participa
+   do portão de exportação; o endpoint antigo de nota também foi recusado porque altera a cena.
 4. **Retenção.** O bucket tem expiração única por `artifact_retention_days`
    (`infra/main.tf:70`), então a evidência morre com o resto, e a revisão pode acontecer
    depois.
@@ -248,7 +255,9 @@ humano em 2026-08-23. Ficam registrados com a pergunta original e o que a decis�
    infraestrutura**. Até lá a fragilidade permanece.
 5. **O valor de cada tolerância de divergência** — sai da calibração com dado real, não deste
    contrato nem do ADR. Até existir, mostra-se a diferença sem classificá-la.
-6. **Qual modelo e qual prompt** para a fatia 3 — sai no plano dela, com o
+6. **Qual modelo e qual prompt** para a fatia 3 — decidido no plano: tarefa
+   `field-photo-classification@1.0.0`, Anthropic `claude-opus-5` como braço primário e
+   categoria fechada mais descrição livre, sob o
    [protocolo de mudança de prompt](../../ai/PROMPT_CHANGE_PROTOCOL.md).
 
 ## Risks
@@ -280,12 +289,14 @@ humano em 2026-08-23. Ficam registrados com a pergunta original e o que a decis�
    [ADR-0049](../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md) foi **aceito por
    ato humano**.
 2. **`DESIGN_APPROVAL_REQUIRED`** — ✅ **cumprido em 2026-08-23**. O
-   [Design Approval Package](mock/README.md) foi **aprovado na revisão 2** — a revisão 1 cobria
-   só a foto e foi materialmente alterada pela ampliação, então nunca chegou a ser aprovada —,
-   conforme [design-approval](../../engineering-os/workflows/design-approval.md).
+   [Design Approval Package](mock/README.md) foi **aprovado na revisão 3**. A revisão 2 havia
+   sido aprovada antes da autorização de implementação; a 3 incorpora modal, filtro manual,
+   múltiplas testemunhas, diferença neutra e observação fora da cena, conforme
+   [design-approval](../../engineering-os/workflows/design-approval.md).
 
-A **primeira rodada paga da fatia 3 continua sendo um terceiro ato humano**, de autorização de
-gasto, separado e posterior a estes dois. Ele **não** foi exercido aqui.
+A primeira rodada paga da fatia 3 foi autorizada no plano de execução: seis fotos próprias,
+uma execução por foto, reserva de US$ 0,75 por chamada e teto absoluto de US$ 5,00. A execução
+continua condicionada ao gate offline e ao recebimento do corpus rotulado fora do Git.
 
 ## References
 

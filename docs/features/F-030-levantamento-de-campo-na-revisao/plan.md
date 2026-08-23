@@ -7,8 +7,8 @@ prancha sem nunca virar cota.
 
 assumptions:
 - O [ADR-0049](../../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md) foi aceito e o
-  Design Approval Package está aprovado na **revisão 2**, ambos por ato humano em 2026-08-23.
-  As quinze decisões do ADR são premissa deste plano, não escolha das tasks.
+  Design Approval Package está aprovado na **revisão 3**, ambos por ato humano em 2026-08-23.
+  As dezesseis decisões do ADR são premissa deste plano, não escolha das tasks.
 - **A evidência de campo sai numa rota própria, não dentro de `ReviewResponse`.** Aquele
   modelo já é grande e volta em toda mutação da revisão; pendurar fotos nele faria cada
   decisão de leitura pagar o custo de um bloco que ela não usa. `GET /v1/jobs/{id}/field-evidence`.
@@ -31,17 +31,15 @@ risks:
 - `main.py` e `CroquiApp.tsx` são arquivos grandes e vivos. Mitigação: a rota nova entra num
   lugar só, e a tela ganha componentes exportados e testáveis, no molde da T3 da F-036.
 
-## Decisão em aberto, e é de número
+## Decisão de tolerância
 
 O ADR-0049 decisão 7 diz que, **sem calibração, o produto mostra a diferença sem classificá-la**.
 O pacote de design aprovado, no estado 6, mostra a divergência com a veste de alerta — o que
 exige classificar.
 
-Não é contradição de fato: o exemplo do pacote é 19,75 contra 12,40, que nenhuma tolerância
-plausível chamaria de acordo. A tensão é sobre o caso limítrofe. **A T4 leva a decisão a
-humano** antes de escrever o número: qual diferença, por `kind`, deixa de ser arredondamento e
-passa a ser discordância. Enquanto não houver resposta, a tela mostra os dois valores e a
-diferença **sem** vestir alerta.
+Decisão humana de 2026-08-23: nenhuma tolerância será inventada nesta feature. A T4 declara o
+mecanismo por `kind`, mas não escreve limiar. A T5 mostra os dois valores e a diferença sem
+estado de concordância, discordância ou alerta até existir calibração com dado real.
 
 tasks:
   - id: T1
@@ -60,8 +58,9 @@ tasks:
     role: builder
     goal: foto avulsa na revisão, que é a porta do levantamento legado
     scope: presign e confirm no molde do upload de prancha, com âncora declarada pelo revisor;
-      a foto avulsa entra na mesma resposta da T1, com a mesma composição.
-    out_of_scope: `apps/web`; PDF como evidência (recusado no contrato); análise da foto avulsa.
+      a foto avulsa entra na mesma resposta da T1, com a mesma composição; leitura textual
+      avulsa reutiliza `FIELD_PHOTO_READING` somente quando alguém pede.
+    out_of_scope: `apps/web`; PDF como evidência (recusado no contrato); chamada automática.
     depends_on: [T1]
     validation: make check, make test
     relative_effort: M
@@ -70,8 +69,9 @@ tasks:
     role: builder
     goal: a evidência de campo na tela da revisão
     scope: `apps/web/src/` — painel "Evidência de campo" com fotos ancoradas, qualidade,
-      leitura, o ato de vincular e o de subir avulsa, e os estados de vazio, carregando, sem
-      análise, recusa e sem papel, correspondendo à **revisão 2** aprovada.
+      leitura, o ato de vincular e o de subir avulsa, modal com abertura do original, filtro
+      manual por âncora e os estados de vazio, carregando, sem análise, recusa e sem papel,
+      correspondendo à **revisão 3** aprovada.
     out_of_scope: `services/`; a testemunha (T5); decidir autorização no navegador.
     depends_on: [T2]
     validation: npm --workspace @croquito/web run test, make check
@@ -83,10 +83,11 @@ tasks:
     scope: associação explícita leitura ↔ valor medido, persistida na revisão de leitura no
       molde de `declared_chains`; as duas fontes (medida `confirmed` do app; valor lido em
       foto, que exige confirmação humana do valor ANTES de poder ser associado); a diferença
-      calculada na leitura; tolerância nomeada por `kind`; testes negativos de que nada
+      calculada na leitura; várias testemunhas; tolerância nomeada por `kind` sem valor;
+      testes negativos de que nada
       promove precisão e de que nenhum caminho infere associação.
     out_of_scope: `apps/web`; entrar em `blockers`; qualquer promoção de precisão.
-    depends_on: [T1]
+    depends_on: [T2]
     relative_effort: L
     validation: make check, make test
 
@@ -94,10 +95,10 @@ tasks:
     role: builder
     goal: a testemunha ao lado da cota, na tela
     scope: o confronto dos dois valores com a origem de cada um, a diferença, o caminho do
-      legado (confirmar o valor lido, depois associar), correspondendo aos estados 5, 6 e 7 da
-      revisão 2.
+      legado (confirmar o valor lido, depois associar), testemunhas empilhadas e diferença
+      neutra, correspondendo à revisão 3.
     out_of_scope: `services/`.
-    depends_on: [T4]
+    depends_on: [T3, T4]
     relative_effort: M
     validation: npm --workspace @croquito/web run test, make check
 
@@ -108,16 +109,17 @@ tasks:
       no Model Routing e eval com gate; teto de custo e lineage por proposta; a rota que pede
       a classificação, nunca automática.
     out_of_scope: `apps/web`; rodar a primeira chamada paga, que é ato humano separado.
-    depends_on: [T1]
+    depends_on: [T2]
     relative_effort: L
     validation: make check, make test, eval com gate declarado
 
   - id: T7
     role: builder
     goal: a proposta da IA na tela, e o ato que a registra
-    scope: o bloco de rascunho com lineage e o botão que grava a conclusão como **nota de
-      revisão** (`POST /v1/jobs/{id}/review/notes`), correspondendo ao estado 8.
-    out_of_scope: `services/`.
+    scope: rota de observação versionada fora da cena; bloco de rascunho com lineage e o ato
+      que grava ou descarta a conclusão em `field_observations_json`, correspondendo ao
+      estado 8.
+    out_of_scope: `SceneRevision`, `Issue`, blockers e endpoint antigo de nota da cena.
     depends_on: [T6, T3]
     relative_effort: M
     validation: npm --workspace @croquito/web run test, make check
@@ -129,19 +131,18 @@ tasks:
       escritório, testemunha associada, e a prova de que a divergência **não** impede a
       exportação.
     out_of_scope: mudar comportamento entregue por T1–T7.
-    depends_on: [T4]
+    depends_on: [T5, T7]
     relative_effort: M
     validation: make test
 
-parallel_groups: T2 e T4 depois de T1 (escopos disjuntos: upload × revisão de leitura);
-  T6 em paralelo com T3 (worker × web).
-critical_path: T1 → T4 → T5.
+parallel_groups: T3, T4 e T6 depois de T2; T5 depende de T3+T4 e T7 de T3+T6.
+critical_path: T1 → T2 → T3/T4/T6 → T5/T7 → T8.
 integration_strategy: commits separados por task na `main`, com revisão linha a linha entre
   elas; nenhuma task encerra com portão vermelho.
-human_gates: os dois que precediam o planejamento foram cumpridos em 2026-08-23. Ficam **dois**
-  abertos, e nenhum deles é de agente: a decisão da tolerância de divergência (ver acima) e a
-  **primeira rodada paga** da fatia 3, que é autorização de gasto. A migração `0017` no
-  hospedado é ato de deploy.
+human_gates: ADR-0049 e Design Approval Package revisão 3 aceitos; tolerância decidida como
+  não classificada. A rodada paga foi autorizada até US$ 5,00, mas só roda depois do gate
+  offline e do recebimento das seis fotos rotuladas. A migração `0017` no hospedado e o apply
+  da retenção continuam atos de rollout.
 
 ## Nota de processo
 

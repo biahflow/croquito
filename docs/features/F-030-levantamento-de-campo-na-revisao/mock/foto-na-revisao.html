@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>F-030 — a evidência de campo na revisão do croqui (revisão 2)</title>
+    <title>F-030 — a evidência de campo na revisão do croqui (revisão 3)</title>
     <style>
       /* Tokens copiados VERBATIM de apps/web/src/styles.css, bloco :root. */
       :root {
@@ -355,6 +355,70 @@
         border-radius: 8px;
         background: var(--surface);
       }
+      .filtro {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .filtro label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+      }
+      .filtro select {
+        min-width: 240px;
+        min-height: 38px;
+        padding: 0 10px;
+        font: inherit;
+        border: 1px solid var(--muted);
+        border-radius: 8px;
+        background: var(--surface);
+      }
+      /* Um fragmento permite congelar um único estado sem duplicar markup. */
+      body:has(.estado:target) .folha > header,
+      body:has(.estado:target) .estado:not(:target) {
+        display: none;
+      }
+      body:has(.estado:target) {
+        padding-top: 28px;
+      }
+      body:has(.estado:target) .estado:target {
+        margin: 0;
+      }
+      .modal-demo {
+        padding: 22px;
+        background: rgba(14, 17, 22, 0.76);
+        border-radius: 11px;
+      }
+      .modal-card {
+        max-width: 720px;
+        margin: 0 auto;
+        overflow: hidden;
+        border-radius: 11px;
+        background: var(--surface);
+        box-shadow: 0 18px 52px rgba(0, 0, 0, 0.28);
+      }
+      .modal-media {
+        display: grid;
+        min-height: 330px;
+        place-items: center;
+        background:
+          repeating-linear-gradient(
+            135deg,
+            #252a31,
+            #252a31 16px,
+            #2d333b 16px,
+            #2d333b 32px
+          );
+        color: var(--dark-ink);
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
     </style>
   </head>
   <body>
@@ -362,12 +426,13 @@
       <header>
         <h1>F-030 — a evidência de campo na revisão do croqui</h1>
         <p>
-          Design Approval Package, <strong>revisão 2</strong>. Painel "Evidência de campo" na
+          Design Approval Package, <strong>revisão 3</strong>. Painel "Evidência de campo" na
           jornada de revisão (<code>apps/web/src/CroquiApp.tsx</code>), ao lado da decisão de
           leitura. A revisão 1 cobria só a foto; esta acrescenta a <strong>testemunha</strong>
           — o valor medido em campo ao lado da cota da prancha — e o caminho do levantamento
-          <strong>legado</strong>, sem app. As fotos são <strong>amostras sintéticas</strong>:
-          o pacote não usa imagem de cliente.
+          <strong>legado</strong>, sem app. Esta revisão fixa modal + original, filtro manual,
+          múltiplas testemunhas, diferença neutra e observação fora da cena. As fotos são
+          <strong>amostras sintéticas</strong>: o pacote não usa imagem de cliente.
         </p>
       </header>
 
@@ -392,6 +457,18 @@
               A foto responde <strong>o que é</strong>. Ela não tem escala e não fornece
               medida — nada daqui vira cota, entidade ou precisão.
             </p>
+            <div class="filtro">
+              <label>
+                Filtrar pela âncora declarada
+                <select>
+                  <option>Todas as fotos</option>
+                  <option>Elemento: mureta oeste</option>
+                  <option>Ponto 7</option>
+                  <option>Nota: trecho já executado</option>
+                </select>
+              </label>
+              <span class="field-hint">O filtro não associa a foto a uma leitura.</span>
+            </div>
             <ul class="fotos">
               <li class="foto">
                 <div class="foto-amostra"><span>amostra sintética</span></div>
@@ -400,6 +477,7 @@
                   <span class="ready">NITIDEZ BOA</span>
                   <span class="field-hint">3024×4032 · 19/08 14:12</span>
                 </span>
+                <button type="button" class="button button-secondary">Ampliar foto</button>
               </li>
               <li class="foto">
                 <div class="foto-amostra"><span>amostra sintética</span></div>
@@ -430,6 +508,29 @@
                 áudio e a transcrição já existem na F-032; trazê-los para a revisão é feature
                 própria, e esta é sobre foto.
               </p>
+            </div>
+          </div>
+        </section>
+      </figure>
+
+      <figure class="estado" id="estado-01b">
+        <figcaption>
+          Estado 1b — foto ampliada
+          <b>O modal preserva a revisão e oferece o arquivo original em nova aba.</b>
+        </figcaption>
+        <section class="modal-demo" aria-label="Foto ampliada">
+          <div class="modal-card" role="dialog" aria-modal="true" aria-label="Foto: mureta oeste">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">ELEMENTO: MURETA OESTE</p>
+                <h2 style="font-size: 16px">Foto de campo · 19/08/2026 14:12</h2>
+              </div>
+              <button type="button" class="button button-secondary">Fechar</button>
+            </div>
+            <div class="modal-media">amostra sintética ampliada</div>
+            <div class="panel-body" style="display: flex; justify-content: space-between; gap: 12px">
+              <span class="field-hint">NITIDEZ BOA · 3024×4032</span>
+              <button type="button" class="button button-secondary">Abrir original ↗</button>
             </div>
           </div>
         </section>
@@ -571,10 +672,10 @@
 
       <figure class="estado" id="estado-06">
         <figcaption>
-          Estado 6 — testemunha discordando
+          Estado 6 — múltiplas testemunhas
           <b>
-            É o caso que hoje ninguém vê. Aviso, nunca veto: não entra em blockers e não impede
-            exportação.
+            Cada fonte permanece separada. A diferença é mostrada sem concorda, discorda ou
+            alerta enquanto não existir tolerância calibrada.
           </b>
         </figcaption>
         <section class="panel" aria-label="Leitura de cota">
@@ -583,11 +684,11 @@
               <p class="eyebrow">LEITURA DA PRANCHA</p>
               <h2 style="font-size: 16px">Cota 7 — recuo frontal</h2>
             </div>
-            <span class="blocked">TESTEMUNHA DISCORDA</span>
+            <span class="ready">CONFIRMADA</span>
           </div>
           <div class="panel-body">
-            <div class="testemunha" style="border-color: #e0b4ad; background: #fbeeec">
-              <p class="eyebrow">TESTEMUNHA DE CAMPO</p>
+            <div class="testemunha">
+              <p class="eyebrow">TESTEMUNHA 1 · MEDIDA DO APP</p>
               <div class="confronto">
                 <span class="valor"><span>COTA DA PRANCHA</span><b>19,75 m</b></span>
                 <span class="valor"><span>TRENA EM CAMPO</span><b>12,40 m</b></span>
@@ -596,9 +697,23 @@
                   <b style="font-size: 15px">7,35 m</b>
                 </span>
               </div>
-              <p class="field-hint" style="margin: 0; color: #7d2f26">
-                A prancha e o campo discordam neste trecho. Isto é um aviso para quem revisa —
-                ele não bloqueia a exportação e não decide qual dos dois está certo.
+              <p class="field-hint" style="margin: 0">
+                Medida confirmada no aparelho. A diferença é informação neutra e não bloqueia
+                a exportação.
+              </p>
+            </div>
+            <div class="testemunha">
+              <p class="eyebrow">TESTEMUNHA 2 · VALOR CONFIRMADO EM FOTO</p>
+              <div class="confronto">
+                <span class="valor"><span>COTA DA PRANCHA</span><b>19,75 m</b></span>
+                <span class="valor"><span>VISOR FOTOGRAFADO</span><b>19,72 m</b></span>
+                <span class="diferenca">
+                  <span class="eyebrow">DIFERENÇA</span>
+                  <b style="font-size: 15px">0,03 m</b>
+                </span>
+              </div>
+              <p class="field-hint" style="margin: 0">
+                Valor lido por máquina e confirmado por Ana Ribeiro antes da associação.
               </p>
             </div>
           </div>
@@ -671,14 +786,17 @@
             <div class="proposta">
               <div class="proposta-cabecalho">
                 <span class="blocked">PROPOSTA DA IA — A CONFIRMAR</span>
-                <strong style="font-size: 13px">Alambrado, não muro</strong>
+                <strong style="font-size: 13px">ALAMBRADO</strong>
               </div>
               <p class="field-hint" style="margin: 0">
-                A imagem mostra tela metálica com montantes aparentes. Isto é uma leitura do que
-                aparece na foto, não uma medida: nenhuma dimensão vem daqui.
+                <strong>Descrição:</strong> tela metálica com montantes aparentes.
+                <strong>Observação topológica:</strong> fechamento contínuo ao longo do limite.
+                Isto é uma leitura do que aparece na foto, não uma medida: nenhuma dimensão
+                vem daqui.
               </p>
               <p class="lineage">
-                prompt field-photo-class@1.0.0 · modelo claude-opus-5 · custo estimado US$ 0,004
+                prompt field-photo-classification@1.0.0 · schema 1.0.0 · provider anthropic ·
+                modelo claude-opus-5
               </p>
               <div class="acoes">
                 <button type="button" class="button button-primary">

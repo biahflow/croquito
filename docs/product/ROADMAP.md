@@ -2,16 +2,17 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-23 (**F-009 e F-012 `DONE`** — ADR-0035/0036 e entregas aceitos por
+Última revisão: 2026-08-23 (**F-030 `READY_FOR_BUILD`** — ADR-0049 emendado, Design Approval
+Package revisão 3 aprovado, plano autorizado e oito Task Contracts publicados; antes:
+**F-009 e F-012 `DONE`** — ADR-0035/0036 e entregas aceitos por
 ato humano após merges, infraestrutura aplicada e rodadas reais no HML; antes: **F-036
 `DONE`** — o orçamento assinado vira o contratado da
 medição, e seis guardrails que não podiam disparar passam a poder; entrega aceita por ato
 humano.
 Antes: faixa F-011..F-019 auditada contra o código: **F-011 encerrada
 `DONE`** por já estar entregue quando foi registrada, F-015 e F-017 encolhidas ao que de fato
-sobrou, e **F-018 e F-019 ganharam Feature Contract**; F-034 **aceita por ato humano** — `DONE`; F-036 e F-030 ganharam
-Feature Contract por seleção humana e seguem `BLOCKED`, agora com os quatro artefatos de gate
-produzidos e pendentes de ato humano: ADR-0048, ADR-0049 e os dois Design Approval Packages;
+sobrou, e **F-018 e F-019 ganharam Feature Contract**; F-034 **aceita por ato humano** — `DONE`;
+F-036 e F-030 ganharam Feature Contract por seleção humana e seus gates foram depois exercidos;
 antes disso, estado da F-034 reconciliado — as duas fatias já estavam na main desde 2026-08-22, e o contrato e esta tabela
 seguiam em READY_FOR_PLANNING; o pacote de revisão dela foi escrito. Antes, em 2026-08-22:
 F-037 (acervo de catálogos, ADR-0047) e F-035 (aprovação do orçamento, ADR-0046) entregues;
@@ -66,7 +67,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
 | F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
-| F-030 | HIGH | READY_FOR_PLANNING | [O levantamento de campo na jornada de revisão: a foto e a medida](../features/F-030-levantamento-de-campo-na-revisao/feature.md) |
+| F-030 | HIGH | READY_FOR_BUILD | [O levantamento de campo na jornada de revisão: a foto e a medida](../features/F-030-levantamento-de-campo-na-revisao/feature.md) |
 | F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | DONE | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
 | F-035 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
@@ -428,9 +429,12 @@ geométrico ao lado do `SceneRevision`.
 Os dois gates foram **cumpridos em 2026-08-23**: o
 [ADR-0049](../adr/0049-evidencia-de-campo-na-revisao-do-escritorio.md) foi **aceito** — o
 vínculo é ao job da prancha, porque não existe job sem PDF (`jobs.upload_id` é
-`NOT NULL UNIQUE`) — e o Design Approval Package foi **aprovado na revisão 2**, que é a que a
-ampliação produziu. A feature está `READY_FOR_PLANNING`; a primeira rodada paga da fatia 3
-segue como ato humano à parte. Contrato em
+`NOT NULL UNIQUE`) — e o Design Approval Package foi primeiro aprovado na revisão 2. A
+autorização de implementação emendou o ADR, aprovou a revisão 3 (modal, filtro manual,
+múltiplas testemunhas, diferença neutra e observação fora da cena), aprovou o plano e fixou
+oito Task Contracts. A feature está `READY_FOR_BUILD`; a rodada paga de seis fotos está
+autorizada até US$ 5,00, mas só depois dos gates offline e do recebimento do corpus rotulado.
+Contrato em
 [F-030](../features/F-030-levantamento-de-campo-na-revisao/feature.md).
 
 F-033 — demanda sob contrato licitado — nasce em 2026-08-21, numa conversa de operação
