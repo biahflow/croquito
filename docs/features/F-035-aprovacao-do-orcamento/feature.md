@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_HUMAN_REVIEW`
 
 > Nasce em 2026-08-22, de uma conversa de alinhamento sobre a cadeia real, quando ficou
 > visível uma **assimetria**: a medição tem `POST .../approve` com aprovação nominal
@@ -199,6 +199,19 @@ assinatura em silêncio: ela fica caduca, visível, e o despacho recusa até um 
   medição — o mesmo caminho que a medição já usa.
 - **Goldens mudam.** `Estimate` ganha campo e sobe `schema_version`. Mitigação: regravar é
   esperado e o diff deve ser só isso; um diff maior é sinal de que algo mais mudou.
+- **Orçamento já montado antes do deploy deixa de reler.** `Estimate.schema_version` é
+  `Literal`, e a T1 subiu de `2.1.0` para `2.2.0`: um `estimate_json` gravado na versão
+  anterior falha em `_revalidated_estimate` (`main.py:9322`) e a leitura do orçamento passa
+  a devolver `422`. Apurado na revisão da T1, e **não** declarado no ADR-0046, que só
+  menciona os goldens.
+
+  **Precedente**: a [F-026](../F-026-importadores-sinapi-sicro/feature.md) fez o mesmo bump
+  (`2.0.0` → `2.1.0`, commit `081967a`) sem tratar compatibilidade, e foi ao ar assim. O
+  risco é conhecido e aceito pelo mesmo motivo: o `Estimate` é recomputado na leitura por
+  construção — servir um documento antigo como bom é justamente o que `_revalidated_estimate`
+  existe para impedir —, e uma rodada afetada se recupera remontando o orçamento, que é
+  ato normal da jornada. **Consequência prática em homologação**: orçamento montado antes do
+  deploy precisa ser remontado para voltar a abrir.
 - **Jornada travada por falta de papel.** Sem ninguém com `aprovador` no realm, nenhum
   orçamento é despachável. Mitigação: o realm ganha o papel e um usuário local na mesma
   entrega; em HML a atribuição é ato humano listado nos gates.

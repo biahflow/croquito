@@ -105,6 +105,36 @@ destinatário por e-mail ou Drive. Fora de escopo por decisão humana de 2026-08
 provedor de e-mail no projeto, o mesmo motivo pelo qual a F-008 está `BLOCKED`. Não é
 construído aqui, e o `Out of Scope` do contrato diz o mesmo.
 
+## Divergências apuradas na implementação (2026-08-22/23)
+
+Registradas para que a revisão 1 não seja lida como fiel ao que foi construído. As quatro
+primeiras têm a mesma raiz: **o mock desenhou dado que nenhuma rota devolve**, e a tela
+mostra o estado sem ele em vez de inventá-lo.
+
+1. **A tela 6 nomeia quem montou** ("montado por marina.gestora"). Nenhuma rota devolve
+   isso, e é **deliberado**: `self_approval_forbidden()` omite o subject porque "devolver o
+   subject de outra pessoa transformaria uma recusa de autorização num diretório de usuários
+   do tenant". A tela explica a regra inteira — inclusive que acumular papéis não contorna —
+   sem o nome.
+
+2. **A tela 9 mostra "DESPACHADO EM 22/08/2026 15:44".** Não existe instante de despacho no
+   estado nem na leitura do orçamento; `updated_at` é o último ato **qualquer**, e usá-lo
+   ali seria carimbar uma data que pode não ser a do despacho. O selo diz só "DESPACHADO".
+
+3. **A tela 8 mostra os passos 1-2 concluídos e o 3 em curso.** Os quatro passos correm
+   numa chamada só e o cliente não observa em qual o servidor está. Em voo os quatro saem
+   como "no servidor" (molde da medição); no desfecho reprovado, a sequência é sabida e é
+   mostrada.
+
+4. **A tela 7 mostra o botão "Aprovar" já desabilitado** — e isso **conflita com o critério
+   7 do próprio contrato**, que diz que a SPA não decide autorização. Desabilitar exigiria
+   a lista de papéis da sessão no cliente e transformaria a tela em juiz de permissão. O
+   botão é oferecido, e o `403` do servidor vira o painel que nomeia o papel que falta. Era
+   uma inconsistência interna do pacote, resolvida do lado da regra.
+
+5. **A etapa "Planilha" foi substituída, não acrescentada** — como a barra do mock já
+   mostrava, e como a aprovação do pacote decidiu (unknown 1 do contrato).
+
 ## Questões abertas
 
 1. **Onde a etapa entra na jornada.** O pacote propõe etapa nova, "Aprovação e despacho",

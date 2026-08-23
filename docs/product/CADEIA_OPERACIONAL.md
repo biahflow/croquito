@@ -77,7 +77,7 @@ representa. Está registrado como
 | 6 | Exportação CAD | produto | **DXF auditado** + render + ZIP | `dxf.py`; portão `ensure_exportable()` | **no ar** |
 | 7 | Importação no CAD e desenho da prancha | projetista | **prancha** (PDF/DWG) com legenda quantificada | — | ato humano, fora do produto |
 | 8 | Orçamento da demanda | orçamentista | **planilha orçamentária** com BDI e coluna `FONTE` por linha | jornada Orçamento (`/v1/estimate-rounds*`), incl. teto da [F-027](../features/F-027-modo-teto-orcamento-invertido/feature.md) | **no ar** (ver §5) |
-| 9 | Aprovação do orçamento | prefeitura | orçamento aprovado | — | ato humano, fora do produto |
+| 9 | Aprovação do orçamento | prefeitura (papel `aprovador`) | orçamento **assinado** e despachado | jornada Orçamento (`POST /v1/estimate-rounds/{id}/estimate/approve` + `.../export`), [F-035](../features/F-035-aprovacao-do-orcamento/feature.md) | **no ar** |
 | 10 | Ordem de Serviço / autorização | prefeitura | **OS**, tendo prancha + orçamento aprovado como anexos | — | ato humano, fora do produto |
 | 11 | Execução | empresa de engenharia | obra | — | fora do produto |
 | 12 | Medição do executado | fiscal | **boletim de medição** + **memória de cálculo** | jornada Medição (`/v1/valuation-rounds*`) | **no ar** |
@@ -181,9 +181,17 @@ Aritmética, que difere entre os dois: dinheiro **trunca** (`money_trunc`), quan
    qualquer um, a cadeia para ali e o teste ponta a ponta sai mais barato pelo CLI
    (`make valuation-estimate-demo`).
 
-3. **Etapas 7, 9, 10, 11 e 14 são atos humanos fora do produto.** O produto entrega o DXF
-   auditado (6) e recebe a prancha de volta (8); entre um e outro há trabalho de CAD que
-   ele não faz nem acompanha.
+3. ~~**Etapas 7, 9, 10, 11 e 14 são atos humanos fora do produto.**~~ **A etapa 9 entrou
+   em 2026-08-22** pela [F-035](../features/F-035-aprovacao-do-orcamento/feature.md)
+   ([ADR-0046](../adr/0046-aprovacao-do-orcamento-base.md)): a aprovação do orçamento é ato
+   registrado, com papel próprio (`aprovador`, que não é quem montou), amarrada por digest
+   ao conteúdo exato assinado, e é ela que abre o despacho da planilha — montar deixou de
+   publicar. Remontar depois de assinado não apaga a assinatura: torna-a **caduca**, e o
+   despacho recusa até um ato novo.
+
+   As etapas **7, 10, 11 e 14** seguem como atos humanos fora do produto. O produto entrega
+   o DXF auditado (6) e recebe a prancha de volta (8); entre um e outro há trabalho de CAD
+   que ele não faz nem acompanha.
 
 4. **Restringir a origem não garante o contrato certo.** Com a F-033 entregue, esta é a
    lacuna que **permanece**: nada confere se o catálogo `sco` instalado é o da data-base e

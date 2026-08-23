@@ -2,9 +2,10 @@
 
 Status: Accepted for MVP  
 Responsável: Product / Design / Engineering  
-Última revisão: 2026-08-21 (seção "Revisão" — vista de exceções do modo automático
-local, F-029); antes: 2026-08-20 (seção "Aceite de traçado em lote" — consultor do traçado:
-causa, conserto de um clique, âncoras e re-semeadura do "como desenhado", F-025)
+Última revisão: 2026-08-23 (seções "O orçamento é assinado antes de sair" e "De onde vem a
+tabela de preços" — aprovação nominal com segregação entre quem orça e quem assina, despacho
+como ato próprio, e a escolha da tabela publicada pela plataforma, F-035 e F-037); antes:
+2026-08-21 (seção "Revisão" — vista de exceções do modo automático local, F-029)
 
 ## Experiência principal
 
@@ -517,6 +518,30 @@ digest-base lido — rodada que andou vira o conflito de sempre, com recarregar 
 novo — e nunca descarta refino pago: shortlist com lineage de chamada paga é recusada pelo
 servidor em vez de sobrescrita. É o caminho de cura para a shortlist gravada por uma
 versão anterior do matcher, que antes obrigava a apagar o arquivo pela mão.
+
+## O orçamento é assinado antes de sair
+
+A planilha do orçamento deixou de nascer publicada. Montar e despachar são **atos
+separados**, e entre os dois existe a assinatura
+([F-035](../features/F-035-aprovacao-do-orcamento/feature.md),
+[ADR-0046](../adr/0046-aprovacao-do-orcamento-base.md)).
+
+**Quem orça não assina.** A assinatura é de um papel próprio — `aprovador` —, e o produto
+recusa quando quem tenta assinar é quem montou, mesmo que a pessoa acumule os dois papéis:
+a comparação é de identidade, não de papel. Sem isso o papel novo seria cerimônia. Despachar
+a planilha já assinada, esse sim, é do orçamentista: assinar é assumir o conteúdo, despachar
+é operar o envio.
+
+**A assinatura vale para um conteúdo exato.** Ela é amarrada por digest ao orçamento como
+ele estava no ato, e o digest é calculado **sem** a própria assinatura — assinar não muda o
+que foi assinado. Remontar depois não apaga o que aconteceu: a assinatura fica **caduca**,
+visível, com os dois digests lado a lado, e o despacho recusa até um ato novo. Descartá-la
+apagaria em silêncio o fato de que alguém assinou.
+
+**A tela mostra o ato com peso de ato**: dois passos explícitos, a identidade da sessão à
+vista e nunca digitável — não existe campo de nome, porque quem aprova é quem entrou —, e a
+consequência escrita antes do clique. O link da planilha só existe depois do despacho, e não
+porque um arquivo passou a existir.
 
 ## De onde vem a tabela de preços
 

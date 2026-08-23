@@ -1178,9 +1178,13 @@ planilha `.xlsx` com proveniência por linha.
 
 Regras que valem em toda a seção, idênticas às da medição:
 
-- Papel exigido: `orcamentista`, em toda rota — inclusive de leitura. Papel ausente devolve
-  `403 FORBIDDEN` antes de qualquer lookup, e por isso ninguém descobre pela diferença
-  entre `403` e `404` o que existe no tenant vizinho.
+- Papel exigido em toda rota — inclusive de leitura. Papel ausente devolve `403 FORBIDDEN`
+  antes de qualquer lookup, e por isso ninguém descobre pela diferença entre `403` e `404` o
+  que existe no tenant vizinho. Desde a [F-035](../features/F-035-aprovacao-do-orcamento/feature.md)
+  o papel não é um só ([ADR-0046](../adr/0046-aprovacao-do-orcamento-base.md), decisões 5 e
+  7): **leitura** aceita `orcamentista` ou `aprovador` — quem assina precisa abrir a jornada
+  para ver o que assina —, **toda mutação da cadeia e o despacho** exigem `orcamentista`, e
+  **`POST .../estimate/approve`** exige `aprovador`.
 - `tenant_id` vem do JWT. Rodada de outro tenant devolve `404 NOT_FOUND`.
 - Toda mutação exige `Idempotency-Key` e `base_version`; versão divergente devolve
   `409 REVISION_CONFLICT`. A versão é **da rodada**, uma só para toda a cadeia.
@@ -1189,9 +1193,14 @@ Regras que valem em toda a seção, idênticas às da medição:
 - Invariante de domínio de `packages/valuation` devolve `422 DOMAIN_VALIDATION_FAILED` com
   o código de domínio (`ESTIMATE_*`, `ASSIGNMENT_*`, `TAKEOFF_*`) em `details`.
 
-O que **não** existe aqui, por construção: contrato, período, saldo e aprovação. Nenhum
-deles existe antes da licitação, e o `Estimate` não passa pelo portão de exportação da
-medição.
+O que **não** existe aqui, por construção: contrato, período e saldo. Nenhum deles existe
+antes da licitação, e o `Estimate` não passa pelo portão de exportação da medição, que
+recebe o contrato por parâmetro.
+
+Aprovação **existe** e é própria (ADR-0046). Ausência do portão contratual da medição não é
+ausência de assinatura: o orçamento tem aprovação nominal amarrada por digest, e
+`Estimate.ensure_exportable()` — o portão daqui — não recebe contrato nenhum, que é o que
+mantém os códigos de saldo, período e contrato fora desta fronteira.
 
 ### `POST /v1/estimate-rounds`
 
@@ -1435,10 +1444,15 @@ código `ASSIGNMENT_*` correspondente.
 Entrada: `base_version` e `bdi_percent`, o percentual **único** do orçamento, como texto
 (ADR-0038, decisão 2). A identidade da obra é atributo da rodada e não viaja aqui.
 
-Monta o orçamento sobre o takeoff confirmado, as decisões de código e a cascata; grava a
-planilha, reabre e reconfere centavo a centavo, e só então publica o `.xlsx` e grava a
-revisão. Auditoria reprovada não publica nada e devolve `500
-ESTIMATE_WORKBOOK_AUDIT_FAILED` com os códigos dos achados — nunca os valores divergentes.
+Monta o orçamento sobre o takeoff confirmado, as decisões de código e a cascata, e grava a
+revisão. **Só monta**: desde a F-035 esta rota não audita nem publica planilha nenhuma —
+despachar é `POST .../estimate/export`, atrás do portão de aprovação. É **quebra declarada
+de contrato de rota** (ADR-0046, decisão 2): quem consumia a resposta esperando planilha
+publicada precisa mudar, e `workbook_present` só passa a `true` depois do despacho.
+
+Registra quem MONTOU o orçamento, contra quem a aprovação compara o `sub` do JWT. Uma
+aprovação anterior é levada adiante já **caduca** (decisão 8): ela continua apontando para o
+digest antigo, a leitura mostra os dois digests, e o despacho recusa até um ato novo.
 
 Cascata vazia, takeoff ainda não revisado por inteiro e nenhuma decisão de código devolvem
 `409 ROUND_STAGE_NOT_READY`. Confirmação sem fonte citada devolve
@@ -1454,12 +1468,60 @@ Com teto declarado na rodada (ADR-0040), a resposta ganha `target`, `consumed`,
 `total_amount` que acabou de ser montado contra o teto. Sem teto, nenhuma dessas chaves
 aparece.
 
+### `POST /v1/estimate-rounds/{round_id}/estimate/approve`
+
+Entrada: `base_version`, e **nada mais**. Identidade e instante são carimbo do servidor;
+`approver_id`, `approver_role`, `decided_at` e `decision_id` no corpo devolvem `422`.
+
+Papel exigido: **`aprovador`**. Assina nominalmente o orçamento da cabeça, amarrando o ato
+ao `content_digest()` do conteúdo assinado — que exclui a própria aprovação, de modo que
+assinar não muda o que foi assinado. A revisão nova avança `version`.
+
+**Quem montou não assina**: `sub` igual ao autor da montagem devolve
+`403 ESTIMATE_SELF_APPROVAL_FORBIDDEN`, mesmo com os dois papéis no token — a comparação é
+de identidade, não de papel (ADR-0046, decisão 6). Orçamento da cabeça sem registro de quem
+o montou devolve `409 ESTIMATE_APPROVAL_AUTHOR_UNKNOWN`: sem autor não há contra quem
+conferir a segregação, e a saída é remontar.
+
+Orçamento ainda não montado devolve `409 ROUND_STAGE_NOT_READY`; orçamento que não revalida
+devolve `422`. Assinar de novo é o caminho normal da aprovação caduca, não erro.
+
+### `POST /v1/estimate-rounds/{round_id}/estimate/export`
+
+Entrada: `base_version`, e nada mais — não há formato, layout nem "exportar assim mesmo" a
+escolher.
+
+Papel exigido: **`orcamentista`** (ADR-0046, decisão 7) — assinar é assumir o conteúdo,
+despachar é operar o envio.
+
+A ordem é o portão: primeiro `Estimate.ensure_exportable()`, o portão do **domínio**, antes
+de qualquer escrita; depois a auditoria de round-trip; só então o `.xlsx` no object store e
+a revisão nova. Orçamento sem aprovação, com aprovação de recusa ou com aprovação que não
+confere com o conteúdo atual devolve `422 DOMAIN_VALIDATION_FAILED` com
+`details.code = ESTIMATE_EXPORT_BLOCKED` e as violações em `details.errors`
+(`ESTIMATE_NOT_APPROVED`, `ESTIMATE_APPROVAL_REJECTED`, `APPROVAL_CONTENT_MISMATCH`) — e
+**nada é escrito**, nem em arquivo temporário. Auditoria reprovada devolve
+`500 ESTIMATE_WORKBOOK_AUDIT_FAILED` com os códigos dos achados, nunca os valores
+divergentes, e também não publica nada.
+
+O `.xlsx` é endereçado pelo `content_digest()` do orçamento, e não pelo digest do documento
+gravado: assinar não muda o conteúdo orçado e não pode mudar o endereço da planilha dele. A
+exportação não altera o orçamento — a revisão nova carrega o mesmo `estimate_json` e
+acrescenta só a referência e o digest do arquivo. A resposta não carrega URL.
+
 ### `GET /v1/estimate-rounds/{round_id}/estimate`
 
 Retorna o orçamento com BDI, totais e linhas **recomputados** na leitura, mais
 `workbook_url`: URL assinada de curta duração da planilha publicada, montada na hora depois
-de conferido o prefixo do tenant. Orçamento ainda não montado devolve
-`409 ROUND_STAGE_NOT_READY`; orçamento que não revalida devolve `422`.
+de conferido o prefixo do tenant — `null` enquanto nada foi despachado. Orçamento ainda não
+montado devolve `409 ROUND_STAGE_NOT_READY`; orçamento que não revalida devolve `422`.
+
+Traz também o bloco `approval` com `approved`, `approved_by`, `approved_at`,
+`approved_digest`, `current_digest` e `stale`. `stale` é **derivado na leitura**, nunca
+gravado: é a relação entre os dois digests no instante em que se lê, e é o que mostra por
+extenso que o orçamento mudou depois de assinado. O mesmo bloco aparece no estado da rodada
+(`GET /v1/estimate-rounds/{round_id}`) quando há orçamento legível na cabeça; sem orçamento,
+a chave não aparece.
 
 Com teto declarado, ganha também `target`/`consumed`/`remaining`/`over` (ADR-0040), a
 mesma forma do estado da rodada.
