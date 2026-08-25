@@ -47,7 +47,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-007 | HIGH | READY_FOR_HUMAN_REVIEW | [Porta de entrada: tela de login com marca](../features/F-007-tela-de-login/feature.md) |
 | F-008 | HIGH | BLOCKED | [Ciclo de vida de conta: convite, recuperação de senha e Google](../features/F-008-ciclo-de-vida-de-conta/feature.md) |
 | F-009 | HIGH | DONE | [Suite hospedada de providers: OpenAI + Anthropic direto, sem AWS](../features/F-009-suite-hospedada-sem-aws/feature.md) |
-| F-010 | HIGH | READY_FOR_HUMAN_REVIEW | [Revisão assistida em lote — fatia 1: anotações sugeridas](../features/F-010-revisao-assistida-lote/feature.md) |
+| F-010 | HIGH | DONE | [Revisão assistida em lote — fatia 1: anotações sugeridas](../features/F-010-revisao-assistida-lote/feature.md) |
 | F-011 | — | DONE | [Jornada guiada da revisão](../features/F-011-jornada-guiada-da-revisao/feature.md) — já entregue quando foi registrada |
 | F-012 | HIGH | DONE | [Operação SaaS da autorização de IA](../features/F-012-operacao-saas-autorizacao-ia/feature.md) |
 | F-013 | A DEFINIR | READY_FOR_SPEC | UI de membros do tenant, depende de F-008 (a definir em contrato) |
@@ -62,7 +62,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |
 | F-025 | HIGH | READY_FOR_HUMAN_REVIEW | [Consultor do traçado](../features/F-025-consultor-do-tracado/feature.md) |
 | F-024 | HIGH | DONE | [Leitura com valor não morre por falta de target_hint](../features/F-024-leitura-sem-target-hint/feature.md) |
-| F-023 | HIGH | READY_FOR_HUMAN_REVIEW | [Survey Quality Score](../features/F-023-survey-quality-score/feature.md) |
+| F-023 | HIGH | DONE | [Survey Quality Score](../features/F-023-survey-quality-score/feature.md) |
 | F-028 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | READY_FOR_HUMAN_REVIEW | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | READY_FOR_HUMAN_REVIEW | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |

@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > F-010 nasceu no Roadmap na rodada da F-009 como "revisão assistida em lote (a
 > definir em contrato)". A fatia 1 foi selecionada por decisão humana de
@@ -11,6 +11,11 @@
 > filtrado em lote e eu passo o olho e confirmo — não quero uma a uma". A
 > fronteira é dele: lote SÓ para as sugeridas como anotação; cota de chão
 > continua individual porque cada uma declara associação e eixo próprios.
+
+> Fatia 1 **commitada na `main`** em `e617129` (painel de lote na etapa de decisões).
+> O único gate pendente era o deploy pela esteira; **a entrega foi aceita por ato
+> humano em 2026-08-25** (Daniel Campos), confirmando deploy realizado. Este flip
+> reconcilia o roadmap, que ficara em `READY_FOR_HUMAN_REVIEW`.
 
 ## Classification
 
