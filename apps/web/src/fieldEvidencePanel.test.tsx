@@ -10,11 +10,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
+  CorrectObservationForm,
   FieldEvidenceBody,
   FieldPhotoModal,
   type FieldEvidenceView,
 } from "./fieldEvidencePanel";
-import type { FieldEvidence, FieldEvidencePhoto } from "./api";
+import type {
+  FieldEvidence,
+  FieldEvidencePhoto,
+  FieldObservation,
+} from "./api";
 import { ALL_ANCHORS } from "./fieldEvidence";
 
 const noop = () => {};
@@ -39,7 +44,10 @@ function photo(overrides: Partial<FieldEvidencePhoto> = {}): FieldEvidencePhoto 
   };
 }
 
-function readyView(evidence: FieldEvidence): FieldEvidenceView {
+function readyView(
+  evidence: FieldEvidence,
+  observations: FieldObservation[] = [],
+): FieldEvidenceView {
   return {
     status: "ready",
     evidence,
@@ -50,6 +58,7 @@ function readyView(evidence: FieldEvidence): FieldEvidenceView {
     aiNotice: null,
     busy: false,
     editingValueKey: null,
+    observations,
   };
 }
 
@@ -69,6 +78,10 @@ function render(view: FieldEvidenceView, openPhoto: FieldEvidencePhoto | null = 
       onStartEditingValue={noop}
       onCancelEditingValue={noop}
       onSubmitValue={noop}
+      onRequestClassification={noop}
+      onRecordObservation={noop}
+      onDismissObservation={noop}
+      onCorrectObservation={noop}
     />,
   );
 }
@@ -223,6 +236,126 @@ describe("ato 1 do legado: confirmar valor lido (estado 7)", () => {
     expect(html).toContain("Espécie da medida");
     expect(html).toContain("Texto lido no visor");
     expect(html).toContain("Cancelar");
+  });
+});
+
+describe("rascunho da classificação e observação (estado 8)", () => {
+  const draftPhoto = photo({
+    origin: "standalone",
+    anchor_text: "Alambrado do fundo",
+    classification_status: "DRAFT",
+    classification: {
+      classification: {
+        category: "ALAMBRADO",
+        description: "Tela de alambrado sobre mureta baixa.",
+        topology_notes: ["fecha à direita"],
+        confidence: "high",
+      },
+      lineage: {
+        provider: "anthropic",
+        model_id: "claude-opus-5",
+        prompt: {
+          prompt_id: "field-photo-classification",
+          prompt_version: "field-photo-classification@1.0.0",
+          schema_version: "1.0.0",
+        },
+      },
+    },
+  });
+
+  function observation(overrides: Partial<FieldObservation> = {}): FieldObservation {
+    return {
+      observation_id: "obs-1",
+      origin: "standalone",
+      evidence_id: "media-1",
+      status: "ACTIVE",
+      category: "ALAMBRADO",
+      description: "Concordo: é alambrado.",
+      source: { analysis_id: "an-1", category: "ALAMBRADO" },
+      supersedes_observation_id: null,
+      recorded_by: "Ana",
+      recorded_at: "2026-08-20T13:00:00Z",
+      ...overrides,
+    };
+  }
+
+  it("mostra a proposta com lineage, a fronteira e os dois atos", () => {
+    const html = render(
+      readyView({ job_id: "j", version: 3, surveys: [], photos: [draftPhoto] }),
+    );
+    expect(html).toContain("PROPOSTA DA IA — A CONFIRMAR");
+    expect(html).toContain("Alambrado");
+    expect(html).toContain("Tela de alambrado sobre mureta baixa");
+    expect(html).toContain("nenhuma dimensão vem daqui");
+    expect(html).toContain("field-photo-classification@1.0.0");
+    expect(html).toContain("modelo claude-opus-5");
+    expect(html).toContain("Registrar como nota de revisão");
+    expect(html).toContain("Descartar");
+  });
+
+  it("classificando mostra o carregando, sem os botões de registrar", () => {
+    const inFlight = photo({
+      origin: "standalone",
+      classification_status: "QUEUED",
+    });
+    const html = render(
+      readyView({ job_id: "j", version: 3, surveys: [], photos: [inFlight] }),
+    );
+    expect(html).toContain("Classificando a foto");
+    expect(html).not.toContain("Registrar como nota de revisão");
+  });
+
+  it("observação registrada mostra autoria e corrigir, não mais registrar", () => {
+    const html = render(
+      readyView(
+        { job_id: "j", version: 3, surveys: [], photos: [draftPhoto] },
+        [observation()],
+      ),
+    );
+    expect(html).toContain("OBSERVAÇÃO REGISTRADA");
+    expect(html).toContain("Registrada por Ana");
+    expect(html).toContain("Corrigir observação");
+    expect(html).not.toContain("Registrar como nota de revisão");
+  });
+
+  it("o formulário de correção não pré-preenche a descrição do revisor", () => {
+    const html = renderToStaticMarkup(
+      <CorrectObservationForm
+        currentCategory="ALAMBRADO"
+        busy={false}
+        onCancel={noop}
+        onSubmit={noop}
+      />,
+    );
+    // A categoria vem pré-selecionada (escolha controlada), mas o campo de descrição nasce
+    // vazio — nenhuma justificativa é semeada, como em todo o produto.
+    expect(html).toContain("Sua observação");
+    expect(html).toContain('value=""');
+    expect(html).not.toContain("Concordo");
+  });
+
+  it("rascunho descartado registra o ato e não reoferece as ações", () => {
+    const html = render(
+      readyView(
+        { job_id: "j", version: 3, surveys: [], photos: [draftPhoto] },
+        [observation({ status: "DISMISSED", category: null, description: null })],
+      ),
+    );
+    expect(html).toContain("descartado por Ana");
+    expect(html).not.toContain("Registrar como nota de revisão");
+    expect(html).not.toContain("Corrigir observação");
+  });
+
+  it("sem rascunho e podendo pedir, oferece 'Pedir classificação'", () => {
+    const html = render(
+      readyView({
+        job_id: "j",
+        version: 3,
+        surveys: [],
+        photos: [photo({ origin: "standalone", classification_status: "NOT_REQUESTED" })],
+      }),
+    );
+    expect(html).toContain("Pedir classificação");
   });
 });
 

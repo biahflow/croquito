@@ -10,6 +10,8 @@ import type {
   FieldEvidence,
   FieldEvidencePhoto,
   FieldEvidenceMeasurement,
+  FieldObservation,
+  FieldObservationCategory,
   FieldWitness,
   FieldWitnessSource,
 } from "./api";
@@ -414,3 +416,137 @@ export function mmFromValueHint(
   const factor = unit === "mm" ? 1 : unit === "cm" ? 10 : 1000;
   return Math.round(parsed * factor);
 }
+
+// --- Classificação por IA e observação humana (F-030 T7) ---
+//
+// O rascunho da IA chega em `photo.classification` como o documento público inteiro
+// (`{ classification: {...}, lineage: {...} }`). As puras abaixo o leem defensivamente e
+// nunca derivam medida daqui — a classificação diz "o que é", nunca "quanto mede".
+
+export type ClassificationDraft = {
+  category: string;
+  description: string;
+  topologyNotes: string[];
+  confidence: string | null;
+};
+
+/** O rascunho de classificação legível, ou `null` se ausente/malformado. */
+export function classificationDraft(photo: FieldEvidencePhoto): ClassificationDraft | null {
+  const inner = photo.classification?.["classification"];
+  if (!inner || typeof inner !== "object") {
+    return null;
+  }
+  const record = inner as Record<string, unknown>;
+  const category = record.category;
+  const description = record.description;
+  if (typeof category !== "string" || typeof description !== "string") {
+    return null;
+  }
+  const notes = Array.isArray(record.topology_notes)
+    ? record.topology_notes.filter((note): note is string => typeof note === "string")
+    : [];
+  return {
+    category,
+    description,
+    topologyNotes: notes,
+    confidence: typeof record.confidence === "string" ? record.confidence : null,
+  };
+}
+
+/** A linha de lineage do rascunho, no formato do Design Approval Package (estado 8). */
+export function classificationLineage(photo: FieldEvidencePhoto): string | null {
+  const lineage = photo.classification?.["lineage"];
+  if (!lineage || typeof lineage !== "object") {
+    return null;
+  }
+  const record = lineage as Record<string, unknown>;
+  const prompt =
+    record.prompt && typeof record.prompt === "object"
+      ? (record.prompt as Record<string, unknown>)
+      : {};
+  const parts: string[] = [];
+  if (typeof prompt.prompt_version === "string") {
+    parts.push(`prompt ${prompt.prompt_version}`);
+  }
+  if (typeof prompt.schema_version === "string") {
+    parts.push(`schema ${prompt.schema_version}`);
+  }
+  if (typeof record.provider === "string") {
+    parts.push(`provider ${record.provider}`);
+  }
+  if (typeof record.model_id === "string") {
+    parts.push(`modelo ${record.model_id}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/** A classificação ainda pode ser pedida (nunca pedida ou falha transitória). */
+export function canRequestClassification(photo: FieldEvidencePhoto): boolean {
+  return (
+    photo.classification_status === "NOT_REQUESTED" ||
+    photo.classification_status === "FAILED_TRANSIENT"
+  );
+}
+
+/** Está classificando agora: a tela mostra estado de carregando. */
+export function isClassificationInFlight(photo: FieldEvidencePhoto): boolean {
+  return photo.classification_status === "QUEUED";
+}
+
+/** Falhou de vez ou foi recusada pelo provider. */
+export function isClassificationFailed(photo: FieldEvidencePhoto): boolean {
+  return (
+    photo.classification_status === "FAILED_TRANSIENT" ||
+    photo.classification_status === "FAILED_PERMANENT" ||
+    photo.classification_status === "REFUSED"
+  );
+}
+
+/** O passe pago foi deliberadamente pulado (sem classificação honesta). */
+export function isClassificationSkipped(photo: FieldEvidencePhoto): boolean {
+  return (
+    photo.classification_status === "SKIPPED_DISABLED" ||
+    photo.classification_status === "SKIPPED_NO_ENTITLEMENT"
+  );
+}
+
+/** A observação ativa desta foto, se houver — a que a tela mostra como registrada. */
+export function activeObservationFor(
+  observations: FieldObservation[],
+  photo: FieldEvidencePhoto,
+): FieldObservation | null {
+  return (
+    observations.find(
+      (observation) =>
+        observation.status === "ACTIVE" &&
+        observation.origin === photo.origin &&
+        observation.evidence_id === photo.evidence_id,
+    ) ?? null
+  );
+}
+
+/** O rascunho desta foto já foi tratado (registrado ou descartado): não reoferece os atos. */
+export function draftHandled(
+  observations: FieldObservation[],
+  photo: FieldEvidencePhoto,
+): FieldObservation | null {
+  return (
+    observations.find(
+      (observation) =>
+        (observation.status === "ACTIVE" || observation.status === "DISMISSED") &&
+        observation.origin === photo.origin &&
+        observation.evidence_id === photo.evidence_id,
+    ) ?? null
+  );
+}
+
+/** As sete categorias controladas, para o seletor de correção. */
+export const FIELD_OBSERVATION_CATEGORIES: FieldObservationCategory[] = [
+  "MURO",
+  "ALAMBRADO",
+  "PORTAO",
+  "PATAMAR",
+  "EQUIPAMENTOS",
+  "DETALHES",
+  "UNKNOWN",
+];

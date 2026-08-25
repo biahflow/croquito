@@ -6218,6 +6218,8 @@ export function CroquiApp({
               <FieldEvidencePanel
                 accessToken={session.access_token}
                 jobId={jobId}
+                review={review}
+                onReviewMutated={setReview}
               />
             ) : null}
             <div className="policy-note">

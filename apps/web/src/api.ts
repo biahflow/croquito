@@ -251,6 +251,9 @@ export type Review = {
   // classifica a diferença. Opcional pelo mesmo motivo das cadeias: revisão gravada antes
   // do campo responde sem ele, e a tela lê com `?? []`.
   field_witnesses?: FieldWitness[];
+  // Observações humanas sobre a classificação por IA (F-030 T7), versionadas fora da cena.
+  // Opcional pelo mesmo motivo das cadeias/testemunhas; a tela lê com `?? []`.
+  field_observations?: FieldObservation[];
   scene: {
     id: string;
     version: number;
@@ -1189,6 +1192,55 @@ export type FieldPhotoValueDraft = {
   raw_text: string;
 };
 
+// Categorias fechadas da classificação (ADR-0049 D9), espelhando o servidor.
+export type FieldObservationCategory =
+  | "MURO"
+  | "ALAMBRADO"
+  | "PORTAO"
+  | "PATAMAR"
+  | "EQUIPAMENTOS"
+  | "DETALHES"
+  | "UNKNOWN";
+
+// A proposta da IA no instante do ato, copiada do artefato pelo servidor: preserva o que a
+// máquina propôs mesmo depois de o revisor corrigir a categoria.
+export type FieldObservationSource = {
+  analysis_id: string;
+  category: FieldObservationCategory;
+  provider?: string | null;
+  model_id?: string | null;
+  prompt_version?: string | null;
+  schema_version?: string | null;
+};
+
+// Observação humana sobre a classificação, versionada FORA da SceneRevision. `category`/
+// `description` ausentes só em DISMISSED (registro do ato de descartar, não observação).
+export type FieldObservation = {
+  observation_id: string;
+  origin: "survey" | "standalone";
+  evidence_id: string;
+  status: "ACTIVE" | "SUPERSEDED" | "DISMISSED";
+  category: FieldObservationCategory | null;
+  description: string | null;
+  source: FieldObservationSource;
+  supersedes_observation_id: string | null;
+  recorded_by: string;
+  recorded_at: string;
+};
+
+// Registrar (com categoria e descrição, opcionalmente corrigindo outra) ou descartar são
+// atos disjuntos, no molde do model_validator do servidor.
+export type FieldObservationCommand =
+  | {
+      action: "record";
+      origin: "survey" | "standalone";
+      evidence_id: string;
+      category: FieldObservationCategory;
+      description: string;
+      corrects_observation_id?: string;
+    }
+  | { action: "dismiss"; origin: "survey" | "standalone"; evidence_id: string };
+
 export async function getFieldEvidence(
   accessToken: string,
   jobId: string,
@@ -1417,6 +1469,56 @@ export async function confirmFieldPhotoValue(
     },
   );
   return getFieldEvidence(accessToken, jobId);
+}
+
+/**
+ * Pede a classificação visual de uma foto confirmada (F-030 T6/T7). Responde `202`: o
+ * rascunho chega no próximo `getFieldEvidence`. Molde de `requestFieldPhotoReading`.
+ */
+export async function requestFieldPhotoClassification(
+  accessToken: string,
+  jobId: string,
+  origin: "survey" | "standalone",
+  evidenceId: string,
+  baseVersion: number,
+): Promise<FieldPhotoAnalysisState> {
+  return apiJson<FieldPhotoAnalysisState>(
+    `/v1/jobs/${jobId}/field-evidence/photos/${origin}/${encodeURIComponent(evidenceId)}/classification`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: baseVersion }),
+    },
+  );
+}
+
+/**
+ * Registra ou descarta a observação humana sobre a classificação (F-030 T7). Uma
+ * `Idempotency-Key` e o `base_version` da revisão por gesto; a resposta é o `Review`
+ * reconferido. A observação viaja fora da cena — nada aqui muda geometria ou exportação.
+ */
+export async function submitFieldObservation(
+  accessToken: string,
+  jobId: string,
+  baseVersion: number,
+  command: FieldObservationCommand,
+): Promise<Review> {
+  return apiJson<Review>(
+    `/v1/jobs/${jobId}/review/field-observations`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: baseVersion, ...command }),
+    },
+  );
 }
 
 export async function createProjectUpload(

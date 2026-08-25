@@ -18,21 +18,30 @@ import {
   getFieldEvidence,
   linkSurveyToJob,
   mutateReviewWitnesses,
+  requestFieldPhotoClassification,
   requestFieldPhotoReading,
+  submitFieldObservation,
   unlinkSurveyFromJob,
   uploadStandaloneFieldPhoto,
   type FieldEvidence,
   type FieldEvidencePhoto,
+  type FieldObservation,
   type FieldWitness,
 } from "./api";
 import {
+  activeObservationFor,
   ALL_ANCHORS,
   anchorLabel,
   anchorOptions,
+  canRequestClassification,
   canRequestReading,
+  classificationDraft,
+  classificationLineage,
+  draftHandled,
   eligibleWitnessSources,
   filterPhotosByAnchor,
   isAnalysisSkipped,
+  isClassificationInFlight,
   isReadingInFlight,
   mmFromValueHint,
   parseWitnessSourceOption,
@@ -335,6 +344,81 @@ describe("testemunhas de campo (helpers puros)", () => {
   });
 });
 
+describe("classificação e observação (helpers puros)", () => {
+  const draftPhoto = photo({
+    origin: "standalone",
+    classification_status: "DRAFT",
+    classification: {
+      classification: {
+        category: "ALAMBRADO",
+        description: "Tela sobre mureta.",
+        topology_notes: ["fecha à direita"],
+        confidence: "high",
+      },
+      lineage: {
+        provider: "anthropic",
+        model_id: "claude-opus-5",
+        prompt: {
+          prompt_version: "field-photo-classification@1.0.0",
+          schema_version: "1.0.0",
+        },
+      },
+    },
+  });
+
+  function observation(overrides: Partial<FieldObservation> = {}): FieldObservation {
+    return {
+      observation_id: "obs-1",
+      origin: "standalone",
+      evidence_id: "media-1",
+      status: "ACTIVE",
+      category: "ALAMBRADO",
+      description: "Concordo.",
+      source: { analysis_id: "an-1", category: "ALAMBRADO" },
+      supersedes_observation_id: null,
+      recorded_by: "Ana",
+      recorded_at: "2026-08-20T13:00:00Z",
+      ...overrides,
+    };
+  }
+
+  it("lê o rascunho legível e a linha de lineage; malformado vira null", () => {
+    const draft = classificationDraft(draftPhoto);
+    expect(draft?.category).toBe("ALAMBRADO");
+    expect(draft?.description).toBe("Tela sobre mureta.");
+    expect(draft?.topologyNotes).toEqual(["fecha à direita"]);
+    expect(classificationDraft(photo())).toBeNull();
+
+    expect(classificationLineage(draftPhoto)).toBe(
+      "prompt field-photo-classification@1.0.0 · schema 1.0.0 · provider anthropic · modelo claude-opus-5",
+    );
+    expect(classificationLineage(photo())).toBeNull();
+  });
+
+  it("predicados de estado da classificação", () => {
+    expect(canRequestClassification(photo({ classification_status: "NOT_REQUESTED" }))).toBe(
+      true,
+    );
+    expect(canRequestClassification(draftPhoto)).toBe(false);
+    expect(isClassificationInFlight(photo({ classification_status: "QUEUED" }))).toBe(true);
+    expect(isClassificationInFlight(draftPhoto)).toBe(false);
+  });
+
+  it("encontra a observação ativa e sabe quando o rascunho já foi tratado", () => {
+    const active = observation();
+    const dismissed = observation({ status: "DISMISSED", category: null });
+    const superseded = observation({ status: "SUPERSEDED" });
+    const p = photo({ origin: "standalone", evidence_id: "media-1" });
+
+    expect(activeObservationFor([active], p)?.observation_id).toBe("obs-1");
+    expect(activeObservationFor([dismissed], p)).toBeNull();
+    expect(draftHandled([dismissed], p)?.status).toBe("DISMISSED");
+    expect(draftHandled([superseded], p)).toBeNull();
+    // Observação de outra foto não conta.
+    expect(activeObservationFor([observation({ evidence_id: "media-9" })], p)).toBeNull();
+  });
+});
+
 // --- Transporte (o oráculo é o que saiu no fetch) ---
 
 type Chamada = { url: string; init: RequestInit | undefined };
@@ -598,5 +682,78 @@ describe("transporte da evidência de campo", () => {
       }),
     ).rejects.toThrow(/inteiro/);
     expect(chamadas).toHaveLength(0);
+  });
+
+  it("registrar observação manda base_version e Idempotency-Key, sem tocar cena", async () => {
+    await submitFieldObservation(TOKEN, JOB, 4, {
+      action: "record",
+      origin: "standalone",
+      evidence_id: "media-2",
+      category: "ALAMBRADO",
+      description: "Concordo: é alambrado.",
+    });
+    expect(chamadas[0].url).toBe(
+      `http://localhost:8000/v1/jobs/${JOB}/review/field-observations`,
+    );
+    expect(headers(0)["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/i);
+    const body = corpo(0);
+    expect(body).toEqual({
+      base_version: 4,
+      action: "record",
+      origin: "standalone",
+      evidence_id: "media-2",
+      category: "ALAMBRADO",
+      description: "Concordo: é alambrado.",
+    });
+    // A observação viaja fora da cena: o corpo não carrega geometria nem cena.
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("scene");
+    expect(serialized).not.toContain("entity");
+    expect(serialized).not.toContain("geometry");
+  });
+
+  it("descartar observação manda só o alvo e a ação", async () => {
+    await submitFieldObservation(TOKEN, JOB, 5, {
+      action: "dismiss",
+      origin: "standalone",
+      evidence_id: "media-2",
+    });
+    expect(corpo(0)).toEqual({
+      base_version: 5,
+      action: "dismiss",
+      origin: "standalone",
+      evidence_id: "media-2",
+    });
+    expect(corpo(0)).not.toHaveProperty("category");
+  });
+
+  it("conflito de versão ao registrar vira ApiError", async () => {
+    stub(() => problema(409, "REVISION_CONFLICT"));
+    const erro = await submitFieldObservation(TOKEN, JOB, 3, {
+      action: "dismiss",
+      origin: "standalone",
+      evidence_id: "media-2",
+    }).catch((e: unknown) => e);
+    expect(erro).toBeInstanceOf(ApiError);
+    expect((erro as ApiError).code).toBe("REVISION_CONFLICT");
+  });
+
+  it("pedir classificação posta na rota de classificação com a guarda otimista", async () => {
+    stub(() =>
+      ok({ analysis_id: "an-1", task: "classification", status: "QUEUED", version: 5 }),
+    );
+    const state = await requestFieldPhotoClassification(
+      TOKEN,
+      JOB,
+      "standalone",
+      "media-2",
+      4,
+    );
+    expect(state.task).toBe("classification");
+    expect(chamadas[0].url).toBe(
+      `http://localhost:8000/v1/jobs/${JOB}/field-evidence/photos/standalone/media-2/classification`,
+    );
+    expect(corpo(0)).toEqual({ base_version: 4 });
+    expect(headers(0)["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/i);
   });
 });

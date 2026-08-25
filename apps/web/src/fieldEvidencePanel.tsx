@@ -18,21 +18,35 @@ import {
   getFieldEvidence,
   linkSurveyToJob,
   listCompletedSurveys,
+  requestFieldPhotoClassification,
   requestFieldPhotoReading,
+  submitFieldObservation,
   unlinkSurveyFromJob,
   uploadStandaloneFieldPhoto,
   type CompletedSurveySummary,
   type FieldEvidence,
   type FieldEvidencePhoto,
+  type FieldObservation,
+  type FieldObservationCategory,
+  type FieldObservationCommand,
   type FieldPhotoValueDraft,
+  type Review,
 } from "./api";
 import {
+  activeObservationFor,
   ALL_ANCHORS,
   anchorLabel,
   anchorOptions,
+  canRequestClassification,
   canRequestReading,
+  classificationDraft,
+  classificationLineage,
+  draftHandled,
+  FIELD_OBSERVATION_CATEGORIES,
   filterPhotosByAnchor,
   isAnalysisSkipped,
+  isClassificationInFlight,
+  isClassificationSkipped,
   isReadingInFlight,
   metersFromMm,
   mmFromValueHint,
@@ -327,6 +341,248 @@ export function FieldPhotoValueBlock({
   );
 }
 
+const OBSERVATION_CATEGORY_LABELS: Record<FieldObservationCategory, string> = {
+  MURO: "Muro",
+  ALAMBRADO: "Alambrado",
+  PORTAO: "Portão",
+  PATAMAR: "Patamar",
+  EQUIPAMENTOS: "Equipamentos",
+  DETALHES: "Detalhes",
+  UNKNOWN: "Indefinido",
+};
+
+/**
+ * Formulário de correção da observação: o revisor troca a categoria (pré-selecionada no
+ * valor corrente, porque é escolha controlada) e escreve a própria descrição — NUNCA
+ * pré-preenchida, como toda justificativa do produto.
+ */
+export function CorrectObservationForm({
+  currentCategory,
+  busy,
+  onCancel,
+  onSubmit,
+}: {
+  currentCategory: FieldObservationCategory | null;
+  busy: boolean;
+  onCancel: () => void;
+  onSubmit: (category: FieldObservationCategory, description: string) => void;
+}) {
+  const [category, setCategory] = useState<FieldObservationCategory>(
+    currentCategory ?? "UNKNOWN",
+  );
+  const [description, setDescription] = useState("");
+  const trimmed = description.trim();
+  const canSubmit = trimmed.length >= 1 && trimmed.length <= 500 && !busy;
+  return (
+    <form
+      className="value-confirm-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (trimmed.length < 1) {
+          return;
+        }
+        onSubmit(category, trimmed);
+      }}
+    >
+      <label>
+        Categoria
+        <select
+          value={category}
+          onChange={(event) =>
+            setCategory(event.target.value as FieldObservationCategory)
+          }
+        >
+          {FIELD_OBSERVATION_CATEGORIES.map((option) => (
+            <option key={option} value={option}>
+              {OBSERVATION_CATEGORY_LABELS[option]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Sua observação
+        <input
+          type="text"
+          maxLength={500}
+          value={description}
+          placeholder="Sua conclusão, nas suas palavras"
+          onChange={(event) => setDescription(event.target.value)}
+        />
+      </label>
+      <div className="acoes">
+        <button type="submit" className="button button-primary" disabled={!canSubmit}>
+          Salvar observação
+        </button>
+        <button
+          type="button"
+          className="button button-secondary"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancelar
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Bloco da classificação por IA e a observação humana (F-030 T7), estado 8 do Design
+ * Approval Package. O rascunho aparece com lineage e a fronteira "nenhuma dimensão vem
+ * daqui"; registrar ou descartar é ato explícito, e nada aqui muda cena ou exportação.
+ */
+export function ClassificationDraftBlock({
+  photo,
+  observations,
+  busy,
+  onRequestClassification,
+  onRecord,
+  onDismiss,
+  onCorrect,
+}: {
+  photo: FieldEvidencePhoto;
+  observations: FieldObservation[];
+  busy: boolean;
+  onRequestClassification: (photo: FieldEvidencePhoto) => void;
+  onRecord: (photo: FieldEvidencePhoto) => void;
+  onDismiss: (photo: FieldEvidencePhoto) => void;
+  onCorrect: (
+    photo: FieldEvidencePhoto,
+    observationId: string,
+    category: FieldObservationCategory,
+    description: string,
+  ) => void;
+}) {
+  const [correcting, setCorrecting] = useState(false);
+  const draft = classificationDraft(photo);
+  const active = activeObservationFor(observations, photo);
+  const handled = draftHandled(observations, photo);
+
+  // Observação ativa: mostra o que foi registrado e permite corrigir.
+  if (active) {
+    return (
+      <div className="proposta">
+        <p className="eyebrow">OBSERVAÇÃO REGISTRADA</p>
+        <p className="reading-current">
+          <strong>{OBSERVATION_CATEGORY_LABELS[active.category ?? "UNKNOWN"]}</strong>
+          {active.description ? ` — ${active.description}` : ""}
+        </p>
+        <small className="field-hint">
+          Registrada por {active.recorded_by} em {shortInstant(active.recorded_at)}. Fora da
+          cena: nada daqui vira entidade, cota ou precisão.
+        </small>
+        {correcting ? (
+          <CorrectObservationForm
+            currentCategory={active.category}
+            busy={busy}
+            onCancel={() => setCorrecting(false)}
+            onSubmit={(category, description) => {
+              onCorrect(photo, active.observation_id, category, description);
+              setCorrecting(false);
+            }}
+          />
+        ) : (
+          <div className="acoes">
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={busy}
+              onClick={() => setCorrecting(true)}
+            >
+              Corrigir observação
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Rascunho descartado: registra o ato, sem reoferecer nada.
+  if (handled && handled.status === "DISMISSED") {
+    return (
+      <p className="leitura">
+        Rascunho de classificação descartado por {handled.recorded_by} em{" "}
+        {shortInstant(handled.recorded_at)}.
+      </p>
+    );
+  }
+
+  // Classificando agora.
+  if (isClassificationInFlight(photo)) {
+    return <p className="leitura">Classificando a foto…</p>;
+  }
+
+  // Passe pulado (honesto, não erro).
+  if (isClassificationSkipped(photo)) {
+    return (
+      <p className="leitura">
+        A classificação por IA não rodou — o processamento pago não está habilitado para
+        este cliente. Estado honesto, não erro.
+      </p>
+    );
+  }
+
+  // Rascunho pronto: a proposta da IA, a confirmar.
+  if (draft) {
+    const lineage = classificationLineage(photo);
+    const draftLabel =
+      OBSERVATION_CATEGORY_LABELS[draft.category as FieldObservationCategory] ??
+      draft.category;
+    return (
+      <div className="proposta">
+        <p className="eyebrow">PROPOSTA DA IA — A CONFIRMAR</p>
+        <p className="reading-current">
+          <strong>{draftLabel}</strong>
+        </p>
+        <small className="field-hint">
+          Descrição: {draft.description}
+          {draft.topologyNotes.length > 0
+            ? ` · Observação topológica: ${draft.topologyNotes.join("; ")}`
+            : ""}
+          . A classificação diz o que é: <strong>nenhuma dimensão vem daqui</strong>.
+        </small>
+        {lineage ? <small className="lineage field-hint">{lineage}</small> : null}
+        <div className="acoes">
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={busy}
+            onClick={() => onRecord(photo)}
+          >
+            Registrar como nota de revisão
+          </button>
+          <button
+            type="button"
+            className="button button-secondary"
+            disabled={busy}
+            onClick={() => onDismiss(photo)}
+          >
+            Descartar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Sem rascunho ainda: oferecer o pedido quando cabe.
+  if (canRequestClassification(photo)) {
+    return (
+      <div className="acoes">
+        <button
+          type="button"
+          className="button button-secondary"
+          disabled={busy}
+          onClick={() => onRequestClassification(photo)}
+        >
+          Pedir classificação
+        </button>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 /**
  * Cartão de uma foto: amostra, âncora declarada, pastilhas de qualidade e leitura, a
  * leitura textual quando existe, e o ato de pedir leitura quando cabe. Nada aqui mede.
@@ -335,22 +591,37 @@ export function FieldPhotoCard({
   photo,
   busy,
   editingValueKey,
+  observations,
   onOpen,
   onRequestReading,
   onConfirmValueDirect,
   onStartEditingValue,
   onCancelEditingValue,
   onSubmitValue,
+  onRequestClassification,
+  onRecordObservation,
+  onDismissObservation,
+  onCorrectObservation,
 }: {
   photo: FieldEvidencePhoto;
   busy: boolean;
   editingValueKey: string | null;
+  observations: FieldObservation[];
   onOpen: (photo: FieldEvidencePhoto) => void;
   onRequestReading: (photo: FieldEvidencePhoto) => void;
   onConfirmValueDirect: (photo: FieldEvidencePhoto, reading: FieldPhotoReading) => void;
   onStartEditingValue: (photo: FieldEvidencePhoto, sourceReadingId: string) => void;
   onCancelEditingValue: () => void;
   onSubmitValue: (photo: FieldEvidencePhoto, draft: FieldPhotoValueDraft) => void;
+  onRequestClassification: (photo: FieldEvidencePhoto) => void;
+  onRecordObservation: (photo: FieldEvidencePhoto) => void;
+  onDismissObservation: (photo: FieldEvidencePhoto) => void;
+  onCorrectObservation: (
+    photo: FieldEvidencePhoto,
+    observationId: string,
+    category: FieldObservationCategory,
+    description: string,
+  ) => void;
 }) {
   const quality = qualityBadge(photo);
   const reading = readingBadge(photo);
@@ -423,6 +694,15 @@ export function FieldPhotoCard({
         onStartEditing={(sourceReadingId) => onStartEditingValue(photo, sourceReadingId)}
         onCancelEditing={onCancelEditingValue}
         onSubmitValue={(draft) => onSubmitValue(photo, draft)}
+      />
+      <ClassificationDraftBlock
+        photo={photo}
+        observations={observations}
+        busy={busy}
+        onRequestClassification={onRequestClassification}
+        onRecord={onRecordObservation}
+        onDismiss={onDismissObservation}
+        onCorrect={onCorrectObservation}
       />
     </li>
   );
@@ -502,6 +782,7 @@ export type FieldEvidenceView =
       aiNotice: string | null;
       busy: boolean;
       editingValueKey: string | null;
+      observations: FieldObservation[];
     };
 
 /**
@@ -523,6 +804,10 @@ export function FieldEvidenceBody({
   onStartEditingValue,
   onCancelEditingValue,
   onSubmitValue,
+  onRequestClassification,
+  onRecordObservation,
+  onDismissObservation,
+  onCorrectObservation,
 }: {
   view: FieldEvidenceView;
   openPhoto: FieldEvidencePhoto | null;
@@ -537,6 +822,15 @@ export function FieldEvidenceBody({
   onStartEditingValue: (photo: FieldEvidencePhoto, sourceReadingId: string) => void;
   onCancelEditingValue: () => void;
   onSubmitValue: (photo: FieldEvidencePhoto, draft: FieldPhotoValueDraft) => void;
+  onRequestClassification: (photo: FieldEvidencePhoto) => void;
+  onRecordObservation: (photo: FieldEvidencePhoto) => void;
+  onDismissObservation: (photo: FieldEvidencePhoto) => void;
+  onCorrectObservation: (
+    photo: FieldEvidencePhoto,
+    observationId: string,
+    category: FieldObservationCategory,
+    description: string,
+  ) => void;
 }) {
   if (view.status === "loading") {
     return (
@@ -644,12 +938,17 @@ export function FieldEvidenceBody({
                 photo={photo}
                 busy={view.busy}
                 editingValueKey={view.editingValueKey}
+                observations={view.observations}
                 onOpen={onOpenPhoto}
                 onRequestReading={onRequestReading}
                 onConfirmValueDirect={onConfirmValueDirect}
                 onStartEditingValue={onStartEditingValue}
                 onCancelEditingValue={onCancelEditingValue}
                 onSubmitValue={onSubmitValue}
+                onRequestClassification={onRequestClassification}
+                onRecordObservation={onRecordObservation}
+                onDismissObservation={onDismissObservation}
+                onCorrectObservation={onCorrectObservation}
               />
             ))}
           </ul>
@@ -799,9 +1098,14 @@ export function LinkAndUploadForm({
 export function FieldEvidencePanel({
   accessToken,
   jobId,
+  review,
+  onReviewMutated,
 }: {
   accessToken: string;
   jobId: string;
+  /** A revisão corrente, fonte das observações e do `base_version` para registrá-las. */
+  review?: Review | null;
+  onReviewMutated?: (next: Review) => void;
 }) {
   const [evidence, setEvidence] = useState<FieldEvidence | null>(null);
   const [loading, setLoading] = useState(true);
@@ -867,21 +1171,24 @@ export function FieldEvidencePanel({
     };
   }, [accessToken, jobId]);
 
-  // Polling enquanto uma leitura está na fila: a leitura chega no próximo GET, com URL
-  // assinada fresca. Para quando nenhuma foto estiver mais lendo.
-  const anyReadingInFlight = useMemo(
-    () => (evidence?.photos ?? []).some(isReadingInFlight),
+  // Polling enquanto uma leitura ou classificação está na fila: o resultado chega no próximo
+  // GET, com URL assinada fresca. Para quando nenhuma foto estiver mais em análise.
+  const anyAnalysisInFlight = useMemo(
+    () =>
+      (evidence?.photos ?? []).some(
+        (photo) => isReadingInFlight(photo) || isClassificationInFlight(photo),
+      ),
     [evidence],
   );
   useEffect(() => {
-    if (!anyReadingInFlight) {
+    if (!anyAnalysisInFlight) {
       return;
     }
     const timer = window.setTimeout(() => {
       void load({ silent: true });
     }, READING_POLL_MS);
     return () => window.clearTimeout(timer);
-  }, [anyReadingInFlight, load, evidence]);
+  }, [anyAnalysisInFlight, load, evidence]);
 
   const runMutation = useCallback(async (action: () => Promise<FieldEvidence>) => {
     setBusy(true);
@@ -1014,7 +1321,127 @@ export function FieldEvidencePanel({
     [onConfirmValue],
   );
 
+  const onRequestClassification = useCallback(
+    async (photo: FieldEvidencePhoto) => {
+      setBusy(true);
+      setAiNotice(null);
+      try {
+        await requestFieldPhotoClassification(
+          accessToken,
+          jobId,
+          photo.origin,
+          photo.evidence_id,
+          baseVersion,
+        );
+        await load({ silent: true });
+      } catch (error) {
+        if (error instanceof ApiError) {
+          setAiNotice(aiRefusalMessage(error));
+        } else {
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : "O pedido de classificação falhou.",
+          );
+        }
+      } finally {
+        setBusy(false);
+      }
+    },
+    [accessToken, jobId, baseVersion, load],
+  );
+
+  const submitObservation = useCallback(
+    async (baseReview: Review, command: FieldObservationCommand) => {
+      if (!onReviewMutated) {
+        return;
+      }
+      setBusy(true);
+      setErrorMessage(null);
+      try {
+        const next = await submitFieldObservation(
+          accessToken,
+          jobId,
+          baseReview.version,
+          command,
+        );
+        onReviewMutated(next);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          setErrorMessage(
+            "A revisão mudou enquanto você registrava a observação. Recarregue a " +
+              "revisão e tente de novo.",
+          );
+        } else {
+          setErrorMessage(
+            error instanceof Error ? error.message : "A observação não foi registrada.",
+          );
+        }
+      } finally {
+        setBusy(false);
+      }
+    },
+    [accessToken, jobId, onReviewMutated],
+  );
+
+  const onRecordObservation = useCallback(
+    (photo: FieldEvidencePhoto) => {
+      const draft = classificationDraft(photo);
+      if (!review || !draft) {
+        setErrorMessage("Não há rascunho de classificação para registrar.");
+        return;
+      }
+      void submitObservation(review, {
+        action: "record",
+        origin: photo.origin,
+        evidence_id: photo.evidence_id,
+        category: draft.category as FieldObservationCategory,
+        description: draft.description,
+      });
+    },
+    [review, submitObservation],
+  );
+
+  const onDismissObservation = useCallback(
+    (photo: FieldEvidencePhoto) => {
+      if (!review) {
+        setErrorMessage("Não há revisão corrente para descartar o rascunho.");
+        return;
+      }
+      void submitObservation(review, {
+        action: "dismiss",
+        origin: photo.origin,
+        evidence_id: photo.evidence_id,
+      });
+    },
+    [review, submitObservation],
+  );
+
+  const onCorrectObservation = useCallback(
+    (
+      photo: FieldEvidencePhoto,
+      observationId: string,
+      category: FieldObservationCategory,
+      description: string,
+    ) => {
+      if (!review) {
+        setErrorMessage("Não há revisão corrente para corrigir a observação.");
+        return;
+      }
+      void submitObservation(review, {
+        action: "record",
+        origin: photo.origin,
+        evidence_id: photo.evidence_id,
+        category,
+        description,
+        corrects_observation_id: observationId,
+      });
+    },
+    [review, submitObservation],
+  );
+
   const photos = evidence?.photos ?? [];
+  const observations = review?.field_observations ?? [];
   const filtered = filterPhotosByAnchor(photos, selectedAnchor);
   const openPhoto =
     openPhotoKey === null
@@ -1042,6 +1469,7 @@ export function FieldEvidencePanel({
             aiNotice,
             busy,
             editingValueKey,
+            observations,
           };
 
   return (
@@ -1063,6 +1491,10 @@ export function FieldEvidencePanel({
       }
       onCancelEditingValue={() => setEditingValueKey(null)}
       onSubmitValue={(photo, draft) => void onConfirmValue(photo, draft)}
+      onRequestClassification={(photo) => void onRequestClassification(photo)}
+      onRecordObservation={onRecordObservation}
+      onDismissObservation={onDismissObservation}
+      onCorrectObservation={onCorrectObservation}
     />
   );
 }
