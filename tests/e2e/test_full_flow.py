@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
-from datetime import datetime
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any, cast
@@ -21,7 +21,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
 from croquito_api.config import ApiSettings
-from croquito_api.database import Database
+from croquito_api.database import (
+    Database,
+    FieldEvidenceAnalysisRecord,
+    JobFieldPhotoRecord,
+    SurveyRecord,
+)
 from croquito_api.main import create_app
 from croquito_core.events import DOMAIN_EVENT_TYPES
 from croquito_worker.association_confidence import CONFIDENCE_SCORE_VERSION
@@ -32,6 +37,7 @@ from croquito_worker.domain_event_publisher import (
 )
 from croquito_worker.local_queue import LocalQueueWorker, LocalWorkerSettings
 from croquito_worker.review_seed import SeedInputs, seed_review
+from tests.api.test_field_evidence import _packet as _survey_packet
 from tests.bundles import (
     CIRCLE_PROPOSAL_ID,
     CIRCLE_READING_ID,
@@ -1516,3 +1522,439 @@ def test_traced_scene_carries_the_scope_criterion_to_the_audited_package(
         approval_record = json.loads(package.read("aprovacao.json"))
     assert approval_record["covered_criteria"] == [SCOPE_CRITERION]
     assert approval_record["acknowledged_criteria"] == []
+
+
+# --- F-030 T8: evidência de campo na revisão coexiste com a exportação ---
+
+SURVEY_E2E = "00000000-0000-7000-8000-0000000030aa"
+#: Testemunhas com divergência pequena e NEUTRA sobre a mesma cota confirmada (25,90 m).
+SURVEY_WITNESS_MM = 25_930  # +0,03 m
+PHOTO_WITNESS_MM = 25_850  # -0,05 m
+PHOTO_READING_ID = "fpr_evidence"
+
+
+def _reach_exportable_scene(
+    client: TestClient,
+    worker: LocalQueueWorker,
+    storage: FakeObjectStore,
+    tmp_path: Path,
+) -> tuple[str, str, str, str]:
+    """Percorre upload → decisão → calibração → aceite até uma cena aprovável.
+
+    Devolve `(job_id, review_endpoint, scene_draft_id, approximate_entity_id)`. A cota de
+    largura fica confirmada, elegível a receber testemunhas.
+    """
+    pdf = synthetic_pdf()
+    source_sha256 = hashlib.sha256(pdf).hexdigest()
+    presign = client.post(
+        "/v1/uploads/presign",
+        headers=_headers("fe-presign"),
+        json={
+            "filename": "levantamento.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": len(pdf),
+            "sha256": source_sha256,
+        },
+    )
+    storage.put_direct(object_key=presign.json()["object_key"], body=pdf)
+    created = client.post(
+        "/v1/jobs",
+        headers=_headers("fe-job"),
+        json={
+            "upload_id": presign.json()["upload_id"],
+            "project_name": "Caso sintético de campo",
+            "default_unit": "m",
+        },
+    )
+    job_id = created.json()["job_id"]
+    assert worker.run_once() == 1
+    review_endpoint = f"/v1/jobs/{job_id}/review"
+
+    bundle = write_seed_bundle(tmp_path / "bundle", source_sha256=source_sha256)
+    seed_review(
+        SeedInputs(
+            job_id=UUID(job_id),
+            tenant_id=TENANT,
+            packet_path=bundle["packet"],
+            associations_path=bundle["associations"],
+            proposals_path=bundle["proposals"],
+            rectangle_request_path=bundle["rectangle_request"],
+            manifest_path=bundle["manifest"],
+            image_path=bundle["image"],
+            required_criteria=(ScopeCriterion(code=SCOPE_CRITERION, text=SCOPE_CRITERION_TEXT),),
+            operator_id="tenant-admin-fe",
+        ),
+        LocalWorkerSettings(
+            database_url=f"sqlite+pysqlite:///{tmp_path / 'e2e.db'}",
+            queue_url="",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            artifact_bucket="croquito-e2e",
+        ),
+        s3_client=storage,
+    )
+
+    solved = client.post(
+        f"{review_endpoint}/decisions",
+        headers=_headers("fe-decisions"),
+        json={
+            "base_version": 1,
+            "decisions": [
+                {
+                    "reading_id": WIDTH_READING_ID,
+                    "action": "confirm",
+                    "justification": "Cota conferida na evidência protegida.",
+                    "association_proposal_id": WIDTH_PROPOSAL_ID,
+                },
+                {
+                    "reading_id": HEIGHT_READING_ID,
+                    "action": "confirm",
+                    "justification": "Cota conferida na evidência protegida.",
+                    "association_proposal_id": HEIGHT_PROPOSAL_ID,
+                },
+                {
+                    "reading_id": CIRCLE_READING_ID,
+                    "action": "confirm",
+                    "justification": "Diâmetro conferido na evidência protegida.",
+                    "association_proposal_id": CIRCLE_PROPOSAL_ID,
+                },
+            ],
+        },
+    )
+    assert solved.status_code == 200
+    scene = solved.json()["scene"]
+    calibration = client.post(
+        f"{review_endpoint}/calibration",
+        headers=_headers("fe-calibration"),
+        json={
+            "base_review_version": 2,
+            "base_scene_version": 1,
+            "anchors": [
+                {
+                    "proposal_id": WIDTH_PROPOSAL_ID,
+                    "entity_id": _line_entity_id(scene, (float(WIDTH_M), 0.0), (0.0, 0.0)),
+                    "reversed": True,
+                },
+                {
+                    "proposal_id": HEIGHT_PROPOSAL_ID,
+                    "entity_id": _line_entity_id(scene, (0.0, 0.0), (0.0, float(HEIGHT_M))),
+                },
+            ],
+        },
+    )
+    assert calibration.status_code == 200
+    accepted = client.post(
+        f"{review_endpoint}/proposals",
+        headers=_headers("fe-accept"),
+        json={
+            "base_review_version": 3,
+            "base_scene_version": 1,
+            "proposal_id": CIRCLE_PROPOSAL_ID,
+            "action": "accept",
+            "justification": "Círculo aceito como hipótese visual revisada.",
+            "calibration_id": calibration.json()["calibration"]["calibration_id"],
+        },
+    )
+    assert accepted.status_code == 200
+    return (
+        job_id,
+        review_endpoint,
+        accepted.json()["scene"]["id"],
+        accepted.json()["proposal_decisions"][-1]["entity_id"],
+    )
+
+
+def _seed_confirmed_survey(client: TestClient, job_id: str) -> None:
+    """Levantamento concluído com uma medida confirmada, no molde do app de campo."""
+    packet = _survey_packet(SURVEY_E2E)
+    packet["measurements"][0]["id"] = "measurement-confirmed"
+    packet["measurements"][0]["value_mm"] = SURVEY_WITNESS_MM
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions.begin() as session:
+        session.add(
+            SurveyRecord(
+                id=SURVEY_E2E,
+                tenant_id=TENANT,
+                name="Levantamento da praça",
+                order_ref="OS-030-E2E",
+                status="COMPLETED",
+                version=2,
+                snapshot_json=packet,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+        )
+
+
+def _upload_standalone_photo(client: TestClient, storage: FakeObjectStore, job_id: str) -> str:
+    """Presign → PUT → confirm de uma foto avulsa; devolve o `evidence_id` confirmado."""
+    body = b"croquito-e2e::foto-avulsa-do-muro" * 8
+    fe_version = client.get(
+        f"/v1/jobs/{job_id}/field-evidence", headers=_headers("fe-ev-read")
+    ).json()["version"]
+    presign = client.post(
+        f"/v1/jobs/{job_id}/field-evidence/photos/presign",
+        headers=_headers("fe-photo-presign"),
+        json={
+            "base_version": fe_version,
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "mime_type": "image/jpeg",
+            "byte_size": len(body),
+            "anchor_text": "Muro dos fundos, junto ao portão",
+        },
+    )
+    assert presign.status_code == 200
+    photo_id = presign.json()["photo_id"]
+    database = cast(Database, cast(Any, client.app).state.database)
+    with database.sessions() as session:
+        record = session.get(JobFieldPhotoRecord, photo_id)
+        assert record is not None
+        object_key = record.object_key
+    storage.put_direct(object_key=object_key, body=body, content_type="image/jpeg")
+    confirm = client.post(
+        f"/v1/jobs/{job_id}/field-evidence/photos/{photo_id}/confirm",
+        headers=_headers("fe-photo-confirm"),
+        json={"base_version": presign.json()["version"]},
+    )
+    assert confirm.status_code == 200
+    return str(photo_id)
+
+
+def _analysis_key(job_id: str, evidence_id: str, task: str) -> str:
+    return (
+        f"tenants/{TENANT}/jobs/{job_id}/field-evidence/analysis/"
+        f"standalone/{evidence_id}/{task}.json"
+    )
+
+
+def _confirm_photo_value(
+    client: TestClient, storage: FakeObjectStore, job_id: str, evidence_id: str
+) -> str:
+    """Ato 1 do legado: leitura de máquina processada e valor confirmado. Devolve o id."""
+    database = cast(Database, cast(Any, client.app).state.database)
+    key = _analysis_key(job_id, evidence_id, "reading")
+    with database.sessions.begin() as session:
+        session.add(
+            FieldEvidenceAnalysisRecord(
+                id="00000000-0000-7000-8000-0000000030b1",
+                tenant_id=TENANT,
+                job_id=job_id,
+                origin="standalone",
+                evidence_id=evidence_id,
+                task="reading",
+                status="PROCESSED",
+                artifact_key=key,
+                requested_by="eng-e2e",
+            )
+        )
+    storage.put_direct(
+        object_key=key,
+        body=json.dumps(
+            {"schema": "field-evidence-reading/1", "readings": [{"id": PHOTO_READING_ID}]}
+        ).encode(),
+        content_type="application/json",
+    )
+    fe_version = client.get(
+        f"/v1/jobs/{job_id}/field-evidence", headers=_headers("fe-ev-read-2")
+    ).json()["version"]
+    confirmed = client.post(
+        f"/v1/jobs/{job_id}/field-evidence/photos/standalone/{evidence_id}/values",
+        headers=_headers("fe-value"),
+        json={
+            "base_version": fe_version,
+            "source_reading_id": PHOTO_READING_ID,
+            "value_mm": PHOTO_WITNESS_MM,
+            "kind": "length",
+            "raw_text": "25,85 m",
+        },
+    )
+    assert confirmed.status_code == 200
+    return str(confirmed.json()["confirmation"]["confirmation_id"])
+
+
+def _seed_classification_draft(
+    client: TestClient, storage: FakeObjectStore, job_id: str, evidence_id: str
+) -> None:
+    database = cast(Database, cast(Any, client.app).state.database)
+    key = _analysis_key(job_id, evidence_id, "classification")
+    with database.sessions.begin() as session:
+        session.add(
+            FieldEvidenceAnalysisRecord(
+                id="00000000-0000-7000-8000-0000000030b2",
+                tenant_id=TENANT,
+                job_id=job_id,
+                origin="standalone",
+                evidence_id=evidence_id,
+                task="classification",
+                status="DRAFT",
+                artifact_key=key,
+                requested_by="eng-e2e",
+            )
+        )
+    storage.put_direct(
+        object_key=key,
+        body=json.dumps(
+            {
+                "schema": "field-evidence-classification/1",
+                "classification": {
+                    "category": "MURO",
+                    "description": "Muro de alvenaria com portão à direita.",
+                    "topology_notes": ["fecha à direita"],
+                    "confidence": "high",
+                },
+                "lineage": {
+                    "provider": "anthropic",
+                    "model_id": "claude-opus-5",
+                    "prompt": {
+                        "prompt_id": "field-photo-classification",
+                        "prompt_version": "field-photo-classification@1.0.0",
+                        "template_hash": "d" * 64,
+                        "schema_version": "1.0.0",
+                    },
+                },
+            }
+        ).encode(),
+        content_type="application/json",
+    )
+
+
+def _review_version(client: TestClient, review_endpoint: str, key: str) -> int:
+    return int(client.get(review_endpoint, headers=_headers(key)).json()["version"])
+
+
+def test_field_evidence_e_observacao_coexistem_com_a_exportacao(
+    tmp_path: Path,
+    stack: tuple[TestClient, LocalQueueWorker, FakeObjectStore, FakeQueue],
+) -> None:
+    """F-030 T8: testemunhas divergentes e observação de campo não impedem o export.
+
+    A jornada leva uma cota confirmada a receber duas testemunhas com diferença neutra e uma
+    observação sobre a classificação por IA — tudo fora da cena. A cena não muda por isso, e
+    a aprovação e a exportação seguem fechando o pacote auditado.
+    """
+    client, worker, storage, _queue = stack
+    job_id, review_endpoint, scene_draft_id, approximate_id = _reach_exportable_scene(
+        client, worker, storage, tmp_path
+    )
+
+    # Impressão digital da cena ANTES da evidência de campo: id, versão e blockers.
+    before = client.get(review_endpoint, headers=_headers("fe-before")).json()
+    scene_before = before["scene"]
+    blockers_before = before["blockers"]
+
+    # 1. Levantamento vinculado pela rota real e uma foto avulsa confirmada.
+    _seed_confirmed_survey(client, job_id)
+    fe_version = client.get(
+        f"/v1/jobs/{job_id}/field-evidence", headers=_headers("fe-link-read")
+    ).json()["version"]
+    linked = client.post(
+        f"/v1/jobs/{job_id}/field-evidence/surveys/{SURVEY_E2E}",
+        headers=_headers("fe-link"),
+        json={"base_version": fe_version},
+    )
+    assert linked.status_code == 200
+    photo_id = _upload_standalone_photo(client, storage, job_id)
+
+    # 2. As duas fontes de testemunha: medida confirmada do app e valor lido em foto.
+    confirmation_id = _confirm_photo_value(client, storage, job_id, photo_id)
+
+    survey_witness = client.post(
+        f"{review_endpoint}/witnesses",
+        headers=_headers("fe-witness-survey"),
+        json={
+            "base_version": _review_version(client, review_endpoint, "fe-rv-1"),
+            "action": "associate",
+            "reading_id": WIDTH_READING_ID,
+            "source": {
+                "type": "survey_measurement",
+                "source_id": "measurement-confirmed",
+                "survey_id": SURVEY_E2E,
+            },
+        },
+    )
+    assert survey_witness.status_code == 200
+    photo_witness = client.post(
+        f"{review_endpoint}/witnesses",
+        headers=_headers("fe-witness-photo"),
+        json={
+            "base_version": _review_version(client, review_endpoint, "fe-rv-2"),
+            "action": "associate",
+            "reading_id": WIDTH_READING_ID,
+            "source": {"type": "photo_reading", "source_id": confirmation_id},
+        },
+    )
+    assert photo_witness.status_code == 200
+    witnesses = photo_witness.json()["field_witnesses"]
+    # Duas testemunhas empilhadas na mesma cota, cada diferença um número neutro.
+    assert len(witnesses) == 2
+    assert {item["difference_mm"] for item in witnesses} == {"30.00", "-50.00"}
+    assert all("status" not in item and "agrees" not in item for item in witnesses)
+    assert all(item["reading_id"] == WIDTH_READING_ID for item in witnesses)
+
+    # 3. Observação humana sobre a classificação por IA, versionada fora da cena.
+    _seed_classification_draft(client, storage, job_id, photo_id)
+    recorded = client.post(
+        f"{review_endpoint}/field-observations",
+        headers=_headers("fe-observe"),
+        json={
+            "base_version": _review_version(client, review_endpoint, "fe-rv-3"),
+            "action": "record",
+            "origin": "standalone",
+            "evidence_id": photo_id,
+            "category": "MURO",
+            "description": "Confirmo: é muro, não alambrado.",
+        },
+    )
+    assert recorded.status_code == 200
+    observations = recorded.json()["field_observations"]
+    assert len(observations) == 1
+    assert observations[0]["status"] == "ACTIVE"
+    assert observations[0]["category"] == "MURO"
+    # A fonte preserva a proposta da IA e o lineage, copiados do artefato pelo servidor.
+    assert observations[0]["source"]["model_id"] == "claude-opus-5"
+    assert observations[0]["source"]["prompt_version"] == "field-photo-classification@1.0.0"
+
+    # 4. A cena não mudou: mesma id, versão e blockers de antes da evidência de campo.
+    after = recorded.json()
+    assert after["scene"]["id"] == scene_before["id"] == scene_draft_id
+    assert after["scene"]["version"] == scene_before["version"]
+    assert after["blockers"] == blockers_before
+    # A divergência das testemunhas nunca virou blocker.
+    assert not any("WITNESS" in code or "OBSERVATION" in code for code in after["blockers"])
+
+    # 5. Aprovação e exportação seguem fechando o pacote, apesar da divergência.
+    approved = client.post(
+        f"/v1/jobs/{job_id}/approve",
+        headers=_headers("fe-approve"),
+        json={
+            "revision_id": scene_draft_id,
+            "accepted_approximations": [approximate_id],
+            "acknowledged_criteria": [SCOPE_CRITERION],
+            "source_evidence_checked": True,
+            "geometry_checked": True,
+            "limitations_acknowledged": True,
+            "statement": "Cena cobre o campo principal; a evidência de campo é observacional.",
+        },
+    )
+    assert approved.status_code == 200
+    assert approved.json()["approved"] is True
+    export = client.post(
+        f"/v1/jobs/{job_id}/exports",
+        headers=_headers("fe-export"),
+        json={"revision_id": approved.json()["id"]},
+    )
+    assert export.status_code == 202
+    assert worker.run_once() == 1
+    completed = client.get(
+        f"/v1/jobs/{job_id}/exports/{export.json()['export_id']}",
+        headers=_headers("fe-export-read"),
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "COMPLETED"
+    assert completed.json()["audit_status"] == "approved"
+    # O pacote saiu: a evidência de campo divergente não fechou a porta da exportação.
+    package_key = (
+        f"tenants/{TENANT}/jobs/{job_id}/exports/{export.json()['export_id']}/croquito.zip"
+    )
+    with zipfile.ZipFile(BytesIO(storage.body(package_key))) as package:
+        assert "desenho.dxf" in package.namelist()
