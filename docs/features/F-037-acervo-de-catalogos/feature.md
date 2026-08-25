@@ -2,7 +2,13 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
+
+> Código completo na `main` (T1–T6 + e2e: acervo de catálogos da plataforma e a escolha da
+> tabela nas telas — `6a86282`, `2f76b5b`, `99d3561`). Os gates restantes — confirmação de
+> que SCO-Rio pode ser distribuída pela plataforma (unknown 4), publicação dos arquivos
+> reais em homologação e deploy — foram **cumpridos e aceitos por ato humano em 2026-08-25**
+> (Daniel Campos). Este flip reconcilia o roadmap, que ficara em `READY_FOR_HUMAN_REVIEW`.
 
 > Nasce em 2026-08-22, de uma conversa sobre o rumo do produto: **o sistema deve trazer as
 > tabelas prontas, e o orçamentista escolher**, como faz o software de orçamento
