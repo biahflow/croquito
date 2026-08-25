@@ -1,7 +1,7 @@
 # ADR-0051: Retenção por classe de objeto preserva a evidência de campo durável
 
-Status: Proposed
-Data: 2026-08-25 (proposto; aguarda aprovação humana da mudança de retenção)
+Status: Accepted
+Data: 2026-08-25 (aceito por ato humano na mesma data)
 Responsável: Product / Engineering
 
 ## Contexto
@@ -79,7 +79,8 @@ efêmeros não expirados — não perda de dado.
 
 - A mudança de retenção **exige aprovação humana** e `terraform plan`/`apply` revisados
   (`infra/AGENTS.md`: "Mudança de retenção exige ADR/aprovação"; "apply exige aprovação
-  explícita"). Por isso este ADR nasce `Proposed`, não `Accepted`.
+  explícita"). Aceito por ato humano em 2026-08-25; o `terraform plan`/`apply` em HML segue
+  como passo humano à parte.
 - O teste de policy de lifecycle (a "policy de sete dias testada" do `infra/AGENTS.md`)
   precisa passar a exercitar a regra por tag; a atualização do teste acompanha a parte (a).
 - Até a parte (b) existir, os efêmeros não expiram: aceitável como interim seguro, a ser
