@@ -2,13 +2,19 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > Selecionada por decisão humana de 2026-08-20, diagnóstico da V16 do Guaxindiba
 > medido no raw-store: a extração devolveu 27 leituras (24 legíveis), 13 cotas de
 > chão em metros com valor — e 12 delas morreram no funil como
 > `READING_{n}_INCOMPLETE` por falta de `target_hint`. O pacote abriu com 8
 > leituras, todas recado, zero cota de chão.
+
+> Corrigida e **commitada na `main`** em `7b15d1f` (funil de `provider_review.py`,
+> testes e snapshot OpenAPI aditivo). A **entrega foi aceita em uso real**: com o funil
+> consertado, a V17 do Guaxindiba extraiu 29 leituras (13 de chão), registrada em
+> `35bf5fa` e no `STATUS.md`. Este flip apenas reconcilia o roadmap, que ficara em
+> `READY_FOR_HUMAN_REVIEW` depois do commit.
 
 ## Classification
 
