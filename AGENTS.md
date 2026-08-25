@@ -2,8 +2,8 @@
 
 Status: Accepted  
 Responsável: Engineering  
-Última revisão: 2026-08-20 (OCR auxiliar deixa de nomear Textract; braço real é
-Cloud Vision/Document AI por configuração — ADR-0037)
+Última revisão: 2026-08-25 (limite de autonomia de nuvem cobre GCP e AWS; a
+homologação viva roda em GCP Cloud Run — ADR-0025)
 
 ## Escopo
 
@@ -69,7 +69,7 @@ Pode executar sem confirmação adicional:
 
 Exige aprovação explícita:
 
-- Deploy ou mutação de recursos AWS.
+- Deploy ou mutação de recursos de nuvem (GCP ou AWS).
 - Migração destrutiva ou irreversível de banco.
 - Chamadas pagas em massa a modelos ou OCR.
 - Envio de documentos para serviços externos fora de um teste autorizado.
