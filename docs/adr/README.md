@@ -70,6 +70,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0048](0048-consolidado-contratual-do-orcamento-assinado.md) | Sob demanda contratada, o orçamento assinado é o consolidado contratual da medição | Accepted |
 | [0049](0049-evidencia-de-campo-na-revisao-do-escritorio.md) | A evidência de campo entra na revisão pelo job da prancha; foto não mede e medida de trena não é cota | Accepted |
 | [0050](0050-correcao-humana-de-forma-como-proposta-derivada.md) | Correção humana de forma é proposta derivada, num conjunto de proveniência própria | Accepted |
+| [0051](0051-retencao-por-classe-preserva-evidencia-de-campo.md) | Retenção por classe de objeto (tag) preserva a evidência de campo durável; retenção por prefixo não alcança as chaves aninhadas por tenant | Proposed |
 
 ## Processo
 
