@@ -2,11 +2,13 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > T1 e T2 integradas e revisadas na branch `f-025-consultor-tracado` em
-> 2026-08-20 ([evidência](evidence.md)); pendem o merge e a aceitação real na
-> prancha do Guaxindiba.
+> 2026-08-20 ([evidência](evidence.md)) e **mergeadas na `main`** em `d110094`.
+> A **aceitação real na prancha do Guaxindiba foi confirmada por ato humano em
+> 2026-08-25** (Daniel Campos). Este flip reconcilia o roadmap, que ficara em
+> `READY_FOR_HUMAN_REVIEW` após o merge.
 
 > F-025 nasceu no Roadmap em 2026-08-20, na primeira exportação real (V17 do
 > Guaxindiba): o aceite travou em "0 exatos, 11 não aplicadas" por três causas

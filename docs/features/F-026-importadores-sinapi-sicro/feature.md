@@ -2,11 +2,13 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > Implementação integrada em 2026-08-20 na branch `f-026-importadores` (T1–T3,
-> [plan.md](plan.md)), revisada e com evidência em [evidence.md](evidence.md).
-> Pende o merge, represado por decisão humana da mesma data.
+> [plan.md](plan.md)), revisada e com evidência em [evidence.md](evidence.md) e
+> **mergeada na `main`** em `b6f253f`. **Deploy e aceitação confirmados por ato
+> humano em 2026-08-25** (Daniel Campos). Este flip reconcilia o roadmap, que
+> ficara em `READY_FOR_HUMAN_REVIEW` após o merge.
 
 > Selecionada por decisão humana de 2026-08-20, na rodada pós-F-020, junto com F-028 e
 > F-027. Fecha o bullet reservado do roadmap ("cascata configurável de fontes de preço

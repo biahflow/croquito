@@ -2,11 +2,13 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > Implementação integrada em 2026-08-20 na branch `f-027-especificacao` (T1–T3,
-> [plan.md](plan.md)), revisada e com evidência em [evidence.md](evidence.md).
-> Pende o merge, represado por decisão humana da mesma data.
+> [plan.md](plan.md)), revisada e com evidência em [evidence.md](evidence.md) e
+> **mergeada na `main`** em `8dd1a5a` (com a migração `0004_estimate_round_target`).
+> **Deploy e aceitação confirmados por ato humano em 2026-08-25** (Daniel Campos).
+> Este flip reconcilia o roadmap, que ficara em `READY_FOR_HUMAN_REVIEW` após o merge.
 
 > Selecionada por decisão humana de 2026-08-20, na rodada pós-F-020. Os DOIS gates
 > foram exercidos na mesma data: o [ADR-0040](../../adr/0040-teto-de-verba-do-orcamento-base.md)
