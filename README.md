@@ -106,6 +106,45 @@ Postgres (`5432`) e LocalStack (`4566`) sobem via `make dev-services` e são usa
 API; não é preciso acessá-los diretamente. `make dev` exige o `.env.local` copiado e os
 serviços de pé (`make dev-services` + `make db-init`).
 
+### Usuários e perfis locais
+
+Identidade e papel vêm sempre do JWT (Keycloak) — o banco não guarda usuários, e
+`make db-init` só cria o schema. Não há comando de "criar usuário": os usuários de
+desenvolvimento já vêm **importados junto com o realm** quando você roda
+`make dev-services` (o Keycloak sobe com `--import-realm`). Todos no tenant
+`tenant-local`, senha `local-dev-only`, logáveis no browser em http://localhost:5173:
+
+| Usuário | Senha | Papéis |
+|---|---|---|
+| `engenheiro.local` | `local-dev-only` | `engineer`, `tenant_admin` |
+| `orcamentista.local` | `local-dev-only` | `orcamentista` |
+| `aprovador.local` | `local-dev-only` | `aprovador` |
+
+Papéis definidos no realm local: `engineer`, `cad_operator`, `tenant_admin`,
+`platform_operator`, `orcamentista`, `aprovador`. O código ainda reconhece
+`field_technician`, `architect` e `domain_reviewer` (campo e revisão), que não têm role
+no realm — use-os via test token (abaixo) ou crie a role na console do Keycloak.
+
+**Chamar a API direto como qualquer perfil (sem browser/Keycloak).** Para smoke ou
+testes de rota — inclusive perfis sem usuário pronto, como `platform_operator` — ligue
+`CROQUITO_ALLOW_TEST_TOKENS=true` no `.env.local` e mande um token de teste no header,
+no formato `test:<tenant>:<subject>:<papéis-separados-por-vírgula>`:
+
+```bash
+curl -H "Authorization: Bearer test:tenant-local:op-1:platform_operator" \
+  http://localhost:8000/v1/projects
+```
+
+O realm local desabilita direct access grants de propósito, então não há token por
+senha fora do browser — o test token é o caminho para chamada direta. Mantenha a flag
+em `false` fora do uso pontual.
+
+Para logar **no browser** com um papel que não tem usuário pronto (ex.
+`platform_operator`, `cad_operator`, `field_technician`), crie o usuário na console do
+Keycloak (http://localhost:8083, admin `local-admin` / `local-admin-only`), atribua a
+role e o atributo `tenant_id`. Sem volume persistente, essas contas somem no
+`make down-services` (o realm importado volta intacto).
+
 ### Demos e evals determinísticas
 
 Não exigem os serviços em Docker e não fazem chamadas externas:
