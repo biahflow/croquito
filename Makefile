@@ -5,7 +5,7 @@ export UV_CACHE_DIR
 export XDG_CACHE_HOME
 export MPLCONFIGDIR
 
-.PHONY: docs setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision check test demo provider-contract-demo vision-eval ocr-eval solver-eval association-eval association-calibration transcription-eval field-photo-classification-eval extraction-eval extraction-eval-degrau valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
+.PHONY: docs setup dev dev-api dev-web dev-worker dev-worker-fixtures dev-services down-services db-init db-revision seed-users check test demo provider-contract-demo vision-eval ocr-eval solver-eval association-eval association-calibration transcription-eval field-photo-classification-eval extraction-eval extraction-eval-degrau valuation-demo valuation-estimate-demo valuation-eval valuation-extraction-eval valuation-parity valuation-compare smoke-local smoke-hml contracts openapi-snapshot infra-check
 
 setup:
 	uv sync --all-groups
@@ -36,6 +36,14 @@ db-revision:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run alembic revision --autogenerate -m "$(MESSAGE)"
 	uv run ruff check --fix services/api/src/croquito_api/migrations/versions
 	uv run ruff format services/api/src/croquito_api/migrations/versions
+
+# Cria/atualiza no Keycloak LOCAL os usuários dos perfis que NÃO vêm no realm importado
+# (cad_operator, platform_operator, field_technician, architect, domain_reviewer). O realm
+# já traz engenheiro.local/orcamentista.local/aprovador.local; este seed cobre o resto.
+# Idempotente. Exige o Keycloak local de pé (`make dev-services`, porta 8083). Como o
+# Keycloak local não tem volume persistente, rode de novo após um `make down-services`.
+seed-users:
+	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run python scripts/seed_local_users.py
 
 dev-api:
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run uvicorn croquito_api.main:app --reload --port 8000

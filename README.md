@@ -122,8 +122,20 @@ desenvolvimento já vêm **importados junto com o realm** quando você roda
 
 Papéis definidos no realm local: `engineer`, `cad_operator`, `tenant_admin`,
 `platform_operator`, `orcamentista`, `aprovador`. O código ainda reconhece
-`field_technician`, `architect` e `domain_reviewer` (campo e revisão), que não têm role
-no realm — use-os via test token (abaixo) ou crie a role na console do Keycloak.
+`field_technician`, `architect` e `domain_reviewer` (campo e revisão).
+
+**Usuários dos demais perfis.** Os papéis sem usuário pronto no realm
+(`cad_operator`, `platform_operator`, `field_technician`, `architect`,
+`domain_reviewer`) são criados por um comando idempotente, com os serviços de pé:
+
+```bash
+make seed-users
+```
+
+Ele cria/atualiza no Keycloak local `cad.local`, `operador.local`, `tecnico.local`,
+`arquiteto.local` e `revisor.local` (tenant `tenant-local`, senha `local-dev-only`),
+criando também as roles que faltam no realm. Como o Keycloak local não tem volume
+persistente, rode de novo depois de um `make down-services`.
 
 **Chamar a API direto como qualquer perfil (sem browser/Keycloak).** Para smoke ou
 testes de rota — inclusive perfis sem usuário pronto, como `platform_operator` — ligue
@@ -139,11 +151,9 @@ O realm local desabilita direct access grants de propósito, então não há tok
 senha fora do browser — o test token é o caminho para chamada direta. Mantenha a flag
 em `false` fora do uso pontual.
 
-Para logar **no browser** com um papel que não tem usuário pronto (ex.
-`platform_operator`, `cad_operator`, `field_technician`), crie o usuário na console do
-Keycloak (http://localhost:8083, admin `local-admin` / `local-admin-only`), atribua a
-role e o atributo `tenant_id`. Sem volume persistente, essas contas somem no
-`make down-services` (o realm importado volta intacto).
+Se precisar de um usuário sob medida além do `make seed-users`, crie-o na console do
+Keycloak (http://localhost:8083, admin `local-admin` / `local-admin-only`), atribuindo a
+role e o atributo `tenant_id`. Essas contas também somem no `make down-services`.
 
 ### Demos e evals determinísticas
 
