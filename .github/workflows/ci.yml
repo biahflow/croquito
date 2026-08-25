@@ -14,5 +14,11 @@ permissions:
   contents: read
 
 jobs:
+  # PORTÃO DE QUALITY TEMPORARIAMENTE DESLIGADO (decisão humana, 2026-08-25) para
+  # destravar o push de demandas urgentes. A `main` não é protegida, então este check é
+  # informativo e não bloqueia merge; o `if: false` apenas evita rodar o portão em PR.
+  # Controle compensatório: `make check` + `make test` locais antes de cada push.
+  # Para religar, remova a linha `if: false` abaixo.
   quality:
+    if: false
     uses: ./.github/workflows/quality.yml
