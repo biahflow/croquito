@@ -109,38 +109,37 @@ serviços de pé (`make dev-services` + `make db-init`).
 ### Usuários e perfis locais
 
 Identidade e papel vêm sempre do JWT (Keycloak) — o banco não guarda usuários, e
-`make db-init` só cria o schema. Não há comando de "criar usuário": os usuários de
-desenvolvimento já vêm **importados junto com o realm** quando você roda
-`make dev-services` (o Keycloak sobe com `--import-realm`). Todos no tenant
-`tenant-local`, senha `local-dev-only`, logáveis no browser em http://localhost:5173:
+`make db-init` só cria o schema. Não há comando de "criar usuário do zero": três usuários
+já vêm **importados com o realm** no `make dev-services` (Keycloak com `--import-realm`) e
+o restante é criado por `make seed-users` (abaixo). Todos no tenant `tenant-local`, senha
+`local-dev-only`, logáveis no browser em http://localhost:5173.
 
-| Usuário | Senha | Papéis |
-|---|---|---|
-| `engenheiro.local` | `local-dev-only` | `engineer`, `tenant_admin` |
-| `orcamentista.local` | `local-dev-only` | `orcamentista` |
-| `aprovador.local` | `local-dev-only` | `aprovador` |
+| Usuário | Papéis | Onde entra | Vem de |
+|---|---|---|---|
+| `engenheiro.local` | `engineer`, `tenant_admin` | croqui | realm |
+| `orcamentista.local` | `orcamentista` | medição (e orçamento) | realm |
+| `aprovador.local` | `aprovador` | orçamento (só assina) | realm |
+| `arquiteto.local` | `architect` | croqui | `make seed-users` |
+| `revisor.local` | `domain_reviewer` | croqui | `make seed-users` |
+| `cad.local` | `cad_operator` | sem jornada na SPA | `make seed-users` |
+| `operador.local` | `platform_operator` | API de administração (test token) | `make seed-users` |
+| `tecnico.local` | `field_technician` | app de campo (PWA separada) | `make seed-users` |
 
-Papéis definidos no realm local: `engineer`, `cad_operator`, `tenant_admin`,
-`platform_operator`, `orcamentista`, `aprovador`. O código ainda reconhece
-`field_technician`, `architect` e `domain_reviewer` (campo e revisão).
-
-**Usuários dos demais perfis.** Os papéis sem usuário pronto no realm
-(`cad_operator`, `platform_operator`, `field_technician`, `architect`,
-`domain_reviewer`) são criados por um comando idempotente, com os serviços de pé:
+**Os papéis que não vêm no realm.** Com os serviços de pé, um comando idempotente cria os
+cinco usuários da metade de baixo da tabela:
 
 ```bash
 make seed-users
 ```
 
-Ele cria/atualiza no Keycloak local `cad.local`, `operador.local`, `tecnico.local`,
-`arquiteto.local` e `revisor.local` (tenant `tenant-local`, senha `local-dev-only`),
-criando as roles que faltam no realm e habilitando o atributo `tenant_id` na Admin API
-do Keycloak. Como o Keycloak local não tem volume persistente, rode de novo depois de um
-`make down-services`.
+Ele cria as roles que faltam no realm (`architect`, `domain_reviewer`, `field_technician`)
+e habilita o atributo `tenant_id` na Admin API do Keycloak — sem isso o Keycloak 26
+descarta o `tenant_id` e o usuário não consegue sessão. Como o Keycloak local não tem
+volume persistente, rode de novo depois de um `make down-services`.
 
 Atenção: nem todo papel tem tela na SPA. Só quem tem jornada aterrissa no app web —
-`architect` e `domain_reviewer` caem no **croqui** (logáveis no browser como
-`arquiteto.local`/`revisor.local`). `platform_operator` é papel de **API** de
+`engineer`/`architect`/`domain_reviewer` no **croqui**, `orcamentista` na **medição**,
+`orcamentista`/`aprovador` no **orçamento**. `platform_operator` é papel de **API** de
 administração (use test token), `field_technician` é do **app de campo** (PWA separada) e
 `cad_operator` não abre jornada — esses três logam no Keycloak mas mostram "sem jornada
 liberada" na SPA, por design.
