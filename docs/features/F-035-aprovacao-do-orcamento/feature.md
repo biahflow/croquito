@@ -2,7 +2,13 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
+
+> Código completo na `main` (T1–T4 + e2e: aprovação nominal e portão de exportação do
+> orçamento — `8c41772`, `7592428`, `fa7ebfb`, `fe70240`). Os gates restantes — papel
+> `aprovador` atribuído no realm de HML, deploy e o ato nominal sobre um orçamento real —
+> foram **cumpridos e aceitos por ato humano em 2026-08-25** (Daniel Campos). Este flip
+> reconcilia o roadmap, que ficara em `READY_FOR_HUMAN_REVIEW` após o merge.
 
 > Nasce em 2026-08-22, de uma conversa de alinhamento sobre a cadeia real, quando ficou
 > visível uma **assimetria**: a medição tem `POST .../approve` com aprovação nominal
