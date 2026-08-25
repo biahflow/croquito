@@ -1051,6 +1051,263 @@ function toHex(buffer: ArrayBuffer): string {
   ).join("");
 }
 
+// --- Evidência de campo (F-030) ---
+//
+// Tipos escritos à mão porque não há contrato REST gerado (só os schemas de domínio de
+// `@croquito/contracts`), espelhando os modelos de `services/api/src/croquito_api/main.py`
+// (`FieldEvidenceResponse` e vizinhos). `photo.url` é assinada por resposta e nunca deve
+// ser persistida em estado durável — cada `getFieldEvidence` traz uma URL fresca.
+
+export type FieldEvidenceAnchor = {
+  kind: "point" | "element" | "note";
+  ref_id: string;
+};
+
+export type FieldEvidenceMeasurement = {
+  source_id: string;
+  survey_id: string;
+  value_mm: number;
+  kind: string;
+  instrument: string;
+  from_point_id: string | null;
+  to_point_id: string | null;
+  second_from_point_id: string | null;
+  second_to_point_id: string | null;
+  element_id: string | null;
+  created_at: string;
+};
+
+export type FieldEvidenceConfirmedValue = {
+  confirmation_id: string;
+  source_reading_id: string;
+  value_mm: number;
+  kind: string;
+  raw_text: string;
+  confirmed_by: string;
+  confirmed_at: string;
+};
+
+export type FieldEvidencePhoto = {
+  evidence_id: string;
+  origin: "survey" | "standalone";
+  survey_id: string | null;
+  sha256: string;
+  mime_type: string;
+  anchors: FieldEvidenceAnchor[];
+  anchor_text: string | null;
+  captured_at: string;
+  /** Assinada por resposta: exibir e "abrir original", nunca guardar. */
+  url: string;
+  analysis: Record<string, unknown> | null;
+  classification: Record<string, unknown> | null;
+  reading_status: string;
+  classification_status: string;
+  confirmed_values: FieldEvidenceConfirmedValue[];
+};
+
+export type LinkedSurveyEvidence = {
+  survey_id: string;
+  name: string;
+  linked_by: string;
+  linked_at: string;
+  measurements: FieldEvidenceMeasurement[];
+};
+
+export type FieldEvidence = {
+  job_id: string;
+  version: number;
+  surveys: LinkedSurveyEvidence[];
+  photos: FieldEvidencePhoto[];
+};
+
+export type CompletedSurveySummary = {
+  survey_id: string;
+  name: string;
+  order_ref: string | null;
+  version: number;
+  photo_count: number;
+  confirmed_measurement_count: number;
+  completed_at: string;
+};
+
+export type CompletedSurveyPage = {
+  items: CompletedSurveySummary[];
+  next_cursor: string | null;
+};
+
+export type FieldPhotoAnalysisState = {
+  analysis_id: string;
+  task: "reading" | "classification";
+  status: string;
+  version: number;
+};
+
+export async function getFieldEvidence(
+  accessToken: string,
+  jobId: string,
+): Promise<FieldEvidence> {
+  return apiJson<FieldEvidence>(
+    `/v1/jobs/${jobId}/field-evidence`,
+    accessToken,
+  );
+}
+
+export async function listCompletedSurveys(
+  accessToken: string,
+  cursor?: string | null,
+): Promise<CompletedSurveyPage> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return apiJson<CompletedSurveyPage>(`/v1/surveys${query}`, accessToken);
+}
+
+/**
+ * Vincular ou desvincular um levantamento é ato humano: uma `Idempotency-Key` e o
+ * `base_version` da evidência por gesto. Repetir um vínculo já existente é sucesso sem
+ * avançar versão; versão movida entre carga e envio volta `409 REVISION_CONFLICT`.
+ */
+export async function linkSurveyToJob(
+  accessToken: string,
+  jobId: string,
+  surveyId: string,
+  baseVersion: number,
+): Promise<FieldEvidence> {
+  await apiJson(
+    `/v1/jobs/${jobId}/field-evidence/surveys/${encodeURIComponent(surveyId)}`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: baseVersion }),
+    },
+  );
+  return getFieldEvidence(accessToken, jobId);
+}
+
+export async function unlinkSurveyFromJob(
+  accessToken: string,
+  jobId: string,
+  surveyId: string,
+  baseVersion: number,
+): Promise<FieldEvidence> {
+  await apiJson(
+    `/v1/jobs/${jobId}/field-evidence/surveys/${encodeURIComponent(surveyId)}/unlink`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: baseVersion }),
+    },
+  );
+  return getFieldEvidence(accessToken, jobId);
+}
+
+/**
+ * Foto avulsa: presign → PUT direto no storage → confirmar, o mesmo molde do upload de
+ * projeto. A âncora é declarada pelo revisor (não inferida); MIME e tamanho seguem o
+ * contrato do servidor para o excesso morrer antes da rede.
+ */
+export async function uploadStandaloneFieldPhoto(
+  accessToken: string,
+  jobId: string,
+  baseVersion: number,
+  file: File,
+  anchorText: string,
+): Promise<FieldEvidence> {
+  const mime = file.type;
+  if (mime !== "image/jpeg" && mime !== "image/png" && mime !== "image/webp") {
+    throw new Error("A foto precisa ser JPEG, PNG ou WebP.");
+  }
+  if (file.size === 0 || file.size > 25_000_000) {
+    throw new Error("A foto deve ter entre 1 byte e 25 MB.");
+  }
+  const trimmed = anchorText.trim();
+  if (trimmed.length < 1 || trimmed.length > 500) {
+    throw new Error("Declare uma âncora de 1 a 500 caracteres para a foto.");
+  }
+  const digest = toHex(
+    await crypto.subtle.digest("SHA-256", await file.arrayBuffer()),
+  );
+  const presigned = await apiJson<PresignJobFieldPhotoResponse>(
+    `/v1/jobs/${jobId}/field-evidence/photos/presign`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({
+        base_version: baseVersion,
+        sha256: digest,
+        mime_type: mime,
+        byte_size: file.size,
+        anchor_text: trimmed,
+      }),
+    },
+  );
+  const upload = await fetch(presigned.url, {
+    method: "PUT",
+    headers: presigned.headers,
+    body: file,
+  });
+  if (!upload.ok) {
+    throw new Error("O upload direto da foto não foi concluído. Tente novamente.");
+  }
+  await apiJson(
+    `/v1/jobs/${jobId}/field-evidence/photos/${presigned.photo_id}/confirm`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: presigned.version }),
+    },
+  );
+  return getFieldEvidence(accessToken, jobId);
+}
+
+type PresignJobFieldPhotoResponse = {
+  photo_id: string;
+  version: number;
+  sha256: string;
+  url: string;
+  headers: Record<string, string>;
+  expires_at: string;
+};
+
+/**
+ * Pedido explícito de leitura textual de uma foto confirmada. Responde `202`: o worker
+ * resolve fora do request, e o resultado chega no próximo `getFieldEvidence`.
+ */
+export async function requestFieldPhotoReading(
+  accessToken: string,
+  jobId: string,
+  origin: "survey" | "standalone",
+  evidenceId: string,
+  baseVersion: number,
+): Promise<FieldPhotoAnalysisState> {
+  return apiJson<FieldPhotoAnalysisState>(
+    `/v1/jobs/${jobId}/field-evidence/photos/${origin}/${encodeURIComponent(evidenceId)}/reading`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: baseVersion }),
+    },
+  );
+}
+
 export async function createProjectUpload(
   accessToken: string,
   file: File,

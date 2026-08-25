@@ -164,6 +164,7 @@ import {
   type ImagePoint,
 } from "./selection";
 import { readRoute, routeSearch } from "./route";
+import { FieldEvidencePanel } from "./fieldEvidencePanel";
 import {
   clampZoom,
   evidenceCropStyle,
@@ -5850,6 +5851,12 @@ export function CroquiApp({
                   </p>
                 </section>
               </details>
+            ) : null}
+            {jobId ? (
+              <FieldEvidencePanel
+                accessToken={session.access_token}
+                jobId={jobId}
+              />
             ) : null}
             <div className="policy-note">
               <strong>Sem falsa precisão</strong>
