@@ -2,11 +2,15 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > Implementação integrada em 2026-08-20 na branch `f-020-orcamento-web` (T1–T6,
 > [plan.md](plan.md)), com revisão do modelo da sessão e evidência consolidada em
-> [evidence.md](evidence.md). Pendem os gates humanos listados ao final.
+> [evidence.md](evidence.md) e **mergeada na `main`** (`9e5ba91` + `b6c82e7`). **Copy
+> final e deploy aceitos por ato humano em 2026-08-25** (Daniel Campos). O `.DBF` real da
+> EMOP é pendência de **dado, não de código** — a jornada roda com a fixture EMOP
+> sintética, como o próprio contrato prevê — e foi **descopada do MVP** para o follow-up
+> #65. Este flip reconcilia o roadmap, que ficara em `READY_FOR_HUMAN_REVIEW`.
 
 > Selecionada por decisão humana de 2026-08-19, numa sessão de revisão visual em que
 > o usuário perguntou se "Medição" era o orçamento. Não era: o orçamento-base existe
@@ -190,8 +194,9 @@ para submissão. Sem CLI.
 3. **Aceite do ADR** que estende a fronteira do ADR-0027 com o BDI:
    [ADR-0038](../../adr/0038-bdi-como-conceito-de-pre-licitacao.md) — **aceito por
    ato humano em 2026-08-20**.
-4. **Obtenção do `.DBF` real da EMOP** (assinatura GRE).
-5. **Merge e deploy**.
+4. **Obtenção do `.DBF` real da EMOP** (assinatura GRE) — **descopada do MVP** para o
+   follow-up #65; a jornada roda com fixture sintética até o arquivo real chegar.
+5. **Merge e deploy** — exercidos; aceitos por ato humano em 2026-08-25.
 
 ## References
 
