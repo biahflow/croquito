@@ -57,7 +57,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-017 | A DEFINIR | READY_FOR_SPEC | Trilha de auditoria do entitlement na tela — o custo por tenant já saiu na F-031 (a definir em contrato) |
 | F-018 | HIGH | BLOCKED | [Corrigir a forma da proposta na tela, sem rerodar o provider](../features/F-018-edicao-de-forma-da-proposta/feature.md) |
 | F-019 | HIGH | BLOCKED | [Ver a cena resolvida antes de exportar](../features/F-019-preview-da-cena-resolvida/feature.md) |
-| F-020 | HIGH | READY_FOR_HUMAN_REVIEW | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
+| F-020 | HIGH | DONE | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
 | F-021 | HIGH | DONE | [Nota pré-classificada na decisão da leitura](../features/F-021-nota-pre-classificada/feature.md) |
 | F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |
 | F-025 | HIGH | DONE | [Consultor do traçado](../features/F-025-consultor-do-tracado/feature.md) |
