@@ -63,12 +63,12 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-025 | HIGH | DONE | [Consultor do traçado](../features/F-025-consultor-do-tracado/feature.md) |
 | F-024 | HIGH | DONE | [Leitura com valor não morre por falta de target_hint](../features/F-024-leitura-sem-target-hint/feature.md) |
 | F-023 | HIGH | DONE | [Survey Quality Score](../features/F-023-survey-quality-score/feature.md) |
-| F-028 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
+| F-028 | HIGH | DONE | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | DONE | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | DONE | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
 | F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
 | F-030 | HIGH | READY_FOR_BUILD | [O levantamento de campo na jornada de revisão: a foto e a medida](../features/F-030-levantamento-de-campo-na-revisao/feature.md) |
-| F-033 | HIGH | READY_FOR_HUMAN_REVIEW | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
+| F-033 | HIGH | DONE | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | DONE | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
 | F-035 | HIGH | READY_FOR_HUMAN_REVIEW | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
 | F-036 | HIGH | DONE | [A medição do orçamento aprovado: consolidado contratual de origem](../features/F-036-vinculo-orcamento-medicao/feature.md) |

@@ -2,7 +2,12 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
+
+> Código completo na `main` (T1–T4, incluindo a ampliação da revisão 2 "regime na
+> abertura" em `a5b5d35`, com e2e em `36b512c`). **Deploy e aceitação confirmados por ato
+> humano em 2026-08-25** (Daniel Campos). Este flip reconcilia o roadmap, que ficara em
+> `READY_FOR_HUMAN_REVIEW` após o merge.
 
 > Nasce em 2026-08-21, de uma conversa de operação: mapeando a cadeia real das praças
 > (levantamento → DXF → prancha → orçamento → aprovação → empresa executora), ficou
@@ -22,7 +27,8 @@
 >
 > **Revisão 2 do pacote, aberta e APROVADA em 2026-08-22**: a tela construída afirma um
 > regime onde não há rodada, e obriga a abrir em pré-licitação para declarar depois. O
-> escopo 6 registra a ampliação, e o gate de design dela está cumprido — falta implementar.
+> escopo 6 registra a ampliação, e o gate de design dela está cumprido — implementada em
+> `a5b5d35` (T3+T4).
 
 ## Classification
 
