@@ -67,6 +67,25 @@ def _admin_token() -> str:
         return json.loads(response.read())["access_token"]
 
 
+def _ensure_unmanaged_attributes(token: str) -> None:
+    """Deixa o realm aceitar o atributo `tenant_id` escrito pela Admin API.
+
+    O Keycloak 26 usa o declarative user profile: um atributo não declarado (como
+    `tenant_id`) é silenciosamente descartado quando o usuário é escrito pela Admin API.
+    O usuário sai sem `tenant_id`, o token não carrega o claim e o app rejeita a sessão —
+    parece "login recusado". O import do realm escreve direto e por isso os usuários do
+    `croquito-realm.json` preservam o atributo; este seed precisa habilitar a política.
+    Escopo LOCAL apenas.
+    """
+    url = f"{KEYCLOAK_URL}/admin/realms/{REALM}/users/profile"
+    profile = json.loads(_request("GET", url, token))
+    if profile.get("unmanagedAttributePolicy") == "ENABLED":
+        return
+    profile["unmanagedAttributePolicy"] = "ENABLED"
+    _request("PUT", url, token, profile)
+    print("  · realm passa a aceitar atributos não gerenciados (tenant_id)")
+
+
 def _ensure_role(token: str, role: str) -> None:
     url = f"{KEYCLOAK_URL}/admin/realms/{REALM}/roles/{role}"
     try:
@@ -134,6 +153,8 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+
+    _ensure_unmanaged_attributes(token)
 
     roles_needed = {role for _, _, _, roles in SEED_USERS for role in roles}
     print(f"garantindo {len(roles_needed)} roles no realm {REALM}")

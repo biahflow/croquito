@@ -134,8 +134,16 @@ make seed-users
 
 Ele cria/atualiza no Keycloak local `cad.local`, `operador.local`, `tecnico.local`,
 `arquiteto.local` e `revisor.local` (tenant `tenant-local`, senha `local-dev-only`),
-criando também as roles que faltam no realm. Como o Keycloak local não tem volume
-persistente, rode de novo depois de um `make down-services`.
+criando as roles que faltam no realm e habilitando o atributo `tenant_id` na Admin API
+do Keycloak. Como o Keycloak local não tem volume persistente, rode de novo depois de um
+`make down-services`.
+
+Atenção: nem todo papel tem tela na SPA. Só quem tem jornada aterrissa no app web —
+`architect` e `domain_reviewer` caem no **croqui** (logáveis no browser como
+`arquiteto.local`/`revisor.local`). `platform_operator` é papel de **API** de
+administração (use test token), `field_technician` é do **app de campo** (PWA separada) e
+`cad_operator` não abre jornada — esses três logam no Keycloak mas mostram "sem jornada
+liberada" na SPA, por design.
 
 **Chamar a API direto como qualquer perfil (sem browser/Keycloak).** Para smoke ou
 testes de rota — inclusive perfis sem usuário pronto, como `platform_operator` — ligue
