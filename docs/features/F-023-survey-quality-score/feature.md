@@ -2,13 +2,17 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > Especificada em 2026-08-20 (decisão humana na mesma sessão: rodada cobre
 > spec + fatia 1, e a fatia 1 inclui a declaração humana de cadeia). Fatia 1
 > executada, revisada linha a linha e integrada na main no mesmo dia
-> ([evidência](evidence.md)); pendem os atos do usuário — migração 0006 no
-> hosted, push/deploy — e a aceitação real numa rodada do Guaxindiba.
+> ([evidência](evidence.md)) — commits `1e1ac28` (backend + migração 0006) e
+> `1f7e80a` (seção Somas de cotas na revisão).
+
+> Os atos pendentes — migração 0006 no hosted, push/deploy e aceitação real —
+> foram **cumpridos e aceitos por ato humano em 2026-08-25** (Daniel Campos). Este
+> flip reconcilia o roadmap, que ficara em `READY_FOR_HUMAN_REVIEW`.
 
 ## Classification
 
