@@ -71,15 +71,31 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
 resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
   bucket = aws_s3_bucket.artifacts.id
 
+  # Retenção por CLASSE de objeto (ADR-0051): só expira o que o app marca como efêmero.
+  # A evidência de campo durável (`surveys/`, `jobs/*/field-evidence/`) nasce sem a tag e
+  # nunca entra aqui. Fail-safe: enquanto o app não marcar, nada expira.
   rule {
     id     = "expire-ephemeral-artifacts"
     status = "Enabled"
 
-    filter {}
+    filter {
+      tag {
+        key   = "lifecycle-class"
+        value = "ephemeral"
+      }
+    }
 
     expiration {
       days = var.artifact_retention_days
     }
+  }
+
+  # Uploads multipart abandonados são sempre lixo, independem de classe.
+  rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+
+    filter {}
 
     abort_incomplete_multipart_upload {
       days_after_initiation = 1
