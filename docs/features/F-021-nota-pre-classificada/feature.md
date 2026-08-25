@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
 > Selecionada por decisão humana de 2026-08-20, durante a segunda revisão real do
 > Guaxindiba: das dez leituras do pacote, oito eram grandezas de elevação (`h=`,
@@ -12,8 +12,12 @@
 > sinais em sugestão pré-preenchida, mantendo o portão humano.
 
 > Executada em 2026-08-20 (T1 worker + T2 web, builds completos, revisão do
-> orquestrador linha a linha, portões integrados verdes). Pende o ato humano:
-> commit dos diffs da árvore.
+> orquestrador linha a linha, portões integrados verdes) e **commitada na `main`** em
+> `2711b5d` (worker + web + docs + testes + evidência). A **entrega foi aceita por ato
+> humano** na série V14→V17 do Guaxindiba, registrada em `35bf5fa`
+> ("aceitação real de F-021/F-022/F-024"); o `STATUS.md` já a descrevia em produção.
+> Este flip apenas reconcilia o estado do roadmap, que ficara em
+> `READY_FOR_HUMAN_REVIEW` depois do commit.
 
 ## Classification
 
