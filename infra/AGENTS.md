@@ -6,6 +6,11 @@ Estas regras estendem o [AGENTS.md](../AGENTS.md). Leia
 [Observability](../docs/operations/OBSERVABILITY.md) e
 [Deployment and Rollback](../docs/operations/DEPLOYMENT_AND_ROLLBACK.md).
 
+O Terraform deste diretório é o alvo de produção AWS, ainda não aplicado. A
+homologação que está de fato no ar roda em GCP (Cloud Run), com infra fora deste
+repositório: veja [ADR-0025](../docs/adr/0025-homologacao-em-gcp-cloud-run.md) e
+[operações/HML](../docs/operations/HML.md).
+
 ## Boundary
 
 Infra contém Terraform, policies, task/state machine definitions e configuração

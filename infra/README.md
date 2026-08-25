@@ -1,6 +1,13 @@
-# Infraestrutura AWS
+# Infraestrutura
 
-Este diretório materializa somente a fundação segura do primeiro marco:
+Este diretório materializa a **fundação AWS**, que é o alvo de produção do sistema
+([ADR-0002](../docs/adr/0002-aws-managed-architecture.md)). Atenção: esse desenho
+**ainda não foi aplicado** — não há recursos AWS reais no ar. A homologação hospedada
+que está de fato em operação roda em **GCP (Cloud Run)**, com a infraestrutura mantida
+fora deste repositório (ver [ADR-0025](../docs/adr/0025-homologacao-em-gcp-cloud-run.md)
+e [operações/HML](../docs/operations/HML.md)).
+
+O Terraform aqui provê somente a fundação segura do primeiro marco:
 
 - bucket S3 privado, SSE-KMS e expiração automática;
 - fila de processamento, DLQ e redrive limitado;
