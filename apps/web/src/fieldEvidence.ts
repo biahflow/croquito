@@ -7,8 +7,11 @@
  * indicador, então cada pastilha carrega texto por extenso.
  */
 import type {
+  FieldEvidence,
   FieldEvidencePhoto,
   FieldEvidenceMeasurement,
+  FieldWitness,
+  FieldWitnessSource,
 } from "./api";
 
 /**
@@ -227,4 +230,187 @@ export function confirmedMeasurementCount(
   surveys: { measurements: FieldEvidenceMeasurement[] }[],
 ): number {
   return surveys.reduce((total, survey) => total + survey.measurements.length, 0);
+}
+
+// --- Testemunhas de campo (F-030 T5) ---
+//
+// O confronto de dois números com a origem de cada um. A diferença é magnitude neutra: nada
+// aqui devolve tom, ícone ou juízo de concordância — enquanto não há tolerância calibrada, a
+// tela só mostra os dois valores e a diferença (ADR-0049 D7, emenda 1). A escolha da fonte é
+// ato humano: os helpers montam a lista de opções elegíveis, mas nunca pré-selecionam nem
+// inferem associação a partir de âncora, proximidade ou valor.
+
+/**
+ * Valor de option estável e reversível para o seletor de fonte. A medida do app carrega
+ * `survey_id`; a leitura de foto não. Roundtrip com `parseWitnessSourceOption`.
+ */
+export function witnessSourceOptionValue(source: FieldWitnessSource): string {
+  if (source.type === "survey_measurement") {
+    return `survey_measurement:${source.survey_id ?? ""}:${source.source_id}`;
+  }
+  return `photo_reading:${source.source_id}`;
+}
+
+/** Inverso de `witnessSourceOptionValue`; `null` para qualquer string que não parseia. */
+export function parseWitnessSourceOption(value: string): FieldWitnessSource | null {
+  if (value.startsWith("survey_measurement:")) {
+    const rest = value.slice("survey_measurement:".length);
+    const sep = rest.indexOf(":");
+    if (sep <= 0) {
+      return null;
+    }
+    const surveyId = rest.slice(0, sep);
+    const sourceId = rest.slice(sep + 1);
+    if (surveyId.length === 0 || sourceId.length === 0) {
+      return null;
+    }
+    return { type: "survey_measurement", source_id: sourceId, survey_id: surveyId };
+  }
+  if (value.startsWith("photo_reading:")) {
+    const sourceId = value.slice("photo_reading:".length);
+    return sourceId.length > 0 ? { type: "photo_reading", source_id: sourceId } : null;
+  }
+  return null;
+}
+
+export type EligibleWitnessSource = {
+  source: FieldWitnessSource;
+  label: string;
+  value_mm: number;
+};
+
+/** Chave quádrupla de uma associação, no molde do servidor, para excluir pares já ligados. */
+function witnessKey(
+  readingId: string,
+  sourceType: FieldWitness["source_type"],
+  sourceId: string,
+  surveyId: string | null,
+): string {
+  return `${readingId}|${sourceType}|${sourceId}|${surveyId ?? ""}`;
+}
+
+/**
+ * As fontes de campo que ainda podem virar testemunha desta leitura: medidas confirmadas dos
+ * levantamentos vinculados e valores já confirmados em foto (ACTIVE), menos os pares já
+ * associados à leitura. Leitura de máquina sem confirmação NUNCA entra — confirmar o valor é
+ * outro ato. A lista nunca é filtrada por âncora nem ordenada por proximidade.
+ */
+export function eligibleWitnessSources(
+  evidence: FieldEvidence,
+  witnesses: FieldWitness[],
+  readingId: string,
+): EligibleWitnessSource[] {
+  const taken = new Set(
+    witnesses
+      .filter((witness) => witness.reading_id === readingId)
+      .map((witness) =>
+        witnessKey(readingId, witness.source_type, witness.source_id, witness.survey_id),
+      ),
+  );
+  const out: EligibleWitnessSource[] = [];
+  for (const survey of evidence.surveys) {
+    for (const measurement of survey.measurements) {
+      const key = witnessKey(
+        readingId,
+        "survey_measurement",
+        measurement.source_id,
+        survey.survey_id,
+      );
+      if (taken.has(key)) {
+        continue;
+      }
+      out.push({
+        source: {
+          type: "survey_measurement",
+          source_id: measurement.source_id,
+          survey_id: survey.survey_id,
+        },
+        label: `Medida do app · ${metersFromMm(measurement.value_mm)} m · ${survey.name}`,
+        value_mm: measurement.value_mm,
+      });
+    }
+  }
+  for (const photo of evidence.photos) {
+    for (const confirmed of photo.confirmed_values) {
+      const key = witnessKey(readingId, "photo_reading", confirmed.confirmation_id, null);
+      if (taken.has(key)) {
+        continue;
+      }
+      out.push({
+        source: { type: "photo_reading", source_id: confirmed.confirmation_id },
+        label: `Valor confirmado em foto · ${metersFromMm(confirmed.value_mm)} m · ${confirmed.confirmed_by}`,
+        value_mm: confirmed.value_mm,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * O eyebrow de cada bloco de testemunha. Com uma só, "TESTEMUNHA DE CAMPO"; com várias, cada
+ * bloco é numerado e diz a origem por extenso — nunca há resumo nem hierarquia entre fontes.
+ */
+export function witnessEyebrow(
+  sourceType: FieldWitness["source_type"],
+  index: number,
+  total: number,
+): string {
+  if (total <= 1) {
+    return "TESTEMUNHA DE CAMPO";
+  }
+  const origem =
+    sourceType === "survey_measurement" ? "MEDIDA DO APP" : "VALOR CONFIRMADO EM FOTO";
+  return `TESTEMUNHA ${index + 1} · ${origem}`;
+}
+
+/** O rótulo do segundo valor do confronto, por extenso, escrito ao lado do número. */
+export function witnessSourceValueLabel(sourceType: FieldWitness["source_type"]): string {
+  return sourceType === "survey_measurement" ? "TRENA EM CAMPO" : "VISOR FOTOGRAFADO";
+}
+
+/**
+ * Metros a partir de um `Decimal` em milímetros que veio como string. Magnitude sem sinal: a
+ * diferença é neutra, e a tela nunca escreve "+"/"−" nem colore o número.
+ */
+export function witnessMeters(mmDecimal: string): string {
+  const parsed = Number(mmDecimal);
+  if (!Number.isFinite(parsed)) {
+    return "";
+  }
+  return metersFromMm(Math.abs(parsed));
+}
+
+/**
+ * As leituras de máquina da foto que ainda não têm valor confirmado (estado 7, "A
+ * CONFIRMAR"). Só entram leituras com `id` — sem ele não há `source_reading_id` para
+ * confirmar. Uma leitura já confirmada some da lista.
+ */
+export function pendingPhotoValues(photo: FieldEvidencePhoto): FieldPhotoReading[] {
+  const confirmed = new Set(
+    photo.confirmed_values.map((value) => value.source_reading_id),
+  );
+  return photoReadings(photo).filter(
+    (reading) => reading.id !== undefined && !confirmed.has(reading.id),
+  );
+}
+
+/**
+ * Milímetros inteiros a partir das dicas de valor/unidade de uma leitura, só para pré-
+ * preencher o formulário de confirmação. Aceita vírgula ou ponto decimal; unidade ausente é
+ * lida como metros (o app de campo mede em metros). `null` quando não dá para parsear.
+ */
+export function mmFromValueHint(
+  valueHint: string | null | undefined,
+  unitHint: string | null | undefined,
+): number | null {
+  if (valueHint === null || valueHint === undefined) {
+    return null;
+  }
+  const parsed = Number(valueHint.trim().replace(",", "."));
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  const unit = (unitHint ?? "m").trim().toLowerCase();
+  const factor = unit === "mm" ? 1 : unit === "cm" ? 10 : 1000;
+  return Math.round(parsed * factor);
 }

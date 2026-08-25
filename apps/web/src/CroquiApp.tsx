@@ -20,11 +20,13 @@ import {
   createTraceSolve,
   getChatSession,
   getExport,
+  getFieldEvidence,
   getJob,
   getReview,
   getTraceSolve,
   listChatSessions,
   listProjects,
+  mutateReviewWitnesses,
   postReviewChains,
   requestExport,
   submitProposalBatch,
@@ -36,6 +38,7 @@ import {
   type DeclaredChain,
   type DimensionChain,
   type ExportArtifact,
+  type FieldWitness,
   type Review,
   type ReviewChainCommand,
   type ReviewDecision,
@@ -165,6 +168,15 @@ import {
 } from "./selection";
 import { readRoute, routeSearch } from "./route";
 import { FieldEvidencePanel } from "./fieldEvidencePanel";
+import {
+  eligibleWitnessSources,
+  parseWitnessSourceOption,
+  witnessEyebrow,
+  witnessMeters,
+  witnessSourceOptionValue,
+  witnessSourceValueLabel,
+  type EligibleWitnessSource,
+} from "./fieldEvidence";
 import {
   clampZoom,
   evidenceCropStyle,
@@ -796,6 +808,213 @@ export function ChainsSection({
   );
 }
 
+/** Estado do carregamento das fontes elegíveis para associar uma testemunha. */
+export type WitnessSourcesView =
+  | { status: "closed" }
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; sources: EligibleWitnessSource[] };
+
+/**
+ * Testemunhas de campo da leitura selecionada (F-030 T5), estados 5–6 do Design Approval
+ * Package. Cada testemunha confronta a cota da prancha com uma medida de campo e mostra a
+ * diferença — número neutro, sem juízo de concordância, cor de alerta ou vencedora. A cota
+ * da prancha nunca some, mesmo com a leitura retificada depois: a testemunha guarda o valor
+ * que confrontou. Associar é ato explícito em dois tempos (escolher a leitura, escolher a
+ * fonte); a âncora do filtro nunca associa nada.
+ */
+export function FieldWitnessesSection({
+  reading,
+  witnesses,
+  canAssociate,
+  sourcesView,
+  selectedSource,
+  submitting,
+  message,
+  onStartAssociating,
+  onCancelAssociating,
+  onSelectSource,
+  onConfirmAssociation,
+  onRetract,
+}: {
+  reading: ReviewReading;
+  witnesses: FieldWitness[];
+  /** A leitura precisa estar confirmada e com valor para receber testemunha (gate do servidor). */
+  canAssociate: boolean;
+  sourcesView: WitnessSourcesView;
+  /** Valor do `<select>` de fonte; "" = nada escolhido. */
+  selectedSource: string;
+  submitting: boolean;
+  /** Feedback próprio deste ato, separado do da decisão. */
+  message: string | null;
+  onStartAssociating: () => void;
+  onCancelAssociating: () => void;
+  onSelectSource: (value: string) => void;
+  onConfirmAssociation: () => void;
+  onRetract: (witnessId: string) => void;
+}) {
+  const associating = sourcesView.status !== "closed";
+  if (witnesses.length === 0 && !canAssociate && !associating) {
+    return null;
+  }
+  const total = witnesses.length;
+  return (
+    <section className="witness-panel" aria-label="Testemunhas de campo">
+      <h3>Testemunhas de campo</h3>
+      <p className="batch-hint">
+        A medida de campo é testemunha da cota, nunca a cota. A diferença é informação
+        neutra: não confirma a leitura, não bloqueia a exportação e não escolhe um valor
+        vencedor — quem confirma a cota é quem revisa.
+      </p>
+      {witnesses.map((witness, index) => (
+        <div className="testemunha" key={witness.witness_id}>
+          <p className="eyebrow">
+            {witnessEyebrow(witness.source_type, index, total)}
+          </p>
+          <div className="confronto">
+            <span className="valor">
+              <span>COTA DA PRANCHA</span>
+              <b>{witnessMeters(witness.reading_value_mm)} m</b>
+            </span>
+            <span className="valor">
+              <span>{witnessSourceValueLabel(witness.source_type)}</span>
+              <b>{witnessMeters(witness.source_value_mm)} m</b>
+            </span>
+            <span className="diferenca">
+              <span>DIFERENÇA</span>
+              <b>{witnessMeters(witness.difference_mm)} m</b>
+            </span>
+          </div>
+          <small className="field-hint">
+            Associada por <strong>{witness.associated_by}</strong> em{" "}
+            {decisionMoment(witness.associated_at)}. A testemunha não confirma a cota.
+          </small>
+          <div className="acoes">
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={submitting}
+              onClick={() => onRetract(witness.witness_id)}
+            >
+              Retirar testemunha
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {!canAssociate ? (
+        <p className="batch-hint">
+          Confirme a leitura <strong>{reading.raw_text}</strong> antes de associar uma
+          testemunha de campo.
+        </p>
+      ) : sourcesView.status === "closed" ? (
+        <div className="acoes">
+          <button
+            type="button"
+            className="button button-secondary"
+            disabled={submitting}
+            onClick={onStartAssociating}
+          >
+            Associar testemunha de campo…
+          </button>
+        </div>
+      ) : sourcesView.status === "loading" ? (
+        <p className="batch-hint">Buscando as fontes de campo…</p>
+      ) : sourcesView.status === "error" ? (
+        <>
+          <p className="decision-error" role="alert">
+            {sourcesView.message}
+          </p>
+          <div className="acoes">
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={submitting}
+              onClick={onStartAssociating}
+            >
+              Tentar de novo
+            </button>
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={submitting}
+              onClick={onCancelAssociating}
+            >
+              Cancelar
+            </button>
+          </div>
+        </>
+      ) : sourcesView.sources.length === 0 ? (
+        <>
+          <p className="batch-hint">
+            Nenhuma fonte de campo elegível para esta leitura. Vincule um levantamento com
+            medidas confirmadas, ou confirme um valor lido em foto no painel "Evidência de
+            campo", e ele aparecerá aqui.
+          </p>
+          <div className="acoes">
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={submitting}
+              onClick={onCancelAssociating}
+            >
+              Fechar
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="witness-source-form">
+          <label>
+            Fonte da testemunha
+            <select
+              value={selectedSource}
+              onChange={(event) => onSelectSource(event.target.value)}
+            >
+              <option value="">Escolha a fonte de campo…</option>
+              {sourcesView.sources.map((eligible) => (
+                <option
+                  key={witnessSourceOptionValue(eligible.source)}
+                  value={witnessSourceOptionValue(eligible.source)}
+                >
+                  {eligible.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <small className="field-hint">
+            A associação é a sua escolha explícita. O filtro de fotos e a âncora declarada
+            nunca associam nada.
+          </small>
+          <div className="acoes">
+            <button
+              type="button"
+              className="button button-primary"
+              disabled={submitting || selectedSource === ""}
+              onClick={onConfirmAssociation}
+            >
+              Associar
+            </button>
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={submitting}
+              onClick={onCancelAssociating}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {message ? (
+        <p className="decision-error" role="alert">
+          {message}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 /**
  * Vista de exceções (F-029): o que o sistema decidiu sozinho e o que ainda espera gente.
  *
@@ -1141,6 +1360,21 @@ export function CroquiApp({
   const [pollTick, setPollTick] = useState(0);
   // Sucesso pode sumir sozinho; erro não. Um erro que se apaga é um erro perdido.
   const [toast, setToast] = useState<string | null>(null);
+  // Associação de testemunha de campo (F-030 T5): o carregamento das fontes elegíveis, a
+  // escolha explícita da fonte e o feedback próprio deste ato, separado do da decisão.
+  const [witnessSourcesView, setWitnessSourcesView] = useState<WitnessSourcesView>({
+    status: "closed",
+  });
+  const [witnessSourceChoice, setWitnessSourceChoice] = useState("");
+  const [witnessMessage, setWitnessMessage] = useState<string | null>(null);
+  const [witnessSubmitting, setWitnessSubmitting] = useState(false);
+  // Trocar a leitura fecha e limpa a associação de testemunha em curso: o ato nunca vaza de
+  // uma leitura para outra (a escolha da leitura é explícita).
+  useEffect(() => {
+    setWitnessSourcesView({ status: "closed" });
+    setWitnessSourceChoice("");
+    setWitnessMessage(null);
+  }, [selectedReadingId]);
   const [showProposals, setShowProposals] = useState(false);
   const [batchIds, setBatchIds] = useState<Set<string>>(new Set());
   const [batchJustification, setBatchJustification] = useState("");
@@ -1248,6 +1482,14 @@ export function CroquiApp({
     review?.packet.readings.find(
       (reading) => reading.id === selectedReadingId,
     ) ?? null;
+  // Testemunhas da leitura selecionada e o gate de associação (F-030 T5). A leitura só
+  // recebe testemunha quando confirmada e com valor — espelho de `FIELD_WITNESS_READING_
+  // NOT_CONFIRMED` no servidor.
+  const witnessesForReading = (review?.field_witnesses ?? []).filter(
+    (witness) => witness.reading_id === selectedReading?.id,
+  );
+  const readingTakesWitness =
+    selectedReading?.status === "confirmed" && Boolean(selectedReading.value_si);
   const selectedEvidenceBox =
     selectedReading?.evidence?.coordinate_space === "source_image_pixels"
       ? selectedReading.evidence.bbox
@@ -2434,6 +2676,110 @@ export function CroquiApp({
       "Cadeia retirada.",
       "Não foi possível retirar a cadeia.",
     );
+  }
+
+  // --- Testemunhas de campo (F-030 T5) ---
+  //
+  // Associar é ato em dois tempos: a leitura já está escolhida (é a selecionada) e a fonte
+  // se escolhe agora, explicitamente. As fontes elegíveis são carregadas no clique, fora do
+  // painel de evidência (que é autocontido), para o dado ser fresco no momento do ato.
+
+  /** Abre a associação: carrega as fontes de campo elegíveis para a leitura selecionada. */
+  async function startAssociatingWitness() {
+    if (!selectedReading) {
+      return;
+    }
+    setWitnessMessage(null);
+    setWitnessSourceChoice("");
+    setWitnessSourcesView({ status: "loading" });
+    try {
+      const evidence = await getFieldEvidence(session.access_token, jobId);
+      const sources = eligibleWitnessSources(
+        evidence,
+        review?.field_witnesses ?? [],
+        selectedReading.id,
+      );
+      setWitnessSourcesView({ status: "ready", sources });
+    } catch (error) {
+      setWitnessSourcesView({
+        status: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Não foi possível carregar as fontes de campo.",
+      });
+    }
+  }
+
+  function cancelAssociatingWitness() {
+    setWitnessSourcesView({ status: "closed" });
+    setWitnessSourceChoice("");
+    setWitnessMessage(null);
+  }
+
+  /** Segundo tempo: a fonte escolhida vira testemunha. O servidor lê o valor e a diferença. */
+  async function confirmWitnessAssociation() {
+    if (!review || !selectedReading) {
+      return;
+    }
+    const source = parseWitnessSourceOption(witnessSourceChoice);
+    if (source === null) {
+      setWitnessMessage("Escolha a fonte de campo antes de associar.");
+      return;
+    }
+    setWitnessSubmitting(true);
+    setWitnessMessage(null);
+    try {
+      const next = await mutateReviewWitnesses(
+        session.access_token,
+        jobId,
+        review.version,
+        { action: "associate", reading_id: selectedReading.id, source },
+      );
+      setReview(next);
+      setConflict(false);
+      setWitnessSourcesView({ status: "closed" });
+      setWitnessSourceChoice("");
+      setToast("Testemunha associada.");
+    } catch (error) {
+      const text =
+        error instanceof Error
+          ? error.message
+          : "Não foi possível associar a testemunha.";
+      setConflict(text.includes("REVISION_CONFLICT"));
+      setWitnessMessage(text);
+    } finally {
+      setWitnessSubmitting(false);
+    }
+  }
+
+  /** Retratar é ato individual: cada testemunha sai por si, e a diferença some com ela. */
+  async function retractWitness(witnessId: string) {
+    if (!review) {
+      return;
+    }
+    setWitnessSubmitting(true);
+    setWitnessMessage(null);
+    try {
+      const next = await mutateReviewWitnesses(
+        session.access_token,
+        jobId,
+        review.version,
+        { action: "retract", witness_id: witnessId },
+      );
+      setReview(next);
+      setConflict(false);
+      setToast("Testemunha retirada.");
+    } catch (error) {
+      const text =
+        error instanceof Error
+          ? error.message
+          : "Não foi possível retirar a testemunha.";
+      setConflict(text.includes("REVISION_CONFLICT"));
+      setWitnessMessage(text);
+    } finally {
+      setWitnessSubmitting(false);
+    }
   }
 
   /** Abre o mesmo formulário da decisão com os valores vigentes já preenchidos. */
@@ -3977,6 +4323,22 @@ export function CroquiApp({
                   onRetract={(chainId) => void retractChain(chainId)}
                   onSelectReading={setSelectedReadingId}
                 />
+                {selectedReading ? (
+                  <FieldWitnessesSection
+                    reading={selectedReading}
+                    witnesses={witnessesForReading}
+                    canAssociate={readingTakesWitness}
+                    sourcesView={witnessSourcesView}
+                    selectedSource={witnessSourceChoice}
+                    submitting={witnessSubmitting}
+                    message={witnessMessage}
+                    onStartAssociating={() => void startAssociatingWitness()}
+                    onCancelAssociating={cancelAssociatingWitness}
+                    onSelectSource={setWitnessSourceChoice}
+                    onConfirmAssociation={() => void confirmWitnessAssociation()}
+                    onRetract={(witnessId) => void retractWitness(witnessId)}
+                  />
+                ) : null}
                 {review.packet.safety_notes?.includes(
                   "REGION_CLASSIFICATION_REQUIRED",
                 ) ? (

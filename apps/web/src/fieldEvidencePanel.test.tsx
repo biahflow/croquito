@@ -49,6 +49,7 @@ function readyView(evidence: FieldEvidence): FieldEvidenceView {
     surveyOptions: [],
     aiNotice: null,
     busy: false,
+    editingValueKey: null,
   };
 }
 
@@ -64,6 +65,10 @@ function render(view: FieldEvidenceView, openPhoto: FieldEvidencePhoto | null = 
       onRequestReading={noop}
       onOpenPhoto={noop}
       onClosePhoto={noop}
+      onConfirmValueDirect={noop}
+      onStartEditingValue={noop}
+      onCancelEditingValue={noop}
+      onSubmitValue={noop}
     />,
   );
 }
@@ -148,6 +153,76 @@ describe("estados do painel", () => {
     });
     expect(html).toContain("exige papel de revisão");
     expect(html).toContain("app-status");
+  });
+});
+
+describe("ato 1 do legado: confirmar valor lido (estado 7)", () => {
+  const readingPhoto = photo({
+    origin: "standalone",
+    anchor_text: "Visor da trena",
+    reading_status: "PROCESSED",
+    analysis: {
+      readings: [
+        { id: "fpr_1", raw_text: "12,40", value_hint: "12,40", unit_hint: "m" },
+      ],
+    },
+  });
+
+  it("mostra o valor a confirmar com os dois atos, e nunca oferece associar", () => {
+    const html = render(
+      readyView({ job_id: "j", version: 3, surveys: [], photos: [readingPhoto] }),
+    );
+    expect(html).toContain("VALOR LIDO NA FOTO — A CONFIRMAR");
+    expect(html).toContain("VISOR DA TRENA");
+    expect(html).toContain("12,40 m");
+    expect(html).toContain("não é testemunha ainda");
+    expect(html).toContain("Confirmar o valor");
+    expect(html).toContain("Corrigir");
+    // Associar é outro ato, em outro painel: aqui nunca aparece.
+    expect(html).not.toContain("Associar");
+  });
+
+  it("valor já confirmado mostra autoria e a fronteira dos dois atos", () => {
+    const confirmedPhoto = photo({
+      origin: "standalone",
+      anchor_text: "Visor",
+      confirmed_values: [
+        {
+          confirmation_id: "cfm-1",
+          source_reading_id: "fpr_1",
+          value_mm: 12_400,
+          kind: "length",
+          raw_text: "12,40",
+          confirmed_by: "Ana",
+          confirmed_at: "2026-08-19T11:00:00Z",
+        },
+      ],
+    });
+    const html = render(
+      readyView({ job_id: "j", version: 3, surveys: [], photos: [confirmedPhoto] }),
+    );
+    expect(html).toContain("VALOR CONFIRMADO EM FOTO");
+    expect(html).toContain("Confirmado por Ana");
+    expect(html).toContain("a associação à cota é outro ato");
+    expect(html).toContain("Corrigir");
+    expect(html).not.toContain("Associar");
+  });
+
+  it("em edição mostra o formulário de valor e some com o botão direto", () => {
+    const view = readyView({
+      job_id: "j",
+      version: 3,
+      surveys: [],
+      photos: [readingPhoto],
+    });
+    const html = render({
+      ...view,
+      editingValueKey: "standalone:media-1:fpr_1",
+    } as FieldEvidenceView);
+    expect(html).toContain("Valor em metros");
+    expect(html).toContain("Espécie da medida");
+    expect(html).toContain("Texto lido no visor");
+    expect(html).toContain("Cancelar");
   });
 });
 

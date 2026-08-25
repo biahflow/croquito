@@ -245,6 +245,12 @@ export type Review = {
   confidence_shadow?: ShadowDecision[];
   auto_association_rate?: number | null;
   review_rate?: number | null;
+  // Testemunhas de campo (F-030): cada uma confronta o valor da cota com uma medida de
+  // campo (trena do app ou valor lido em foto e confirmado), com a diferença já calculada
+  // pelo servidor. Observacional — nunca entra em `blockers`, nunca promove precisão, nunca
+  // classifica a diferença. Opcional pelo mesmo motivo das cadeias: revisão gravada antes
+  // do campo responde sem ele, e a tela lê com `?? []`.
+  field_witnesses?: FieldWitness[];
   scene: {
     id: string;
     version: number;
@@ -1142,6 +1148,47 @@ export type FieldPhotoAnalysisState = {
   version: number;
 };
 
+// A fonte de uma testemunha, no molde do servidor (`FieldWitnessSource`): a medida do app
+// carrega `survey_id`; o valor lido em foto nunca. O cliente escolhe a fonte, nunca o valor
+// — o servidor lê o valor da fonte e calcula a diferença.
+export type FieldWitnessSource = {
+  type: "survey_measurement" | "photo_reading";
+  source_id: string;
+  survey_id?: string;
+};
+
+// Uma testemunha já associada a uma leitura. Os três valores em milímetros viajam como
+// STRING (o servidor serializa `Decimal`): reescrevê-los como `number` perderia a precisão
+// escrita, e a diferença é justamente o que o revisor está lendo. `difference_mm` é só um
+// número — não há `status`, `agrees` nem tom de alerta, por decisão de projeto (ADR-0049).
+export type FieldWitness = {
+  witness_id: string;
+  reading_id: string;
+  source_type: "survey_measurement" | "photo_reading";
+  source_id: string;
+  survey_id: string | null;
+  reading_value_mm: string;
+  source_value_mm: string;
+  difference_mm: string;
+  associated_by: string;
+  associated_at: string;
+};
+
+// Associar e retratar são atos disjuntos: a união impede o cliente de mandar `witness_id`
+// junto com `source`, espelhando o `model_validator` de `ReviewWitnessCommand` no servidor.
+export type ReviewWitnessCommand =
+  | { action: "associate"; reading_id: string; source: FieldWitnessSource }
+  | { action: "retract"; witness_id: string };
+
+// O primeiro ato do caminho legado: confirmar o valor lido por máquina numa foto. É
+// append-only no servidor; associá-lo a uma cota é outro ato, na rota de testemunhas.
+export type FieldPhotoValueDraft = {
+  source_reading_id: string;
+  value_mm: number;
+  kind: "length" | "diagonal" | "width" | "radius" | "level" | "drop" | "height";
+  raw_text: string;
+};
+
 export async function getFieldEvidence(
   accessToken: string,
   jobId: string,
@@ -1306,6 +1353,70 @@ export async function requestFieldPhotoReading(
       body: JSON.stringify({ base_version: baseVersion }),
     },
   );
+}
+
+/**
+ * Associar ou retratar uma testemunha de campo (F-030). Uma `Idempotency-Key` e o
+ * `base_version` da revisão por gesto, como as demais mutações da revisão: cada ato cria
+ * uma revisão de leitura nova e a resposta é o `Review` já reconferido. O cliente escolhe a
+ * leitura e a fonte; o valor e a diferença são resolvidos pelo servidor.
+ */
+export async function mutateReviewWitnesses(
+  accessToken: string,
+  jobId: string,
+  baseVersion: number,
+  command: ReviewWitnessCommand,
+): Promise<Review> {
+  return apiJson<Review>(`/v1/jobs/${jobId}/review/witnesses`, accessToken, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify({ base_version: baseVersion, ...command }),
+  });
+}
+
+/**
+ * Ato 1 do caminho legado: confirmar o valor lido por máquina numa foto. POST append-only
+ * seguido do re-GET da evidência, o mesmo molde de `linkSurveyToJob`. Não vira testemunha
+ * aqui: associá-lo a uma cota é o segundo ato, na rota de testemunhas. A validação de forma
+ * mata o excesso antes da rede, para o revisor ver uma frase e não um 422.
+ */
+export async function confirmFieldPhotoValue(
+  accessToken: string,
+  jobId: string,
+  origin: "survey" | "standalone",
+  evidenceId: string,
+  baseVersion: number,
+  draft: FieldPhotoValueDraft,
+): Promise<FieldEvidence> {
+  if (!Number.isInteger(draft.value_mm) || draft.value_mm < 0) {
+    throw new Error("O valor confirmado precisa ser um número inteiro de milímetros.");
+  }
+  const rawText = draft.raw_text.trim();
+  if (rawText.length < 1 || rawText.length > 200) {
+    throw new Error("O texto lido deve ter de 1 a 200 caracteres.");
+  }
+  await apiJson(
+    `/v1/jobs/${jobId}/field-evidence/photos/${origin}/${encodeURIComponent(evidenceId)}/values`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({
+        base_version: baseVersion,
+        source_reading_id: draft.source_reading_id,
+        value_mm: draft.value_mm,
+        kind: draft.kind,
+        raw_text: rawText,
+      }),
+    },
+  );
+  return getFieldEvidence(accessToken, jobId);
 }
 
 export async function createProjectUpload(

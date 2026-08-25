@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   ApiError,
+  confirmFieldPhotoValue,
   getFieldEvidence,
   linkSurveyToJob,
   listCompletedSurveys,
@@ -23,6 +24,7 @@ import {
   type CompletedSurveySummary,
   type FieldEvidence,
   type FieldEvidencePhoto,
+  type FieldPhotoValueDraft,
 } from "./api";
 import {
   ALL_ANCHORS,
@@ -32,13 +34,29 @@ import {
   filterPhotosByAnchor,
   isAnalysisSkipped,
   isReadingInFlight,
+  metersFromMm,
+  mmFromValueHint,
+  pendingPhotoValues,
   photoReadings,
   qualityBadge,
   readingBadge,
   shortInstant,
   surveyOptionLabel,
+  type FieldPhotoReading,
   type StateBadge,
 } from "./fieldEvidence";
+import { measurementKindLabel } from "./labels";
+
+/** As sete espécies de medida que o servidor aceita ao confirmar um valor lido em foto. */
+const VALUE_KINDS: FieldPhotoValueDraft["kind"][] = [
+  "length",
+  "diagonal",
+  "width",
+  "radius",
+  "level",
+  "drop",
+  "height",
+];
 
 const READING_POLL_MS = 2_000;
 
@@ -71,6 +89,244 @@ function StateChip({ badge }: { badge: StateBadge }) {
   return <span className={badge.tone}>{badge.label}</span>;
 }
 
+type ValueDraftSeed = {
+  source_reading_id: string;
+  value_mm: number | null;
+  kind: FieldPhotoValueDraft["kind"];
+  raw_text: string;
+};
+
+/**
+ * Formulário de confirmação/correção de um valor lido em foto (Ato 1 do legado). Estado
+ * local próprio, pré-preenchido a partir da dica de leitura ou do valor já confirmado. O
+ * valor é digitado em metros e convertido para milímetros inteiros só no envio.
+ */
+function ValueConfirmForm({
+  seed,
+  busy,
+  onCancel,
+  onSubmit,
+}: {
+  seed: ValueDraftSeed;
+  busy: boolean;
+  onCancel: () => void;
+  onSubmit: (draft: FieldPhotoValueDraft) => void;
+}) {
+  const [meters, setMeters] = useState(
+    seed.value_mm !== null ? metersFromMm(seed.value_mm) : "",
+  );
+  const [kind, setKind] = useState<FieldPhotoValueDraft["kind"]>(seed.kind);
+  const [rawText, setRawText] = useState(seed.raw_text);
+
+  const valueMm = mmFromValueHint(meters, "m");
+  const trimmed = rawText.trim();
+  const canSubmit =
+    valueMm !== null && trimmed.length >= 1 && trimmed.length <= 200 && !busy;
+
+  return (
+    <form
+      className="value-confirm-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (valueMm === null || trimmed.length < 1) {
+          return;
+        }
+        onSubmit({
+          source_reading_id: seed.source_reading_id,
+          value_mm: valueMm,
+          kind,
+          raw_text: trimmed,
+        });
+      }}
+    >
+      <label>
+        Valor em metros
+        <input
+          type="text"
+          inputMode="decimal"
+          value={meters}
+          placeholder="ex.: 12,40"
+          onChange={(event) => setMeters(event.target.value)}
+        />
+      </label>
+      <label>
+        Espécie da medida
+        <select
+          value={kind}
+          onChange={(event) =>
+            setKind(event.target.value as FieldPhotoValueDraft["kind"])
+          }
+        >
+          {VALUE_KINDS.map((option) => (
+            <option key={option} value={option}>
+              {measurementKindLabel(option)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Texto lido no visor
+        <input
+          type="text"
+          maxLength={200}
+          value={rawText}
+          onChange={(event) => setRawText(event.target.value)}
+        />
+      </label>
+      <div className="acoes">
+        <button type="submit" className="button button-primary" disabled={!canSubmit}>
+          Confirmar o valor
+        </button>
+        <button
+          type="button"
+          className="button button-secondary"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancelar
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Ato 1 do caminho legado (estado 7): confirmar o valor lido por máquina numa foto. Mostra
+ * as leituras ainda "A CONFIRMAR" e os valores já confirmados. Confirmar aqui é um ato;
+ * associar à cota é outro, no painel da leitura — este bloco nunca oferece associação.
+ */
+export function FieldPhotoValueBlock({
+  photo,
+  editingSourceReadingId,
+  busy,
+  onConfirmDirect,
+  onStartEditing,
+  onCancelEditing,
+  onSubmitValue,
+}: {
+  photo: FieldEvidencePhoto;
+  editingSourceReadingId: string | null;
+  busy: boolean;
+  onConfirmDirect: (reading: FieldPhotoReading) => void;
+  onStartEditing: (sourceReadingId: string) => void;
+  onCancelEditing: () => void;
+  onSubmitValue: (draft: FieldPhotoValueDraft) => void;
+}) {
+  const pending = pendingPhotoValues(photo);
+  if (pending.length === 0 && photo.confirmed_values.length === 0) {
+    return null;
+  }
+  return (
+    <>
+      {pending.map((reading) => {
+        const readingId = reading.id;
+        if (readingId === undefined) {
+          return null;
+        }
+        const parsed = mmFromValueHint(reading.value_hint, reading.unit_hint);
+        const editing = editingSourceReadingId === readingId;
+        return (
+          <div className="testemunha" key={`pending:${readingId}`}>
+            <p className="eyebrow">VALOR LIDO NA FOTO — A CONFIRMAR</p>
+            <div className="confronto">
+              <span className="valor">
+                <span>VISOR DA TRENA</span>
+                <b>
+                  {parsed !== null ? `${metersFromMm(parsed)} m` : `"${reading.raw_text}"`}
+                </b>
+              </span>
+            </div>
+            <small className="field-hint">
+              Número lido por máquina no visor da foto. Ele <strong>não é testemunha
+              ainda</strong>: confirmar o valor é um ato, associá-lo a uma cota é outro.
+            </small>
+            {editing ? (
+              <ValueConfirmForm
+                seed={{
+                  source_reading_id: readingId,
+                  value_mm: parsed,
+                  kind: "length",
+                  raw_text: reading.raw_text,
+                }}
+                busy={busy}
+                onCancel={onCancelEditing}
+                onSubmit={onSubmitValue}
+              />
+            ) : (
+              <div className="acoes">
+                {parsed !== null ? (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    disabled={busy}
+                    onClick={() => onConfirmDirect(reading)}
+                  >
+                    Confirmar o valor
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  disabled={busy}
+                  onClick={() => onStartEditing(readingId)}
+                >
+                  {parsed !== null ? "Corrigir" : "Informar o valor"}
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {photo.confirmed_values.map((confirmed) => {
+        const editing = editingSourceReadingId === confirmed.source_reading_id;
+        return (
+          <div className="testemunha" key={`confirmed:${confirmed.confirmation_id}`}>
+            <p className="eyebrow">VALOR CONFIRMADO EM FOTO</p>
+            <div className="confronto">
+              <span className="valor">
+                <span>VISOR FOTOGRAFADO</span>
+                <b>{metersFromMm(confirmed.value_mm)} m</b>
+              </span>
+            </div>
+            <small className="field-hint">
+              Confirmado por {confirmed.confirmed_by} em {shortInstant(confirmed.confirmed_at)}.
+              Confirmado aqui, associado lá: a associação à cota é outro ato, no painel da
+              leitura.
+            </small>
+            {editing ? (
+              <ValueConfirmForm
+                seed={{
+                  source_reading_id: confirmed.source_reading_id,
+                  value_mm: confirmed.value_mm,
+                  kind: (VALUE_KINDS as string[]).includes(confirmed.kind)
+                    ? (confirmed.kind as FieldPhotoValueDraft["kind"])
+                    : "length",
+                  raw_text: confirmed.raw_text,
+                }}
+                busy={busy}
+                onCancel={onCancelEditing}
+                onSubmit={onSubmitValue}
+              />
+            ) : (
+              <div className="acoes">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  disabled={busy}
+                  onClick={() => onStartEditing(confirmed.source_reading_id)}
+                >
+                  Corrigir
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 /**
  * Cartão de uma foto: amostra, âncora declarada, pastilhas de qualidade e leitura, a
  * leitura textual quando existe, e o ato de pedir leitura quando cabe. Nada aqui mede.
@@ -78,18 +334,33 @@ function StateChip({ badge }: { badge: StateBadge }) {
 export function FieldPhotoCard({
   photo,
   busy,
+  editingValueKey,
   onOpen,
   onRequestReading,
+  onConfirmValueDirect,
+  onStartEditingValue,
+  onCancelEditingValue,
+  onSubmitValue,
 }: {
   photo: FieldEvidencePhoto;
   busy: boolean;
+  editingValueKey: string | null;
   onOpen: (photo: FieldEvidencePhoto) => void;
   onRequestReading: (photo: FieldEvidencePhoto) => void;
+  onConfirmValueDirect: (photo: FieldEvidencePhoto, reading: FieldPhotoReading) => void;
+  onStartEditingValue: (photo: FieldEvidencePhoto, sourceReadingId: string) => void;
+  onCancelEditingValue: () => void;
+  onSubmitValue: (photo: FieldEvidencePhoto, draft: FieldPhotoValueDraft) => void;
 }) {
   const quality = qualityBadge(photo);
   const reading = readingBadge(photo);
   const readings = photoReadings(photo);
   const captured = shortInstant(photo.captured_at);
+  const valuePrefix = `${photo.origin}:${photo.evidence_id}:`;
+  const editingSourceReadingId =
+    editingValueKey !== null && editingValueKey.startsWith(valuePrefix)
+      ? editingValueKey.slice(valuePrefix.length)
+      : null;
   return (
     <li className="foto">
       <button
@@ -144,6 +415,15 @@ export function FieldPhotoCard({
           <span className="field-hint">Lendo o texto da foto…</span>
         ) : null}
       </div>
+      <FieldPhotoValueBlock
+        photo={photo}
+        editingSourceReadingId={editingSourceReadingId}
+        busy={busy}
+        onConfirmDirect={(reading) => onConfirmValueDirect(photo, reading)}
+        onStartEditing={(sourceReadingId) => onStartEditingValue(photo, sourceReadingId)}
+        onCancelEditing={onCancelEditingValue}
+        onSubmitValue={(draft) => onSubmitValue(photo, draft)}
+      />
     </li>
   );
 }
@@ -221,6 +501,7 @@ export type FieldEvidenceView =
       surveyOptions: CompletedSurveySummary[];
       aiNotice: string | null;
       busy: boolean;
+      editingValueKey: string | null;
     };
 
 /**
@@ -238,6 +519,10 @@ export function FieldEvidenceBody({
   onRequestReading,
   onOpenPhoto,
   onClosePhoto,
+  onConfirmValueDirect,
+  onStartEditingValue,
+  onCancelEditingValue,
+  onSubmitValue,
 }: {
   view: FieldEvidenceView;
   openPhoto: FieldEvidencePhoto | null;
@@ -248,6 +533,10 @@ export function FieldEvidenceBody({
   onRequestReading: (photo: FieldEvidencePhoto) => void;
   onOpenPhoto: (photo: FieldEvidencePhoto) => void;
   onClosePhoto: () => void;
+  onConfirmValueDirect: (photo: FieldEvidencePhoto, reading: FieldPhotoReading) => void;
+  onStartEditingValue: (photo: FieldEvidencePhoto, sourceReadingId: string) => void;
+  onCancelEditingValue: () => void;
+  onSubmitValue: (photo: FieldEvidencePhoto, draft: FieldPhotoValueDraft) => void;
 }) {
   if (view.status === "loading") {
     return (
@@ -354,8 +643,13 @@ export function FieldEvidenceBody({
                 key={`${photo.origin}:${photo.evidence_id}`}
                 photo={photo}
                 busy={view.busy}
+                editingValueKey={view.editingValueKey}
                 onOpen={onOpenPhoto}
                 onRequestReading={onRequestReading}
+                onConfirmValueDirect={onConfirmValueDirect}
+                onStartEditingValue={onStartEditingValue}
+                onCancelEditingValue={onCancelEditingValue}
+                onSubmitValue={onSubmitValue}
               />
             ))}
           </ul>
@@ -518,6 +812,8 @@ export function FieldEvidencePanel({
   const [selectedAnchor, setSelectedAnchor] = useState(ALL_ANCHORS);
   const [surveyOptions, setSurveyOptions] = useState<CompletedSurveySummary[]>([]);
   const [openPhotoKey, setOpenPhotoKey] = useState<string | null>(null);
+  // Qual valor lido está em edição: `${origin}:${evidence_id}:${source_reading_id}`.
+  const [editingValueKey, setEditingValueKey] = useState<string | null>(null);
 
   const load = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -662,6 +958,62 @@ export function FieldEvidencePanel({
     [accessToken, jobId, baseVersion, load],
   );
 
+  const onConfirmValue = useCallback(
+    async (photo: FieldEvidencePhoto, draft: FieldPhotoValueDraft) => {
+      setBusy(true);
+      setErrorMessage(null);
+      try {
+        const next = await confirmFieldPhotoValue(
+          accessToken,
+          jobId,
+          photo.origin,
+          photo.evidence_id,
+          baseVersion,
+          draft,
+        );
+        setEvidence(next);
+        setEditingValueKey(null);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          await load({ silent: true });
+          setErrorMessage(
+            "A evidência mudou enquanto você confirmava o valor. Recarreguei a versão " +
+              "atual; confira e confirme de novo.",
+          );
+        } else {
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : "A confirmação do valor não foi concluída.",
+          );
+        }
+      } finally {
+        setBusy(false);
+      }
+    },
+    [accessToken, jobId, baseVersion, load],
+  );
+
+  const onConfirmValueDirect = useCallback(
+    (photo: FieldEvidencePhoto, reading: FieldPhotoReading) => {
+      if (reading.id === undefined) {
+        return;
+      }
+      const valueMm = mmFromValueHint(reading.value_hint, reading.unit_hint);
+      if (valueMm === null) {
+        setEditingValueKey(`${photo.origin}:${photo.evidence_id}:${reading.id}`);
+        return;
+      }
+      void onConfirmValue(photo, {
+        source_reading_id: reading.id,
+        value_mm: valueMm,
+        kind: "length",
+        raw_text: reading.raw_text,
+      });
+    },
+    [onConfirmValue],
+  );
+
   const photos = evidence?.photos ?? [];
   const filtered = filterPhotosByAnchor(photos, selectedAnchor);
   const openPhoto =
@@ -689,6 +1041,7 @@ export function FieldEvidencePanel({
             surveyOptions,
             aiNotice,
             busy,
+            editingValueKey,
           };
 
   return (
@@ -704,6 +1057,12 @@ export function FieldEvidencePanel({
         setOpenPhotoKey(`${photo.origin}:${photo.evidence_id}`)
       }
       onClosePhoto={() => setOpenPhotoKey(null)}
+      onConfirmValueDirect={onConfirmValueDirect}
+      onStartEditingValue={(photo, sourceReadingId) =>
+        setEditingValueKey(`${photo.origin}:${photo.evidence_id}:${sourceReadingId}`)
+      }
+      onCancelEditingValue={() => setEditingValueKey(null)}
+      onSubmitValue={(photo, draft) => void onConfirmValue(photo, draft)}
     />
   );
 }

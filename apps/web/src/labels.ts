@@ -95,6 +95,9 @@ const MEASUREMENT_KIND_LABELS: Record<string, string> = {
   height: "altura",
   radius: "raio",
   diameter: "diâmetro",
+  diagonal: "diagonal",
+  level: "nível",
+  drop: "desnível",
 };
 
 export function measurementKindLabel(kind: string): string {

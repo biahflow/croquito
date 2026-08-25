@@ -2965,6 +2965,107 @@ footer {
   margin-top: 4px;
 }
 
+/* Testemunhas de campo (F-030 T5): o confronto de dois números com a origem de cada um.
+   Sobre tokens existentes, sem cor nova — a diferença é neutra por construção e nunca
+   ganha vermelho/âmbar. `tabular-nums` alinha os valores coluna a coluna. */
+.witness-panel {
+  margin-top: 14px;
+}
+
+.witness-panel h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.testemunha {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+
+.confronto {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: end;
+}
+
+.valor {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.valor b {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.valor span {
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+  color: var(--ink-secondary);
+}
+
+.diferenca {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 18px;
+  border-left: 1px solid var(--line);
+}
+
+.diferenca b {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.diferenca span {
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+  color: var(--ink-secondary);
+}
+
+.witness-source-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.witness-source-form select {
+  min-height: 38px;
+  padding: 0 10px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.value-confirm-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.value-confirm-form input[type="text"],
+.value-confirm-form select {
+  min-height: 36px;
+  padding: 0 10px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
 .field-evidence-forms {
   display: flex;
   flex-direction: column;
