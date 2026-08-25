@@ -3480,6 +3480,262 @@
         "title": "FieldEvidenceResponse",
         "type": "object"
       },
+      "FieldObservationCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "record",
+              "dismiss"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "enum": [
+                  "MURO",
+                  "ALAMBRADO",
+                  "PORTAO",
+                  "PATAMAR",
+                  "EQUIPAMENTOS",
+                  "DETALHES",
+                  "UNKNOWN"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "corrects_observation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Observation Id"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "evidence_id": {
+            "format": "uuid",
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "survey",
+              "standalone"
+            ],
+            "title": "Origin",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "action",
+          "origin",
+          "evidence_id"
+        ],
+        "title": "FieldObservationCommand",
+        "type": "object"
+      },
+      "FieldObservationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "enum": [
+                  "MURO",
+                  "ALAMBRADO",
+                  "PORTAO",
+                  "PATAMAR",
+                  "EQUIPAMENTOS",
+                  "DETALHES",
+                  "UNKNOWN"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "evidence_id": {
+            "format": "uuid",
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "observation_id": {
+            "format": "uuid",
+            "title": "Observation Id",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "survey",
+              "standalone"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "recorded_by": {
+            "title": "Recorded By",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/FieldObservationSource"
+          },
+          "status": {
+            "enum": [
+              "ACTIVE",
+              "SUPERSEDED",
+              "DISMISSED"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "supersedes_observation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Observation Id"
+          }
+        },
+        "required": [
+          "observation_id",
+          "origin",
+          "evidence_id",
+          "status",
+          "source",
+          "recorded_by",
+          "recorded_at"
+        ],
+        "title": "FieldObservationResponse",
+        "type": "object"
+      },
+      "FieldObservationSource": {
+        "additionalProperties": false,
+        "description": "Resumo do rascunho da IA no instante do ato, copiado do artefato pelo servidor.\n\nPreserva o que a IA propôs mesmo depois de o revisor corrigir a categoria, e sobrevive à\nexpiração do artefato. Nunca é aceito do cliente — mesma regra do valor da testemunha.",
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "MURO",
+              "ALAMBRADO",
+              "PORTAO",
+              "PATAMAR",
+              "EQUIPAMENTOS",
+              "DETALHES",
+              "UNKNOWN"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Version"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          }
+        },
+        "required": [
+          "analysis_id",
+          "category"
+        ],
+        "title": "FieldObservationSource",
+        "type": "object"
+      },
       "FieldPhotoAnalysisStateResponse": {
         "additionalProperties": false,
         "properties": {
@@ -6477,6 +6733,13 @@
               "$ref": "#/components/schemas/DeclaredChainResponse"
             },
             "title": "Declared Chains",
+            "type": "array"
+          },
+          "field_observations": {
+            "items": {
+              "$ref": "#/components/schemas/FieldObservationResponse"
+            },
+            "title": "Field Observations",
             "type": "array"
           },
           "field_witnesses": {
@@ -12098,6 +12361,81 @@
           }
         ],
         "summary": "Annotate Dimension",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/review/field-observations": {
+      "post": {
+        "description": "Registra ou descarta observação humana sobre a classificação, fora da cena.",
+        "operationId": "mutate_review_field_observations_v1_jobs__job_id__review_field_observations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FieldObservationCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mutate Review Field Observations",
         "tags": [
           "review"
         ]

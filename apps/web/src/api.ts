@@ -245,6 +245,15 @@ export type Review = {
   confidence_shadow?: ShadowDecision[];
   auto_association_rate?: number | null;
   review_rate?: number | null;
+  // Testemunhas de campo (F-030): cada uma confronta o valor da cota com uma medida de
+  // campo (trena do app ou valor lido em foto e confirmado), com a diferença já calculada
+  // pelo servidor. Observacional — nunca entra em `blockers`, nunca promove precisão, nunca
+  // classifica a diferença. Opcional pelo mesmo motivo das cadeias: revisão gravada antes
+  // do campo responde sem ele, e a tela lê com `?? []`.
+  field_witnesses?: FieldWitness[];
+  // Observações humanas sobre a classificação por IA (F-030 T7), versionadas fora da cena.
+  // Opcional pelo mesmo motivo das cadeias/testemunhas; a tela lê com `?? []`.
+  field_observations?: FieldObservation[];
   scene: {
     id: string;
     version: number;
@@ -1049,6 +1058,467 @@ function toHex(buffer: ArrayBuffer): string {
   return Array.from(new Uint8Array(buffer), (value) =>
     value.toString(16).padStart(2, "0"),
   ).join("");
+}
+
+// --- Evidência de campo (F-030) ---
+//
+// Tipos escritos à mão porque não há contrato REST gerado (só os schemas de domínio de
+// `@croquito/contracts`), espelhando os modelos de `services/api/src/croquito_api/main.py`
+// (`FieldEvidenceResponse` e vizinhos). `photo.url` é assinada por resposta e nunca deve
+// ser persistida em estado durável — cada `getFieldEvidence` traz uma URL fresca.
+
+export type FieldEvidenceAnchor = {
+  kind: "point" | "element" | "note";
+  ref_id: string;
+};
+
+export type FieldEvidenceMeasurement = {
+  source_id: string;
+  survey_id: string;
+  value_mm: number;
+  kind: string;
+  instrument: string;
+  from_point_id: string | null;
+  to_point_id: string | null;
+  second_from_point_id: string | null;
+  second_to_point_id: string | null;
+  element_id: string | null;
+  created_at: string;
+};
+
+export type FieldEvidenceConfirmedValue = {
+  confirmation_id: string;
+  source_reading_id: string;
+  value_mm: number;
+  kind: string;
+  raw_text: string;
+  confirmed_by: string;
+  confirmed_at: string;
+};
+
+export type FieldEvidencePhoto = {
+  evidence_id: string;
+  origin: "survey" | "standalone";
+  survey_id: string | null;
+  sha256: string;
+  mime_type: string;
+  anchors: FieldEvidenceAnchor[];
+  anchor_text: string | null;
+  captured_at: string;
+  /** Assinada por resposta: exibir e "abrir original", nunca guardar. */
+  url: string;
+  analysis: Record<string, unknown> | null;
+  classification: Record<string, unknown> | null;
+  reading_status: string;
+  classification_status: string;
+  confirmed_values: FieldEvidenceConfirmedValue[];
+};
+
+export type LinkedSurveyEvidence = {
+  survey_id: string;
+  name: string;
+  linked_by: string;
+  linked_at: string;
+  measurements: FieldEvidenceMeasurement[];
+};
+
+export type FieldEvidence = {
+  job_id: string;
+  version: number;
+  surveys: LinkedSurveyEvidence[];
+  photos: FieldEvidencePhoto[];
+};
+
+export type CompletedSurveySummary = {
+  survey_id: string;
+  name: string;
+  order_ref: string | null;
+  version: number;
+  photo_count: number;
+  confirmed_measurement_count: number;
+  completed_at: string;
+};
+
+export type CompletedSurveyPage = {
+  items: CompletedSurveySummary[];
+  next_cursor: string | null;
+};
+
+export type FieldPhotoAnalysisState = {
+  analysis_id: string;
+  task: "reading" | "classification";
+  status: string;
+  version: number;
+};
+
+// A fonte de uma testemunha, no molde do servidor (`FieldWitnessSource`): a medida do app
+// carrega `survey_id`; o valor lido em foto nunca. O cliente escolhe a fonte, nunca o valor
+// — o servidor lê o valor da fonte e calcula a diferença.
+export type FieldWitnessSource = {
+  type: "survey_measurement" | "photo_reading";
+  source_id: string;
+  survey_id?: string;
+};
+
+// Uma testemunha já associada a uma leitura. Os três valores em milímetros viajam como
+// STRING (o servidor serializa `Decimal`): reescrevê-los como `number` perderia a precisão
+// escrita, e a diferença é justamente o que o revisor está lendo. `difference_mm` é só um
+// número — não há `status`, `agrees` nem tom de alerta, por decisão de projeto (ADR-0049).
+export type FieldWitness = {
+  witness_id: string;
+  reading_id: string;
+  source_type: "survey_measurement" | "photo_reading";
+  source_id: string;
+  survey_id: string | null;
+  reading_value_mm: string;
+  source_value_mm: string;
+  difference_mm: string;
+  associated_by: string;
+  associated_at: string;
+};
+
+// Associar e retratar são atos disjuntos: a união impede o cliente de mandar `witness_id`
+// junto com `source`, espelhando o `model_validator` de `ReviewWitnessCommand` no servidor.
+export type ReviewWitnessCommand =
+  | { action: "associate"; reading_id: string; source: FieldWitnessSource }
+  | { action: "retract"; witness_id: string };
+
+// O primeiro ato do caminho legado: confirmar o valor lido por máquina numa foto. É
+// append-only no servidor; associá-lo a uma cota é outro ato, na rota de testemunhas.
+export type FieldPhotoValueDraft = {
+  source_reading_id: string;
+  value_mm: number;
+  kind: "length" | "diagonal" | "width" | "radius" | "level" | "drop" | "height";
+  raw_text: string;
+};
+
+// Categorias fechadas da classificação (ADR-0049 D9), espelhando o servidor.
+export type FieldObservationCategory =
+  | "MURO"
+  | "ALAMBRADO"
+  | "PORTAO"
+  | "PATAMAR"
+  | "EQUIPAMENTOS"
+  | "DETALHES"
+  | "UNKNOWN";
+
+// A proposta da IA no instante do ato, copiada do artefato pelo servidor: preserva o que a
+// máquina propôs mesmo depois de o revisor corrigir a categoria.
+export type FieldObservationSource = {
+  analysis_id: string;
+  category: FieldObservationCategory;
+  provider?: string | null;
+  model_id?: string | null;
+  prompt_version?: string | null;
+  schema_version?: string | null;
+};
+
+// Observação humana sobre a classificação, versionada FORA da SceneRevision. `category`/
+// `description` ausentes só em DISMISSED (registro do ato de descartar, não observação).
+export type FieldObservation = {
+  observation_id: string;
+  origin: "survey" | "standalone";
+  evidence_id: string;
+  status: "ACTIVE" | "SUPERSEDED" | "DISMISSED";
+  category: FieldObservationCategory | null;
+  description: string | null;
+  source: FieldObservationSource;
+  supersedes_observation_id: string | null;
+  recorded_by: string;
+  recorded_at: string;
+};
+
+// Registrar (com categoria e descrição, opcionalmente corrigindo outra) ou descartar são
+// atos disjuntos, no molde do model_validator do servidor.
+export type FieldObservationCommand =
+  | {
+      action: "record";
+      origin: "survey" | "standalone";
+      evidence_id: string;
+      category: FieldObservationCategory;
+      description: string;
+      corrects_observation_id?: string;
+    }
+  | { action: "dismiss"; origin: "survey" | "standalone"; evidence_id: string };
+
+export async function getFieldEvidence(
+  accessToken: string,
+  jobId: string,
+): Promise<FieldEvidence> {
+  return apiJson<FieldEvidence>(
+    `/v1/jobs/${jobId}/field-evidence`,
+    accessToken,
+  );
+}
+
+export async function listCompletedSurveys(
+  accessToken: string,
+  cursor?: string | null,
+): Promise<CompletedSurveyPage> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return apiJson<CompletedSurveyPage>(`/v1/surveys${query}`, accessToken);
+}
+
+/**
+ * Vincular ou desvincular um levantamento é ato humano: uma `Idempotency-Key` e o
+ * `base_version` da evidência por gesto. Repetir um vínculo já existente é sucesso sem
+ * avançar versão; versão movida entre carga e envio volta `409 REVISION_CONFLICT`.
+ */
+export async function linkSurveyToJob(
+  accessToken: string,
+  jobId: string,
+  surveyId: string,
+  baseVersion: number,
+): Promise<FieldEvidence> {
+  await apiJson(
+    `/v1/jobs/${jobId}/field-evidence/surveys/${encodeURIComponent(surveyId)}`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: baseVersion }),
+    },
+  );
+  return getFieldEvidence(accessToken, jobId);
+}
+
+export async function unlinkSurveyFromJob(
+  accessToken: string,
+  jobId: string,
+  surveyId: string,
+  baseVersion: number,
+): Promise<FieldEvidence> {
+  await apiJson(
+    `/v1/jobs/${jobId}/field-evidence/surveys/${encodeURIComponent(surveyId)}/unlink`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: baseVersion }),
+    },
+  );
+  return getFieldEvidence(accessToken, jobId);
+}
+
+/**
+ * Foto avulsa: presign → PUT direto no storage → confirmar, o mesmo molde do upload de
+ * projeto. A âncora é declarada pelo revisor (não inferida); MIME e tamanho seguem o
+ * contrato do servidor para o excesso morrer antes da rede.
+ */
+export async function uploadStandaloneFieldPhoto(
+  accessToken: string,
+  jobId: string,
+  baseVersion: number,
+  file: File,
+  anchorText: string,
+): Promise<FieldEvidence> {
+  const mime = file.type;
+  if (mime !== "image/jpeg" && mime !== "image/png" && mime !== "image/webp") {
+    throw new Error("A foto precisa ser JPEG, PNG ou WebP.");
+  }
+  if (file.size === 0 || file.size > 25_000_000) {
+    throw new Error("A foto deve ter entre 1 byte e 25 MB.");
+  }
+  const trimmed = anchorText.trim();
+  if (trimmed.length < 1 || trimmed.length > 500) {
+    throw new Error("Declare uma âncora de 1 a 500 caracteres para a foto.");
+  }
+  const digest = toHex(
+    await crypto.subtle.digest("SHA-256", await file.arrayBuffer()),
+  );
+  const presigned = await apiJson<PresignJobFieldPhotoResponse>(
+    `/v1/jobs/${jobId}/field-evidence/photos/presign`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({
+        base_version: baseVersion,
+        sha256: digest,
+        mime_type: mime,
+        byte_size: file.size,
+        anchor_text: trimmed,
+      }),
+    },
+  );
+  const upload = await fetch(presigned.url, {
+    method: "PUT",
+    headers: presigned.headers,
+    body: file,
+  });
+  if (!upload.ok) {
+    throw new Error("O upload direto da foto não foi concluído. Tente novamente.");
+  }
+  await apiJson(
+    `/v1/jobs/${jobId}/field-evidence/photos/${presigned.photo_id}/confirm`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: presigned.version }),
+    },
+  );
+  return getFieldEvidence(accessToken, jobId);
+}
+
+type PresignJobFieldPhotoResponse = {
+  photo_id: string;
+  version: number;
+  sha256: string;
+  url: string;
+  headers: Record<string, string>;
+  expires_at: string;
+};
+
+/**
+ * Pedido explícito de leitura textual de uma foto confirmada. Responde `202`: o worker
+ * resolve fora do request, e o resultado chega no próximo `getFieldEvidence`.
+ */
+export async function requestFieldPhotoReading(
+  accessToken: string,
+  jobId: string,
+  origin: "survey" | "standalone",
+  evidenceId: string,
+  baseVersion: number,
+): Promise<FieldPhotoAnalysisState> {
+  return apiJson<FieldPhotoAnalysisState>(
+    `/v1/jobs/${jobId}/field-evidence/photos/${origin}/${encodeURIComponent(evidenceId)}/reading`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: baseVersion }),
+    },
+  );
+}
+
+/**
+ * Associar ou retratar uma testemunha de campo (F-030). Uma `Idempotency-Key` e o
+ * `base_version` da revisão por gesto, como as demais mutações da revisão: cada ato cria
+ * uma revisão de leitura nova e a resposta é o `Review` já reconferido. O cliente escolhe a
+ * leitura e a fonte; o valor e a diferença são resolvidos pelo servidor.
+ */
+export async function mutateReviewWitnesses(
+  accessToken: string,
+  jobId: string,
+  baseVersion: number,
+  command: ReviewWitnessCommand,
+): Promise<Review> {
+  return apiJson<Review>(`/v1/jobs/${jobId}/review/witnesses`, accessToken, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify({ base_version: baseVersion, ...command }),
+  });
+}
+
+/**
+ * Ato 1 do caminho legado: confirmar o valor lido por máquina numa foto. POST append-only
+ * seguido do re-GET da evidência, o mesmo molde de `linkSurveyToJob`. Não vira testemunha
+ * aqui: associá-lo a uma cota é o segundo ato, na rota de testemunhas. A validação de forma
+ * mata o excesso antes da rede, para o revisor ver uma frase e não um 422.
+ */
+export async function confirmFieldPhotoValue(
+  accessToken: string,
+  jobId: string,
+  origin: "survey" | "standalone",
+  evidenceId: string,
+  baseVersion: number,
+  draft: FieldPhotoValueDraft,
+): Promise<FieldEvidence> {
+  if (!Number.isInteger(draft.value_mm) || draft.value_mm < 0) {
+    throw new Error("O valor confirmado precisa ser um número inteiro de milímetros.");
+  }
+  const rawText = draft.raw_text.trim();
+  if (rawText.length < 1 || rawText.length > 200) {
+    throw new Error("O texto lido deve ter de 1 a 200 caracteres.");
+  }
+  await apiJson(
+    `/v1/jobs/${jobId}/field-evidence/photos/${origin}/${encodeURIComponent(evidenceId)}/values`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({
+        base_version: baseVersion,
+        source_reading_id: draft.source_reading_id,
+        value_mm: draft.value_mm,
+        kind: draft.kind,
+        raw_text: rawText,
+      }),
+    },
+  );
+  return getFieldEvidence(accessToken, jobId);
+}
+
+/**
+ * Pede a classificação visual de uma foto confirmada (F-030 T6/T7). Responde `202`: o
+ * rascunho chega no próximo `getFieldEvidence`. Molde de `requestFieldPhotoReading`.
+ */
+export async function requestFieldPhotoClassification(
+  accessToken: string,
+  jobId: string,
+  origin: "survey" | "standalone",
+  evidenceId: string,
+  baseVersion: number,
+): Promise<FieldPhotoAnalysisState> {
+  return apiJson<FieldPhotoAnalysisState>(
+    `/v1/jobs/${jobId}/field-evidence/photos/${origin}/${encodeURIComponent(evidenceId)}/classification`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: baseVersion }),
+    },
+  );
+}
+
+/**
+ * Registra ou descarta a observação humana sobre a classificação (F-030 T7). Uma
+ * `Idempotency-Key` e o `base_version` da revisão por gesto; a resposta é o `Review`
+ * reconferido. A observação viaja fora da cena — nada aqui muda geometria ou exportação.
+ */
+export async function submitFieldObservation(
+  accessToken: string,
+  jobId: string,
+  baseVersion: number,
+  command: FieldObservationCommand,
+): Promise<Review> {
+  return apiJson<Review>(
+    `/v1/jobs/${jobId}/review/field-observations`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ base_version: baseVersion, ...command }),
+    },
+  );
 }
 
 export async function createProjectUpload(

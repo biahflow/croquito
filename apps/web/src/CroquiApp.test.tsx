@@ -5,6 +5,7 @@ import { ApiError, postReviewChains } from "./api";
 import type {
   DeclaredChain,
   DimensionChain,
+  FieldWitness,
   Review,
   ReviewReading,
 } from "./api";
@@ -18,6 +19,7 @@ import {
   DecisionAuthorLine,
   exceptionCounts,
   ExceptionsBand,
+  FieldWitnessesSection,
   isSystemAnnotation,
   isSystemDecided,
   JobStatusBand,
@@ -28,6 +30,7 @@ import {
   readingIdsWithCandidate,
   toggleChainTerm,
   visibleReadings,
+  type WitnessSourcesView,
 } from "./CroquiApp";
 
 /**
@@ -346,6 +349,167 @@ describe("ChainsSection", () => {
     expect(html).toContain("Cancelar");
     // Sem total e sem parcelas, confirmar está fechado.
     expect(html).toContain("disabled");
+  });
+});
+
+function witness(overrides: Partial<FieldWitness> = {}): FieldWitness {
+  return {
+    witness_id: "0197f2a0-0000-7000-8000-0000000000aa",
+    reading_id: "rd_0000000000000001",
+    source_type: "survey_measurement",
+    source_id: "mea-1",
+    survey_id: "svy-1",
+    reading_value_mm: "19750",
+    source_value_mm: "19780",
+    difference_mm: "30",
+    associated_by: "Ana",
+    associated_at: "2026-08-20T13:00:00Z",
+    ...overrides,
+  };
+}
+
+const confirmedReading: ReviewReading = {
+  id: "rd_0000000000000001",
+  raw_text: "19,75",
+  kind: "length",
+  status: "confirmed",
+  value_si: "19.75",
+  unit: "m",
+};
+
+function renderWitnesses(
+  props: Partial<Parameters<typeof FieldWitnessesSection>[0]> = {},
+) {
+  const sourcesView: WitnessSourcesView = props.sourcesView ?? { status: "closed" };
+  return renderToStaticMarkup(
+    <FieldWitnessesSection
+      reading={props.reading ?? confirmedReading}
+      witnesses={props.witnesses ?? []}
+      canAssociate={props.canAssociate ?? true}
+      sourcesView={sourcesView}
+      selectedSource={props.selectedSource ?? ""}
+      submitting={props.submitting ?? false}
+      message={props.message ?? null}
+      onStartAssociating={() => undefined}
+      onCancelAssociating={() => undefined}
+      onSelectSource={() => undefined}
+      onConfirmAssociation={() => undefined}
+      onRetract={() => undefined}
+    />,
+  );
+}
+
+describe("FieldWitnessesSection", () => {
+  it("confronta cota e trena com diferença neutra, sem juízo de concordância", () => {
+    const html = renderWitnesses({ witnesses: [witness()] });
+
+    expect(html).toContain("TESTEMUNHA DE CAMPO");
+    expect(html).toContain("COTA DA PRANCHA");
+    expect(html).toContain("19,75");
+    expect(html).toContain("TRENA EM CAMPO");
+    expect(html).toContain("19,78");
+    expect(html).toContain("DIFERENÇA");
+    expect(html).toContain("0,03");
+    expect(html).toContain("Associada por");
+    expect(html).toContain("Retirar testemunha");
+    // A diferença é neutra: nenhum vocabulário nem veste de concordância/alerta. (A cópia
+    // explica que não escolhe "vencedor", então esse termo não é asserido negativamente.)
+    expect(html).not.toContain("concorda");
+    expect(html).not.toContain("diverge");
+    expect(html).not.toContain("confere");
+    expect(html).not.toContain("⚠");
+    expect(html).not.toContain("ocr-warning");
+    // A diferença não veste tom de estado (as classes de pastilha do painel).
+    expect(html).not.toContain('class="blocked"');
+    expect(html).not.toContain('class="ready"');
+  });
+
+  it("empilha várias testemunhas sem hierarquia e sem faixa-resumo", () => {
+    const html = renderWitnesses({
+      witnesses: [
+        witness(),
+        witness({
+          witness_id: "0197f2a0-0000-7000-8000-0000000000bb",
+          source_type: "photo_reading",
+          source_id: "cfm-1",
+          survey_id: null,
+          source_value_mm: "19700",
+          difference_mm: "-50",
+        }),
+      ],
+    });
+
+    expect(html).toContain("TESTEMUNHA 1 · MEDIDA DO APP");
+    expect(html).toContain("TESTEMUNHA 2 · VALOR CONFIRMADO EM FOTO");
+    expect(html).toContain("VISOR FOTOGRAFADO");
+    // A cota da prancha aparece uma vez por testemunha; nenhuma é escolhida vencedora.
+    expect(html.split("COTA DA PRANCHA").length - 1).toBe(2);
+    // A segunda diferença também é magnitude neutra (sem sinal).
+    expect(html).toContain("0,05");
+  });
+
+  it("leitura não confirmada com testemunha mostra o gate, sem oferecer associar", () => {
+    const html = renderWitnesses({
+      canAssociate: false,
+      witnesses: [witness()],
+      reading: { ...confirmedReading, status: "proposed", value_si: null },
+    });
+
+    // A cota da prancha nunca some: a testemunha guarda o valor que confrontou.
+    expect(html).toContain("COTA DA PRANCHA");
+    expect(html).toContain("Confirme a leitura");
+    expect(html).not.toContain("Associar testemunha de campo");
+  });
+
+  it("sem testemunha e sem poder associar, a seção não aparece", () => {
+    const html = renderWitnesses({
+      canAssociate: false,
+      witnesses: [],
+      reading: { ...confirmedReading, status: "proposed", value_si: null },
+    });
+    expect(html).toBe("");
+  });
+
+  it("sem fonte elegível mostra o porquê e não deixa botão morto de associar", () => {
+    const html = renderWitnesses({ sourcesView: { status: "ready", sources: [] } });
+
+    expect(html).toContain("Nenhuma fonte de campo elegível");
+    expect(html).toContain("Fechar");
+    expect(html).not.toContain("<select");
+  });
+
+  it("com fontes, o select nasce vazio e associar fica fechado sem escolha", () => {
+    const html = renderWitnesses({
+      sourcesView: {
+        status: "ready",
+        sources: [
+          {
+            source: { type: "survey_measurement", source_id: "mea-1", survey_id: "svy-1" },
+            label: "Medida do app · 19,78 m · Praça",
+            value_mm: 19_780,
+          },
+        ],
+      },
+      selectedSource: "",
+    });
+
+    expect(html).toContain("Escolha a fonte de campo…");
+    expect(html).toContain("Medida do app · 19,78 m · Praça");
+    expect(html).toContain("nunca associam nada");
+    // "Associar" existe mas está desabilitado enquanto nada foi escolhido.
+    expect(html).toContain("Associar");
+    expect(html).toContain("disabled");
+  });
+
+  it("carregando e erro têm estados próprios, sem select de fonte", () => {
+    expect(renderWitnesses({ sourcesView: { status: "loading" } })).toContain(
+      "Buscando as fontes de campo",
+    );
+    const erro = renderWitnesses({
+      sourcesView: { status: "error", message: "Falha ao carregar." },
+    });
+    expect(erro).toContain('role="alert"');
+    expect(erro).toContain("Tentar de novo");
   });
 });
 

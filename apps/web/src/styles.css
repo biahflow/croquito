@@ -2830,3 +2830,326 @@ footer {
  * `.jornada-medicao p` (0,1,1) venceria `.aviso-fixo` (0,1,0) e apagaria a cor do aviso
  * permanente da medição.
  */
+
+/*
+ * Painel "Evidência de campo" da revisão (F-030 T3). Composições de layout sobre tokens
+ * existentes do bloco :root — sem cor nova. O botão secundário (`.button-secondary`) é o
+ * citado no Design Approval Package revisão 3: texto de acento sobre superfície, para atos
+ * não primários (ampliar, abrir original, desvincular). Estado nunca é só cor: cada
+ * pastilha carrega texto por extenso (`.ready`, `.blocked`, `.neutral`).
+ */
+.button-secondary {
+  color: var(--accent-text);
+  background: var(--surface);
+  border-color: var(--accent-text);
+}
+
+.field-evidence-panel {
+  margin-top: 16px;
+}
+
+.field-evidence-panel .panel-title {
+  margin-top: 3px;
+  font-size: 16px;
+}
+
+.field-evidence-boundary {
+  margin-bottom: 12px;
+}
+
+.field-evidence-panel .esqueleto {
+  height: 12px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+}
+
+.filtro {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.filtro label,
+.vinculo-form label,
+.upload-avulsa label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.filtro select,
+.vinculo-form select {
+  min-width: 240px;
+  min-height: 38px;
+  padding: 0 10px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.fotos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.foto {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.foto-amostra-button {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+/* Marcador de foto sintético: o painel real substitui por <img>, mas o cartão nunca some
+   por falta de imagem. */
+.foto-amostra {
+  display: block;
+  aspect-ratio: 4 / 3;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: repeating-linear-gradient(
+    135deg,
+    var(--surface-sunken),
+    var(--surface-sunken) 9px,
+    var(--surface-subtle) 9px,
+    var(--surface-subtle) 18px
+  );
+}
+
+.ancora {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.foto-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+
+.leitura {
+  margin: 0;
+  padding: 8px;
+  background: var(--surface-sunken);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.acoes {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 4px;
+}
+
+/* Testemunhas de campo (F-030 T5): o confronto de dois números com a origem de cada um.
+   Sobre tokens existentes, sem cor nova — a diferença é neutra por construção e nunca
+   ganha vermelho/âmbar. `tabular-nums` alinha os valores coluna a coluna. */
+.witness-panel {
+  margin-top: 14px;
+}
+
+.witness-panel h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.testemunha {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+
+.confronto {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: end;
+}
+
+.valor {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.valor b {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.valor span {
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+  color: var(--ink-secondary);
+}
+
+.diferenca {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 18px;
+  border-left: 1px solid var(--line);
+}
+
+.diferenca b {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.diferenca span {
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+  color: var(--ink-secondary);
+}
+
+.witness-source-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.witness-source-form select {
+  min-height: 38px;
+  padding: 0 10px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.value-confirm-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.value-confirm-form input[type="text"],
+.value-confirm-form select {
+  min-height: 36px;
+  padding: 0 10px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.field-evidence-forms {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.vinculo-form,
+.upload-avulsa {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: end;
+}
+
+.linked-surveys {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.linked-survey {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--surface-subtle);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.upload-avulsa input[type="text"] {
+  min-width: 220px;
+  min-height: 38px;
+  padding: 0 10px;
+  font: inherit;
+  border: 1px solid var(--muted);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+/* Modal da foto ampliada: overlay escuro sobre a revisão, que continua montada por baixo. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(14, 17, 22, 0.76);
+}
+
+.modal-card {
+  width: min(720px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  border-radius: 11px;
+  background: var(--surface);
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.28);
+}
+
+.modal-title {
+  margin-top: 3px;
+  font-size: 16px;
+}
+
+.modal-media {
+  display: block;
+  width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  background: var(--surface-sunken);
+}
+
+.modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+}

@@ -922,6 +922,65 @@ class FieldWitnessResponse(ApiModel):
     associated_at: datetime
 
 
+#: A lista fechada de categorias da classificação (ADR-0049 D9), duplicada aqui como as
+#: demais camadas do arquivo: a API não importa o enum do worker.
+FieldObservationCategory = Literal[
+    "MURO", "ALAMBRADO", "PORTAO", "PATAMAR", "EQUIPAMENTOS", "DETALHES", "UNKNOWN"
+]
+
+
+class FieldObservationSource(ApiModel):
+    """Resumo do rascunho da IA no instante do ato, copiado do artefato pelo servidor.
+
+    Preserva o que a IA propôs mesmo depois de o revisor corrigir a categoria, e sobrevive à
+    expiração do artefato. Nunca é aceito do cliente — mesma regra do valor da testemunha.
+    """
+
+    analysis_id: UUID
+    category: FieldObservationCategory
+    provider: str | None = None
+    model_id: str | None = None
+    prompt_version: str | None = None
+    schema_version: str | None = None
+
+
+class FieldObservationResponse(ApiModel):
+    observation_id: UUID
+    origin: Literal["survey", "standalone"]
+    evidence_id: UUID
+    status: Literal["ACTIVE", "SUPERSEDED", "DISMISSED"]
+    #: Ausentes só em `DISMISSED`, que registra o ato de descartar, não uma observação.
+    category: FieldObservationCategory | None = None
+    description: str | None = None
+    source: FieldObservationSource
+    supersedes_observation_id: UUID | None = None
+    recorded_by: str
+    recorded_at: datetime
+
+
+class FieldObservationCommand(ApiModel):
+    base_version: int = Field(ge=1)
+    action: Literal["record", "dismiss"]
+    origin: Literal["survey", "standalone"]
+    evidence_id: UUID
+    category: FieldObservationCategory | None = None
+    description: str | None = Field(default=None, min_length=1, max_length=500)
+    corrects_observation_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_action(self) -> FieldObservationCommand:
+        if self.action == "record":
+            if self.category is None or self.description is None:
+                raise ValueError("registrar exige category e description")
+        elif (
+            self.category is not None
+            or self.description is not None
+            or self.corrects_observation_id is not None
+        ):
+            raise ValueError("descartar não leva category, description nem correção")
+        return self
+
+
 class ReviewResponse(ApiModel):
     job_id: UUID
     review_id: UUID
@@ -958,6 +1017,10 @@ class ReviewResponse(ApiModel):
     auto_association_rate: float | None = None
     review_rate: float | None = None
     field_witnesses: list[FieldWitnessResponse] = Field(default_factory=list)
+    # Observações humanas sobre a classificação por IA (F-030 T7): versionadas com a revisão,
+    # FORA da SceneRevision. `default_factory=list` pelo mesmo motivo dos demais: a resposta
+    # idempotente gravada antes do campo é revalidada no replay e não pode virar 500.
+    field_observations: list[FieldObservationResponse] = Field(default_factory=list)
     scene: SceneRevision | None = None
     preview_urls: dict[str, str] = Field(default_factory=dict)
 
@@ -4087,6 +4150,31 @@ def _resolve_field_witness_source(
     return Decimal(measurement.value_mm), survey.id
 
 
+def _field_observation_source(
+    analysis: FieldEvidenceAnalysisRecord, document: dict[str, Any]
+) -> FieldObservationSource:
+    """Monta a fonte da observação a partir do artefato de classificação, no servidor."""
+    classification = document.get("classification")
+    category = classification.get("category") if isinstance(classification, dict) else None
+    lineage = document.get("lineage")
+    provider = model_id = prompt_version = schema_version = None
+    if isinstance(lineage, dict):
+        provider = lineage.get("provider")
+        model_id = lineage.get("model_id")
+        prompt = lineage.get("prompt")
+        if isinstance(prompt, dict):
+            prompt_version = prompt.get("prompt_version")
+            schema_version = prompt.get("schema_version")
+    return FieldObservationSource(
+        analysis_id=UUID(analysis.id),
+        category=category,
+        provider=provider,
+        model_id=model_id,
+        prompt_version=prompt_version,
+        schema_version=schema_version,
+    )
+
+
 def _calibration_response(value: dict[str, Any] | None) -> ProposalCalibrationResponse | None:
     return ProposalCalibrationResponse.model_validate(value) if value is not None else None
 
@@ -4585,6 +4673,10 @@ def _review_response(
         review_rate=confidence.review_rate,
         field_witnesses=[
             FieldWitnessResponse.model_validate(value) for value in record.field_witnesses_json
+        ],
+        field_observations=[
+            FieldObservationResponse.model_validate(value)
+            for value in record.field_observations_json
         ],
         scene=scene,
         preview_urls=_preview_urls(
@@ -6806,6 +6898,206 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             confidence_shadow_json=current.confidence_shadow_json,
             field_witnesses_json=witnesses,
             field_observations_json=current.field_observations_json,
+            calibration_json=current.calibration_json,
+            proposal_decisions_json=current.proposal_decisions_json,
+            trace_acceptance_json=current.trace_acceptance_json,
+            evidence_refs_json=current.evidence_refs_json,
+            solver_request_json=current.solver_request_json,
+            solver_blockers_json=current.solver_blockers_json,
+            required_blocker_codes_json=current.required_blocker_codes_json,
+            required_criteria_texts_json=current.required_criteria_texts_json,
+            scene_revision_id=current.scene_revision_id,
+            created_by=principal.subject,
+        )
+        session.add(next_review)
+        try:
+            session.flush()
+        except IntegrityError as error:
+            session.rollback()
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Uma atualização concorrente criou nova revisão.",
+            ) from error
+        response = _review_response(application, session, next_review)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action=audit_action,
+            resource_type="review_revision",
+            resource_id=next_review.id,
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/review/field-observations",
+        response_model=ReviewResponse,
+        tags=["review"],
+    )
+    async def mutate_review_field_observations(
+        job_id: UUID,
+        payload: FieldObservationCommand,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReviewResponse:
+        """Registra ou descarta observação humana sobre a classificação, fora da cena."""
+        _reviewer_role(principal)
+        operation = f"review.field-observations:{job_id}:{payload.origin}:{payload.evidence_id}"
+        request_hash = _request_hash(payload)
+        replay = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            return ReviewResponse.model_validate(replay)
+        job = _load_job(session, job_id=job_id, tenant_id=principal.tenant_id)
+        current = _latest_review(session, job_id=job_id, tenant_id=principal.tenant_id)
+        if current is None:
+            raise _problem(
+                "JOB_NOT_READY",
+                status.HTTP_409_CONFLICT,
+                "Pacote de revisão ainda não está disponível.",
+            )
+        if current.version != payload.base_version:
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Existe uma revisão de leitura mais recente.",
+            )
+        # Foto alvo escopada ao job; alheia ou inexistente é o mesmo 404.
+        _load_field_photo_target(
+            session, job=job, origin=payload.origin, evidence_id=payload.evidence_id
+        )
+        # A observação nasce de um rascunho de classificação: exige DRAFT com artefato.
+        analysis = _field_analysis_state(
+            session,
+            tenant_id=job.tenant_id,
+            job_id=job.id,
+            origin=payload.origin,
+            evidence_id=str(payload.evidence_id),
+            task="classification",
+        )
+        document = (
+            _read_field_analysis(
+                application, object_key=analysis.artifact_key, tenant_id=job.tenant_id
+            )
+            if analysis is not None
+            and analysis.status == "DRAFT"
+            and analysis.artifact_key is not None
+            else None
+        )
+        if analysis is None or analysis.status != "DRAFT" or document is None:
+            raise _problem(
+                "FIELD_OBSERVATION_DRAFT_NOT_FOUND",
+                status.HTTP_409_CONFLICT,
+                "Não há rascunho de classificação para esta foto.",
+            )
+        source = _field_observation_source(analysis, document)
+
+        evidence_id = str(payload.evidence_id)
+        observations = [dict(value) for value in current.field_observations_json]
+
+        def _for_photo(entry: dict[str, Any]) -> bool:
+            return entry.get("origin") == payload.origin and entry.get("evidence_id") == evidence_id
+
+        now = datetime.now(UTC)
+        if payload.action == "record":
+            if payload.corrects_observation_id is None:
+                if any(
+                    entry.get("status") == "ACTIVE" and _for_photo(entry) for entry in observations
+                ):
+                    raise _problem(
+                        "FIELD_OBSERVATION_ALREADY_RECORDED",
+                        status.HTTP_409_CONFLICT,
+                        "Esta foto já tem uma observação ativa.",
+                    )
+                audit_action = "FIELD_OBSERVATION_RECORDED"
+            else:
+                target = next(
+                    (
+                        entry
+                        for entry in observations
+                        if entry.get("observation_id") == str(payload.corrects_observation_id)
+                        and entry.get("status") == "ACTIVE"
+                        and _for_photo(entry)
+                    ),
+                    None,
+                )
+                if target is None:
+                    raise _problem(
+                        "FIELD_OBSERVATION_NOT_FOUND",
+                        status.HTTP_404_NOT_FOUND,
+                        "Observação a corrigir não encontrada nesta revisão.",
+                    )
+                target["status"] = "SUPERSEDED"
+                audit_action = "FIELD_OBSERVATION_CORRECTED"
+            observation = FieldObservationResponse(
+                observation_id=new_uuid7(),
+                origin=payload.origin,
+                evidence_id=payload.evidence_id,
+                status="ACTIVE",
+                category=payload.category,
+                description=payload.description,
+                source=source,
+                supersedes_observation_id=payload.corrects_observation_id,
+                recorded_by=principal.subject,
+                recorded_at=now,
+            )
+            observations.append(observation.model_dump(mode="json"))
+        else:
+            if any(
+                entry.get("status") in {"ACTIVE", "DISMISSED"} and _for_photo(entry)
+                for entry in observations
+            ):
+                raise _problem(
+                    "FIELD_OBSERVATION_ALREADY_HANDLED",
+                    status.HTTP_409_CONFLICT,
+                    "O rascunho desta foto já foi registrado ou descartado.",
+                )
+            observation = FieldObservationResponse(
+                observation_id=new_uuid7(),
+                origin=payload.origin,
+                evidence_id=payload.evidence_id,
+                status="DISMISSED",
+                category=None,
+                description=None,
+                source=source,
+                supersedes_observation_id=None,
+                recorded_by=principal.subject,
+                recorded_at=now,
+            )
+            observations.append(observation.model_dump(mode="json"))
+            audit_action = "FIELD_OBSERVATION_DISMISSED"
+
+        next_review = ReviewRevisionRecord(
+            id=str(new_uuid7()),
+            tenant_id=current.tenant_id,
+            job_id=current.job_id,
+            version=current.version + 1,
+            parent_review_id=current.id,
+            packet_json=current.packet_json,
+            associations_json=current.associations_json,
+            proposals_json=current.proposals_json,
+            selected_associations_json=current.selected_associations_json,
+            declared_chains_json=current.declared_chains_json,
+            confidence_shadow_json=current.confidence_shadow_json,
+            field_witnesses_json=current.field_witnesses_json,
+            field_observations_json=observations,
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             trace_acceptance_json=current.trace_acceptance_json,

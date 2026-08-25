@@ -341,6 +341,14 @@ milímetros, autoria e instante. A diferença é somente um número: não há `s
 `agrees`, tolerância escondida nem alerta. Várias testemunhas podem apontar para a mesma
 leitura e aparecem como itens separados.
 
+`field_observations` traz as observações humanas sobre a classificação por IA (F-030 T7),
+versionadas com a revisão e **fora da `SceneRevision`**. Cada item declara `observation_id`,
+`origin`+`evidence_id` da foto, `status` (`ACTIVE` | `SUPERSEDED` | `DISMISSED`), `category`
+e `description` (ausentes só em `DISMISSED`), a `source` (resumo da proposta da IA — categoria
+proposta e lineage — copiado do artefato pelo servidor), `supersedes_observation_id`, autoria
+e instante. Registrar, corrigir ou descartar **não toca cena, digest, blockers, solver nem
+exportação**.
+
 - Cada candidato de `associations.candidates` carrega `association_confidence` (0–1,
   "sei a qual segmento esta cota pertence?") e `orientation_alignment` (`number | null`;
   `null` quando o candidato não tem direção própria — círculo, contorno).
@@ -634,6 +642,31 @@ cabeça corrente; a revisão anterior preserva o ato no histórico. Erros nomead
 `FIELD_WITNESS_READING_NOT_CONFIRMED`, `FIELD_WITNESS_SOURCE_NOT_CONFIRMED`,
 `FIELD_WITNESS_SOURCE_NOT_FOUND`, `FIELD_WITNESS_ALREADY_ASSOCIATED` e
 `FIELD_WITNESS_NOT_FOUND`.
+
+### `POST /v1/jobs/{job_id}/review/field-observations`
+
+Registra ou descarta a observação humana sobre a classificação por IA de uma foto (F-030
+T7), **fora da `SceneRevision`**. Entrada comum: `base_version`, `action`
+(`record` | `dismiss`), `origin` e `evidence_id` da foto. Para `record`, exige `category`
+(uma das sete: `MURO`, `ALAMBRADO`, `PORTAO`, `PATAMAR`, `EQUIPAMENTOS`, `DETALHES`,
+`UNKNOWN`) e `description` (1–500). Corrigir é `record` com `corrects_observation_id`:
+carimba a anterior `SUPERSEDED` e cria uma `ACTIVE` nova. Para `dismiss`, o corpo não leva
+`category`, `description` nem correção.
+
+A foto precisa ter um rascunho de classificação em `DRAFT` com artefato; senão o comando
+falha com `409 FIELD_OBSERVATION_DRAFT_NOT_FOUND`. O servidor copia a `source` (categoria
+proposta pela IA e lineage) do próprio artefato — o cliente nunca a envia — e o revisor pode
+registrar uma categoria diferente da proposta (registrar já corrigido é ato legítimo). O
+comando cria somente uma `ReviewRevision` nova, gravando em `field_observations_json` e
+preservando pacote, associações, testemunhas, **cena, digest, precisão, blockers, solver e
+exportação verbatim** — `scene_revision_id` não muda e nenhuma `SceneRevision` é criada. O
+descarte grava uma entrada `DISMISSED` (sem categoria nem descrição) e **não** apaga a
+classificação nem a evidência.
+
+Papel de revisão, tenant, `base_version` e `Idempotency-Key` falham fechados. Erros nomeados
+incluem `FIELD_OBSERVATION_DRAFT_NOT_FOUND`, `FIELD_OBSERVATION_NOT_FOUND`,
+`FIELD_OBSERVATION_ALREADY_RECORDED`, `FIELD_OBSERVATION_ALREADY_HANDLED`, `JOB_NOT_READY` e
+`REVISION_CONFLICT`. A foto alheia ou inexistente responde `404 NOT_FOUND`.
 
 ### Calibração e decisões de proposta
 
