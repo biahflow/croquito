@@ -65,6 +65,25 @@ silêncio.
 O contrato traz `IE00040849`, fora do padrão SCO. O validador aceita o mesmo superset
 estrutural das demais origens de preço, senão o entulho dele ficaria de fora da conta.
 
+### A nota e o teto da parcela `PARTIAL` (decisão 6, [#96](https://github.com/biahflow/croquito/issues/96))
+
+T6 fez os builders iterarem serviços, mas a parcela `PARTIAL` (ADR-0053, decisão 3) ficou
+sem as duas guardas que a honram: a **nota obrigatória** e o **teto do elemento**. A #96
+fecha o buraco no lado do DOMÍNIO+API (a tela é o lado WEB da mesma decisão):
+
+- `CalcContribution` exige nota não vazia quando `basis` é `PARTIAL`, recusada na leitura da
+  célula com `CALC_PARTIAL_NOTE_REQUIRED`. O `CalcBlock` materializado não ganha campo de
+  nota — dar um a ele mudaria o digest de orçamento assinado (ADR-0053, decisão 5); a nota
+  mora no lado da autoria.
+- O build confere `quantidade declarada ≤ TakeoffItem.quantity` por par
+  `(serviço, source_item_id)` dentro de `resolve_calc_matrix`, cobrindo as duas cadeias
+  (medição e orçamento-base) num ponto só, e recusa com `CALC_PARTIAL_EXCEEDS_ITEM`. A
+  quantidade declarada é o produto que os operandos já computam — nada é reinventado.
+- Os dois códigos são fixos `CALC_PARTIAL_*` nas duas cadeias: descrevem a semântica da
+  célula, não a resolução da cadeia (por isso não seguem o `error_prefix` `CALC`/`ESTIMATE`
+  dos erros de dependência). Nenhum campo novo entrou nos corpos de requisição, e o snapshot
+  OpenAPI não muda: a matriz continua viajando inteira no campo `calc_matrix`.
+
 ## Verificação
 
 O oráculo é a planilha. Cada tarefa fecha com `make check` e `make test` verdes, e o

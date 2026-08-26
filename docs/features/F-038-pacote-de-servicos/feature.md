@@ -158,7 +158,7 @@ O oráculo é o arquivo, não a intuição:
 |---|---|
 | Digest quebrado invalida orçamento assinado | Poda declarada por versão, implementada e provada antes de qualquer campo novo (#74) |
 | Fechamento esquecido produz boletim parcial em silêncio | `CALC_PACKAGE_NOT_CLOSED` fail-closed |
-| Parcela parcial tratada como derivável inventa número | `PARTIAL` é declarada e conferida só contra o teto |
+| Parcela parcial tratada como derivável inventa número | `PARTIAL` é declarada com nota obrigatória (`CALC_PARTIAL_NOTE_REQUIRED`, na leitura da célula) e conferida contra o teto do elemento no build (`CALC_PARTIAL_EXCEEDS_ITEM`); nunca recomputada (#96) |
 | Regime anterior vazando muda resultado de rodada existente | Regime declarado pelo `schema_version` do artefato; goldens byte-idênticos são o gate |
 | Matcher invisivelmente pior no mundo do pacote | Medido e publicado no golden como gap conhecido |
 

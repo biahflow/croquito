@@ -310,7 +310,10 @@ class CalcBlock(ValuationContractModel):
 
         Só o que o bloco sabe sozinho. O teto da parcela `PARTIAL` (nunca maior que a
         quantidade do elemento) depende do `TakeoffItem`, que este modelo não alcança: é
-        conferência de builder.
+        conferência de builder. A nota obrigatória da `PARTIAL` (ADR-0053, decisão 3) mora no
+        lado da autoria (`CalcContribution.note`, `CALC_PARTIAL_NOTE_REQUIRED`): o bloco
+        materializado é o render literal e não carrega campo de nota — dar um a ele mudaria o
+        digest de orçamento assinado, que a decisão 5 do mesmo ADR existe para preservar.
         """
         if self.basis is ContributionBasis.STANDALONE and self.source_item_id is not None:
             raise ValuationValidationError(
