@@ -23,11 +23,17 @@ from croquito_valuation.calc import (
     build_worksite_bulletin,
     build_worksite_valuation,
 )
+from croquito_valuation.calc_matrix import (
+    CalcContribution,
+    CalcMatrix,
+    ServiceContributions,
+)
 from croquito_valuation.contract import ContractLine, ContractWorkbook
 from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
 from croquito_valuation.models import (
     CalcOperand,
     CalcRecipe,
+    ContributionBasis,
     PriceCatalog,
     PriceCatalogEntry,
     PriceOrigin,
@@ -805,3 +811,136 @@ def test_a_legacy_set_still_builds_the_same_bulletin() -> None:
 
     assert [line.item_number for line in result.bulletin.lines] == ["1"]
     assert result.bulletin.lines[0].unit_price == entry.unit_price
+
+
+# --------------------------------------------------------------------------------------
+# regime da matriz (T6): o builder itera SERVIÇOS, não itens
+# --------------------------------------------------------------------------------------
+
+_SAIBRO = "BP04050350(/)"
+_ITEM_3 = "ti_0000000000000003"
+_PACOTE_PISO = (
+    "MT14150050(A)",
+    "BP04050350(/)",
+    "ET39050109(/)",
+    "BP09100050(B)",
+    "SC34150200(/)",
+    "SC29100100(A)",
+)
+
+
+def _full_contribution(item_id: str, *, value: Decimal, label: str) -> CalcContribution:
+    return CalcContribution(
+        source_item_id=item_id,
+        label=label,
+        basis=ContributionBasis.FULL,
+        recipe=CalcRecipe.DECLARED_PRODUCT,
+        operands=[CalcOperand(name="AREA", value=value, unit="m2")],
+    )
+
+
+def test_matrix_regime_fuses_many_elements_into_one_service_line() -> None:
+    # Três elementos alimentam o mesmo serviço: uma linha, quantidade = soma das parcelas.
+    items = [
+        _confirmed_item(item_id=_ITEM_1, label="PISO EM CONCRETO", quantity=Decimal("418.12")),
+        _confirmed_item(item_id=_ITEM_2, label="PAVIMENTO INTERTRAVADO", quantity=Decimal("59.34")),
+        _confirmed_item(item_id=_ITEM_3, label="FORRACAO EM GRAMA", quantity=Decimal("1.28")),
+    ]
+    packet = _packet(items)
+    catalog = _catalog([_catalog_entry(code=_SAIBRO, unit="m2")])
+    assignments = _assignment_set(
+        packet,
+        catalog,
+        [
+            _assignment(_ITEM_1, code=_SAIBRO),
+            _assignment(_ITEM_2, code=_SAIBRO),
+            _assignment(_ITEM_3, code=_SAIBRO),
+        ],
+    )
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SAIBRO,
+                contributions=[
+                    _full_contribution(_ITEM_1, value=Decimal("418.12"), label="PISO EM CONCRETO"),
+                    _full_contribution(
+                        _ITEM_2, value=Decimal("59.34"), label="PAVIMENTO INTERTRAVADO"
+                    ),
+                    _full_contribution(_ITEM_3, value=Decimal("1.28"), label="FORRACAO EM GRAMA"),
+                ],
+            )
+        ]
+    )
+
+    result = build_worksite_bulletin(
+        packet,
+        assignments,
+        catalog,
+        worksite_key=_WORKSITE_KEY,
+        worksite_name=_WORKSITE_NAME,
+        calc_matrix=matrix,
+    )
+
+    # Uma linha só, com a soma das três parcelas (418,12 + 59,34 + 1,28 = 478,74).
+    assert [line.code for line in result.bulletin.lines] == [_SAIBRO]
+    assert result.bulletin.lines[0].quantity == Decimal("478.74")
+    assert result.service_numbers == {_SAIBRO: "1"}
+    assert result.item_numbers == {}
+    sheet = result.calc_sheets[0]
+    assert len(sheet.blocks) == 3
+    assert sheet.total_quantity == Decimal("478.74")
+
+
+def test_matrix_regime_expands_one_element_into_many_service_lines() -> None:
+    # Um elemento (PISO EM CONCRETO) dispara a pilha construtiva inteira: seis linhas.
+    piso = _confirmed_item(item_id=_ITEM_1, label="PISO EM CONCRETO", quantity=Decimal("418.12"))
+    packet = _packet([piso])
+    catalog = _catalog([_catalog_entry(code=code, unit="m2") for code in _PACOTE_PISO])
+    assignments = _assignment_set(
+        packet, catalog, [_assignment(_ITEM_1, code=code) for code in _PACOTE_PISO]
+    )
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=code,
+                contributions=[
+                    _full_contribution(_ITEM_1, value=Decimal("418.12"), label="PISO EM CONCRETO")
+                ],
+            )
+            for code in _PACOTE_PISO
+        ]
+    )
+
+    result = build_worksite_bulletin(
+        packet,
+        assignments,
+        catalog,
+        worksite_key=_WORKSITE_KEY,
+        worksite_name=_WORKSITE_NAME,
+        calc_matrix=matrix,
+    )
+
+    assert len(result.bulletin.lines) == 6
+    assert {line.code for line in result.bulletin.lines} == set(_PACOTE_PISO)
+    assert len(result.service_numbers) == 6
+    assert all(line.quantity == Decimal("418.12") for line in result.bulletin.lines)
+
+
+def test_a_package_without_a_matrix_is_still_refused() -> None:
+    # Sem matriz, um item com dois códigos não pode virar boletim: escolher em silêncio é o
+    # defeito que a F-038 ataca. O portão continua no regime legado.
+    item = _confirmed_item(item_id=_ITEM_1, quantity=Decimal("10.00"))
+    packet = _packet([item])
+    catalog = _catalog([_catalog_entry(code=_SAIBRO), _catalog_entry(code="MT14150050(A)")])
+    assignments = _assignment_set(
+        packet,
+        catalog,
+        [_assignment(_ITEM_1, code=_SAIBRO), _assignment(_ITEM_1, code="MT14150050(A)")],
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        build_worksite_bulletin(
+            packet, assignments, catalog, worksite_key=_WORKSITE_KEY, worksite_name=_WORKSITE_NAME
+        )
+
+    assert raised.value.code == "CALC_PACKAGE_NOT_SUPPORTED"
