@@ -73,6 +73,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-035 | HIGH | DONE | [Aprovação nominal do orçamento antes do despacho](../features/F-035-aprovacao-do-orcamento/feature.md) |
 | F-036 | HIGH | DONE | [A medição do orçamento aprovado: consolidado contratual de origem](../features/F-036-vinculo-orcamento-medicao/feature.md) |
 | F-037 | HIGH | DONE | [Acervo central de catálogos de preço](../features/F-037-acervo-de-catalogos/feature.md) |
+| F-038 | HIGH | IN_PROGRESS | [O item de legenda é um pacote de serviços, não um código](../features/F-038-pacote-de-servicos/feature.md) |
 | F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 | F-031 | MEDIUM | READY_FOR_HUMAN_REVIEW | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — branch isolada `feat/f-031-value-events`, não integra no MVP |
 

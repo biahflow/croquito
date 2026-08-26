@@ -234,6 +234,7 @@ const RECIPE_LABELS: LookupTable = {
   perim_height_minus_openings: "perímetro × altura menos vãos",
   qty_times_months: "quantidade × meses",
   days_times_hours: "dias × horas",
+  declared_product: "produto dos fatores declarados",
 };
 
 export function recipeLabel(recipe: string): string {

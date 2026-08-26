@@ -11,11 +11,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated, Final, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 from uuid import UUID
 
 from pydantic import (
@@ -35,11 +35,14 @@ from croquito_valuation.sco import CONTRACT_CODE_PATTERN, SCO_CODE_PATTERN
 if TYPE_CHECKING:  # pragma: no cover - só para anotação; `contract` importa deste módulo
     from croquito_valuation.contract import ContractLine, ContractWorkbook
 
-VALUATION_SCHEMA_VERSION: Final = "2.0.0"
+VALUATION_SCHEMA_VERSION: Final = "3.0.0"
 ITEM_NUMBER_PATTERN: Final = r"^\d{1,3}(\.\d{1,3}){0,3}$"
 WORKSITE_KEY_PATTERN: Final = r"^[a-z0-9][a-z0-9-]{2,63}$"
 REFERENCE_MONTH_PATTERN: Final = r"^\d{4}-\d{2}$"
 SHA256_PATTERN: Final = r"^[a-f0-9]{64}$"
+TAKEOFF_ITEM_ID_PATTERN: Final = r"^ti_[a-f0-9]{16}$"
+"""Identidade do item de legenda. Vive aqui, e não em `takeoff`, porque a memória de
+cálculo passa a apontar para o elemento e `takeoff` importa deste módulo, não o contrário."""
 NON_SCO_CODE_PATTERN: Final = r"^[A-Z0-9][A-Z0-9./()-]{1,29}$"
 """Superset ESTRUTURAL do código de origem EMOP/composição: maiúsculas e dígitos com
 pontuação limitada (`./()-`), sem espaço, 2 a 30 caracteres. Só garante estrutura — o
@@ -208,6 +211,44 @@ class CalcRecipe(StrEnum):
     PERIM_HEIGHT_MINUS_OPENINGS = "perim_height_minus_openings"
     QTY_TIMES_MONTHS = "qty_times_months"
     DAYS_TIMES_HOURS = "days_times_hours"
+    DECLARED_PRODUCT = "declared_product"
+    """Produto dos operandos que a orçamentista declarou, sem forma fixa.
+
+    A memória real não tem um repertório fechado de fórmulas: o orçamento do Campo do Toca
+    traz 45 formas distintas e 43 termos de operando, 21 deles usados uma única vez
+    (`GOLAS x QTD/GOLA`, `REFLETORES x M/REFLETOR`, `COMP x ALT x TAXA x COEF EMOP`). Nomear
+    cada uma seria perseguir um alvo que a próxima obra move; esta receita nomeia o que
+    todas têm em comum e que `expected_subtotal` já recomputa — o produto. O sentido de cada
+    fator continua onde sempre esteve: no `name` do operando, que é dado, não identificador.
+    """
+
+
+class ContributionBasis(StrEnum):
+    """De onde vem a parcela que um bloco acrescenta à quantidade do serviço.
+
+    É o eixo que o [ADR-0053] acrescentou: um elemento da prancha alimenta vários serviços,
+    e cada bloco declara COMO. A lista é fechada porque descreve a relação, não a fórmula.
+    """
+
+    FULL = "full"
+    """A parcela é a quantidade confirmada do elemento, inteira."""
+
+    DERIVED = "derived"
+    """Sai da geometria do elemento por uma fórmula declarada (perímetro x altura)."""
+
+    PARTIAL = "partial"
+    """Recorte medido à parte, que a aritmética do elemento não produz.
+
+    O piso de 418,12 m² recebe limpeza em 170 m²: não há conta que tire um do outro. O
+    número é declarado pela orçamentista e conferido só contra o teto do elemento — o que
+    depende do item e por isso é validação do builder, não do modelo.
+    """
+
+    DEPENDENT = "dependent"
+    """Vem da quantidade de OUTRO serviço, não da prancha (transporte, carga, bota-fora)."""
+
+    STANDALONE = "standalone"
+    """Não tem origem geométrica: canteiro e administração (placa, container, vigia)."""
 
 
 class CalcOperand(ValuationContractModel):
@@ -222,9 +263,24 @@ class CalcOperand(ValuationContractModel):
 
 
 class CalcBlock(ValuationContractModel):
-    """Bloco de cálculo de um item: operandos multiplicados menos deduções."""
+    """Bloco de cálculo de um item: operandos multiplicados menos deduções.
+
+    O bloco é a parcela que UM elemento da prancha acrescenta à quantidade de UM serviço —
+    é a célula da matriz que o [ADR-0053] descreve. `label` continua sendo o texto impresso
+    na memória (e relido pelo auditor de round-trip); `source_item_id` é o mesmo vínculo,
+    agora conferível por máquina.
+    """
 
     label: str = Field(min_length=1, max_length=120)
+    source_item_id: str | None = Field(default=None, pattern=TAKEOFF_ITEM_ID_PATTERN)
+    basis: ContributionBasis | None = None
+    """`None` significa "não declarado", nunca um valor presumido.
+
+    Bloco escrito antes desta versão não afirmou base nenhuma, e um default afirmaria por
+    ele: um `PERIMETER_TIMES_HEIGHT` do M4 é `DERIVED`, não `FULL`.
+    """
+
+    derived_from_code: str | None = Field(default=None, min_length=1, max_length=30)
     recipe: CalcRecipe
     operands: list[CalcOperand] = Field(min_length=1)
     deductions: list[CalcOperand] = Field(default_factory=list)
@@ -245,6 +301,68 @@ class CalcBlock(ValuationContractModel):
                 "CALC_SUBTOTAL_MISMATCH",
                 "subtotal do bloco não confere com os operandos declarados",
                 {"label": self.label, "expected": str(expected), "declared": str(self.subtotal)},
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_contribution(self) -> CalcBlock:
+        """Coerência entre a base declarada e os vínculos que ela implica.
+
+        Só o que o bloco sabe sozinho. O teto da parcela `PARTIAL` (nunca maior que a
+        quantidade do elemento) depende do `TakeoffItem`, que este modelo não alcança: é
+        conferência de builder.
+        """
+        if self.basis is ContributionBasis.STANDALONE and self.source_item_id is not None:
+            raise ValuationValidationError(
+                "CALC_CONTRIBUTION_STANDALONE_WITH_ITEM",
+                "parcela de canteiro não nasce de elemento da prancha",
+                {"label": self.label, "source_item_id": self.source_item_id},
+            )
+        if self.basis is ContributionBasis.DEPENDENT:
+            if self.derived_from_code is None:
+                raise ValuationValidationError(
+                    "CALC_CONTRIBUTION_DEPENDENT_WITHOUT_CODE",
+                    "parcela derivada precisa dizer de qual serviço ela vem",
+                    {"label": self.label},
+                )
+        elif self.derived_from_code is not None:
+            raise ValuationValidationError(
+                "CALC_CONTRIBUTION_CODE_WITHOUT_DEPENDENCY",
+                "só parcela derivada de outro serviço cita um código de origem",
+                {
+                    "label": self.label,
+                    "basis": self.basis.value if self.basis else None,
+                    "derived_from_code": self.derived_from_code,
+                },
+            )
+        # As três bases restantes afirmam que a parcela vem de UM elemento da prancha
+        # (`FULL`, `DERIVED`) ou é um recorte medido dele (`PARTIAL`); sem `source_item_id`
+        # o bloco afirma a origem e não a nomeia. `DEPENDENT` fica de fora porque a origem
+        # dela é outro serviço, não um elemento — se também carrega elemento de origem é
+        # decisão do builder (T4, ADR-0053), não deste modelo. `basis is None` fica de fora
+        # porque é o bloco pré-matriz, que não afirmou nada.
+        if (
+            self.basis
+            in (ContributionBasis.FULL, ContributionBasis.DERIVED, ContributionBasis.PARTIAL)
+            and self.source_item_id is None
+        ):
+            raise ValuationValidationError(
+                "CALC_CONTRIBUTION_WITHOUT_SOURCE_ITEM",
+                "parcela com origem em elemento precisa apontar para o elemento",
+                {"label": self.label, "basis": self.basis.value},
+            )
+        # `derived_from_code` é texto livre no schema, mas afirma ser um código de catálogo:
+        # sem checar a forma, "codigo com espaco" ou um `ti_...` copiado por engano passam
+        # como se fossem origem válida. Mesmo superset estrutural de `haulage.validate_codes`
+        # — o contrato real traz código fora do SCO (`IE...`), então não pode exigir SCO puro.
+        if self.derived_from_code is not None and (
+            re.fullmatch(SCO_CODE_PATTERN, self.derived_from_code) is None
+            and re.fullmatch(NON_SCO_CODE_PATTERN, self.derived_from_code) is None
+        ):
+            raise ValuationValidationError(
+                "CALC_CONTRIBUTION_CODE_INVALID",
+                "código de origem da parcela não tem formato de código de catálogo",
+                {"label": self.label, "derived_from_code": self.derived_from_code},
             )
         return self
 
@@ -385,6 +503,75 @@ class ReviewerDecision(ValuationContractModel):
         return value
 
 
+# --------------------------------------------------------------------------------------
+# Digest de conteúdo governado pela versão que o artefato declara
+# --------------------------------------------------------------------------------------
+
+DigestPruning = Mapping[str, Sequence[tuple[tuple[str, ...], frozenset[str]]]]
+"""Campos a podar do payload de digest, por versão de schema.
+
+A chave é a `schema_version` **declarada pelo artefato**. O valor é uma sequência de
+podas, cada uma com o caminho até os dicionários afetados (atravessando listas) e as
+chaves que aquela versão não conhecia. São várias porque uma versão nova costuma tocar
+mais de um nível — um campo no bloco de cálculo e outro no operando dele, por exemplo.
+"""
+
+
+def _prune_versioned_fields(node: object, path: tuple[str, ...], keys: frozenset[str]) -> None:
+    """Remove `keys` dos dicionários alcançados por `path`, atravessando listas."""
+    if isinstance(node, list):
+        for element in node:
+            _prune_versioned_fields(element, path, keys)
+        return
+    if not isinstance(node, dict):
+        return
+    if not path:
+        for key in keys:
+            node.pop(key, None)
+        return
+    head = path[0]
+    if head in node:
+        _prune_versioned_fields(node[head], path[1:], keys)
+
+
+def versioned_content_digest(
+    payload: dict[str, Any], schema_version: str, pruning: DigestPruning
+) -> str:
+    """SHA-256 do payload canônico, podando o que a versão declarada não conhecia.
+
+    Existe porque o digest é o que amarra a aprovação nominal ao conteúdo aprovado: um
+    campo novo em qualquer modelo aninhado entraria no payload como `null` e mudaria o
+    digest de artefatos **já assinados**, que passariam a falhar em
+    `APPROVAL_CONTENT_MISMATCH`. Sob o ADR-0048 o orçamento assinado é o consolidado
+    contratual da medição, então isso invalidaria um contrato.
+
+    A poda é declarada por versão, nunca inferida: `exclude_none=True` resolveria o caso
+    do campo novo e, de quebra, derrubaria `CalcOperand.unit=None` — mudando o digest de
+    tudo que se queria preservar.
+
+    Consome `payload`: a poda é feita no lugar, sobre o dicionário recém-criado por
+    `model_dump()`.
+    """
+    for path, keys in pruning.get(schema_version, ()):
+        _prune_versioned_fields(payload, path, keys)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+VALUATION_DIGEST_PRUNING: Final[DigestPruning] = {
+    "2.0.0": [
+        (
+            ("calc_sheets", "blocks"),
+            frozenset({"source_item_id", "basis", "derived_from_code"}),
+        ),
+    ],
+}
+"""Medição escrita antes da matriz não conhecia os vínculos do bloco de cálculo.
+
+Sem esta entrada, o `null` dos três campos entraria no payload e mudaria o digest de toda
+medição já aprovada, que passaria a falhar em `APPROVAL_CONTENT_MISMATCH`."""
+
+
 class ValuationApproval(ValuationContractModel):
     """Aprovação nominal amarrada por digest ao conteúdo exato aprovado.
 
@@ -406,7 +593,7 @@ class Valuation(ValuationContractModel):
     planilha publicada. Ver docs/architecture/VALUATION_CONTEXT.md.
     """
 
-    schema_version: Literal["2.0.0"] = VALUATION_SCHEMA_VERSION
+    schema_version: Literal["2.0.0", "3.0.0"] = VALUATION_SCHEMA_VERSION
     id: UUID = Field(default_factory=new_uuid7)
     period_number: int = Field(ge=1)
     reference_label: str = Field(min_length=1, max_length=120)
@@ -491,13 +678,11 @@ class Valuation(ValuationContractModel):
 
     def content_digest(self) -> str:
         """SHA-256 do conteúdo canônico da medição, sem a aprovação que o referencia."""
-        payload = json.dumps(
+        return versioned_content_digest(
             self.model_dump(mode="json", exclude={"approval"}),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
+            self.schema_version,
+            VALUATION_DIGEST_PRUNING,
         )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def export_errors(self, contract: ContractWorkbook) -> list[str]:
         """Violações que impedem publicar a medição, no formato `CODE` ou `CODE:detalhe`."""

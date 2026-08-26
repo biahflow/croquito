@@ -119,7 +119,7 @@ def test_demo_writes_the_six_artifacts_of_the_consolidated_chain(tmp_path: Path)
     audit_payload = json.loads(result.audit_path.read_text(encoding="utf-8"))
     contract_payload = json.loads(result.contract_path.read_text(encoding="utf-8"))
 
-    assert valuation_payload["schema_version"] == "2.0.0"
+    assert valuation_payload["schema_version"] == "3.0.0"
     assert valuation_payload["period_number"] == contract_payload["period_numbers"][-1] + 1
     assert valuation_payload["approval"]["valuation_digest"] == result.valuation.content_digest()
     assert audit_payload["schema_version"] == "2.0.0"
@@ -207,7 +207,7 @@ def test_the_estimate_demo_publishes_only_what_the_approval_authorizes(tmp_path:
 
     payload = json.loads(result.estimate_path.read_text(encoding="utf-8"))
 
-    assert payload["schema_version"] == "2.2.0"
+    assert payload["schema_version"] == "3.0.0"
     assert payload["approval"]["estimate_digest"] == result.estimate.content_digest()
     assert payload["approval"]["decision"]["approver_role"] == "aprovador"
     assert payload["approval"]["decision"]["approver_id"] != SYNTHETIC_TAKEOFF_REVIEWER

@@ -33,8 +33,6 @@ portão, a regra é a de sempre: tudo recomputado na construção e revalidado n
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -55,16 +53,32 @@ from croquito_valuation.models import (
     SHA256_PATTERN,
     WORKSITE_KEY_PATTERN,
     CalcSheet,
+    DigestPruning,
     ExactDecimal,
     PriceCatalog,
     PriceOrigin,
     ValuationContractModel,
+    versioned_content_digest,
 )
 from croquito_valuation.rounding import money_trunc, quantity_round
 from croquito_valuation.sco import SCO_CODE_PATTERN
 from croquito_valuation.takeoff import TakeoffItem, TakeoffPacket
 
-ESTIMATE_SCHEMA_VERSION: Final = "2.2.0"
+ESTIMATE_SCHEMA_VERSION: Final = "3.0.0"
+
+ESTIMATE_DIGEST_PRUNING: Final[DigestPruning] = {
+    "2.2.0": [
+        (
+            ("calc_sheets", "blocks"),
+            frozenset({"source_item_id", "basis", "derived_from_code"}),
+        ),
+    ],
+}
+"""Orçamento assinado antes da matriz não conhecia os vínculos do bloco de cálculo.
+
+Aqui a poda vale mais do que compatibilidade de leitura: sob o ADR-0048 o orçamento
+assinado é o consolidado contratual da medição, e mover esse digest invalidaria um
+contrato."""
 
 _ITEM_ID_PATTERN: Final = r"^ti_[a-f0-9]{16}$"
 
@@ -221,7 +235,7 @@ class Estimate(ValuationContractModel):
     nunca o percentual aplicado ao total geral (decisão 4).
     """
 
-    schema_version: Literal["2.2.0"] = ESTIMATE_SCHEMA_VERSION
+    schema_version: Literal["2.2.0", "3.0.0"] = ESTIMATE_SCHEMA_VERSION
     worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
     worksite_name: str = Field(min_length=1, max_length=120)
     address: str | None = Field(default=None, min_length=1, max_length=200)
@@ -403,13 +417,11 @@ class Estimate(ValuationContractModel):
         Excluir `approval` do cálculo é o que faz assinar não mudar o que foi assinado: o
         digest gravado no ato continua conferindo com o do orçamento logo depois dele.
         """
-        payload = json.dumps(
+        return versioned_content_digest(
             self.model_dump(mode="json", exclude={"approval"}),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
+            self.schema_version,
+            ESTIMATE_DIGEST_PRUNING,
         )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def export_errors(self) -> list[str]:
         """Violações que impedem despachar o orçamento, no formato `CODE`.
