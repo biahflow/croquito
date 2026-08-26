@@ -1,7 +1,7 @@
 # F-038 T3 — A base da contribuição no bloco de cálculo
 
-Issue: [#75](https://github.com/biahflow/croquito/issues/75) · Estado: **entregue**
-(`d75847f`)
+Issue: [#75](https://github.com/biahflow/croquito/issues/75) · Estado: **aceita**
+(`d75847f`, revisada e corrigida em `e51bbf8`)
 
 ## Goal
 
@@ -56,3 +56,29 @@ de operando, 21 de ocorrência única. Entrou **uma** receita, `DECLARED_PRODUCT
 
 As âncoras de T2 passaram a reconstruir o artefato **como está gravado no banco** — sem as
 chaves que a matriz criou —, que é o payload que precisa continuar rendendo o mesmo digest.
+
+## Revisão (2026-08-26)
+
+Revisão linha a linha do `d75847f`. Os três critérios de aceite passam, e um deles foi
+provado por mutação: com os mapas de poda zerados em memória, as duas âncoras de digest
+divergem; com eles, batem com o valor literal anterior à F-038. A âncora prova o que afirma.
+
+O diff do golden do orçamento é exatamente a versão mais as três chaves `null` em cada um
+dos cinco blocos, e os goldens de planilha não aparecem no diff — nenhuma célula se moveu.
+
+**Dois defeitos, corrigidos em `e51bbf8`:**
+
+- `basis` `FULL`/`DERIVED`/`PARTIAL` com `source_item_id=None` era aceito — o bloco afirmava
+  origem em elemento sem nomear o elemento. Vira `CALC_CONTRIBUTION_WITHOUT_SOURCE_ITEM`.
+  `DEPENDENT` fica de fora com teste que fixa o silêncio: quem decide é a T4.
+- `derived_from_code` só tinha limite de tamanho e aceitava texto que não é código. Vira
+  `CALC_CONTRIBUTION_CODE_INVALID`, com o mesmo superset estrutural de `ServiceHaulage`.
+
+**Dívida registrada, não paga aqui**: `^ti_[a-f0-9]{16}$` está duplicado em `calc.py:39`,
+`assignment.py:162`, `estimate.py:83` e `amendment_dossier.py:43` além do
+`TAKEOFF_ITEM_ID_PATTERN` que esta tarefa criou. Unificar toca arquivos que estão na mão da
+T5.
+
+**Achado de fora do escopo**: a branch não passava no `make check` sozinha — `8729c1f`
+registrou o ADR-0052 no índice enquanto o arquivo dele seguia não rastreado. Corrigido em
+`557b3bd`.
