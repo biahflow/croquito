@@ -1,0 +1,2291 @@
+{
+  "version": "sco-haulage-v1",
+  "source_label": "Memória do Campo do Toca — contrato SMH/Rio (Out/2023)",
+  "derivations": [
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "AL04200056(/)",
+      "label": "TIJOLO (10X20X20)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.4",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.1",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "AL04250050(/)",
+      "label": "BLOCO (10X20X40)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.2",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.1",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "AL04250300(/)",
+      "label": "BLOCO (15X20X40)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.2",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.15",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "AL04250450(/)",
+      "label": "BLOCO (20X20X40)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.6",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.2",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "AL04270100(/)",
+      "label": "BLOCO ESTRUTURAL (15X20X40)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.6",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.15",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "AL04300200(/)",
+      "label": "COBOGÓ",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.4",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.15",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "AL09100053(A)",
+      "label": "DIVISÓRIA PARA SANITÁRIO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.8",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.02",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP04050350(/)",
+      "label": "PAV. SAIBRO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.1",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP09050400(B)",
+      "label": "PINTURA DE LIGAÇÃO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.15",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP09050500(/)",
+      "label": "RECOMPOSIÇÃO DE REVESTIMENTO (ASFALTO)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.45",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.1",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP09050700(A)",
+      "label": "CONCRETO ASFÁLTICO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.45",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.1",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP09100050(B)",
+      "label": "PAVIMENTO RÍGIDO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.1",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP09200103(A)",
+      "label": "REASSENTAMENTO DE INTERTRAVADO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.06",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP09200350(/)",
+      "label": "INTERTRAVADO (6CM)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.4",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.06",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP09200353(/)",
+      "label": "INTERTRAVADO COLORIDO (6CM)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.4",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.06",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "CI04050150(A)",
+      "label": "MADEIRAMENTO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.08",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "CI04300056(/)",
+      "label": "COBERTURA (TELHA PORTUGUESA)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.007",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "CI04350050(A)",
+      "label": "COBERTURA (CHAPA DE AÇO PINTADA)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "CI14050750(A)",
+      "label": "IMPERMEABILIZAÇÃO (MANTA ASF)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.003",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "DR64050050(/)",
+      "label": "COLCHÃO DRENANTE",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.3",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "DR64050100(/)",
+      "label": "MANTA BIDIM",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.002",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ES04300250(C)",
+      "label": "GUARDA-CORPO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.004",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ES14050150(/)",
+      "label": "PORTA DE ALUMINIO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.04",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ES14100400(/)",
+      "label": "JANELA ALUMINIO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.04",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ES44050350(/)",
+      "label": "VIDRO FANTASIA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.04",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET14200050(A)",
+      "label": "FORMAS (MADEIRIT)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.02",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET19300100(/)",
+      "label": "ESCORAMENTO (VERTICAL)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.02",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET24050150(A)",
+      "label": "ESTRUTURA METÁLICA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.1",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.01",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET39050109(/)",
+      "label": "TELA DE AÇO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET49050200(A)",
+      "label": "MURO DE CONTENÇÃO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.4",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.4",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET54050103(B)",
+      "label": "LAJE PRÉ MOLDADA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.1",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.04",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET64050200(/)",
+      "label": "TRATAMENTO DE ARMADURA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET14100100(/)",
+      "label": "FORMAS (MOLDAGEM DE PEÇAS)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.03",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04050420(/)",
+      "label": "ESPÉCIES VEGETAIS (0,6 A 1,5)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.06",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04050610(/)",
+      "label": "ESPÉCIES VEGETAIS (0,1 A 0,4)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.01",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04050630(/)",
+      "label": "ESPÉCIES VEGETAIS (0,2 A 0,8)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.02",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04050800(/)",
+      "label": "ESPÉCIES VEGETAIS (0,1 A 0,2)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.01",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04050820(/)",
+      "label": "ESPÉCIES VEGETAIS (0,1 A 0,3)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.01",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04050830(/)",
+      "label": "ESPÉCIES VEGETAIS (0,1 A 0,2) - TIPO II",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.01",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04100056(/)",
+      "label": "PLANTIO DE MUDAS (12/M²)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.04",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04100065(/)",
+      "label": "PLANTIO DE MUDAS (25/M²)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.04",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04100100(A)",
+      "label": "PLANTIO DE GRAMA (SÃO CARLOS)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.05",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04100112(/)",
+      "label": "PLANTIO DE GRAMA (ZOIZIA JAPONICA)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.05",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04100500(/)",
+      "label": "BIOMANTA VEGETAL",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04200105(/)",
+      "label": "PISO DE GRAMA SINTÉTICA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.01",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ14100203(A)",
+      "label": "TELA ALAMBRADO (S/ REVESTIMENTO)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ14100500(/)",
+      "label": "TELA ALAMBRADO (C/ REVESTIMENTO)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ14100900(/)",
+      "label": "TELA POLIETILENO (AÉREA)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ14150203(A)",
+      "label": "ALAMBRADO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "0.004",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PT04150050(B)",
+      "label": "PREPARO (PINTURA)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PT04150150(/)",
+      "label": "PINTURA ACRÍLICA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PT04250506(/)",
+      "label": "REPINTURA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PT04300103(/)",
+      "label": "ENVERNIZAMENTO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PT04300250(/)",
+      "label": "PINTURA (CONCRETO)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PT04400103(/)",
+      "label": "PINTURA (FERRO)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PT04400350(/)",
+      "label": "REPINTURA (FERRO)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PT04450100(/)",
+      "label": "PINTURA DE QUADRA (ACRILICA)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PT09050100(/)",
+      "label": "TEXTURA (ACRÍLICA)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PT04450050(/)",
+      "label": "MARCAÇÃO DE QUADRA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "RV09050050(/)",
+      "label": "CHAPISCO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.6",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.01",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "RV09050106(A)",
+      "label": "EMBOÇO + CHAPISCO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.8",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.03",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "RV09300300(A)",
+      "label": "FORRO EM PLACA DE PVC",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.008",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "RV14050059(/)",
+      "label": "CONTRAPISO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.8",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.03",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "RV14100050(A)",
+      "label": "RECOMPOSIÇÃO DE PISO CIMENTADO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.8",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.02",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "RV14150081(A)",
+      "label": "PISO PORCELANATO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.7",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "RV14200600(/)",
+      "label": "PÁTIO DE CONCRETO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.1",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "RV14650050(/)",
+      "label": "RECOMPOSIÇÃO (PEDRA PORTUGUESA)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.7",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "RV14900040(/)",
+      "label": "CAMADA AMORTECEDORA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.01",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "IE00040849",
+      "label": "TIJOLO REFRATÁRIO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.01",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP04050050(/)",
+      "label": "BRITA CORRIDA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.95",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP04050100(A)",
+      "label": "COLCHÃO DE AREIA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.6",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP04050103(A)",
+      "label": "PÓ DE PEDRA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.7",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP09050150(/)",
+      "label": "CONCRETO ASFÁLTICO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.45",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "BP09050355(/)",
+      "label": "REPARADOR DE PAV. (ASFALTO N/ EMULSIONADO)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.45",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "DR54050050(/)",
+      "label": "CAMADA DE BRITA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "DR54050053(/)",
+      "label": "PEDRA BRITADA  (1 E 2)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "DR54050450(A)",
+      "label": "EMBASAMENTO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.7",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET04350050(A)",
+      "label": "BRITA CORRIDA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.4",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET04600150(/)",
+      "label": "CONCRETO DOSADO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.2",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET04600200(/)",
+      "label": "CONCRETO ARMADO (20MPA)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.4",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET19200050(/)",
+      "label": "ESCORAMENTO (HORIZONTAL)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET44050050(A)",
+      "label": "CONCRETO PROJETADO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.2",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET44100071(/)",
+      "label": "CONCRETO BOMBEADO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.2",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "ET59050074(/)",
+      "label": "CONCRETO IMPORTADO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.4",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "MT14050050(/)",
+      "label": "ATERRO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "MT14050250(/)",
+      "label": "REATERRO DE VALA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "MT14050300(/)",
+      "label": "REATERRO DE VALA (PÓ DE PEDRA)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ19050060(/)",
+      "label": "TERRA ESTRUMADA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC14050400(/)",
+      "label": "PÓ-DE-PEDRA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.7",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC14050550(/)",
+      "label": "SAIBRO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.3",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "MT14150050(A)",
+      "label": "PREPARO DE SOLO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.3",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "PJ04200500(/)",
+      "label": "REMOÇÃO DE GRAMA SINTÉTICA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.01",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC04050200(/)",
+      "label": "ARRANCAMENTO DE GRADES E GRADIS",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC04050300(/)",
+      "label": "ARRANCAMENTO PARALELEPÍPEDO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "2.1",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.06",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC04051200(/)",
+      "label": "DEMOLIÇÃO DE PISO (ALTA RESISTÊNCIA)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.1",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC04051250(/)",
+      "label": "DEMOLIÇÃO MANUAL DE PISO CIMENTADO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.05",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC04051350(/)",
+      "label": "DEMOLIÇÃO DE PISO CERÂMICO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.003",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC04051450(/)",
+      "label": "DEMOLIÇÃO DE REVESTIMENTO CERÂMICO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.003",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC04051500(/)",
+      "label": "DEMOLIÇÃO DE ARGAMASSA (PAREDE)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.01",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC04052000(/)",
+      "label": "REMOÇÃO TELHA COLONIAL",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.003",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC04052700(/)",
+      "label": "REMOÇÃO DE FORRO (FRISO DE MADEIRA, EUCATEX OU SIMILARES)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.005",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC04053000(/)",
+      "label": "REMOÇÃO DE INTERTRAVADO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.05",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC04100100(/)",
+      "label": "DEMOLIÇÃO DE PASSEIO (COM EQUIPAMENTO)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.1",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "SC29100050(/)",
+      "label": "LIXAMENTO",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.001",
+          "unit": "m"
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "MT04050050(/)",
+      "label": "ESCAVAÇÃO MANUAL (ATÉ 1,50)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04100050(/)",
+      "origin_code": "MT04300050(/)",
+      "label": "ESCAVAÇÃO MANUAL (ATÉ 0,50)",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "DAM",
+          "value": "3.5",
+          "unit": "dam"
+        }
+      ]
+    },
+    {
+      "target_code": "TC04150100(/)",
+      "origin_code": "MT04300050(/)",
+      "label": "ESCAVAÇÃO MANUAL",
+      "factors": [
+        {
+          "name": "EMP",
+          "value": "1.3",
+          "unit": null
+        }
+      ]
+    },
+    {
+      "target_code": "TC09050300(/)",
+      "origin_code": "MT14150050(A)",
+      "label": "PREPARO MANUAL",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        },
+        {
+          "name": "ESP",
+          "value": "0.3",
+          "unit": "m"
+        }
+      ]
+    },
+    {
+      "target_code": "TC09050300(/)",
+      "origin_code": "MT04300050(/)",
+      "label": "ESCAVAÇÃO VALA",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        }
+      ]
+    },
+    {
+      "target_code": "TC09050300(/)",
+      "origin_code": "MT04050050(/)",
+      "label": "ESCAVAÇÃO MANUAL",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        }
+      ]
+    },
+    {
+      "target_code": "TC09050350(/)",
+      "origin_code": "MT09050050(/)",
+      "label": "PREPARO MANUAL",
+      "factors": [
+        {
+          "name": "P.ESP",
+          "value": "1.5",
+          "unit": null
+        }
+      ]
+    }
+  ],
+  "unmapped_labels": [
+    "APICOAMENTO",
+    "COBERTURA (CHAPAS DE ALUMINIO)",
+    "JANELA ALUMINIO",
+    "PINTURA DE SUPERFÍCIE (EPÓXI)",
+    "REVESTIMENTO (PAREDE)",
+    "TELHA (TRAPEZOIDAL)"
+  ]
+}
