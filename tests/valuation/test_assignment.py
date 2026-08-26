@@ -26,6 +26,8 @@ from croquito_valuation.assignment import (
     CodeAssignmentSet,
     CodeCandidate,
     CodeSuggestionSet,
+    ItemPackageClosure,
+    ItemPackageClosureInput,
     SuggestionConfig,
     SuggestionRefinement,
     SuggestionSemantics,
@@ -74,6 +76,11 @@ _ITEM_2 = "ti_0000000000000002"
 _ITEM_3 = "ti_0000000000000003"
 _REVIEWER = "orcamentista-sintetico"
 _DECIDED_AT = datetime(2026, 2, 1, 12, 0, tzinfo=UTC)
+_LATER = datetime(2026, 2, 2, 9, 0, tzinfo=UTC)
+# Os dois códigos do caso real que fechou a questão do ADR-0053: a estrutura tubular e a
+# tela que ela prende, ambas medidas pela mesma área de fachada do mesmo elemento.
+_CODE_ALAMBRADO = "CE04100010(/)"
+_CODE_TELA = "CE04100020(/)"
 
 
 def _evidence(
@@ -94,6 +101,21 @@ def _decision(action: Literal["confirm", "reject"] = "confirm") -> ReviewerDecis
         reviewer_id=_REVIEWER,
         reviewer_role="orcamentista",
         decided_at=_DECIDED_AT,
+    )
+
+
+def _closure_input(
+    *,
+    item_id: str = _ITEM_1,
+    decided_at: datetime = _DECIDED_AT,
+    note: str | None = None,
+) -> ItemPackageClosureInput:
+    return ItemPackageClosureInput(
+        item_id=item_id,
+        reviewer_id=_REVIEWER,
+        reviewer_role="orcamentista",
+        decided_at=decided_at,
+        note=note,
     )
 
 
@@ -192,6 +214,21 @@ def _catalog(
         reference_month="2026-01",
         source_sha256=source_sha256,
         entries=entries if entries is not None else [_catalog_entry()],
+    )
+
+
+def _package_catalog() -> PriceCatalog:
+    """Catálogo com os dois códigos do pacote, para o elemento que dispara mais de um."""
+    return _catalog(
+        [
+            _catalog_entry(code=_CODE_ALAMBRADO),
+            _catalog_entry(
+                code=_CODE_TELA,
+                description="TELA DE ALAMBRADO",
+                unit="m2",
+                unit_price=Decimal("30.00"),
+            ),
+        ]
     )
 
 
@@ -781,13 +818,71 @@ def test_apply_refuses_re_deciding_an_already_decided_item() -> None:
     assert raised.value.code == "ASSIGNMENT_ITEM_ALREADY_DECIDED"
 
 
-def test_batch_refuses_two_decisions_for_the_same_item() -> None:
+def test_batch_refuses_the_same_pair_twice() -> None:
+    """O que era duplicidade de ITEM virou duplicidade de PAR.
+
+    Sob N:N, duas decisões para o mesmo item deixaram de ser erro — são o pacote. O que
+    continua sem sentido é decidir duas vezes o mesmo par.
+    """
     decision = _assignment_input()
 
     with pytest.raises(ValidationError) as raised:
         CodeAssignmentBatch(assignments=[decision, decision])
 
+    assert valuation_error_codes(raised.value) == ["ASSIGNMENT_DUPLICATE_PAIR"]
+
+
+def test_batch_accepts_two_codes_for_the_same_item() -> None:
+    """A refutação da premissa 1:1, no menor teste possível.
+
+    `PISO EM CONCRETO` dispara seis serviços; dois bastam para provar que o lote os aceita.
+    """
+    batch = CodeAssignmentBatch(
+        assignments=[
+            _assignment_input(code=_CODE_ALAMBRADO),
+            _assignment_input(code=_CODE_TELA),
+        ]
+    )
+
+    assert [decision.code for decision in batch.assignments] == [_CODE_ALAMBRADO, _CODE_TELA]
+
+
+def test_batch_refuses_two_rejections_for_the_same_item() -> None:
+    """`ASSIGNMENT_DUPLICATE_ITEM` fica, com o significado que sobrou do regime antigo."""
+    rejection = _assignment_input(action="reject", code=None, note="sem cotação")
+
+    with pytest.raises(ValidationError) as raised:
+        CodeAssignmentBatch(assignments=[rejection, rejection])
+
     assert valuation_error_codes(raised.value) == ["ASSIGNMENT_DUPLICATE_ITEM"]
+
+
+def test_batch_refuses_rejecting_and_confirming_the_same_item() -> None:
+    """Rejeitar é dizer que NENHUM serviço precifica o elemento; não é uma opinião parcial."""
+    with pytest.raises(ValidationError) as raised:
+        CodeAssignmentBatch(
+            assignments=[
+                _assignment_input(),
+                _assignment_input(action="reject", code=None, note="sem cotação"),
+            ]
+        )
+
+    assert valuation_error_codes(raised.value) == ["ASSIGNMENT_REJECT_WITH_CONFIRMED"]
+
+
+def test_batch_refuses_being_empty() -> None:
+    """`assignments` perdeu o `min_length=1` para caber fechamento sozinho — não para sumir."""
+    with pytest.raises(ValidationError) as raised:
+        CodeAssignmentBatch()
+
+    assert valuation_error_codes(raised.value) == ["ASSIGNMENT_BATCH_EMPTY"]
+
+
+def test_batch_refuses_closing_the_same_item_twice() -> None:
+    with pytest.raises(ValidationError) as raised:
+        CodeAssignmentBatch(assignments=[], closures=[_closure_input(), _closure_input()])
+
+    assert valuation_error_codes(raised.value) == ["ASSIGNMENT_DUPLICATE_CLOSURE"]
 
 
 def test_confirm_without_code_is_refused() -> None:
@@ -858,6 +953,266 @@ def test_apply_refuses_incompatible_unit_without_note() -> None:
         apply_code_assignments(packet, batch, _catalog())
 
     assert raised.value.code == "ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE"
+
+
+def _code_assignment(
+    *,
+    item_id: str = _ITEM_1,
+    code: str | None = _CODE_ALAMBRADO,
+    status: Literal["confirmed", "rejected"] = "confirmed",
+) -> CodeAssignment:
+    return CodeAssignment(
+        item_id=item_id,
+        status=status,
+        code=code,
+        unit_compatible=True,
+        decision=_decision("confirm" if status == "confirmed" else "reject"),
+    )
+
+
+def _legacy_set(assignments: list[CodeAssignment]) -> CodeAssignmentSet:
+    """Conjunto como toda rodada anterior ao ADR-0053 está gravada no banco."""
+    return CodeAssignmentSet(
+        schema_version="1.0.0",
+        plate_id=_PLATE_ID,
+        page_number=1,
+        image_sha256=_DIGEST,
+        catalog_sha256=_CATALOG_DIGEST,
+        assignments=assignments,
+        safety_notes=["nota de segurança um", "nota de segurança dois"],
+    )
+
+
+def test_a_package_grows_across_batches_and_stays_open_until_closed() -> None:
+    """O caso que a tarefa existe para permitir, do primeiro código até o fechamento.
+
+    Entre um código e outro o item continua PENDENTE. É essa a diferença entre "resolvido"
+    e "pela metade" que a cardinalidade 1:1 não sabia expressar.
+    """
+    packet = _packet([_confirmed_item(unit="m")])
+    catalog = _package_catalog()
+
+    first = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(assignments=[_assignment_input(code=_CODE_ALAMBRADO)]),
+        catalog,
+    )
+    assert first.schema_version == "2.0.0"
+    assert first.open_package_item_ids() == frozenset({_ITEM_1})
+    assert first.closed_item_ids() == frozenset()
+
+    second = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(assignments=[_assignment_input(code=_CODE_TELA)]),
+        catalog,
+        previous=first,
+    )
+    assert second.confirmed_codes_by_item() == {_ITEM_1: (_CODE_ALAMBRADO, _CODE_TELA)}
+    assert second.open_package_item_ids() == frozenset({_ITEM_1})
+
+    third = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(closures=[_closure_input()]),
+        catalog,
+        previous=second,
+    )
+    assert third.closed_item_ids() == frozenset({_ITEM_1})
+    assert third.open_package_item_ids() == frozenset()
+    assert [closure.item_id for closure in third.closures] == [_ITEM_1]
+
+
+def test_apply_refuses_adding_a_code_to_a_closed_package() -> None:
+    """Sem esta recusa o fechamento não afirmaria nada: bastaria mandar mais um código."""
+    packet = _packet([_confirmed_item(unit="m")])
+    catalog = _package_catalog()
+    closed = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(
+            assignments=[_assignment_input(code=_CODE_ALAMBRADO)],
+            closures=[_closure_input()],
+        ),
+        catalog,
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments(
+            packet,
+            CodeAssignmentBatch(assignments=[_assignment_input(code=_CODE_TELA)]),
+            catalog,
+            previous=closed,
+        )
+
+    assert raised.value.code == "ASSIGNMENT_ITEM_ALREADY_CLOSED"
+
+
+def test_apply_refuses_closing_a_package_twice() -> None:
+    packet = _packet([_confirmed_item(unit="m")])
+    catalog = _package_catalog()
+    closed = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(
+            assignments=[_assignment_input(code=_CODE_ALAMBRADO)],
+            closures=[_closure_input()],
+        ),
+        catalog,
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments(
+            packet,
+            CodeAssignmentBatch(closures=[_closure_input(decided_at=_LATER)]),
+            catalog,
+            previous=closed,
+        )
+
+    assert raised.value.code == "ASSIGNMENT_DUPLICATE_CLOSURE"
+
+
+def test_apply_refuses_closing_an_item_without_a_confirmed_code() -> None:
+    packet = _packet([_confirmed_item(unit="m")])
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments(
+            packet, CodeAssignmentBatch(closures=[_closure_input()]), _package_catalog()
+        )
+
+    assert raised.value.code == "ASSIGNMENT_CLOSURE_WITHOUT_ASSIGNMENT"
+
+
+def test_a_rejection_closes_the_item_by_itself() -> None:
+    """Declarar que nenhum serviço precifica o elemento já é dizer que não vem mais nada."""
+    packet = _packet([_confirmed_item(unit="m")])
+
+    result = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(
+            assignments=[_assignment_input(action="reject", code=None, note="sem cotação")]
+        ),
+        _package_catalog(),
+    )
+
+    assert result.closed_item_ids() == frozenset({_ITEM_1})
+    assert result.open_package_item_ids() == frozenset()
+    assert result.closures == []
+
+
+def test_a_divergent_unit_inside_a_package_confirms_without_a_note() -> None:
+    """Com pacote, a divergência de unidade é o caso normal — a nota viraria ruído.
+
+    Um elemento em metros alimenta legitimamente um serviço em m². Exigir nota aqui faria
+    toda confirmação carregar uma, e nota que sempre aparece é nota que ninguém lê.
+    """
+    packet = _packet([_confirmed_item(unit="m")])
+    batch = CodeAssignmentBatch(
+        assignments=[
+            _assignment_input(code=_CODE_ALAMBRADO),
+            _assignment_input(code=_CODE_TELA, note=None),
+        ]
+    )
+
+    result = apply_code_assignments(packet, batch, _package_catalog())
+
+    tela = result.assignments[1]
+    assert tela.code == _CODE_TELA
+    assert tela.unit_compatible is False
+    assert tela.decision.note is None
+
+
+def test_a_divergent_unit_still_refuses_when_the_item_has_a_single_code() -> None:
+    """O regime espelho não afrouxou: com um código só, a unidade divergente segue recusando."""
+    packet = _packet([_confirmed_item(unit="m")])
+    batch = CodeAssignmentBatch(assignments=[_assignment_input(code=_CODE_TELA, note=None)])
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments(packet, batch, _package_catalog())
+
+    assert raised.value.code == "ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE"
+
+
+def test_a_legacy_set_refuses_carrying_closures() -> None:
+    with pytest.raises(ValidationError) as raised:
+        CodeAssignmentSet(
+            schema_version="1.0.0",
+            plate_id=_PLATE_ID,
+            page_number=1,
+            image_sha256=_DIGEST,
+            catalog_sha256=_CATALOG_DIGEST,
+            assignments=[_code_assignment()],
+            closures=[ItemPackageClosure(item_id=_ITEM_1, decision=_decision())],
+            safety_notes=["nota de segurança um", "nota de segurança dois"],
+        )
+
+    assert valuation_error_codes(raised.value) == ["ASSIGNMENT_CLOSURE_NOT_SUPPORTED"]
+
+
+def test_a_legacy_set_keeps_refusing_two_assignments_for_the_same_item() -> None:
+    """O regime antigo relê com a regra antiga; o bump não muda o que já está gravado."""
+    with pytest.raises(ValidationError) as raised:
+        _legacy_set([_code_assignment(), _code_assignment(code=_CODE_TELA)])
+
+    assert valuation_error_codes(raised.value) == ["ASSIGNMENT_DUPLICATE_ITEM"]
+
+
+def test_a_legacy_set_counts_every_decided_item_as_closed() -> None:
+    """Em 1.0.0 a confirmação ERA o fechamento: um código era o pacote inteiro."""
+    legacy = _legacy_set([_code_assignment(), _code_assignment(item_id=_ITEM_2, code=_CODE_TELA)])
+
+    assert legacy.closed_item_ids() == frozenset({_ITEM_1, _ITEM_2})
+    assert legacy.open_package_item_ids() == frozenset()
+
+
+def test_carrying_a_legacy_set_forward_reuses_its_decisions_as_closures() -> None:
+    """Migrar não pode fabricar ato humano: o fechamento reusa o `vd_` que já existia.
+
+    Um `decision_id` novo aqui seria a prova de que o sistema assinou no lugar de alguém.
+    """
+    packet = _packet([_confirmed_item(unit="m"), _confirmed_item(item_id=_ITEM_2, unit="m")])
+    legacy = _legacy_set([_code_assignment()])
+
+    migrated = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(assignments=[_assignment_input(item_id=_ITEM_2, code=_CODE_ALAMBRADO)]),
+        _package_catalog(),
+        previous=legacy,
+    )
+
+    assert migrated.schema_version == "2.0.0"
+    assert [closure.item_id for closure in migrated.closures] == [_ITEM_1]
+    assert migrated.closures[0].decision == legacy.assignments[0].decision
+    # O item antigo chega fechado; o novo nasce com o pacote aberto, como qualquer outro.
+    assert migrated.closed_item_ids() == frozenset({_ITEM_1})
+    assert migrated.open_package_item_ids() == frozenset({_ITEM_2})
+
+
+def test_the_closure_decision_id_is_deterministic_and_distinct_from_the_confirmation() -> None:
+    """O discriminador do payload é o que separa os dois atos do mesmo revisor e instante."""
+    packet = _packet([_confirmed_item(unit="m")])
+    result = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(
+            assignments=[_assignment_input(code=_CODE_ALAMBRADO)],
+            closures=[_closure_input()],
+        ),
+        _package_catalog(),
+    )
+
+    canonical = json.dumps(
+        {
+            "kind": "package_closure",
+            "item_id": _ITEM_1,
+            "reviewer_id": _REVIEWER,
+            "reviewer_role": "orcamentista",
+            "decided_at": _DECIDED_AT.isoformat(),
+            "note": None,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    expected = f"vd_{hashlib.sha256(canonical.encode()).hexdigest()[:16]}"
+
+    assert result.closures[0].decision.decision_id == expected
+    assert result.closures[0].decision.decision_id != result.assignments[0].decision.decision_id
 
 
 def test_apply_confirms_incompatible_unit_with_note_and_records_it() -> None:

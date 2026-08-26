@@ -47,7 +47,11 @@ from croquito_api.valuation_rounds import (
     signed_artifact_url,
 )
 from croquito_core.ids import new_uuid7
-from croquito_valuation.assignment import CodeAssignment, CodeAssignmentSet
+from croquito_valuation.assignment import (
+    CodeAssignment,
+    CodeAssignmentSet,
+    ItemPackageClosure,
+)
 from croquito_valuation.models import (
     PriceCatalog,
     PriceCatalogEntry,
@@ -151,6 +155,14 @@ def _packet(items: list[TakeoffItem] | None = None) -> TakeoffPacket:
 
 
 def _assignment_set(*, status: Literal["confirmed", "rejected"] = "confirmed") -> CodeAssignmentSet:
+    decision = ReviewerDecision(
+        decision_id="vd_0123456789abcdff",
+        action="confirm" if status == "confirmed" else "reject",
+        reviewer_id=_REVIEWER,
+        reviewer_role="orcamentista",
+        decided_at=_DECIDED_AT,
+        note=None if status == "confirmed" else "item sem código no catálogo",
+    )
     return CodeAssignmentSet(
         plate_id=_PLATE_ID,
         page_number=1,
@@ -162,16 +174,17 @@ def _assignment_set(*, status: Literal["confirmed", "rejected"] = "confirmed") -
                 status=status,
                 code="CE04100010(/)" if status == "confirmed" else None,
                 unit_compatible=True,
-                decision=ReviewerDecision(
-                    decision_id="vd_0123456789abcdff",
-                    action="confirm" if status == "confirmed" else "reject",
-                    reviewer_id=_REVIEWER,
-                    reviewer_role="orcamentista",
-                    decided_at=_DECIDED_AT,
-                    note=None if status == "confirmed" else "item sem código no catálogo",
-                ),
+                decision=decision,
             )
         ],
+        # Fixture no regime de pacote (`2.0.0`): o item confirmado nasce com o pacote
+        # FECHADO, que é o que a orçamentista faz quando o elemento dispara um serviço só.
+        # A rejeição fecha o item sozinha e não leva fechamento declarado.
+        closures=(
+            [ItemPackageClosure(item_id=_ITEM_1, decision=decision)]
+            if status == "confirmed"
+            else []
+        ),
         safety_notes=[
             "Confirmação de código é ato humano; sugestão não confirma nada.",
             "Código fora do catálogo instalado é recusado.",

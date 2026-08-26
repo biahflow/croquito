@@ -17,7 +17,11 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
-from croquito_valuation.assignment import CodeAssignment, CodeAssignmentSet
+from croquito_valuation.assignment import (
+    CodeAssignment,
+    CodeAssignmentSet,
+    ItemPackageClosure,
+)
 from croquito_valuation.calc import CalcBlockPlan, CalcPlan, ItemCalcPlan
 from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
 from croquito_valuation.estimate import Estimate, build_worksite_estimate
@@ -229,12 +233,21 @@ def _assignment_set(
     plate_id: str = _PLATE_ID,
     catalog_sha256: str = _SCO_DIGEST,
 ) -> CodeAssignmentSet:
+    entries = assignments if assignments is not None else _default_assignments()
     return CodeAssignmentSet(
         plate_id=plate_id,
         page_number=1,
         image_sha256=_DIGEST,
         catalog_sha256=catalog_sha256,
-        assignments=assignments if assignments is not None else _default_assignments(),
+        assignments=entries,
+        # Fixture no regime de pacote (`2.0.0`): cada item confirmado nasce com o pacote
+        # FECHADO, que é o que a orçamentista faz quando o elemento dispara um serviço só.
+        # Sem isso o boletim recusaria em `CALC_PACKAGE_NOT_CLOSED`, e com razão.
+        closures=[
+            ItemPackageClosure(item_id=item.item_id, decision=item.decision)
+            for item in entries
+            if item.status == "confirmed"
+        ],
         safety_notes=[
             "Confirmação de código é ato humano rastreável.",
             "A fonte de preço de cada item é a citada na confirmação.",

@@ -26,7 +26,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final, Literal
 
-from croquito_valuation.assignment import CodeAssignmentBatch, CodeAssignmentInput
+from croquito_valuation.assignment import (
+    CodeAssignmentBatch,
+    CodeAssignmentInput,
+    ItemPackageClosureInput,
+)
 from croquito_valuation.composition import CompositionLine, CompositionSet, CostComposition
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.models import PriceCatalog, PriceOrigin
@@ -211,5 +215,20 @@ def build_demo_estimate_assignments(
                 note=decision.note,
             )
             for decision in _DEMO_ESTIMATE_DECISIONS
-        ]
+        ],
+        # O orçamentista sintético fecha o pacote de cada elemento que precificou: na
+        # prancha sintética um elemento dispara um serviço só, e é isso que ele declara.
+        # Sem o ato, `build-calc` recusaria em `CALC_PACKAGE_NOT_CLOSED` — e recusaria certo,
+        # porque "um código" e "o pacote inteiro" deixaram de ser a mesma afirmação.
+        # A luminária rejeitada não entra: a rejeição fecha o item sozinha.
+        closures=[
+            ItemPackageClosureInput(
+                item_id=item_for_label(packet, decision.label).id,
+                reviewer_id=SYNTHETIC_TAKEOFF_REVIEWER,
+                reviewer_role="orcamentista",
+                decided_at=SYNTHETIC_ESTIMATE_DECIDED_AT,
+            )
+            for decision in _DEMO_ESTIMATE_DECISIONS
+            if decision.action == "confirm"
+        ],
     )

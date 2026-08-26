@@ -1608,6 +1608,24 @@ def _decide_code(
     )
 
 
+def _close_package(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    tenant: str = _TENANT,
+    key: str = "fechamento-001",
+    **body: Any,
+) -> Any:
+    payload: dict[str, Any] = {"base_version": base_version, "item_id": _ITEM_CLEAR}
+    payload.update(body)
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/code-assignments/closures",
+        headers=_headers(tenant, key=key),
+        json=payload,
+    )
+
+
 def test_a_shortlist_e_calculada_uma_vez_e_nao_avanca_a_versao_da_rodada(tmp_path: Path) -> None:
     """Artefato derivado entra na cadeia sem mover o token de concorrência (decisão de
     2026-08-17): um `GET` que avançasse a versão faria a decisão seguinte levar `409`."""
@@ -1930,7 +1948,11 @@ def test_a_confirmacao_de_codigo_grava_revisao_e_avanca_a_versao(tmp_path: Path)
     assert body["version"] == prepared["version"] + 1
     assert body["confirmed"] == 1
     assert body["rejected"] == 0
-    assert body["pending_items"] == []
+    assert body["closed"] == 0
+    # Confirmar UM código não termina o item: sob a cardinalidade N:N o elemento pode
+    # disparar mais serviços, e só o fechamento diz que não dispara. Enquanto isso ele
+    # continua na lista do que falta fazer, que é a que a tela mostra.
+    assert [item["item_id"] for item in body["pending_items"]] == [_ITEM_CLEAR]
     assignment = body["assignments"]["assignments"][0]
     assert assignment["item_id"] == _ITEM_CLEAR
     assert assignment["code"] == _CATALOG_CODE
@@ -2251,7 +2273,21 @@ def _round_with_decided_code(
         **({} if action == "confirm" else rejeicao),
     )
     assert decided.status_code == 200, decided.text
-    return {"round_id": prepared["round_id"], "version": decided.json()["version"]}
+    if action != "confirm":
+        # A rejeição fecha o item sozinha: não há pacote a declarar completo.
+        return {"round_id": prepared["round_id"], "version": decided.json()["version"]}
+
+    # O boletim não é montado sobre pacote aberto. Fechar é ato humano próprio, e passa
+    # pela ROTA pelo mesmo motivo que a decisão de código: fabricá-lo à mão esconderia a
+    # precondição que `CALC_PACKAGE_NOT_CLOSED` existe para cobrar.
+    closed = _close_package(
+        client,
+        prepared["round_id"],
+        base_version=decided.json()["version"],
+        key=f"{key}-fechamento",
+    )
+    assert closed.status_code == 200, closed.text
+    return {"round_id": prepared["round_id"], "version": closed.json()["version"]}
 
 
 def _stored_document(client: TestClient, round_id: str, column: str) -> dict[str, Any]:
@@ -2349,7 +2385,8 @@ def test_o_corpo_do_calc_recusa_a_identidade_da_obra(tmp_path: Path) -> None:
         assert response.status_code == 422, campo
         assert "extra" in response.text.lower()
 
-    assert len(_revisions(client)) == 3
+    # Uma revisão a mais que antes: o fechamento do pacote é ato próprio e grava a sua.
+    assert len(_revisions(client)) == 4
     assert _round_version(client, prepared["round_id"]) == prepared["version"]
 
 
@@ -2463,7 +2500,8 @@ def test_o_calc_recusa_base_version_divergente_e_exige_idempotency_key(tmp_path:
     assert conflito.json()["detail"]["code"] == "REVISION_CONFLICT"
     assert headerless.status_code == 400
     assert headerless.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
-    assert len(_revisions(client)) == 3
+    # Uma revisão a mais que antes: o fechamento do pacote é ato próprio e grava a sua.
+    assert len(_revisions(client)) == 4
     assert _round_version(client, prepared["round_id"]) == prepared["version"]
 
 
@@ -2479,7 +2517,8 @@ def test_idempotencia_do_calc_devolve_a_mesma_resposta(tmp_path: Path) -> None:
     assert second.json() == first.json()
     assert reused.status_code == 409
     assert reused.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
-    assert len(_revisions(client)) == 4
+    # Uma revisão a mais que antes: o fechamento do pacote é ato próprio e grava a sua.
+    assert len(_revisions(client)) == 5
 
 
 def test_o_boletim_e_recomputado_na_leitura_e_nunca_servido_como_gravado(tmp_path: Path) -> None:
@@ -2722,7 +2761,8 @@ def test_papel_e_tenant_valem_nas_rotas_de_fechamento(tmp_path: Path) -> None:
     assert all(response.json()["detail"]["code"] == "FORBIDDEN" for response in sem_papel)
     assert [response.status_code for response in outro_tenant] == [404] * 4
     assert [response.status_code for response in sem_token] == [401] * 4
-    assert len(_revisions(client)) == 3
+    # Uma revisão a mais que antes: o fechamento do pacote é ato próprio e grava a sua.
+    assert len(_revisions(client)) == 4
     assert _round_version(client, round_id) == prepared["version"]
 
 

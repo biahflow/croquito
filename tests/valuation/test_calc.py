@@ -9,7 +9,11 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
-from croquito_valuation.assignment import CodeAssignment, CodeAssignmentSet
+from croquito_valuation.assignment import (
+    CodeAssignment,
+    CodeAssignmentSet,
+    ItemPackageClosure,
+)
 from croquito_valuation.calc import (
     DEFAULT_BLOCK_LABEL,
     DEFAULT_OPERAND_NAME,
@@ -164,6 +168,14 @@ def _assignment_set(
         image_sha256=packet.image_sha256,
         catalog_sha256=catalog.source_sha256,
         assignments=assignments,
+        # Fixture no regime de pacote (`2.0.0`): cada item confirmado nasce com o pacote
+        # FECHADO, que é o que a orçamentista faz quando o elemento dispara um serviço só.
+        # Sem isso o boletim recusaria em `CALC_PACKAGE_NOT_CLOSED`, e com razão.
+        closures=[
+            ItemPackageClosure(item_id=item.item_id, decision=item.decision)
+            for item in assignments
+            if item.status == "confirmed"
+        ],
         safety_notes=[
             "Confirmação de código é ato humano rastreável; a sugestão lexical nunca "
             "confirma sozinha.",

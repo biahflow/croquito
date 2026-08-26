@@ -425,10 +425,30 @@ def _build_round_through_calc(
             lawn_note = assignment.note
     assert lawn_note == _LAWN_REJECTION_NOTE
 
+    # 8b. Confirmar o código não termina o elemento: só o FECHAMENTO diz que o pacote de
+    # serviços dele está completo. Antes do ato, todo item confirmado segue pendente.
+    aberto = client.get(
+        f"/v1/valuation-rounds/{round_id}/code-assignments", headers=_headers()
+    ).json()
+    assert aberto["closed"] == 1, "só o gramado rejeitado fecha sozinho antes do ato"
+    assert len(aberto["pending_items"]) == len(_CATALOG_UNIT_PRICE)
+
+    for index, assignment in enumerate(code_decisions):
+        if assignment.action != "confirm":
+            continue  # a rejeição fecha o item sozinha
+        response = client.post(
+            f"/v1/valuation-rounds/{round_id}/code-assignments/closures",
+            headers=_headers(f"fechamento-pacote-{index}"),
+            json={"base_version": version, "item_id": assignment.item_id},
+        )
+        assert response.status_code == 200, response.text
+        version = response.json()["version"]
+
     assignments_state = client.get(
         f"/v1/valuation-rounds/{round_id}/code-assignments", headers=_headers()
     ).json()
     assert assignments_state["pending_items"] == []
+    assert assignments_state["closed"] == len(_CATALOG_UNIT_PRICE) + 1
     assert assignments_state["confirmed"] == len(_CATALOG_UNIT_PRICE)
     assert assignments_state["rejected"] == 1
 

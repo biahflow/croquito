@@ -598,6 +598,10 @@ def _write_paths(round_id: str) -> list[tuple[str, dict[str, Any]]]:
                 "catalog_sha256": "a" * 64,
             },
         ),
+        (
+            f"/v1/estimate-rounds/{round_id}/code-assignments/closures",
+            {"base_version": 1, "item_id": _ITEM_FIRST},
+        ),
         (f"/v1/estimate-rounds/{round_id}/estimate", {"base_version": 1, "bdi_percent": "25.00"}),
         (f"/v1/estimate-rounds/{round_id}/estimate/export", {"base_version": 1}),
         (

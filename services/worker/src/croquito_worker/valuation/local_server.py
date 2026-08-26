@@ -79,6 +79,7 @@ from croquito_valuation.assignment import (
     CodeAssignmentInput,
     CodeAssignmentSet,
     CodeSuggestionSet,
+    ItemPackageClosureInput,
     apply_code_assignments,
 )
 from croquito_valuation.calc import CalcPlan, build_worksite_valuation
@@ -398,6 +399,18 @@ class CodeDecisionRequest(_LocalRequest):
     item_id: str
     action: Literal["confirm", "reject"]
     code: str | None = None
+    note: str | None = None
+    base_assignments_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+
+
+class ItemPackageClosureRequest(_LocalRequest):
+    """Pedido de fechamento do pacote de serviços de um item.
+
+    Mesmo protocolo de digest-base de `CodeDecisionRequest`: o fechamento acumula sobre o
+    conjunto anterior e por isso precisa citar o que leu.
+    """
+
+    item_id: str
     note: str | None = None
     base_assignments_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
 
@@ -1658,6 +1671,53 @@ def _build_app(run: _Run, *, origins: Sequence[str]) -> FastAPI:
             ],
         }
 
+    def _guarded_assignments(base: str | None) -> tuple[CodeAssignmentSet, str] | None:
+        """Conjunto corrente, conferido contra o digest-base que o cliente diz ter lido.
+
+        Compartilhado pelos dois atos que acumulam sobre ele — a decisão de código e o
+        fechamento de pacote —, porque o protocolo de concorrência é o mesmo: quem escreve
+        precisa provar que leu a versão que está lá.
+        """
+        found = run.assignments()
+        if found is None and base is not None:
+            raise LocalServerRefusal(
+                409,
+                ValuationValidationError(
+                    "LOCAL_BASE_DIGEST_UNEXPECTED",
+                    "ainda não existe conjunto de confirmações; não há digest-base a citar",
+                    {"artifact": CODE_ASSIGNMENTS_FILENAME},
+                ),
+            )
+        if found is not None:
+            if base is None:
+                raise LocalServerRefusal(
+                    409,
+                    ValuationValidationError(
+                        "LOCAL_BASE_DIGEST_REQUIRED",
+                        "já existe conjunto de confirmações; informe o digest-base lido",
+                        {
+                            "artifact": CODE_ASSIGNMENTS_FILENAME,
+                            "current_sha256": found[1],
+                        },
+                    ),
+                )
+            _guard(CODE_ASSIGNMENTS_FILENAME, base=base, current=found[1])
+        return found
+
+    def _assignments_response(
+        packet: TakeoffPacket, assignments: CodeAssignmentSet, document: str
+    ) -> dict[str, object]:
+        return {
+            "assignments": assignments.model_dump(mode="json"),
+            "assignments_sha256": _digest_of(document),
+            "confirmed": _count_status(assignments, "confirmed"),
+            "rejected": _count_status(assignments, "rejected"),
+            "closed": len(assignments.closed_item_ids()),
+            "pending_items": [
+                _item_payload(item) for item in _pending_code_items(packet, assignments)
+            ],
+        }
+
     @router.post("/codes/decisions", tags=["codes"])
     async def decide_item_code(payload: CodeDecisionRequest) -> dict[str, object]:
         """Confirma ou rejeita o código de UM item, acumulando sobre o conjunto anterior.
@@ -1667,34 +1727,7 @@ def _build_app(run: _Run, *, origins: Sequence[str]) -> FastAPI:
         as confirmações já registradas.
         """
         packet, _digest = run.require_packet()
-        assignments_found = run.assignments()
-        if assignments_found is None and payload.base_assignments_sha256 is not None:
-            raise LocalServerRefusal(
-                409,
-                ValuationValidationError(
-                    "LOCAL_BASE_DIGEST_UNEXPECTED",
-                    "ainda não existe conjunto de confirmações; não há digest-base a citar",
-                    {"artifact": CODE_ASSIGNMENTS_FILENAME},
-                ),
-            )
-        if assignments_found is not None:
-            if payload.base_assignments_sha256 is None:
-                raise LocalServerRefusal(
-                    409,
-                    ValuationValidationError(
-                        "LOCAL_BASE_DIGEST_REQUIRED",
-                        "já existe conjunto de confirmações; informe o digest-base lido",
-                        {
-                            "artifact": CODE_ASSIGNMENTS_FILENAME,
-                            "current_sha256": assignments_found[1],
-                        },
-                    ),
-                )
-            _guard(
-                CODE_ASSIGNMENTS_FILENAME,
-                base=payload.base_assignments_sha256,
-                current=assignments_found[1],
-            )
+        assignments_found = _guarded_assignments(payload.base_assignments_sha256)
 
         catalog = run.require_catalog()
         batch = CodeAssignmentBatch(
@@ -1719,15 +1752,40 @@ def _build_app(run: _Run, *, origins: Sequence[str]) -> FastAPI:
         )
         document = _document(assignments)
         atomic_write_text(run.path(CODE_ASSIGNMENTS_FILENAME), document)
-        return {
-            "assignments": assignments.model_dump(mode="json"),
-            "assignments_sha256": _digest_of(document),
-            "confirmed": _count_status(assignments, "confirmed"),
-            "rejected": _count_status(assignments, "rejected"),
-            "pending_items": [
-                _item_payload(item) for item in _pending_code_items(packet, assignments)
-            ],
-        }
+        return _assignments_response(packet, assignments, document)
+
+    @router.post("/codes/closures", tags=["codes"])
+    async def close_item_package(payload: ItemPackageClosureRequest) -> dict[str, object]:
+        """Declara COMPLETO o pacote de serviços de um item.
+
+        O irmão local da rota `/v1/.../code-assignments/closures`, pelo mesmo motivo: com a
+        cardinalidade N:N, confirmar um código não diz que o elemento acabou, e sem este ato
+        `calc/build` recusaria em `CALC_PACKAGE_NOT_CLOSED`. Rejeição fecha o item sozinha.
+        """
+        packet, _digest = run.require_packet()
+        assignments_found = _guarded_assignments(payload.base_assignments_sha256)
+        catalog = run.require_catalog()
+        batch = CodeAssignmentBatch(
+            closures=[
+                ItemPackageClosureInput(
+                    item_id=payload.item_id,
+                    reviewer_id=run.reviewer_id,
+                    reviewer_role=REVIEWER_ROLE,
+                    decided_at=_now(),
+                    note=payload.note,
+                )
+            ]
+        )
+        assignments = apply_code_assignments(
+            packet,
+            batch,
+            catalog,
+            run.contract(),
+            previous=None if assignments_found is None else assignments_found[0],
+        )
+        document = _document(assignments)
+        atomic_write_text(run.path(CODE_ASSIGNMENTS_FILENAME), document)
+        return _assignments_response(packet, assignments, document)
 
     @router.post("/calc/build", tags=["bulletin"])
     async def build_calc(payload: CalcBuildRequest) -> dict[str, object]:

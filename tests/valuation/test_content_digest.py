@@ -20,7 +20,11 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from croquito_valuation.assignment import CodeAssignment, CodeAssignmentSet
+from croquito_valuation.assignment import (
+    CodeAssignment,
+    CodeAssignmentSet,
+    ItemPackageClosure,
+)
 from croquito_valuation.estimate import (
     ESTIMATE_DIGEST_PRUNING,
     ESTIMATE_SCHEMA_VERSION,
@@ -292,6 +296,9 @@ def _estimate() -> Estimate:
                 decision=_decision(),
             )
         ],
+        # Fixture no regime de pacote (`2.0.0`): o item confirmado nasce com o pacote
+        # FECHADO, que é o que a orçamentista faz quando o elemento dispara um serviço só.
+        closures=[ItemPackageClosure(item_id=_ITEM_ID, decision=_decision())],
         safety_notes=[
             "Confirmação de código é ato humano rastreável.",
             "A fonte de preço de cada item é a citada na confirmação.",
