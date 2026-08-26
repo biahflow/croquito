@@ -1302,7 +1302,7 @@ def _compute_suggestions_response(run: _Run) -> dict[str, object]:
     packet, _digest = run.require_packet()
     require_reviewed_takeoff(packet)
     catalog = run.require_catalog()
-    computed, notes = compute_suggestions(
+    computed, notes, _telemetry = compute_suggestions(
         packet,
         catalog,
         run.contract(),

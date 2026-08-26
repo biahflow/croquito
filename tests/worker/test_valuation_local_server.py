@@ -49,6 +49,7 @@ from croquito_valuation.calc_matrix import (
     CalcMatrix,
     ServiceContributions,
 )
+from croquito_valuation.catalog import default_domain_synonyms
 from croquito_valuation.models import (
     CalcOperand,
     CalcRecipe,
@@ -73,6 +74,10 @@ from croquito_worker.providers import (
     ProviderUsage,
 )
 from croquito_worker.valuation import local_server
+from croquito_worker.valuation.catalog_search import (
+    SEMANTIC_AVAILABLE_MESSAGE,
+    SemanticArm,
+)
 from croquito_worker.valuation.cli import (
     AMENDMENT_DOSSIER_FILENAME,
     CALC_MATRIX_FILENAME,
@@ -102,12 +107,17 @@ from croquito_worker.valuation.sco_matching import (
     CATALOG_INDEX_FILENAME,
     QUERY_CACHE_FILENAME,
     index_document,
+    load_semantic_index,
 )
 from croquito_worker.valuation.sco_matching_fixtures import (
     FIXTURE_EMBEDDINGS_DIMS,
     FIXTURE_EMBEDDINGS_MODEL,
     fixture_catalog_index,
     fixture_vector,
+)
+from croquito_worker.valuation.suggestions import (
+    SemanticArmTelemetry,
+    compute_suggestions,
 )
 from croquito_worker.valuation.synthetic import build_synthetic_previous_mapao
 
@@ -2177,6 +2187,96 @@ def test_recompute_is_hybrid_when_the_round_has_an_index_and_pays_nothing_new(
     payload = response.json()
     assert payload["matching"] == "hybrid"
     assert len(adapter.calls) == calls_after_get
+
+
+def _reviewed_semantic_arm(root: Path, adapter: _CountingEmbeddings | None) -> SemanticArm:
+    """Braço semântico da rodada revisada, montado com o índice fabricado no disco."""
+    catalog = PriceCatalog.model_validate_json(
+        (root / CATALOG_FILENAME).read_text(encoding="utf-8")
+    )
+    index = load_semantic_index(root / CATALOG_INDEX_FILENAME, catalog)
+    return SemanticArm(
+        index, adapter, "available", f"{SEMANTIC_AVAILABLE_MESSAGE}: {index.model_id}"
+    )
+
+
+def test_compute_suggestions_reports_the_paid_arm_when_it_runs(
+    reviewed_root: Path, tmp_path: Path
+) -> None:
+    """A telemetria do braço que RODOU carrega model id, tokens e custo — o que faltava
+    para responder "quanto este tenant consumiu" sem ler a saída do CLI por fora (#70).
+
+    Tokens vêm do dublê (`ProviderUsage(input_tokens=len(batch))`): uma chamada paga com o
+    lote inteiro dos rótulos confirmados. Custo é `None` porque o dublê não estima custo, e
+    `None` é registro honesto de "não sei", não zero fabricado.
+    """
+    _install_fixture_index(reviewed_root)
+    catalog = PriceCatalog.model_validate_json(
+        (reviewed_root / CATALOG_FILENAME).read_text(encoding="utf-8")
+    )
+    packet = load_takeoff_packet(reviewed_root / TAKEOFF_PACKET_FILENAME)
+    adapter = _CountingEmbeddings()
+
+    _computed, notes, telemetry = compute_suggestions(
+        packet,
+        catalog,
+        None,
+        default_domain_synonyms(),
+        semantic=_reviewed_semantic_arm(reviewed_root, adapter),
+        query_cache_path=tmp_path / QUERY_CACHE_FILENAME,
+    )
+
+    assert isinstance(telemetry, SemanticArmTelemetry)
+    assert telemetry.arm_ran is True
+    assert telemetry.reason is None
+    assert telemetry.model_id == FIXTURE_EMBEDDINGS_MODEL
+    # Uma chamada paga, com o lote inteiro dos rótulos confirmados; tokens = tamanho do lote.
+    assert len(adapter.calls) == 1
+    assert telemetry.input_tokens == len(adapter.calls[0])
+    assert telemetry.input_tokens > 0
+    assert telemetry.estimated_cost_usd is None
+    assert telemetry.sources_with_index == 1
+    assert telemetry.sources_total == 1
+    assert notes == []
+    # O bloco que vai ao evento e ao log declara o gasto sem nenhum conteúdo embutido.
+    assert telemetry.event_payload() == {
+        "semantic_arm_ran": True,
+        "semantic_reason": None,
+        "model_id": FIXTURE_EMBEDDINGS_MODEL,
+        "input_tokens": telemetry.input_tokens,
+        "estimated_cost_usd": None,
+        "sources_with_index": 1,
+        "sources_total": 1,
+    }
+
+
+def test_compute_suggestions_reports_the_lexical_fallback_when_the_arm_is_absent(
+    reviewed_root: Path, tmp_path: Path
+) -> None:
+    """Sem índice a via paga não roda, e a telemetria diz isso com todas as letras:
+    `arm_ran=false`, motivo declarado, nenhuma fonte com índice, custo nulo."""
+    catalog = PriceCatalog.model_validate_json(
+        (reviewed_root / CATALOG_FILENAME).read_text(encoding="utf-8")
+    )
+    packet = load_takeoff_packet(reviewed_root / TAKEOFF_PACKET_FILENAME)
+
+    _computed, _notes, telemetry = compute_suggestions(
+        packet,
+        catalog,
+        None,
+        default_domain_synonyms(),
+        semantic=SemanticArm(None, None, "unavailable", "via de embeddings indisponível: teste"),
+        query_cache_path=tmp_path / QUERY_CACHE_FILENAME,
+    )
+
+    assert telemetry.arm_ran is False
+    assert telemetry.reason == "via de embeddings indisponível: teste"
+    assert telemetry.model_id is None
+    assert telemetry.input_tokens is None
+    assert telemetry.estimated_cost_usd is None
+    assert telemetry.sources_with_index == 0
+    assert telemetry.sources_total == 1
+    assert not (tmp_path / QUERY_CACHE_FILENAME).exists()
 
 
 def test_serve_installs_the_index_that_sits_next_to_the_catalog(tmp_path: Path) -> None:

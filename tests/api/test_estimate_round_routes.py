@@ -46,6 +46,7 @@ from croquito_api.config import ApiSettings
 from croquito_api.database import (
     AuditRecord,
     Database,
+    DomainEventRecord,
     EstimateRoundRecord,
     EstimateRoundRevisionRecord,
     IdempotencyRecord,
@@ -1605,6 +1606,49 @@ def test_reordenar_a_cascata_muda_a_precificacao_da_sugestao_seguinte(tmp_path: 
         params={"q": "alambrado"},
     )
     assert [result["price_origin"] for result in busca_depois.json()["results"]] == ["emop", "sco"]
+
+
+def test_o_recompute_registra_o_braco_de_embeddings_com_as_fontes_da_cascata(
+    tmp_path: Path,
+) -> None:
+    """O evento do recompute declara quantas fontes da cascata tinham índice (#70).
+
+    Nenhuma tem hoje — a rodada da API não publica índice —, então `sources_with_index=0` de
+    `sources_total=2` (a cascata sco+emop), o braço não rodou e tokens/custo são nulos. É a
+    contagem que o ADR-0054 D5 vai tornar real quando o índice por fonte chegar ao caminho
+    hospedado; até lá, o registro é honesto sobre o zero.
+    """
+    client = _client(tmp_path)
+    state = _round_with_cascade_and_takeoff(client)
+    round_id = state["round_id"]
+    assert len(state["cascade"]) == 2
+
+    response = client.post(
+        f"/v1/estimate-rounds/{round_id}/code-suggestions/recompute",
+        headers=_headers(key="recompute-observabilidade"),
+        json={"base_version": state["version"]},
+    )
+    assert response.status_code == 200, response.text
+
+    with _database(client).sessions() as session:
+        eventos = (
+            session.query(DomainEventRecord)
+            .filter_by(event_type="croquito.estimate.action_recorded.v1")
+            .order_by(DomainEventRecord.created_at, DomainEventRecord.id)
+            .all()
+        )
+    recompute = next(
+        evento
+        for evento in eventos
+        if evento.payload_json["action"] == "ESTIMATE_CODE_SUGGESTIONS_RECOMPUTED"
+    )
+    payload = recompute.payload_json
+    assert payload["semantic_arm_ran"] is False
+    assert payload["model_id"] is None
+    assert payload["input_tokens"] is None
+    assert payload["estimated_cost_usd"] is None
+    assert payload["sources_with_index"] == 0
+    assert payload["sources_total"] == 2
 
 
 def test_reordenar_depois_da_decisao_de_codigo_recusa_no_ato(tmp_path: Path) -> None:

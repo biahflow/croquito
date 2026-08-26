@@ -289,6 +289,7 @@ from croquito_worker.valuation.round_view import (
     review_status,
     takeoff_counts,
 )
+from croquito_worker.valuation.suggestions import SemanticArmTelemetry
 from croquito_worker.vision import VisionProposalSet
 
 
@@ -2716,6 +2717,7 @@ def _record_round_event(
     event_type: str,
     action: str,
     record: ValuationRoundRecord | EstimateRoundRecord,
+    extra_payload: Mapping[str, Any] | None = None,
 ) -> None:
     """Espelha em evento a ação já auditada de uma rodada de medição/orçamento.
 
@@ -2727,12 +2729,49 @@ def _record_round_event(
     `version` é o contador ÚNICO da cadeia da rodada (ADR-0028 D3) DEPOIS do ato; é ele
     que dá ao consumidor a ordem causal dentro da rodada, que `occurred_at` sozinho não
     garante.
+
+    `extra_payload` acrescenta grandezas de observabilidade a UMA ação específica sem mudar
+    o formato das demais — hoje só o recompute da shortlist o usa, para declarar o gasto do
+    braço de embeddings (rodou?, model id, tokens, custo, fontes com índice). São grandezas,
+    nunca conteúdo: quem monta o bloco (`SemanticArmTelemetry.event_payload`) já o garante.
     """
+    payload: dict[str, Any] = {
+        "action": action,
+        "round_id": record.id,
+        "version": record.version,
+    }
+    if extra_payload is not None:
+        payload.update(extra_payload)
     _record_domain_event(
         session,
         principal=principal,
         event_type=event_type,
-        payload={"action": action, "round_id": record.id, "version": record.version},
+        payload=payload,
+    )
+
+
+def _log_suggestions_recompute(
+    record: ValuationRoundRecord | EstimateRoundRecord,
+    telemetry: SemanticArmTelemetry,
+) -> None:
+    """Log estruturado do gasto do braço de embeddings no recompute da shortlist.
+
+    É o par do evento de rodada para quem observa a plataforma pelos logs e não pela fila de
+    eventos — foi lendo a saída do CLI, por falta deste registro, que o consumo do tenant
+    teve de ser medido por fora na rodada de 2026-08-25. O `stage` distingue as duas jornadas
+    sem carregar nome de obra, e `round_id` é id opaco; os demais campos são as grandezas que
+    `event_payload` já isolou (nenhum conteúdo embutido). Hoje sai `semantic_arm_ran=false`:
+    a rodada da API não publica índice, e declarar que a via paga não rodou é o oposto de
+    degradar em silêncio.
+    """
+    stage = (
+        "valuation.code-suggestions.recompute"
+        if isinstance(record, ValuationRoundRecord)
+        else "estimate.code-suggestions.recompute"
+    )
+    _VALUATION_LOGGER.info(
+        "code_suggestions_recomputed",
+        extra={"stage": stage, "round_id": record.id, **telemetry.event_payload()},
     )
 
 
@@ -4984,6 +5023,12 @@ def _require_idempotency(
 
 
 _REQUEST_LOGGER = logging.getLogger("croquito_api.request")
+_VALUATION_LOGGER = logging.getLogger("croquito_api.valuation")
+"""Log estruturado das ações de rodada que gastam (ou poderiam gastar) via paga.
+
+Só grandezas entram no `extra`, pelo mesmo contrato do `CLAUDE.md` que rege o
+`request_completed`: id opaco de rodada, stage, `arm_ran`, model id, tokens, custo e
+contagens — nunca rótulo, descrição ou qualquer conteúdo embutido."""
 
 
 def create_app(settings: ApiSettings | None = None, database: Database | None = None) -> FastAPI:
@@ -10006,7 +10051,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         packet = require_takeoff_packet(revision)
         require_reviewed_packet(packet)
-        computed, notes = compute_round_suggestions(packet, _round_catalog(record))
+        computed, notes, _telemetry = compute_round_suggestions(packet, _round_catalog(record))
         document = computed.model_dump(mode="json")
         append_revision(
             session,
@@ -10084,7 +10129,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         packet = require_takeoff_packet(revision)
         require_reviewed_packet(packet)
         require_unrefined_suggestions(suggestions_of(revision))
-        computed, notes = compute_round_suggestions(packet, _round_catalog(record))
+        computed, notes, telemetry = compute_round_suggestions(packet, _round_catalog(record))
         document = computed.model_dump(mode="json")
         append_revision(
             session,
@@ -10118,7 +10163,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             event_type=EVENT_VALUATION_ACTION_RECORDED,
             action="VALUATION_CODE_SUGGESTIONS_RECOMPUTED",
             record=record,
+            extra_payload=telemetry.event_payload(),
         )
+        _log_suggestions_recompute(record, telemetry)
         _commit_valuation_revision(session)
         return response
 
@@ -12207,7 +12254,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         packet = estimate_rounds.require_takeoff_packet(revision)
         require_reviewed_packet(packet)
-        computed, notes = estimate_rounds.compute_round_suggestions(
+        computed, notes, _telemetry = estimate_rounds.compute_round_suggestions(
             packet, _estimate_cascade(record)
         )
         document = computed.model_dump(mode="json")
@@ -12282,7 +12329,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         packet = estimate_rounds.require_takeoff_packet(revision)
         require_reviewed_packet(packet)
         require_unrefined_suggestions(estimate_rounds.suggestions_of(revision))
-        computed, notes = estimate_rounds.compute_round_suggestions(
+        computed, notes, telemetry = estimate_rounds.compute_round_suggestions(
             packet, _estimate_cascade(record)
         )
         document = computed.model_dump(mode="json")
@@ -12318,7 +12365,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             event_type=EVENT_ESTIMATE_ACTION_RECORDED,
             action="ESTIMATE_CODE_SUGGESTIONS_RECOMPUTED",
             record=record,
+            extra_payload=telemetry.event_payload(),
         )
+        _log_suggestions_recompute(record, telemetry)
         _commit_valuation_revision(session)
         return response
 

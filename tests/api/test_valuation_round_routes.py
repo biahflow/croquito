@@ -1742,6 +1742,54 @@ def test_o_recompute_avanca_a_versao_e_regrava_a_shortlist(tmp_path: Path) -> No
         assert all(set(audit.metadata_json) == {"request_id"} for audit in audits)
 
 
+def test_o_recompute_registra_o_gasto_do_braco_de_embeddings_no_evento(tmp_path: Path) -> None:
+    """O evento do recompute declara o que a via paga gastou (#70): observabilidade, não freio.
+
+    A rodada da API não publica índice de embeddings, então o braço semântico não roda e o
+    evento diz isso com todas as letras — `semantic_arm_ran=false`, motivo declarado, nenhuma
+    fonte com índice, tokens e custo nulos. É o oposto de omitir: quem observa a plataforma
+    sabe que a vizinhança semântica não participou, e por quê, sem ler a saída do CLI por fora.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+
+    response = client.post(
+        f"/v1/valuation-rounds/{prepared['round_id']}/code-suggestions/recompute",
+        headers=_headers(key="recompute-observabilidade"),
+        json={"base_version": prepared["version"]},
+    )
+    assert response.status_code == 200, response.text
+
+    with _database(client).sessions() as session:
+        eventos = (
+            session.query(DomainEventRecord)
+            .filter_by(event_type="croquito.valuation.action_recorded.v1")
+            .order_by(DomainEventRecord.created_at, DomainEventRecord.id)
+            .all()
+        )
+    recompute = next(
+        evento
+        for evento in eventos
+        if evento.payload_json["action"] == "VALUATION_CODE_SUGGESTIONS_RECOMPUTED"
+    )
+    payload = recompute.payload_json
+    assert payload["semantic_arm_ran"] is False
+    assert payload["semantic_reason"] is not None
+    assert payload["model_id"] is None
+    assert payload["input_tokens"] is None
+    assert payload["estimated_cost_usd"] is None
+    assert payload["sources_with_index"] == 0
+    assert payload["sources_total"] == 1
+    # As ações que não gastam continuam com o formato enxuto de sempre: o bloco só entra aqui.
+    outros = [
+        evento
+        for evento in eventos
+        if evento.payload_json["action"] != "VALUATION_CODE_SUGGESTIONS_RECOMPUTED"
+    ]
+    assert outros, "esperava ao menos uma ação anterior sem telemetria"
+    assert all(set(evento.payload_json) == {"action", "round_id", "version"} for evento in outros)
+
+
 def test_o_recompute_nunca_descarta_o_refino_pago(tmp_path: Path) -> None:
     """Recalcular por caminho determinístico apagaria o lineage da chamada paga."""
     client = _client(tmp_path)

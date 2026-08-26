@@ -38,6 +38,17 @@ IDs de tenant são hash/alias operacional; nenhum nome de cliente aparece.
 - schema failure e disagreement rate.
 - `estimated_cost_usd` por page/provider.
 
+### Recompute da shortlist (braço de embeddings)
+
+O recompute de código (`POST /v1/{valuation,estimate}-rounds/{id}/code-suggestions/recompute`)
+declara o gasto da via paga de embeddings no evento de rodada (`*.action_recorded.v1`) e no
+log estruturado `croquito_api.valuation` (`code_suggestions_recomputed`). Campos, só
+grandezas: `semantic_arm_ran` (o braço rodou?), `model_id`, `input_tokens`,
+`estimated_cost_usd` (texto), `sources_with_index` e `sources_total`. `semantic_arm_ran=false`
+é registro POSITIVO — a rodada da API ainda não publica índice, então o braço não roda e o
+log diz isso com `semantic_reason`, em vez de omitir. Nenhum rótulo ou descrição embutida
+entra no evento ou no log.
+
 ### Geometria/CAD
 
 - entities por precision/type.

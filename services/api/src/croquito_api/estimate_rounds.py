@@ -99,6 +99,7 @@ from croquito_worker.valuation.round_view import (
     review_status,
     takeoff_counts,
 )
+from croquito_worker.valuation.suggestions import SemanticArmTelemetry
 
 ESTIMATE_CASCADE_ORIGIN_DUPLICATE: Final = "ESTIMATE_CASCADE_ORIGIN_DUPLICATE"
 ESTIMATE_CASCADE_ORDER_INVALID: Final = "ESTIMATE_CASCADE_ORDER_INVALID"
@@ -1081,7 +1082,7 @@ def current_stage(
 
 def compute_round_suggestions(
     packet: TakeoffPacket, cascade: Sequence[PriceCatalog]
-) -> tuple[CodeSuggestionSet, list[str]]:
+) -> tuple[CodeSuggestionSet, list[str], SemanticArmTelemetry]:
     """Shortlist recalculada do zero sobre a CASCATA; nenhuma chamada paga acontece.
 
     Os candidatos saem na ordem da cascata — todos os da primeira fonte, depois os da
@@ -1089,10 +1090,17 @@ def compute_round_suggestions(
     declarada do orçamentista, ser desempatada por similaridade de texto. O braço semântico
     é declarado indisponível pelo mesmo motivo da medição: nenhuma rota de `/v1` publica
     índice de embeddings.
+
+    A terceira saída é a telemetria do braço semântico. `sources_total` é o tamanho da
+    cascata e `sources_with_index` é zero: nenhuma fonte tem índice publicado hoje, então
+    nenhuma pagou embedding. É isso que o recompute registra — quantas fontes da cascata
+    tinham índice —, e o número passa a ser real quando o índice por fonte (ADR-0054 D5)
+    chegar ao caminho hospedado.
     """
     return (
         suggest_codes_over_cascade(packet, cascade, synonyms=default_domain_synonyms()),
         [SEMANTIC_ARM_ABSENT],
+        SemanticArmTelemetry.lexical_only(SEMANTIC_ARM_ABSENT, sources_total=len(cascade)),
     )
 
 
