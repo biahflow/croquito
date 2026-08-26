@@ -109,5 +109,5 @@ substitui nenhum gate futuro da Engineering OS ou do projeto.
 A decisão humana de 2026-08-18 acrescenta duas regras à adoção. A primeira: a camada global
 passa a ser vendorizada e pinada em `docs/engineering-os/`, sincronizada por
 `scripts/sync_engineering_os.py` — registrada no
-[ADR-0034](../adr/0034-camada-global-vendorizada-e-pinada.md), **aceito por ato humano em 2026-08-18**. A segunda: de F-007 em diante, todo plano válido emite Task Contracts
+[ADR-0034](../adr/0034-camada-global-vendorizada-e-pinada.md), **aceito por ato humano em 2026-08-18**; desde a [ADR-0052](../adr/0052-pino-da-camada-global-por-tag-do-remoto.md) o pino é uma tag SemVer do remoto publicado, e não mais um caminho na máquina do operador. A segunda: de F-007 em diante, todo plano válido emite Task Contracts
 formais em `docs/features/<feature-id>/tasks/`.

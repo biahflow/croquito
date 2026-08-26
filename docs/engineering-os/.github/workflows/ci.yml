@@ -1,0 +1,95 @@
+name: CI
+
+# Esta camada é vendorizada como espelho completo dentro de cada projeto consumidor: o que
+# passa aqui vira regra lá, e o que quebra aqui quebra num repositório que não pode
+# consertá-lo. Os portões abaixo são os que a origem deve a seus consumidores.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository:
+    name: Documentação, higiene e adapters
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Dependências dos portões
+        run: pip install --quiet pyyaml
+
+      - name: Links de Markdown
+        run: scripts/check-links.py
+
+      - name: Artefatos gerados rastreados
+        run: scripts/check-tracked-artifacts.py
+
+      - name: Caminhos absolutos de máquina
+        run: scripts/check-operator-paths.py
+
+      - name: YAML parseável
+        run: scripts/check-yaml.py
+
+      - name: Adapters carregam o placeholder
+        # Um adapter que perdeu `{{EOS_ROOT}}` já tem um caminho fixo dentro dele; o portão
+        # de caminhos de máquina pega o caso absoluto, este pega o relativo.
+        run: |
+          for adapter in adapters/claude/CLAUDE.md adapters/codex/AGENTS.md; do
+            grep -q '{{EOS_ROOT}}' "$adapter" || {
+              echo "adapter sem placeholder {{EOS_ROOT}}: $adapter" >&2
+              exit 1
+            }
+          done
+
+      - name: Instalação renderiza sem escrever
+        run: scripts/install-adapters.sh --dry-run
+
+  go:
+    name: Biah (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: biah/go.mod
+          cache-dependency-path: biah/go.sum
+
+      - name: Formatação
+        working-directory: biah
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "arquivos fora do gofmt:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: Vet
+        working-directory: biah
+        run: go vet ./...
+
+      - name: Build
+        working-directory: biah
+        run: go build ./...
+
+      - name: Testes
+        working-directory: biah
+        run: go test ./...

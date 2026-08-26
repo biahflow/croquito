@@ -1,0 +1,11 @@
+worker: codex
+capabilities:
+  - implementation
+  - debugging
+  - testing
+  - code_review
+  - optimization
+constraints:
+  max_context_tokens: 200000
+  timeout_seconds: 3600
+  supports_parallel: true

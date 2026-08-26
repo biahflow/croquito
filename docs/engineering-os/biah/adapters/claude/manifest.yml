@@ -1,0 +1,10 @@
+worker: claude
+capabilities:
+  - architecture_reasoning
+  - large_context
+  - refactoring
+  - code_review
+constraints:
+  max_context_tokens: 200000
+  timeout_seconds: 3600
+  supports_parallel: false
