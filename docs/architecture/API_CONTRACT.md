@@ -1220,7 +1220,12 @@ código e resolve dependência entre serviços; ausente, vale o regime legado (c
 item), byte-idêntico ao de hoje. Ela chega como objeto e é persistida na revisão nova
 (`calc_matrix_json`), auditável e re-legível, antes de alimentar o build. Matriz malformada —
 ciclo, código duplicado, alvo de dependência inválido — devolve `422 DOMAIN_VALIDATION_FAILED`
-com o código estável do domínio (`CALC_MATRIX_*`, `CALC_MATRIX_DEPENDENCY_*`).
+com o código estável do domínio (`CALC_MATRIX_*`, `CALC_MATRIX_DEPENDENCY_*`). Parcela `PARTIAL`
+(ADR-0053, decisão 3) sem nota devolve `CALC_PARTIAL_NOTE_REQUIRED` na leitura da matriz, e
+parcela cuja quantidade declarada ultrapassa a do elemento de origem devolve
+`CALC_PARTIAL_EXCEEDS_ITEM` no build (com o código do serviço, o `source_item_id`, o valor
+declarado e o teto em `details`). A matriz continua viajando **inteira** no campo `calc_matrix`;
+nenhum campo por par entra no corpo, e o snapshot OpenAPI não muda.
 
 Constrói o boletim e a memória de cálculo a partir do takeoff confirmado e das confirmações
 de código. Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para
@@ -1609,7 +1614,11 @@ não viaja aqui.
 quando presente, o orçamento funde por código e resolve dependência; ausente, vale o regime
 legado (código único por item), byte-idêntico. É persistida na revisão nova
 (`calc_matrix_json`), auditável, antes do build; matriz malformada devolve
-`422 DOMAIN_VALIDATION_FAILED` com o código estável do domínio.
+`422 DOMAIN_VALIDATION_FAILED` com o código estável do domínio. Como na rota de calc, parcela
+`PARTIAL` sem nota devolve `CALC_PARTIAL_NOTE_REQUIRED` e parcela acima da quantidade do
+elemento de origem devolve `CALC_PARTIAL_EXCEEDS_ITEM` — os dois códigos são fixos nas duas
+cadeias. Nenhum campo por par entra no corpo; a matriz viaja inteira e o snapshot OpenAPI
+não muda.
 
 Monta o orçamento sobre o takeoff confirmado, as decisões de código e a cascata, e grava a
 revisão. **Só monta**: desde a F-035 esta rota não audita nem publica planilha nenhuma —
