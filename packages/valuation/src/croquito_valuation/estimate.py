@@ -540,11 +540,47 @@ def build_worksite_estimate(
             {"item_ids": unknown_ids},
         )
 
-    assignments_by_item = {assignment.item_id: assignment for assignment in assignments.assignments}
+    # Espelho de `CALC_PACKAGE_NOT_CLOSED`: sob a cardinalidade N:N a presença de um código
+    # deixou de significar que o elemento acabou, e um pacote pela metade viraria orçamento
+    # pela metade sem ninguém ser avisado.
+    open_ids = sorted(assignments.open_package_item_ids() & confirmed_ids)
+    if open_ids:
+        raise ValuationValidationError(
+            "ESTIMATE_PACKAGE_NOT_CLOSED",
+            "item confirmado tem pacote de serviços em aberto; o orçamento não é montado "
+            "pela metade",
+            {"item_ids": open_ids},
+        )
+
+    packages = assignments.confirmed_codes_by_item()
+    # PORTÃO TEMPORÁRIO, removido pela T6 (#78). Enquanto o builder iterar ITENS, cada item
+    # vira uma linha, e um pacote precisaria escolher um dos códigos. Escolher em silêncio é
+    # o defeito que a F-038 ataca.
+    packaged_ids = sorted(
+        item_id for item_id in confirmed_ids if len(packages.get(item_id, ())) > 1
+    )
+    if packaged_ids:
+        raise ValuationValidationError(
+            "ESTIMATE_PACKAGE_NOT_SUPPORTED",
+            "item com mais de um código confirmado ainda não vira orçamento; a matriz de "
+            "contribuições é que resolve o pacote",
+            {"item_ids": packaged_ids},
+        )
+
+    assignments_by_item = {
+        assignment.item_id: assignment
+        for assignment in assignments.assignments
+        if assignment.status == "confirmed"
+    }
+    rejected_ids = {
+        assignment.item_id
+        for assignment in assignments.assignments
+        if assignment.status == "rejected"
+    }
     unpriced_item_ids: list[str] = []
     included_items: list[TakeoffItem] = []
     for item in confirmed_items:
-        if assignments_by_item[item.id].status == "rejected":
+        if item.id in rejected_ids:
             unpriced_item_ids.append(item.id)
             continue
         included_items.append(item)

@@ -143,9 +143,12 @@ def _assignment_set(
         # FECHADO, que é o que a orçamentista faz quando o elemento dispara um serviço só.
         # Sem isso o boletim recusaria em `CALC_PACKAGE_NOT_CLOSED`, e com razão.
         closures=[
-            ItemPackageClosure(item_id=item.item_id, decision=item.decision)
-            for item in assignments
-            if item.status == "confirmed"
+            ItemPackageClosure(item_id=item_id, decision=decision)
+            # Um fechamento por ELEMENTO, não por par: o item que dispara dois serviços tem
+            # dois assignments e um pacote só.
+            for item_id, decision in {
+                item.item_id: item.decision for item in assignments if item.status == "confirmed"
+            }.items()
         ],
         safety_notes=[
             "Confirmação de código é ato humano rastreável; a sugestão lexical nunca "
@@ -445,3 +448,29 @@ def test_the_serialized_dossier_never_carries_a_price_key() -> None:
                 _walk(value)
 
     _walk(document)
+
+
+def test_an_element_with_a_package_is_never_read_as_an_amendment_candidate() -> None:
+    """Candidato a aditivo é o item cujo ÚNICO vínculo é uma rejeição.
+
+    O dict `{item_id: assignment}` de antes ficava com o último vínculo do item e dependia,
+    para acertar, de uma invariante que mora em outro arquivo — a de que rejeição e
+    confirmação não coexistem no mesmo item (`ASSIGNMENT_REJECT_WITH_CONFIRMED`). Ele não
+    produzia número errado, mas acertava por tabela. Indexar só as rejeições diz a regra no
+    lugar onde ela vale, e este teste fixa o comportamento com um elemento de dois serviços.
+    """
+    lawn = _confirmed_item(item_id=_ITEM_1, label="GRAMADO SINTETICO")
+    fence = _confirmed_item(item_id=_ITEM_2, label="ALAMBRADO SINTETICO")
+    packet = _packet([lawn, fence])
+    assignments = _assignment_set(
+        packet,
+        [
+            _assignment(lawn.id, note="sem cotação aplicável no contrato sintético"),
+            _assignment(fence.id, status="confirmed", code="CE04100010(/)", note=None),
+            _assignment(fence.id, status="confirmed", code="CE04100020(/)", note=None),
+        ],
+    )
+
+    dossier = build_amendment_dossier(packet, assignments)
+
+    assert [item.item_id for item in dossier.items] == [lawn.id]

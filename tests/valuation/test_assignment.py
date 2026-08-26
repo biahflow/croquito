@@ -1045,6 +1045,56 @@ def test_apply_refuses_adding_a_code_to_a_closed_package() -> None:
     assert raised.value.code == "ASSIGNMENT_ITEM_ALREADY_CLOSED"
 
 
+def test_apply_refuses_pricing_an_item_rejected_in_an_earlier_batch() -> None:
+    """A contradição que atravessa dois lotes tem a mesma recusa da que cabe em um.
+
+    Sem esta checagem o caso cairia em `ASSIGNMENT_ITEM_ALREADY_CLOSED` — recusa correta com
+    mensagem falsa, porque ninguém declarou pacote completo para um item rejeitado.
+    """
+    packet = _packet([_confirmed_item(unit="m")])
+    catalog = _package_catalog()
+    rejeitado = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(
+            assignments=[_assignment_input(action="reject", code=None, note="sem cotação")]
+        ),
+        catalog,
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments(
+            packet,
+            CodeAssignmentBatch(assignments=[_assignment_input(code=_CODE_ALAMBRADO)]),
+            catalog,
+            previous=rejeitado,
+        )
+
+    assert raised.value.code == "ASSIGNMENT_REJECT_WITH_CONFIRMED"
+
+
+def test_apply_refuses_rejecting_an_item_already_priced_in_an_earlier_batch() -> None:
+    """O mesmo, na direção oposta: o elemento já tem serviço que o precifica."""
+    packet = _packet([_confirmed_item(unit="m")])
+    catalog = _package_catalog()
+    confirmado = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(assignments=[_assignment_input(code=_CODE_ALAMBRADO)]),
+        catalog,
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments(
+            packet,
+            CodeAssignmentBatch(
+                assignments=[_assignment_input(action="reject", code=None, note="mudei de ideia")]
+            ),
+            catalog,
+            previous=confirmado,
+        )
+
+    assert raised.value.code == "ASSIGNMENT_REJECT_WITH_CONFIRMED"
+
+
 def test_apply_refuses_closing_a_package_twice() -> None:
     packet = _packet([_confirmed_item(unit="m")])
     catalog = _package_catalog()
@@ -1182,6 +1232,29 @@ def test_carrying_a_legacy_set_forward_reuses_its_decisions_as_closures() -> Non
     # O item antigo chega fechado; o novo nasce com o pacote aberto, como qualquer outro.
     assert migrated.closed_item_ids() == frozenset({_ITEM_1})
     assert migrated.open_package_item_ids() == frozenset({_ITEM_2})
+
+
+def test_a_legacy_item_cannot_grow_into_a_package() -> None:
+    """Limitação declarada, e não descuido: rodada antiga é um pacote de um serviço só.
+
+    Ao migrar para `2.0.0`, os itens do conjunto `1.0.0` chegam FECHADOS — sob aquele regime
+    a confirmação era o pacote inteiro. A consequência é que um elemento de rodada antiga não
+    ganha o segundo código: para montar pacote sobre ele, abre-se rodada nova. Aceitar o
+    contrário obrigaria a dizer que a confirmação antiga não fechava nada, e aí toda rodada
+    já gravada passaria a exibir seus itens como pendentes.
+    """
+    packet = _packet([_confirmed_item(unit="m")])
+    legacy = _legacy_set([_code_assignment()])
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_assignments(
+            packet,
+            CodeAssignmentBatch(assignments=[_assignment_input(code=_CODE_TELA)]),
+            _package_catalog(),
+            previous=legacy,
+        )
+
+    assert raised.value.code == "ASSIGNMENT_ITEM_ALREADY_CLOSED"
 
 
 def test_the_closure_decision_id_is_deterministic_and_distinct_from_the_confirmation() -> None:

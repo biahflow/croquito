@@ -1077,7 +1077,11 @@ def test_estimate_chain_with_five_sources_including_sinapi_and_sicro(
             if assignment.item_id == _BENCH_ITEM_ID
             else assignment
             for assignment in decisions.assignments
-        ]
+        ],
+        # Os fechamentos vêm junto: trocar a FONTE de um código não muda quais elementos
+        # tiveram o pacote declarado completo, e perdê-los aqui faria `build-estimate`
+        # recusar em `ESTIMATE_PACKAGE_NOT_CLOSED`.
+        closures=decisions.closures,
     )
     decisions_path = _write_json(
         root / "inputs" / "estimate-code-decisions.json", decisions.model_dump_json(indent=2)

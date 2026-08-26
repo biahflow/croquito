@@ -163,13 +163,27 @@ def build_amendment_dossier(
             {"item_ids": missing_ids},
         )
 
-    assignments_by_item = {assignment.item_id: assignment for assignment in assignments.assignments}
+    # Indexa só as REJEIÇÕES, e não "o assignment do item".
+    #
+    # Era um dict `{item_id: assignment}` sobre a lista inteira, que sob a cardinalidade N:N
+    # ficaria com o último vínculo do item e descartaria os outros em silêncio. Aqui o efeito
+    # seria pior do que perder uma linha: um elemento com códigos confirmados poderia ser
+    # lido como rejeitado — ou o contrário —, e o dossiê pediria aditivo de serviço que já
+    # está precificado.
+    #
+    # Candidato a aditivo é o item cujo ÚNICO vínculo é uma rejeição, que é o que o código
+    # sempre quis dizer. `ASSIGNMENT_REJECT_WITH_CONFIRMED` garante que rejeição e
+    # confirmação não coexistam para o mesmo item, então a leitura é sempre unívoca.
+    rejections_by_item = {
+        assignment.item_id: assignment
+        for assignment in assignments.assignments
+        if assignment.status == "rejected"
+    }
 
     missing_justification = sorted(
         item.id
         for item in confirmed_items
-        if assignments_by_item[item.id].status == "rejected"
-        and assignments_by_item[item.id].decision.note is None
+        if item.id in rejections_by_item and rejections_by_item[item.id].decision.note is None
     )
     if missing_justification:
         raise ValuationValidationError(
@@ -180,8 +194,8 @@ def build_amendment_dossier(
 
     items: list[AmendmentDossierItem] = []
     for item in confirmed_items:
-        assignment = assignments_by_item[item.id]
-        if assignment.status != "rejected":
+        assignment = rejections_by_item.get(item.id)
+        if assignment is None:
             continue
         assert item.quantity is not None  # garantido por TakeoffItem confirmado
         note = assignment.decision.note

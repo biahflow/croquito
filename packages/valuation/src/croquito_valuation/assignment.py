@@ -1311,6 +1311,37 @@ def _ensure_batch_decidable(
             {"pairs": already_decided},
         )
 
+    # A contradição entre lotes, antes da recusa por pacote fechado. A rejeição fecha o item,
+    # então sem esta checagem um item rejeitado que recebesse código cairia em
+    # `ASSIGNMENT_ITEM_ALREADY_CLOSED` — recusa correta com mensagem falsa, porque ninguém
+    # declarou pacote nenhum como completo ali. `_ensure_package_shape` já cobre a
+    # contradição DENTRO de um lote; esta cobre a que atravessa dois.
+    previous_rejected = {
+        assignment.item_id
+        for assignment in (previous.assignments if previous else ())
+        if assignment.status == "rejected"
+    }
+    previous_confirmed = {
+        assignment.item_id
+        for assignment in (previous.assignments if previous else ())
+        if assignment.status == "confirmed"
+    }
+    contradicted = sorted(
+        {
+            assignment.item_id
+            for assignment in batch.assignments
+            if (assignment.action == "confirm" and assignment.item_id in previous_rejected)
+            or (assignment.action == "reject" and assignment.item_id in previous_confirmed)
+        }
+    )
+    if contradicted:
+        raise ValuationValidationError(
+            "ASSIGNMENT_REJECT_WITH_CONFIRMED",
+            "rejeitar é declarar que nenhum serviço precifica o elemento; não coexiste com "
+            "código confirmado para o mesmo item",
+            {"item_ids": contradicted},
+        )
+
     # A partir daqui só o pacote: acrescentar código a item já fechado, e fechar o que não
     # dá para fechar. Sem esta checagem o fechamento não afirmaria nada — bastaria mandar
     # mais um código depois dele.

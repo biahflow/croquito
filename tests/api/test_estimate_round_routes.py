@@ -1921,7 +1921,42 @@ def _round_ready_for_estimate(
         key="decisao-emop",
     )
     assert second.status_code == 200, second.text
-    return {**state, "version": second.json()["version"], "digests": digests}
+
+    # O orçamento não é montado sobre pacote aberto: confirmar um código deixou de dizer que
+    # o elemento acabou. Cada item aqui dispara um serviço só, e é isso que o fechamento
+    # declara.
+    version = second.json()["version"]
+    for index, item_id in enumerate((_ITEM_FIRST, _ITEM_SECOND)):
+        closed = _close_package(
+            client,
+            state["round_id"],
+            item_id=item_id,
+            base_version=version,
+            key=f"fechamento-{index}",
+        )
+        assert closed.status_code == 200, closed.text
+        version = closed.json()["version"]
+
+    return {**state, "version": version, "digests": digests}
+
+
+def _close_package(
+    client: TestClient,
+    round_id: str,
+    *,
+    item_id: str,
+    base_version: int,
+    key: str,
+    note: str | None = None,
+) -> Any:
+    body: dict[str, Any] = {"base_version": base_version, "item_id": item_id}
+    if note is not None:
+        body["note"] = note
+    return client.post(
+        f"/v1/estimate-rounds/{round_id}/code-assignments/closures",
+        headers=_headers(key=key),
+        json=body,
+    )
 
 
 def _build_estimate(
@@ -2974,7 +3009,16 @@ def _round_under_regime_ready_for_estimate(client: TestClient) -> dict[str, Any]
         key="codigo-regime",
     )
     assert confirmed.status_code == 200, confirmed.text
-    return {"round_id": round_id, "version": confirmed.json()["version"]}
+    # O elemento dispara um serviço só, e o fechamento é quem declara isso.
+    closed = _close_package(
+        client,
+        round_id,
+        item_id=_ITEM_FIRST,
+        base_version=confirmed.json()["version"],
+        key="fechamento-regime",
+    )
+    assert closed.status_code == 200, closed.text
+    return {"round_id": round_id, "version": closed.json()["version"]}
 
 
 def test_sob_demanda_contratada_o_bdi_declarado_recusa(tmp_path: Path) -> None:

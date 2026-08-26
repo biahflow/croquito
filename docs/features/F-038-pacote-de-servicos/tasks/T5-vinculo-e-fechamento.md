@@ -160,6 +160,32 @@ mantê-lo estável segue certa, mas por outro motivo; o rótulo que faltava entr
 `CALC_CONTRIBUTION_CODE_INVALID` nasceram na correção da #75 (`e51bbf8`) sem rótulo pt-BR.
 Como esta tarefa já abria os dois `labels.ts`, levaram carona.
 
+### Limitação declarada: rodada antiga não vira pacote
+
+Ao migrar de `1.0.0` para `2.0.0`, os itens do conjunto antigo chegam **fechados** — naquele
+regime a confirmação era o pacote inteiro. A consequência é que um elemento de rodada já
+gravada **não ganha o segundo código**: para montar pacote sobre ele, abre-se rodada nova.
+
+Aceitar o contrário obrigaria a dizer que a confirmação antiga não fechava nada, e aí toda
+rodada gravada passaria a exibir seus itens como pendentes — quebrando a garantia de
+comportamento byte-idêntico que a T5 existe para preservar. Não há ato de "reabrir pacote", e
+ele seria marco próprio.
+
+O teste `test_a_legacy_item_cannot_grow_into_a_package` fixa o comportamento.
+
+### Dois defeitos que a revisão do próprio diff encontrou
+
+Ficam registrados porque a causa de ambos é a mesma e vale para as tarefas seguintes: os
+testes passavam porque nenhuma fixture produzia dois códigos para o mesmo item — o silêncio
+que os portões existem para impedir estava também no oráculo.
+
+1. **Só `calc.py` tinha os portões.** `estimate.py` e `amendment_dossier.py` continuaram com
+   o dict `{item_id: assignment}` por dois commits. Corrigido, com teste que monta um
+   elemento de dois serviços e exige a recusa em cada builder.
+2. **Contradição entre lotes tinha a recusa certa com a mensagem errada.** Item rejeitado
+   que recebia código caía em `ASSIGNMENT_ITEM_ALREADY_CLOSED` — mas ninguém declarou pacote
+   completo ali. Agora responde `ASSIGNMENT_REJECT_WITH_CONFIRMED`, nas duas direções.
+
 ### Achado fora do escopo, não corrigido
 
 `tests/valuation/test_sicro.py::test_reimporting_the_same_bytes_yields_the_same_catalog_id`

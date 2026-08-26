@@ -244,9 +244,12 @@ def _assignment_set(
         # FECHADO, que é o que a orçamentista faz quando o elemento dispara um serviço só.
         # Sem isso o boletim recusaria em `CALC_PACKAGE_NOT_CLOSED`, e com razão.
         closures=[
-            ItemPackageClosure(item_id=item.item_id, decision=item.decision)
-            for item in entries
-            if item.status == "confirmed"
+            ItemPackageClosure(item_id=item_id, decision=decision)
+            # Um fechamento por ELEMENTO, não por par: o item que dispara dois serviços tem
+            # dois assignments e um pacote só.
+            for item_id, decision in {
+                item.item_id: item.decision for item in entries if item.status == "confirmed"
+            }.items()
         ],
         safety_notes=[
             "Confirmação de código é ato humano rastreável.",
@@ -902,3 +905,54 @@ def test_cli_build_estimate_refuses_an_unreadable_bdi_without_traceback(
     assert "Traceback" not in err
     assert "decimal" in err.lower()
     assert not output_dir.exists() or list(output_dir.iterdir()) == []
+
+
+# --------------------------------------------------------------------------------------
+# pacote de serviços: o orçamento não é montado pela metade nem escolhe um dos códigos
+# --------------------------------------------------------------------------------------
+
+
+def _raw_set(
+    assignments: list[CodeAssignment], closures: list[ItemPackageClosure]
+) -> CodeAssignmentSet:
+    """Conjunto montado à mão, para exercer estados que o helper fechado não produz."""
+    return CodeAssignmentSet(
+        plate_id=_PLATE_ID,
+        page_number=1,
+        image_sha256=_DIGEST,
+        catalog_sha256=_SCO_DIGEST,
+        assignments=assignments,
+        closures=closures,
+        safety_notes=[
+            "Confirmação de código é ato humano rastreável.",
+            "A fonte de preço de cada item é a citada na confirmação.",
+        ],
+    )
+
+
+def test_item_with_an_open_package_does_not_become_an_estimate() -> None:
+    """Espelho de `CALC_PACKAGE_NOT_CLOSED` no orçamento-base."""
+    assignments = _raw_set(_default_assignments(), [])
+
+    with pytest.raises(ValuationValidationError) as raised:
+        _build(assignments=assignments)
+
+    assert raised.value.code == "ESTIMATE_PACKAGE_NOT_CLOSED"
+
+
+def test_item_with_two_codes_refuses_instead_of_picking_one_in_the_estimate() -> None:
+    """O portão temporário até a matriz existir (#78), do lado da pré-licitação."""
+    extra = _assignment(_PAVEMENT_ITEM, code=_EMOP_CODE, catalog_sha256=_EMOP_DIGEST)
+    entries = [*_default_assignments(), extra]
+    closures = [
+        ItemPackageClosure(item_id=item_id, decision=decision)
+        for item_id, decision in {
+            item.item_id: item.decision for item in entries if item.status == "confirmed"
+        }.items()
+    ]
+
+    with pytest.raises(ValuationValidationError) as raised:
+        _build(assignments=_raw_set(entries, closures))
+
+    assert raised.value.code == "ESTIMATE_PACKAGE_NOT_SUPPORTED"
+    assert raised.value.details == {"item_ids": [_PAVEMENT_ITEM]}
