@@ -426,9 +426,11 @@ formato; pedir de novo devolve o mesmo artefato.
 
 Fluxo do orçamentista, paralelo ao de croqui → DXF e com vocabulário próprio
 ([Valuation Context](../architecture/VALUATION_CONTEXT.md)). O profissional levanta
-quantitativos, confirma o código de catálogo de cada item, monta a memória de cálculo e
-recebe o boletim de medição da obra em planilha, com fórmulas conferíveis célula a
-célula.
+quantitativos, confirma os códigos de catálogo de cada item — a relação elemento ×
+serviço é N:N, então um item pode receber vários códigos e o pacote é fechado por ato
+próprio ([ADR-0053](../adr/0053-cardinalidade-n-n-elemento-servico.md)) —, monta a
+memória de cálculo e recebe o boletim de medição da obra em planilha, com fórmulas
+conferíveis célula a célula.
 
 No M1 nada disso está na sessão autenticada: existe apenas a demonstração determinística
 `make valuation-demo`, que parte de um catálogo sintético e produz `medicao.xlsx` (abas
@@ -469,9 +471,10 @@ A primeira implementação dessas regras é a **UI local de homologação** (M6,
 [ADR-0020](../adr/0020-local-homologation-server-for-valuation.md)): o app
 `apps/medicao` sobre o servidor `croquito-valuation serve`. A orçamentista revisa o
 takeoff item a item sobre a prancha (bbox por estado, decisão nunca em lote, nada
-pré-marcado), confirma ou rejeita o código de cada item com a descrição completa do
-catálogo, busca por palavra-chave sempre à mão e a distinção fornecimento × execução
-sinalizada como dica de leitura declarada; item rejeitado por falta de código no
+pré-marcado), confirma ou rejeita os códigos de cada item com a descrição completa do
+catálogo, busca por palavra-chave sempre à mão e o pacote de serviços do elemento —
+vários códigos sobre a mesma medida, fechado por ato próprio ([ADR-0053](../adr/0053-cardinalidade-n-n-elemento-servico.md)) —
+sinalizado como dica de leitura declarada; item rejeitado por falta de código no
 SCO/contrato entra na lista visível de candidatos a aditivo (regra da obra licitada).
 Essa lista é prévia calculada na tela — o **dossiê do aditivo** oficial nasce no
 servidor, pelo mesmo gesto de fechamento do boletim: com toda decisão de código
