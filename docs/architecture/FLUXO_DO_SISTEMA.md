@@ -172,7 +172,14 @@ Vive em `packages/valuation`, que não depende do worker nem do scene graph. A r
 profunda é o [Valuation Context](VALUATION_CONTEXT.md).
 
 O caminho comum é: importar catálogo de preços → extrair a legenda da prancha (takeoff) →
-revisar item a item → sugerir e confirmar código do catálogo → montar o documento.
+revisar item a item → sugerir e confirmar **os** códigos do catálogo → **fechar o pacote de
+serviços de cada elemento** → montar o documento.
+
+O plural e o fechamento são do [ADR-0053](../adr/0053-cardinalidade-n-n-elemento-servico.md):
+um elemento da prancha dispara N serviços (`PISO EM CONCRETO`, medido uma vez, alimenta
+seis códigos). A identidade da confirmação é o par `(item_id, code)`, e como a presença de
+um código deixou de responder "este item acabou?", quem responde é um ato humano próprio —
+o `ItemPackageClosure`. Enquanto ele não vem, o item aparece como **pendente**.
 
 O documento final é que difere, e é onde a fronteira licitada vale:
 
@@ -193,6 +200,8 @@ não defeito.
 | `CALIBRATION_INVALID` | `proposal_calibration.py` | âncoras degeneradas ou erro acima da tolerância |
 | `BULLETIN_PRICE_ORIGIN_FORBIDDEN` | `valuation/calc.py`, reafirmado em `workbook_writer.py` | catálogo com origem diferente de `sco` na obra licitada — **duas linhas de defesa**, a segunda na hora de escrever a planilha |
 | `CALC_PLAN_QUANTITY_MISMATCH` | `valuation/calc.py` | o plano de cálculo não fecha com a quantidade que o humano confirmou |
+| `CALC_PACKAGE_NOT_CLOSED` / `ESTIMATE_PACKAGE_NOT_CLOSED` | `valuation/calc.py`, `valuation/estimate.py` | item confirmado com pacote de serviços em aberto — o boletim não é montado pela metade. Rejeição fecha o item sozinha |
+| `CALC_PACKAGE_NOT_SUPPORTED` / `ESTIMATE_PACKAGE_NOT_SUPPORTED` | `valuation/calc.py`, `valuation/estimate.py` | item com mais de um código chega a builder que ainda itera itens, não serviços — **portão temporário**, removido quando a matriz de contribuições entrar |
 | `CALC_CONTRIBUTION_*` | `valuation/models.py` | a base declarada da parcela não bate com o que ela implica: canteiro com elemento de origem, parcela derivada sem dizer de qual serviço vem, código de origem fora de parcela derivada, parcela de elemento sem nomear o elemento, ou código de origem sem forma de código de catálogo |
 | `VALUATION_EXPORT_BLOCKED` | `valuation/models.py` | medição não aprovada, aprovação que não casa com o conteúdo, período fora de sequência, código fora do contrato, preço/unidade divergentes do contrato ou saldo estourado |
 | Auditoria da planilha | `valuation/canonical.py` | reabre o `.xlsx`, recanonicaliza e compara célula a célula; divergência não publica |

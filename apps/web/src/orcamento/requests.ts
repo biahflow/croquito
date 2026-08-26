@@ -22,6 +22,7 @@ import { ehZeroDecimal } from "./teto";
 import type {
   CascadeOrderDraft,
   CascadeRemoveDraft,
+  CodeClosureDraft,
   CodeDecisionDraft,
   CreateEstimateDraft,
   TakeoffDecisionDraft,
@@ -259,6 +260,28 @@ export function takeoffDecisionBody(
  * rejeitar é recusar todas as fontes, não uma delas, e o servidor recusa a citação junto
  * da rejeição (`ASSIGNMENT_CATALOG_ON_REJECT`). A tela já manda só o que cabe em cada ato.
  */
+/**
+ * Corpo do `POST .../code-assignments/closures`.
+ *
+ * Fechar não leva código nem fonte: a afirmação é sobre o ELEMENTO — "o pacote de serviços
+ * dele está completo" —, e não sobre mais um serviço. A nota é opcional, ao contrário da
+ * rejeição: fechar é o curso normal do trabalho, e nota obrigatória em ato rotineiro vira
+ * ruído que ninguém lê.
+ */
+export function codeClosureBody(
+  draft: CodeClosureDraft,
+): Record<string, string | number> {
+  const body: Record<string, string | number> = {
+    ...versionBody(draft.baseVersion),
+    item_id: draft.itemId,
+  };
+  const note = draft.note?.trim();
+  if (note) {
+    body.note = note;
+  }
+  return body;
+}
+
 export function codeDecisionBody(
   draft: CodeDecisionDraft,
 ): Record<string, string | number> {

@@ -5,6 +5,7 @@ import {
   buildEstimateBody,
   cascadeOrderBody,
   cascadeRemoveBody,
+  codeClosureBody,
   codeDecisionBody,
   createEstimateBody,
   installCatalogBody,
@@ -373,5 +374,43 @@ describe("corpo do regime da rodada", () => {
 
   it("não tem como exprimir a volta para pré-licitação", () => {
     expect(JSON.stringify(regimeBody(1))).not.toContain("pre_bid");
+  });
+});
+
+describe("fechamento de pacote de serviços", () => {
+  it("o fechamento fala do ELEMENTO: não leva código nem fonte", () => {
+    expect(
+      codeClosureBody({
+        itemId: "ti_af6f85a49ea0b93d",
+        baseVersion: 4,
+      }),
+    ).toEqual({
+      base_version: 4,
+      item_id: "ti_af6f85a49ea0b93d",
+    });
+  });
+
+  it("a nota é opcional e viaja aparada quando existe", () => {
+    expect(
+      codeClosureBody({
+        itemId: "ti_af6f85a49ea0b93d",
+        baseVersion: 4,
+        note: "  o alambrado é a estrutura mais a tela; não há terceiro serviço  ",
+      }),
+    ).toEqual({
+      base_version: 4,
+      item_id: "ti_af6f85a49ea0b93d",
+      note: "o alambrado é a estrutura mais a tela; não há terceiro serviço",
+    });
+  });
+
+  it("nota em branco é omitida, nunca enviada como string vazia", () => {
+    const body = codeClosureBody({
+      itemId: "ti_af6f85a49ea0b93d",
+      baseVersion: 4,
+      note: "   ",
+    });
+
+    expect(Object.keys(body)).not.toContain("note");
   });
 });

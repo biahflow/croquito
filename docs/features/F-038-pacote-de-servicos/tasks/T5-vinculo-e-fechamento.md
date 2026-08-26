@@ -1,6 +1,6 @@
 # F-038 T5 — Vínculo com chave `(item_id, code)` e fechamento de pacote
 
-Issue: [#77](https://github.com/biahflow/croquito/issues/77) · Estado: **em execução**
+Issue: [#77](https://github.com/biahflow/croquito/issues/77) · Estado: **entregue**
 
 ## Goal
 
@@ -123,4 +123,61 @@ git diff --stat tests/valuation/golden   # precisa sair vazio
 
 ## Report
 
-*(preenchido ao encerrar)*
+Fatia ponta a ponta por decisão do dono do produto: domínio, duas rotas `/v1` novas, CLI,
+servidor local, duas fixtures demo e as duas telas. `make check` e `make test` verdes
+(2472 pytest, 1140 vitest web, 261 field), goldens byte-idênticos
+(`git status tests/valuation/golden` vazio depois das duas demos), diff de
+`packages/contracts/` puramente aditivo.
+
+**Propriedade verificada, não construída**: nenhum `vd_` se moveu.
+`_assignment_decision_id` já digeria `code`, e o teste que congela o payload histórico
+(`test_assignment.py`) passou sem uma linha de mudança.
+
+### Desvios do spec, com evidência
+
+**A rota de fechamento é própria, contra o texto da #80**, que sugeria embutir `closures` no
+corpo de `/decisions`. Aquela rota carrega **uma** decisão e a UI a chama uma vez por código;
+torná-la polimórfica esconderia dois atos humanos distintos atrás de um endpoint, e a
+auditoria deixaria de distingui-los. Nasceram
+`POST /v1/{valuation,estimate}-rounds/{id}/code-assignments/closures`.
+
+**Dois portões temporários que o spec não previa.** `CALC_PACKAGE_NOT_SUPPORTED` e
+`ESTIMATE_PACKAGE_NOT_SUPPORTED`. A T5 rodou **antes** da T4, invertendo o `plan.md`, e os
+três builders indexavam `{item_id: assignment}` — dict que fica com o último e descarta os
+outros em silêncio. Sem o portão, um pacote de seis códigos viraria uma linha escolhida ao
+acaso. T6 (#78) os remove.
+
+**`closed` entrou nos payloads e no CLI.** Não estava no spec, e é consequência direta:
+`confirmed` conta PARES e passou a divergir do número de elementos resolvidos. Sem a
+contagem nova, a tela diria "6 confirmados" para um elemento só.
+
+**A correção do texto da #77.** A issue afirma que `ASSIGNMENT_DUPLICATE_ITEM` está
+rotulado em `medicao/labels.ts:302` e `orcamento/labels.ts:842`. Não estava — essas linhas
+são `ASSIGNMENT_ITEM_ALREADY_DECIDED`, e o código caía no fallback genérico. A decisão de
+mantê-lo estável segue certa, mas por outro motivo; o rótulo que faltava entrou aqui.
+
+**Dois rótulos de fora do escopo.** `CALC_CONTRIBUTION_WITHOUT_SOURCE_ITEM` e
+`CALC_CONTRIBUTION_CODE_INVALID` nasceram na correção da #75 (`e51bbf8`) sem rótulo pt-BR.
+Como esta tarefa já abria os dois `labels.ts`, levaram carona.
+
+### Achado fora do escopo, não corrigido
+
+`tests/valuation/test_sicro.py::test_reimporting_the_same_bytes_yields_the_same_catalog_id`
+é **instável desde antes desta tarefa**. `write_sicro_xlsx` cria um `Workbook()` novo por
+chamada, e o openpyxl carimba `dcterms:created` com o instante atual: dois arquivos escritos
+em segundos diferentes têm bytes diferentes, digest diferente e UUIDv5 diferente. Reproduzi
+com um `sleep(1.1)` entre as duas escritas. Falha só sob carga, quando as duas chamadas
+atravessam a fronteira do segundo. Área da F-026, não tocada aqui — fica reportado em vez de
+consertado.
+
+### O que a T5 deliberadamente não entrega
+
+Decisões 3 e 6 do Design Approval — memória de cálculo na tela do orçamento e parcela
+parcial declarada — dependem da `CalcMatrix`, que é #76/#78. A seleção múltipla e o ato de
+fechamento (decisões 1, 2, 4 e 5) estão no ar.
+
+### Conflito previsto na integração
+
+`apps/web/src/orcamento/labels.ts` também mudou em `b32c1c1`, na branch
+`feat/prancha-lote-e-braco-semantico`. É dicionário de chaves independentes: o conflito é
+textual e resolve por união.

@@ -13,6 +13,7 @@
  */
 
 import type {
+  CodeClosureDraft,
   CodeDecisionDraft,
   CreateRoundDraft,
   TakeoffDecisionDraft,
@@ -114,6 +115,27 @@ export function takeoffDecisionBody(
  * (é ela que vira o texto do pedido de aditivo) e recusa `code` junto dela; a tela já
  * manda só o que cabe em cada ato.
  */
+/**
+ * Corpo do `POST .../code-assignments/closures`.
+ *
+ * Fechar não leva código: a afirmação é sobre o ELEMENTO — "o pacote de serviços dele está
+ * completo" —, e não sobre mais um serviço. A nota é opcional, ao contrário da rejeição:
+ * fechar é o curso normal do trabalho, e nota obrigatória em ato rotineiro vira ruído.
+ */
+export function codeClosureBody(
+  draft: CodeClosureDraft,
+): Record<string, string | number> {
+  const body: Record<string, string | number> = {
+    ...versionBody(draft.baseVersion),
+    item_id: draft.itemId,
+  };
+  const note = draft.note?.trim();
+  if (note) {
+    body.note = note;
+  }
+  return body;
+}
+
 export function codeDecisionBody(
   draft: CodeDecisionDraft,
 ): Record<string, string | number> {

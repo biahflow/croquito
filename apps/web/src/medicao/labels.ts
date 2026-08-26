@@ -301,7 +301,23 @@ const ERROR_MESSAGES: LookupTable = {
     "A decisão aponta para um item que não está no pacote desta prancha.",
   // Confirmação de código.
   ASSIGNMENT_ITEM_ALREADY_DECIDED:
-    "O código deste item já foi decidido; decisão não se sobrescreve.",
+    "Este código já foi decidido para o item; decisão não se sobrescreve.",
+  ASSIGNMENT_DUPLICATE_ITEM:
+    "Um item recebe uma rejeição só: rejeitar é recusar todos os códigos de uma vez.",
+  ASSIGNMENT_DUPLICATE_PAIR:
+    "Este código já está no pacote deste item; escolha outro.",
+  ASSIGNMENT_REJECT_WITH_CONFIRMED:
+    "Rejeitar é declarar que nenhum serviço precifica este elemento, e ele já tem código confirmado.",
+  ASSIGNMENT_ITEM_ALREADY_CLOSED:
+    "O pacote deste item já foi declarado completo; não entra código novo.",
+  ASSIGNMENT_DUPLICATE_CLOSURE:
+    "O pacote deste item já foi declarado completo.",
+  ASSIGNMENT_CLOSURE_WITHOUT_ASSIGNMENT:
+    "Confirme ao menos um código antes de fechar o pacote; rejeitar já encerra o item.",
+  ASSIGNMENT_CLOSURE_NOT_SUPPORTED:
+    "Esta rodada foi montada antes do pacote de serviços e não tem pacote a fechar.",
+  ASSIGNMENT_BATCH_EMPTY:
+    "O envio precisa levar ao menos uma decisão de código ou um fechamento de pacote.",
   ASSIGNMENT_ITEM_NOT_CONFIRMED:
     "Só item confirmado na revisão do takeoff recebe código.",
   ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE:
@@ -322,6 +338,14 @@ const ERROR_MESSAGES: LookupTable = {
   // Boletim.
   CALC_ASSIGNMENT_MISSING:
     "Há item confirmado sem decisão de código; o boletim não é montado pela metade.",
+  CALC_PACKAGE_NOT_CLOSED:
+    "Há item com pacote de serviços em aberto; o boletim não é montado pela metade.",
+  CALC_PACKAGE_NOT_SUPPORTED:
+    "Item com mais de um código ainda não vira boletim: a matriz de contribuições resolve o pacote.",
+  CALC_CONTRIBUTION_WITHOUT_SOURCE_ITEM:
+    "A parcela nasce de um elemento da prancha e precisa dizer de qual.",
+  CALC_CONTRIBUTION_CODE_INVALID:
+    "O código de origem da parcela não tem a forma de um código de catálogo.",
   CALC_PLAN_QUANTITY_MISMATCH:
     "A decomposição do plano de cálculo não fecha com a quantidade confirmada.",
   CALC_NO_ITEMS: "Não há item medido para montar o boletim desta obra.",

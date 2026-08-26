@@ -4,7 +4,8 @@ Gates cumpridos: [ADR-0053](../../adr/0053-cardinalidade-n-n-elemento-servico.md
 2026-08-25 e [Design Approval Package](mock/README.md) revisão 1 aprovado em 2026-08-26.
 
 O trabalho está fatiado em doze tarefas, publicadas como issues em `biahflow/croquito`
-(#73 a #84). Quatro estão entregues, na branch `feat/f-038-digest-estavel`.
+(#73 a #84). Cinco estão entregues: quatro na branch `feat/f-038-digest-estavel` e a T5 em
+`feat/f-038-t5-pacote-de-servicos`.
 
 ## A ordem é ditada por um risco, não por conveniência
 
@@ -27,7 +28,7 @@ dos builders, e o layout impresso isolado numa tarefa própria.
 | T11 | [#83](https://github.com/biahflow/croquito/issues/83) | Tabela de derivação de transporte como dado | **Entregue** |
 | T3 | [#75](https://github.com/biahflow/croquito/issues/75) | `ContributionBasis` e os campos da matriz | **Aceita** |
 | T4 | [#76](https://github.com/biahflow/croquito/issues/76) | `CalcMatrix` e dependência sem ciclo | Pendente |
-| T5 | [#77](https://github.com/biahflow/croquito/issues/77) | Vínculo `(item_id, code)` e fechamento de pacote | Pendente |
+| T5 | [#77](https://github.com/biahflow/croquito/issues/77) | Vínculo `(item_id, code)` e fechamento de pacote | **Entregue** |
 | T6 | [#78](https://github.com/biahflow/croquito/issues/78) | Builders passam a iterar serviços | Pendente |
 | T7 | [#79](https://github.com/biahflow/croquito/issues/79) | Memória comporta quatro operandos | Pendente |
 | T8 | [#80](https://github.com/biahflow/croquito/issues/80) | CLI, rotas `/v1` e migração da matriz | Pendente |

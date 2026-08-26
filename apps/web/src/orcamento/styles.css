@@ -527,6 +527,27 @@ p {
   color: #7a1212;
 }
 
+/* O pacote de serviços do elemento selecionado, em montagem. O estado "aberto" é dito em
+   TEXTO dentro do bloco; a borda só o acompanha, nunca o substitui (ADR-0053 / mock rev. 1,
+   decisão 5). */
+.pacote-do-item {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.pacote-do-item h4 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+}
+
+.lista-simples {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+}
+
 .busca {
   display: flex;
   align-items: flex-end;

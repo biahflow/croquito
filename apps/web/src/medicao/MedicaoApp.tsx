@@ -28,6 +28,7 @@ import {
   postApprove,
   postBulletinExport,
   postCalcBuild,
+  postCodeClosure,
   postCodeDecision,
   postDossierBuild,
   postSuggestionsRecompute,
@@ -1624,6 +1625,12 @@ export function MedicaoApp({
   const items = takeoff?.packet.items ?? [];
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
   const pendingItems = codes?.pending_items ?? [];
+  /** Os códigos já confirmados do item selecionado — o pacote que está sendo montado. */
+  const pacoteDoItem = (codes?.assignments?.assignments ?? []).filter(
+    (assignment) =>
+      assignment.item_id === selectedPendingId &&
+      assignment.status === "confirmed",
+  );
   const selectedPending =
     pendingItems.find((item) => item.item_id === selectedPendingId) ?? null;
 
@@ -1892,17 +1899,55 @@ export function MedicaoApp({
       setCodes(response);
       setCodeChoice(null);
       setCodeNote("");
-      setSelectedPendingId("");
+      // O item SEGUE selecionado depois de confirmar: o elemento pode disparar mais de um
+      // serviço, e limpar a seleção obrigaria a reencontrá-lo na lista a cada código. A
+      // rejeição encerra o item sozinha, e aí sim a seleção sai.
+      if (action === "reject") {
+        setSelectedPendingId("");
+      }
       setRevisionConflict(false);
       setToast(
         action === "confirm"
-          ? `${selectedPending.label}: código ${codeChoice?.code ?? ""} confirmado.`
+          ? `${selectedPending.label}: código ${codeChoice?.code ?? ""} confirmado; feche o pacote quando não houver mais serviços.`
           : `${selectedPending.label}: registrado como candidato a aditivo.`,
       );
       await atualizarEstado();
     } catch (error) {
       // O conflito tem banner próprio, com o botão de recarregar e o formulário
       // preservado; repetir a frase no alerta comum só empilharia ruído.
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const fecharPacote = async () => {
+    const token = tokenDaSessao();
+    if (token === null || selectedPending === null || version === null) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const response = await postCodeClosure(token, rodada, {
+        itemId: selectedPending.item_id,
+        baseVersion: version,
+        note: codeNote,
+      });
+      aplicarVersao(response.version);
+      setCodes(response);
+      setCodeChoice(null);
+      setCodeNote("");
+      setSelectedPendingId("");
+      setRevisionConflict(false);
+      setToast(`${selectedPending.label}: pacote de serviços declarado completo.`);
+      await atualizarEstado();
+    } catch (error) {
       const recusa = recusaDeMutacao(error);
       if (recusa.conflito) {
         setRevisionConflict(true);
@@ -3424,12 +3469,33 @@ export function MedicaoApp({
                       className="botao-secundario"
                       onClick={() => void decidirCodigo("reject")}
                       disabled={
-                        submitting || version === null || codeNote.trim().length === 0
+                        submitting ||
+                        version === null ||
+                        codeNote.trim().length === 0 ||
+                        pacoteDoItem.length > 0
                       }
                     >
                       Sem código no contrato (aditivo)
                     </button>
+                    <button
+                      type="button"
+                      className="botao-secundario"
+                      onClick={() => void fecharPacote()}
+                      disabled={
+                        submitting || version === null || pacoteDoItem.length === 0
+                      }
+                    >
+                      Fechar pacote de serviços
+                    </button>
                   </div>
+                  {pacoteDoItem.length === 0 ? null : (
+                    <p className="dica">
+                      Pacote em aberto, com {pacoteDoItem.length}{" "}
+                      {pacoteDoItem.length === 1 ? "serviço" : "serviços"} (
+                      {pacoteDoItem.map((item) => item.code).join(", ")}). O item só conta
+                      como resolvido depois do fechamento.
+                    </p>
+                  )}
                   <p className="dica">
                     Rejeitar exige nota: é ela que vira o texto do pedido de aditivo.
                   </p>

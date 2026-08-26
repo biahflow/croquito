@@ -82,7 +82,8 @@ recebe, inclusive o capítulo de transporte, que passa a ser derivado em vez de 
 1. **A memória é a matriz.** `CalcBlock` ganha `source_item_id` ao lado do `label`, mais
    `basis` e `derived_from_code`. **Entregue (#75).**
 2. **A identidade da confirmação é o par `(item_id, code)`**, com fechamento explícito de
-   pacote. Sem ele, item com um de seis códigos pareceria pronto. **Pendente (#77).**
+   pacote. Sem ele, item com um de seis códigos pareceria pronto. **Entregue (#77)**, ponta
+   a ponta: domínio, rotas `/v1`, CLI, servidor local e as duas telas.
 3. **A linha do orçamento agrupa por código**, com uma `CalcSheet` por linha e um bloco por
    elemento contribuinte. **Pendente (#78).**
 4. **Dependência entre serviços** resolvida no build e materializada como operando literal,
