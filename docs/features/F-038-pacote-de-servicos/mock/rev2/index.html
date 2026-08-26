@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>F-038 rev.2 — Autoria da matriz e declaração PARTIAL</title>
+<style>
+  /* -------------------------------------------------------------------------
+     Design System — croquito ("Grafite técnico").
+     Tokens de COR copiados verbatim de docs/engineering/DESIGN_SYSTEM.md
+     (fonte de verdade em runtime: apps/web/src/styles.css), lidos em 2026-08-26.
+     Tipografia (Inter/Georgia) e regras de uso de cor idem.
+
+     Valores marcados "NOVO" nos comentários abaixo NAO vêm do design system:
+     por DESIGN_SYSTEM.md ("O que ainda não é sistema") NÃO há escala de
+     tipografia, de espaçamento nem de raio. São declarados aqui como novos e
+     fazem parte do que este pacote pede para aprovar. Nenhuma escala foi
+     inventada como sistema — são valores locais deste artefato de evidência.
+     ------------------------------------------------------------------------- */
+  :root {
+    /* Cor — design system, verbatim */
+    --bg: #fafaf8;
+    --surface: #ffffff;
+    --surface-subtle: #f4f4f1;
+    --surface-sunken: #efefeb;
+    --ink: #14181d;
+    --ink-secondary: #5b6169;
+    --muted: #9aa0a8;
+    --line: #e5e5e0;
+    --accent: #00c877;
+    --accent-hover: #00b169;
+    --accent-ink: #0e1116;
+    --accent-text: #00744a;
+    --accent-soft: #e6f6ee;
+    --accent-line: #9bdcc0;
+    --dark: #0e1116;
+    --dark-ink: #f2f4f7;
+    --dark-ink-soft: rgba(242,244,247,.72);
+    --dark-line: rgba(242,244,247,.12);
+    --dark-line-strong: rgba(242,244,247,.34);
+
+    /* Cor de domínio — DESIGN_SYSTEM regra 4: matiz próprio de estado, não é a
+       paleta da marca. Os tons de aviso/atenção abaixo NÃO estão tabelados no
+       design system; são declarados NOVOS neste pacote. */
+    --warn-ink: #8a5a00;      /* NOVO — texto de atenção sobre claro */
+    --warn-soft: #fbf3e2;     /* NOVO — fundo de atenção */
+    --warn-line: #e6cf9a;     /* NOVO — borda de atenção */
+    --danger-ink: #9a2b25;    /* NOVO — texto de erro crítico sobre claro */
+    --danger-soft: #fbecea;   /* NOVO — fundo de erro crítico */
+    --danger-line: #e2b3ae;   /* NOVO — borda de erro crítico */
+
+    /* Tipografia — design system */
+    --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-title: Georgia, "Times New Roman", serif;
+
+    /* NOVO — espaçamento local deste artefato (não é escala de sistema) */
+    --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+    /* NOVO — raio local (design system só registra que 6px é o mais comum) */
+    --r: 6px;
+  }
+
+  * { box-sizing: border-box; }
+  html { font-synthesis: none; text-rendering: optimizeLegibility; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 15px;               /* NOVO */
+    line-height: 1.5;
+  }
+
+  /* Casca de documento de evidência (não é chrome do produto) */
+  .doc { max-width: 1120px; margin: 0 auto; padding: var(--sp-6) var(--sp-5) 64px; }
+
+  header.capa {
+    background: var(--dark);
+    color: var(--dark-ink);
+    border-radius: var(--r);
+    padding: var(--sp-6);
+    margin-bottom: var(--sp-6);
+  }
+  header.capa h1 {
+    font-family: var(--font-title);
+    font-size: 25px;               /* design system: h1 25px/600 Georgia */
+    font-weight: 600;
+    margin: 0 0 var(--sp-2);
+  }
+  header.capa .selo-status {
+    display: inline-block;
+    font-size: 12.5px;             /* NOVO */
+    letter-spacing: .02em;
+    text-transform: uppercase;
+    border: 1px solid var(--dark-line-strong);
+    border-radius: 999px;
+    padding: 3px 12px;
+    color: var(--dark-ink);
+    margin-bottom: var(--sp-4);
+  }
+  header.capa p { color: var(--dark-ink-soft); margin: var(--sp-2) 0 0; max-width: 78ch; }
+  header.capa dl {
+    display: grid; grid-template-columns: max-content 1fr; gap: var(--sp-1) var(--sp-4);
+    margin: var(--sp-4) 0 0; font-size: 13.5px;
+  }
+  header.capa dt { color: var(--dark-ink-soft); }
+  header.capa dd { margin: 0; color: var(--dark-ink); }
+
+  .legenda-proveniencia {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: var(--sp-4) var(--sp-5);
+    margin-bottom: var(--sp-6);
+    font-size: 13.5px;
+    color: var(--ink-secondary);
+  }
+  .legenda-proveniencia strong { color: var(--ink); }
+  .legenda-proveniencia .chip {
+    display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 12px;
+    border: 1px solid var(--line); margin: 0 4px;
+  }
+  .chip.novo { background: var(--warn-soft); border-color: var(--warn-line); color: var(--warn-ink); }
+  .chip.ds { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
+
+  h2.secao {
+    font-family: var(--font-title);
+    font-weight: 600;
+    font-size: 21px;               /* NOVO */
+    margin: var(--sp-6) 0 var(--sp-2);
+    padding-top: var(--sp-4);
+    border-top: 1px solid var(--line);
+  }
+  h2.secao .num { color: var(--accent-text); }
+  .secao-intro { color: var(--ink-secondary); max-width: 82ch; margin: 0 0 var(--sp-5); font-size: 14px; }
+
+  /* Painel de estado: caption + render */
+  .painel { margin: 0 0 var(--sp-6); }
+  .painel > figcaption {
+    display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap;
+    margin: 0 0 var(--sp-2);
+  }
+  .painel > figcaption .rotulo {
+    font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .03em;
+    color: var(--ink);
+  }
+  .painel > figcaption .estado {
+    font-size: 12px; border-radius: 999px; padding: 1px 10px;
+    background: var(--surface-sunken); border: 1px solid var(--line); color: var(--ink-secondary);
+  }
+  .painel > figcaption .nota { font-size: 12.5px; color: var(--ink-secondary); }
+
+  /* O "vidro" que emula a viewport do produto (desktop, min 1180px por
+     DESIGN_SYSTEM; aqui reduzido para caber na página de evidência). */
+  .render {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    overflow: hidden;
+  }
+  .render-topbar {
+    background: var(--dark); color: var(--dark-ink);
+    display: flex; align-items: center; gap: var(--sp-3);
+    padding: 10px var(--sp-4); font-size: 13px;
+  }
+  .render-topbar .marca { font-family: var(--font-title); font-weight: 600; }
+  .render-topbar .trilha { color: var(--dark-ink-soft); font-size: 12.5px; }
+  .render-body { padding: var(--sp-5); }
+
+  .render-body h3 {
+    font-family: var(--font-title); font-weight: 600; font-size: 18px; margin: 0 0 var(--sp-1);
+  }
+  .render-body h4 { font-size: 14px; margin: var(--sp-4) 0 var(--sp-2); }
+  .dica, .campo-dica { color: var(--ink-secondary); font-size: 13px; margin: 0 0 var(--sp-3); }
+
+  /* Cartão de elemento (item de takeoff) */
+  .elemento {
+    border: 1px solid var(--line); border-radius: var(--r); padding: var(--sp-4);
+    margin-bottom: var(--sp-4); background: var(--surface);
+  }
+  .elemento-topo { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-3); }
+  .elemento-nome { font-weight: 600; }
+  .elemento-qtd { font-variant-numeric: tabular-nums; color: var(--ink-secondary); font-size: 13.5px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tabular { font-variant-numeric: tabular-nums; }
+
+  /* Pílula de estado — SEMPRE com palavra (regra 5) */
+  .pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px;
+          padding: 2px 10px; font-size: 12px; border: 1px solid var(--line); }
+  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 999px; background: var(--muted); }
+  .pill.aberto { background: var(--warn-soft); border-color: var(--warn-line); color: var(--warn-ink); }
+  .pill.aberto::before { background: var(--warn-ink); }
+  .pill.fechado { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
+  .pill.fechado::before { background: var(--accent-text); }
+  .pill.vazio { background: var(--surface-sunken); color: var(--ink-secondary); }
+  .pill.vazio::before { background: var(--muted); }
+
+  /* Linha de contribuição (célula da matriz: par item×código) */
+  .contrib {
+    border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: var(--r);
+    padding: var(--sp-3) var(--sp-4); margin: var(--sp-2) 0; background: var(--surface);
+  }
+  .contrib.partial { border-left-color: var(--warn-ink); }
+  .contrib.dependent { border-left-color: var(--accent-text); }
+  .contrib-topo { display: flex; justify-content: space-between; gap: var(--sp-3); align-items: baseline; }
+  .contrib-code { font-weight: 600; }
+  .contrib-sub { font-size: 13.5px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .contrib-formula { font-size: 13px; color: var(--ink-secondary); margin-top: 4px; }
+  .contrib-selos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--sp-2); }
+  .selo { font-size: 12px; border-radius: 999px; padding: 1px 9px; border: 1px solid var(--line);
+          background: var(--surface-subtle); color: var(--ink-secondary); }
+  .selo.base { background: var(--surface-sunken); }
+  .selo.base.partial { background: var(--warn-soft); border-color: var(--warn-line); color: var(--warn-ink); }
+  .selo.base.dependent { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
+
+  /* Editor de parcela (superfície NOVA — não há idioma prévio) */
+  .editor { background: var(--surface-subtle); border: 1px solid var(--line); border-radius: var(--r);
+            padding: var(--sp-4); margin-top: var(--sp-3); }
+  .editor .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-3); }
+  .campo { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  .campo > span.rot { font-weight: 600; }
+  .fake-input, .fake-select, .fake-textarea {
+    border: 1px solid var(--muted); border-radius: 5px; background: var(--surface);
+    padding: 7px 10px; font-family: var(--font-ui); font-size: 13.5px; color: var(--ink);
+  }
+  .fake-select::after { content: " ▾"; color: var(--muted); }
+  .fake-textarea { min-height: 52px; }
+  .operandos-linha { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: var(--sp-2); }
+  .operando { display: inline-flex; align-items: center; gap: 6px;
+              border: 1px solid var(--muted); border-radius: 5px; padding: 5px 8px; background: var(--surface);
+              font-size: 13px; }
+  .operando .nome { color: var(--ink-secondary); }
+  .operando .val { font-variant-numeric: tabular-nums; }
+  .operando .un { color: var(--muted); font-size: 12px; }
+  .times { color: var(--muted); font-weight: 600; }
+  .igual { color: var(--ink-secondary); }
+
+  .botao { border-radius: 5px; padding: 8px 14px; font-size: 13.5px; font-family: var(--font-ui);
+           border: 1px solid var(--muted); background: var(--surface); color: var(--ink); cursor: default; }
+  .botao-primario { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .botao[disabled] { color: var(--muted); border-color: var(--line); background: var(--surface-subtle); }
+  .acoes { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); align-items: center; }
+
+  /* Faixas de aviso e erro — palavra + role, nunca só cor (regra 5) */
+  .faixa { border-radius: var(--r); padding: var(--sp-3) var(--sp-4); margin: var(--sp-3) 0; font-size: 13.5px; }
+  .faixa .titulo { font-weight: 600; display: block; margin-bottom: 3px; }
+  .faixa.atencao { background: var(--warn-soft); border: 1px solid var(--warn-line); color: var(--warn-ink); }
+  .faixa.erro { background: var(--danger-soft); border: 1px solid var(--danger-line); color: var(--danger-ink); }
+  .faixa .cod { font-family: ui-monospace, monospace; font-size: 12px; opacity: .85; }
+
+  /* Ordem topológica */
+  .topo-ordem { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+                background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--r);
+                padding: var(--sp-3); margin-top: var(--sp-3); font-size: 13px; }
+  .topo-ordem .passo { background: var(--surface); border: 1px solid var(--line); border-radius: 5px;
+                       padding: 3px 9px; font-weight: 600; }
+  .topo-ordem .seta { color: var(--muted); }
+  .topo-ordem .rot { color: var(--ink-secondary); margin-right: 4px; }
+
+  /* Memória de cálculo (render text-only, entregue no #95) */
+  .memoria { list-style: none; padding: 0; margin: 0; }
+  .memoria > li { border-top: 1px solid var(--line); padding: var(--sp-3) 0; }
+  .memoria > li:first-child { border-top: 0; }
+  .memoria .item-linha { font-weight: 600; }
+  .memoria ul { margin: 6px 0 0; padding-left: 18px; }
+  .memoria ul li { font-size: 13.5px; color: var(--ink); margin: 3px 0; }
+  .memoria-base { color: var(--ink-secondary); }
+  .memoria-derivada { color: var(--accent-text); }
+
+  /* Estados vazios / loading / sem autorização */
+  .estado-vazio { text-align: center; color: var(--ink-secondary); padding: var(--sp-6) var(--sp-4);
+                  border: 1px dashed var(--muted); border-radius: var(--r); }
+  .skel { background: linear-gradient(90deg, var(--surface-subtle), var(--surface-sunken), var(--surface-subtle));
+          border-radius: 4px; height: 12px; }
+  .skel.l { width: 60%; } .skel.m { width: 40%; } .skel.s { width: 25%; }
+  .skel-row { display: flex; flex-direction: column; gap: 10px; padding: var(--sp-4) 0; }
+
+  footer.rodape { color: var(--ink-secondary); font-size: 13px; margin-top: var(--sp-6);
+                  border-top: 1px solid var(--line); padding-top: var(--sp-4); }
+  code.k { font-family: ui-monospace, monospace; font-size: 12.5px; background: var(--surface-sunken);
+           padding: 1px 5px; border-radius: 4px; }
+
+  @media (max-width: 720px) {
+    .editor .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header class="capa">
+    <span class="selo-status">Proposed · aguardando aprovação humana</span>
+    <h1>F-038 rev.2 — Autoria da matriz e declaração PARTIAL</h1>
+    <p>
+      Rendering autocontido do Design Approval Package revisão 2. É <strong>evidência</strong> para
+      um gate humano, não implementação, e não deve ser copiado para código de aplicação. O
+      comportamento N:N que estas telas expõem é do ADR-0053, já aceito; o que se decide aqui é a
+      <em>interface</em> de autoria da matriz e a superfície da parcela parcial, que a revisão 1
+      (text-only) não resolveu.
+    </p>
+    <dl>
+      <dt>Classificação</dt><dd>INTERFACE_CHANGE</dd>
+      <dt>Revisão</dt><dd>2</dd>
+      <dt>Produzido por</dt><dd>agente (Claude Code)</dd>
+      <dt>Abre em</dt><dd>navegador, sem build, sem rede, sem CDN</dd>
+      <dt>Origem</dt><dd>issue #96 — a decisão 6 da rev.1 não foi implementada por achado de contrato</dd>
+    </dl>
+  </header>
+
+  <div class="legenda-proveniencia">
+    <p style="margin:0 0 8px"><strong>Como ler a proveniência.</strong> Todo valor de cor sai da
+    tabela de <span class="chip ds">design system</span> (docs/engineering/DESIGN_SYSTEM.md, lido em
+    2026-08-26). Onde não sai, é <span class="chip novo">novo</span> e está sendo decidido neste
+    pacote — inclusive os tons de atenção/erro e todo tamanho, espaçamento e raio, porque o design
+    system registra que ainda não há escala de tipografia, espaçamento nem raio.</p>
+    <p style="margin:0"><strong>O que é proposta do agente.</strong> A superfície de
+    <em>autoria da matriz</em> (o editor de parcela: receita, operandos, dependência, ordem
+    topológica) é <span class="chip novo">nova</span> — não existe idioma prévio no cliente web,
+    que hoje só <em>renderiza</em> memória. A grade de códigos, a seção "Pacote de serviços deste
+    elemento", o ato "Fechar pacote" e o render text-only da memória
+    <span class="chip ds">já existem</span> (PR #81/#95) e são citados, não reinventados.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 class="secao"><span class="num">A.</span> Autoria da matriz — o editor de parcela (superfície nova)</h2>
+  <p class="secao-intro">
+    A rev.1 assumiu que a matriz seria fiada por par <code class="k">(item, code)</code> nas rotas
+    de decisão. O achado do #96: a matriz só é aceita como o objeto <code class="k">CalcMatrix</code>
+    inteiro no corpo do build (<code class="k">POST .../estimate</code>, campo
+    <code class="k">calc_matrix</code>); as rotas de decisão usam <code class="k">extra="forbid"</code>
+    e recusariam campos por par. Logo a matriz precisa ser <em>autorada na tela</em> antes do build —
+    e nenhum cliente web produz <code class="k">calc_matrix</code> hoje. Estas telas são essa autoria.
+  </p>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">A1 · Elemento com pacote em aberto, parcelas por código</span>
+      <span class="estado">estado: pacote aberto / pendente</span>
+      <span class="nota">o mesmo elemento alimenta seis serviços — a célula de cada par é uma parcela</span>
+    </figcaption>
+    <div class="render">
+      <div class="render-topbar">
+        <span class="marca">croquito</span>
+        <span class="trilha">Orçamento · Praça Campo do Toca · etapa <strong>Códigos e pacote</strong></span>
+      </div>
+      <div class="render-body">
+        <div class="elemento">
+          <div class="elemento-topo">
+            <span class="elemento-nome">PISO EM CONCRETO</span>
+            <span class="elemento-qtd tabular">quantidade confirmada do elemento: 418,12 m²</span>
+          </div>
+          <p class="campo-dica">Um elemento pode disparar mais de um serviço. Cada parcela abaixo é
+          o que este elemento acrescenta à quantidade daquele serviço — não é o total do serviço.</p>
+          <p><span class="pill aberto">Pacote em aberto · 6 serviços · só conta como resolvido depois do fechamento</span></p>
+
+          <div class="contrib">
+            <div class="contrib-topo">
+              <span class="contrib-code mono">MT14150050(A)</span>
+              <span class="contrib-sub tabular">parcela 418,12 m²</span>
+            </div>
+            <div class="contrib-formula">preparo de solo — comprimento × largura</div>
+            <div class="contrib-selos">
+              <span class="selo base">base: espelho do elemento</span>
+              <span class="selo">unidade compatível</span>
+            </div>
+          </div>
+
+          <div class="contrib">
+            <div class="contrib-topo">
+              <span class="contrib-code mono">BP04050350(/)</span>
+              <span class="contrib-sub tabular">parcela 418,12 m²</span>
+            </div>
+            <div class="contrib-formula">base de saibro — comprimento × largura</div>
+            <div class="contrib-selos">
+              <span class="selo base">base: espelho do elemento</span>
+              <span class="selo">este serviço também recebe parcelas de outros 3 elementos</span>
+            </div>
+          </div>
+
+          <div class="contrib">
+            <div class="contrib-topo">
+              <span class="contrib-code mono">BP09100050(B)</span>
+              <span class="contrib-sub tabular">parcela 418,12 m²</span>
+            </div>
+            <div class="contrib-formula">pavimento rígido — comprimento × largura</div>
+            <div class="contrib-selos">
+              <span class="selo base">base: espelho do elemento</span>
+            </div>
+          </div>
+
+          <div class="contrib partial">
+            <div class="contrib-topo">
+              <span class="contrib-code mono">SC34150200(/)</span>
+              <span class="contrib-sub tabular">parcela 170,00 m²</span>
+            </div>
+            <div class="contrib-formula">limpeza — recorte medido à parte (não sai da geometria do elemento)</div>
+            <div class="contrib-selos">
+              <span class="selo base partial">base: parcela parcial declarada</span>
+              <span class="selo">nota obrigatória registrada · teto 418,12 m²</span>
+            </div>
+          </div>
+
+          <div class="contrib dependent">
+            <div class="contrib-topo">
+              <span class="contrib-code mono">TC04100050(/)</span>
+              <span class="contrib-sub tabular">parcela 365,86 t·dam</span>
+            </div>
+            <div class="contrib-formula">transporte — derivada da quantidade de BP09100050(B) × massa específica × distância</div>
+            <div class="contrib-selos">
+              <span class="selo base dependent">base: derivada de outro serviço</span>
+              <span class="selo">resolvida no build; chega à memória como operando literal</span>
+            </div>
+          </div>
+
+          <div class="acoes">
+            <button class="botao">Adicionar serviço ao pacote</button>
+            <button class="botao botao-primario">Fechar pacote de serviços</button>
+            <span class="campo-dica" style="margin:0">O fechamento é ato próprio. Sem ele, um item
+            com um de seis códigos pareceria pronto.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">A2 · Editor de parcela — receita, operandos, dependência</span>
+      <span class="estado">estado: autorando uma célula</span>
+      <span class="nota">superfície NOVA: como um humano monta a fórmula de um par (item, code)</span>
+    </figcaption>
+    <div class="render">
+      <div class="render-topbar">
+        <span class="marca">croquito</span>
+        <span class="trilha">Orçamento · parcela de <strong>PISO EM CONCRETO</strong> → serviço <strong>BP09100050(B)</strong></span>
+      </div>
+      <div class="render-body">
+        <div class="editor">
+          <div class="grid">
+            <label class="campo">
+              <span class="rot">Base da contribuição</span>
+              <span class="fake-select">espelho do elemento (full)</span>
+              <span class="campo-dica" style="margin:2px 0 0">full · derived · partial · dependent · standalone</span>
+            </label>
+            <label class="campo">
+              <span class="rot">Receita / grandeza</span>
+              <span class="fake-select">comprimento × largura (length_times_width)</span>
+              <span class="campo-dica" style="margin:2px 0 0">perímetro × altura · quantidade × meses · dias × horas · produto dos fatores declarados</span>
+            </label>
+          </div>
+
+          <h4 style="margin-top:16px">Operandos</h4>
+          <div class="operandos-linha">
+            <span class="operando"><span class="nome">COMPRIMENTO</span> <span class="val tabular">26,90</span> <span class="un">m</span></span>
+            <span class="times">×</span>
+            <span class="operando"><span class="nome">LARGURA</span> <span class="val tabular">15,55</span> <span class="un">m</span></span>
+            <span class="times">×</span>
+            <button class="botao" style="padding:5px 10px">+ operando</button>
+            <span class="igual">= subtotal recomputado pelo servidor</span>
+          </div>
+          <p class="campo-dica" style="margin-top:10px">A receita <code class="k">declared_product</code>
+          aceita o produto de quatro fatores <span class="mono">a × b × c × n</span> (T7), para as
+          fórmulas fora de forma fixa — <span class="mono">COMP × ALT × TAXA × COEF EMOP</span>. O
+          sentido de cada fator vive no <em>nome</em> do operando, que é dado, não identificador. A
+          tela não multiplica nem soma: o subtotal vem do servidor.</p>
+
+          <label class="campo" style="margin-top:12px">
+            <span class="rot">Depende de outro serviço?</span>
+            <span class="fake-select">não — a parcela nasce deste elemento</span>
+            <span class="campo-dica" style="margin:2px 0 0">Só <em>derivada de outro serviço</em> (dependent)
+            cita um código de origem — ex.: transporte = quantidade(BP09100050) × massa × distância.</span>
+          </label>
+
+          <div class="acoes">
+            <button class="botao botao-primario">Gravar parcela no pacote</button>
+            <button class="botao">Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">A3 · Ordem topológica visível</span>
+      <span class="estado">estado: dependência declarada, sem ciclo</span>
+      <span class="nota">a ordem de cálculo é mostrada; o serviço que alimenta outro vem antes</span>
+    </figcaption>
+    <div class="render">
+      <div class="render-topbar">
+        <span class="marca">croquito</span>
+        <span class="trilha">Orçamento · ordem de cálculo do boletim</span>
+      </div>
+      <div class="render-body">
+        <p class="dica">A parcela <strong>derivada de outro serviço</strong> só pode ser calculada
+        depois do serviço de que ela depende. A tela mostra a ordem em que o build vai numerar as
+        linhas — determinística, sem ambiguidade.</p>
+        <div class="topo-ordem" role="list" aria-label="ordem topológica de cálculo">
+          <span class="rot">calcula primeiro</span>
+          <span class="passo mono" role="listitem">BP09100050(B)</span>
+          <span class="seta">→</span>
+          <span class="passo mono" role="listitem">TC04100050(/)</span>
+          <span class="seta">→</span>
+          <span class="passo mono" role="listitem">…demais serviços independentes</span>
+          <span class="rot" style="margin-left:6px">calcula por último</span>
+        </div>
+        <p class="campo-dica" style="margin-top:12px">Transporte (<span class="mono">TC04100050</span>)
+        recebe como primeiro operando literal a quantidade já resolvida de
+        <span class="mono">BP09100050</span> — a memória continua autocontida, sem referência cruzada
+        entre abas.</p>
+      </div>
+    </div>
+  </figure>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">A4 · Ciclo de dependência</span>
+      <span class="estado">estado: erro crítico</span>
+      <span class="nota">aviso em palavra + código estável, nunca escondido atrás de interação</span>
+    </figcaption>
+    <div class="render">
+      <div class="render-topbar">
+        <span class="marca">croquito</span>
+        <span class="trilha">Orçamento · ordem de cálculo do boletim</span>
+      </div>
+      <div class="render-body">
+        <p class="dica">Se dois serviços passam a depender um do outro, a memória não tem ordem de
+        cálculo. O pacote não fecha, e o erro é dito por extenso.</p>
+        <div class="faixa erro" role="alert">
+          <span class="titulo">Há dependência cíclica entre serviços</span>
+          A parcela de <span class="mono">TC04100050(/)</span> deriva de <span class="mono">BP09100050(B)</span>,
+          que por sua vez foi declarado derivando de <span class="mono">TC04100050(/)</span>. Desfaça
+          uma das dependências para que exista ordem de cálculo.
+          <div style="margin-top:6px"><span class="cod">CALC_MATRIX_DEPENDENCY_CYCLE</span></div>
+        </div>
+        <p class="campo-dica">Auto-referência (um serviço dependendo de si mesmo) é recusada do mesmo
+        jeito: <span class="cod">CALC_MATRIX_SELF_DEPENDENCY</span>.</p>
+      </div>
+    </div>
+  </figure>
+
+  <!-- ============================================================ -->
+  <h2 class="secao"><span class="num">B.</span> Declaração PARTIAL — a decisão 6 da rev.1</h2>
+  <p class="secao-intro">
+    O ponto de honestidade do desenho. Os 170 m² de limpeza <em>dentro</em> dos 418,12 do piso não
+    saem de aritmética nenhuma: são declarados, com <strong>nota obrigatória</strong> e
+    <strong>teto ≤ quantidade do elemento</strong>, e nunca recomputados. A rev.1 aprovou isto em
+    texto; a rev.2 mostra a superfície que a torna operável.
+  </p>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">B1 · Declarando a parcela parcial</span>
+      <span class="estado">estado: teto respeitado</span>
+      <span class="nota">mostra o teto do elemento e exige a justificativa</span>
+    </figcaption>
+    <div class="render">
+      <div class="render-topbar">
+        <span class="marca">croquito</span>
+        <span class="trilha">Orçamento · parcela de <strong>PISO EM CONCRETO</strong> → serviço <strong>SC34150200(/)</strong> (limpeza)</span>
+      </div>
+      <div class="render-body">
+        <div class="editor">
+          <label class="campo">
+            <span class="rot">Base da contribuição</span>
+            <span class="fake-select">parcela parcial declarada (partial)</span>
+          </label>
+          <div class="grid" style="margin-top:12px">
+            <label class="campo">
+              <span class="rot">Quantidade da parcela</span>
+              <span class="fake-input tabular">170,00 m²</span>
+              <span class="campo-dica" style="margin:2px 0 0">Teto do elemento: <strong class="tabular">418,12 m²</strong>. A parcela não pode ultrapassá-lo.</span>
+            </label>
+            <label class="campo">
+              <span class="rot">Nota (obrigatória)</span>
+              <span class="fake-textarea">Limpeza medida à parte pela fiscalização sobre a faixa
+              central do piso; não deriva da área total.</span>
+            </label>
+          </div>
+          <div class="faixa atencao" role="note" style="margin-top:12px">
+            <span class="titulo">Por que a nota é obrigatória aqui</span>
+            A limpeza sobre 170 m² <strong>não é derivável</strong> dos 418,12 por conta nenhuma. Sem
+            a justificativa, o número pareceria calculado — e não é.
+          </div>
+          <div class="acoes">
+            <button class="botao botao-primario">Gravar parcela parcial</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">B2 · Parcela acima do teto — bloqueada</span>
+      <span class="estado">estado: erro de validação</span>
+      <span class="nota">valor acima da quantidade do elemento é recusado, com o teto à vista</span>
+    </figcaption>
+    <div class="render">
+      <div class="render-topbar">
+        <span class="marca">croquito</span>
+        <span class="trilha">Orçamento · parcela de <strong>PISO EM CONCRETO</strong> → serviço <strong>SC34150200(/)</strong></span>
+      </div>
+      <div class="render-body">
+        <div class="editor">
+          <div class="grid">
+            <label class="campo">
+              <span class="rot">Quantidade da parcela</span>
+              <span class="fake-input tabular" style="border-color:var(--danger-line); background:var(--danger-soft)">500,00 m²</span>
+              <span class="campo-dica" style="margin:2px 0 0">Teto do elemento: <strong class="tabular">418,12 m²</strong>.</span>
+            </label>
+            <label class="campo">
+              <span class="rot">Nota (obrigatória)</span>
+              <span class="fake-textarea">—</span>
+            </label>
+          </div>
+          <div class="faixa erro" role="alert" style="margin-top:12px">
+            <span class="titulo">A parcela parcial não pode passar do teto do elemento</span>
+            Declarado 500,00 m² para um elemento de 418,12 m². Uma parcela é sempre um recorte do
+            elemento, nunca maior que ele. Ajuste a quantidade para ≤ 418,12 m².
+            <div style="margin-top:6px"><span class="cod">CALC_PARTIAL_EXCEEDS_ITEM</span> · conferência do build (teto depende do TakeoffItem)</div>
+          </div>
+          <div class="acoes">
+            <button class="botao botao-primario" disabled>Gravar parcela parcial</button>
+            <span class="campo-dica" style="margin:0">Gravação bloqueada enquanto o valor exceder o
+            teto ou a nota estiver vazia.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <!-- ============================================================ -->
+  <h2 class="secao"><span class="num">C.</span> Estados do pacote</h2>
+  <p class="secao-intro">
+    Todos como superfícies do pacote — não só o caminho feliz. Estado por <em>palavra</em>, não só
+    por cor (DESIGN_SYSTEM regra 5); aviso crítico nunca escondido atrás de interação.
+  </p>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">C1 · Pacote fechado</span>
+      <span class="estado">estado: resolvido</span>
+    </figcaption>
+    <div class="render"><div class="render-body">
+      <div class="elemento">
+        <div class="elemento-topo">
+          <span class="elemento-nome">PISO EM CONCRETO</span>
+          <span class="pill fechado">Pacote fechado · 6 serviços · resolvido</span>
+        </div>
+        <p class="campo-dica" style="margin-top:8px">Fechado por ato humano. O boletim pode ser
+        montado; o item conta como resolvido.</p>
+      </div>
+    </div></div>
+  </figure>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">C2 · Serviço que soma parcelas de vários elementos</span>
+      <span class="estado">estado: fusão por código</span>
+      <span class="nota">o outro lado do N:N — BP04050350(/) fecha em 478,74 m²</span>
+    </figcaption>
+    <div class="render"><div class="render-body">
+      <div class="elemento">
+        <div class="elemento-topo">
+          <span class="elemento-nome mono">BP04050350(/)</span>
+          <span class="contrib-sub tabular">total do serviço: 478,74 m²</span>
+        </div>
+        <p class="campo-dica" style="margin-top:8px">Quatro parcelas rotuladas, de quatro elementos:</p>
+        <ul class="memoria">
+          <li><span class="item-linha">CAMPO DE FUTEBOL</span> — parcela 0,00 m² <span class="memoria-base">· espelho do elemento</span></li>
+          <li><span class="item-linha">PISO EM CONCRETO</span> — parcela 418,12 m² <span class="memoria-base">· espelho do elemento</span></li>
+          <li><span class="item-linha">PAVIMENTO INTERTRAVADO</span> — parcela 59,34 m² <span class="memoria-base">· espelho do elemento</span></li>
+          <li><span class="item-linha">FORRAÇÃO EM GRAMA</span> — parcela 1,28 m² <span class="memoria-base">· espelho do elemento</span></li>
+        </ul>
+      </div>
+    </div></div>
+  </figure>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">C3 · Item sem contribuição</span>
+      <span class="estado">estado: vazio</span>
+    </figcaption>
+    <div class="render"><div class="render-body">
+      <div class="elemento">
+        <div class="elemento-topo">
+          <span class="elemento-nome">FORRAÇÃO EM GRAMA</span>
+          <span class="pill vazio">Nenhum serviço no pacote</span>
+        </div>
+        <div class="estado-vazio" style="margin-top:12px">
+          Nenhum código confirmado ainda. Um elemento pode disparar mais de um serviço:
+          confirme quantos forem e feche o pacote no fim.
+        </div>
+      </div>
+    </div></div>
+  </figure>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">C4 · Carregando</span>
+      <span class="estado">estado: loading</span>
+    </figcaption>
+    <div class="render"><div class="render-body">
+      <div class="skel-row" aria-hidden="true">
+        <div class="skel l"></div>
+        <div class="skel m"></div>
+        <div class="skel s"></div>
+        <div class="skel m"></div>
+      </div>
+      <p class="campo-dica">Carregando o pacote de serviços deste elemento…</p>
+    </div></div>
+  </figure>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">C5 · Sem autorização</span>
+      <span class="estado">estado: unauthorized</span>
+    </figcaption>
+    <div class="render"><div class="render-body">
+      <div class="faixa atencao" role="alert">
+        <span class="titulo">Você não tem permissão para montar o pacote desta obra</span>
+        A autoria da matriz exige o papel de orçamentista no tenant desta rodada. Fale com quem
+        administra os acessos.
+        <div style="margin-top:6px"><span class="cod">403 · FORBIDDEN</span></div>
+      </div>
+    </div></div>
+  </figure>
+
+  <!-- ============================================================ -->
+  <h2 class="secao"><span class="num">D.</span> A memória na jornada do orçamento (decisão 3, render text-only entregue no #95)</h2>
+  <p class="secao-intro">
+    A autoria da matriz (seção A) produz o <code class="k">CalcMatrix</code> que o build funde em
+    boletim; a <em>memória de cálculo</em> é como esse resultado volta para a tela — o artefato que
+    explica de onde veio cada quantidade. Este render já existe (PR #95), é <strong>puro e aditivo</strong>:
+    subtotais e total vêm do servidor, a tela não multiplica nem soma. A rev.2 apenas mostra onde a
+    autoria (A) e a memória (D) se conectam.
+  </p>
+
+  <figure class="painel">
+    <figcaption>
+      <span class="rotulo">D1 · Memória renderizada — base por extenso, derivação nomeada</span>
+      <span class="estado">estado: já entregue (#95), citado</span>
+    </figcaption>
+    <div class="render">
+      <div class="render-topbar">
+        <span class="marca">croquito</span>
+        <span class="trilha">Orçamento · <strong>Memória de cálculo</strong></span>
+      </div>
+      <div class="render-body">
+        <h3>Memória de cálculo</h3>
+        <p class="dica">A memória mostra, para cada serviço, as parcelas que os elementos da prancha
+        somam à quantidade — e de qual elemento cada parcela veio. Os subtotais e o total vêm do
+        servidor; a tela não multiplica nem soma.</p>
+        <ul class="memoria">
+          <li>
+            <span class="item-linha">Item 3 — total 418,12</span>
+            <ul>
+              <li>PISO EM CONCRETO (comprimento × largura): COMPRIMENTO 26,90 m × LARGURA 15,55 m = 418,12
+                <span class="memoria-base"> · espelho do elemento</span></li>
+            </ul>
+          </li>
+          <li>
+            <span class="item-linha">Item 7 — total 170,00</span>
+            <ul>
+              <li>limpeza do piso (produto dos fatores declarados): ÁREA DECLARADA 170,00 m² = 170,00
+                <span class="memoria-base"> · parcela parcial declarada</span></li>
+            </ul>
+          </li>
+          <li>
+            <span class="item-linha">Item 12 — total 365,86</span>
+            <ul>
+              <li>transporte do pavimento rígido (produto dos fatores declarados): QUANTIDADE BP09100050(B)
+                418,12 × MASSA ESPECÍFICA 0,25 × DISTÂNCIA 3,50 dam = 365,86
+                <span class="memoria-base"> · derivada de outro serviço</span>
+                <span class="memoria-derivada"> · derivada da quantidade de BP09100050(B)</span></li>
+            </ul>
+          </li>
+        </ul>
+        <p class="campo-dica" style="margin-top:12px"><em>Conexão A→D:</em> a base
+        <strong>parcela parcial declarada</strong> e a proveniência
+        <strong>derivada da quantidade de …</strong> que aparecem aqui são exatamente o que a autoria
+        da seção A grava. Números ilustrativos (massa específica); a fórmula real é a que a
+        orçamentista declara.</p>
+      </div>
+    </div>
+  </figure>
+
+  <footer class="rodape">
+    <p><strong>Captura fixa.</strong> Este arquivo <em>é</em> o rendering autocontido. A captura
+    congelada (imagem) que o workflow pede fica <strong>pendente do ato de renderização em navegador</strong>:
+    o agente não abriu um navegador aqui e não inventa screenshots. Ao aprovar, abra este
+    <code class="k">index.html</code> e congele a imagem do que viu — é a ela que a aprovação se refere.</p>
+    <p><strong>Nada foi implementado</strong> em <code class="k">apps/web/</code> e
+    <strong>nada foi aprovado</strong>. Esta é evidência para um gate humano. Detalhes, decisões,
+    proveniência completa e fronteira entregue×reservado estão no <code class="k">README.md</code> ao lado.</p>
+  </footer>
+
+</div>
+</body>
+</html>
