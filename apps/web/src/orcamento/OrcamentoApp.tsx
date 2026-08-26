@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "oidc-client-ts";
-import type { CodeSuggestionSet } from "@croquito/contracts";
+import type { CodeSuggestionSet, Estimate } from "@croquito/contracts";
 
 import {
   associatePlate,
@@ -89,6 +89,7 @@ import {
   AVISO_DESPACHO_FAIL_CLOSED,
   AVISO_IDENTIDADE_DA_SESSAO,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
+  AVISO_MEMORIA,
   AVISO_ORCAMENTO,
   AVISO_ORCAMENTO_SEM_RODADA,
   AVISO_ORCAMENTO_SOB_CONTRATO,
@@ -104,11 +105,13 @@ import {
   AVISO_TETO_LIMITE,
   cascadePositionLabel,
   CONSEQUENCIAS_DO_ESTOURO,
+  contributionBasisLabel,
   CONVITE_TABELA_PROPRIA,
   DESCRICAO_CALCULO_SHORTLIST,
   DESCRICAO_MONTAGEM,
   DESCRICAO_REGIME,
   DESCRICAO_TABELA_PROPRIA,
+  derivadaDeLabel,
   DICA_BDI,
   DICA_CANDIDATO_ADITIVO,
   DICA_QUANTIDADE,
@@ -131,6 +134,7 @@ import {
   priceOriginSeloClass,
   priceSourceLabel,
   procedenciaDaFonte,
+  recipeLabel,
   REGIME_OPCAO_PRE_LICITACAO,
   REGIME_OPCAO_SOB_CONTRATO,
   ROTULO_TABELA_DO_ACERVO,
@@ -599,6 +603,83 @@ export function SemPrecoNaCascata({ rotulos }: { rotulos: readonly string[] }) {
           <li key={`${index}:${rotulo}`}>
             {rotulo}{" "}
             <span className="selo selo-fonte-ausente">sem preço na cascata</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Memória de cálculo do orçamento (Design Approval Package, decisão 3). Com a matriz
+ * elemento × serviço, ela é o artefato que explica DE ONDE veio cada quantidade — e era a
+ * lacuna da jornada do orçamento: `calc_sheets` só era renderizada na medição. O dado já
+ * chegava ao cliente em `EstimateResponse.estimate.calc_sheets`; o que faltava era mostrá-lo
+ * onde a quantidade é montada.
+ *
+ * Render puro e ADITIVO: os subtotais e o total vêm do JSON do servidor, que os recomputa na
+ * leitura — a tela não multiplica nem soma. `basis` e a proveniência de parcela derivada
+ * aparecem por EXTENSO, nunca só por cor (decisão 5): parcela parcial e serviço derivado de
+ * outro são palavra. `basis` ausente (artefato anterior à matriz) simplesmente não é exibido,
+ * porque a ausência não afirma "espelho" — ela não declara nada.
+ */
+export function MemoriaDeCalculo({
+  calcSheets,
+}: {
+  calcSheets: readonly Estimate.CalcSheet[];
+}) {
+  if (calcSheets.length === 0) {
+    return null;
+  }
+  return (
+    <div className="memoria-de-calculo">
+      <h3>Memória de cálculo</h3>
+      <p className="dica">{AVISO_MEMORIA}</p>
+      <ul className="memoria">
+        {calcSheets.map((sheet) => (
+          <li key={sheet.item_number}>
+            <p>
+              <strong>Item {sheet.item_number}</strong> — total{" "}
+              {formatDecimalText(sheet.total_quantity)}
+            </p>
+            <ul>
+              {sheet.blocks.map((block, index) => {
+                const base = contributionBasisLabel(block.basis);
+                const operandos = block.operands
+                  .map(
+                    (operand) =>
+                      `${operand.name} ${formatDecimalText(operand.value)}${
+                        operand.unit ? ` ${unitLabel(operand.unit)}` : ""
+                      }`,
+                  )
+                  .join(" × ");
+                const deducoes = block.deductions ?? [];
+                const deducaoTexto =
+                  deducoes.length === 0
+                    ? ""
+                    : ` − ${deducoes
+                        .map(
+                          (deduction) =>
+                            `${deduction.name} ${formatDecimalText(deduction.value)}`,
+                        )
+                        .join(" − ")}`;
+                return (
+                  <li key={`${sheet.item_number}-${index}`}>
+                    {block.label} ({recipeLabel(block.recipe)}): {operandos}
+                    {deducaoTexto} = {formatDecimalText(block.subtotal)}
+                    {base === null ? null : (
+                      <span className="memoria-base"> · {base}</span>
+                    )}
+                    {block.derived_from_code ? (
+                      <span className="memoria-derivada">
+                        {" "}
+                        · {derivadaDeLabel(block.derived_from_code)}
+                      </span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
           </li>
         ))}
       </ul>
@@ -4084,6 +4165,8 @@ export function OrcamentoApp({
                     </ul>
                   </div>
                 )}
+
+                <MemoriaDeCalculo calcSheets={estimate.estimate.calc_sheets} />
 
                 <p className="digest" title={estimate.estimate_sha256}>
                   documento gravado {shortDigest(estimate.estimate_sha256)}

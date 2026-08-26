@@ -625,6 +625,74 @@ export function unitMismatchHint(itemUnit: string, codeUnit: string): string {
   );
 }
 
+/* Memória de cálculo na jornada do orçamento (ADR-0053, F-038 T9) ----------- */
+
+/**
+ * A memória de cálculo passou a existir aqui (Design Approval Package, decisão 3): com a
+ * matriz elemento × serviço, ela é o artefato que explica DE ONDE veio cada quantidade. A
+ * frase diz que nada é recomputado na tela — todos os subtotais e totais vêm do servidor.
+ */
+export const AVISO_MEMORIA =
+  "A memória mostra, para cada serviço, as parcelas que os elementos da prancha somam à " +
+  "quantidade — e de qual elemento cada parcela veio. Os subtotais e o total vêm do " +
+  "servidor; a tela não multiplica nem soma.";
+
+/**
+ * Receita do bloco de memória em língua de obra. O identificador do domínio continua
+ * visível ao lado no bloco: quem confere a planilha lê a frase, quem confere o JSON
+ * reconhece a chave. Espelho deliberado do `recipeLabel` da medição — as jornadas
+ * compartilham o vocabulário do domínio, nunca o módulo.
+ */
+const RECIPE_LABELS: LookupTable = {
+  direct_quantity: "quantidade direta",
+  length_times_width: "comprimento × largura",
+  perimeter_times_height: "perímetro × altura",
+  perim_height_minus_openings: "perímetro × altura menos vãos",
+  qty_times_months: "quantidade × meses",
+  days_times_hours: "dias × horas",
+  declared_product: "produto dos fatores declarados",
+};
+
+export function recipeLabel(recipe: string): string {
+  return RECIPE_LABELS[recipe] ?? recipe;
+}
+
+/**
+ * A base de contribuição de uma parcela por extenso (`ContributionBasis`, ADR-0053,
+ * decisão 3). É rótulo TEXTUAL, não cor (Design Approval Package, decisão 5): parcela
+ * parcial e serviço derivado de outro precisam de palavra, não só de veste.
+ *
+ * `PARTIAL` é o ponto de honestidade do desenho — os 170 m² de limpeza dentro dos 418,12
+ * do piso são DECLARADOS, com nota e teto, nunca recomputados. `DEPENDENT` diz que a
+ * quantidade veio de outro serviço, e `derivadaDeLabel` nomeia qual.
+ */
+const CONTRIBUTION_BASIS_LABELS: LookupTable = {
+  full: "espelho do elemento",
+  derived: "derivada da geometria",
+  partial: "parcela parcial declarada",
+  dependent: "derivada de outro serviço",
+  standalone: "de canteiro, sem origem geométrica",
+};
+
+/**
+ * `basis` nasce `null` ("não declarado") em artefato anterior à matriz (ADR-0053, decisão
+ * 3): a ausência não afirma nada, e a tela não inventa "espelho" para ela — devolve `null`
+ * e o bloco simplesmente não exibe a base.
+ */
+export function contributionBasisLabel(
+  basis: string | null | undefined,
+): string | null {
+  if (!basis) {
+    return null;
+  }
+  return CONTRIBUTION_BASIS_LABELS[basis] ?? basis;
+}
+
+/** De qual serviço uma parcela `DEPENDENT` tirou a quantidade — a proveniência, escrita. */
+export function derivadaDeLabel(code: string): string {
+  return `derivada da quantidade de ${code}`;
+}
+
 const ERROR_MESSAGES: LookupTable = {
   // Guarda otimista, sessão e autorização da API `/v1`.
   REVISION_CONFLICT:
@@ -771,6 +839,28 @@ const ERROR_MESSAGES: LookupTable = {
     "A parcela nasce de um elemento da prancha e precisa dizer de qual.",
   CALC_CONTRIBUTION_CODE_INVALID:
     "O código de origem da parcela não tem a forma de um código de catálogo.",
+  // Coerência da parcela na matriz (ADR-0053, F-038): a base declarada e os campos que ela
+  // exige precisam bater. As frases nomeiam a base para quem lê a recusa, nunca a cor.
+  CALC_CONTRIBUTION_STANDALONE_WITH_ITEM:
+    "Parcela de canteiro não nasce de elemento da prancha; ela não aponta para nenhum item.",
+  CALC_CONTRIBUTION_DEPENDENT_WITHOUT_CODE:
+    "Parcela derivada de outro serviço precisa dizer de qual código ela vem.",
+  CALC_CONTRIBUTION_CODE_WITHOUT_DEPENDENCY:
+    "Só parcela derivada de outro serviço cita um código de origem; esta base não é derivada.",
+  // Matriz elemento × serviço: a leitura do artefato recusa duplicidade e ciclo, para a
+  // memória ter ordem de cálculo. As três chegam como `DOMAIN_VALIDATION_FAILED`.
+  CALC_MATRIX_DUPLICATE_CODE:
+    "Há mais de um conjunto de contribuições para o mesmo serviço; cada código entra uma vez.",
+  CALC_MATRIX_SELF_DEPENDENCY:
+    "Um serviço não pode derivar de si mesmo; a memória não teria ordem de cálculo.",
+  CALC_MATRIX_DEPENDENCY_CYCLE:
+    "Há dependência cíclica entre serviços; a memória não tem ordem de cálculo. Desfaça o ciclo.",
+  // Dependência resolvida no build do orçamento (`error_prefix="ESTIMATE"`): a parcela
+  // derivada aponta para um serviço que precisa existir no boletim e ter código confirmado.
+  ESTIMATE_MATRIX_DEPENDENCY_UNKNOWN:
+    "Uma parcela derivada aponta para um serviço que não está no orçamento; inclua-o ou corrija a origem.",
+  ESTIMATE_MATRIX_DEPENDENCY_UNPRICED:
+    "Uma parcela derivada aponta para um serviço sem código confirmado; confirme o código de origem antes.",
   ESTIMATE_ASSIGNMENT_CATALOG_REQUIRED:
     "Há confirmação de código sem fonte citada; sem ela a linha não sabe de onde o preço veio.",
   ESTIMATE_ASSIGNMENT_UNKNOWN_ITEM:
