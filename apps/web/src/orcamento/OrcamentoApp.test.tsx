@@ -5,12 +5,14 @@ import type { Estimate } from "@croquito/contracts";
 
 import {
   AtoDeAprovacao,
+  AutoriaDeContribuicao,
   BannerOrcamentoMudou,
   BlocoConsumoDoTeto,
   FaixaTetoEstourado,
   LinhaTetoDaRodada,
   MemoriaDeCalculo,
   OrcamentoApp,
+  ResumoDaMatriz,
   PainelEscolhaDeFonte,
   PainelRegimeDaRodada,
   PainelAutoAprovacaoRecusada,
@@ -34,9 +36,16 @@ import {
   AVISO_ORCAMENTO,
   AVISO_ORCAMENTO_SEM_RODADA,
   DICA_REGIME,
+  RESUMO_MATRIZ_VAZIO,
   origensAceitasNaCascata,
 } from "./labels";
 import type { ReferenceCatalogOption } from "./api";
+import {
+  assembleCalcMatrix,
+  emptyContributionForm,
+  type CalcContributionDraft,
+  type CalcContributionForm,
+} from "./matrix";
 import { derivarTeto } from "./teto";
 
 /**
@@ -1301,5 +1310,192 @@ describe("MemoriaDeCalculo", () => {
     // Ausência não afirma "espelho": nenhuma base é fabricada para o bloco legado.
     expect(html).not.toContain("espelho do elemento");
     expect(html).not.toContain("memoria-base");
+  });
+});
+
+/** Um rascunho salvo de contribuição, para as fixtures do resumo da matriz. */
+function contribuicao(over: Partial<CalcContributionDraft>): CalcContributionDraft {
+  return {
+    itemId: "ti_0000000000000001",
+    code: "SCO001",
+    itemQuantity: "418.12",
+    label: "Piso em concreto",
+    basis: "derived",
+    recipe: "length_times_width",
+    operands: [{ name: "COMPRIMENTO", value: "20.906", unit: "m" }],
+    deductions: [],
+    dependsOnCode: "",
+    note: "",
+    ...over,
+  };
+}
+
+/**
+ * Autoria da contribuição (F-038 "decisão 6", painéis A1–A2/B1–B2 do mock). O editor pede a
+ * base, a grandeza e os operandos; a parcela PARCIAL pede nota e mostra o teto do elemento.
+ * Nada nasce pré-marcado (decisão 4) e a base é dita por extenso (decisão 5).
+ */
+describe("AutoriaDeContribuicao", () => {
+  const noop = () => undefined;
+
+  function render(
+    form: CalcContributionForm,
+    over: Partial<Parameters<typeof AutoriaDeContribuicao>[0]> = {},
+  ): string {
+    return renderToStaticMarkup(
+      <AutoriaDeContribuicao
+        code="SCO001"
+        itemUnit="m2"
+        itemQuantity="418.12"
+        form={form}
+        erro={null}
+        codigosDisponiveis={["SCO478", "SCO001"]}
+        onChange={noop}
+        onSalvar={noop}
+        onCancelar={noop}
+        submitting={false}
+        {...over}
+      />,
+    );
+  }
+
+  it("oferece as grandezas e as bases por extenso, nada pré-marcado", () => {
+    const html = render(emptyContributionForm("Piso em concreto"));
+
+    // Grandezas (receitas) em língua de obra.
+    expect(html).toContain("comprimento × largura");
+    expect(html).toContain("perímetro × altura menos vãos");
+    // Bases por extenso, não só cor.
+    expect(html).toContain("parcela parcial declarada");
+    expect(html).toContain("derivada de outro serviço");
+    // Placeholder de "escolha": a base começa vazia.
+    expect(html).toContain("Escolha de onde vem a parcela…");
+  });
+
+  it("na parcela PARCIAL mostra o teto do elemento e pede a justificativa", () => {
+    const html = render({
+      ...emptyContributionForm("Limpeza sobre o piso"),
+      basis: "partial",
+    });
+
+    // O teto (quantidade do elemento) aparece por extenso, com a unidade.
+    expect(html).toContain("Teto desta parcela");
+    expect(html).toContain("418,12");
+    // A nota é obrigatória e a regra é dita.
+    expect(html).toContain("Justificativa da parcela (obrigatória)");
+    expect(html).toContain("dentro do teto do elemento");
+  });
+
+  it("na parcela DEPENDENT oferece o serviço de origem, menos o próprio código", () => {
+    const html = render({
+      ...emptyContributionForm("Transporte"),
+      basis: "dependent",
+    });
+
+    expect(html).toContain("Depende de qual serviço");
+    expect(html).toContain('value="SCO478"');
+    // O próprio código não é opção de origem (evita a auto-referência já na tela).
+    expect(html).not.toContain('value="SCO001"');
+  });
+
+  it("mostra a recusa da validação como alerta ao lado do editor", () => {
+    const html = render(emptyContributionForm("Piso"), {
+      erro: "A parcela precisa de um rótulo — é o texto que aparece na memória de cálculo.",
+    });
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("texto que aparece na memória");
+  });
+});
+
+/**
+ * Resumo da matriz (F-038 "decisão 6", painéis A3–A5/C1–C5 do mock): a ordem topológica de
+ * cálculo, o serviço que funde parcelas de vários elementos, e a recusa de ciclo/auto-
+ * referência escrita por extenso — nunca escondida atrás de interação (decisão 5).
+ */
+describe("ResumoDaMatriz", () => {
+  it("declara o regime legado quando não há contribuição autorada (C4/vazio)", () => {
+    const html = renderToStaticMarkup(<ResumoDaMatriz matrix={null} />);
+    expect(html).toContain(RESUMO_MATRIZ_VAZIO);
+  });
+
+  it("numera a ordem de cálculo com o dependente depois da origem (A3)", () => {
+    const matrix = assembleCalcMatrix([
+      contribuicao({
+        code: "TR01",
+        label: "Transporte",
+        basis: "dependent",
+        recipe: "declared_product",
+        dependsOnCode: "SCO478",
+        operands: [{ name: "MASSA", value: "0.02", unit: "" }],
+      }),
+      contribuicao({ code: "SCO478", label: "Saibro" }),
+    ]);
+    const html = renderToStaticMarkup(<ResumoDaMatriz matrix={matrix} />);
+
+    // A origem vem primeiro (1.), o dependente depois (2.).
+    const posSaibro = html.indexOf("SCO478");
+    const posTransporte = html.indexOf("TR01");
+    expect(posSaibro).toBeGreaterThanOrEqual(0);
+    expect(posSaibro).toBeLessThan(posTransporte);
+    expect(html).toContain("derivada da quantidade de SCO478");
+  });
+
+  it("diz por extenso que um serviço funde parcelas de vários elementos (C3/saibro)", () => {
+    const matrix = assembleCalcMatrix([
+      contribuicao({
+        code: "SCO478",
+        itemId: "ti_0000000000000001",
+        label: "Saibro trecho 1",
+      }),
+      contribuicao({
+        code: "SCO478",
+        itemId: "ti_0000000000000002",
+        label: "Saibro trecho 2",
+      }),
+    ]);
+    const html = renderToStaticMarkup(<ResumoDaMatriz matrix={matrix} />);
+
+    expect(html).toContain("funde parcelas de 2 elementos");
+  });
+
+  it("recusa o ciclo por extenso, com os códigos, nunca escondido (A4)", () => {
+    const matrix = assembleCalcMatrix([
+      contribuicao({
+        code: "A",
+        basis: "dependent",
+        recipe: "declared_product",
+        dependsOnCode: "B",
+        operands: [{ name: "X", value: "1", unit: "" }],
+      }),
+      contribuicao({
+        code: "B",
+        basis: "dependent",
+        recipe: "declared_product",
+        dependsOnCode: "A",
+        operands: [{ name: "Y", value: "1", unit: "" }],
+      }),
+    ]);
+    const html = renderToStaticMarkup(<ResumoDaMatriz matrix={matrix} />);
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("dependência cíclica");
+    expect(html).toContain("(A, B)");
+  });
+
+  it("recusa a auto-referência por extenso (A4)", () => {
+    const matrix = assembleCalcMatrix([
+      contribuicao({
+        code: "A",
+        basis: "dependent",
+        recipe: "declared_product",
+        dependsOnCode: "A",
+        operands: [{ name: "X", value: "1", unit: "" }],
+      }),
+    ]);
+    const html = renderToStaticMarkup(<ResumoDaMatriz matrix={matrix} />);
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("não pode derivar de si mesmo");
   });
 });

@@ -569,6 +569,81 @@ p {
   font-size: 0.85rem;
 }
 
+.lista-simples li {
+  margin-bottom: 8px;
+}
+
+/* Autoria da contribuição da matriz (F-038 "decisão 6"). O editor é um cartão dentro da
+   etapa de códigos; a borda só acompanha o estado, que é dito em texto (base por extenso,
+   teto da parcela parcial escrito). Cor nunca é o único indicador (decisão 5). */
+.autoria-contribuicao {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+}
+
+.autoria-contribuicao h4 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+}
+
+.autoria-operandos {
+  margin: 12px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.autoria-operandos legend {
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+  padding: 0 4px;
+}
+
+.autoria-linha {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.autoria-linha input {
+  flex: 1;
+  min-width: 90px;
+}
+
+.autoria-parcial {
+  margin: 8px 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* Resumo da matriz: a ordem topológica de cálculo. `.resumo-matriz-funde` é tinta
+   secundária — o SIGNIFICADO está na palavra ("funde parcelas de N elementos"). */
+.resumo-matriz {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.resumo-matriz h4 {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+}
+
+.resumo-matriz-ordem {
+  margin: 8px 0;
+  padding-left: 20px;
+  font-size: 0.85rem;
+}
+
+.resumo-matriz-funde {
+  color: var(--ink-secondary);
+}
+
 .busca {
   display: flex;
   align-items: flex-end;

@@ -35,6 +35,7 @@ import type {
 } from "@croquito/contracts";
 
 import { apiJson, ApiError } from "../api";
+import type { CalcMatrix } from "./matrix";
 import {
   buildEstimateBody,
   cascadeOrderBody,
@@ -1088,14 +1089,20 @@ export function postCodeClosure(
  * `bdi_percent` é o percentual ÚNICO do orçamento inteiro e viaja como texto. Corpo que
  * não é decimal exato não sai daqui: `buildEstimateBody` devolve `null` e a recusa é da
  * tela, antes da viagem.
+ *
+ * `calcMatrix` (F-038 "decisão 6", ADR-0053) é a matriz elemento × serviço que a
+ * orçamentista montou na etapa de códigos. É OPCIONAL — sem contribuição autorada ela é
+ * omitida e o servidor monta o regime legado byte-idêntico. Quando vem, viaja como
+ * `calc_matrix` no mesmo corpo do build, e o servidor a valida (é o portão final).
  */
 export function postBuildEstimate(
   accessToken: string,
   roundId: string,
   bdiPercent: string,
   baseVersion: number,
+  calcMatrix?: CalcMatrix | null,
 ): Promise<EstimateResponse> {
-  const body = buildEstimateBody(bdiPercent, baseVersion);
+  const body = buildEstimateBody(bdiPercent, baseVersion, calcMatrix);
   if (body === null) {
     return Promise.reject(
       new ApiError(

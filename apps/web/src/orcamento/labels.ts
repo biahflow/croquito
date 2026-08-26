@@ -693,6 +693,55 @@ export function derivadaDeLabel(code: string): string {
   return `derivada da quantidade de ${code}`;
 }
 
+/**
+ * Copy da AUTORIA da matriz (F-038 "decisão 6"). A copy final é decisão-à-parte do pacote
+ * (o mock aprova a direção, não o texto), mas as strings ficam AQUI, nunca no JSX — é a
+ * mesma regra do resto da jornada. A base é dita por extenso ao lado da cor, sempre.
+ */
+export const AUTORIA_TITULO = "Contribuição deste elemento para o serviço";
+
+export const AUTORIA_DICA =
+  "Um elemento da prancha pode alimentar vários serviços, e cada parcela declara COMO: a " +
+  "grandeza, os operandos nomeados e, quando é o caso, que ela é parcial (recorte medido " +
+  "dentro do elemento) ou derivada de outro serviço. Os subtotais são recomputados pelo " +
+  "servidor; a tela não multiplica nem soma.";
+
+export const AUTORIA_DICA_PARCIAL =
+  "Parcela parcial é DECLARADA, não recomputada: escreva o número, a justificativa e ela é " +
+  "conferida contra o teto do elemento (nunca maior que a quantidade dele).";
+
+export const AUTORIA_ROTULO_TETO = "Teto desta parcela (quantidade do elemento)";
+
+export const AUTORIA_SEM_TETO =
+  "O elemento ainda não tem quantidade confirmada, então não há teto a conferir aqui; o " +
+  "servidor confere no build.";
+
+export const RESUMO_MATRIZ_TITULO = "Ordem de cálculo dos serviços";
+
+export const RESUMO_MATRIZ_DICA =
+  "Um serviço que alimenta outro é calculado antes. A ordem abaixo é a que o orçamento " +
+  "seguirá; ciclo e auto-referência são recusados por extenso, não escondidos.";
+
+export const RESUMO_MATRIZ_VAZIO =
+  "Nenhuma contribuição autorada ainda. Sem matriz, o orçamento usa o regime de um código " +
+  "por item, como antes.";
+
+/**
+ * Frase curta que explica cada base na hora de escolher — não é o rótulo do resultado
+ * (`contributionBasisLabel`), é a ajuda da autoria. `null` quando a base não é conhecida.
+ */
+const CONTRIBUTION_BASIS_HINTS: LookupTable = {
+  full: "a parcela é a quantidade confirmada do elemento, inteira.",
+  derived: "sai da geometria do elemento por uma fórmula (perímetro × altura).",
+  partial: "recorte medido à parte, declarado, dentro do teto do elemento.",
+  dependent: "vem da quantidade de OUTRO serviço (transporte, carga, bota-fora).",
+  standalone: "não tem origem geométrica: canteiro e administração.",
+};
+
+export function contributionBasisHint(basis: string): string | null {
+  return CONTRIBUTION_BASIS_HINTS[basis] ?? null;
+}
+
 const ERROR_MESSAGES: LookupTable = {
   // Guarda otimista, sessão e autorização da API `/v1`.
   REVISION_CONFLICT:
@@ -855,6 +904,24 @@ const ERROR_MESSAGES: LookupTable = {
     "Um serviço não pode derivar de si mesmo; a memória não teria ordem de cálculo.",
   CALC_MATRIX_DEPENDENCY_CYCLE:
     "Há dependência cíclica entre serviços; a memória não tem ordem de cálculo. Desfaça o ciclo.",
+  // Parcela PARCIAL (F-038 "decisão 6"): número declarado dentro do elemento, com nota e
+  // teto. As duas frases nomeiam a regra por extenso — o servidor devolve os mesmos códigos.
+  CALC_PARTIAL_EXCEEDS_ITEM:
+    "A parcela parcial não pode passar da quantidade do elemento: os 170 m² de limpeza cabem dentro dos 418,12 do piso, nunca o contrário. Reduza o valor até o teto do elemento.",
+  CALC_PARTIAL_NOTE_REQUIRED:
+    "A parcela parcial é declarada, não recomputada: sem a nota que justifica o recorte, ela não é montada. Escreva de onde vem o número.",
+  // Guardas locais da autoria da contribuição, para o rascunho incompleto não viajar. Não
+  // são recusa do servidor — são o que falta preencher antes de salvar a parcela.
+  CALC_BASIS_REQUIRED:
+    "Escolha de onde vem a parcela (base da contribuição); nada é presumido por você.",
+  CALC_RECIPE_REQUIRED:
+    "Escolha a grandeza da parcela (a receita de cálculo) antes de salvar.",
+  CALC_LABEL_REQUIRED:
+    "A parcela precisa de um rótulo — é o texto que aparece na memória de cálculo.",
+  CALC_OPERAND_REQUIRED:
+    "A parcela precisa de ao menos um operando nomeado com valor.",
+  CALC_OPERAND_INVALID:
+    "Cada operando tem um nome e um valor decimal (escreva 20,00 ou 20.00); o valor viaja como texto para o servidor lê-lo exato.",
   // Dependência resolvida no build do orçamento (`error_prefix="ESTIMATE"`): a parcela
   // derivada aponta para um serviço que precisa existir no boletim e ter código confirmado.
   ESTIMATE_MATRIX_DEPENDENCY_UNKNOWN:
