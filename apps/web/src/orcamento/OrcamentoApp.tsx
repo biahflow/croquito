@@ -147,7 +147,32 @@ import {
   TITULO_TABELA_PROPRIA,
   unitLabel,
   unitMismatchHint,
+  AUTORIA_TITULO,
+  AUTORIA_DICA,
+  AUTORIA_DICA_PARCIAL,
+  AUTORIA_ROTULO_TETO,
+  AUTORIA_SEM_TETO,
+  RESUMO_MATRIZ_TITULO,
+  RESUMO_MATRIZ_DICA,
+  RESUMO_MATRIZ_VAZIO,
+  contributionBasisHint,
 } from "./labels";
+import {
+  assembleCalcMatrix,
+  buildContributionDraft,
+  CALC_RECIPES,
+  CONTRIBUTION_BASES,
+  contributionKey,
+  emptyContributionForm,
+  emptyOperand,
+  formFromDraft,
+  matrixOrderError,
+  topologicalOrder,
+  type CalcContributionDraft,
+  type CalcContributionForm,
+  type CalcMatrix,
+  type OperandDraft,
+} from "./matrix";
 import { overlayFreshness } from "./overlay";
 import { bdiPercentError, tetoAmountError, worksiteKeyError } from "./requests";
 import { derivarTeto, type TetoDerivado } from "./teto";
@@ -684,6 +709,386 @@ export function MemoriaDeCalculo({
         ))}
       </ul>
     </div>
+  );
+}
+
+/**
+ * Editor da CONTRIBUIÇÃO de um par `(elemento, código)` — a célula da matriz (ADR-0053,
+ * F-038 "decisão 6"). É aqui que a orçamentista declara COMO o elemento alimenta o serviço:
+ * a base, a grandeza (receita), os operandos nomeados e, quando é o caso, a nota e o teto da
+ * parcela PARCIAL ou o código de que ela DEPENDE.
+ *
+ * Componente CONTROLADO e puro: todo estado mora em `form`, e cada campo devolve um `form`
+ * novo por `onChange`. Nada nasce pré-marcado (decisão 4): `base` e `grandeza` começam sem
+ * escolha, e a base é dita por EXTENSO ao lado do seletor, nunca só por cor (decisão 5).
+ */
+export function AutoriaDeContribuicao({
+  code,
+  itemUnit,
+  itemQuantity,
+  form,
+  erro,
+  codigosDisponiveis,
+  onChange,
+  onSalvar,
+  onCancelar,
+  onRemover,
+  submitting,
+}: {
+  code: string;
+  itemUnit: string;
+  itemQuantity: string | null;
+  form: CalcContributionForm;
+  erro: string | null;
+  codigosDisponiveis: readonly string[];
+  onChange: (form: CalcContributionForm) => void;
+  onSalvar: () => void;
+  onCancelar: () => void;
+  onRemover?: () => void;
+  submitting: boolean;
+}) {
+  const setOperando = (
+    campo: "operands" | "deductions",
+    index: number,
+    chave: keyof OperandDraft,
+    valor: string,
+  ) => {
+    const linhas = form[campo].map((operando, i) =>
+      i === index ? { ...operando, [chave]: valor } : operando,
+    );
+    onChange({ ...form, [campo]: linhas });
+  };
+  const adicionarLinha = (campo: "operands" | "deductions") => {
+    onChange({ ...form, [campo]: [...form[campo], emptyOperand()] });
+  };
+  const removerLinha = (campo: "operands" | "deductions", index: number) => {
+    onChange({ ...form, [campo]: form[campo].filter((_, i) => i !== index) });
+  };
+
+  const capDisponivel = itemQuantity !== null && itemQuantity.trim().length > 0;
+
+  return (
+    <section className="autoria-contribuicao" aria-label={`${AUTORIA_TITULO} ${code}`}>
+      <h4>
+        {AUTORIA_TITULO} <code>{code}</code>
+      </h4>
+      <p className="campo-dica">{AUTORIA_DICA}</p>
+
+      <label className="campo">
+        Rótulo da parcela
+        <input
+          type="text"
+          value={form.label}
+          onChange={(event) => onChange({ ...form, label: event.target.value })}
+        />
+      </label>
+
+      <label className="campo">
+        Base da contribuição
+        <select
+          value={form.basis}
+          onChange={(event) =>
+            onChange({
+              ...form,
+              basis: event.target.value as CalcContributionForm["basis"],
+            })
+          }
+        >
+          <option value="">Escolha de onde vem a parcela…</option>
+          {CONTRIBUTION_BASES.map((base) => (
+            <option key={base} value={base}>
+              {contributionBasisLabel(base)}
+            </option>
+          ))}
+        </select>
+        {form.basis === "" ? null : (
+          <span className="campo-dica">{contributionBasisHint(form.basis)}</span>
+        )}
+      </label>
+
+      <label className="campo">
+        Grandeza (receita de cálculo)
+        <select
+          value={form.recipe}
+          onChange={(event) =>
+            onChange({
+              ...form,
+              recipe: event.target.value as CalcContributionForm["recipe"],
+            })
+          }
+        >
+          <option value="">Escolha a grandeza…</option>
+          {CALC_RECIPES.map((recipe) => (
+            <option key={recipe} value={recipe}>
+              {recipeLabel(recipe)}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <fieldset className="autoria-operandos">
+        <legend>Operandos (nome × valor)</legend>
+        {form.operands.map((operando, index) => (
+          <div className="autoria-linha" key={`operando-${index}`}>
+            <input
+              type="text"
+              aria-label={`Nome do operando ${index + 1}`}
+              placeholder="NOME (ex.: PERÍMETRO)"
+              value={operando.name}
+              onChange={(event) =>
+                setOperando("operands", index, "name", event.target.value)
+              }
+            />
+            <input
+              type="text"
+              inputMode="decimal"
+              aria-label={`Valor do operando ${index + 1}`}
+              placeholder="20,00"
+              value={operando.value}
+              onChange={(event) =>
+                setOperando("operands", index, "value", event.target.value)
+              }
+            />
+            <input
+              type="text"
+              aria-label={`Unidade do operando ${index + 1}`}
+              placeholder={unitLabel(itemUnit)}
+              value={operando.unit}
+              onChange={(event) =>
+                setOperando("operands", index, "unit", event.target.value)
+              }
+            />
+            <button
+              type="button"
+              className="botao-secundario"
+              onClick={() => removerLinha("operands", index)}
+              disabled={form.operands.length === 1}
+            >
+              Remover
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={() => adicionarLinha("operands")}
+        >
+          Adicionar operando
+        </button>
+      </fieldset>
+
+      <fieldset className="autoria-operandos">
+        <legend>Deduções (opcional; subtraídas do produto)</legend>
+        {form.deductions.map((deducao, index) => (
+          <div className="autoria-linha" key={`deducao-${index}`}>
+            <input
+              type="text"
+              aria-label={`Nome da dedução ${index + 1}`}
+              placeholder="NOME (ex.: VÃOS)"
+              value={deducao.name}
+              onChange={(event) =>
+                setOperando("deductions", index, "name", event.target.value)
+              }
+            />
+            <input
+              type="text"
+              inputMode="decimal"
+              aria-label={`Valor da dedução ${index + 1}`}
+              placeholder="0,00"
+              value={deducao.value}
+              onChange={(event) =>
+                setOperando("deductions", index, "value", event.target.value)
+              }
+            />
+            <button
+              type="button"
+              className="botao-secundario"
+              onClick={() => removerLinha("deductions", index)}
+            >
+              Remover
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={() => adicionarLinha("deductions")}
+        >
+          Adicionar dedução
+        </button>
+      </fieldset>
+
+      {form.basis === "dependent" ? (
+        <label className="campo">
+          Depende de qual serviço (código)
+          <select
+            value={form.dependsOnCode}
+            onChange={(event) =>
+              onChange({ ...form, dependsOnCode: event.target.value })
+            }
+          >
+            <option value="">Escolha o serviço de origem…</option>
+            {codigosDisponiveis
+              .filter((disponivel) => disponivel !== code)
+              .map((disponivel) => (
+                <option key={disponivel} value={disponivel}>
+                  {disponivel}
+                </option>
+              ))}
+          </select>
+          <span className="campo-dica">
+            A quantidade do serviço de origem entra como primeiro operando na montagem — a
+            memória fica autocontida, sem referência cruzada.
+          </span>
+        </label>
+      ) : null}
+
+      {form.basis === "partial" ? (
+        <div className="autoria-parcial">
+          {/* Teto por EXTENSO, sempre visível: a parcela parcial cabe dentro do elemento. */}
+          <p className="campo-dica">
+            {AUTORIA_ROTULO_TETO}:{" "}
+            {capDisponivel ? (
+              <strong>
+                {formatDecimalText(itemQuantity as string)} {unitLabel(itemUnit)}
+              </strong>
+            ) : (
+              AUTORIA_SEM_TETO
+            )}
+          </p>
+          <label className="campo">
+            Justificativa da parcela (obrigatória)
+            <span className="campo-dica">{AUTORIA_DICA_PARCIAL}</span>
+            <textarea
+              value={form.note}
+              onChange={(event) => onChange({ ...form, note: event.target.value })}
+            />
+          </label>
+        </div>
+      ) : null}
+
+      {erro === null ? null : (
+        <p className="campo-erro" role="alert">
+          {erro}
+        </p>
+      )}
+
+      <div className="acoes-linha">
+        <button
+          type="button"
+          className="botao-primario"
+          onClick={onSalvar}
+          disabled={submitting}
+        >
+          Salvar contribuição
+        </button>
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={onCancelar}
+          disabled={submitting}
+        >
+          Cancelar
+        </button>
+        {onRemover ? (
+          <button
+            type="button"
+            className="botao-secundario"
+            onClick={onRemover}
+            disabled={submitting}
+          >
+            Remover contribuição
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Resumo da MATRIZ montada: a ordem topológica de cálculo dos serviços (quem alimenta outro
+ * vem antes) e a recusa de ciclo/auto-referência, escrita por CÓDIGO estável e nunca
+ * escondida atrás de interação (decisão 5, ADR-0053). Um serviço que FUNDE parcelas de mais
+ * de um elemento (o saibro dos 478,74 m²) diz isso por extenso.
+ *
+ * Puro: recebe a matriz montada e recomputa ordem e recusa com os mesmos helpers que o
+ * `montar` usa. Sem matriz, declara o regime legado — não inventa ordem para o nada.
+ */
+export function ResumoDaMatriz({ matrix }: { matrix: CalcMatrix | null }) {
+  if (matrix === null) {
+    return (
+      <section className="resumo-matriz" aria-label={RESUMO_MATRIZ_TITULO}>
+        <h4>{RESUMO_MATRIZ_TITULO}</h4>
+        <p className="campo-dica">{RESUMO_MATRIZ_VAZIO}</p>
+      </section>
+    );
+  }
+  const erro = matrixOrderError(matrix);
+  const order = topologicalOrder(matrix.services);
+  const serviceByCode = new Map(
+    matrix.services.map((service) => [service.code, service] as const),
+  );
+  return (
+    <section className="resumo-matriz" aria-label={RESUMO_MATRIZ_TITULO}>
+      <h4>{RESUMO_MATRIZ_TITULO}</h4>
+      <p className="campo-dica">{RESUMO_MATRIZ_DICA}</p>
+      {erro !== null ? (
+        <p className="banner-erro" role="alert">
+          {errorMessage(erro.code)} ({erro.codes.join(", ")})
+        </p>
+      ) : order === null ? (
+        <p className="banner-erro" role="alert">
+          {errorMessage("CALC_MATRIX_DEPENDENCY_CYCLE")}
+        </p>
+      ) : (
+        <ol className="resumo-matriz-ordem">
+          {order.map((code, index) => {
+            const service = serviceByCode.get(code);
+            const contributions = service?.contributions ?? [];
+            const elementos = new Set(
+              contributions
+                .map((contribution) => contribution.source_item_id)
+                .filter((id): id is string => id !== null),
+            );
+            const funde = elementos.size > 1;
+            return (
+              <li key={code}>
+                <strong>
+                  {index + 1}. <code>{code}</code>
+                </strong>{" "}
+                — {contributions.length}{" "}
+                {contributions.length === 1 ? "parcela" : "parcelas"}
+                {funde ? (
+                  <span className="resumo-matriz-funde">
+                    {" "}
+                    · funde parcelas de {elementos.size} elementos
+                  </span>
+                ) : null}
+                <ul>
+                  {contributions.map((contribution, cIndex) => {
+                    const base = contributionBasisLabel(contribution.basis);
+                    return (
+                      <li key={`${code}-${cIndex}`}>
+                        {contribution.label}
+                        {base === null ? null : (
+                          <span className="memoria-base"> · {base}</span>
+                        )}
+                        {contribution.depends_on_code ? (
+                          <span className="memoria-derivada">
+                            {" "}
+                            · {derivadaDeLabel(contribution.depends_on_code)}
+                          </span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
   );
 }
 
@@ -1651,6 +2056,26 @@ export function OrcamentoApp({
   // BDI e montagem.
   const [bdiInput, setBdiInput] = useState("");
 
+  // Matriz de contribuições (F-038 "decisão 6", ADR-0053). O que a orçamentista autora por
+  // par `(elemento, código)` mora AQUI, na tela, e só vira `calc_matrix` no build — o
+  // servidor é o portão final. `contribuicoes` é indexado por `contributionKey`.
+  const [contribuicoes, setContribuicoes] = useState<
+    Record<string, CalcContributionDraft>
+  >({});
+  // O par cuja contribuição está sendo autorada agora, e o rascunho do editor. `null` é o
+  // editor fechado. `autoriaForm` começa sem base nem grandeza (nada nasce pré-marcado).
+  const [autoriaAlvo, setAutoriaAlvo] = useState<{
+    itemId: string;
+    code: string;
+    label: string;
+    unit: string;
+    quantity: string | null;
+  } | null>(null);
+  const [autoriaForm, setAutoriaForm] = useState<CalcContributionForm | null>(null);
+  const [autoriaErro, setAutoriaErro] = useState<string | null>(null);
+  // Recusa de ORDEM da matriz na montagem (ciclo/auto-referência), escrita por extenso.
+  const [matrizErro, setMatrizErro] = useState<string | null>(null);
+
   // Aprovação e despacho (F-035, ADR-0046). `confirmandoAprovacao` é o SEGUNDO ato
   // explícito do desenho aprovado, não preferência de interface: o primeiro clique abre a
   // consequência, o segundo assina.
@@ -2320,6 +2745,61 @@ export function OrcamentoApp({
     }
   };
 
+  /**
+   * Abre o editor de contribuição de um par `(elemento, código)`. Reabre a contribuição já
+   * salva para corrigir, ou começa um rascunho vazio — sem base nem grandeza pré-marcada.
+   */
+  const abrirAutoria = (
+    itemId: string,
+    code: string,
+    label: string,
+    unit: string,
+    quantity: string | null,
+  ) => {
+    const existente = contribuicoes[contributionKey(itemId, code)];
+    setAutoriaAlvo({ itemId, code, label, unit, quantity });
+    setAutoriaForm(existente ? formFromDraft(existente) : emptyContributionForm(label));
+    setAutoriaErro(null);
+  };
+
+  const fecharAutoria = () => {
+    setAutoriaAlvo(null);
+    setAutoriaForm(null);
+    setAutoriaErro(null);
+  };
+
+  /** Valida o rascunho e o guarda no mapa; recusa vira a frase do que falta, ao lado do editor. */
+  const salvarContribuicao = () => {
+    if (autoriaAlvo === null || autoriaForm === null) {
+      return;
+    }
+    const resultado = buildContributionDraft(
+      autoriaAlvo.itemId,
+      autoriaAlvo.code,
+      autoriaAlvo.quantity,
+      autoriaForm,
+    );
+    if ("code" in resultado) {
+      setAutoriaErro(errorMessage(resultado.code));
+      return;
+    }
+    const chave = contributionKey(autoriaAlvo.itemId, autoriaAlvo.code);
+    setContribuicoes((atual) => ({ ...atual, [chave]: resultado.draft }));
+    fecharAutoria();
+  };
+
+  const removerContribuicao = (itemId: string, code: string) => {
+    const chave = contributionKey(itemId, code);
+    setContribuicoes((atual) => {
+      const proximo = { ...atual };
+      delete proximo[chave];
+      return proximo;
+    });
+    if (autoriaAlvo?.itemId === itemId && autoriaAlvo?.code === code) {
+      fecharAutoria();
+    }
+  };
+
   const montarOrcamento = async () => {
     const token = tokenDaSessao();
     if (token === null || orcamento === null || version === null) {
@@ -2330,10 +2810,30 @@ export function OrcamentoApp({
       setAlertMessage(erroBdi);
       return;
     }
+    // A matriz é montada do que foi autorado. Sem contribuição nenhuma, `null`: o build vai
+    // sem `calc_matrix` e o servidor monta o regime legado. Ciclo/auto-referência são
+    // recusados AQUI, por extenso, antes da viagem — o servidor continua sendo o portão.
+    const matriz = assembleCalcMatrix(Object.values(contribuicoes));
+    if (matriz !== null) {
+      const ordemErro = matrixOrderError(matriz);
+      if (ordemErro !== null) {
+        const frase = `${errorMessage(ordemErro.code)} (${ordemErro.codes.join(", ")})`;
+        setMatrizErro(frase);
+        setAlertMessage(frase);
+        return;
+      }
+    }
+    setMatrizErro(null);
     setSubmitting(true);
     setAuditoriaReprovada(null);
     try {
-      const response = await postBuildEstimate(token, orcamento, bdiInput, version);
+      const response = await postBuildEstimate(
+        token,
+        orcamento,
+        bdiInput,
+        version,
+        matriz,
+      );
       aplicarVersao(response.version);
       setEstimate(response);
       setAlertMessage(null);
@@ -2586,6 +3086,23 @@ export function OrcamentoApp({
   const semCandidato = (suggestions?.suggestions.unmatched_item_ids ?? []).filter(
     (itemId) => pendingItems.some((item) => item.item_id === itemId),
   );
+  // A matriz montada do que foi autorado — a mesma que o `montar` envia. Alimenta o resumo
+  // da ordem de cálculo e a costura com a memória.
+  const matriz = useMemo(
+    () => assembleCalcMatrix(Object.values(contribuicoes)),
+    [contribuicoes],
+  );
+  // Todos os códigos confirmados da rodada, para a parcela DEPENDENT escolher a origem: a
+  // dependência atravessa itens, então ela não se limita ao pacote do elemento aberto.
+  const codigosConfirmados = useMemo(() => {
+    const vistos = new Set<string>();
+    for (const assignment of codes?.assignments?.assignments ?? []) {
+      if (assignment.status === "confirmed" && assignment.code) {
+        vistos.add(assignment.code);
+      }
+    }
+    return [...vistos];
+  }, [codes]);
   const bdiErro = bdiInput.trim().length === 0 ? null : bdiPercentError(bdiInput);
   // O bloco do teto é derivado do ESTADO da rodada, que é a leitura autoritativa: o
   // servidor manda `{target, consumed, remaining, over}` pronto, e `null` aqui é a rodada
@@ -3713,21 +4230,99 @@ export function OrcamentoApp({
                           como resolvido depois do fechamento.
                         </p>
                         <ul className="lista-simples">
-                          {pacoteDoItem.map((assignment) => (
-                            <li key={assignment.code}>
-                              <code>{assignment.code}</code>
-                              {assignment.unit_compatible ? null : (
-                                <span className="campo-aviso">
-                                  {" "}
-                                  unidade diferente da do elemento
-                                </span>
-                              )}
-                            </li>
-                          ))}
+                          {pacoteDoItem.map((assignment) => {
+                            const codigo = assignment.code;
+                            if (!codigo) {
+                              return null;
+                            }
+                            const chave = contributionKey(
+                              selectedPendingId,
+                              codigo,
+                            );
+                            const autorada = contribuicoes[chave];
+                            const editando =
+                              autoriaAlvo?.itemId === selectedPendingId &&
+                              autoriaAlvo?.code === codigo;
+                            return (
+                              <li key={codigo}>
+                                <code>{codigo}</code>
+                                {assignment.unit_compatible ? null : (
+                                  <span className="campo-aviso">
+                                    {" "}
+                                    unidade diferente da do elemento
+                                  </span>
+                                )}{" "}
+                                {/* Contribuição autorada em TEXTO, não só cor (decisão 5):
+                                    a base declarada aparece por extenso. */}
+                                {autorada ? (
+                                  <span className="selo selo-ok">
+                                    contribuição autorada
+                                    {contributionBasisLabel(autorada.basis)
+                                      ? ` · ${contributionBasisLabel(autorada.basis)}`
+                                      : ""}
+                                  </span>
+                                ) : (
+                                  <span className="selo selo-atencao">
+                                    sem contribuição
+                                  </span>
+                                )}{" "}
+                                <button
+                                  type="button"
+                                  className="botao-secundario"
+                                  onClick={() =>
+                                    abrirAutoria(
+                                      selectedPendingId,
+                                      codigo,
+                                      itemPendente.label,
+                                      itemPendente.unit,
+                                      itemPendente.quantity,
+                                    )
+                                  }
+                                  disabled={submitting || editando}
+                                >
+                                  {autorada
+                                    ? "Editar contribuição"
+                                    : "Autorar contribuição"}
+                                </button>
+                              </li>
+                            );
+                          })}
                         </ul>
                       </>
                     )}
                   </section>
+
+                  {/* Editor da contribuição do par selecionado (F-038 "decisão 6"). */}
+                  {autoriaAlvo !== null &&
+                  autoriaForm !== null &&
+                  autoriaAlvo.itemId === selectedPendingId ? (
+                    <AutoriaDeContribuicao
+                      code={autoriaAlvo.code}
+                      itemUnit={autoriaAlvo.unit}
+                      itemQuantity={autoriaAlvo.quantity}
+                      form={autoriaForm}
+                      erro={autoriaErro}
+                      codigosDisponiveis={codigosConfirmados}
+                      onChange={setAutoriaForm}
+                      onSalvar={salvarContribuicao}
+                      onCancelar={fecharAutoria}
+                      onRemover={
+                        contribuicoes[
+                          contributionKey(autoriaAlvo.itemId, autoriaAlvo.code)
+                        ]
+                          ? () =>
+                              removerContribuicao(
+                                autoriaAlvo.itemId,
+                                autoriaAlvo.code,
+                              )
+                          : undefined
+                      }
+                      submitting={submitting}
+                    />
+                  ) : null}
+
+                  {/* A ordem de cálculo da matriz montada até aqui, com ciclo por extenso. */}
+                  <ResumoDaMatriz matrix={matriz} />
 
                   {codeChoice !== null &&
                   codeChoice.unit.trim().toLowerCase() !==
@@ -3816,6 +4411,13 @@ export function OrcamentoApp({
                   )}
                   <p className="dica">{AVISO_BDI}</p>
                   <p className="dica">{DESCRICAO_MONTAGEM}</p>
+                  {/* Recusa de ORDEM da matriz (ciclo/auto-referência): por extenso, antes
+                      da viagem, nunca escondida atrás do clique de montar. */}
+                  {matrizErro === null ? null : (
+                    <p className="banner-erro" role="alert">
+                      {matrizErro}
+                    </p>
+                  )}
                   <div className="acoes-linha">
                     <button
                       type="submit"
@@ -3826,6 +4428,9 @@ export function OrcamentoApp({
                     </button>
                   </div>
                 </form>
+                {/* A matriz que será enviada no build, na ordem de cálculo. É a costura com
+                    a memória: a mesma base e proveniência que `MemoriaDeCalculo` renderiza. */}
+                <ResumoDaMatriz matrix={matriz} />
               </section>
 
               <PainelTetoDaVerba

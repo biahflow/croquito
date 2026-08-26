@@ -27,6 +27,7 @@ import {
   searchCascade,
 } from "./api";
 import { describeError, isRevisionConflict, orcamentoErrorCode } from "./errors";
+import type { CalcMatrix } from "./matrix";
 
 /** Base do build de teste: `VITE_API_BASE_URL` não é declarada neste ambiente. */
 const BASE = "http://localhost:8000";
@@ -341,6 +342,55 @@ describe("BDI da montagem", () => {
     );
 
     expect(chamadas).toHaveLength(0);
+  });
+});
+
+/**
+ * A matriz elemento × serviço (F-038 "decisão 6", ADR-0053) viaja no MESMO corpo do build,
+ * ao lado do BDI, e SÓ quando a orçamentista autorou contribuição. Sem matriz, o corpo é o
+ * de sempre — é o que garante que o regime legado (código único por item) siga byte-idêntico.
+ */
+describe("matriz de contribuições na montagem", () => {
+  const MATRIZ: CalcMatrix = {
+    schema_version: "1.0.0",
+    services: [
+      {
+        code: "SCO001",
+        contributions: [
+          {
+            source_item_id: "ti_0000000000000001",
+            label: "Piso em concreto",
+            basis: "derived",
+            recipe: "length_times_width",
+            operands: [
+              { name: "COMPRIMENTO", value: "20.906", unit: "m" },
+              { name: "LARGURA", value: "20.00", unit: "m" },
+            ],
+            deductions: [],
+            depends_on_code: null,
+            note: null,
+          },
+        ],
+      },
+    ],
+  };
+
+  it("vai como calc_matrix ao lado do BDI quando há contribuição autorada", async () => {
+    await postBuildEstimate(TOKEN, ROUND, "25,00", 11, MATRIZ);
+
+    const corpo = corpoDaChamada();
+    expect(corpo).toEqual({
+      base_version: 11,
+      bdi_percent: "25.00",
+      calc_matrix: MATRIZ,
+    });
+  });
+
+  it("sem matriz (null) o corpo é o de sempre — regime legado byte-idêntico", async () => {
+    await postBuildEstimate(TOKEN, ROUND, "25,00", 11, null);
+
+    expect(corpoDaChamada()).toEqual({ base_version: 11, bdi_percent: "25.00" });
+    expect(corpoDaChamada()).not.toHaveProperty("calc_matrix");
   });
 });
 

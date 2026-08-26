@@ -186,6 +186,23 @@ def _dependent(code: str, *, factor: Decimal = Decimal("2")) -> CalcContribution
     )
 
 
+def _partial(
+    item_id: str,
+    *,
+    value: Decimal,
+    note: str | None = "170 m2 medidos em campo pela orcamentista",
+    label: str = "LIMPEZA",
+) -> CalcContribution:
+    return CalcContribution(
+        source_item_id=item_id,
+        label=label,
+        basis=ContributionBasis.PARTIAL,
+        recipe=CalcRecipe.DECLARED_PRODUCT,
+        operands=[CalcOperand(name="AREA", value=value, unit="m2")],
+        note=note,
+    )
+
+
 # --------------------------------------------------------------------------------------
 # guardas na leitura do artefato
 # --------------------------------------------------------------------------------------
@@ -387,3 +404,83 @@ def test_legacy_regime_keeps_two_items_with_same_code_as_two_services() -> None:
     # Mesmo código nos dois: NÃO funde no regime legado — fusão mexeria em boletim assinado.
     assert [s.code for s in resolved.services] == [_SAIBRO, _SAIBRO]
     assert [s.item_number for s in resolved.services] == ["1", "2"]
+
+
+# --------------------------------------------------------------------------------------
+# parcela PARTIAL: nota obrigatória (leitura) e teto do elemento (build) — ADR-0053, d.3
+# --------------------------------------------------------------------------------------
+
+
+def test_partial_without_note_rejected_at_read() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _partial(_ITEM_1, value=Decimal("170"), note=None)
+    assert valuation_error_codes(raised.value) == ["CALC_PARTIAL_NOTE_REQUIRED"]
+
+
+def test_partial_with_blank_note_rejected_at_read() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _partial(_ITEM_1, value=Decimal("170"), note="   ")
+    assert valuation_error_codes(raised.value) == ["CALC_PARTIAL_NOTE_REQUIRED"]
+
+
+def test_partial_within_item_cap_builds() -> None:
+    # 170 m2 de limpeza dentro dos 418,12 do piso: declarado, com nota, e abaixo do teto.
+    item = _confirmed_item(item_id=_ITEM_1, quantity=Decimal("418.12"))
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SAIBRO, contributions=[_partial(_ITEM_1, value=Decimal("170"))]
+            )
+        ]
+    )
+    resolved = resolve_calc_matrix([item], _priced_set([_SAIBRO]), calc_matrix=matrix)
+    assert resolved.services[0].total_quantity == Decimal("170.00")
+
+
+def test_partial_equal_to_item_cap_builds() -> None:
+    # Fronteira: declarado == teto não ultrapassa (a recusa é estrita, `>`).
+    item = _confirmed_item(item_id=_ITEM_1, quantity=Decimal("418.12"))
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SAIBRO, contributions=[_partial(_ITEM_1, value=Decimal("418.12"))]
+            )
+        ]
+    )
+    resolved = resolve_calc_matrix([item], _priced_set([_SAIBRO]), calc_matrix=matrix)
+    assert resolved.services[0].total_quantity == Decimal("418.12")
+
+
+def test_partial_over_item_cap_rejected_at_build() -> None:
+    item = _confirmed_item(item_id=_ITEM_1, quantity=Decimal("418.12"))
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SAIBRO, contributions=[_partial(_ITEM_1, value=Decimal("500"))]
+            )
+        ]
+    )
+    with pytest.raises(ValuationValidationError) as raised:
+        resolve_calc_matrix([item], _priced_set([_SAIBRO]), calc_matrix=matrix)
+    assert raised.value.code == "CALC_PARTIAL_EXCEEDS_ITEM"
+    assert raised.value.details["source_item_id"] == _ITEM_1
+    assert raised.value.details["declared"] == "500.00"
+    assert raised.value.details["cap"] == "418.12"
+
+
+def test_partial_cap_code_is_fixed_across_chains() -> None:
+    # O teto e a nota descrevem a semântica da célula, não a resolução da cadeia: o código é
+    # `CALC_PARTIAL_*` fixo mesmo no orçamento-base (`error_prefix="ESTIMATE"`).
+    item = _confirmed_item(item_id=_ITEM_1, quantity=Decimal("418.12"))
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SAIBRO, contributions=[_partial(_ITEM_1, value=Decimal("500"))]
+            )
+        ]
+    )
+    with pytest.raises(ValuationValidationError) as raised:
+        resolve_calc_matrix(
+            [item], _priced_set([_SAIBRO]), calc_matrix=matrix, error_prefix="ESTIMATE"
+        )
+    assert raised.value.code == "CALC_PARTIAL_EXCEEDS_ITEM"

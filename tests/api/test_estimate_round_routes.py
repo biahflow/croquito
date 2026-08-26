@@ -2098,6 +2098,97 @@ def test_o_estimate_recusa_matriz_malformada_como_dominio(tmp_path: Path) -> Non
     assert response.json()["detail"]["code"] == "DOMAIN_VALIDATION_FAILED"
 
 
+def _partial_service_matrix(*, value: str, with_note: bool = True) -> dict[str, Any]:
+    """Matriz de um serviço com UMA parcela `PARTIAL` sobre o item confirmado.
+
+    Construída como dict cru (não `CalcContribution`) porque o caso da nota faltando não
+    passaria pelo próprio modelo — o corpo da rota é justamente onde o cliente pode postar
+    isso, e a rota tem de recusar como domínio, não deixar estourar.
+    """
+    contribution: dict[str, Any] = {
+        "source_item_id": _ITEM_FIRST,
+        "label": "LIMPEZA DE PISO",
+        "basis": "partial",
+        "recipe": "declared_product",
+        "operands": [{"name": "AREA", "value": value, "unit": "m2"}],
+    }
+    if with_note:
+        contribution["note"] = "medido em campo pela orcamentista; nao sai da area do piso"
+    return {
+        "schema_version": "1.0.0",
+        "services": [{"code": _SCO_CODE, "contributions": [contribution]}],
+    }
+
+
+def test_o_estimate_recusa_parcial_sem_nota(tmp_path: Path) -> None:
+    """Parcela `PARTIAL` sem nota volta como `422` com `CALC_PARTIAL_NOTE_REQUIRED`."""
+    client = _client(tmp_path)
+    state = _round_ready_single_service(client)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="parcial-sem-nota"),
+        json={
+            "base_version": state["version"],
+            "bdi_percent": "25.00",
+            "calc_matrix": _partial_service_matrix(value="7.00", with_note=False),
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detail["details"]["code"] == "CALC_PARTIAL_NOTE_REQUIRED"
+
+
+def test_o_estimate_recusa_parcial_acima_do_teto(tmp_path: Path) -> None:
+    """Parcela `PARTIAL` acima da quantidade do elemento volta com `CALC_PARTIAL_EXCEEDS_ITEM`.
+
+    O item confirmado tem 10,00 m; declarar 15,00 na parcela ultrapassa o teto, e a
+    conferência é do build (o teto vem do `TakeoffItem`, não da célula).
+    """
+    client = _client(tmp_path)
+    state = _round_ready_single_service(client)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="parcial-acima-do-teto"),
+        json={
+            "base_version": state["version"],
+            "bdi_percent": "25.00",
+            "calc_matrix": _partial_service_matrix(value="15.00"),
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detail["details"]["code"] == "CALC_PARTIAL_EXCEEDS_ITEM"
+    assert detail["details"]["cap"] == "10.00"
+    assert detail["details"]["declared"] == "15.00"
+
+
+def test_o_estimate_aceita_parcial_dentro_do_teto(tmp_path: Path) -> None:
+    """Parcela `PARTIAL` com nota e abaixo do teto monta o orçamento (200)."""
+    client = _client(tmp_path)
+    state = _round_ready_single_service(client)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="parcial-dentro-do-teto"),
+        json={
+            "base_version": state["version"],
+            "bdi_percent": "25.00",
+            "calc_matrix": _partial_service_matrix(value="7.00"),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    lines = response.json()["estimate"]["lines"]
+    assert [line["code"] for line in lines] == [_SCO_CODE]
+    assert lines[0]["quantity"] == "7.00"
+
+
 def _round_ready_for_estimate(
     client: TestClient, *, sco_from_acervo: bool = False
 ) -> dict[str, Any]:

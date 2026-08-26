@@ -18,6 +18,7 @@
  */
 
 import { parseDecimalInput } from "./format";
+import type { CalcMatrix } from "./matrix";
 import { ehZeroDecimal } from "./teto";
 import type {
   CascadeOrderDraft,
@@ -329,14 +330,28 @@ export function bdiPercentError(value: string): string | null {
  * Corpo do `POST .../estimate`. `bdi_percent` sai como TEXTO decimal, sempre: ele é
  * `ExactDecimal` no domínio (ADR-0038, decisão 2), que recusa `float`. Texto que não é
  * decimal devolve `null` aqui, e a tela recusa antes de chamar.
+ *
+ * `calc_matrix` (F-038 "decisão 6", ADR-0053) é a matriz elemento × serviço que a
+ * orçamentista montou, e viaja no MESMO corpo, ao lado do BDI. Ela é OPCIONAL: sem
+ * contribuição autorada o campo é OMITIDO — e a ausência é o regime legado (código único
+ * por item), que o servidor monta byte-idêntico ao de hoje. Presente, o objeto vai cru; o
+ * servidor o valida como `CalcMatrix` e é o portão final.
  */
 export function buildEstimateBody(
   bdiPercent: string,
   baseVersion: number,
-): Record<string, string | number> | null {
+  calcMatrix?: CalcMatrix | null,
+): Record<string, unknown> | null {
   const percent = parseDecimalInput(bdiPercent);
   if (percent === null) {
     return null;
   }
-  return { ...versionBody(baseVersion), bdi_percent: percent };
+  const body: Record<string, unknown> = {
+    ...versionBody(baseVersion),
+    bdi_percent: percent,
+  };
+  if (calcMatrix) {
+    body.calc_matrix = calcMatrix;
+  }
+  return body;
 }

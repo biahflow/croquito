@@ -101,6 +101,17 @@ class CalcContribution(ValuationContractModel):
                 "parcela com origem em elemento precisa apontar para o elemento",
                 {"label": self.label, "basis": self.basis.value},
             )
+        # A parcela `PARTIAL` é o ponto de honestidade do desenho (ADR-0053, decisão 3): os
+        # 170 m² de limpeza dentro dos 418,12 do piso não saem de conta nenhuma. Como o número
+        # é DECLARADO e nunca recomputado, a nota que o justifica é obrigatória — sem ela a
+        # célula afirma um recorte medido sem dizer de onde ele veio. O teto (`≤ quantidade do
+        # item`) é conferência do build, porque depende do `TakeoffItem`.
+        if self.basis is ContributionBasis.PARTIAL and not (self.note and self.note.strip()):
+            raise ValuationValidationError(
+                "CALC_PARTIAL_NOTE_REQUIRED",
+                "parcela parcial precisa de nota que justifique o recorte medido",
+                {"label": self.label},
+            )
         if self.depends_on_code is not None and (
             re.fullmatch(SCO_CODE_PATTERN, self.depends_on_code) is None
             and re.fullmatch(NON_SCO_CODE_PATTERN, self.depends_on_code) is None
@@ -294,7 +305,50 @@ def _resolve_legacy(
     return ResolvedMatrix(services=tuple(resolved))
 
 
+def _partial_cap_by_item(included_items: list[TakeoffItem]) -> dict[str, Decimal]:
+    """Teto de cada elemento incluído: a quantidade confirmada que uma parcela não ultrapassa."""
+    return {item.id: item.quantity for item in included_items if item.quantity is not None}
+
+
+def _check_partial_cap(
+    *,
+    service_code: str,
+    contribution: CalcContribution,
+    declared: Decimal,
+    cap_by_item: dict[str, Decimal],
+) -> None:
+    """Confere o teto da parcela `PARTIAL`: o declarado nunca passa da quantidade do elemento.
+
+    É conferência de BUILD porque o teto vem de `TakeoffItem.quantity`, que o modelo da célula
+    não alcança (ADR-0053, decisão 3). O `declared` é o produto que os operandos já computaram
+    (o subtotal do bloco materializado), nunca um número novo. O código é fixo `CALC_PARTIAL_*`,
+    e não `error_prefix`: como o teto e a nota descrevem a semântica da célula (não a resolução
+    da cadeia), as duas famílias de PARTIAL têm um nome só nas duas cadeias — igual ao
+    `CALC_PARTIAL_NOTE_REQUIRED`, que nasce no validador do modelo, sem cadeia.
+    """
+    source_item_id = contribution.source_item_id
+    assert source_item_id is not None  # invariante da célula: `PARTIAL` aponta para o elemento.
+    cap = cap_by_item.get(source_item_id)
+    if cap is None:
+        # Elemento fora dos itens incluídos: não há quantidade para conferir o teto. O vínculo
+        # entre `source_item_id` e item incluído não é validado aqui para nenhuma base, então
+        # inventar recusa seria alargar escopo — o teto só existe quando há elemento de origem.
+        return
+    if declared > cap:
+        raise ValuationValidationError(
+            "CALC_PARTIAL_EXCEEDS_ITEM",
+            "parcela parcial ultrapassa a quantidade do elemento de origem",
+            {
+                "code": service_code,
+                "source_item_id": source_item_id,
+                "declared": str(declared),
+                "cap": str(cap),
+            },
+        )
+
+
 def _resolve_matrix(
+    included_items: list[TakeoffItem],
     assignments: CodeAssignmentSet,
     calc_matrix: CalcMatrix,
     *,
@@ -303,6 +357,7 @@ def _resolve_matrix(
     """Regime novo: funde por serviço, resolve a dependência e numera na ordem topológica."""
     order = _topological_order(calc_matrix.services)
     assert order is not None  # o validador de `CalcMatrix` já recusou ciclo na leitura.
+    cap_by_item = _partial_cap_by_item(included_items)
     service_by_code = {service.code: service for service in calc_matrix.services}
     matrix_codes = set(service_by_code)
     priced_codes = {
@@ -330,8 +385,9 @@ def _resolve_matrix(
     resolved_by_code: dict[str, ResolvedService] = {}
     for index, code in enumerate(order, start=1):
         service = service_by_code[code]
-        blocks = tuple(
-            _materialize(
+        materialized: list[CalcBlock] = []
+        for contribution in service.contributions:
+            block = _materialize(
                 contribution,
                 upstream_quantity=(
                     resolved_by_code[contribution.depends_on_code].total_quantity
@@ -340,8 +396,15 @@ def _resolve_matrix(
                     else None
                 ),
             )
-            for contribution in service.contributions
-        )
+            if contribution.basis is ContributionBasis.PARTIAL:
+                _check_partial_cap(
+                    service_code=code,
+                    contribution=contribution,
+                    declared=block.subtotal,
+                    cap_by_item=cap_by_item,
+                )
+            materialized.append(block)
+        blocks = tuple(materialized)
         total_quantity = quantity_round(sum((block.subtotal for block in blocks), Decimal(0)))
         resolved_by_code[code] = ResolvedService(
             item_number=str(index),
@@ -370,5 +433,5 @@ def resolve_calc_matrix(
     de erro já existentes.
     """
     if calc_matrix is not None:
-        return _resolve_matrix(assignments, calc_matrix, error_prefix=error_prefix)
+        return _resolve_matrix(included_items, assignments, calc_matrix, error_prefix=error_prefix)
     return _resolve_legacy(included_items, assignments, calc_plan=calc_plan)

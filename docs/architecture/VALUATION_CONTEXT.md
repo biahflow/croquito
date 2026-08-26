@@ -410,6 +410,15 @@ lexical continua sendo o fallback permanente, com ou sem provider.
   `pending_items` e o boletim recusa em `CALC_PACKAGE_NOT_CLOSED` (`ESTIMATE_PACKAGE_NOT_CLOSED`
   no orçamento-base). **A rejeição fecha o item sozinha** — declarar que nenhum serviço
   precifica o elemento já é dizer que não vem mais nada.
+- **A parcela `PARTIAL` é declarada, com nota obrigatória e teto do elemento.** Os 170 m² de
+  limpeza dentro dos 418,12 do piso não saem de conta nenhuma (ADR-0053, decisão 3): a
+  quantidade é declarada pela orçamentista e nunca recomputada. A nota que justifica o recorte
+  é obrigatória, conferida na leitura da célula (`CALC_PARTIAL_NOTE_REQUIRED` em
+  `CalcContribution`); o teto — a parcela nunca ultrapassa a quantidade do elemento de origem —
+  é conferência do build, porque depende do `TakeoffItem.quantity`, que a célula não alcança
+  (`CALC_PARTIAL_EXCEEDS_ITEM`, com o código do serviço, o `source_item_id`, o valor declarado
+  e o teto nos detalhes). Os dois códigos são fixos `CALC_PARTIAL_*` nas duas cadeias
+  (medição e orçamento-base): descrevem a semântica da célula, não a resolução da cadeia.
 - **O regime é declarado pelo artefato, nunca pelo processo.** `CodeAssignmentSet.schema_version`
   vale `1.0.0` (um código por item, sem fechamento) ou `2.0.0` (par e fechamento). Rodada
   gravada antes do ADR-0053 relê com o comportamento exato de antes; ao receber decisão nova
