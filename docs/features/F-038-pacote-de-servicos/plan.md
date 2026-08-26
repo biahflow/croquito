@@ -30,7 +30,7 @@ dos builders, e o layout impresso isolado numa tarefa própria.
 | T4 | [#76](https://github.com/biahflow/croquito/issues/76) | `CalcMatrix` e dependência sem ciclo | Pendente |
 | T5 | [#77](https://github.com/biahflow/croquito/issues/77) | Vínculo `(item_id, code)` e fechamento de pacote | **Entregue** |
 | T6 | [#78](https://github.com/biahflow/croquito/issues/78) | Builders passam a iterar serviços | Pendente |
-| T7 | [#79](https://github.com/biahflow/croquito/issues/79) | Memória comporta quatro operandos | Pendente |
+| T7 | [#79](https://github.com/biahflow/croquito/issues/79) | Memória comporta quatro operandos | **Entregue** |
 | T8 | [#80](https://github.com/biahflow/croquito/issues/80) | CLI, rotas `/v1` e migração da matriz | Pendente |
 | T9 | [#81](https://github.com/biahflow/croquito/issues/81) | Tela: montar o pacote e ver a memória | Pendente |
 | T10 | [#82](https://github.com/biahflow/croquito/issues/82) | Gabarito de pacotes como oráculo do golden | Pendente |
