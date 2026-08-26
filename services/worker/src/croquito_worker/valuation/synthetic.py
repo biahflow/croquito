@@ -35,7 +35,11 @@ from uuid import NAMESPACE_URL, uuid5
 from openpyxl import Workbook
 from openpyxl.utils import column_index_from_string
 
-from croquito_valuation.assignment import CodeAssignmentBatch, CodeAssignmentInput
+from croquito_valuation.assignment import (
+    CodeAssignmentBatch,
+    CodeAssignmentInput,
+    ItemPackageClosureInput,
+)
 from croquito_valuation.calc import CalcBlockPlan, CalcBuildResult, CalcPlan, ItemCalcPlan
 from croquito_valuation.catalog import parse_money
 from croquito_valuation.contract import ContractWorkbook
@@ -1050,7 +1054,22 @@ def build_demo_code_assignments(packet: TakeoffPacket) -> CodeAssignmentBatch:
                 note=assignment.note,
             )
             for assignment in _DEMO_CODE_ASSIGNMENTS
-        ]
+        ],
+        # O orçamentista sintético fecha o pacote de cada elemento que precificou: na
+        # prancha sintética um elemento dispara um serviço só, e é isso que ele declara.
+        # Sem o ato, `build-calc` recusaria em `CALC_PACKAGE_NOT_CLOSED` — e recusaria certo,
+        # porque "um código" e "o pacote inteiro" deixaram de ser a mesma afirmação.
+        # O gramado rejeitado não entra: a rejeição fecha o item sozinha.
+        closures=[
+            ItemPackageClosureInput(
+                item_id=item_for_label(packet, assignment.label).id,
+                reviewer_id=SYNTHETIC_TAKEOFF_REVIEWER,
+                reviewer_role="orcamentista",
+                decided_at=SYNTHETIC_CODE_DECIDED_AT,
+            )
+            for assignment in _DEMO_CODE_ASSIGNMENTS
+            if assignment.action == "confirm"
+        ],
     )
 
 

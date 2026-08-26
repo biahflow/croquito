@@ -188,7 +188,13 @@ def _review_takeoff(client: TestClient) -> str:
 
 
 def _confirm_codes(client: TestClient) -> str:
-    """Confirma o código item a item, acumulando sobre o conjunto anterior pelo digest."""
+    """Confirma o código item a item e FECHA o pacote de cada elemento precificado.
+
+    Os dois atos, e não um: confirmar um código deixou de significar que o elemento acabou
+    (ADR-0053). Sem o fechamento a rodada ficaria com todo item pendente e `calc/build`
+    recusaria em `CALC_PACKAGE_NOT_CLOSED`. A rejeição fecha o item sozinha e não é fechada
+    aqui — é ela que vira candidato a aditivo.
+    """
     identifiers = _item_ids(client)
     base: str | None = None
     for label, decision in _CODE_REVIEW:
@@ -198,6 +204,17 @@ def _confirm_codes(client: TestClient) -> str:
         response = client.post("/codes/decisions", json=body)
         assert response.status_code == 200, (label, response.json())
         base = str(response.json()["assignments_sha256"])
+
+    for label, decision in _CODE_REVIEW:
+        if decision.get("action") != "confirm":
+            continue
+        response = client.post(
+            "/codes/closures",
+            json={"item_id": identifiers[label], "base_assignments_sha256": base},
+        )
+        assert response.status_code == 200, (label, response.json())
+        base = str(response.json()["assignments_sha256"])
+
     assert base is not None
     return base
 

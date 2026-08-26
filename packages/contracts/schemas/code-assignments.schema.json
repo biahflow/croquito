@@ -59,6 +59,26 @@
       "title": "CodeAssignment",
       "type": "object"
     },
+    "ItemPackageClosure": {
+      "additionalProperties": false,
+      "description": "Ato humano que declara o pacote de serviços de um elemento COMPLETO.\n\nExiste porque, com a cardinalidade N:N, a presença de um assignment deixou de responder\n\"este item acabou?\". Um elemento com um de seis códigos pareceria pronto e produziria\nboletim parcial em silêncio; o fechamento é o que separa \"resolvido\" de \"pela metade\".\nNunca é inferido da contagem de códigos — ninguém, além da orçamentista, sabe quantos\nserviços um elemento dispara.",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/ReviewerDecision"
+        },
+        "item_id": {
+          "pattern": "^ti_[a-f0-9]{16}$",
+          "title": "Item Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "decision"
+      ],
+      "title": "ItemPackageClosure",
+      "type": "object"
+    },
     "ReviewerDecision": {
       "additionalProperties": false,
       "description": "Decisão humana rastreável do orçamentista.\n\nDuplicação local deliberada do `HumanDecision` do contexto de cena: o ADR-0016 mantém\nos dois contextos separados, e uma decisão sobre medição não é uma decisão sobre\ngeometria. O que se repete é a forma, não o significado.",
@@ -118,9 +138,9 @@
       "type": "object"
     }
   },
-  "$id": "https://schemas.croquito.local/valuation/code-assignments/1.0.0.json",
+  "$id": "https://schemas.croquito.local/valuation/code-assignments/2.0.0.json",
   "additionalProperties": false,
-  "description": "Conjunto imutável de confirmações/rejeições de código de uma prancha.",
+  "description": "Conjunto imutável de confirmações/rejeições de código de uma prancha.\n\nO `schema_version` declara o REGIME, e não só a forma dos campos:\n\n- `1.0.0` — um código por item, sem fechamento. É o que está gravado em toda rodada\n  anterior ao ADR-0053, e relê com o comportamento exato de antes.\n- `2.0.0` — a identidade é o par `(item_id, code)`, e o pacote de um elemento só está\n  completo quando um `ItemPackageClosure` diz que está.\n\nPacote aberto é estado NORMAL e persistido, não erro: o segundo dos seis códigos chega\nnum lote seguinte, e entre um e outro a rodada precisa poder ser gravada e relida. Quem\nrecusa pacote aberto é o portão que monta o boletim, onde a metade vira número errado.",
   "properties": {
     "assignments": {
       "items": {
@@ -133,6 +153,13 @@
       "pattern": "^[a-f0-9]{64}$",
       "title": "Catalog Sha256",
       "type": "string"
+    },
+    "closures": {
+      "items": {
+        "$ref": "#/$defs/ItemPackageClosure"
+      },
+      "title": "Closures",
+      "type": "array"
     },
     "contract_sha256": {
       "anyOf": [
@@ -172,8 +199,11 @@
       "type": "array"
     },
     "schema_version": {
-      "const": "1.0.0",
-      "default": "1.0.0",
+      "default": "2.0.0",
+      "enum": [
+        "1.0.0",
+        "2.0.0"
+      ],
       "title": "Schema Version",
       "type": "string"
     }

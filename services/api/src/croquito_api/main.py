@@ -182,6 +182,7 @@ from croquito_valuation.assignment import (
     CodeAssignmentInput,
     CodeAssignmentSet,
     CodeSuggestionSet,
+    ItemPackageClosureInput,
     apply_code_assignments,
     apply_code_assignments_over_cascade,
 )
@@ -277,6 +278,7 @@ from croquito_worker.valuation.round_view import (
 from croquito_worker.valuation.round_view import (
     anchor_counts,
     anchored_packet,
+    count_closed,
     count_status,
     item_payload,
     matching_of,
@@ -1433,6 +1435,21 @@ class RecomputeSuggestionsRequest(ApiModel):
     """
 
     base_version: int = Field(ge=1)
+
+
+class ItemPackageClosureRequest(ApiModel):
+    """Declaração de que o pacote de serviços de um elemento está completo.
+
+    Serve às duas jornadas: fechar não cita fonte de preço nem código, então a diferença
+    que obrigou `EstimateCodeAssignmentDecisionRequest` a existir não aparece aqui.
+
+    A `note` é opcional de propósito. Fechar é o curso normal do trabalho — ao contrário da
+    rejeição, que tira o item do boletim e por isso exige justificativa nesta API.
+    """
+
+    base_version: int = Field(ge=1)
+    item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
+    note: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class CodeAssignmentDecisionRequest(ApiModel):
@@ -9171,6 +9188,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             "assignments_sha256": None if document is None else document_digest(document),
             "confirmed": 0 if assignments is None else count_status(assignments, "confirmed"),
             "rejected": 0 if assignments is None else count_status(assignments, "rejected"),
+            # `confirmed` conta PARES e `closed` conta ELEMENTOS: sob pacote os dois
+            # divergem, e é `closed` que responde "quanto já ficou pronto".
+            "closed": 0 if assignments is None else count_closed(assignments),
             "pending_items": [
                 item_payload(item) for item in pending_code_items(packet, assignments)
             ],
@@ -10230,6 +10250,105 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         return response
 
     @application.post(
+        "/v1/valuation-rounds/{round_id}/code-assignments/closures",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def close_valuation_item_package(
+        round_id: UUID,
+        payload: ItemPackageClosureRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Declara COMPLETO o pacote de serviços de um item — o ato que a confirmação não faz.
+
+        Existe porque a presença de um código deixou de significar que o elemento acabou.
+        Sem esta rota, um item com um de seis códigos ficaria indistinguível de um item
+        resolvido, e o boletim sairia pela metade sem ninguém ser avisado.
+
+        É rota própria, e não uma bandeira em `/decisions`, porque `/decisions` carrega UMA
+        decisão: um pacote de seis códigos nasce em seis chamadas, e a orçamentista não sabe
+        de antemão qual será a última. Quem fecha afirma outra coisa, e afirmação separada
+        merece endpoint separado — inclusive para a auditoria poder distingui-las.
+
+        A rota não confere quantos códigos o item tem: fechar é decisão de quem monta o
+        pacote. Item sem código confirmado, pacote já fechado e item fora do takeoff
+        continuam sendo recusa do domínio."""
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.code-closures:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        previous = assignments_of(revision)
+        catalog = _round_catalog(record)
+        try:
+            batch = CodeAssignmentBatch(
+                closures=[
+                    ItemPackageClosureInput(
+                        item_id=payload.item_id,
+                        reviewer_id=principal.subject,
+                        reviewer_role=VALUATION_REVIEWER_ROLE,
+                        decided_at=datetime.now(UTC),
+                        note=payload.note,
+                    )
+                ]
+            )
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+        assignments = apply_code_assignments(packet, batch, catalog, previous=previous)
+
+        document = assignments.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_assignments_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _assignments_payload(
+            record, packet=packet, assignments=assignments, document=document
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_ITEM_PACKAGE_CLOSED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_ITEM_PACKAGE_CLOSED",
+            record=record,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.post(
         "/v1/valuation-rounds/{round_id}/calc",
         response_model=dict[str, Any],
         tags=["valuation"],
@@ -10882,6 +11001,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             "assignments_sha256": None if document is None else document_digest(document),
             "confirmed": 0 if assignments is None else count_status(assignments, "confirmed"),
             "rejected": 0 if assignments is None else count_status(assignments, "rejected"),
+            "closed": 0 if assignments is None else count_closed(assignments),
             "pending_items": [
                 item_payload(item) for item in pending_code_items(packet, assignments)
             ],
@@ -12302,6 +12422,107 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             principal=principal,
             event_type=EVENT_ESTIMATE_ACTION_RECORDED,
             action="ESTIMATE_ITEM_CODE_DECIDED",
+            record=record,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/code-assignments/closures",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def close_estimate_item_package(
+        round_id: UUID,
+        payload: ItemPackageClosureRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Declara COMPLETO o pacote de serviços de um item — o ato que a confirmação não faz.
+
+        Existe porque a presença de um código deixou de significar que o elemento acabou.
+        Sem esta rota, um item com um de seis códigos ficaria indistinguível de um item
+        resolvido, e o boletim sairia pela metade sem ninguém ser avisado.
+
+        É rota própria, e não uma bandeira em `/decisions`, porque `/decisions` carrega UMA
+        decisão: um pacote de seis códigos nasce em seis chamadas, e a orçamentista não sabe
+        de antemão qual será a última. Quem fecha afirma outra coisa, e afirmação separada
+        merece endpoint separado — inclusive para a auditoria poder distingui-las.
+
+        A rota não confere quantos códigos o item tem: fechar é decisão de quem monta o
+        pacote. Item sem código confirmado, pacote já fechado e item fora do takeoff
+        continuam sendo recusa do domínio."""
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.code-closures:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        packet = estimate_rounds.require_takeoff_packet(revision)
+        previous = estimate_rounds.assignments_of(revision)
+        cascade = _estimate_cascade(record)
+        try:
+            batch = CodeAssignmentBatch(
+                closures=[
+                    ItemPackageClosureInput(
+                        item_id=payload.item_id,
+                        reviewer_id=principal.subject,
+                        reviewer_role=VALUATION_REVIEWER_ROLE,
+                        decided_at=datetime.now(UTC),
+                        note=payload.note,
+                    )
+                ]
+            )
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+        assignments = apply_code_assignments_over_cascade(packet, batch, cascade, previous=previous)
+
+        document = assignments.model_dump(mode="json")
+        estimate_rounds.append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_assignments_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _estimate_assignments_payload(
+            record, packet=packet, assignments=assignments, document=document
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_ITEM_PACKAGE_CLOSED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_ITEM_PACKAGE_CLOSED",
             record=record,
         )
         _commit_valuation_revision(session)

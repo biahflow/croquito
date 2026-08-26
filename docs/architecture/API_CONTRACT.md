@@ -1171,7 +1171,10 @@ híbrida.
 
 ### `GET /v1/valuation-rounds/{round_id}/code-assignments`
 
-Retorna o `CodeAssignmentSet` corrente e os itens confirmados ainda sem decisão de código.
+Retorna o `CodeAssignmentSet` corrente e os itens confirmados cujo pacote de serviços
+ainda não está completo. As contagens saem sempre: `confirmed` e `rejected` contam **pares**
+`(item, código)`, e `closed` conta **elementos** com o pacote declarado completo — sob
+pacote os dois números divergem.
 
 ### `POST /v1/valuation-rounds/{round_id}/code-assignments/decisions`
 
@@ -1180,6 +1183,30 @@ Confirmação exige `code`; rejeição exige justificativa e recusa `code`. Item
 takeoff, código fora do catálogo instalado, item já decidido ou unidade incompatível sem nota
 devolvem `422 DOMAIN_VALIDATION_FAILED` com o código `ASSIGNMENT_*` correspondente em
 `details`.
+
+Desde o ADR-0053 a identidade da decisão é o par `(item_id, code)`: o mesmo item pode
+receber mais de um código, e o que recusa a repetição é o par, não o item.
+
+### `POST /v1/valuation-rounds/{round_id}/code-assignments/closures`
+
+Entrada: `base_version`, `item_id` e `note` opcional. Declara **completo** o pacote de
+serviços do elemento — o ato que a confirmação de código não pratica.
+
+É rota própria, e não uma bandeira em `/decisions`, porque `/decisions` carrega **uma**
+decisão: um elemento que dispara seis serviços é montado em seis chamadas, e quem monta não
+sabe de antemão qual será a última (ADR-0053, decisão 2). Fechar afirma outra coisa —
+que não vem mais nada —, e a auditoria registra as duas separadamente.
+
+Enquanto o pacote não é fechado, o item continua em `pending_items` e o boletim recusa em
+`CALC_PACKAGE_NOT_CLOSED`. **Rejeição fecha o item sozinha** e não usa esta rota.
+
+Item fora do takeoff, item sem nenhum código confirmado
+(`ASSIGNMENT_CLOSURE_WITHOUT_ASSIGNMENT`) e pacote já fechado
+(`ASSIGNMENT_DUPLICATE_CLOSURE`) devolvem `422 DOMAIN_VALIDATION_FAILED`. Acrescentar código
+a pacote já fechado é `ASSIGNMENT_ITEM_ALREADY_CLOSED`.
+
+Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para versão
+divergente.
 
 ### `POST /v1/valuation-rounds/{round_id}/calc`
 
@@ -1525,7 +1552,9 @@ busca nunca degrada em silêncio. Consulta sem termo utilizável devolve
 
 ### `GET /v1/estimate-rounds/{round_id}/code-assignments`
 
-Retorna o `CodeAssignmentSet` corrente e os itens confirmados ainda sem decisão de código.
+Retorna o `CodeAssignmentSet` corrente e os itens confirmados cujo pacote de serviços
+ainda não está completo, com as mesmas contagens da medição (`confirmed`/`rejected` por par,
+`closed` por elemento).
 
 ### `POST /v1/estimate-rounds/{round_id}/code-assignments/decisions`
 
@@ -1537,6 +1566,31 @@ recusa tanto `code` quanto `catalog_sha256` — rejeitar é recusar todas as fon
 Fonte fora da cascata, código fora do catálogo citado, item não confirmado no takeoff, item
 já decidido ou unidade incompatível sem nota devolvem `422 DOMAIN_VALIDATION_FAILED` com o
 código `ASSIGNMENT_*` correspondente.
+
+Desde o ADR-0053 a identidade da decisão é o par `(item_id, code)`, e a recusa de unidade
+divergente sem nota vale **só quando o item tem exatamente um código confirmado**: sob
+pacote, um elemento em m² alimenta legitimamente serviços em m³, kg e m.
+
+### `POST /v1/estimate-rounds/{round_id}/code-assignments/closures`
+
+Entrada: `base_version`, `item_id` e `note` opcional. Declara **completo** o pacote de
+serviços do elemento — o ato que a confirmação de código não pratica.
+
+É rota própria, e não uma bandeira em `/decisions`, porque `/decisions` carrega **uma**
+decisão: um elemento que dispara seis serviços é montado em seis chamadas, e quem monta não
+sabe de antemão qual será a última (ADR-0053, decisão 2). Fechar afirma outra coisa —
+que não vem mais nada —, e a auditoria registra as duas separadamente.
+
+Enquanto o pacote não é fechado, o item continua em `pending_items` e o boletim recusa em
+`CALC_PACKAGE_NOT_CLOSED`. **Rejeição fecha o item sozinha** e não usa esta rota.
+
+Item fora do takeoff, item sem nenhum código confirmado
+(`ASSIGNMENT_CLOSURE_WITHOUT_ASSIGNMENT`) e pacote já fechado
+(`ASSIGNMENT_DUPLICATE_CLOSURE`) devolvem `422 DOMAIN_VALIDATION_FAILED`. Acrescentar código
+a pacote já fechado é `ASSIGNMENT_ITEM_ALREADY_CLOSED`.
+
+Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para versão
+divergente.
 
 ### `POST /v1/estimate-rounds/{round_id}/estimate`
 

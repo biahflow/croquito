@@ -42,7 +42,8 @@ sem tocar o scene graph ([ADR-0016](../adr/0016-valuation-bounded-context.md)).
 | Levantamento de quantitativos (takeoff) | `TakeoffPacket` / `TakeoffItem` | Legenda quantificada da prancha, do estado observado (`proposed`/`ambiguous`) ao confirmado pelo orçamentista |
 | Prancha | `plate_id` / `PlateEvidence` | Desenho do projetista com a legenda já quantificada; âncora de evidência do item de takeoff |
 | Sugestão de código | `CodeSuggestion` / `CodeCandidate` | Shortlist lexical determinística por item confirmado; observação, nunca decisão |
-| Confirmação de código | `CodeAssignment` | Ato humano rastreável que liga item confirmado a código do catálogo (ou o rejeita) |
+| Confirmação de código | `CodeAssignment` | Ato humano rastreável que liga item confirmado a **um** código do catálogo (ou o rejeita); a identidade é o par `(item_id, code)` |
+| Fechamento de pacote | `ItemPackageClosure` | Ato humano que declara completo o pacote de serviços de um elemento; sem ele o item segue pendente e o boletim não fecha |
 | Plano de cálculo | `CalcPlan` / `CalcBlockPlan` | Decomposição declarada da quantidade confirmada em operandos da memória |
 | Dossiê do aditivo | `AmendmentDossier` / `AmendmentDossierItem` | Itens confirmados no takeoff cujo código foi rejeitado, com a justificativa humana; instrui o pedido de RE-RA e nunca precifica |
 | Origem de preço | `PriceOrigin` | Fonte da cotação de um catálogo: `sco`, `emop` ou `composition`; um catálogo carrega uma origem só |
@@ -399,6 +400,20 @@ lexical continua sendo o fallback permanente, com ou sem provider.
 - **A quantidade confirmada manda sobre o plano de cálculo.** O plano só decompõe;
   decomposição que não fecha recusa (`CALC_PLAN_QUANTITY_MISMATCH`), e item confirmado
   sem confirmação de código bloqueia o boletim (`CALC_ASSIGNMENT_MISSING`).
+- **Pacote de serviços incompleto não vira boletim.** Desde o [ADR-0053](../adr/0053-cardinalidade-n-n-elemento-servico.md)
+  um elemento da prancha dispara N serviços, e a presença de um código deixou de responder
+  "este item acabou?". Só o `ItemPackageClosure` responde: sem ele o item continua em
+  `pending_items` e o boletim recusa em `CALC_PACKAGE_NOT_CLOSED` (`ESTIMATE_PACKAGE_NOT_CLOSED`
+  no orçamento-base). **A rejeição fecha o item sozinha** — declarar que nenhum serviço
+  precifica o elemento já é dizer que não vem mais nada.
+- **O regime é declarado pelo artefato, nunca pelo processo.** `CodeAssignmentSet.schema_version`
+  vale `1.0.0` (um código por item, sem fechamento) ou `2.0.0` (par e fechamento). Rodada
+  gravada antes do ADR-0053 relê com o comportamento exato de antes; ao receber decisão nova
+  ela migra reusando as `ReviewerDecision` que já tem, sem fabricar ato humano.
+- **A recusa de unidade divergente vale só no regime espelho.** Com pacote, um elemento em
+  m² alimenta legitimamente serviços em m³, kg e m; `ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE`
+  só dispara quando o item tem exatamente um código confirmado. `unit_compatible` continua
+  gravado como observação nos dois regimes.
 
 ## Gramática fechada de fórmulas
 

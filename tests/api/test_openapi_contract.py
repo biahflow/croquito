@@ -426,6 +426,7 @@ ROTAS_DE_MEDICAO: frozenset[str] = frozenset(
         "GET /v1/valuation-rounds/{round_id}/catalog/search",
         "GET /v1/valuation-rounds/{round_id}/code-assignments",
         "POST /v1/valuation-rounds/{round_id}/code-assignments/decisions",
+        "POST /v1/valuation-rounds/{round_id}/code-assignments/closures",
         "POST /v1/valuation-rounds/{round_id}/calc",
         "GET /v1/valuation-rounds/{round_id}/bulletin",
         "POST /v1/valuation-rounds/{round_id}/approve",

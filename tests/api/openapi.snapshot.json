@@ -4185,6 +4185,41 @@
         "title": "IssueStatus",
         "type": "string"
       },
+      "ItemPackageClosureRequest": {
+        "additionalProperties": false,
+        "description": "Declaração de que o pacote de serviços de um elemento está completo.\n\nServe às duas jornadas: fechar não cita fonte de preço nem código, então a diferença\nque obrigou `EstimateCodeAssignmentDecisionRequest` a existir não aparece aqui.\n\nA `note` é opcional de propósito. Fechar é o curso normal do trabalho — ao contrário da\nrejeição, que tira o item do boletim e por isso exige justificativa nesta API.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "item_id": {
+            "pattern": "^ti_[a-f0-9]{16}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "base_version",
+          "item_id"
+        ],
+        "title": "ItemPackageClosureRequest",
+        "type": "object"
+      },
       "JobFieldPhotoStateResponse": {
         "additionalProperties": false,
         "properties": {
@@ -9651,6 +9686,83 @@
         ]
       }
     },
+    "/v1/estimate-rounds/{round_id}/code-assignments/closures": {
+      "post": {
+        "description": "Declara COMPLETO o pacote de serviços de um item — o ato que a confirmação não faz.\n\nExiste porque a presença de um código deixou de significar que o elemento acabou.\nSem esta rota, um item com um de seis códigos ficaria indistinguível de um item\nresolvido, e o boletim sairia pela metade sem ninguém ser avisado.\n\nÉ rota própria, e não uma bandeira em `/decisions`, porque `/decisions` carrega UMA\ndecisão: um pacote de seis códigos nasce em seis chamadas, e a orçamentista não sabe\nde antemão qual será a última. Quem fecha afirma outra coisa, e afirmação separada\nmerece endpoint separado — inclusive para a auditoria poder distingui-las.\n\nA rota não confere quantos códigos o item tem: fechar é decisão de quem monta o\npacote. Item sem código confirmado, pacote já fechado e item fora do takeoff\ncontinuam sendo recusa do domínio.",
+        "operationId": "close_estimate_item_package_v1_estimate_rounds__round_id__code_assignments_closures_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemPackageClosureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Close Estimate Item Package V1 Estimate Rounds  Round Id  Code Assignments Closures Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Close Estimate Item Package",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
     "/v1/estimate-rounds/{round_id}/code-assignments/decisions": {
       "post": {
         "description": "Confirma ou rejeita o código de UM item CITANDO a fonte, acumulando sobre o anterior.\n\nA citação viaja na DECISÃO, e não só no relatório final: é ela que o orçamento usa,\nlinha a linha, para dizer de qual tabela o preço veio. Código fora do catálogo\ncitado, fonte fora da cascata, item já decidido e unidade incompatível sem nota\ncontinuam sendo recusa do domínio, que esta rota não reimplementa.",
@@ -14938,6 +15050,83 @@
           }
         ],
         "summary": "Get Valuation Code Assignments",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/code-assignments/closures": {
+      "post": {
+        "description": "Declara COMPLETO o pacote de serviços de um item — o ato que a confirmação não faz.\n\nExiste porque a presença de um código deixou de significar que o elemento acabou.\nSem esta rota, um item com um de seis códigos ficaria indistinguível de um item\nresolvido, e o boletim sairia pela metade sem ninguém ser avisado.\n\nÉ rota própria, e não uma bandeira em `/decisions`, porque `/decisions` carrega UMA\ndecisão: um pacote de seis códigos nasce em seis chamadas, e a orçamentista não sabe\nde antemão qual será a última. Quem fecha afirma outra coisa, e afirmação separada\nmerece endpoint separado — inclusive para a auditoria poder distingui-las.\n\nA rota não confere quantos códigos o item tem: fechar é decisão de quem monta o\npacote. Item sem código confirmado, pacote já fechado e item fora do takeoff\ncontinuam sendo recusa do domínio.",
+        "operationId": "close_valuation_item_package_v1_valuation_rounds__round_id__code_assignments_closures_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemPackageClosureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Close Valuation Item Package V1 Valuation Rounds  Round Id  Code Assignments Closures Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Close Valuation Item Package",
         "tags": [
           "valuation"
         ]

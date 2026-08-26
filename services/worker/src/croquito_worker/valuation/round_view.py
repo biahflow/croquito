@@ -140,13 +140,34 @@ def item_payload(item: TakeoffItem) -> dict[str, object]:
 def pending_code_items(
     packet: TakeoffPacket, assignments: CodeAssignmentSet | None
 ) -> list[TakeoffItem]:
-    """Itens confirmados no takeoff que ainda não receberam decisão de código."""
-    decided = set() if assignments is None else {item.item_id for item in assignments.assignments}
-    return [item for item in packet.confirmed_items() if item.id not in decided]
+    """Itens confirmados no takeoff cujo pacote de serviços ainda não está completo.
+
+    Era "itens que ainda não receberam decisão de código", e a diferença é a razão de o
+    fechamento existir: com a cardinalidade N:N, um elemento com um de seis códigos JÁ
+    recebeu decisão e continua pela metade. Listá-lo como pronto seria o mesmo silêncio que
+    `CALC_PACKAGE_NOT_CLOSED` recusa lá na frente — só que aqui ninguém veria, porque é esta
+    lista que a tela usa para dizer o que falta fazer.
+
+    Quem responde é o próprio conjunto (`closed_item_ids`), que decide pelo regime que o
+    artefato declara: em `1.0.0` toda decisão fecha o item, e a lista sai idêntica à de
+    antes.
+    """
+    closed = frozenset() if assignments is None else assignments.closed_item_ids()
+    return [item for item in packet.confirmed_items() if item.id not in closed]
 
 
 def count_status(assignments: CodeAssignmentSet, status: str) -> int:
+    """Quantos ASSIGNMENTS têm este estado — pares, não elementos.
+
+    Sob pacote os dois números divergem: seis confirmações de um elemento só contam seis.
+    Quem quer contar elementos resolvidos usa `count_closed`.
+    """
     return sum(1 for assignment in assignments.assignments if assignment.status == status)
+
+
+def count_closed(assignments: CodeAssignmentSet) -> int:
+    """Elementos com o pacote completo — a contagem que responde "quanto já foi feito"."""
+    return len(assignments.closed_item_ids())
 
 
 def matching_of(suggestions: CodeSuggestionSet) -> str:

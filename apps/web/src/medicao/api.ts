@@ -35,6 +35,7 @@ import type {
 
 import { apiJson, ApiError } from "../api";
 import {
+  codeClosureBody,
   codeDecisionBody,
   createRoundBody,
   takeoffDecisionBody,
@@ -360,6 +361,11 @@ export type CodesResponse = {
   assignments_sha256: string | null;
   confirmed: number;
   rejected: number;
+  /**
+   * Elementos com o pacote de serviços declarado COMPLETO. Difere de `confirmed`, que conta
+   * pares `(item, código)`: um elemento que dispara seis serviços soma seis ali e um aqui.
+   */
+  closed: number;
   pending_items: PendingCodeItem[];
 };
 
@@ -448,6 +454,12 @@ export type TakeoffDecisionDraft = {
   unit?: string;
   note?: string;
   itemNote?: string;
+};
+
+export type CodeClosureDraft = {
+  itemId: string;
+  baseVersion: number;
+  note?: string;
 };
 
 export type CodeDecisionDraft = {
@@ -746,6 +758,24 @@ export function postCodeDecision(
     roundPath(roundId, "/code-assignments/decisions"),
     accessToken,
     codeDecisionBody(draft),
+  );
+}
+
+/**
+ * Declara COMPLETO o pacote de serviços de um item — ato próprio, rota própria.
+ *
+ * Confirmar um código deixou de significar que o elemento acabou: ele pode disparar outros
+ * serviços, e só este ato afirma que não dispara.
+ */
+export function postCodeClosure(
+  accessToken: string,
+  roundId: string,
+  draft: CodeClosureDraft,
+): Promise<CodesResponse> {
+  return post<CodesResponse>(
+    roundPath(roundId, "/code-assignments/closures"),
+    accessToken,
+    codeClosureBody(draft),
   );
 }
 

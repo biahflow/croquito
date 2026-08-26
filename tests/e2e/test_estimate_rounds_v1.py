@@ -42,6 +42,7 @@ portão de despacho, para provar que uma recusa não escreveu nada.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, Literal, cast
@@ -187,6 +188,33 @@ def _presign_and_put(
 
 def _catalog_upload_bytes(catalog: PriceCatalog) -> bytes:
     return catalog.model_dump_json().encode("utf-8")
+
+
+def _close_packages(
+    client: TestClient,
+    round_id: str,
+    item_ids: Sequence[str],
+    *,
+    version: int,
+    prefix: str,
+) -> int:
+    """Declara completo o pacote de serviços de cada elemento precificado.
+
+    Confirmar um código deixou de terminar o elemento (ADR-0053): ele pode disparar outros
+    serviços, e só o fechamento afirma que não dispara. Sem o ato o orçamento recusaria em
+    `ESTIMATE_PACKAGE_NOT_CLOSED`. A rejeição fecha o item sozinha e não passa por aqui.
+
+    Devolve a `base_version` corrente, porque cada fechamento grava a sua revisão.
+    """
+    for index, item_id in enumerate(item_ids):
+        response = client.post(
+            f"/v1/estimate-rounds/{round_id}/code-assignments/closures",
+            headers=_headers(f"{prefix}-{index}"),
+            json={"base_version": version, "item_id": item_id},
+        )
+        assert response.status_code == 200, response.text
+        version = response.json()["version"]
+    return version
 
 
 def _packet_from_takeoff_response(body: dict[str, Any]) -> TakeoffPacket:
@@ -474,12 +502,27 @@ def test_estimate_round_full_chain_through_v1_api(
         assert response.status_code == 200, response.text
         version = response.json()["version"]
 
+    aberto = client.get(
+        f"/v1/estimate-rounds/{round_id}/code-assignments", headers=_headers()
+    ).json()
+    assert len(aberto["pending_items"]) == len(code_decisions) - 1, (
+        "elemento com código confirmado e pacote aberto continua pendente"
+    )
+    version = _close_packages(
+        client,
+        round_id,
+        [item.item_id for item in code_decisions if item.action == "confirm"],
+        version=version,
+        prefix="fechamento-pacote",
+    )
+
     assignments_state = client.get(
         f"/v1/estimate-rounds/{round_id}/code-assignments", headers=_headers()
     ).json()
     assert assignments_state["pending_items"] == []
     assert assignments_state["rejected"] == 1  # a luminária: nenhuma fonte a precifica
     assert assignments_state["confirmed"] == len(code_decisions) - 1
+    assert assignments_state["closed"] == len(code_decisions)
 
     # 6. `base_version` velho recusa a montagem com `409 REVISION_CONFLICT`, sem publicar
     # orçamento nem planilha nenhuma.
@@ -815,6 +858,14 @@ def test_estimate_round_target_over_and_exact_limit_through_v1_api(
         assert response.status_code == 200, response.text
         version = response.json()["version"]
 
+    version = _close_packages(
+        client,
+        round_id,
+        [item.item_id for item in code_decisions if item.action == "confirm"],
+        version=version,
+        prefix="fechamento-pacote-teto",
+    )
+
     # 2. `POST .../estimate`: monta, audita e publica — teto (70000.00) menor que o total
     # conhecido do cenário (71516.83 com BDI 25%) estoura já na PRÓPRIA montagem
     # (critério 3 da feature).
@@ -1115,6 +1166,18 @@ def test_estimate_round_contracted_demand_regime_through_v1_api(
         assert response.status_code == 200, response.text
         version = response.json()["version"]
 
+    version = _close_packages(
+        client,
+        round_id,
+        [
+            item_for_label(final_packet, label).id
+            for label, action, _ in regime_code_decisions
+            if action == "confirm"
+        ],
+        version=version,
+        prefix="fechamento-pacote-regime",
+    )
+
     assignments_state = client.get(
         f"/v1/estimate-rounds/{round_id}/code-assignments", headers=_headers()
     ).json()
@@ -1388,9 +1451,8 @@ def test_estimate_dispatch_gate_through_v1_api(
     final_takeoff = client.get(f"/v1/estimate-rounds/{round_id}/takeoff", headers=_headers()).json()
     final_packet = _packet_from_takeoff_response(final_takeoff)
 
-    for index, assignment in enumerate(
-        build_demo_estimate_assignments(final_packet, list(cascade)).assignments
-    ):
+    gate_decisions = build_demo_estimate_assignments(final_packet, list(cascade)).assignments
+    for index, assignment in enumerate(gate_decisions):
         response = client.post(
             f"/v1/estimate-rounds/{round_id}/code-assignments/decisions",
             headers=_headers(f"decisao-codigo-portao-{index}"),
@@ -1405,6 +1467,14 @@ def test_estimate_dispatch_gate_through_v1_api(
         )
         assert response.status_code == 200, response.text
         version = response.json()["version"]
+
+    version = _close_packages(
+        client,
+        round_id,
+        [item.item_id for item in gate_decisions if item.action == "confirm"],
+        version=version,
+        prefix="fechamento-pacote-portao",
+    )
 
     # 3. Monta. A partir daqui o teste é só sobre o portão, e o object store é a testemunha:
     # tudo o que for recusado tem de deixá-lo exatamente como está agora.

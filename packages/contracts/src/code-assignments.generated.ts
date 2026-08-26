@@ -13,6 +13,8 @@ export type Status = "confirmed" | "rejected";
 export type UnitCompatible = boolean;
 export type Assignments = CodeAssignment[];
 export type CatalogSha2561 = string;
+export type ItemId1 = string;
+export type Closures = ItemPackageClosure[];
 export type ContractSha256 = string | null;
 export type ImageSha256 = string;
 export type PageNumber = number;
@@ -21,14 +23,26 @@ export type PlateId = string;
  * @minItems 2
  */
 export type SafetyNotes = [string, string, ...string[]];
-export type SchemaVersion = "1.0.0";
+export type SchemaVersion = "1.0.0" | "2.0.0";
 
 /**
  * Conjunto imutável de confirmações/rejeições de código de uma prancha.
+ *
+ * O `schema_version` declara o REGIME, e não só a forma dos campos:
+ *
+ * - `1.0.0` — um código por item, sem fechamento. É o que está gravado em toda rodada
+ *   anterior ao ADR-0053, e relê com o comportamento exato de antes.
+ * - `2.0.0` — a identidade é o par `(item_id, code)`, e o pacote de um elemento só está
+ *   completo quando um `ItemPackageClosure` diz que está.
+ *
+ * Pacote aberto é estado NORMAL e persistido, não erro: o segundo dos seis códigos chega
+ * num lote seguinte, e entre um e outro a rodada precisa poder ser gravada e relida. Quem
+ * recusa pacote aberto é o portão que monta o boletim, onde a metade vira número errado.
  */
 export interface CroquitoCodeAssignmentSet {
   assignments: Assignments;
   catalog_sha256: CatalogSha2561;
+  closures?: Closures;
   contract_sha256?: ContractSha256;
   image_sha256: ImageSha256;
   page_number: PageNumber;
@@ -66,4 +80,17 @@ export interface ReviewerDecision {
   note?: Note;
   reviewer_id: ReviewerId;
   reviewer_role: ReviewerRole;
+}
+/**
+ * Ato humano que declara o pacote de serviços de um elemento COMPLETO.
+ *
+ * Existe porque, com a cardinalidade N:N, a presença de um assignment deixou de responder
+ * "este item acabou?". Um elemento com um de seis códigos pareceria pronto e produziria
+ * boletim parcial em silêncio; o fechamento é o que separa "resolvido" de "pela metade".
+ * Nunca é inferido da contagem de códigos — ninguém, além da orçamentista, sabe quantos
+ * serviços um elemento dispara.
+ */
+export interface ItemPackageClosure {
+  decision: ReviewerDecision;
+  item_id: ItemId1;
 }

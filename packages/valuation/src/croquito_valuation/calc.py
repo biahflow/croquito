@@ -210,11 +210,44 @@ def build_worksite_bulletin(
             {"item_ids": unknown_ids},
         )
 
-    assignments_by_item = {assignment.item_id: assignment for assignment in assignments.assignments}
+    # Irmão de `CALC_ASSIGNMENT_MISSING`, e pelo mesmo motivo: com a cardinalidade N:N a
+    # presença de um assignment deixou de significar que o item acabou. Um elemento com um
+    # de seis códigos passaria por aqui e viraria boletim pela metade, em silêncio — que é
+    # exatamente o erro que `CALC_ASSIGNMENT_MISSING` existe para impedir no caso vizinho.
+    open_ids = sorted(assignments.open_package_item_ids() & confirmed_ids)
+    if open_ids:
+        raise ValuationValidationError(
+            "CALC_PACKAGE_NOT_CLOSED",
+            "item confirmado tem pacote de serviços em aberto; o boletim não é montado pela metade",
+            {"item_ids": open_ids},
+        )
+
+    packages = assignments.confirmed_codes_by_item()
+    # PORTÃO TEMPORÁRIO, removido pela T6 (#78), quando o builder passar a iterar SERVIÇOS.
+    # Enquanto ele iterar itens, cada item vira uma linha, e um pacote de seis códigos
+    # precisaria escolher um deles. Recusar é a única saída honesta: escolher em silêncio é
+    # o defeito que a F-038 inteira ataca, e a alternativa de somar preços diferentes
+    # inventaria um serviço que não existe no catálogo.
+    packaged_ids = sorted(
+        item_id for item_id in confirmed_ids if len(packages.get(item_id, ())) > 1
+    )
+    if packaged_ids:
+        raise ValuationValidationError(
+            "CALC_PACKAGE_NOT_SUPPORTED",
+            "item com mais de um código confirmado ainda não vira boletim; a matriz de "
+            "contribuições é que resolve o pacote",
+            {"item_ids": packaged_ids},
+        )
+
+    rejected_ids = {
+        assignment.item_id
+        for assignment in assignments.assignments
+        if assignment.status == "rejected"
+    }
     excluded_item_ids: list[str] = []
     included_items: list[TakeoffItem] = []
     for item in confirmed_items:
-        if assignments_by_item[item.id].status == "rejected":
+        if item.id in rejected_ids:
             excluded_item_ids.append(item.id)
             continue
         included_items.append(item)
@@ -272,8 +305,9 @@ def build_worksite_bulletin(
                 },
             )
 
-        code = assignments_by_item[item.id].code
-        assert code is not None  # assignment incluído sempre é "confirmed" (excluídos já saíram)
+        # Item incluído tem pacote de exatamente um código: o portão acima recusou o de
+        # mais de um, e a rejeição já tirou o de nenhum.
+        code = packages[item.id][0]
         entry = catalog.entry_for(code)
         total = money_trunc(quantity * entry.unit_price)
         lines.append(

@@ -2658,6 +2658,10 @@ def _command_confirm_codes(args: argparse.Namespace) -> int:
             "plate_id": result.assignments.plate_id,
             "confirmed": sum(1 for item in assignments if item.status == "confirmed"),
             "rejected": sum(1 for item in assignments if item.status == "rejected"),
+            # `confirmed` conta PARES e `closed` conta ELEMENTOS com o pacote completo: sob
+            # a cardinalidade N:N os dois números divergem, e é `closed` que diz quanto do
+            # trabalho acabou.
+            "closed": len(result.assignments.closed_item_ids()),
             "output": str(result.assignments_path),
         }
     )

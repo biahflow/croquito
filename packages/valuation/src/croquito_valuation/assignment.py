@@ -66,7 +66,17 @@ mudou de forma, só de comportamento (`unmatched_item_ids` fica mais raro porque
 sinônimo). Um artefato 1.1.0 antigo continua carregável pelo mesmo `CodeSuggestionSet`;
 `synonyms`/`ExpandedTerms` não têm campo correspondente no artefato — a expansão é
 `expanded_terms` da CAMADA do servidor local (observação de busca), não do suggester."""
-ASSIGNMENT_SCHEMA_VERSION: Final = "1.0.0"
+ASSIGNMENT_SCHEMA_VERSION: Final = "2.0.0"
+"""Bumpou em 2026-08-26 (ADR-0053 decisão 2) porque a IDENTIDADE da confirmação mudou: era o
+`item_id` e passou a ser o par `(item_id, code)`, com fechamento explícito de pacote.
+
+`1.0.0` continua no `Literal` de `schema_version` e continua sendo lido com o comportamento
+de sempre — unicidade por item, sem fechamento. Não é gentileza: os blobs
+`code_assignments_json` são append-only e toda rodada gravada até aqui declara essa versão.
+Uma rodada 1:1 é um pacote de um serviço só, que é exatamente o que ela é.
+
+O regime é lido do artefato, nunca do processo. É isso que faz uma rodada antiga produzir o
+mesmo boletim depois deste bump, e é isso que impede o regime novo de vazar para trás."""
 SCO_SUGGESTER_VERSION: Final = "lexical-sco-suggester-v1"
 
 SCO_CASCADE_SUGGESTER_VERSION: Final = "lexical-cascade-sco-suggester-v1"
@@ -844,20 +854,116 @@ class CodeAssignmentInput(ValuationContractModel):
         return self
 
 
-class CodeAssignmentBatch(ValuationContractModel):
-    """Lote de decisões de confirmação de código; no máximo uma decisão por item."""
+class ItemPackageClosureInput(ValuationContractModel):
+    """Declaração de que o pacote de serviços de um elemento está COMPLETO.
 
-    assignments: list[CodeAssignmentInput] = Field(min_length=1)
+    Ato próprio, e não uma bandeira na última confirmação: a rota posta uma decisão por
+    request, então um pacote de seis códigos nasce em seis atos e ninguém sabe de antemão
+    qual será o último. Quem fecha afirma o que a confirmação não afirma — que não vem mais
+    nada —, e afirmação precisa de autor, instante e, quando houver, justificativa.
+    """
+
+    item_id: str = Field(pattern=_ITEM_ID_PATTERN)
+    reviewer_id: str = Field(min_length=1, max_length=120)
+    reviewer_role: Literal["orcamentista"]
+    decided_at: datetime
+    note: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @field_validator("decided_at")
+    @classmethod
+    def validate_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValuationValidationError(
+                "ASSIGNMENT_DECISION_TIMESTAMP_NAIVE",
+                "fechamento de pacote exige data e hora com fuso horário",
+                {"decided_at": value.isoformat()},
+            )
+        return value
+
+
+def _ensure_package_shape(pairs: Sequence[tuple[str, str | None]]) -> None:
+    """Unicidade sob o regime de pacote, com três recusas que dizem coisas diferentes.
+
+    `pairs` é `(item_id, code)` por decisão, com `code=None` na rejeição.
+
+    - O mesmo par duas vezes é decisão repetida (`ASSIGNMENT_DUPLICATE_PAIR`). É o que
+      `ASSIGNMENT_DUPLICATE_ITEM` significava no regime 1:1, e é por isso que ele não podia
+      simplesmente ser reinterpretado: o significado antigo continua existindo, só que
+      aplicado ao par.
+    - Mais de uma rejeição para o mesmo item continua sendo duplicidade de item, e mantém o
+      código estável `ASSIGNMENT_DUPLICATE_ITEM` — o mesmo que a tela já sabe traduzir.
+    - Rejeitar e confirmar o mesmo item é contradição, não pacote
+      (`ASSIGNMENT_REJECT_WITH_CONFIRMED`): rejeitar é dizer que NENHUM serviço precifica o
+      elemento, e isso não coexiste com um serviço que o precifica.
+    """
+    entries = list(pairs)
+    confirmed = [(item_id, code) for item_id, code in entries if code is not None]
+    duplicated_pairs = sorted(
+        {f"{item_id}:{code}" for item_id, code in confirmed if confirmed.count((item_id, code)) > 1}
+    )
+    if duplicated_pairs:
+        raise ValuationValidationError(
+            "ASSIGNMENT_DUPLICATE_PAIR",
+            "há mais de uma decisão para o mesmo par de item e código",
+            {"pairs": duplicated_pairs},
+        )
+
+    rejected_ids = [item_id for item_id, code in entries if code is None]
+    duplicated_items = sorted({item for item in rejected_ids if rejected_ids.count(item) > 1})
+    if duplicated_items:
+        raise ValuationValidationError(
+            "ASSIGNMENT_DUPLICATE_ITEM",
+            "há mais de uma rejeição para o mesmo item",
+            {"item_ids": duplicated_items},
+        )
+
+    contradicted = sorted(set(rejected_ids) & {item_id for item_id, _ in confirmed})
+    if contradicted:
+        raise ValuationValidationError(
+            "ASSIGNMENT_REJECT_WITH_CONFIRMED",
+            "rejeitar é declarar que nenhum serviço precifica o elemento; não coexiste com "
+            "código confirmado para o mesmo item",
+            {"item_ids": contradicted},
+        )
+
+
+def _ensure_unique_closures(item_ids: Sequence[str]) -> None:
+    """Fechar duas vezes o mesmo pacote não é reforço; é ambiguidade sobre qual ato vale."""
+    entries = list(item_ids)
+    duplicated = sorted({item for item in entries if entries.count(item) > 1})
+    if duplicated:
+        raise ValuationValidationError(
+            "ASSIGNMENT_DUPLICATE_CLOSURE",
+            "há mais de um fechamento de pacote para o mesmo item",
+            {"item_ids": duplicated},
+        )
+
+
+class CodeAssignmentBatch(ValuationContractModel):
+    """Lote de decisões de código e de fechamentos de pacote.
+
+    Os dois atos viajam juntos porque um lote é uma sessão de trabalho da orçamentista, e
+    não uma decisão só: ela pode acrescentar o quinto código de um elemento e fechar o
+    pacote de outro no mesmo envio. Lote só com fechamento também é legítimo — o fechamento
+    costuma vir depois do último código —, e é por isso que `assignments` deixou de exigir
+    `min_length=1`. O que não existe é lote vazio.
+    """
+
+    assignments: list[CodeAssignmentInput] = Field(default_factory=list)
+    closures: list[ItemPackageClosureInput] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_unique_items(self) -> CodeAssignmentBatch:
-        item_ids = [assignment.item_id for assignment in self.assignments]
-        if len(item_ids) != len(set(item_ids)):
+    def validate_batch(self) -> CodeAssignmentBatch:
+        if not self.assignments and not self.closures:
             raise ValuationValidationError(
-                "ASSIGNMENT_DUPLICATE_ITEM",
-                "um item só pode receber uma decisão de código por lote",
-                {"item_ids": sorted(item_ids)},
+                "ASSIGNMENT_BATCH_EMPTY",
+                "lote exige ao menos uma decisão de código ou um fechamento de pacote",
+                {},
             )
+        _ensure_package_shape(
+            [(assignment.item_id, assignment.code) for assignment in self.assignments]
+        )
+        _ensure_unique_closures([closure.item_id for closure in self.closures])
         return self
 
 
@@ -901,29 +1007,131 @@ class CodeAssignment(ValuationContractModel):
         return self
 
 
-class CodeAssignmentSet(ValuationContractModel):
-    """Conjunto imutável de confirmações/rejeições de código de uma prancha."""
+class ItemPackageClosure(ValuationContractModel):
+    """Ato humano que declara o pacote de serviços de um elemento COMPLETO.
 
-    schema_version: Literal["1.0.0"] = ASSIGNMENT_SCHEMA_VERSION
+    Existe porque, com a cardinalidade N:N, a presença de um assignment deixou de responder
+    "este item acabou?". Um elemento com um de seis códigos pareceria pronto e produziria
+    boletim parcial em silêncio; o fechamento é o que separa "resolvido" de "pela metade".
+    Nunca é inferido da contagem de códigos — ninguém, além da orçamentista, sabe quantos
+    serviços um elemento dispara.
+    """
+
+    item_id: str = Field(pattern=_ITEM_ID_PATTERN)
+    decision: ReviewerDecision
+
+    @model_validator(mode="after")
+    def validate_state(self) -> ItemPackageClosure:
+        if self.decision.action != "confirm":
+            raise ValuationValidationError(
+                "ASSIGNMENT_STATE_INVALID",
+                "fechamento de pacote é afirmação, não recusa; exige decisão de confirmação",
+                {"item_id": self.item_id},
+            )
+        return self
+
+
+class CodeAssignmentSet(ValuationContractModel):
+    """Conjunto imutável de confirmações/rejeições de código de uma prancha.
+
+    O `schema_version` declara o REGIME, e não só a forma dos campos:
+
+    - `1.0.0` — um código por item, sem fechamento. É o que está gravado em toda rodada
+      anterior ao ADR-0053, e relê com o comportamento exato de antes.
+    - `2.0.0` — a identidade é o par `(item_id, code)`, e o pacote de um elemento só está
+      completo quando um `ItemPackageClosure` diz que está.
+
+    Pacote aberto é estado NORMAL e persistido, não erro: o segundo dos seis códigos chega
+    num lote seguinte, e entre um e outro a rodada precisa poder ser gravada e relida. Quem
+    recusa pacote aberto é o portão que monta o boletim, onde a metade vira número errado.
+    """
+
+    schema_version: Literal["1.0.0", "2.0.0"] = ASSIGNMENT_SCHEMA_VERSION
     plate_id: str = Field(min_length=1, max_length=64)
     page_number: int = Field(ge=1)
     image_sha256: str = Field(pattern=SHA256_PATTERN)
     catalog_sha256: str = Field(pattern=SHA256_PATTERN)
     contract_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     assignments: list[CodeAssignment]
+    closures: list[ItemPackageClosure] = Field(default_factory=list)
     safety_notes: list[str] = Field(min_length=2)
 
     @model_validator(mode="after")
-    def validate_unique_items(self) -> CodeAssignmentSet:
-        item_ids = [assignment.item_id for assignment in self.assignments]
-        duplicated = sorted({item_id for item_id in item_ids if item_ids.count(item_id) > 1})
-        if duplicated:
+    def validate_package_integrity(self) -> CodeAssignmentSet:
+        if self.schema_version == "1.0.0":
+            if self.closures:
+                raise ValuationValidationError(
+                    "ASSIGNMENT_CLOSURE_NOT_SUPPORTED",
+                    "conjunto no regime de código único não tem pacote para fechar",
+                    {"item_ids": sorted({closure.item_id for closure in self.closures})},
+                )
+            item_ids = [assignment.item_id for assignment in self.assignments]
+            duplicated = sorted({item_id for item_id in item_ids if item_ids.count(item_id) > 1})
+            if duplicated:
+                raise ValuationValidationError(
+                    "ASSIGNMENT_DUPLICATE_ITEM",
+                    "há mais de um assignment para o mesmo item",
+                    {"item_ids": duplicated},
+                )
+            return self
+
+        _ensure_package_shape(
+            [(assignment.item_id, assignment.code) for assignment in self.assignments]
+        )
+        closure_ids = [closure.item_id for closure in self.closures]
+        _ensure_unique_closures(closure_ids)
+        confirmed_ids = {
+            assignment.item_id
+            for assignment in self.assignments
+            if assignment.status == "confirmed"
+        }
+        orphan = sorted(set(closure_ids) - confirmed_ids)
+        if orphan:
             raise ValuationValidationError(
-                "ASSIGNMENT_DUPLICATE_ITEM",
-                "há mais de um assignment para o mesmo item",
-                {"item_ids": duplicated},
+                "ASSIGNMENT_CLOSURE_WITHOUT_ASSIGNMENT",
+                "fechamento de pacote exige ao menos um código confirmado para o item; "
+                "rejeição já fecha o item sozinha",
+                {"item_ids": orphan},
             )
         return self
+
+    def closed_item_ids(self) -> frozenset[str]:
+        """Itens cujo pacote está completo: o fechamento declarado, mais toda rejeição.
+
+        A rejeição fecha o item sozinha — declarar que nenhum serviço precifica o elemento
+        já é dizer que não vem mais nada, e pedir um fechamento em cima disso seria exigir
+        duas vezes a mesma afirmação.
+
+        Em `1.0.0` não existe pacote aberto: lá a confirmação ERA o fechamento, porque um
+        código era o pacote inteiro. Todo item decidido conta como fechado, e é isso que faz
+        uma rodada antiga produzir o mesmo boletim de antes.
+        """
+        if self.schema_version == "1.0.0":
+            return frozenset(assignment.item_id for assignment in self.assignments)
+        rejected = {
+            assignment.item_id for assignment in self.assignments if assignment.status == "rejected"
+        }
+        return frozenset({closure.item_id for closure in self.closures} | rejected)
+
+    def open_package_item_ids(self) -> frozenset[str]:
+        """Itens que já receberam código e ainda esperam o ato de fechamento."""
+        return frozenset(
+            {assignment.item_id for assignment in self.assignments} - self.closed_item_ids()
+        )
+
+    def confirmed_codes_by_item(self) -> dict[str, tuple[str, ...]]:
+        """Códigos confirmados de cada item, na ordem em que foram decididos.
+
+        A ordem é a do próprio conjunto, e ela importa: é ela que o boletim usa para numerar
+        as linhas de um pacote, e determinismo é obrigatório porque `valuation-demo` é
+        golden.
+        """
+        packages: dict[str, tuple[str, ...]] = {}
+        for assignment in self.assignments:
+            if assignment.status != "confirmed" or assignment.code is None:
+                continue
+            packages[assignment.item_id] = (*packages.get(assignment.item_id, ()), assignment.code)
+        return packages
 
 
 _ASSIGNMENT_SAFETY_NOTES: Final = (
@@ -959,6 +1167,69 @@ def _assignment_decision_id(item: TakeoffItem, decision: CodeAssignmentInput) ->
         separators=(",", ":"),
     )
     return f"vd_{hashlib.sha256(canonical.encode()).hexdigest()[:16]}"
+
+
+def _closure_decision_id(closure: ItemPackageClosureInput) -> str:
+    """Id determinístico do fechamento; irmão de `_assignment_decision_id`.
+
+    O payload leva `"kind": "package_closure"` e não leva `code`. O discriminador é o que
+    garante id distinto do de uma confirmação do mesmo item, feita pelo mesmo revisor, no
+    mesmo instante — e ele mora só aqui de propósito: acrescentar uma chave ao payload de
+    `_assignment_decision_id` moveria todo `vd_` já gravado desde o M4.
+    """
+    payload: dict[str, object] = {
+        "kind": "package_closure",
+        "item_id": closure.item_id,
+        "reviewer_id": closure.reviewer_id,
+        "reviewer_role": closure.reviewer_role,
+        "decided_at": closure.decided_at.isoformat(),
+        "note": closure.note,
+    }
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"vd_{hashlib.sha256(canonical.encode()).hexdigest()[:16]}"
+
+
+def _closure_of(closure: ItemPackageClosureInput) -> ItemPackageClosure:
+    """Fechamento resolvido, com a decisão humana carimbada."""
+    return ItemPackageClosure(
+        item_id=closure.item_id,
+        decision=ReviewerDecision(
+            decision_id=_closure_decision_id(closure),
+            action="confirm",
+            reviewer_id=closure.reviewer_id,
+            reviewer_role=closure.reviewer_role,
+            decided_at=closure.decided_at,
+            note=closure.note,
+        ),
+    )
+
+
+def _carried_closures(previous: CodeAssignmentSet | None) -> list[ItemPackageClosure]:
+    """Fechamentos que o conjunto anterior leva adiante, inclusive os do regime antigo.
+
+    Uma rodada gravada em `1.0.0` não tem `closures`, mas cada confirmação dela ERA um
+    fechamento: naquele regime um código era o pacote inteiro. Ao migrar para `2.0.0` na
+    primeira decisão nova, o fechamento é construído REUSANDO a `ReviewerDecision` que já
+    está no assignment — o mesmo `vd_`, o mesmo autor, o mesmo instante.
+
+    Reusar em vez de carimbar de novo é o ponto: fabricar uma decisão nova aqui seria
+    assinar um ato humano que ninguém praticou, e o `decision_id` novo seria a prova de que
+    o sistema inventou. A rejeição não entra porque ela já fecha o item por si.
+    """
+    if previous is None:
+        return []
+    if previous.schema_version != "1.0.0":
+        return list(previous.closures)
+    return [
+        ItemPackageClosure(item_id=assignment.item_id, decision=assignment.decision)
+        for assignment in previous.assignments
+        if assignment.status == "confirmed"
+    ]
 
 
 def _ensure_batch_decidable(
@@ -1022,16 +1293,136 @@ def _ensure_batch_decidable(
             {"item_ids": not_confirmed},
         )
 
-    previous_ids = (
-        {assignment.item_id for assignment in previous.assignments} if previous else set()
+    previous_pairs = (
+        {(assignment.item_id, assignment.code) for assignment in previous.assignments}
+        if previous
+        else set()
     )
-    already_decided = sorted(set(batch_ids) & previous_ids)
+    batch_pairs = [(assignment.item_id, assignment.code) for assignment in batch.assignments]
+    already_decided = sorted(
+        f"{item_id}:{code}" if code is not None else item_id
+        for item_id, code in dict.fromkeys(batch_pairs)
+        if (item_id, code) in previous_pairs
+    )
     if already_decided:
         raise ValuationValidationError(
             "ASSIGNMENT_ITEM_ALREADY_DECIDED",
-            "item já possui confirmação de código anterior; re-decisão é recusada",
-            {"item_ids": already_decided},
+            "este par de item e código já foi decidido; re-decisão é recusada",
+            {"pairs": already_decided},
         )
+
+    # A contradição entre lotes, antes da recusa por pacote fechado. A rejeição fecha o item,
+    # então sem esta checagem um item rejeitado que recebesse código cairia em
+    # `ASSIGNMENT_ITEM_ALREADY_CLOSED` — recusa correta com mensagem falsa, porque ninguém
+    # declarou pacote nenhum como completo ali. `_ensure_package_shape` já cobre a
+    # contradição DENTRO de um lote; esta cobre a que atravessa dois.
+    previous_rejected = {
+        assignment.item_id
+        for assignment in (previous.assignments if previous else ())
+        if assignment.status == "rejected"
+    }
+    previous_confirmed = {
+        assignment.item_id
+        for assignment in (previous.assignments if previous else ())
+        if assignment.status == "confirmed"
+    }
+    contradicted = sorted(
+        {
+            assignment.item_id
+            for assignment in batch.assignments
+            if (assignment.action == "confirm" and assignment.item_id in previous_rejected)
+            or (assignment.action == "reject" and assignment.item_id in previous_confirmed)
+        }
+    )
+    if contradicted:
+        raise ValuationValidationError(
+            "ASSIGNMENT_REJECT_WITH_CONFIRMED",
+            "rejeitar é declarar que nenhum serviço precifica o elemento; não coexiste com "
+            "código confirmado para o mesmo item",
+            {"item_ids": contradicted},
+        )
+
+    # A partir daqui só o pacote: acrescentar código a item já fechado, e fechar o que não
+    # dá para fechar. Sem esta checagem o fechamento não afirmaria nada — bastaria mandar
+    # mais um código depois dele.
+    closed_ids = previous.closed_item_ids() if previous else frozenset()
+    reopened = sorted({item_id for item_id in batch_ids if item_id in closed_ids})
+    if reopened:
+        raise ValuationValidationError(
+            "ASSIGNMENT_ITEM_ALREADY_CLOSED",
+            "o pacote deste item já foi declarado completo; acrescentar código é recusado",
+            {"item_ids": reopened},
+        )
+
+    closure_ids = [closure.item_id for closure in batch.closures]
+    unknown_closures = sorted({item_id for item_id in closure_ids if item_id not in known_ids})
+    if unknown_closures:
+        raise ValuationValidationError(
+            "ASSIGNMENT_UNKNOWN_ITEM",
+            "fechamento de pacote aponta para item de takeoff desconhecido",
+            {"unknown_ids": unknown_closures},
+        )
+
+    already_closed = sorted({item_id for item_id in closure_ids if item_id in closed_ids})
+    if already_closed:
+        raise ValuationValidationError(
+            "ASSIGNMENT_DUPLICATE_CLOSURE",
+            "o pacote deste item já foi declarado completo",
+            {"item_ids": already_closed},
+        )
+
+    # Fechar exige ter o que fechar. A checagem também existe no modelo do conjunto, mas
+    # aqui ela chega ANTES da montagem: quem chamou recebe o código de domínio estável em
+    # vez do erro de validação do Pydantic embrulhando a mesma coisa.
+    confirmed_ids = {
+        assignment.item_id
+        for assignment in (previous.assignments if previous else ())
+        if assignment.status == "confirmed"
+    } | {assignment.item_id for assignment in batch.assignments if assignment.action == "confirm"}
+    empty_closures = sorted({item_id for item_id in closure_ids if item_id not in confirmed_ids})
+    if empty_closures:
+        raise ValuationValidationError(
+            "ASSIGNMENT_CLOSURE_WITHOUT_ASSIGNMENT",
+            "fechamento de pacote exige ao menos um código confirmado para o item; "
+            "rejeição já fecha o item sozinha",
+            {"item_ids": empty_closures},
+        )
+
+
+def _inputs_by_item(batch: CodeAssignmentBatch) -> dict[str, list[CodeAssignmentInput]]:
+    """Decisões do lote agrupadas por item, preservando a ordem de chegada.
+
+    Era um `dict[str, CodeAssignmentInput]`, e a troca para lista é a cardinalidade em si:
+    o dict de antes ficava com a ÚLTIMA decisão de cada item e descartava as outras sem
+    dizer nada. Sob N:N isso silenciaria cinco dos seis códigos de um elemento.
+
+    A ordem importa e é a do lote: é ela que decide em que sequência os pares entram no
+    conjunto, e daí a numeração das linhas do boletim. `valuation-demo` é golden.
+    """
+    grouped: dict[str, list[CodeAssignmentInput]] = {}
+    for assignment in batch.assignments:
+        grouped.setdefault(assignment.item_id, []).append(assignment)
+    return grouped
+
+
+def _is_single_code_item(
+    previous_codes: Mapping[str, tuple[str, ...]],
+    item_id: str,
+    item_inputs: Sequence[CodeAssignmentInput],
+) -> bool:
+    """O item termina esta aplicação com exatamente um código confirmado?
+
+    É a condição do regime espelho, onde a recusa de unidade divergente continua valendo.
+    Conta o conjunto RESULTANTE — o que já estava em `previous` mais o que este lote traz —,
+    porque é o resultado que diz se o elemento virou pacote ou continua 1:1.
+
+    Consequência aceita e declarada no ADR-0053: um pacote montado em lotes sucessivos passa
+    por este estado no primeiro lote, e ali a recusa ainda se aplica. Seguir a regra ao pé
+    da letra é preferível a inventar uma terceira, que precisaria adivinhar a intenção de
+    quem ainda não mandou o segundo código.
+    """
+    confirmed_now = sum(1 for entry in item_inputs if entry.action == "confirm")
+    return len(previous_codes.get(item_id, ())) + confirmed_now == 1
 
 
 def _rejected_assignment(
@@ -1061,15 +1452,26 @@ def _confirmed_assignment(
     entry: PriceCatalogEntry,
     *,
     catalog_sha256: str | None,
+    single_code_item: bool,
 ) -> CodeAssignment:
     """Confirmação de código já resolvida contra a entrada de catálogo escolhida.
 
-    A unidade incompatível sem nota recusa aqui, nas duas cadeias: o orçamentista pode
-    medir em unidade diferente da tabela, mas nunca em silêncio.
+    A unidade incompatível sem nota recusa aqui, nas duas cadeias — mas só quando o item
+    tem EXATAMENTE um código confirmado, o regime espelho em que a unidade do elemento e a
+    do serviço deveriam mesmo coincidir (ADR-0053, consequência declarada).
+
+    Com pacote, a divergência é o caso normal e não o suspeito: um elemento medido em m²
+    alimenta legitimamente saibro em m³, tela em kg e meio-fio em m. Recusar ali faria a
+    nota virar ruído em toda confirmação, e nota que sempre aparece é nota que ninguém lê —
+    o resultado seria menos atenção sobre a divergência, não mais. Quem explica a conversão
+    no mundo do pacote é a `basis`/`recipe` da contribuição.
+
+    `unit_compatible` continua gravado como observação nos dois regimes: o que muda é
+    quando o sistema RECUSA, nunca o que ele registra.
     """
     code = entry.code
     unit_compatible = normalize_unit(item.unit) == normalize_unit(entry.unit)
-    if not unit_compatible and input_assignment.note is None:
+    if single_code_item and not unit_compatible and input_assignment.note is None:
         raise ValuationValidationError(
             "ASSIGNMENT_UNIT_INCOMPATIBLE_WITHOUT_NOTE",
             "unidade do item diverge da unidade do catálogo; confirme com nota explícita",
@@ -1124,59 +1526,67 @@ def apply_code_assignments(
     """
     _ensure_batch_decidable(packet, batch, previous, expected_catalog_sha256=catalog.source_sha256)
 
-    assignments_by_item = {assignment.item_id: assignment for assignment in batch.assignments}
+    inputs_by_item = _inputs_by_item(batch)
+    previous_codes = previous.confirmed_codes_by_item() if previous is not None else {}
     new_assignments: list[CodeAssignment] = []
     for item in packet.items:
-        input_assignment = assignments_by_item.get(item.id)
-        if input_assignment is None:
+        item_inputs = inputs_by_item.get(item.id)
+        if item_inputs is None:
             continue
 
-        if input_assignment.action == "reject":
-            new_assignments.append(_rejected_assignment(item, input_assignment))
-            continue
+        single_code_item = _is_single_code_item(previous_codes, item.id, item_inputs)
+        for input_assignment in item_inputs:
+            if input_assignment.action == "reject":
+                new_assignments.append(_rejected_assignment(item, input_assignment))
+                continue
 
-        code = input_assignment.code
-        assert code is not None  # garantido por ASSIGNMENT_CODE_REQUIRED no modelo de input
-        cited_catalog = input_assignment.catalog_sha256
-        if cited_catalog is not None and cited_catalog != catalog.source_sha256:
-            raise ValuationValidationError(
-                "ASSIGNMENT_CATALOG_UNKNOWN",
-                "decisão cita uma fonte de preço que não é o catálogo desta rodada",
-                {"item_id": item.id, "cited": cited_catalog, "available": catalog.source_sha256},
-            )
-        if not catalog.has_code(code):
-            raise ValuationValidationError(
-                "ASSIGNMENT_CODE_NOT_IN_CATALOG",
-                "código confirmado não existe no catálogo de preços importado",
-                {"item_id": item.id, "code": code},
-            )
-        if contract is not None:
-            matches = contract.lines_for_code(code)
-            if not matches:
+            code = input_assignment.code
+            assert code is not None  # garantido por ASSIGNMENT_CODE_REQUIRED no modelo de input
+            cited_catalog = input_assignment.catalog_sha256
+            if cited_catalog is not None and cited_catalog != catalog.source_sha256:
                 raise ValuationValidationError(
-                    "CODE_NOT_IN_CONTRACT",
-                    "código confirmado não existe no consolidado contratual importado",
-                    {"item_id": item.id, "code": code},
-                )
-            if len(matches) > 1:
-                raise ValuationValidationError(
-                    "CODE_AMBIGUOUS_IN_CONTRACT",
-                    "código confirmado existe em mais de um grupo do consolidado contratual",
+                    "ASSIGNMENT_CATALOG_UNKNOWN",
+                    "decisão cita uma fonte de preço que não é o catálogo desta rodada",
                     {
                         "item_id": item.id,
-                        "code": code,
-                        "groups": [line.group_label for line in matches],
+                        "cited": cited_catalog,
+                        "available": catalog.source_sha256,
                     },
                 )
+            if not catalog.has_code(code):
+                raise ValuationValidationError(
+                    "ASSIGNMENT_CODE_NOT_IN_CATALOG",
+                    "código confirmado não existe no catálogo de preços importado",
+                    {"item_id": item.id, "code": code},
+                )
+            if contract is not None:
+                matches = contract.lines_for_code(code)
+                if not matches:
+                    raise ValuationValidationError(
+                        "CODE_NOT_IN_CONTRACT",
+                        "código confirmado não existe no consolidado contratual importado",
+                        {"item_id": item.id, "code": code},
+                    )
+                if len(matches) > 1:
+                    raise ValuationValidationError(
+                        "CODE_AMBIGUOUS_IN_CONTRACT",
+                        "código confirmado existe em mais de um grupo do consolidado contratual",
+                        {
+                            "item_id": item.id,
+                            "code": code,
+                            "groups": [line.group_label for line in matches],
+                        },
+                    )
 
-        new_assignments.append(
-            _confirmed_assignment(
-                item,
-                input_assignment,
-                catalog.entry_for(code),
-                catalog_sha256=cited_catalog,
+            new_assignments.append(
+                _confirmed_assignment(
+                    item,
+                    input_assignment,
+                    catalog.entry_for(code),
+                    catalog_sha256=cited_catalog,
+                    single_code_item=single_code_item,
+                )
             )
-        )
 
     previous_assignments = list(previous.assignments) if previous is not None else []
     return CodeAssignmentSet(
@@ -1186,6 +1596,7 @@ def apply_code_assignments(
         catalog_sha256=catalog.source_sha256,
         contract_sha256=contract.source_sha256 if contract else None,
         assignments=[*previous_assignments, *new_assignments],
+        closures=[*_carried_closures(previous), *(_closure_of(c) for c in batch.closures)],
         safety_notes=list(_ASSIGNMENT_SAFETY_NOTES),
     )
 
@@ -1219,53 +1630,57 @@ def apply_code_assignments_over_cascade(
         packet, batch, previous, expected_catalog_sha256=cascade[0].source_sha256
     )
 
-    assignments_by_item = {assignment.item_id: assignment for assignment in batch.assignments}
+    inputs_by_item = _inputs_by_item(batch)
+    previous_codes = previous.confirmed_codes_by_item() if previous is not None else {}
     new_assignments: list[CodeAssignment] = []
     for item in packet.items:
-        input_assignment = assignments_by_item.get(item.id)
-        if input_assignment is None:
+        item_inputs = inputs_by_item.get(item.id)
+        if item_inputs is None:
             continue
 
-        if input_assignment.action == "reject":
-            new_assignments.append(_rejected_assignment(item, input_assignment))
-            continue
+        single_code_item = _is_single_code_item(previous_codes, item.id, item_inputs)
+        for input_assignment in item_inputs:
+            if input_assignment.action == "reject":
+                new_assignments.append(_rejected_assignment(item, input_assignment))
+                continue
 
-        code = input_assignment.code
-        assert code is not None  # garantido por ASSIGNMENT_CODE_REQUIRED no modelo de input
-        cited_catalog = input_assignment.catalog_sha256
-        if cited_catalog is None:
-            raise ValuationValidationError(
-                "ASSIGNMENT_CATALOG_REQUIRED",
-                "com mais de uma fonte de preço, a confirmação precisa citar de qual "
-                "catálogo o código veio",
-                {"item_id": item.id, "code": code},
-            )
-        catalog = catalogs_by_digest.get(cited_catalog)
-        if catalog is None:
-            raise ValuationValidationError(
-                "ASSIGNMENT_CATALOG_UNKNOWN",
-                "decisão cita uma fonte de preço que não está na cascata desta rodada",
-                {
-                    "item_id": item.id,
-                    "cited": cited_catalog,
-                    "available": [entry.source_sha256 for entry in cascade],
-                },
-            )
-        if not catalog.has_code(code):
-            raise ValuationValidationError(
-                "ASSIGNMENT_CODE_NOT_IN_CATALOG",
-                "código confirmado não existe no catálogo citado pela decisão",
-                {"item_id": item.id, "code": code, "catalog_sha256": cited_catalog},
-            )
+            code = input_assignment.code
+            assert code is not None  # garantido por ASSIGNMENT_CODE_REQUIRED no modelo de input
+            cited_catalog = input_assignment.catalog_sha256
+            if cited_catalog is None:
+                raise ValuationValidationError(
+                    "ASSIGNMENT_CATALOG_REQUIRED",
+                    "com mais de uma fonte de preço, a confirmação precisa citar de qual "
+                    "catálogo o código veio",
+                    {"item_id": item.id, "code": code},
+                )
+            catalog = catalogs_by_digest.get(cited_catalog)
+            if catalog is None:
+                raise ValuationValidationError(
+                    "ASSIGNMENT_CATALOG_UNKNOWN",
+                    "decisão cita uma fonte de preço que não está na cascata desta rodada",
+                    {
+                        "item_id": item.id,
+                        "cited": cited_catalog,
+                        "available": [entry.source_sha256 for entry in cascade],
+                    },
+                )
+            if not catalog.has_code(code):
+                raise ValuationValidationError(
+                    "ASSIGNMENT_CODE_NOT_IN_CATALOG",
+                    "código confirmado não existe no catálogo citado pela decisão",
+                    {"item_id": item.id, "code": code, "catalog_sha256": cited_catalog},
+                )
 
-        new_assignments.append(
-            _confirmed_assignment(
-                item,
-                input_assignment,
-                catalog.entry_for(code),
-                catalog_sha256=cited_catalog,
+            new_assignments.append(
+                _confirmed_assignment(
+                    item,
+                    input_assignment,
+                    catalog.entry_for(code),
+                    catalog_sha256=cited_catalog,
+                    single_code_item=single_code_item,
+                )
             )
-        )
 
     previous_assignments = list(previous.assignments) if previous is not None else []
     return CodeAssignmentSet(
@@ -1275,5 +1690,6 @@ def apply_code_assignments_over_cascade(
         catalog_sha256=cascade[0].source_sha256,
         contract_sha256=None,
         assignments=[*previous_assignments, *new_assignments],
+        closures=[*_carried_closures(previous), *(_closure_of(c) for c in batch.closures)],
         safety_notes=list(_ASSIGNMENT_SAFETY_NOTES),
     )

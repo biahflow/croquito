@@ -514,6 +514,21 @@ def _decide_codes(
         assert response.status_code == 200, response.text
         collected.append(response)
         version = response.json()["version"]
+
+    # Confirmar o código não termina o elemento: só o fechamento diz que o pacote de
+    # serviços dele está completo. Sem o ato, `ESTIMATE_PACKAGE_NOT_CLOSED`. A rejeição
+    # fecha o item sozinha.
+    for index, assignment in enumerate(assignments):
+        if assignment.action != "confirm":
+            continue
+        response = stack.client.post(
+            f"/v1/estimate-rounds/{round_id}/code-assignments/closures",
+            headers=_headers(f"{prefix}-fechamento-{index}", tenant=tenant),
+            json={"base_version": version, "item_id": assignment.item_id},
+        )
+        assert response.status_code == 200, response.text
+        collected.append(response)
+        version = response.json()["version"]
     return version
 
 

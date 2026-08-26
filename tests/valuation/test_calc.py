@@ -9,7 +9,11 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
-from croquito_valuation.assignment import CodeAssignment, CodeAssignmentSet
+from croquito_valuation.assignment import (
+    CodeAssignment,
+    CodeAssignmentSet,
+    ItemPackageClosure,
+)
 from croquito_valuation.calc import (
     DEFAULT_BLOCK_LABEL,
     DEFAULT_OPERAND_NAME,
@@ -164,6 +168,17 @@ def _assignment_set(
         image_sha256=packet.image_sha256,
         catalog_sha256=catalog.source_sha256,
         assignments=assignments,
+        # Fixture no regime de pacote (`2.0.0`): cada item confirmado nasce com o pacote
+        # FECHADO, que é o que a orçamentista faz quando o elemento dispara um serviço só.
+        # Sem isso o boletim recusaria em `CALC_PACKAGE_NOT_CLOSED`, e com razão.
+        closures=[
+            ItemPackageClosure(item_id=item_id, decision=decision)
+            # Um fechamento por ELEMENTO, não por par: o item que dispara dois serviços tem
+            # dois assignments e um pacote só.
+            for item_id, decision in {
+                item.item_id: item.decision for item in assignments if item.status == "confirmed"
+            }.items()
+        ],
         safety_notes=[
             "Confirmação de código é ato humano rastreável; a sugestão lexical nunca "
             "confirma sozinha.",
@@ -693,3 +708,100 @@ def test_valuation_speaks_to_the_export_gate_without_adapting() -> None:
     )
 
     assert valuation.export_errors(contract) == ["VALUATION_NOT_APPROVED"]
+
+
+# --------------------------------------------------------------------------------------
+# pacote de serviços: o boletim não é montado pela metade nem escolhe um dos códigos
+# --------------------------------------------------------------------------------------
+
+
+def _open_package_set(
+    packet: TakeoffPacket, catalog: PriceCatalog, assignments: list[CodeAssignment]
+) -> CodeAssignmentSet:
+    """Conjunto no regime de pacote SEM fechamento — o estado normal entre dois lotes."""
+    return CodeAssignmentSet(
+        plate_id=packet.plate_id,
+        page_number=packet.page_number,
+        image_sha256=packet.image_sha256,
+        catalog_sha256=catalog.source_sha256,
+        assignments=assignments,
+        safety_notes=[
+            "Confirmação de código é ato humano rastreável; a sugestão lexical nunca "
+            "confirma sozinha.",
+            "Preço e unidade impressos continuam sendo conferidos contra catálogo e "
+            "contrato no portão de exportação.",
+        ],
+    )
+
+
+def test_item_with_an_open_package_does_not_become_a_bulletin() -> None:
+    """Sem o fechamento, o item pode estar pela metade — e meio boletim é número errado."""
+    item = _confirmed_item()
+    packet = _packet([item])
+    entry = _catalog_entry()
+    catalog = _catalog([entry])
+    assignments = _open_package_set(packet, catalog, [_assignment(item.id, code=entry.code)])
+
+    with pytest.raises(ValuationValidationError) as raised:
+        build_worksite_bulletin(
+            packet, assignments, catalog, worksite_key=_WORKSITE_KEY, worksite_name=_WORKSITE_NAME
+        )
+
+    assert raised.value.code == "CALC_PACKAGE_NOT_CLOSED"
+    assert raised.value.details == {"item_ids": [item.id]}
+
+
+def test_item_with_two_codes_refuses_instead_of_picking_one() -> None:
+    """O portão temporário até a matriz existir (#78).
+
+    O que ele impede não é uma exceção a mais: é o `{item_id: assignment}` de antes ficar com
+    o último código e montar UMA linha, em silêncio, para um elemento que dispara dois
+    serviços.
+    """
+    item = _confirmed_item()
+    packet = _packet([item])
+    first = _catalog_entry(code="CE04100010(/)")
+    second = _catalog_entry(code="CE04100020(/)", description="TELA DO ALAMBRADO")
+    catalog = _catalog([first, second])
+    assignments = _assignment_set(
+        packet,
+        catalog,
+        [_assignment(item.id, code=first.code), _assignment(item.id, code=second.code)],
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        build_worksite_bulletin(
+            packet, assignments, catalog, worksite_key=_WORKSITE_KEY, worksite_name=_WORKSITE_NAME
+        )
+
+    assert raised.value.code == "CALC_PACKAGE_NOT_SUPPORTED"
+    assert raised.value.details == {"item_ids": [item.id]}
+
+
+def test_a_legacy_set_still_builds_the_same_bulletin() -> None:
+    """Rodada gravada antes do ADR-0053 não tem fechamento e não precisa de nenhum."""
+    item = _confirmed_item()
+    packet = _packet([item])
+    entry = _catalog_entry()
+    catalog = _catalog([entry])
+    legacy = CodeAssignmentSet(
+        schema_version="1.0.0",
+        plate_id=packet.plate_id,
+        page_number=packet.page_number,
+        image_sha256=packet.image_sha256,
+        catalog_sha256=catalog.source_sha256,
+        assignments=[_assignment(item.id, code=entry.code)],
+        safety_notes=[
+            "Confirmação de código é ato humano rastreável; a sugestão lexical nunca "
+            "confirma sozinha.",
+            "Preço e unidade impressos continuam sendo conferidos contra catálogo e "
+            "contrato no portão de exportação.",
+        ],
+    )
+
+    result = build_worksite_bulletin(
+        packet, legacy, catalog, worksite_key=_WORKSITE_KEY, worksite_name=_WORKSITE_NAME
+    )
+
+    assert [line.item_number for line in result.bulletin.lines] == ["1"]
+    assert result.bulletin.lines[0].unit_price == entry.unit_price

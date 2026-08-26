@@ -19,6 +19,7 @@ import {
   listReferenceCatalogs,
   postApproveEstimate,
   postBuildEstimate,
+  postCodeClosure,
   postCodeDecision,
   postExportEstimate,
   postSuggestionsRecompute,
@@ -2184,14 +2185,52 @@ export function OrcamentoApp({
       setCodes(response);
       setCodeChoice(null);
       setCodeNote("");
-      setSelectedPendingId("");
+      // O item SEGUE selecionado depois de confirmar: o elemento pode disparar mais de um
+      // serviço, e limpar a seleção aqui obrigaria a reencontrá-lo na lista a cada código.
+      // A rejeição encerra o item sozinha, e aí sim a seleção sai.
+      if (action === "reject") {
+        setSelectedPendingId("");
+      }
       setAlertMessage(null);
       setRevisionConflict(false);
       setToast(
         action === "confirm"
-          ? "Código confirmado, com a fonte citada."
+          ? "Código confirmado, com a fonte citada. Feche o pacote quando não houver mais serviços."
           : "Item declarado sem preço na cascata.",
       );
+      await carregarEstado();
+    } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const fecharPacote = async () => {
+    const token = tokenDaSessao();
+    if (
+      token === null ||
+      orcamento === null ||
+      version === null ||
+      selectedPendingId === ""
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const response = await postCodeClosure(token, orcamento, {
+        itemId: selectedPendingId,
+        baseVersion: version,
+        note: codeNote,
+      });
+      aplicarVersao(response.version);
+      setCodes(response);
+      setCodeChoice(null);
+      setCodeNote("");
+      setSelectedPendingId("");
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast("Pacote de serviços declarado completo.");
       await carregarEstado();
     } catch (error) {
       registrarRecusa(error);
@@ -2451,6 +2490,12 @@ export function OrcamentoApp({
   const itens = takeoff?.packet.items ?? [];
   const itemSelecionado = itens.find((item) => item.id === selectedItemId) ?? null;
   const pendingItems = codes?.pending_items ?? [];
+  /** Os códigos já confirmados do item selecionado — o pacote que está sendo montado. */
+  const pacoteDoItem = (codes?.assignments?.assignments ?? []).filter(
+    (assignment) =>
+      assignment.item_id === selectedPendingId &&
+      assignment.status === "confirmed",
+  );
   const itemPendente =
     pendingItems.find((item) => item.item_id === selectedPendingId) ?? null;
   const candidatos: CodeSuggestionSet.CodeCandidate[] =
@@ -3570,6 +3615,39 @@ export function OrcamentoApp({
                     })}
                   </ul>
 
+                  <section className="pacote-do-item">
+                    <h4>Pacote de serviços deste elemento</h4>
+                    {pacoteDoItem.length === 0 ? (
+                      <p className="campo-dica">
+                        Nenhum código confirmado ainda. Um elemento pode disparar mais de um
+                        serviço: confirme quantos forem e feche o pacote no fim.
+                      </p>
+                    ) : (
+                      <>
+                        {/* Estado em TEXTO, e não só em cor: pacote aberto é o que separa
+                            "item resolvido" de "item pela metade". */}
+                        <p className="campo-dica">
+                          Pacote em aberto, com {pacoteDoItem.length}{" "}
+                          {pacoteDoItem.length === 1 ? "serviço" : "serviços"}. Ele só conta
+                          como resolvido depois do fechamento.
+                        </p>
+                        <ul className="lista-simples">
+                          {pacoteDoItem.map((assignment) => (
+                            <li key={assignment.code}>
+                              <code>{assignment.code}</code>
+                              {assignment.unit_compatible ? null : (
+                                <span className="campo-aviso">
+                                  {" "}
+                                  unidade diferente da do elemento
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </section>
+
                   {codeChoice !== null &&
                   codeChoice.unit.trim().toLowerCase() !==
                     itemPendente.unit.trim().toLowerCase() ? (
@@ -3582,7 +3660,8 @@ export function OrcamentoApp({
                     Nota da decisão
                     <span className="campo-dica">
                       Obrigatória na rejeição: é ela que registra por que nenhuma fonte
-                      precifica o item.
+                      precifica o item. Opcional ao confirmar um código ou ao fechar o
+                      pacote.
                     </span>
                     <textarea
                       value={codeNote}
@@ -3602,9 +3681,21 @@ export function OrcamentoApp({
                       type="button"
                       className="botao-secundario"
                       onClick={() => void decidirCodigo("reject")}
-                      disabled={submitting || codeNote.trim().length === 0}
+                      disabled={
+                        submitting ||
+                        codeNote.trim().length === 0 ||
+                        pacoteDoItem.length > 0
+                      }
                     >
                       Rejeitar com nota
+                    </button>
+                    <button
+                      type="button"
+                      className="botao-secundario"
+                      onClick={() => void fecharPacote()}
+                      disabled={submitting || pacoteDoItem.length === 0}
+                    >
+                      Fechar pacote de serviços
                     </button>
                   </div>
                 </>
