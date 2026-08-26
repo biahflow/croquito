@@ -1,4 +1,4 @@
-# ADR-0052: Índice de embeddings é artefato publicado da plataforma, e o braço semântico roda no recompute
+# ADR-0054: Índice de embeddings é artefato publicado da plataforma, e o braço semântico roda no recompute
 
 Status: Accepted  
 Data: 2026-08-25 (aceito por ato humano na mesma data)  

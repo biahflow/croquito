@@ -71,8 +71,9 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0049](0049-evidencia-de-campo-na-revisao-do-escritorio.md) | A evidência de campo entra na revisão pelo job da prancha; foto não mede e medida de trena não é cota | Accepted |
 | [0050](0050-correcao-humana-de-forma-como-proposta-derivada.md) | Correção humana de forma é proposta derivada, num conjunto de proveniência própria | Accepted |
 | [0051](0051-retencao-por-classe-preserva-evidencia-de-campo.md) | Retenção por classe de objeto (tag) preserva a evidência de campo durável; retenção por prefixo não alcança as chaves aninhadas por tenant | Accepted |
-| [0052](0052-indice-de-embeddings-publicado-e-braco-semantico-hospedado.md) | Índice de embeddings é artefato publicado da plataforma, encontrado por digest; o braço semântico roda no recompute explícito, nunca no GET | Accepted |
+| [0052](0052-pino-da-camada-global-por-tag-do-remoto.md) | Pino da camada global por tag do remoto | Accepted |
 | [0053](0053-cardinalidade-n-n-elemento-servico.md) | A relação entre elemento da prancha e serviço do catálogo é N:N, com parcela por par | Accepted |
+| [0054](0054-indice-de-embeddings-publicado-e-braco-semantico-hospedado.md) | Índice de embeddings é artefato publicado da plataforma, encontrado por digest; o braço semântico roda no recompute explícito, nunca no GET | Accepted |
 
 ## Processo
 

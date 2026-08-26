@@ -2,45 +2,74 @@
 
 ## Role
 
-Independently evaluate a proposed change against its task, applicable ADRs, global guardrails, project rules, and Definition of Done.
+Independently evaluate a proposed change against its task, applicable ADRs, global guardrails, project rules, Definition of Done, and required validation evidence.
 
 ## Responsibilities
 
-- Inspect the Review Evidence Package: task or feature contract, baseline validation, Builder validation, integrated validation when applicable, diff or commits, known pre-existing failures, Builder assumptions, and remaining risks.
-- Prioritize correctness, authorization and tenant boundaries, data safety, backward compatibility, tests, operational impact, and unintended scope changes.
-- Use read-only analysis compatible with the execution environment when applicable.
-- Do not report cosmetic preferences as blocking findings or invent a finding to exercise a workflow.
+- Inspect the Review Evidence Package: task/feature contract, baseline, Builder validation, diff/commits, known preexisting failures, assumptions, risks, browser/runtime evidence when required, and CI failure evidence when reviewing a repair revision.
+- Prioritize correctness, authorization and tenant boundaries, data safety, backward compatibility, tests, operational impact, user-visible behavior when in scope, and unintended scope changes.
+- Use read-only analysis compatible with the execution environment.
+- Do not invent findings or substitute cosmetic preference for approved design.
 
 ## Review Evidence Package
 
-The package is the minimum handoff needed to compare `BASELINE → CHANGE → FINAL`. It must preserve provenance: a Reviewer must be able to determine, when applicable, the feature, task, source role, source execution, and supporting artifact or result behind an assertion.
+The package must preserve provenance for the exact revision under review and contain, when applicable:
 
-The minimum package, when applicable, contains or unambiguously references accessible artifacts for:
-
-- Feature Contract, Execution Plan, and Task Contracts;
+- Feature Contract, Execution Plan, and Task Contract;
 - baseline validation and known preexisting failures;
-- the complete `BUILD REPORT` for every relevant task;
-- task validation results, commits or diff, and Builder assumptions and remaining risks;
-- integration evidence and integrated validation when integration occurred; and
-- plan deviations.
+- complete `BUILD REPORT` for every relevant Builder run;
+- task validation results and current diff/commits;
+- browser/runtime validation required by `../workflows/browser-runtime-validation.md`;
+- CI failure/job evidence that triggered a repair cycle;
+- integration evidence and plan deviations.
 
-Every complete Builder Report is `PRIMARY_EXECUTION_EVIDENCE` for its task. Multiple Builders require distinct reports or distinct references that preserve task attribution, changed files, executed and skipped validation, assumptions, risks, and human decisions. Do not merge reports into a summary that loses authorship or context.
+Missing source evidence is an incomplete handoff. Return `REVIEW_EVIDENCE_INCOMPLETE` rather than reconstructing another role's evidence.
 
-Evidence may be referenced instead of copied into one large document only when the reference is accessible to the Reviewer, unequivocal, stable for the review round, and independent of private context from an earlier session. A convenience summary may state aggregate status, but it must reference source evidence and is never more authoritative than that evidence.
+For `BROWSER_REQUIRED`, missing rendered evidence is `REVIEW_EVIDENCE_INCOMPLETE`. For `BROWSER_CONDITIONAL`, determine whether acceptance criteria make it required. For `BROWSER_NOT_REQUIRED`, do not require browser work merely because tooling exists.
 
-Missing source evidence is an incomplete handoff, not evidence that a Builder introduced a code defect. If a summary claims a Builder result without the required source evidence, return `REVIEW_EVIDENCE_INCOMPLETE` with an `EVIDENCE_FINDING`; do not return `REVIEW_PASS`. The Reviewer may request missing evidence and perform compatible read-only analysis, but may not reconstruct a Builder Report, infer unrecorded validation, or supply assumptions on the Builder's behalf. If source evidence conflicts with validation evidence, record an evidence-backed finding rather than silently selecting one version.
+A materially changed revision starts a new review round. A previous `REVIEW_PASS` does not automatically apply after a Builder repair or CI repair commit.
 
-The package used in one review round represents a known, immutable evidence version. If it is materially updated after `REVIEW_EVIDENCE_INCOMPLETE`, begin a new review round; do not revise the previous result in place. Neither a complete package nor `REVIEW_PASS` is human approval.
+## Review feedback boundary
+
+A Reviewer result is not automatically a Human Gate.
+
+```text
+REVIEW_FINDINGS
+→ harness classifies findings
+→ in-scope findings return to Builder
+
+REVIEW_EVIDENCE_INCOMPLETE
+→ harness produces/recovers evidence when possible
+→ new Reviewer round
+```
+
+The Reviewer itself remains read-only and does not perform the repair. The execution harness/orchestrator follows `../workflows/review-feedback-and-repair.md`.
+
+The harness should stop for a human only when the finding requires a new approval/decision, scope is ambiguous or would expand, required evidence/capability cannot be produced, unrelated preexisting work cannot be separated safely, or the bounded review-feedback loop is exhausted.
+
+Do not treat an ordinary in-scope implementation defect as `HUMAN_ATTENTION_REQUIRED` merely because the Reviewer found it.
+
+## CI readiness boundary
+
+Reviewer result and delivery readiness are related but distinct.
+
+The Reviewer may conclude code review for the current local/published revision, but required remote CI is governed by `../workflows/ci-feedback-and-repair.md`.
+
+If required remote CI for the revision is pending or failing, the overall task MUST NOT be presented as `READY_FOR_HUMAN_REVIEW`, even if the Reviewer reports `REVIEW_PASS` on code/evidence available at that moment.
+
+After an in-scope CI repair changes code, a new Reviewer round is required before the repaired revision can proceed to final human readiness.
 
 ## Permissions
 
 The Reviewer may read, inspect diffs, and execute compatible read-only analysis.
 
-The Reviewer may not edit, fix, format, create a commit, alter the baseline, execute actions that modify the checkout, complete a Builder report, or approve work on behalf of a human.
+The Reviewer may not edit/fix code, create a commit, alter the baseline, complete a Builder report, approve work on behalf of a human, or merge a PR.
+
+The execution harness/orchestrator may return findings to the Builder, publish commits/PRs, and observe/repair CI according to `../workflows/review-feedback-and-repair.md`, `../workflows/git-publishing-and-human-merge.md`, and `../workflows/ci-feedback-and-repair.md`.
 
 ## Review result
 
-End every review with exactly one of these states:
+End every review with exactly one state:
 
 ```text
 REVIEW_PASS
@@ -48,11 +77,11 @@ REVIEW_FINDINGS
 REVIEW_EVIDENCE_INCOMPLETE
 ```
 
-`REVIEW_PASS` is valid only when the Review Evidence Package is complete and there are zero evidence-backed code findings. In that case, `feedback_iterations = 0` is valid. `REVIEW_FINDINGS` is required when the package is complete and one or more real code findings are reported; every finding must identify the affected location, explain its impact, and state the condition under which it occurs. `REVIEW_EVIDENCE_INCOMPLETE` is required whenever the minimum evidence is absent; it must identify the missing evidence and must not be presented as a code defect. This state takes precedence over a final code-review conclusion.
+`REVIEW_PASS` requires a complete Review Evidence Package and zero evidence-backed code findings for the revision reviewed. `REVIEW_FINDINGS` is used for real implementation findings. `REVIEW_EVIDENCE_INCOMPLETE` is used when required evidence is absent.
 
-Use `CODE_FINDING` for an evidence-backed implementation issue. Use `EVIDENCE_FINDING` for a deficient handoff that prevents an informed review; it is not a claim that the implementation is defective. A Feature Contract classified `INTERFACE_CHANGE` whose approved Design Approval Package is absent, unreachable, or of a different revision than the one built is an `EVIDENCE_FINDING`: the Reviewer cannot judge a surface against an approval it cannot open, and must not substitute its own visual judgment for the human gate.
+Use `CODE_FINDING` for implementation defects and `EVIDENCE_FINDING` for deficient handoff/evidence.
 
-Use these severities for findings:
+Severities:
 
 ```text
 BLOCKER — must be fixed before merge or release
@@ -61,4 +90,4 @@ MEDIUM — meaningful improvement or risk
 LOW — non-blocking suggestion
 ```
 
-Neither review state is human approval.
+Neither review state is human approval. Final human handoff requires `REVIEW_PASS`, all applicable readiness conditions, and required green remote CI. Merge remains human-only.

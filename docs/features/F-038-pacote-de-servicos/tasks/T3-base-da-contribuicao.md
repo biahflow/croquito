@@ -80,5 +80,5 @@ dos cinco blocos, e os goldens de planilha não aparecem no diff — nenhuma cé
 T5.
 
 **Achado de fora do escopo**: a branch não passava no `make check` sozinha — `8729c1f`
-registrou o ADR-0052 no índice enquanto o arquivo dele seguia não rastreado. Corrigido em
+registrou o ADR-0054 no índice enquanto o arquivo dele seguia não rastreado. Corrigido em
 `557b3bd`.

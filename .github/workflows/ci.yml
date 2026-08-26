@@ -1,14 +1,25 @@
-# CI de pull request. O portão em si mora em `quality.yml`, chamado aqui e também pelo
-# deploy — um arquivo só, para os dois não divergirem com o tempo.
+# O portão de qualidade na `main`. O portão em si mora em `quality.yml`, chamado aqui e
+# também pelo deploy — um arquivo só, para os dois não divergirem com o tempo.
 #
-# **Sem gatilho de `push` na `main`, de propósito.** Merge é um push, e com o gatilho aqui
-# o merge acordava este workflow e o `deploy-hml` no mesmo segundo, para o mesmo commit,
-# correndo em paralelo: dois runs no histórico e, o que importa, um deploy que não esperava
-# o portão. Na `main` quem roda o portão é o próprio deploy, antes de publicar.
+# **Não roda em pull request, por decisão de 2026-08-26.** `make test` leva ~10 minutos no
+# runner, e esperar isso a cada push de PR custava mais atenção do que comprava: o controle
+# do trabalho em curso são os portões locais (`make check` e `make test`), que rodam na
+# máquina de quem escreve e falham antes do commit.
+#
+# O gatilho é `push` na `main`, o que inclui o merge. Isso reverte a decisão registrada na
+# versão anterior deste arquivo, que evitava o gatilho de push justamente porque merge
+# acorda este workflow e o `deploy-hml` no mesmo segundo, para o mesmo commit. A
+# duplicação continua existindo e passa a ser aceita: os dois rodam em paralelo, então não
+# atrasam ninguém, e quem barra a publicação continua sendo o portão de dentro do deploy.
+#
+# O que este workflow cobre e o deploy não: merge que toca só `docs/`, `tests/` ou `infra/`.
+# O `deploy-hml` tem filtro de `paths` e nem acorda nesses casos — sem este gatilho, uma
+# mudança de documentação entraria na `main` sem passar por portão nenhum.
 name: ci
 
 on:
-  pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read

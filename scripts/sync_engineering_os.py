@@ -1,17 +1,19 @@
-"""Espelha a camada global da Engineering OS dentro deste repositório (ADR-0034).
+"""Espelha a camada global da Engineering OS dentro deste repositório (ADR-0034, ADR-0052).
 
-O Engineering OS vive num checkout git local do operador, sem remote e sem tags. CI,
-colaborador novo e agente em nuvem não alcançam esse caminho, então a camada global é
-vendorizada em `docs/engineering-os/` e pinada pelo commit de origem registrado no
-`PROVENANCE.md`.
+A Engineering OS é publicada em `https://github.com/biahflow/engineeringOS` e versionada por
+tag SemVer. Este script busca a tag pinada, espelha os arquivos rastreados dela em
+`docs/engineering-os/` e registra o pino no `PROVENANCE.md`.
 
-Ressincronizar é ato deliberado: o script recusa origem suja, reescreve o espelho inteiro e
-deixa o diff para revisão como qualquer outra mudança.
+O pino é a constante `PINNED_TAG`. Avançá-lo é um diff de uma linha, revisado como qualquer
+outra mudança do repositório; enquanto ele não muda, aquela tag **é** a camada global que vale
+aqui. O script recusa uma referência que não seja tag do remoto: branch se move, e um pino que
+se move não é pino.
 
 Uso:
 
     uv run python scripts/sync_engineering_os.py
-    CROQUITO_EOS_SOURCE=/outro/checkout uv run python scripts/sync_engineering_os.py
+    uv run python scripts/sync_engineering_os.py --tag v0.2.0
+    CROQUITO_EOS_ORIGIN=/caminho/para/fork uv run python scripts/sync_engineering_os.py
 """
 
 from __future__ import annotations
@@ -21,12 +23,14 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DESTINATION = ROOT / "docs" / "engineering-os"
-DEFAULT_SOURCE = "~/workspace/engineeringOS"
+DEFAULT_ORIGIN = "https://github.com/biahflow/engineeringOS.git"
+PINNED_TAG = "v0.1.0"
 PROVENANCE_NAME = "PROVENANCE.md"
 # Um `.gitignore` aninhado mudaria a semântica de ignore do croquito dentro do diretório
 # vendorizado; o espelho é documentação, não um checkout funcional.
@@ -40,68 +44,56 @@ class SyncFailure(RuntimeError):
     """A origem da Engineering OS não está em estado sincronizável."""
 
 
-def source_path() -> Path:
-    raw = os.getenv("CROQUITO_EOS_SOURCE") or DEFAULT_SOURCE
-    return Path(raw).expanduser().resolve()
+def origin() -> str:
+    return os.getenv("CROQUITO_EOS_ORIGIN") or DEFAULT_ORIGIN
 
 
-def _git(source: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(source), *args],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def _git(*args: str) -> str:
+    result = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        raise SyncFailure(f"git {' '.join(args)} falhou em {source}: {result.stderr.strip()}")
+        raise SyncFailure(f"git {' '.join(args)} falhou: {result.stderr.strip()}")
     return result.stdout
 
 
-def _display_path(path: Path) -> str:
-    """Colapsa o home do operador: o caminho é informação de origem, não endereço da máquina."""
-    home = Path.home()
-    try:
-        return f"~/{path.relative_to(home)}"
-    except ValueError:
-        return str(path)
+def resolve_tag(source: str, tag: str) -> str:
+    """Resolve a tag para o commit que ela aponta, recusando qualquer coisa que não seja tag.
 
-
-def validate_source(source: Path) -> None:
-    if not source.is_dir():
+    Tag anotada tem dois refs no remoto: o objeto de tag e o commit sob `^{}`. O pino é o
+    commit — é ele que o `PROVENANCE` declara e que alguém consegue conferir.
+    """
+    listing = _git("ls-remote", "--tags", source, f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}")
+    resolved: dict[str, str] = {}
+    for line in listing.splitlines():
+        commit, _, reference = line.partition("\t")
+        resolved[reference.strip()] = commit.strip()
+    if not resolved:
         raise SyncFailure(
-            f"origem inexistente: {source}. Aponte CROQUITO_EOS_SOURCE para o checkout "
-            "do engineeringOS."
+            f"tag inexistente no remoto: {tag} em {source}. O pino é uma tag SemVer "
+            "publicada; branch se move e não serve de pino."
         )
-    if not (source / ".git").exists():
-        raise SyncFailure(f"origem não é um repositório git: {source}")
+    return resolved.get(f"refs/tags/{tag}^{{}}") or resolved[f"refs/tags/{tag}"]
 
 
-def worktree_state(source: Path, allow_dirty: bool) -> str:
-    dirty = bool(_git(source, "status", "--porcelain").strip())
-    if dirty and not allow_dirty:
-        raise SyncFailure(
-            f"árvore suja em {source}: commit ou descarte as mudanças antes de vendorizar, "
-            "ou rode com --allow-dirty para registrar o estado sujo no PROVENANCE."
-        )
-    return "dirty" if dirty else "clean"
+def clone(source: str, tag: str, into: Path) -> None:
+    _git("clone", "--depth", "1", "--branch", tag, "--quiet", source, str(into))
 
 
-def tracked_files(source: Path) -> list[Path]:
-    listing = _git(source, "ls-files", "-z").split("\0")
+def tracked_files(checkout: Path) -> list[Path]:
+    listing = _git("-C", str(checkout), "ls-files", "-z").split("\0")
     return sorted(
         Path(entry) for entry in listing if entry and Path(entry).name not in EXCLUDED_NAMES
     )
 
 
-def _copy(origin: Path, target: Path) -> bool:
+def _copy(source: Path, target: Path) -> bool:
     """Copia preservando o modo. Devolve False quando o destino já é idêntico."""
-    payload = origin.read_bytes()
-    mode = origin.stat().st_mode
+    payload = source.read_bytes()
+    mode = source.stat().st_mode
     if target.exists() and target.read_bytes() == payload and target.stat().st_mode == mode:
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(payload)
-    shutil.copymode(origin, target)
+    shutil.copymode(source, target)
     return True
 
 
@@ -123,7 +115,7 @@ def _prune(expected: set[Path]) -> list[Path]:
     return removed
 
 
-def provenance_text(source: Path, commit: str, state: str, count: int, today: date) -> str:
+def provenance_text(source: str, tag: str, commit: str, count: int, today: date) -> str:
     return f"""# Proveniência do snapshot da Engineering OS
 
 Status: Generated
@@ -132,27 +124,30 @@ Responsável: Engineering
 
 Este diretório é um **espelho pinado** da camada global da Engineering OS, vendorizado para
 que CI, colaborador novo e agente em nuvem enxerguem as mesmas regras que o operador carrega
-por fora ([ADR-0034](../adr/0034-camada-global-vendorizada-e-pinada.md)). Os arquivos são
-cópia fiel da origem, em inglês, e **não são editados aqui** — nem este registro, que é
-gerado pelo script.
+por fora ([ADR-0034](../adr/0034-camada-global-vendorizada-e-pinada.md), pino por tag na
+[ADR-0052](../adr/0052-pino-da-camada-global-por-tag-do-remoto.md)). Os arquivos são cópia
+fiel da origem, em inglês, e **não são editados aqui** — nem este registro, que é gerado pelo
+script.
 
 | Campo | Valor |
 |---|---|
+| Origem | `{source}` |
+| Tag de origem | `{tag}` |
 | Commit de origem | `{commit}` |
-| Estado da origem | `{state}` |
 | Sincronizado em | {today.isoformat()} |
-| Caminho de origem | `{_display_path(source)}` |
 | Arquivos espelhados | {count} |
 
 ## Ressincronizar
+
+Avançar o pino é trocar `PINNED_TAG` em `scripts/sync_engineering_os.py` e rodar:
 
 ```bash
 uv run python scripts/sync_engineering_os.py
 ```
 
-Ressincronizar é ato deliberado, não rotina automática: o script recusa origem com árvore
-suja e o diff resultante é revisado como qualquer outra mudança do repositório. Enquanto
-não houver nova sincronização, o commit acima é a versão da camada global que vale para
+Ressincronizar é ato deliberado, não rotina automática: o script recusa referência que não
+seja tag publicada, e o diff resultante é revisado como qualquer outra mudança do repositório.
+Enquanto não houver nova sincronização, a tag acima é a versão da camada global que vale para
 este repositório.
 """
 
@@ -170,26 +165,29 @@ def write_provenance(text: str) -> bool:
     return True
 
 
-def synchronize(allow_dirty: bool) -> int:
-    source = source_path()
-    validate_source(source)
-    state = worktree_state(source, allow_dirty)
-    commit = _git(source, "rev-parse", "HEAD").strip()
-    files = tracked_files(source)
-    if not files:
-        raise SyncFailure(f"origem sem arquivos rastreados: {source}")
+def synchronize(tag: str) -> int:
+    source = origin()
+    commit = resolve_tag(source, tag)
 
-    copied = [relative for relative in files if _copy(source / relative, DESTINATION / relative)]
+    with tempfile.TemporaryDirectory(prefix="eos-sync-") as scratch:
+        checkout = Path(scratch) / "engineeringOS"
+        clone(source, tag, checkout)
+        files = tracked_files(checkout)
+        if not files:
+            raise SyncFailure(f"origem sem arquivos rastreados: {source}@{tag}")
+        copied = [
+            relative for relative in files if _copy(checkout / relative, DESTINATION / relative)
+        ]
+
     removed = _prune(set(files))
-    provenance = provenance_text(source, commit, state, len(files), date.today())
-    rewritten = write_provenance(provenance)
+    rewritten = write_provenance(provenance_text(source, tag, commit, len(files), date.today()))
 
     for relative in copied:
         print(f"atualizado: {relative}")
     for relative in removed:
         print(f"removido: {relative}")
     print(
-        f"Engineering OS {commit[:7]} ({state}): {len(files)} arquivos espelhados, "
+        f"Engineering OS {tag} ({commit[:7]}): {len(files)} arquivos espelhados, "
         f"{len(copied)} atualizados, {len(removed)} removidos, "
         f"{len(files) - len(copied)} inalterados, "
         f"PROVENANCE {'reescrito' if rewritten else 'inalterado'}."
@@ -200,13 +198,13 @@ def synchronize(allow_dirty: bool) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--allow-dirty",
-        action="store_true",
-        help="aceita origem com árvore suja; o estado fica registrado no PROVENANCE.",
+        "--tag",
+        default=PINNED_TAG,
+        help=f"tag da Engineering OS a espelhar; por padrão o pino {PINNED_TAG}.",
     )
     arguments = parser.parse_args()
     try:
-        return synchronize(allow_dirty=arguments.allow_dirty)
+        return synchronize(tag=arguments.tag)
     except SyncFailure as error:
         print(str(error), file=sys.stderr)
         return 1
