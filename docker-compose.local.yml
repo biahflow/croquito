@@ -17,18 +17,29 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
-  localstack:
-    image: localstack/localstack:4.10.0
+  # Emulador AWS local (S3, SQS, Step Functions, EventBridge, Secrets Manager). Era o
+  # LocalStack até 2026-08-26; a edição community parou de persistir estado — `PERSISTENCE`
+  # virou recurso pago —, e cada `make down-services` deixava o PostgreSQL cheio de jobs
+  # apontando para objetos que não existiam mais. O floci é MIT, persiste em disco de
+  # graça e reproduz o CORS do bucket como a AWS (regra configurada, não `*`), que é o que
+  # o PUT assinado da prancha exerce desde o browser.
+  #
+  # Os recursos (bucket, CORS, filas com redrive, secret e state machine) NÃO vêm de hook
+  # da imagem: quem os cria é `scripts/bootstrap_local_aws.py`, chamado por `make db-init`.
+  floci:
+    image: floci/floci:1.7.0
     environment:
       AWS_DEFAULT_REGION: sa-east-1
-      DEBUG: "0"
-      PERSISTENCE: "0"
-      SERVICES: s3,sqs,stepfunctions,eventbridge,secretsmanager
+      # `persistent` grava a cada escrita. O modo `hybrid`, recomendado pelo projeto para
+      # desenvolvimento, descarrega a cada 5s — janela curta, mas é exatamente o dado que
+      # esta troca existe para não perder.
+      FLOCI_STORAGE_MODE: persistent
     ports:
       - "127.0.0.1:4566:4566"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./localstack/init:/etc/localstack/init/ready.d:ro
+      # `/app/data` é o `FLOCI_STORAGE_PERSISTENT_PATH` da imagem; montar noutro caminho
+      # cria um volume que fica vazio e uma persistência que só parece existir.
+      - floci-data:/app/data
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.2
@@ -55,3 +66,4 @@ services:
 
 volumes:
   postgres-data:
+  floci-data:
