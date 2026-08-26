@@ -56,14 +56,39 @@
     },
     "CalcBlock": {
       "additionalProperties": false,
-      "description": "Bloco de cálculo de um item: operandos multiplicados menos deduções.",
+      "description": "Bloco de cálculo de um item: operandos multiplicados menos deduções.\n\nO bloco é a parcela que UM elemento da prancha acrescenta à quantidade de UM serviço —\né a célula da matriz que o [ADR-0053] descreve. `label` continua sendo o texto impresso\nna memória (e relido pelo auditor de round-trip); `source_item_id` é o mesmo vínculo,\nagora conferível por máquina.",
       "properties": {
+        "basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContributionBasis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "deductions": {
           "items": {
             "$ref": "#/$defs/CalcOperand"
           },
           "title": "Deductions",
           "type": "array"
+        },
+        "derived_from_code": {
+          "anyOf": [
+            {
+              "maxLength": 30,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derived From Code"
         },
         "label": {
           "maxLength": 120,
@@ -81,6 +106,19 @@
         },
         "recipe": {
           "$ref": "#/$defs/CalcRecipe"
+        },
+        "source_item_id": {
+          "anyOf": [
+            {
+              "pattern": "^ti_[a-f0-9]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Item Id"
         },
         "subtotal": {
           "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -142,7 +180,8 @@
         "perimeter_times_height",
         "perim_height_minus_openings",
         "qty_times_months",
-        "days_times_hours"
+        "days_times_hours",
+        "declared_product"
       ],
       "title": "CalcRecipe",
       "type": "string"
@@ -183,6 +222,18 @@
       ],
       "title": "CalcSheet",
       "type": "object"
+    },
+    "ContributionBasis": {
+      "description": "De onde vem a parcela que um bloco acrescenta à quantidade do serviço.\n\nÉ o eixo que o [ADR-0053] acrescentou: um elemento da prancha alimenta vários serviços,\ne cada bloco declara COMO. A lista é fechada porque descreve a relação, não a fórmula.",
+      "enum": [
+        "full",
+        "derived",
+        "partial",
+        "dependent",
+        "standalone"
+      ],
+      "title": "ContributionBasis",
+      "type": "string"
     },
     "ReviewerDecision": {
       "additionalProperties": false,
@@ -329,7 +380,7 @@
       "type": "object"
     }
   },
-  "$id": "https://schemas.croquito.local/valuation/valuation/2.0.0.json",
+  "$id": "https://schemas.croquito.local/valuation/valuation/3.0.0.json",
   "additionalProperties": false,
   "description": "Medição de um período: um boletim por obra e as memórias de cálculo de cada item.\n\nNada aqui carrega saldo contratual: o que já foi medido antes vive no\n`ContractWorkbook`, que entra por parâmetro no portão de exportação\n(`export_errors()`/`ensure_exportable()`). O portão falha fechado — medição sem\naprovação nominal válida, fora da sequência de períodos ou acima do saldo não vira\nplanilha publicada. Ver docs/architecture/VALUATION_CONTEXT.md.",
   "properties": {
@@ -377,8 +428,11 @@
       "type": "string"
     },
     "schema_version": {
-      "const": "2.0.0",
-      "default": "2.0.0",
+      "default": "3.0.0",
+      "enum": [
+        "2.0.0",
+        "3.0.0"
+      ],
       "title": "Schema Version",
       "type": "string"
     }

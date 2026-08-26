@@ -35,10 +35,18 @@ export type CalcSheets = [CalcSheet, ...CalcSheet[]];
  * @minItems 1
  */
 export type Blocks = [CalcBlock, ...CalcBlock[]];
+/**
+ * De onde vem a parcela que um bloco acrescenta à quantidade do serviço.
+ *
+ * É o eixo que o [ADR-0053] acrescentou: um elemento da prancha alimenta vários serviços,
+ * e cada bloco declara COMO. A lista é fechada porque descreve a relação, não a fórmula.
+ */
+export type ContributionBasis = "full" | "derived" | "partial" | "dependent" | "standalone";
 export type Name = string;
 export type Unit1 = string | null;
 export type Value = string;
 export type Deductions = CalcOperand[];
+export type DerivedFromCode = string | null;
 export type Label = string;
 /**
  * @minItems 1
@@ -53,7 +61,9 @@ export type CalcRecipe =
   | "perimeter_times_height"
   | "perim_height_minus_openings"
   | "qty_times_months"
-  | "days_times_hours";
+  | "days_times_hours"
+  | "declared_product";
+export type SourceItemId = string | null;
 export type Subtotal = string;
 export type ItemNumber1 = string;
 export type TotalQuantity = string;
@@ -61,7 +71,7 @@ export type WorksiteKey1 = string;
 export type Id = string;
 export type PeriodNumber = number;
 export type ReferenceLabel = string;
-export type SchemaVersion = "2.0.0";
+export type SchemaVersion = "2.0.0" | "3.0.0";
 
 /**
  * Medição de um período: um boletim por obra e as memórias de cálculo de cada item.
@@ -143,12 +153,20 @@ export interface CalcSheet {
 }
 /**
  * Bloco de cálculo de um item: operandos multiplicados menos deduções.
+ *
+ * O bloco é a parcela que UM elemento da prancha acrescenta à quantidade de UM serviço —
+ * é a célula da matriz que o [ADR-0053] descreve. `label` continua sendo o texto impresso
+ * na memória (e relido pelo auditor de round-trip); `source_item_id` é o mesmo vínculo,
+ * agora conferível por máquina.
  */
 export interface CalcBlock {
+  basis?: ContributionBasis | null;
   deductions?: Deductions;
+  derived_from_code?: DerivedFromCode;
   label: Label;
   operands: Operands;
   recipe: CalcRecipe;
+  source_item_id?: SourceItemId;
   subtotal: Subtotal;
 }
 /**

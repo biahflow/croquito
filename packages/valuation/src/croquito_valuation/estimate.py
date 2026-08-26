@@ -64,13 +64,21 @@ from croquito_valuation.rounding import money_trunc, quantity_round
 from croquito_valuation.sco import SCO_CODE_PATTERN
 from croquito_valuation.takeoff import TakeoffItem, TakeoffPacket
 
-ESTIMATE_SCHEMA_VERSION: Final = "2.2.0"
+ESTIMATE_SCHEMA_VERSION: Final = "3.0.0"
 
-ESTIMATE_DIGEST_PRUNING: Final[DigestPruning] = {}
-"""Campos a podar do digest por versão declarada; vazio enquanto só existe uma versão.
+ESTIMATE_DIGEST_PRUNING: Final[DigestPruning] = {
+    "2.2.0": [
+        (
+            ("calc_sheets", "blocks"),
+            frozenset({"source_item_id", "basis", "derived_from_code"}),
+        ),
+    ],
+}
+"""Orçamento assinado antes da matriz não conhecia os vínculos do bloco de cálculo.
 
-A entrada nasce junto com o primeiro campo novo em modelo aninhado — ver
-`versioned_content_digest`, que explica por que a poda é declarada e não inferida."""
+Aqui a poda vale mais do que compatibilidade de leitura: sob o ADR-0048 o orçamento
+assinado é o consolidado contratual da medição, e mover esse digest invalidaria um
+contrato."""
 
 _ITEM_ID_PATTERN: Final = r"^ti_[a-f0-9]{16}$"
 
@@ -227,7 +235,7 @@ class Estimate(ValuationContractModel):
     nunca o percentual aplicado ao total geral (decisão 4).
     """
 
-    schema_version: Literal["2.2.0"] = ESTIMATE_SCHEMA_VERSION
+    schema_version: Literal["2.2.0", "3.0.0"] = ESTIMATE_SCHEMA_VERSION
     worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
     worksite_name: str = Field(min_length=1, max_length=120)
     address: str | None = Field(default=None, min_length=1, max_length=200)

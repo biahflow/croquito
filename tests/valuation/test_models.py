@@ -14,6 +14,7 @@ from croquito_valuation.models import (
     CalcOperand,
     CalcRecipe,
     CalcSheet,
+    ContributionBasis,
     PriceCatalog,
     PriceCatalogEntry,
     PriceOrigin,
@@ -381,7 +382,7 @@ def test_valuation_accepts_the_consistent_case() -> None:
         calc_sheets=[_full_sheet()],
     )
 
-    assert valuation.schema_version == "2.0.0"
+    assert valuation.schema_version == "3.0.0"
     assert valuation.calc_sheet_for(_WORKSITE_KEY, "1").total_quantity == Decimal("126.00")
     assert valuation.total_amount == Decimal("11251.80")
 
@@ -419,3 +420,98 @@ def test_valuation_matches_calc_sheets_by_worksite_and_item() -> None:
         )
 
     assert valuation_error_codes(raised.value) == ["VALUATION_DUPLICATE_CALC_SHEET"]
+
+
+# --------------------------------------------------------------------------------------
+# a base da contribuição (ADR-0053): de onde a parcela vem
+# --------------------------------------------------------------------------------------
+
+_ITEM_ID = "ti_0123456789abcdef"
+
+
+def _contribution(
+    *,
+    basis: ContributionBasis | None = None,
+    source_item_id: str | None = None,
+    derived_from_code: str | None = None,
+) -> CalcBlock:
+    return CalcBlock(
+        label="PISO EM CONCRETO",
+        source_item_id=source_item_id,
+        basis=basis,
+        derived_from_code=derived_from_code,
+        recipe=CalcRecipe.DECLARED_PRODUCT,
+        operands=[CalcOperand(name="ÁREA", value=Decimal("418.12"), unit="m2")],
+        subtotal=Decimal("418.12"),
+    )
+
+
+def test_a_block_written_before_the_matrix_declares_no_basis() -> None:
+    """Ausência é ausência: o bloco antigo não afirmou base nenhuma, e nada afirma por ele."""
+    block = _area_block()
+
+    assert block.basis is None
+    assert block.source_item_id is None
+    assert block.derived_from_code is None
+
+
+def test_a_block_can_point_at_the_element_it_came_from() -> None:
+    block = _contribution(basis=ContributionBasis.FULL, source_item_id=_ITEM_ID)
+
+    assert block.basis is ContributionBasis.FULL
+    assert block.source_item_id == _ITEM_ID
+
+
+def test_a_partial_share_is_declared_not_computed() -> None:
+    """Os 170 m² de limpeza dentro de 418,12 não saem de conta nenhuma — só do teto."""
+    block = _contribution(basis=ContributionBasis.PARTIAL, source_item_id=_ITEM_ID)
+
+    assert block.basis is ContributionBasis.PARTIAL
+
+
+def test_site_overhead_has_no_element_of_origin() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _contribution(basis=ContributionBasis.STANDALONE, source_item_id=_ITEM_ID)
+
+    assert valuation_error_codes(raised.value) == ["CALC_CONTRIBUTION_STANDALONE_WITH_ITEM"]
+
+
+def test_a_dependent_share_says_which_service_it_comes_from() -> None:
+    block = _contribution(basis=ContributionBasis.DEPENDENT, derived_from_code="BP09100050(B)")
+
+    assert block.derived_from_code == "BP09100050(B)"
+
+
+def test_a_dependent_share_without_the_origin_service_is_refused() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _contribution(basis=ContributionBasis.DEPENDENT)
+
+    assert valuation_error_codes(raised.value) == ["CALC_CONTRIBUTION_DEPENDENT_WITHOUT_CODE"]
+
+
+def test_only_a_dependent_share_cites_another_service() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _contribution(basis=ContributionBasis.FULL, derived_from_code="BP09100050(B)")
+
+    assert valuation_error_codes(raised.value) == ["CALC_CONTRIBUTION_CODE_WITHOUT_DEPENDENCY"]
+
+
+def test_the_source_item_has_the_shape_of_a_takeoff_item() -> None:
+    with pytest.raises(ValidationError):
+        _contribution(basis=ContributionBasis.FULL, source_item_id="item-1")
+
+
+def test_the_declared_product_recomputes_like_every_other_recipe() -> None:
+    """A receita nova não muda a aritmética: o subtotal segue sendo o produto conferido."""
+    with pytest.raises(ValidationError) as raised:
+        CalcBlock(
+            label="ALAMBRADO",
+            recipe=CalcRecipe.DECLARED_PRODUCT,
+            operands=[
+                CalcOperand(name="PERIMETRO", value=Decimal("195.965")),
+                CalcOperand(name="ALTURA", value=Decimal("4")),
+            ],
+            subtotal=Decimal("700.00"),
+        )
+
+    assert valuation_error_codes(raised.value) == ["CALC_SUBTOTAL_MISMATCH"]

@@ -17,11 +17,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from croquito_valuation.assignment import CodeAssignment, CodeAssignmentSet
-from croquito_valuation.estimate import ESTIMATE_DIGEST_PRUNING, Estimate, build_worksite_estimate
+from croquito_valuation.estimate import (
+    ESTIMATE_DIGEST_PRUNING,
+    ESTIMATE_SCHEMA_VERSION,
+    Estimate,
+    build_worksite_estimate,
+)
 from croquito_valuation.models import (
     VALUATION_DIGEST_PRUNING,
     BulletinLine,
@@ -141,11 +146,12 @@ def test_pruning_an_absent_field_is_not_an_error() -> None:
     )
 
 
-def test_both_artefacts_start_with_nothing_to_prune() -> None:
-    """Enquanto cada artefato tem uma versão só, não há o que podar — a entrada nasce com
-    o primeiro campo novo, e o teste registra o ponto de partida."""
-    assert VALUATION_DIGEST_PRUNING == {}
-    assert ESTIMATE_DIGEST_PRUNING == {}
+def test_each_artefact_prunes_the_fields_the_matrix_created() -> None:
+    """A poda declara exatamente os campos que a cardinalidade N:N acrescentou ao bloco."""
+    matrix_fields = frozenset({"source_item_id", "basis", "derived_from_code"})
+
+    assert VALUATION_DIGEST_PRUNING["2.0.0"] == [(("calc_sheets", "blocks"), matrix_fields)]
+    assert ESTIMATE_DIGEST_PRUNING["2.2.0"] == [(("calc_sheets", "blocks"), matrix_fields)]
 
 
 # --------------------------------------------------------------------------------------
@@ -154,6 +160,25 @@ def test_both_artefacts_start_with_nothing_to_prune() -> None:
 
 _VALUATION_ID = UUID("01920000-0000-7000-8000-000000000001")
 _WORKSITE_KEY = "praca-sintetica-norte"
+
+#: Campos que a matriz de contribuições (ADR-0053) acrescentou ao bloco de cálculo.
+_MATRIX_FIELDS = ("source_item_id", "basis", "derived_from_code")
+
+
+def _as_stored_before_the_matrix(payload: dict[str, Any], version: str) -> dict[str, Any]:
+    """O artefato como está gravado no banco: sem as chaves que a matriz criou.
+
+    Reler o `model_dump` corrente com a versão trocada não bastaria — ele já traz as chaves
+    novas como `null`. O que existe em `valuation_json`/`estimate_json` de toda rodada
+    anterior não tem chave nenhuma dessas, e é esse payload que precisa continuar rendendo
+    o mesmo digest.
+    """
+    payload["schema_version"] = version
+    for sheet in payload["calc_sheets"]:
+        for block in sheet["blocks"]:
+            for field in _MATRIX_FIELDS:
+                block.pop(field, None)
+    return payload
 
 
 def _valuation() -> Valuation:
@@ -175,7 +200,7 @@ def _valuation() -> Valuation:
         quantity=Decimal("105.00"),
         total=Decimal("9376.50"),
     )
-    return Valuation(
+    current = Valuation(
         id=_VALUATION_ID,
         period_number=1,
         reference_label="JANEIRO/2026",
@@ -195,6 +220,9 @@ def _valuation() -> Valuation:
                 total_quantity=Decimal("105.00"),
             )
         ],
+    )
+    return Valuation.model_validate(
+        _as_stored_before_the_matrix(current.model_dump(mode="json"), "2.0.0")
     )
 
 
@@ -288,7 +316,7 @@ def _estimate() -> Estimate:
         ],
         origin=PriceOrigin.SCO,
     )
-    return build_worksite_estimate(
+    current = build_worksite_estimate(
         packet,
         assignments,
         (catalog,),
@@ -298,6 +326,9 @@ def _estimate() -> Estimate:
         address="RUA SINTETICA 400",
         calc_plan=None,
     ).estimate
+    return Estimate.model_validate(
+        _as_stored_before_the_matrix(current.model_dump(mode="json"), "2.2.0")
+    )
 
 
 _VALUATION_DIGEST_BEFORE_F038 = "177a22ac477324cd8d0687293e10439ec42e0f0719b5d458fa27d810337f4346"
@@ -316,3 +347,11 @@ def test_the_anchored_artefacts_declare_the_versions_the_anchors_describe() -> N
     """A âncora só protege enquanto descreve a versão que ela fixou."""
     assert _valuation().schema_version == "2.0.0"
     assert _estimate().schema_version == "2.2.0"
+
+
+def test_the_artefacts_built_today_declare_the_new_version() -> None:
+    """O que nasce agora é da matriz; a âncora descreve o passado, não o presente."""
+    from croquito_valuation.models import VALUATION_SCHEMA_VERSION
+
+    assert VALUATION_SCHEMA_VERSION == "3.0.0"
+    assert ESTIMATE_SCHEMA_VERSION == "3.0.0"

@@ -2,14 +2,39 @@
   "$defs": {
     "CalcBlock": {
       "additionalProperties": false,
-      "description": "Bloco de cálculo de um item: operandos multiplicados menos deduções.",
+      "description": "Bloco de cálculo de um item: operandos multiplicados menos deduções.\n\nO bloco é a parcela que UM elemento da prancha acrescenta à quantidade de UM serviço —\né a célula da matriz que o [ADR-0053] descreve. `label` continua sendo o texto impresso\nna memória (e relido pelo auditor de round-trip); `source_item_id` é o mesmo vínculo,\nagora conferível por máquina.",
       "properties": {
+        "basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContributionBasis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "deductions": {
           "items": {
             "$ref": "#/$defs/CalcOperand"
           },
           "title": "Deductions",
           "type": "array"
+        },
+        "derived_from_code": {
+          "anyOf": [
+            {
+              "maxLength": 30,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derived From Code"
         },
         "label": {
           "maxLength": 120,
@@ -27,6 +52,19 @@
         },
         "recipe": {
           "$ref": "#/$defs/CalcRecipe"
+        },
+        "source_item_id": {
+          "anyOf": [
+            {
+              "pattern": "^ti_[a-f0-9]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Item Id"
         },
         "subtotal": {
           "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -88,7 +126,8 @@
         "perimeter_times_height",
         "perim_height_minus_openings",
         "qty_times_months",
-        "days_times_hours"
+        "days_times_hours",
+        "declared_product"
       ],
       "title": "CalcRecipe",
       "type": "string"
@@ -162,6 +201,18 @@
       ],
       "title": "CatalogSource",
       "type": "object"
+    },
+    "ContributionBasis": {
+      "description": "De onde vem a parcela que um bloco acrescenta à quantidade do serviço.\n\nÉ o eixo que o [ADR-0053] acrescentou: um elemento da prancha alimenta vários serviços,\ne cada bloco declara COMO. A lista é fechada porque descreve a relação, não a fórmula.",
+      "enum": [
+        "full",
+        "derived",
+        "partial",
+        "dependent",
+        "standalone"
+      ],
+      "title": "ContributionBasis",
+      "type": "string"
     },
     "EstimateApproval": {
       "additionalProperties": false,
@@ -338,7 +389,7 @@
       "type": "string"
     }
   },
-  "$id": "https://schemas.croquito.local/valuation/estimate/2.2.0.json",
+  "$id": "https://schemas.croquito.local/valuation/estimate/3.0.0.json",
   "additionalProperties": false,
   "description": "Orçamento-base de uma obra, amarrado à prancha e à cascata que o precificou.\n\nSem período, sem contrato e sem saldo: nenhum desses conceitos existe antes da\nlicitação. Aprovação existe e é própria (`approval`, ADR-0046): nominal, amarrada por\ndigest ao conteúdo exato assinado, com portão de exportação\n(`export_errors()`/`ensure_exportable()`) que **não** recebe contrato — é a assinatura\nsem contrato que mantém a fronteira do ADR-0027 de pé.\n\nA memória de cálculo é a MESMA do boletim (`CalcSheet`, montada por\n`build_calc_blocks`), e a relação 1:1 entre linha e memória é validada como na medição —\nquantidade que diverge da memória recusa.\n\n`bdi_percent` é o BDI do orçamento inteiro (ADR-0038): percentual único, nunca por\nlinha nem por grupo. `total_amount` já embute o BDI (é a soma dos `total` das linhas,\nque recomputam sobre `unit_price_with_bdi`); `total_amount_without_bdi` é a mesma soma\nsem o percentual, para quem for imprimir a diferença entre os dois totais truncados —\nnunca o percentual aplicado ao total geral (decisão 4).",
   "properties": {
@@ -421,8 +472,11 @@
       "type": "array"
     },
     "schema_version": {
-      "const": "2.2.0",
-      "default": "2.2.0",
+      "default": "3.0.0",
+      "enum": [
+        "2.2.0",
+        "3.0.0"
+      ],
       "title": "Schema Version",
       "type": "string"
     },
