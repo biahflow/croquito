@@ -224,9 +224,13 @@ lexical continua sendo o fallback permanente, com ou sem provider.
   total de linha e total da obra são recalculados pelos validadores; divergência vira
   erro com código estável (`CALC_SUBTOTAL_MISMATCH`, `CALC_TOTAL_MISMATCH`,
   `LINE_TOTAL_MISMATCH`, `BULLETIN_TOTAL_MISMATCH`).
-- **Memória 1:1 com o boletim.** Toda linha tem memória de cálculo e a quantidade
-  impressa é a recomputada dos blocos (`VALUATION_CALC_SHEET_MISMATCH`,
-  `VALUATION_QUANTITY_MISMATCH`).
+- **Memória 1:1 com a linha do boletim (o serviço), nunca com o item de takeoff.** Toda
+  linha tem memória de cálculo e a quantidade impressa é a recomputada dos blocos
+  (`VALUATION_CALC_SHEET_MISMATCH`, `VALUATION_QUANTITY_MISMATCH`). A `CalcSheet` é
+  indexada pelo `item_number` da linha do boletim, não pelo item de takeoff: como a
+  relação elemento × serviço é N:N ([ADR-0053](../adr/0053-cardinalidade-n-n-elemento-servico.md)),
+  um item de takeoff pode gerar várias linhas (uma por código do seu pacote) e cada linha
+  tem sua própria memória.
 - **Template é dado, não código.** Nome de aba, colunas, rótulos e formatos vivem no
   `WorkbookTemplate`. O template real de cada cliente fica fora do Git; o repositório só
   versiona o `default_template()` e fixtures sintéticas.
