@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 2  
-Status: **Proposed — aguardando aprovação humana**  
+Status: **Approved (2026-08-26)**  
 Date: 2026-08-26  
 Produced by: agente (Claude Code)
 
@@ -58,15 +58,17 @@ declarado como pendente quanto à imagem — honestamente, como a rev.1 fez com 
 
 | Campo | Valor |
 | --- | --- |
-| O que foi aprovado | — *(nada ainda; aguardando ato humano)* |
-| Aprovado por | — *(em branco)* |
-| Data | — *(em branco)* |
-| Revisão aprovada | — *(em branco; esta é a revisão 2, proposta)* |
-| Explicitamente **não** coberto | ver "O que a aprovação não cobre", abaixo |
+| O que foi aprovado | a direção de interface descrita em "Superfícies e estados incluídos" e renderizada em [`index.html`](index.html) — a autoria da matriz por par `(item, code)` (receita/grandeza, operandos, dependência com ordem topológica e recusa de ciclo) e a declaração de contribuição `PARTIAL` com nota obrigatória e teto `≤ quantidade do item` (decisão 6 da rev.1) |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-26 |
+| Revisão aprovada | 2 |
+| Explicitamente **não** coberto | ver "O que a aprovação não cobre", abaixo — em especial: a copy final, os nomes de rotas/campos/erros (do plano, incluindo `CALC_PARTIAL_EXCEEDS_ITEM`, proposto), os tons de atenção/erro e escalas novas, e a captura congelada da imagem |
 
-A aprovação da rev.1 **não** cobre esta rev.2: é pacote materialmente novo (nova superfície de
-autoria) e precisa do seu próprio ato. Nenhum agente aprova design, inclusive este; o registro
-acima fica em branco de propósito, aguardando ato humano.
+A aprovação da rev.1 **não** cobria esta rev.2: é pacote materialmente novo (nova superfície de
+autoria) e teve o seu próprio ato de aprovação, registrado acima — decisão humana de Daniel Campos
+em 2026-08-26, transcrita pelo agente (RECORD_APPROVAL). Nenhum agente aprova design; a decisão foi
+do humano. Com este aceite, a decisão 6 sai do bloqueio de gate e está **liberada para o
+planejamento** da implementação.
 
 ## Artefato
 
