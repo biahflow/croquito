@@ -27,7 +27,7 @@ dos builders, e o layout impresso isolado numa tarefa própria.
 | T1 | [#73](https://github.com/biahflow/croquito/issues/73) | Importar a base SCO Out/2023 da planilha | **Entregue** |
 | T11 | [#83](https://github.com/biahflow/croquito/issues/83) | Tabela de derivação de transporte como dado | **Entregue** |
 | T3 | [#75](https://github.com/biahflow/croquito/issues/75) | `ContributionBasis` e os campos da matriz | **Aceita** |
-| T4 | [#76](https://github.com/biahflow/croquito/issues/76) | `CalcMatrix` e dependência sem ciclo | Pendente |
+| T4 | [#76](https://github.com/biahflow/croquito/issues/76) | `CalcMatrix` e dependência sem ciclo | **Entregue** |
 | T5 | [#77](https://github.com/biahflow/croquito/issues/77) | Vínculo `(item_id, code)` e fechamento de pacote | **Entregue** |
 | T6 | [#78](https://github.com/biahflow/croquito/issues/78) | Builders passam a iterar serviços | Pendente |
 | T7 | [#79](https://github.com/biahflow/croquito/issues/79) | Memória comporta quatro operandos | Pendente |
