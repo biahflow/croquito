@@ -3442,7 +3442,7 @@ export function MedicaoApp({
                     <span className="campo-dica">
                       {notaObrigatoria
                         ? "obrigatória: registre a conversão de unidade"
-                        : "obrigatória para rejeitar; opcional para confirmar"}
+                        : "obrigatória para rejeitar; opcional para confirmar ou fechar o pacote"}
                     </span>
                     <textarea
                       value={codeNote}

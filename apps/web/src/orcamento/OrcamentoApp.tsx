@@ -3660,7 +3660,8 @@ export function OrcamentoApp({
                     Nota da decisão
                     <span className="campo-dica">
                       Obrigatória na rejeição: é ela que registra por que nenhuma fonte
-                      precifica o item.
+                      precifica o item. Opcional ao confirmar um código ou ao fechar o
+                      pacote.
                     </span>
                     <textarea
                       value={codeNote}
