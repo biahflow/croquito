@@ -13,7 +13,14 @@ from openpyxl import load_workbook
 from croquito_valuation.canonical import audit_workbook, canonicalize_workbook
 from croquito_valuation.contract import ContractWorkbook
 from croquito_valuation.errors import ValuationValidationError
-from croquito_valuation.models import BulletinLine, PriceCatalog, Valuation
+from croquito_valuation.models import (
+    BulletinLine,
+    CalcBlock,
+    CalcOperand,
+    CalcRecipe,
+    PriceCatalog,
+    Valuation,
+)
 from croquito_valuation.template import WorkbookTemplate, default_template
 from croquito_valuation.workbook_reader import read_contract_workbook
 from croquito_valuation.workbook_writer import (
@@ -91,6 +98,51 @@ def test_roundtrip_matches_the_valuation_cent_by_cent(tmp_path: Path) -> None:
         assert str(line.total) in totals
     assert str(fixture.valuation.total_amount) in totals
     assert "11.84" in totals, "o par 1,15 x 10,30 prova que dinheiro trunca"
+
+
+def test_a_block_of_four_operands_fits_and_round_trips(tmp_path: Path) -> None:
+    """A sapata do alambrado (`0,6 x 0,6 x 0,6 x 58 postes`) tem quatro operandos.
+
+    Antes da T7 o escritor recusava com `MEMORY_BLOCK_TOO_WIDE`: só havia três colunas de
+    operando. Agora imprime nas colunas C..F, com o subtotal recuado para I, e o auditor
+    reabre e fecha.
+    """
+    fixture = build_fixture(tmp_path)
+    quantity = fixture.valuation.calc_sheets[0].total_quantity
+    wide_block = CalcBlock(
+        label="SAPATA DO ALAMBRADO",
+        recipe=CalcRecipe.DECLARED_PRODUCT,
+        operands=[
+            CalcOperand(name="QUANTIDADE", value=quantity, unit="m3"),
+            CalcOperand(name="FATOR B", value=Decimal("1"), unit="m"),
+            CalcOperand(name="FATOR C", value=Decimal("1"), unit="m"),
+            CalcOperand(name="POSTES", value=Decimal("1"), unit="un"),
+        ],
+        subtotal=quantity,
+    )
+    payload = fixture.valuation.model_dump()
+    payload["calc_sheets"][0]["blocks"] = [wide_block.model_dump()]
+    valuation = Valuation.model_validate(payload)
+
+    workbook_path = tmp_path / "quatro-operandos.xlsx"
+    # Não levanta `MEMORY_BLOCK_TOO_WIDE`: o bloco de quatro operandos agora cabe.
+    write_valuation_workbook(valuation, fixture.catalog, fixture.template, workbook_path)
+    report = audit_workbook(workbook_path, valuation, fixture.catalog, fixture.template)
+    assert report.status == "ok"
+    assert report.findings == []
+
+    canonical = canonicalize_workbook(workbook_path, fixture.template)
+    memory = _cells(canonical, report.worksites[0].memory_sheet)
+    # O subtotal do bloco é `=ROUND(PRODUCT(C..:F..),2)` na coluna I: os quatro operandos
+    # ocupam C..F e o subtotal recuou para além deles.
+    subtotal = next(
+        (ref, cell)
+        for ref, cell in memory.items()
+        if cell["kind"] == "formula"
+        and re.fullmatch(r"=ROUND\(PRODUCT\(C\d+:F\d+\),2\)", str(cell["formula"]))
+    )
+    assert subtotal[0].startswith("I")
+    assert str(subtotal[1]["value"]) == str(quantity)
 
 
 def test_emitted_formulas_stay_inside_the_closed_grammar(tmp_path: Path) -> None:

@@ -427,12 +427,12 @@
         },
         {
           "kind": "text",
-          "ref": "F4",
+          "ref": "I4",
           "value": "QUANT."
         },
         {
           "kind": "text",
-          "ref": "G4",
+          "ref": "J4",
           "value": "TOTAL"
         },
         {
@@ -462,13 +462,13 @@
         },
         {
           "kind": "number",
-          "ref": "F5",
+          "ref": "I5",
           "value": "126.00"
         },
         {
-          "formula": "=TRUNC(F5*E5,2)",
+          "formula": "=TRUNC(I5*E5,2)",
           "kind": "formula",
-          "ref": "G5",
+          "ref": "J5",
           "value": "11251.80"
         },
         {
@@ -488,7 +488,7 @@
         },
         {
           "kind": "text",
-          "ref": "F7",
+          "ref": "I7",
           "value": "SUBTOTAL"
         },
         {
@@ -504,7 +504,7 @@
         {
           "formula": "=ROUND(PRODUCT(C8:D8),2)",
           "kind": "formula",
-          "ref": "F8",
+          "ref": "I8",
           "value": "105.00"
         },
         {
@@ -524,7 +524,7 @@
         },
         {
           "kind": "text",
-          "ref": "F10",
+          "ref": "I10",
           "value": "SUBTOTAL"
         },
         {
@@ -540,7 +540,7 @@
         {
           "formula": "=ROUND(PRODUCT(C11:D11),2)",
           "kind": "formula",
-          "ref": "F11",
+          "ref": "I11",
           "value": "21.00"
         },
         {
@@ -549,9 +549,9 @@
           "value": "TOTAL"
         },
         {
-          "formula": "=SUM(F8:F11)",
+          "formula": "=SUM(I8:I11)",
           "kind": "formula",
-          "ref": "F12",
+          "ref": "I12",
           "value": "126.00"
         },
         {
@@ -581,13 +581,13 @@
         },
         {
           "kind": "number",
-          "ref": "F14",
+          "ref": "I14",
           "value": "85.20"
         },
         {
-          "formula": "=TRUNC(F14*E14,2)",
+          "formula": "=TRUNC(I14*E14,2)",
           "kind": "formula",
-          "ref": "G14",
+          "ref": "J14",
           "value": "12162.30"
         },
         {
@@ -612,7 +612,7 @@
         },
         {
           "kind": "text",
-          "ref": "F16",
+          "ref": "I16",
           "value": "SUBTOTAL"
         },
         {
@@ -633,7 +633,7 @@
         {
           "formula": "=ROUND(PRODUCT(C17:D17),2)-E17",
           "kind": "formula",
-          "ref": "F17",
+          "ref": "I17",
           "value": "85.20"
         },
         {
@@ -642,9 +642,9 @@
           "value": "TOTAL"
         },
         {
-          "formula": "=SUM(F17:F17)",
+          "formula": "=SUM(I17:I17)",
           "kind": "formula",
-          "ref": "F18",
+          "ref": "I18",
           "value": "85.20"
         },
         {
@@ -674,13 +674,13 @@
         },
         {
           "kind": "number",
-          "ref": "F20",
+          "ref": "I20",
           "value": "10.00"
         },
         {
-          "formula": "=TRUNC(F20*E20,2)",
+          "formula": "=TRUNC(I20*E20,2)",
           "kind": "formula",
-          "ref": "G20",
+          "ref": "J20",
           "value": "1689.00"
         },
         {
@@ -700,7 +700,7 @@
         },
         {
           "kind": "text",
-          "ref": "F22",
+          "ref": "I22",
           "value": "SUBTOTAL"
         },
         {
@@ -716,7 +716,7 @@
         {
           "formula": "=ROUND(PRODUCT(C23:D23),2)",
           "kind": "formula",
-          "ref": "F23",
+          "ref": "I23",
           "value": "10.00"
         },
         {
@@ -725,9 +725,9 @@
           "value": "TOTAL"
         },
         {
-          "formula": "=SUM(F23:F23)",
+          "formula": "=SUM(I23:I23)",
           "kind": "formula",
-          "ref": "F24",
+          "ref": "I24",
           "value": "10.00"
         },
         {
@@ -757,12 +757,12 @@
         },
         {
           "kind": "number",
-          "ref": "F26",
+          "ref": "I26",
           "value": "18.40"
         },
         {
           "kind": "number",
-          "ref": "G26",
+          "ref": "J26",
           "value": "4352.52"
         },
         {
@@ -777,7 +777,7 @@
         },
         {
           "kind": "text",
-          "ref": "F28",
+          "ref": "I28",
           "value": "SUBTOTAL"
         },
         {
@@ -788,7 +788,7 @@
         {
           "formula": "=ROUND(PRODUCT(C29:C29),2)",
           "kind": "formula",
-          "ref": "F29",
+          "ref": "I29",
           "value": "18.40"
         },
         {
@@ -797,9 +797,9 @@
           "value": "TOTAL"
         },
         {
-          "formula": "=SUM(F29:F29)",
+          "formula": "=SUM(I29:I29)",
           "kind": "formula",
-          "ref": "F30",
+          "ref": "I30",
           "value": "18.40"
         },
         {
@@ -829,12 +829,12 @@
         },
         {
           "kind": "number",
-          "ref": "F32",
+          "ref": "I32",
           "value": "12.00"
         },
         {
           "kind": "number",
-          "ref": "G32",
+          "ref": "J32",
           "value": "7348.80"
         },
         {
@@ -849,7 +849,7 @@
         },
         {
           "kind": "text",
-          "ref": "F34",
+          "ref": "I34",
           "value": "SUBTOTAL"
         },
         {
@@ -860,7 +860,7 @@
         {
           "formula": "=ROUND(PRODUCT(C35:C35),2)",
           "kind": "formula",
-          "ref": "F35",
+          "ref": "I35",
           "value": "12.00"
         },
         {
@@ -869,9 +869,9 @@
           "value": "TOTAL"
         },
         {
-          "formula": "=SUM(F35:F35)",
+          "formula": "=SUM(I35:I35)",
           "kind": "formula",
-          "ref": "F36",
+          "ref": "I36",
           "value": "12.00"
         },
         {
@@ -901,13 +901,13 @@
         },
         {
           "kind": "number",
-          "ref": "F38",
+          "ref": "I38",
           "value": "1.15"
         },
         {
-          "formula": "=TRUNC(F38*E38,2)",
+          "formula": "=TRUNC(I38*E38,2)",
           "kind": "formula",
-          "ref": "G38",
+          "ref": "J38",
           "value": "11.84"
         },
         {
@@ -922,7 +922,7 @@
         },
         {
           "kind": "text",
-          "ref": "F40",
+          "ref": "I40",
           "value": "SUBTOTAL"
         },
         {
@@ -933,7 +933,7 @@
         {
           "formula": "=ROUND(PRODUCT(C41:C41),2)",
           "kind": "formula",
-          "ref": "F41",
+          "ref": "I41",
           "value": "1.15"
         },
         {
@@ -942,9 +942,9 @@
           "value": "TOTAL"
         },
         {
-          "formula": "=SUM(F41:F41)",
+          "formula": "=SUM(I41:I41)",
           "kind": "formula",
-          "ref": "F42",
+          "ref": "I42",
           "value": "1.15"
         },
         {
@@ -974,13 +974,13 @@
         },
         {
           "kind": "number",
-          "ref": "F44",
+          "ref": "I44",
           "value": "12.00"
         },
         {
-          "formula": "=TRUNC(F44*E44,2)",
+          "formula": "=TRUNC(I44*E44,2)",
           "kind": "formula",
-          "ref": "G44",
+          "ref": "J44",
           "value": "22200.00"
         },
         {
@@ -1000,7 +1000,7 @@
         },
         {
           "kind": "text",
-          "ref": "F46",
+          "ref": "I46",
           "value": "SUBTOTAL"
         },
         {
@@ -1016,7 +1016,7 @@
         {
           "formula": "=ROUND(PRODUCT(C47:D47),2)",
           "kind": "formula",
-          "ref": "F47",
+          "ref": "I47",
           "value": "12.00"
         },
         {
@@ -1025,9 +1025,9 @@
           "value": "TOTAL"
         },
         {
-          "formula": "=SUM(F47:F47)",
+          "formula": "=SUM(I47:I47)",
           "kind": "formula",
-          "ref": "F48",
+          "ref": "I48",
           "value": "12.00"
         },
         {
@@ -1057,13 +1057,13 @@
         },
         {
           "kind": "number",
-          "ref": "F50",
+          "ref": "I50",
           "value": "4.35"
         },
         {
-          "formula": "=TRUNC(F50*E50,2)",
+          "formula": "=TRUNC(I50*E50,2)",
           "kind": "formula",
-          "ref": "G50",
+          "ref": "J50",
           "value": "57.85"
         },
         {
@@ -1078,7 +1078,7 @@
         },
         {
           "kind": "text",
-          "ref": "F52",
+          "ref": "I52",
           "value": "SUBTOTAL"
         },
         {
@@ -1089,7 +1089,7 @@
         {
           "formula": "=ROUND(PRODUCT(C53:C53),2)",
           "kind": "formula",
-          "ref": "F53",
+          "ref": "I53",
           "value": "4.35"
         },
         {
@@ -1098,9 +1098,9 @@
           "value": "TOTAL"
         },
         {
-          "formula": "=SUM(F53:F53)",
+          "formula": "=SUM(I53:I53)",
           "kind": "formula",
-          "ref": "F54",
+          "ref": "I54",
           "value": "4.35"
         }
       ],

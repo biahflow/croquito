@@ -627,14 +627,20 @@ def default_template() -> WorkbookTemplate:
         quantity=SheetColumn(letter="F", label="QUANT", width=12),
         total=SheetColumn(letter="G", label="TOTAL", width=16),
     )
+    # A memória imprime os operandos de cada bloco à esquerda do subtotal (que fica sob a
+    # coluna de QUANT.). A fórmula do produto é uma faixa contígua `PRODUCT(primeiro:último)`,
+    # então as colunas de operando precisam ser contíguas e nunca abarcar o subtotal. O
+    # Campo do Toca tem blocos de quatro operandos (`0,6 x 0,6 x 0,6 x 58 postes`;
+    # `quantidade x densidade x espessura x distância`), então QUANT. e TOTAL recuam para I e
+    # J e abrem seis colunas de operando (quatro fatores + dedução + folga).
     memory_columns = SheetColumns(
         item=SheetColumn(letter="A", label="ITEM", width=8),
         code=SheetColumn(letter="B", label="CODIGO", width=18),
         description=SheetColumn(letter="C", label="DESCRIÇÃO", width=56),
         unit=SheetColumn(letter="D", label="UNIDADE", width=12),
         unit_price=SheetColumn(letter="E", label="VALOR UNIT", width=14),
-        quantity=SheetColumn(letter="F", label="QUANT.", width=12),
-        total=SheetColumn(letter="G", label="TOTAL", width=16),
+        quantity=SheetColumn(letter="I", label="QUANT.", width=12),
+        total=SheetColumn(letter="J", label="TOTAL", width=16),
     )
     return WorkbookTemplate(
         label="MAPÃO padrão (M2)",
@@ -657,7 +663,7 @@ def default_template() -> WorkbookTemplate:
             title="MEMÓRIA DE CÁLCULO",
             header_row=4,
             columns=memory_columns,
-            operand_columns=["C", "D", "E"],
+            operand_columns=["C", "D", "E", "F", "G", "H"],
         ),
         general=GeneralLayout(
             sheet_name="PLANILHA GERAL",
