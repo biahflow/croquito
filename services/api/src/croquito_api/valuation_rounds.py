@@ -90,7 +90,11 @@ from croquito_worker.valuation.round_view import (
     review_status,
     takeoff_counts,
 )
-from croquito_worker.valuation.suggestions import compute_suggestions, require_reviewed_takeoff
+from croquito_worker.valuation.suggestions import (
+    SemanticArmTelemetry,
+    compute_suggestions,
+    require_reviewed_takeoff,
+)
 
 ROUND_STAGE_NOT_READY: Final = "ROUND_STAGE_NOT_READY"
 REVISION_CONFLICT: Final = "REVISION_CONFLICT"
@@ -490,7 +494,7 @@ def require_unrefined_suggestions(suggestions: CodeSuggestionSet | None) -> None
 
 def compute_round_suggestions(
     packet: TakeoffPacket, catalog: PriceCatalog
-) -> tuple[CodeSuggestionSet, list[str]]:
+) -> tuple[CodeSuggestionSet, list[str], SemanticArmTelemetry]:
     """Shortlist recalculada do zero pelo algoritmo corrente; nenhuma chamada paga acontece.
 
     Mesmo cálculo do servidor de medição (`compute_suggestions`), com as três coisas que na
@@ -499,6 +503,12 @@ def compute_round_suggestions(
     e braço semântico declarado indisponível, porque nenhuma rota publica índice de
     embeddings. A revisão completa do takeoff é precondição e continua sendo conferida lá
     dentro.
+
+    A terceira saída é a telemetria do braço semântico. Hoje ela é sempre `arm_ran=False`
+    com `SEMANTIC_ARM_ABSENT` — a rodada da API não tem índice para pagar —, e é isso que o
+    recompute registra no evento e no log: a vizinhança semântica não participou. Quando o
+    índice publicado da plataforma (ADR-0054) chegar ao caminho hospedado, o `SemanticArm`
+    passa a rodar e a mesma telemetria carrega tokens, custo e model id sem tocar aqui.
     """
     return compute_suggestions(
         packet,
