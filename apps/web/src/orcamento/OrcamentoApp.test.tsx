@@ -17,6 +17,7 @@ import {
   PainelRegimeDaRodada,
   PainelAutoAprovacaoRecusada,
   PainelSemAcesso,
+  PranchaComAncoras,
   PainelSemPapelDeAprovador,
   PainelSemPapelDeOrcamentista,
   PainelTetoDaVerba,
@@ -250,6 +251,44 @@ describe("SemPrecoNaCascata", () => {
  * O `409` não é erro do ato: o orçamento andou, nada foi gravado e o caminho é recarregar
  * — com o formulário preservado.
  */
+/**
+ * A suíte do web roda em `environment: "node"` (apps/web/vite.config.ts): não há DOM, e
+ * `useEffect` não executa em `renderToStaticMarkup`. O que se prova aqui, portanto, é o
+ * estado ANTES de conhecer as dimensões da página — que é exatamente o estado em que a
+ * tela não pode desenhar âncora nenhuma, porque não sabe onde ela cai. A aritmética do
+ * zoom e do enquadramento é testada em `prancha.test.ts`, onde é pura.
+ */
+describe("PranchaComAncoras", () => {
+  const item = {
+    id: "item-1",
+    label: "PISO EM CONCRETO",
+    quantity: "418.12",
+    unit: "m2",
+    status: "confirmed",
+    raw_text: "PISO EM CONCRETO 418,12m²",
+    evidence: {
+      plate_id: "prancha-local",
+      page_number: 1,
+      image_sha256: "a".repeat(64),
+      coordinate_space: "source_image_pixels",
+      bbox: { left: 100, top: 200, right: 300, bottom: 260 },
+    },
+  } as unknown as Parameters<typeof PranchaComAncoras>[0]["itens"][number];
+
+  it("mostra a prancha enquanto as dimensões da página não são conhecidas", () => {
+    const html = renderToStaticMarkup(
+      <PranchaComAncoras src="blob:prancha" itens={[item]} selectedItemId="" onSelect={() => {}} />,
+    );
+
+    expect(html).toContain("Página promovida da prancha deste orçamento");
+    expect(html).toContain("blob:prancha");
+    // Sem página medida não há viewBox, e sem viewBox uma âncora desenhada cairia no
+    // lugar errado — com toda a autoridade de um desenho.
+    expect(html).not.toContain("<svg");
+    expect(html).not.toContain("ancora");
+  });
+});
+
 describe("BannerOrcamentoMudou", () => {
   it("diz que o orçamento mudou, que nada foi gravado e oferece recarregar", () => {
     const html = renderToStaticMarkup(<BannerOrcamentoMudou onReload={() => {}} />);

@@ -957,6 +957,97 @@ p {
   border: 1px solid var(--line);
 }
 
+/* Prancha aproximável com as âncoras do pacote (zoom + seleção cruzada) ------- */
+/*
+ * O quadro tem altura própria e recorta o SVG: sem isso, aproximar cresceria o elemento
+ * na página em vez de aproximar o desenho, e a lista de itens ao lado sairia da tela.
+ */
+.prancha {
+  margin: 10px 0;
+}
+
+.prancha-controles {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.prancha-zoom {
+  color: var(--ink-secondary);
+  font-size: 0.85rem;
+}
+
+.prancha-quadro {
+  border: 1px solid var(--line);
+  background: var(--surface-subtle);
+  overflow: hidden;
+  max-height: 62vh;
+  touch-action: none;
+}
+
+.prancha-quadro.arrastavel {
+  cursor: grab;
+}
+
+.prancha-quadro.arrastavel:active {
+  cursor: grabbing;
+}
+
+.prancha-svg {
+  display: block;
+  width: 100%;
+  max-height: 62vh;
+}
+
+/*
+ * Âncora: o traço declara o estado por FORMA (cheio = registrada contra a tinta,
+ * tracejada = ainda bruta) e a cor só reforça, como manda a folha do produto. O número
+ * repete o da lista ao lado — é ele que liga desenho e item para quem não distingue cor.
+ */
+.ancora rect {
+  fill: transparent;
+  stroke: #2f6fd0;
+  cursor: pointer;
+}
+
+.ancora text {
+  fill: #2f6fd0;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+
+.ancora:hover rect {
+  fill: rgba(47, 111, 208, 0.12);
+}
+
+.ancora-raw rect,
+.ancora-raw text {
+  stroke: #b26a00;
+}
+
+.ancora-raw rect {
+  stroke: #b26a00;
+}
+
+.ancora-raw text {
+  fill: #b26a00;
+  stroke: var(--surface);
+}
+
+.ancora-selecionada rect {
+  stroke: var(--accent-text);
+  fill: rgba(0, 200, 119, 0.16);
+}
+
+.ancora-selecionada text {
+  fill: var(--accent-text);
+}
+
 /* Teto de verba: consumo e estouro (F-027) ---------------------------------- */
 /*
  * Composição nova sobre a veste dos banners que a jornada já tem, e NENHUMA cor nova: o
