@@ -23,11 +23,17 @@ from croquito_valuation.assignment import (
     ItemPackageClosure,
 )
 from croquito_valuation.calc import CalcBlockPlan, CalcPlan, ItemCalcPlan
+from croquito_valuation.calc_matrix import (
+    CalcContribution,
+    CalcMatrix,
+    ServiceContributions,
+)
 from croquito_valuation.errors import ValuationValidationError, valuation_error_codes
 from croquito_valuation.estimate import Estimate, build_worksite_estimate
 from croquito_valuation.models import (
     CalcOperand,
     CalcRecipe,
+    ContributionBasis,
     PriceCatalog,
     PriceCatalogEntry,
     PriceOrigin,
@@ -956,3 +962,100 @@ def test_item_with_two_codes_refuses_instead_of_picking_one_in_the_estimate() ->
 
     assert raised.value.code == "ESTIMATE_PACKAGE_NOT_SUPPORTED"
     assert raised.value.details == {"item_ids": [_PAVEMENT_ITEM]}
+
+
+# --------------------------------------------------------------------------------------
+# regime da matriz (T6): uma linha por SERVIÇO, com a fonte de preço do código
+# --------------------------------------------------------------------------------------
+
+
+def _full_parcel(item_id: str, value: str) -> CalcContribution:
+    return CalcContribution(
+        source_item_id=item_id,
+        label="PARCELA",
+        basis=ContributionBasis.FULL,
+        recipe=CalcRecipe.DECLARED_PRODUCT,
+        operands=[CalcOperand(name="AREA", value=Decimal(value), unit="m2")],
+    )
+
+
+def test_matrix_regime_fuses_elements_into_one_priced_service_line() -> None:
+    items = [
+        _confirmed_item(_PAVEMENT_ITEM, label="PISO A", quantity="10.00"),
+        _confirmed_item(_LAWN_ITEM, label="PISO B", quantity="20.00"),
+        _confirmed_item(_BENCH_ITEM, label="PISO C", quantity="5.00"),
+    ]
+    assignments = _assignment_set(
+        [
+            _assignment(_PAVEMENT_ITEM, code=_SCO_CODE, catalog_sha256=_SCO_DIGEST),
+            _assignment(_LAWN_ITEM, code=_SCO_CODE, catalog_sha256=_SCO_DIGEST),
+            _assignment(_BENCH_ITEM, code=_SCO_CODE, catalog_sha256=_SCO_DIGEST),
+        ]
+    )
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SCO_CODE,
+                contributions=[
+                    _full_parcel(_PAVEMENT_ITEM, "10.00"),
+                    _full_parcel(_LAWN_ITEM, "20.00"),
+                    _full_parcel(_BENCH_ITEM, "5.00"),
+                ],
+            )
+        ]
+    )
+
+    result = build_worksite_estimate(
+        _packet(items),
+        assignments,
+        _cascade(),
+        worksite_key=_WORKSITE_KEY,
+        worksite_name=_WORKSITE_NAME,
+        bdi_percent=_BDI_PERCENT,
+        calc_matrix=matrix,
+    )
+
+    assert [line.code for line in result.estimate.lines] == [_SCO_CODE]
+    assert result.estimate.lines[0].quantity == Decimal("35.00")
+    assert result.estimate.lines[0].price_origin == PriceOrigin.SCO
+    assert result.service_numbers == {_SCO_CODE: "1"}
+    assert result.item_numbers == {}
+
+
+def test_matrix_regime_refuses_a_code_priced_by_two_different_sources() -> None:
+    # O mesmo código confirmado citando SCO num elemento e EMOP no outro: quem precifica
+    # ficaria à sorte da ordem. Recusa em vez de escolher.
+    items = [
+        _confirmed_item(_PAVEMENT_ITEM, label="PISO A", quantity="10.00"),
+        _confirmed_item(_LAWN_ITEM, label="PISO B", quantity="20.00"),
+    ]
+    assignments = _assignment_set(
+        [
+            _assignment(_PAVEMENT_ITEM, code=_SCO_CODE, catalog_sha256=_SCO_DIGEST),
+            _assignment(_LAWN_ITEM, code=_SCO_CODE, catalog_sha256=_EMOP_DIGEST),
+        ]
+    )
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SCO_CODE,
+                contributions=[
+                    _full_parcel(_PAVEMENT_ITEM, "10.00"),
+                    _full_parcel(_LAWN_ITEM, "20.00"),
+                ],
+            )
+        ]
+    )
+
+    with pytest.raises(ValuationValidationError) as raised:
+        build_worksite_estimate(
+            _packet(items),
+            assignments,
+            _cascade(),
+            worksite_key=_WORKSITE_KEY,
+            worksite_name=_WORKSITE_NAME,
+            bdi_percent=_BDI_PERCENT,
+            calc_matrix=matrix,
+        )
+
+    assert raised.value.code == "ESTIMATE_PACKAGE_CATALOG_CONFLICT"

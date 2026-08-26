@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from pydantic import Field, model_validator
 
@@ -35,6 +35,11 @@ from croquito_valuation.models import (
 )
 from croquito_valuation.rounding import money_trunc, quantity_round
 from croquito_valuation.takeoff import TakeoffItem, TakeoffPacket
+
+if TYPE_CHECKING:
+    # Import só para anotação: `calc_matrix` importa `build_calc_blocks` DESTE módulo, então
+    # o `resolve_calc_matrix` de runtime entra por import tardio dentro do builder.
+    from croquito_valuation.calc_matrix import CalcMatrix
 
 _ITEM_ID_PATTERN: Final = r"^ti_[a-f0-9]{16}$"
 
@@ -84,11 +89,18 @@ class CalcPlan(ValuationContractModel):
 
 @dataclass(frozen=True, slots=True)
 class CalcBuildResult:
-    """Resultado do builder: boletim, memórias, numeração e itens excluídos por rejeição."""
+    """Resultado do builder: boletim, memórias, numeração e itens excluídos por rejeição.
+
+    `item_numbers` (item de takeoff → número da linha) vale no regime legado, onde cada item
+    é uma linha; no regime da matriz, um elemento alimenta vários serviços e a numeração é
+    por SERVIÇO, então quem responde "onde este código foi impresso" é `service_numbers`
+    (código → número da linha).
+    """
 
     bulletin: WorksiteBulletin
     calc_sheets: tuple[CalcSheet, ...]
     item_numbers: dict[str, str]
+    service_numbers: dict[str, str]
     excluded_item_ids: tuple[str, ...]
     safety_notes: tuple[str, ...]
 
@@ -146,6 +158,7 @@ def build_worksite_bulletin(
     address: str | None = None,
     contract_label: str | None = None,
     calc_plan: CalcPlan | None = None,
+    calc_matrix: CalcMatrix | None = None,
 ) -> CalcBuildResult:
     """Constrói o boletim e a memória de cálculo de uma obra a partir do takeoff confirmado.
 
@@ -223,21 +236,20 @@ def build_worksite_bulletin(
         )
 
     packages = assignments.confirmed_codes_by_item()
-    # PORTÃO TEMPORÁRIO, removido pela T6 (#78), quando o builder passar a iterar SERVIÇOS.
-    # Enquanto ele iterar itens, cada item vira uma linha, e um pacote de seis códigos
-    # precisaria escolher um deles. Recusar é a única saída honesta: escolher em silêncio é
-    # o defeito que a F-038 inteira ataca, e a alternativa de somar preços diferentes
-    # inventaria um serviço que não existe no catálogo.
-    packaged_ids = sorted(
-        item_id for item_id in confirmed_ids if len(packages.get(item_id, ())) > 1
-    )
-    if packaged_ids:
-        raise ValuationValidationError(
-            "CALC_PACKAGE_NOT_SUPPORTED",
-            "item com mais de um código confirmado ainda não vira boletim; a matriz de "
-            "contribuições é que resolve o pacote",
-            {"item_ids": packaged_ids},
+    # Sem matriz, o builder itera itens e cada item é uma linha: um pacote de vários códigos
+    # precisaria escolher um deles, e escolher em silêncio é o defeito que a F-038 ataca. Com
+    # matriz, é ela quem funde o pacote em serviços — então o portão só vale no regime legado.
+    if calc_matrix is None:
+        packaged_ids = sorted(
+            item_id for item_id in confirmed_ids if len(packages.get(item_id, ())) > 1
         )
+        if packaged_ids:
+            raise ValuationValidationError(
+                "CALC_PACKAGE_NOT_SUPPORTED",
+                "item com mais de um código confirmado exige a matriz de contribuições para "
+                "virar boletim",
+                {"item_ids": packaged_ids},
+            )
 
     rejected_ids = {
         assignment.item_id
@@ -282,53 +294,70 @@ def build_worksite_bulletin(
             {"item_ids": scale_unsupported},
         )
 
-    plan_by_item = {plan.item_id: plan for plan in calc_plan.plans} if calc_plan else {}
-    item_numbers: dict[str, str] = {}
+    # Import tardio: `calc_matrix` importa `build_calc_blocks` deste módulo (ciclo).
+    from croquito_valuation.calc_matrix import resolve_calc_matrix
+
+    resolved = resolve_calc_matrix(
+        included_items,
+        assignments,
+        calc_plan=calc_plan,
+        calc_matrix=calc_matrix,
+        error_prefix="CALC",
+    )
+
+    if calc_matrix is None:
+        # Regime legado: cada serviço é um item, na ordem de `included_items`. A conferência
+        # de que o plano fecha com a quantidade CONFIRMADA continua sendo do builder — o
+        # resolver só soma os subtotais, não conhece a quantidade humana.
+        for item, service in zip(included_items, resolved.services, strict=True):
+            if service.total_quantity != _confirmed_quantity(item):
+                raise ValuationValidationError(
+                    "CALC_PLAN_QUANTITY_MISMATCH",
+                    "plano de cálculo não fecha com a quantidade confirmada pelo orçamentista",
+                    {
+                        "item_id": item.id,
+                        "expected": str(_confirmed_quantity(item)),
+                        "recomputed": str(service.total_quantity),
+                    },
+                )
+
+    # No regime legado a numeração é por item (byte-idêntico); no da matriz, por serviço, e
+    # é `service_numbers` (código único → linha) quem responde onde cada código foi impresso.
+    item_numbers: dict[str, str] = (
+        {
+            item.id: service.item_number
+            for item, service in zip(included_items, resolved.services, strict=True)
+        }
+        if calc_matrix is None
+        else {}
+    )
+    service_numbers: dict[str, str] = {}
     lines: list[BulletinLine] = []
     calc_sheets: list[CalcSheet] = []
-    for index, item in enumerate(included_items, start=1):
-        item_number = str(index)
-        item_numbers[item.id] = item_number
-        quantity = _confirmed_quantity(item)
-
-        blocks = build_calc_blocks(plan_by_item.get(item.id), quantity=quantity, unit=item.unit)
-
-        total_quantity = quantity_round(sum((block.subtotal for block in blocks), Decimal(0)))
-        if total_quantity != quantity:
-            raise ValuationValidationError(
-                "CALC_PLAN_QUANTITY_MISMATCH",
-                "plano de cálculo não fecha com a quantidade confirmada pelo orçamentista",
-                {
-                    "item_id": item.id,
-                    "expected": str(quantity),
-                    "recomputed": str(total_quantity),
-                },
-            )
-
-        # Item incluído tem pacote de exatamente um código: o portão acima recusou o de
-        # mais de um, e a rejeição já tirou o de nenhum.
-        code = packages[item.id][0]
-        entry = catalog.entry_for(code)
-        total = money_trunc(quantity * entry.unit_price)
+    for service in resolved.services:
+        entry = catalog.entry_for(service.code)
+        total = money_trunc(service.total_quantity * entry.unit_price)
         lines.append(
             BulletinLine(
-                item_number=item_number,
-                code=code,
+                item_number=service.item_number,
+                code=service.code,
                 description=entry.description,
                 unit=entry.unit,
                 unit_price=entry.unit_price,
-                quantity=quantity,
+                quantity=service.total_quantity,
                 total=total,
             )
         )
         calc_sheets.append(
             CalcSheet(
                 worksite_key=worksite_key,
-                item_number=item_number,
-                blocks=blocks,
-                total_quantity=total_quantity,
+                item_number=service.item_number,
+                blocks=list(service.blocks),
+                total_quantity=service.total_quantity,
             )
         )
+        if calc_matrix is not None:
+            service_numbers[service.code] = service.item_number
 
     bulletin = WorksiteBulletin(
         worksite_key=worksite_key,
@@ -342,6 +371,7 @@ def build_worksite_bulletin(
         bulletin=bulletin,
         calc_sheets=tuple(calc_sheets),
         item_numbers=item_numbers,
+        service_numbers=service_numbers,
         excluded_item_ids=tuple(excluded_item_ids),
         safety_notes=_CALC_SAFETY_NOTES,
     )
@@ -359,6 +389,7 @@ def build_worksite_valuation(
     address: str | None = None,
     contract_label: str | None = None,
     calc_plan: CalcPlan | None = None,
+    calc_matrix: CalcMatrix | None = None,
 ) -> Valuation:
     """Constrói o boletim/memória e devolve a medição de um período, sem aprovação.
 
@@ -374,6 +405,7 @@ def build_worksite_valuation(
         address=address,
         contract_label=contract_label,
         calc_plan=calc_plan,
+        calc_matrix=calc_matrix,
     )
     return Valuation(
         period_number=period_number,

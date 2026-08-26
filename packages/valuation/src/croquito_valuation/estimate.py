@@ -44,6 +44,7 @@ from pydantic import Field, field_validator, model_validator
 
 from croquito_valuation.assignment import CodeAssignmentSet, ensure_price_cascade
 from croquito_valuation.calc import CalcPlan, build_calc_blocks
+from croquito_valuation.calc_matrix import CalcMatrix, resolve_calc_matrix
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.models import (
     ITEM_NUMBER_PATTERN,
@@ -454,16 +455,87 @@ class Estimate(ValuationContractModel):
 
 @dataclass(frozen=True, slots=True)
 class EstimateBuildResult:
-    """Orçamento montado e a numeração que ligou cada item de takeoff à linha dele."""
+    """Orçamento montado e a numeração das linhas.
+
+    `item_numbers` (item de takeoff → linha) vale no regime legado; no da matriz a numeração
+    é por SERVIÇO e quem responde onde cada código foi impresso é `service_numbers`.
+    """
 
     estimate: Estimate
     item_numbers: dict[str, str]
+    service_numbers: dict[str, str]
 
 
 def _confirmed_quantity(item: TakeoffItem) -> Decimal:
     """Quantidade do item confirmado; `TakeoffItem.validate_review_state` garante que existe."""
     assert item.quantity is not None
     return item.quantity
+
+
+def _priced_catalog(
+    code: str,
+    cited_catalog: str | None,
+    catalogs_by_digest: dict[str, PriceCatalog],
+    cascade: Sequence[PriceCatalog],
+    *,
+    item_id: str | None,
+) -> PriceCatalog:
+    """Resolve o catálogo que precifica um código, com as recusas de fonte do orçamento-base.
+
+    `item_id` viaja nos detalhes do erro quando o código veio de UM item (regime legado); no
+    regime da matriz o serviço é fundido de vários elementos e a referência é o código.
+    """
+    if cited_catalog is None:
+        raise ValuationValidationError(
+            "ESTIMATE_ASSIGNMENT_CATALOG_REQUIRED",
+            "confirmação de código sem fonte citada não precifica no orçamento-base; "
+            "com mais de uma tabela, quem escolhe a fonte é o orçamentista",
+            {"item_id": item_id, "code": code},
+        )
+    catalog = catalogs_by_digest.get(cited_catalog)
+    if catalog is None:
+        raise ValuationValidationError(
+            "ASSIGNMENT_CATALOG_UNKNOWN",
+            "confirmação cita uma fonte de preço que não está na cascata do orçamento",
+            {
+                "item_id": item_id,
+                "cited": cited_catalog,
+                "available": [entry.source_sha256 for entry in cascade],
+            },
+        )
+    if re.fullmatch(_code_pattern_for(catalog.origin), code) is None:
+        raise ValuationValidationError(
+            "ESTIMATE_CODE_INVALID_FOR_ORIGIN",
+            "código confirmado não tem o formato da origem do catálogo citado",
+            {"item_id": item_id, "code": code, "price_origin": catalog.origin.value},
+        )
+    return catalog
+
+
+def _cited_catalog_by_code(assignments: CodeAssignmentSet) -> dict[str, str | None]:
+    """Fonte citada por código, para o regime da matriz; citações divergentes recusam.
+
+    Um serviço fundido de vários elementos precisa de UMA fonte de preço. Se dois elementos
+    confirmam o mesmo código citando catálogos diferentes, quem precifica ficaria à sorte da
+    ordem — `ESTIMATE_PACKAGE_CATALOG_CONFLICT` recusa em vez de escolher em silêncio.
+    """
+    by_code: dict[str, str | None] = {}
+    for assignment in assignments.assignments:
+        if assignment.status != "confirmed" or assignment.code is None:
+            continue
+        if assignment.code in by_code and by_code[assignment.code] != assignment.catalog_sha256:
+            raise ValuationValidationError(
+                "ESTIMATE_PACKAGE_CATALOG_CONFLICT",
+                "o mesmo código foi confirmado citando fontes de preço diferentes",
+                {
+                    "code": assignment.code,
+                    "cited": sorted(
+                        {str(by_code[assignment.code]), str(assignment.catalog_sha256)}
+                    ),
+                },
+            )
+        by_code[assignment.code] = assignment.catalog_sha256
+    return by_code
 
 
 def build_worksite_estimate(
@@ -476,6 +548,7 @@ def build_worksite_estimate(
     bdi_percent: Decimal,
     address: str | None = None,
     calc_plan: CalcPlan | None = None,
+    calc_matrix: CalcMatrix | None = None,
 ) -> EstimateBuildResult:
     """Monta o orçamento-base de uma obra a partir do takeoff confirmado e da cascata.
 
@@ -553,19 +626,20 @@ def build_worksite_estimate(
         )
 
     packages = assignments.confirmed_codes_by_item()
-    # PORTÃO TEMPORÁRIO, removido pela T6 (#78). Enquanto o builder iterar ITENS, cada item
-    # vira uma linha, e um pacote precisaria escolher um dos códigos. Escolher em silêncio é
-    # o defeito que a F-038 ataca.
-    packaged_ids = sorted(
-        item_id for item_id in confirmed_ids if len(packages.get(item_id, ())) > 1
-    )
-    if packaged_ids:
-        raise ValuationValidationError(
-            "ESTIMATE_PACKAGE_NOT_SUPPORTED",
-            "item com mais de um código confirmado ainda não vira orçamento; a matriz de "
-            "contribuições é que resolve o pacote",
-            {"item_ids": packaged_ids},
+    # Sem matriz, o builder itera itens e cada item é uma linha: um pacote de vários códigos
+    # precisaria escolher um deles em silêncio, que é o defeito que a F-038 ataca. Com matriz,
+    # é ela quem funde o pacote em serviços — então o portão só vale no regime legado.
+    if calc_matrix is None:
+        packaged_ids = sorted(
+            item_id for item_id in confirmed_ids if len(packages.get(item_id, ())) > 1
         )
+        if packaged_ids:
+            raise ValuationValidationError(
+                "ESTIMATE_PACKAGE_NOT_SUPPORTED",
+                "item com mais de um código confirmado exige a matriz de contribuições para "
+                "virar orçamento",
+                {"item_ids": packaged_ids},
+            )
 
     assignments_by_item = {
         assignment.item_id: assignment
@@ -614,83 +688,111 @@ def build_worksite_estimate(
             {"item_ids": scale_unsupported},
         )
 
-    plan_by_item = {plan.item_id: plan for plan in calc_plan.plans} if calc_plan else {}
     item_numbers: dict[str, str] = {}
+    service_numbers: dict[str, str] = {}
     lines: list[EstimateLine] = []
     calc_sheets: list[CalcSheet] = []
-    for index, item in enumerate(included_items, start=1):
-        item_number = str(index)
-        item_numbers[item.id] = item_number
-        quantity = _confirmed_quantity(item)
 
-        blocks = build_calc_blocks(plan_by_item.get(item.id), quantity=quantity, unit=item.unit)
-        total_quantity = quantity_round(sum((block.subtotal for block in blocks), Decimal(0)))
-        if total_quantity != quantity:
-            raise ValuationValidationError(
-                "ESTIMATE_PLAN_QUANTITY_MISMATCH",
-                "plano de cálculo não fecha com a quantidade confirmada pelo orçamentista",
-                {
-                    "item_id": item.id,
-                    "expected": str(quantity),
-                    "recomputed": str(total_quantity),
-                },
-            )
+    if calc_matrix is None:
+        # Regime legado: uma linha por ITEM, byte-idêntico ao orçamento de hoje (o catálogo
+        # citado é por item, então este caminho não se funde por código).
+        plan_by_item = {plan.item_id: plan for plan in calc_plan.plans} if calc_plan else {}
+        for index, item in enumerate(included_items, start=1):
+            item_number = str(index)
+            item_numbers[item.id] = item_number
+            quantity = _confirmed_quantity(item)
 
-        assignment = assignments_by_item[item.id]
-        code = assignment.code
-        assert code is not None  # assignment incluído sempre é "confirmed"
-        cited_catalog = assignment.catalog_sha256
-        if cited_catalog is None:
-            raise ValuationValidationError(
-                "ESTIMATE_ASSIGNMENT_CATALOG_REQUIRED",
-                "confirmação de código sem fonte citada não precifica no orçamento-base; "
-                "com mais de uma tabela, quem escolhe a fonte é o orçamentista",
-                {"item_id": item.id, "code": code},
-            )
-        catalog = catalogs_by_digest.get(cited_catalog)
-        if catalog is None:
-            raise ValuationValidationError(
-                "ASSIGNMENT_CATALOG_UNKNOWN",
-                "confirmação cita uma fonte de preço que não está na cascata do orçamento",
-                {
-                    "item_id": item.id,
-                    "cited": cited_catalog,
-                    "available": [entry.source_sha256 for entry in cascade],
-                },
-            )
-        if re.fullmatch(_code_pattern_for(catalog.origin), code) is None:
-            raise ValuationValidationError(
-                "ESTIMATE_CODE_INVALID_FOR_ORIGIN",
-                "código confirmado não tem o formato da origem do catálogo citado",
-                {"item_id": item.id, "code": code, "price_origin": catalog.origin.value},
-            )
+            blocks = build_calc_blocks(plan_by_item.get(item.id), quantity=quantity, unit=item.unit)
+            total_quantity = quantity_round(sum((block.subtotal for block in blocks), Decimal(0)))
+            if total_quantity != quantity:
+                raise ValuationValidationError(
+                    "ESTIMATE_PLAN_QUANTITY_MISMATCH",
+                    "plano de cálculo não fecha com a quantidade confirmada pelo orçamentista",
+                    {
+                        "item_id": item.id,
+                        "expected": str(quantity),
+                        "recomputed": str(total_quantity),
+                    },
+                )
 
-        entry = catalog.entry_for(code)
-        unit_price_with_bdi = money_trunc(entry.unit_price * (1 + bdi_percent / 100))
-        lines.append(
-            EstimateLine(
-                item_number=item_number,
-                code=code,
-                description=entry.description,
-                unit=entry.unit,
-                unit_price=entry.unit_price,
-                unit_price_with_bdi=unit_price_with_bdi,
-                quantity=quantity,
-                total=money_trunc(quantity * unit_price_with_bdi),
-                price_origin=catalog.origin,
-                catalog_sha256=catalog.source_sha256,
-                reference_month=catalog.reference_month,
-                source_label=catalog.source_label,
+            assignment = assignments_by_item[item.id]
+            code = assignment.code
+            assert code is not None  # assignment incluído sempre é "confirmed"
+            catalog = _priced_catalog(
+                code, assignment.catalog_sha256, catalogs_by_digest, cascade, item_id=item.id
             )
+            entry = catalog.entry_for(code)
+            unit_price_with_bdi = money_trunc(entry.unit_price * (1 + bdi_percent / 100))
+            lines.append(
+                EstimateLine(
+                    item_number=item_number,
+                    code=code,
+                    description=entry.description,
+                    unit=entry.unit,
+                    unit_price=entry.unit_price,
+                    unit_price_with_bdi=unit_price_with_bdi,
+                    quantity=quantity,
+                    total=money_trunc(quantity * unit_price_with_bdi),
+                    price_origin=catalog.origin,
+                    catalog_sha256=catalog.source_sha256,
+                    reference_month=catalog.reference_month,
+                    source_label=catalog.source_label,
+                )
+            )
+            calc_sheets.append(
+                CalcSheet(
+                    worksite_key=worksite_key,
+                    item_number=item_number,
+                    blocks=blocks,
+                    total_quantity=total_quantity,
+                )
+            )
+    else:
+        # Regime da matriz: uma linha por SERVIÇO. A matriz funde as parcelas dos elementos e
+        # a quantidade da linha é a soma delas; a fonte de preço é do código (uma por serviço).
+        catalog_sha_by_code = _cited_catalog_by_code(assignments)
+        resolved = resolve_calc_matrix(
+            included_items,
+            assignments,
+            calc_plan=calc_plan,
+            calc_matrix=calc_matrix,
+            error_prefix="ESTIMATE",
         )
-        calc_sheets.append(
-            CalcSheet(
-                worksite_key=worksite_key,
-                item_number=item_number,
-                blocks=blocks,
-                total_quantity=total_quantity,
+        for service in resolved.services:
+            catalog = _priced_catalog(
+                service.code,
+                catalog_sha_by_code.get(service.code),
+                catalogs_by_digest,
+                cascade,
+                item_id=None,
             )
-        )
+            entry = catalog.entry_for(service.code)
+            unit_price_with_bdi = money_trunc(entry.unit_price * (1 + bdi_percent / 100))
+            lines.append(
+                EstimateLine(
+                    item_number=service.item_number,
+                    code=service.code,
+                    description=entry.description,
+                    unit=entry.unit,
+                    unit_price=entry.unit_price,
+                    unit_price_with_bdi=unit_price_with_bdi,
+                    quantity=service.total_quantity,
+                    total=money_trunc(service.total_quantity * unit_price_with_bdi),
+                    price_origin=catalog.origin,
+                    catalog_sha256=catalog.source_sha256,
+                    reference_month=catalog.reference_month,
+                    source_label=catalog.source_label,
+                )
+            )
+            calc_sheets.append(
+                CalcSheet(
+                    worksite_key=worksite_key,
+                    item_number=service.item_number,
+                    blocks=list(service.blocks),
+                    total_quantity=service.total_quantity,
+                )
+            )
+            service_numbers[service.code] = service.item_number
 
     estimate = Estimate(
         worksite_key=worksite_key,
@@ -711,4 +813,6 @@ def build_worksite_estimate(
         total_amount=sum((line.total for line in lines), Decimal("0.00")),
         safety_notes=list(_ESTIMATE_SAFETY_NOTES),
     )
-    return EstimateBuildResult(estimate=estimate, item_numbers=item_numbers)
+    return EstimateBuildResult(
+        estimate=estimate, item_numbers=item_numbers, service_numbers=service_numbers
+    )
