@@ -62,8 +62,16 @@ from croquito_valuation.assignment import (
     CodeSuggestionSet,
     SuggestionRefinement,
 )
+from croquito_valuation.calc_matrix import (
+    CalcContribution,
+    CalcMatrix,
+    ServiceContributions,
+)
 from croquito_valuation.canonical import AuditedWorksite, AuditFinding, AuditReport
 from croquito_valuation.models import (
+    CalcOperand,
+    CalcRecipe,
+    ContributionBasis,
     PriceCatalog,
     PriceCatalogEntry,
     PriceOrigin,
@@ -2388,6 +2396,66 @@ def test_o_corpo_do_calc_recusa_a_identidade_da_obra(tmp_path: Path) -> None:
     # Uma revisão a mais que antes: o fechamento do pacote é ato próprio e grava a sua.
     assert len(_revisions(client)) == 4
     assert _round_version(client, prepared["round_id"]) == prepared["version"]
+
+
+def _single_service_matrix() -> dict[str, Any]:
+    """Matriz com UM serviço (o código confirmado da fixture) alimentado por UM elemento."""
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_CATALOG_CODE,
+                contributions=[
+                    CalcContribution(
+                        source_item_id=_ITEM_CLEAR,
+                        label="ALAMBRADO GALVANIZADO",
+                        basis=ContributionBasis.FULL,
+                        recipe=CalcRecipe.DECLARED_PRODUCT,
+                        operands=[
+                            CalcOperand(name="COMPRIMENTO", value=Decimal("10.00"), unit="m")
+                        ],
+                    )
+                ],
+            )
+        ]
+    )
+    return matrix.model_dump(mode="json")
+
+
+def test_o_calc_aceita_a_matriz_e_a_persiste_na_revisao(tmp_path: Path) -> None:
+    """A matriz posta no corpo funde por código, monta o boletim e fica gravada auditável."""
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+
+    response = _build_calc(
+        client,
+        prepared["round_id"],
+        base_version=prepared["version"],
+        calc_matrix=_single_service_matrix(),
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    lines = body["valuation"]["bulletins"][0]["lines"]
+    assert [line["code"] for line in lines] == [_CATALOG_CODE]
+    # A matriz validada é gravada na revisão nova, re-legível byte-a-byte com o que foi posto.
+    stored = _stored_document(client, prepared["round_id"], "calc_matrix_json")
+    assert stored == _single_service_matrix()
+
+
+def test_o_calc_recusa_matriz_malformada_como_dominio(tmp_path: Path) -> None:
+    """Matriz inválida volta como `422 DOMAIN_VALIDATION_FAILED`, não como erro de esquema."""
+    client = _client(tmp_path)
+    prepared = _round_with_decided_code(client)
+
+    response = _build_calc(
+        client,
+        prepared["round_id"],
+        base_version=prepared["version"],
+        calc_matrix={"services": []},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "DOMAIN_VALIDATION_FAILED"
 
 
 def test_o_calc_com_codigo_pendente_recusa_com_o_vocabulario_do_dominio(tmp_path: Path) -> None:

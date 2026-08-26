@@ -47,7 +47,13 @@ from croquito_valuation.takeoff import (
     TakeoffItemStatus,
     TakeoffPacket,
 )
-from croquito_worker.valuation.cli import ESTIMATE_FILENAME, main
+from croquito_worker.valuation.cli import (
+    CALC_MATRIX_FILENAME,
+    CALC_PLAN_FILENAME,
+    ESTIMATE_FILENAME,
+    main,
+    run_build_estimate,
+)
 
 _PLATE_ID = "praca-sintetica-oeste-prancha-01"
 _DIGEST = "a" * 64
@@ -1059,3 +1065,97 @@ def test_matrix_regime_refuses_a_code_priced_by_two_different_sources() -> None:
         )
 
     assert raised.value.code == "ESTIMATE_PACKAGE_CATALOG_CONFLICT"
+
+
+# --------------------------------------------------------------------------------------
+# CLI: `build-estimate --calc-matrix` (F-038 T8)
+# --------------------------------------------------------------------------------------
+
+
+def _estimate_matrix_fixture(tmp_path: Path) -> tuple[Path, Path, list[Path], Path]:
+    """Escreve pacote, códigos, a cascata (3 fontes) e a matriz que funde 3 elementos."""
+    items = [
+        _confirmed_item(_PAVEMENT_ITEM, label="PISO A", quantity="10.00"),
+        _confirmed_item(_LAWN_ITEM, label="PISO B", quantity="20.00"),
+        _confirmed_item(_BENCH_ITEM, label="PISO C", quantity="5.00"),
+    ]
+    assignments = _assignment_set(
+        [
+            _assignment(_PAVEMENT_ITEM, code=_SCO_CODE, catalog_sha256=_SCO_DIGEST),
+            _assignment(_LAWN_ITEM, code=_SCO_CODE, catalog_sha256=_SCO_DIGEST),
+            _assignment(_BENCH_ITEM, code=_SCO_CODE, catalog_sha256=_SCO_DIGEST),
+        ]
+    )
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SCO_CODE,
+                contributions=[
+                    _full_parcel(_PAVEMENT_ITEM, "10.00"),
+                    _full_parcel(_LAWN_ITEM, "20.00"),
+                    _full_parcel(_BENCH_ITEM, "5.00"),
+                ],
+            )
+        ]
+    )
+    packet_path = tmp_path / "takeoff-packet.json"
+    assignments_path = tmp_path / "code-assignments.json"
+    matrix_path = tmp_path / CALC_MATRIX_FILENAME
+    packet_path.write_text(_packet(items).model_dump_json(), encoding="utf-8")
+    assignments_path.write_text(assignments.model_dump_json(), encoding="utf-8")
+    matrix_path.write_text(matrix.model_dump_json(), encoding="utf-8")
+    catalog_paths: list[Path] = []
+    for index, catalog in enumerate(_cascade()):
+        path = tmp_path / f"catalog-{index}.json"
+        path.write_text(catalog.model_dump_json(), encoding="utf-8")
+        catalog_paths.append(path)
+    return packet_path, assignments_path, catalog_paths, matrix_path
+
+
+def test_run_build_estimate_with_matrix_fuses_into_one_service_line(tmp_path: Path) -> None:
+    packet_path, assignments_path, catalog_paths, matrix_path = _estimate_matrix_fixture(tmp_path)
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    result = run_build_estimate(
+        packet_path,
+        assignments_path,
+        catalog_paths,
+        output_dir,
+        worksite_key=_WORKSITE_KEY,
+        worksite_name=_WORKSITE_NAME,
+        bdi_percent=_BDI_PERCENT,
+        address=None,
+        calc_plan_path=None,
+        calc_matrix_path=matrix_path,
+    )
+
+    # Três elementos, uma linha só: 10 + 20 + 5 = 35.
+    assert [line.code for line in result.estimate.lines] == [_SCO_CODE]
+    assert result.estimate.lines[0].quantity == Decimal("35.00")
+    assert result.estimate_path.is_file()
+
+
+def test_run_build_estimate_refuses_plan_and_matrix_together(tmp_path: Path) -> None:
+    packet_path, assignments_path, catalog_paths, matrix_path = _estimate_matrix_fixture(tmp_path)
+    plan_path = tmp_path / CALC_PLAN_FILENAME
+    # A recusa é por caminho declarado, antes de ler: o conteúdo do plano é irrelevante.
+    plan_path.write_text("{}", encoding="utf-8")
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    with pytest.raises(ValuationValidationError) as raised:
+        run_build_estimate(
+            packet_path,
+            assignments_path,
+            catalog_paths,
+            output_dir,
+            worksite_key=_WORKSITE_KEY,
+            worksite_name=_WORKSITE_NAME,
+            bdi_percent=_BDI_PERCENT,
+            address=None,
+            calc_plan_path=plan_path,
+            calc_matrix_path=matrix_path,
+        )
+
+    assert raised.value.code == "CALC_PLAN_AND_MATRIX_DECLARED"

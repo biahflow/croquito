@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -45,6 +46,12 @@ from croquito_valuation.takeoff import (
     TakeoffItem,
     TakeoffItemStatus,
     TakeoffPacket,
+)
+from croquito_worker.valuation.cli import (
+    CALC_MATRIX_FILENAME,
+    CALC_PLAN_FILENAME,
+    _load_calc_plan_and_matrix,
+    run_build_calc,
 )
 
 _PLATE_ID = "praca-sintetica-norte-prancha-01"
@@ -944,3 +951,112 @@ def test_a_package_without_a_matrix_is_still_refused() -> None:
         )
 
     assert raised.value.code == "CALC_PACKAGE_NOT_SUPPORTED"
+
+
+# --------------------------------------------------------------------------------------
+# CLI: `build-calc --calc-matrix` (F-038 T8)
+# --------------------------------------------------------------------------------------
+
+
+def _piso_matrix_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+    """Escreve em disco pacote, códigos, catálogo e matriz que fundem 3 elementos num serviço."""
+    items = [
+        _confirmed_item(item_id=_ITEM_1, label="PISO EM CONCRETO", quantity=Decimal("418.12")),
+        _confirmed_item(item_id=_ITEM_2, label="PAVIMENTO INTERTRAVADO", quantity=Decimal("59.34")),
+        _confirmed_item(item_id=_ITEM_3, label="FORRACAO EM GRAMA", quantity=Decimal("1.28")),
+    ]
+    packet = _packet(items)
+    catalog = _catalog([_catalog_entry(code=_SAIBRO, unit="m2")])
+    assignments = _assignment_set(
+        packet,
+        catalog,
+        [
+            _assignment(_ITEM_1, code=_SAIBRO),
+            _assignment(_ITEM_2, code=_SAIBRO),
+            _assignment(_ITEM_3, code=_SAIBRO),
+        ],
+    )
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SAIBRO,
+                contributions=[
+                    _full_contribution(_ITEM_1, value=Decimal("418.12"), label="PISO EM CONCRETO"),
+                    _full_contribution(
+                        _ITEM_2, value=Decimal("59.34"), label="PAVIMENTO INTERTRAVADO"
+                    ),
+                    _full_contribution(_ITEM_3, value=Decimal("1.28"), label="FORRACAO EM GRAMA"),
+                ],
+            )
+        ]
+    )
+    packet_path = tmp_path / "takeoff-packet.json"
+    assignments_path = tmp_path / "code-assignments.json"
+    catalog_path = tmp_path / "catalog.json"
+    matrix_path = tmp_path / CALC_MATRIX_FILENAME
+    packet_path.write_text(packet.model_dump_json(), encoding="utf-8")
+    assignments_path.write_text(assignments.model_dump_json(), encoding="utf-8")
+    catalog_path.write_text(catalog.model_dump_json(), encoding="utf-8")
+    matrix_path.write_text(matrix.model_dump_json(), encoding="utf-8")
+    return packet_path, assignments_path, catalog_path, matrix_path
+
+
+def test_run_build_calc_with_matrix_fuses_into_one_service_line(tmp_path: Path) -> None:
+    packet_path, assignments_path, catalog_path, matrix_path = _piso_matrix_fixture(tmp_path)
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    result = run_build_calc(
+        packet_path,
+        assignments_path,
+        catalog_path,
+        output_dir,
+        worksite_key=_WORKSITE_KEY,
+        worksite_name=_WORKSITE_NAME,
+        period_number=1,
+        reference_label="MEDICAO 01/2026",
+        address=None,
+        contract_label=None,
+        calc_plan_path=None,
+        calc_matrix_path=matrix_path,
+    )
+
+    # Três elementos, uma linha só (fusão por código): 418,12 + 59,34 + 1,28 = 478,74.
+    lines = result.valuation.bulletins[0].lines
+    assert [line.code for line in lines] == [_SAIBRO]
+    assert lines[0].quantity == Decimal("478.74")
+    assert result.valuation_path.is_file()
+
+
+def test_run_build_calc_refuses_plan_and_matrix_together(tmp_path: Path) -> None:
+    packet_path, assignments_path, catalog_path, matrix_path = _piso_matrix_fixture(tmp_path)
+    plan_path = tmp_path / CALC_PLAN_FILENAME
+    # A recusa é por caminho declarado, antes de ler: o conteúdo do plano é irrelevante.
+    plan_path.write_text("{}", encoding="utf-8")
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    with pytest.raises(ValuationValidationError) as raised:
+        run_build_calc(
+            packet_path,
+            assignments_path,
+            catalog_path,
+            output_dir,
+            worksite_key=_WORKSITE_KEY,
+            worksite_name=_WORKSITE_NAME,
+            period_number=1,
+            reference_label="MEDICAO 01/2026",
+            address=None,
+            contract_label=None,
+            calc_plan_path=plan_path,
+            calc_matrix_path=matrix_path,
+        )
+
+    assert raised.value.code == "CALC_PLAN_AND_MATRIX_DECLARED"
+
+
+def test_load_calc_plan_and_matrix_refuses_both_declared(tmp_path: Path) -> None:
+    # A recusa é antes de ler qualquer arquivo: os caminhos nem precisam existir.
+    with pytest.raises(ValuationValidationError) as raised:
+        _load_calc_plan_and_matrix(tmp_path / "plan.json", tmp_path / "matrix.json")
+    assert raised.value.code == "CALC_PLAN_AND_MATRIX_DECLARED"

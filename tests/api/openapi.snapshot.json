@@ -701,6 +701,18 @@
               }
             ],
             "title": "Bdi Percent"
+          },
+          "calc_matrix": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calc Matrix"
           }
         },
         "required": [
@@ -711,12 +723,24 @@
       },
       "BuildValuationCalcRequest": {
         "additionalProperties": false,
-        "description": "Construção do boletim e da memória de cálculo: o corpo é só a guarda de concorrência.\n\nA identidade da obra NÃO entra por aqui. No servidor de medição (`POST /calc/build`),\n`worksite_key`, `worksite_name`, `period_number`, `reference_label`, `address` e\n`contract_label` viajavam no payload; em `/v1` eles são atributos da RODADA (decisão\nhumana de 2026-08-17, colunas de `ValuationRoundRecord`) e é de lá que o cálculo os lê.\nAceitá-los aqui deixaria o cliente reescrever a identidade da obra no meio da cadeia —\nquem recusa é o `extra=\"forbid\"` do `ApiModel`, não uma lista negra.\n\n`base_version` é MUDANÇA pretendida desta migração (F-003, achado 7): `/calc/build` não\ntem guarda de concorrência nenhuma e sempre reconstrói do estado corrente dos dois\nartefatos de origem. Em `/v1` a construção é ato humano da cadeia — ela avança a versão\nda rodada e pode devolver `409 REVISION_CONFLICT`.",
+        "description": "Construção do boletim e da memória de cálculo: o corpo é só a guarda de concorrência.\n\nA identidade da obra NÃO entra por aqui. No servidor de medição (`POST /calc/build`),\n`worksite_key`, `worksite_name`, `period_number`, `reference_label`, `address` e\n`contract_label` viajavam no payload; em `/v1` eles são atributos da RODADA (decisão\nhumana de 2026-08-17, colunas de `ValuationRoundRecord`) e é de lá que o cálculo os lê.\nAceitá-los aqui deixaria o cliente reescrever a identidade da obra no meio da cadeia —\nquem recusa é o `extra=\"forbid\"` do `ApiModel`, não uma lista negra.\n\n`base_version` é MUDANÇA pretendida desta migração (F-003, achado 7): `/calc/build` não\ntem guarda de concorrência nenhuma e sempre reconstrói do estado corrente dos dois\nartefatos de origem. Em `/v1` a construção é ato humano da cadeia — ela avança a versão\nda rodada e pode devolver `409 REVISION_CONFLICT`.\n\n`calc_matrix` é a matriz elemento x serviço (ADR-0053, F-038 T8), opcional: quando vem, o\nboletim funde por código e resolve dependência; sem ela, o regime legado (código único\npor item) segue byte-idêntico. Ela chega como objeto cru e é validada como `CalcMatrix` no\ncorpo da rota — invariante do domínio (ciclo, código duplicado) volta como\n`422 DOMAIN_VALIDATION_FAILED`, não como erro de esquema. É persistida na revisão nova\n(`calc_matrix_json`) para auditoria antes de alimentar o builder.",
         "properties": {
           "base_version": {
             "minimum": 1.0,
             "title": "Base Version",
             "type": "integer"
+          },
+          "calc_matrix": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calc Matrix"
           }
         },
         "required": [
@@ -14841,7 +14865,7 @@
     },
     "/v1/valuation-rounds/{round_id}/calc": {
       "post": {
-        "description": "Constrói boletim e memória de cálculo do takeoff confirmado e dos códigos decididos.\n\nA identidade da obra vem da RODADA (`worksite_key`, `worksite_name`,\n`period_number`, `reference_label`, `address`, `contract_label`), nunca do corpo:\nem `/v1` esses rótulos são colunas de `ValuationRoundRecord` e o corpo carrega só a\nguarda de concorrência.\n\n`calc_plan=None` de propósito: o plano de cálculo é artefato de DIRETÓRIO do\nservidor de medição e a rodada de `/v1` não o publica. Sem ele, cada item recebe o\nbloco de quantidade direta que o próprio domínio gera — nunca uma receita suposta.\n\nEsta rota **não aprova nada**: aprovação nominal da medição é ato próprio, com\nportão de saldo e contrato, e não pertence à construção do boletim.\n\nO que ela faz, quando a cabeça já trazia uma aprovação, é LEVÁ-LA ADIANTE — e\npreservar não é aprovar. A aprovação carregada continua amarrada ao digest do\nconteúdo ANTIGO, então a medição recém-montada nasce com a aprovação caduca: a\nexportação recusa com `APPROVAL_CONTENT_MISMATCH` até um ato novo, e a tela mostra os\ndois digests lado a lado em vez de fingir que ninguém nunca assinou. Descartá-la aqui\napagaria em silêncio o fato de que uma aprovação existiu. Quem responde \"houve\naprovação antes?\" é a rota, que tem a revisão em mãos, e não o domínio:\n`build_worksite_valuation` continua montando medição sem aprovação nenhuma. Ver\n`carry_approval_forward`.\n\nDuas recusas se parecem e não são a mesma coisa. Conjunto de códigos ainda\ninexistente é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem, o orçamentista tem\no que fazer para sair dela. Conjunto existente com item confirmado sem decisão é\n`422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`: invariante do\ndomínio, e quem a levanta é `packages/valuation`. Catálogo com origem diferente do\nSCO fecha a medição licitada em `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (ADR-0027) —\nitem fora do contrato vira dossiê de aditivo, nunca preço de outra tabela.\n\nA guarda de `base_version` é mudança pretendida desta migração; ver\n`BuildValuationCalcRequest`.",
+        "description": "Constrói boletim e memória de cálculo do takeoff confirmado e dos códigos decididos.\n\nA identidade da obra vem da RODADA (`worksite_key`, `worksite_name`,\n`period_number`, `reference_label`, `address`, `contract_label`), nunca do corpo:\nem `/v1` esses rótulos são colunas de `ValuationRoundRecord` e o corpo carrega só a\nguarda de concorrência.\n\n`calc_plan=None` de propósito: o plano de cálculo POR ITEM é artefato de DIRETÓRIO do\nservidor de medição e a rodada de `/v1` não o publica. A memória de cálculo que a\nrodada aceita é a `CalcMatrix` (ADR-0053, F-038 T8), que vem no CORPO do build: quando\npresente, o boletim funde por código e resolve dependência; ausente, cada item recebe\no bloco de quantidade direta que o próprio domínio gera — nunca uma receita suposta. A\nmatriz posta é validada aqui e persistida em `calc_matrix_json` da revisão nova, para\nauditoria, antes de alimentar o builder.\n\nEsta rota **não aprova nada**: aprovação nominal da medição é ato próprio, com\nportão de saldo e contrato, e não pertence à construção do boletim.\n\nO que ela faz, quando a cabeça já trazia uma aprovação, é LEVÁ-LA ADIANTE — e\npreservar não é aprovar. A aprovação carregada continua amarrada ao digest do\nconteúdo ANTIGO, então a medição recém-montada nasce com a aprovação caduca: a\nexportação recusa com `APPROVAL_CONTENT_MISMATCH` até um ato novo, e a tela mostra os\ndois digests lado a lado em vez de fingir que ninguém nunca assinou. Descartá-la aqui\napagaria em silêncio o fato de que uma aprovação existiu. Quem responde \"houve\naprovação antes?\" é a rota, que tem a revisão em mãos, e não o domínio:\n`build_worksite_valuation` continua montando medição sem aprovação nenhuma. Ver\n`carry_approval_forward`.\n\nDuas recusas se parecem e não são a mesma coisa. Conjunto de códigos ainda\ninexistente é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem, o orçamentista tem\no que fazer para sair dela. Conjunto existente com item confirmado sem decisão é\n`422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`: invariante do\ndomínio, e quem a levanta é `packages/valuation`. Catálogo com origem diferente do\nSCO fecha a medição licitada em `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (ADR-0027) —\nitem fora do contrato vira dossiê de aditivo, nunca preço de outra tabela.\n\nA guarda de `base_version` é mudança pretendida desta migração; ver\n`BuildValuationCalcRequest`.",
         "operationId": "build_valuation_calc_v1_valuation_rounds__round_id__calc_post",
         "parameters": [
           {

@@ -772,6 +772,10 @@ class ValuationRoundRevisionRecord(Base):
     code_suggestions_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     code_assignments_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     valuation_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    calc_matrix_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    """A `CalcMatrix` posta no build (ADR-0053, F-038 T8): a matriz elemento x serviço que
+    gerou a memória desta revisão, guardada auditável e re-legível. `NULL` é o regime legado
+    — código único por item, sem matriz —, que continua byte-idêntico."""
     amendment_dossier_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     extraction_lineage_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     artifact_refs_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
@@ -899,6 +903,10 @@ class EstimateRoundRevisionRecord(Base):
     code_assignments_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     estimate_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     """O `Estimate` montado: linhas com proveniência, BDI declarado e memória de cálculo."""
+    calc_matrix_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    """A `CalcMatrix` posta no build (ADR-0053, F-038 T8): a matriz elemento x serviço que
+    gerou a memória desta revisão, guardada auditável e re-legível. `NULL` é o regime legado
+    — código único por item, sem matriz —, que continua byte-idêntico."""
     estimate_built_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     """Subject de quem MONTOU o orçamento da cabeça, carregado adiante pelos atos seguintes.
 

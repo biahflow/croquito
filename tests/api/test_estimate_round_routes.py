@@ -53,8 +53,20 @@ from croquito_api.database import (
 from croquito_api.main import create_app
 from croquito_api.valuation_rounds import document_digest
 from croquito_core.ids import new_uuid7
+from croquito_valuation.calc_matrix import (
+    CalcContribution,
+    CalcMatrix,
+    ServiceContributions,
+)
 from croquito_valuation.estimate_workbook import EstimateAuditFinding, EstimateAuditReport
-from croquito_valuation.models import PriceCatalog, PriceCatalogEntry, PriceOrigin
+from croquito_valuation.models import (
+    CalcOperand,
+    CalcRecipe,
+    ContributionBasis,
+    PriceCatalog,
+    PriceCatalogEntry,
+    PriceOrigin,
+)
 from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
@@ -1885,6 +1897,161 @@ def _estimate_documents(client: TestClient) -> list[dict[str, Any]]:
         for revision in _revisions(client)
         if isinstance(document := revision.estimate_json, dict)
     ]
+
+
+def _round_ready_single_service(client: TestClient) -> dict[str, Any]:
+    """Rodada com UM item confirmado no SCO e o pacote fechado — pronta para a matriz."""
+    state = _round_with_cascade_and_takeoff(client)
+    digests = [entry["source_sha256"] for entry in state["cascade"]]
+    decided = _confirm_code(
+        client,
+        state["round_id"],
+        item_id=_ITEM_FIRST,
+        code=_SCO_CODE,
+        catalog_sha256=digests[0],
+        base_version=state["version"],
+        key="decisao-sco-matriz",
+    )
+    assert decided.status_code == 200, decided.text
+    closed = _close_package(
+        client,
+        state["round_id"],
+        item_id=_ITEM_FIRST,
+        base_version=decided.json()["version"],
+        key="fechamento-matriz",
+    )
+    assert closed.status_code == 200, closed.text
+    return {"round_id": state["round_id"], "version": closed.json()["version"]}
+
+
+def _single_service_matrix() -> dict[str, Any]:
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SCO_CODE,
+                contributions=[
+                    CalcContribution(
+                        source_item_id=_ITEM_FIRST,
+                        label="ALAMBRADO GALVANIZADO",
+                        basis=ContributionBasis.FULL,
+                        recipe=CalcRecipe.DECLARED_PRODUCT,
+                        operands=[
+                            CalcOperand(name="COMPRIMENTO", value=Decimal("10.00"), unit="m")
+                        ],
+                    )
+                ],
+            )
+        ]
+    )
+    return matrix.model_dump(mode="json")
+
+
+def _head_calc_matrix_json(client: TestClient, round_id: str) -> Any:
+    with _database(client).sessions() as session:
+        revision = session.scalar(
+            select(EstimateRoundRevisionRecord)
+            .where(EstimateRoundRevisionRecord.round_id == round_id)
+            .order_by(EstimateRoundRevisionRecord.version.desc())
+        )
+        assert revision is not None
+        return revision.calc_matrix_json
+
+
+def test_o_estimate_aceita_a_matriz_e_a_persiste_na_revisao(tmp_path: Path) -> None:
+    """A matriz posta no corpo monta o orçamento e fica gravada auditável na revisão."""
+    client = _client(tmp_path)
+    state = _round_ready_single_service(client)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="montagem-matriz"),
+        json={
+            "base_version": state["version"],
+            "bdi_percent": "25.00",
+            "calc_matrix": _single_service_matrix(),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [line["code"] for line in body["estimate"]["lines"]] == [_SCO_CODE]
+    assert _head_calc_matrix_json(client, state["round_id"]) == _single_service_matrix()
+
+
+def test_o_estimate_com_matriz_de_dois_servicos_gera_duas_linhas(tmp_path: Path) -> None:
+    """Aceite (F-038): dois códigos confirmados viram duas linhas de boletim, sobre HTTP.
+
+    Cada serviço é precificado pela fonte que a decisão citou — SCO num, EMOP no outro —, e a
+    matriz é o que costura os dois elementos nas duas linhas.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code=_SCO_CODE,
+                contributions=[
+                    CalcContribution(
+                        source_item_id=_ITEM_FIRST,
+                        label="ALAMBRADO SCO",
+                        basis=ContributionBasis.FULL,
+                        recipe=CalcRecipe.DECLARED_PRODUCT,
+                        operands=[
+                            CalcOperand(name="COMPRIMENTO", value=Decimal("10.00"), unit="m")
+                        ],
+                    )
+                ],
+            ),
+            ServiceContributions(
+                code=_EMOP_CODE,
+                contributions=[
+                    CalcContribution(
+                        source_item_id=_ITEM_SECOND,
+                        label="ALAMBRADO EMOP",
+                        basis=ContributionBasis.FULL,
+                        recipe=CalcRecipe.DECLARED_PRODUCT,
+                        operands=[
+                            CalcOperand(name="COMPRIMENTO", value=Decimal("10.00"), unit="m")
+                        ],
+                    )
+                ],
+            ),
+        ]
+    )
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="montagem-matriz-multi"),
+        json={
+            "base_version": state["version"],
+            "bdi_percent": "25.00",
+            "calc_matrix": matrix.model_dump(mode="json"),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    codes = [line["code"] for line in response.json()["estimate"]["lines"]]
+    assert sorted(codes) == sorted([_SCO_CODE, _EMOP_CODE])
+    assert _head_calc_matrix_json(client, state["round_id"]) == matrix.model_dump(mode="json")
+
+
+def test_o_estimate_recusa_matriz_malformada_como_dominio(tmp_path: Path) -> None:
+    """Matriz inválida volta como `422 DOMAIN_VALIDATION_FAILED`, não como erro de esquema."""
+    client = _client(tmp_path)
+    state = _round_ready_single_service(client)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate",
+        headers=_headers(key="montagem-matriz-ruim"),
+        json={
+            "base_version": state["version"],
+            "bdi_percent": "25.00",
+            "calc_matrix": {"services": []},
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "DOMAIN_VALIDATION_FAILED"
 
 
 def _round_ready_for_estimate(
