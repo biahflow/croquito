@@ -346,6 +346,24 @@ const ERROR_MESSAGES: LookupTable = {
     "A parcela nasce de um elemento da prancha e precisa dizer de qual.",
   CALC_CONTRIBUTION_CODE_INVALID:
     "O código de origem da parcela não tem a forma de um código de catálogo.",
+  // Coerência da parcela e da matriz (ADR-0053, F-038): rótulos nas duas jornadas, mesma
+  // regra da casa. A dependência resolvida no build da medição usa `error_prefix="CALC"`.
+  CALC_CONTRIBUTION_STANDALONE_WITH_ITEM:
+    "Parcela de canteiro não nasce de elemento da prancha; ela não aponta para nenhum item.",
+  CALC_CONTRIBUTION_DEPENDENT_WITHOUT_CODE:
+    "Parcela derivada de outro serviço precisa dizer de qual código ela vem.",
+  CALC_CONTRIBUTION_CODE_WITHOUT_DEPENDENCY:
+    "Só parcela derivada de outro serviço cita um código de origem; esta base não é derivada.",
+  CALC_MATRIX_DUPLICATE_CODE:
+    "Há mais de um conjunto de contribuições para o mesmo serviço; cada código entra uma vez.",
+  CALC_MATRIX_SELF_DEPENDENCY:
+    "Um serviço não pode derivar de si mesmo; a memória não teria ordem de cálculo.",
+  CALC_MATRIX_DEPENDENCY_CYCLE:
+    "Há dependência cíclica entre serviços; a memória não tem ordem de cálculo. Desfaça o ciclo.",
+  CALC_MATRIX_DEPENDENCY_UNKNOWN:
+    "Uma parcela derivada aponta para um serviço que não está no boletim; inclua-o ou corrija a origem.",
+  CALC_MATRIX_DEPENDENCY_UNPRICED:
+    "Uma parcela derivada aponta para um serviço sem código confirmado; confirme o código de origem antes.",
   CALC_PLAN_QUANTITY_MISMATCH:
     "A decomposição do plano de cálculo não fecha com a quantidade confirmada.",
   CALC_NO_ITEMS: "Não há item medido para montar o boletim desta obra.",

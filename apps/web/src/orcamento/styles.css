@@ -350,6 +350,27 @@ p {
   margin-bottom: 10px;
 }
 
+/* Memória de cálculo (F-038 T9). Cópia verbatim das regras `.memoria` de
+   `apps/web/src/medicao/styles.css` — sem o wrapper —, no molde documentado no topo deste
+   arquivo. `.memoria-base` e `.memoria-derivada` são tinta secundária: o SIGNIFICADO está
+   na palavra ("parcela parcial declarada", "derivada de…"), nunca na cor. */
+.memoria-de-calculo {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.memoria,
+.memoria ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.memoria-base,
+.memoria-derivada {
+  color: var(--ink-secondary);
+}
+
 .mono {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 0.85em;

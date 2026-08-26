@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { User } from "oidc-client-ts";
+import type { Estimate } from "@croquito/contracts";
 
 import {
   AtoDeAprovacao,
@@ -8,6 +9,7 @@ import {
   BlocoConsumoDoTeto,
   FaixaTetoEstourado,
   LinhaTetoDaRodada,
+  MemoriaDeCalculo,
   OrcamentoApp,
   PainelEscolhaDeFonte,
   PainelRegimeDaRodada,
@@ -28,6 +30,7 @@ import {
 } from "./OrcamentoApp";
 import {
   AVISO_ACERVO_FILTRADO,
+  AVISO_MEMORIA,
   AVISO_ORCAMENTO,
   AVISO_ORCAMENTO_SEM_RODADA,
   DICA_REGIME,
@@ -1180,5 +1183,123 @@ describe("PainelSemPapelDeAprovador", () => {
     expect(html).toContain('role="alert"');
     // Não é a tela de sem acesso à jornada: ela continua sendo lida.
     expect(html).not.toContain("Sem acesso ao orçamento");
+  });
+});
+
+/**
+ * Memória de cálculo na jornada do orçamento (F-038 T9, Design Approval Package, decisão
+ * 3). Ela é o artefato que explica DE ONDE veio cada quantidade, e antes só existia na
+ * medição — `calc_sheets` já chegava ao cliente e faltava mostrá-la. A fixture é a praça do
+ * ADR-0053: o piso (`DERIVED`, geometria) e a parcela de limpeza (`PARTIAL`, declarada
+ * dentro do piso), mais um serviço `DEPENDENT` que tira a quantidade de outro código.
+ */
+const MEMORIA_FIXTURE: readonly Estimate.CalcSheet[] = [
+  {
+    worksite_key: "praca-do-exemplo",
+    item_number: "1",
+    total_quantity: "418.12",
+    blocks: [
+      {
+        label: "Piso em concreto",
+        basis: "derived",
+        recipe: "length_times_width",
+        operands: [
+          { name: "COMPRIMENTO", value: "20.906", unit: "m" },
+          { name: "LARGURA", value: "20.00", unit: "m" },
+        ],
+        subtotal: "418.12",
+      },
+    ],
+  },
+  {
+    worksite_key: "praca-do-exemplo",
+    item_number: "2",
+    total_quantity: "170.00",
+    blocks: [
+      {
+        label: "Limpeza sobre o piso",
+        basis: "partial",
+        recipe: "declared_product",
+        operands: [{ name: "AREA DECLARADA", value: "170.00", unit: "m2" }],
+        subtotal: "170.00",
+      },
+    ],
+  },
+  {
+    worksite_key: "praca-do-exemplo",
+    item_number: "3",
+    total_quantity: "8.36",
+    blocks: [
+      {
+        label: "Transporte do material",
+        basis: "dependent",
+        derived_from_code: "BP04050350(/)",
+        recipe: "declared_product",
+        operands: [
+          { name: "QUANTIDADE BP04050350(/)", value: "478.74" },
+          { name: "MASSA", value: "0.02" },
+        ],
+        subtotal: "8.36",
+      },
+    ],
+  },
+];
+
+describe("MemoriaDeCalculo", () => {
+  it("mostra as parcelas, a receita e o subtotal recomputado pelo servidor", () => {
+    const html = renderToStaticMarkup(
+      <MemoriaDeCalculo calcSheets={MEMORIA_FIXTURE} />,
+    );
+
+    expect(html).toContain("Memória de cálculo");
+    expect(html).toContain(AVISO_MEMORIA);
+    // Cada serviço é um item numerado, com o total que o servidor recomputou.
+    expect(html).toContain("Item 1");
+    expect(html).toContain("Piso em concreto");
+    expect(html).toContain("comprimento × largura");
+    expect(html).toContain("418,12");
+    // A tela não soma nem multiplica: o texto diz isso por extenso.
+    expect(html).toContain("a tela não multiplica nem soma");
+  });
+
+  it("nomeia a base da parcela e a proveniência derivada por EXTENSO, não só por cor", () => {
+    const html = renderToStaticMarkup(
+      <MemoriaDeCalculo calcSheets={MEMORIA_FIXTURE} />,
+    );
+
+    // Decisão 5: parcela parcial e serviço derivado de outro são palavra, não veste.
+    expect(html).toContain("parcela parcial declarada");
+    expect(html).toContain("derivada da geometria");
+    expect(html).toContain("derivada da quantidade de BP04050350(/)");
+  });
+
+  it("não inventa memória quando o orçamento ainda não foi montado", () => {
+    const html = renderToStaticMarkup(<MemoriaDeCalculo calcSheets={[]} />);
+
+    expect(html).toBe("");
+  });
+
+  it("omite a base quando o artefato é anterior à matriz (basis não declarada)", () => {
+    const legado: readonly Estimate.CalcSheet[] = [
+      {
+        worksite_key: "praca-do-exemplo",
+        item_number: "1",
+        total_quantity: "10.00",
+        blocks: [
+          {
+            label: "Serviço legado",
+            recipe: "direct_quantity",
+            operands: [{ name: "QUANTIDADE", value: "10.00" }],
+            subtotal: "10.00",
+          },
+        ],
+      },
+    ];
+    const html = renderToStaticMarkup(<MemoriaDeCalculo calcSheets={legado} />);
+
+    expect(html).toContain("Serviço legado");
+    // Ausência não afirma "espelho": nenhuma base é fabricada para o bloco legado.
+    expect(html).not.toContain("espelho do elemento");
+    expect(html).not.toContain("memoria-base");
   });
 });
