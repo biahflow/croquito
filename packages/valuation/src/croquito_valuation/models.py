@@ -11,11 +11,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated, Final, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal
 from uuid import UUID
 
 from pydantic import (
@@ -385,6 +385,65 @@ class ReviewerDecision(ValuationContractModel):
         return value
 
 
+# --------------------------------------------------------------------------------------
+# Digest de conteúdo governado pela versão que o artefato declara
+# --------------------------------------------------------------------------------------
+
+DigestPruning = Mapping[str, Sequence[tuple[tuple[str, ...], frozenset[str]]]]
+"""Campos a podar do payload de digest, por versão de schema.
+
+A chave é a `schema_version` **declarada pelo artefato**. O valor é uma sequência de
+podas, cada uma com o caminho até os dicionários afetados (atravessando listas) e as
+chaves que aquela versão não conhecia. São várias porque uma versão nova costuma tocar
+mais de um nível — um campo no bloco de cálculo e outro no operando dele, por exemplo.
+"""
+
+
+def _prune_versioned_fields(node: object, path: tuple[str, ...], keys: frozenset[str]) -> None:
+    """Remove `keys` dos dicionários alcançados por `path`, atravessando listas."""
+    if isinstance(node, list):
+        for element in node:
+            _prune_versioned_fields(element, path, keys)
+        return
+    if not isinstance(node, dict):
+        return
+    if not path:
+        for key in keys:
+            node.pop(key, None)
+        return
+    head = path[0]
+    if head in node:
+        _prune_versioned_fields(node[head], path[1:], keys)
+
+
+def versioned_content_digest(
+    payload: dict[str, Any], schema_version: str, pruning: DigestPruning
+) -> str:
+    """SHA-256 do payload canônico, podando o que a versão declarada não conhecia.
+
+    Existe porque o digest é o que amarra a aprovação nominal ao conteúdo aprovado: um
+    campo novo em qualquer modelo aninhado entraria no payload como `null` e mudaria o
+    digest de artefatos **já assinados**, que passariam a falhar em
+    `APPROVAL_CONTENT_MISMATCH`. Sob o ADR-0048 o orçamento assinado é o consolidado
+    contratual da medição, então isso invalidaria um contrato.
+
+    A poda é declarada por versão, nunca inferida: `exclude_none=True` resolveria o caso
+    do campo novo e, de quebra, derrubaria `CalcOperand.unit=None` — mudando o digest de
+    tudo que se queria preservar.
+
+    Consome `payload`: a poda é feita no lugar, sobre o dicionário recém-criado por
+    `model_dump()`.
+    """
+    for path, keys in pruning.get(schema_version, ()):
+        _prune_versioned_fields(payload, path, keys)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+VALUATION_DIGEST_PRUNING: Final[DigestPruning] = {}
+"""Vazio enquanto `Valuation` tem uma versão só; a entrada nasce com o primeiro campo novo."""
+
+
 class ValuationApproval(ValuationContractModel):
     """Aprovação nominal amarrada por digest ao conteúdo exato aprovado.
 
@@ -491,13 +550,11 @@ class Valuation(ValuationContractModel):
 
     def content_digest(self) -> str:
         """SHA-256 do conteúdo canônico da medição, sem a aprovação que o referencia."""
-        payload = json.dumps(
+        return versioned_content_digest(
             self.model_dump(mode="json", exclude={"approval"}),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
+            self.schema_version,
+            VALUATION_DIGEST_PRUNING,
         )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def export_errors(self, contract: ContractWorkbook) -> list[str]:
         """Violações que impedem publicar a medição, no formato `CODE` ou `CODE:detalhe`."""
