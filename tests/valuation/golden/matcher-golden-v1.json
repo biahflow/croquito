@@ -1,6 +1,6 @@
 {
   "schema_version": "matcher-golden-v1",
-  "description": "Golden set do matcher de codigo SCO (M7). Cada caso e {label, unit, expected, gates}. `expected` e {\"code\": \"...\"} quando existe UM codigo correto, {\"codes\": [...], \"family\", \"human_choice\"} quando a resposta certa e uma FAMILIA (ver `note_family_oracle`), ou {\"aditivo\": true} quando o item legitimamente nao tem cotacao publicada. Existem DOIS gates porque existem dois matchers medidos: `lexical_gate` e o matcher lexical puro (radical + sinonimo + Dice, medido por `suggest_codes`), que segue sendo o fallback permanente; `hybrid_gate` e o matcher do produto desde a Fase 2 (fusao RRF entre cobertura lexica ponderada por IDF e vizinhanca semantica, medido por `hybrid_candidates`). Gate `true` FALHA o teste se nenhum codigo aceitavel aparecer no top-20 daquele matcher; `false` marca gap conhecido, com o rank medido ao lado para que piora apareca e melhora nunca reprove. `gate` sozinho vale para os dois e e o que os casos sinteticos e os de aditivo usam.",
+  "description": "Golden set do matcher de codigo SCO (M7). Cada caso e {label, unit, expected, gates}. `expected` e {\"code\": \"...\"} quando existe UM codigo correto, {\"codes\": [...], \"family\", \"human_choice\"} quando a resposta certa e uma FAMILIA (ver `note_family_oracle`), {\"aditivo\": true} quando o item legitimamente nao tem cotacao publicada, ou {\"package\": [{code, role, required, basis, quantity}, ...]} quando UM elemento da prancha dispara VARIOS servicos do catalogo (cardinalidade N:N, ADR-0053; ver `note_package_cardinality`). Existem DOIS gates porque existem dois matchers medidos: `lexical_gate` e o matcher lexical puro (radical + sinonimo + Dice, medido por `suggest_codes`), que segue sendo o fallback permanente; `hybrid_gate` e o matcher do produto desde a Fase 2 (fusao RRF entre cobertura lexica ponderada por IDF e vizinhanca semantica, medido por `hybrid_candidates`). Gate `true` FALHA o teste se nenhum codigo aceitavel aparecer no top-20 daquele matcher; `false` marca gap conhecido, com o rank medido ao lado para que piora apareca e melhora nunca reprove. `gate` sozinho vale para os dois e e o que os casos sinteticos e os de aditivo usam.",
   "note_ci_vs_local": "Casos com \"catalog\": \"synthetic\" rodam no CI: o catalogo e o mini-MAPAO sintetico que `croquito_worker.valuation.synthetic.build_synthetic_previous_mapao` gera em memoria durante o teste (mesmo gabarito de `DEMO_EXPECTED_CODE_BY_LABEL`). Casos com \"catalog\": \"real\" rodam contra o catalogo real do SCO publicado por `output/valuation-toca/import/catalog.json`, que NAO e versionado (dado do cliente/prefeitura) -- o teste correspondente usa `pytest.mark.skipif` quando esse arquivo nao existe na maquina local, e por isso essa metade nunca roda no CI.",
   "note_known_gaps": "Achado da Fase 1 (2026-08-13), medido contra o catalogo real (4964 itens): o Dice sobre radicais favorece descricoes CURTAS sobre descricoes LONGAS quando ambas compartilham uma palavra comum, porque o denominador de |A|+|B| penaliza o lado verboso. `IP49150409(/)` (a resposta certa de REFLETOR EXISTENTE) tem uma descricao tecnica de um paragrafo inteiro, e dezenas de outros codigos da mesma familia projetor/refletor com descricao curta ('Substituicao de lampada e lavagem do refletor.') pontuam mais alto no Dice puro, mesmo sendo respostas menos precisas. O sinonimo refletor<->projetor FUNCIONA -- ele tira o score de ~0 (sem interseccao nenhuma) para um score real, e o top da lista passa a ser todo composto de codigos genuinamente da familia projetor/refletor -- mas nao e o suficiente para colocar ESTE codigo especifico dentro dos 20 primeiros. E exatamente a classe de problema que a Fase 2 (retrieval semantico por embeddings + fusao de ranking) foi desenhada para resolver, e o `known_gap_rank` de cada caso serve de baseline para medir esse ganho quando ela entrar.",
   "cases": [
@@ -264,6 +264,103 @@
       "hybrid_rank_2026_08_13": 9
     },
     {
+      "catalog": "real",
+      "label": "PISO EM CONCRETO",
+      "unit": "m2",
+      "expected": {
+        "package": [
+          {
+            "code": "MT14150050(A)",
+            "role": "preparo de solo",
+            "required": true,
+            "basis": "FULL",
+            "quantity": "418.12",
+            "unit": "m2"
+          },
+          {
+            "code": "BP04050350(/)",
+            "role": "base",
+            "required": true,
+            "basis": "FULL",
+            "quantity": "418.12",
+            "unit": "m2",
+            "basis_note": "base de saibro sobre a area cheia do elemento; a mesma linha soma parcelas de outros elementos ate 478,74 m2 (ver note_gramado_forracao_parcelas)"
+          },
+          {
+            "code": "ET39050109(/)",
+            "role": "armadura",
+            "required": true,
+            "basis": "FULL",
+            "quantity": "418.12",
+            "unit": "m2"
+          },
+          {
+            "code": "BP09100050(B)",
+            "role": "pavimento",
+            "required": true,
+            "basis": "DEPENDENT",
+            "quantity": "418.12",
+            "unit": "m2",
+            "derived_from_code": "BP04050350(/)",
+            "basis_note": "celula real =F107: referencia a area digitada no bloco do saibro; vem de outro servico e fecha em 418,12 m2"
+          },
+          {
+            "code": "SC34150200(/)",
+            "role": "limpeza",
+            "required": false,
+            "basis": "PARTIAL",
+            "quantity": "170",
+            "unit": "m2",
+            "basis_note": "170 m2 dos 418,12 declarados; nao deriveis por aritmetica nenhuma; teto <= quantidade do item, nunca recomputado (ADR-0053 decisao 3)"
+          },
+          {
+            "code": "SC29100100(A)",
+            "role": "polimento",
+            "required": false,
+            "basis": "PARTIAL",
+            "quantity": "170",
+            "unit": "m2",
+            "basis_note": "mesma parcela de 170 m2 da limpeza; PARTIAL declarada, com nota obrigatoria e teto"
+          }
+        ]
+      },
+      "lexical_gate": false,
+      "hybrid_gate": false,
+      "package_recall_2026_08_26": 0.0,
+      "package_note": "PISO EM CONCRETO, 418,12 m2 medidos uma unica vez, alimenta SEIS servicos no arquivo real do Campo do Toca (ADR-0053). Os quatro primeiros cobrem a area cheia (FULL); os dois ultimos (limpeza, polimento) sao PARTIAL sobre 170 m2 dos 418,12. O caso de codigo unico PISO EM CONCRETO -> RV14250100(C) acima segue byte-identico e nao e tocado: era a leitura 1:1 do M7 (\"qual codigo E este elemento\"); o pacote e a leitura N:N que o arquivo prova."
+    },
+    {
+      "catalog": "real",
+      "label": "ALAMBRADO DO CAMPO",
+      "unit": "m2",
+      "expected": {
+        "package": [
+          {
+            "code": "PJ14150203(A)",
+            "role": "estrutura tubular",
+            "required": true,
+            "basis": "FULL",
+            "quantity": "783.86",
+            "unit": "m2",
+            "basis_note": "postes e armacao que dao fixacao; area de fachada 783,86 m2 = perimetro 195,965 x altura 4"
+          },
+          {
+            "code": "PJ14100500(/)",
+            "role": "tela",
+            "required": true,
+            "basis": "FULL",
+            "quantity": "783.86",
+            "unit": "m2",
+            "basis_note": "a tela que a estrutura prende; MESMA area de fachada da estrutura, sem que dois FULL sobre a mesma medida sejam erro"
+          }
+        ]
+      },
+      "lexical_gate": false,
+      "hybrid_gate": false,
+      "package_recall_2026_08_26": 0.0,
+      "package_note": "Caso canonico confirmado pela orcamentista (2026-08-25) e o mais caro do arquivo: R$ 399.651,01, 62% do orcamento da obra. Duas partes fisicas do mesmo elemento em FAMILIAS diferentes do catalogo (PJ1415 estrutura de alambrado, PJ1410 tela), ambas com basis=FULL sobre a mesma area. E o caso-limite do desenho: (a) dois codigos FULL sobre a mesma medida sem que isso seja erro; (b) o matcher precisa trazer AMBOS, e um top-N otimizado para 'qual codigo E alambrado' tende a trazer so um."
+    },
+    {
       "catalog": "synthetic",
       "label": "PISO INTERTRAVADO SINTETICO",
       "unit": "m2",
@@ -322,5 +419,7 @@
   "note_phase_final": "Rodada final (2026-08-13), catalogo real (4.964 itens), text-embedding-3-small, cobertura ponderada por IDF, profundidade de braco 50, RRF_K 60: recall@20 do hibrido = 12/12, top-1 3/12, top-3 5/12. Ranks fundidos, na ordem dos casos: 0, 14, 11, 14, 1, 2, 0, 10, 0, 3, 5, 9. Contra a Fase 1 (lexico puro), os oito gaps fecharam: PISO INTERTRAVADO 346->14, PISO EM SAIBRO 33->14, ALAMBRADO DO CAMPO 853->1 (familia), ALAMBRADO PARQUE 796->2 (familia), MESA COM 04 BANCOS 37->0, REFLETOR EXISTENTE 163->0 (familia), BALANCO DUPLO 168->5, FORRACAO EM GRAMA 26->9; e os quatro que ja passavam seguem dentro: PISO EM CONCRETO 0, GRAMADO 11, GOLA QUADRADA 10, GANGORRA DUPLA 3. Tres medicoes descartadas no caminho, registradas para nao serem refeitas: indice sem o codigo SCO no texto embeddado (8/12, pior — ver INDEX_TEXT_RECIPE_MEASUREMENT), varredura de 108 combinacoes de parametro global da fusao antes do IDF (teto de 9/12) e profundidade de braco diferente de 50 (ver HYBRID_ARM_DEPTH).",
   "note_opportunity_legend_noise": "IMPLEMENTADA na rodada 2.2 (2026-08-13) COM GANHO MEDIDO — lista de ruido de legenda. O rotulo de prancha carrega palavras que descrevem o ESTADO do elemento, nao o servico: \"existente\", \"a ser recuperar\", \"h=1.00m\". Elas entram na consulta como qualquer outra palavra e, com a ponderacao por IDF, uma palavra-ruido RARA no catalogo ganha peso alto: no REFLETOR EXISTENTE, \"existente\" pesa 0,532 contra 0,468 de \"refletor\". `LegendNoiseList` (packages/valuation/.../data/sco-legend-noise-v1.json, termos \"existente\"/\"a ser recuperar\") e o parametro `noise` de `weighted_query_coverage_score`/`hybrid_candidates` AMORTECEM (nunca removem) o peso do radical de ruido. A PRIMEIRA calibracao (so rank do alvo) nao viu ganho e quase parou o mecanismo aqui — foi a metrica errada: o rank do codigo aceitavel nos 12 casos gateados fica byte-identico ao baseline (nenhum alvo estava perto o bastante do topo para o amortecimento empurra-lo), mas a COMPOSICAO do top-20 — o que a orcamentista realmente varre — muda muito. Ver `note_phase_2_2` para a medicao completa (junk-share 10/20 -> 0/20 no REFLETOR EXISTENTE). Mecanismo ATIVADO nos call sites de producao (`local_server.py` rotas `/suggestions` e `/catalog/search`, `cli.py` `run_suggest_codes`) desde esta rodada, sem override por rodada (so o seed versionado). `SCO_HYBRID_SUGGESTER_VERSION` bumpou para `v2`; `hybrid_junk_max` no golden gateia a composicao dos dois casos com termo de ruido.",
   "note_phase_2_2": "Calibracao da lista de ruido de legenda em DUAS rodadas (2026-08-13), sobre os 12 casos reais gateados do braco hibrido, damp em {0.1, 0.25, 0.5} contra o baseline sem noise (scripts descartaveis, fora do repo). RODADA 1 (so rank do alvo): os RANKS FUNDIDOS SAO BYTE-IDENTICOS ao baseline nos quatro cenarios — 0, 14, 11, 14, 1, 2, 0, 10, 0, 3, 5, 9 (recall@20 12/12, top-1 3/12, top-3 5/12 em TODOS, inclusive apos ativar `noise` em producao). Causa: dos 12 rotulos, so 2 contem um termo de ruido (\"REFLETOR EXISTENTE\", \"ALAMBRADO DO CAMPO EXISTENTE A SER RECUPERAR\"); nos dois casos, os candidatos mais proximos do codigo certo no braco lexico TAMBEM cobrem os mesmos radicais de ruido na propria descricao, entao amortecer o peso reescala numerador e denominador quase na mesma proporcao para eles e para o alvo — a ordem relativa do ALVO nao muda (so troca IT29200600<->IT29200609 no topo do REFLETOR, os dois aceitaveis pela familia). RODADA 2 (JUNK-SHARE, a metrica que decidiu): quantos itens do top-20 fundido cobrem ao menos um radical de RUIDO e NENHUM radical de SERVICO (`query_covered_only_by_noise`) — o lixo que a orcamentista teria que varrer manualmente. Sem `noise`, REFLETOR EXISTENTE tem 10/20 itens assim (\"Remocao de caiacao existente\", \"Forracao de piso com carpete... sobre base existente\", \"Chapiscado... existente\", etc. — nenhum tem qualquer radical de \"refletor\"); ALAMBRADO DO CAMPO ja tinha 0/20 mas a ordem interna piora (PJ14151500, \"Recuperacao do apoio de alambrado\", no rank 15 em vez do 4). COM `noise`, nos TRES fatores testados (0.1/0.25/0.5), REFLETOR EXISTENTE cai para 0/20 (lista vira integralmente refletor/luminaria/projetor) e ALAMBRADO permanece 0/20 com a ordem interna melhor (PJ14151500 sobe para rank 4). Os tres fatores empataram nessa metrica; o criterio de desempate do spec (recall -> top-3 -> top-1 -> rank medio, tambem empatados) mantem o ponto de partida, `LEGEND_NOISE_DAMP_FACTOR = 0.25`. Os pisos ratchet `_HYBRID_TOP1_FLOOR`/`_HYBRID_TOP3_FLOOR` NAO mudaram: nenhum rank de caso gateado mudou, entao nao ha novo patamar para subir. Registrado para nao ser remedido do zero: a licao e medir a COMPOSICAO da lista, nao so o rank do alvo, quando a hipotese for sobre ruido lexical.",
-  "note_abstention_measurement": "MEDIDA E DESCARTADA (2026-08-13) — sinal de abstencao \"possivel aditivo\" por limiar de evidencia. Hipotese: um item sem correspondente no SCO produziria evidencia fraca de retrieval, e um flag calibrado avisaria a orcamentista. Medicao sobre os 15 rotulos reais (com noise ativo), tres caracteristicas por rotulo: maior cobertura ponderada amortecida do top-20 (cov_max), maior cosseno do braco semantico (cos_max) e fracao do peso IDF da consulta que NENHUM candidato cobre (gap_share). Resultado: as distribuicoes se SOBREPOEM por completo. \"LUMINARIAS DUPLAS ALTAS\" (aditivo) tem cov_max 1.000 — todos os radicais cobertos; \"MESA COM 03 BANCOS\" (aditivo, cov 0.679/cos 0.574) e gemea metrica de \"MESA COM 04 BANCOS\" (codigo, 0.687/0.631), e ate o gap_share falha porque \"03\" aparece em outras descricoes (\"03 modulos focais\"); enquanto isso, casos COM codigo como GOLA QUADRADA (cov 0.389) e ALAMBRADO PARQUE (0.415) ficam ABAIXO dos aditivos. Nenhum limiar em nenhuma caracteristica (nem combinacao simples) dispara 3/3 aditivos com 0/12 falsos. A explicacao e de dominio, nao de engenharia: esses itens sao aditivo por razao CONTRATUAL (fora do escopo SCO da licitacao — mesa com OUTRA contagem de bancos, variante de luminaria sem preco, arvores a preservar), nao por distancia lexical ou semantica. E o mesmo limite de evidencia do oraculo por familia: o texto do rotulo nao carrega a informacao que decide, e quem decide e a orcamentista com a prancha na frente (confirm-codes ja e fail-closed: rejeitar codigo e o caminho do dossie de aditivo). Registrado para nao ser reconstruido como \"ganho obvio\": um chip \"possivel aditivo\" errado nas duas direcoes (falso alarme em GOLA QUADRADA, silencio em LUMINARIAS) seria pior que nenhum. Se um dia entrar, precisa de evidencia NOVA (ex.: historico de confirmacoes da propria obra), nao de limiar sobre estas caracteristicas."
+  "note_abstention_measurement": "MEDIDA E DESCARTADA (2026-08-13) — sinal de abstencao \"possivel aditivo\" por limiar de evidencia. Hipotese: um item sem correspondente no SCO produziria evidencia fraca de retrieval, e um flag calibrado avisaria a orcamentista. Medicao sobre os 15 rotulos reais (com noise ativo), tres caracteristicas por rotulo: maior cobertura ponderada amortecida do top-20 (cov_max), maior cosseno do braco semantico (cos_max) e fracao do peso IDF da consulta que NENHUM candidato cobre (gap_share). Resultado: as distribuicoes se SOBREPOEM por completo. \"LUMINARIAS DUPLAS ALTAS\" (aditivo) tem cov_max 1.000 — todos os radicais cobertos; \"MESA COM 03 BANCOS\" (aditivo, cov 0.679/cos 0.574) e gemea metrica de \"MESA COM 04 BANCOS\" (codigo, 0.687/0.631), e ate o gap_share falha porque \"03\" aparece em outras descricoes (\"03 modulos focais\"); enquanto isso, casos COM codigo como GOLA QUADRADA (cov 0.389) e ALAMBRADO PARQUE (0.415) ficam ABAIXO dos aditivos. Nenhum limiar em nenhuma caracteristica (nem combinacao simples) dispara 3/3 aditivos com 0/12 falsos. A explicacao e de dominio, nao de engenharia: esses itens sao aditivo por razao CONTRATUAL (fora do escopo SCO da licitacao — mesa com OUTRA contagem de bancos, variante de luminaria sem preco, arvores a preservar), nao por distancia lexical ou semantica. E o mesmo limite de evidencia do oraculo por familia: o texto do rotulo nao carrega a informacao que decide, e quem decide e a orcamentista com a prancha na frente (confirm-codes ja e fail-closed: rejeitar codigo e o caminho do dossie de aditivo). Registrado para nao ser reconstruido como \"ganho obvio\": um chip \"possivel aditivo\" errado nas duas direcoes (falso alarme em GOLA QUADRADA, silencio em LUMINARIAS) seria pior que nenhum. Se um dia entrar, precisa de evidencia NOVA (ex.: historico de confirmacoes da propria obra), nao de limiar sobre estas caracteristicas.",
+  "note_package_cardinality": "QUARTA forma do oraculo (T10, F-038), aditiva as tres existentes: `{\"package\": [{code, role, required, basis, quantity, ...}]}`. Vem do ADR-0053: a relacao entre elemento da prancha e servico do catalogo e N:N. UM elemento dispara VARIOS servicos -- PISO EM CONCRETO, 418,12 m2 medidos uma vez, alimenta seis codigos (preparo de solo, base de saibro, tela soldada, pavimento rigido, limpeza, polimento), prova na formula: a celula do pavimento rigido e literalmente =F107, referencia a area do bloco do saibro. O ALAMBRADO DO CAMPO e o caso-limite confirmado pela orcamentista (2026-08-25): PJ14150203(A) (estrutura tubular) + PJ14100500(/) (tela), duas partes fisicas do mesmo elemento, mesma area de fachada (783,86 m2), 62% do orcamento. `basis` e o enum fechado de ContributionBasis (ADR-0053 decisao 3): FULL (espelho), DERIVED (geometria), PARTIAL (declarada, com nota obrigatoria e teto <= quantidade do item, nunca recomputada -- os 170 m2 de limpeza/polimento nao sao deriveis dos 418,12), DEPENDENT (vem de outro servico -- o =F107 do pavimento) e STANDALONE. `quantity` e a parcela por par (o eixo que a matriz elemento x servico ja tinha na forma e que faltava nomear). MEDIDO-NAO-GATEADO, exatamente como os known_gap: cada caso de pacote entra com `lexical_gate: false` e `hybrid_gate: false` e um `package_recall_2026_08_26` registrado; o teste MEDE o recall@20 do matcher de codigo unico sobre a lista do pacote e so reprova se ele PIORAR abaixo do piso, nunca por nao chegar a 100%. E o gap que o ADR-0053 manda publicar, nao esconder: 'o matcher fica mensuravelmente pior no mundo do pacote antes de ficar melhor... o gap e publicado como medido'. O piso nasce 0.0 (o matcher de codigo unico, otimizado para 'qual codigo E este elemento', nao traz codigos de familias diferentes: os melhores codigos das familias envolvidas ja estao fora do top-20 no lexico puro -- PISO EM SAIBRO rank 33, ALAMBRADO rank 747), consistente com `_REAL_TOP1_FLOOR = 0.0`; ele so cataca para cima quando um suggester de pacote (marco proprio, F-038 fora de escopo desta tarefa) entrar. Casos de pacote sao `catalog: \"real\"` e por isso seguem sob `skipif`: o catalogo real do SCO nao e versionado (dado do cliente), entao esta metade nunca roda no CI -- igual aos outros casos reais.",
+  "note_gramado_forracao_parcelas": "GRAMADO e FORRACAO EM GRAMA (NAS GOLAS DE ARVORES) apontam ambos para PJ04100100(A). Sob a cardinalidade 1:1 do M7 isso parecia uma COLISAO (dois rotulos, um codigo). O ADR-0053 mostra que NAO e: e a segunda direcao da matriz N:N -- 'um servico recebe parcelas de varios elementos'. PJ04100100(A) e o mesmo servico de forracao/grama recebendo DUAS PARCELAS de quantidade (a area do gramado do campo e o 1,28 m2 das golas de arvore), que somam na quantidade de UMA linha de orcamento, do mesmo jeito que BP04050350(/) soma CAMPO DE FUTEBOL + PISO EM CONCRETO + PAVIMENTO INTERTRAVADO + FORRACAO EM GRAMA = 478,74 m2. Os dois casos existentes ficam BYTE-IDENTICOS de proposito: a reinterpretacao e sobre como se LE o oraculo de codigo unico (duas parcelas do mesmo servico, nao duas respostas concorrentes), nao uma mudanca no gabarito de nenhum dos dois -- cada um segue exigindo PJ04100100(A) no seu proprio gate. Quando o eixo das parcelas virar dado de teste (suggester/builder de pacote, marco proprio), estes dois deixam de ser 'o mesmo codigo em dois casos' e passam a ser 'duas parcelas somando na quantidade de um item'."
 }
