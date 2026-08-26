@@ -187,6 +187,7 @@ from croquito_valuation.assignment import (
     apply_code_assignments_over_cascade,
 )
 from croquito_valuation.calc import build_worksite_valuation
+from croquito_valuation.calc_matrix import CalcMatrix
 from croquito_valuation.contract import ContractWorkbook
 from croquito_valuation.contract_from_estimate import build_contract_from_estimate
 from croquito_valuation.errors import ValuationValidationError, valuation_errors
@@ -1496,9 +1497,17 @@ class BuildValuationCalcRequest(ApiModel):
     tem guarda de concorrência nenhuma e sempre reconstrói do estado corrente dos dois
     artefatos de origem. Em `/v1` a construção é ato humano da cadeia — ela avança a versão
     da rodada e pode devolver `409 REVISION_CONFLICT`.
+
+    `calc_matrix` é a matriz elemento x serviço (ADR-0053, F-038 T8), opcional: quando vem, o
+    boletim funde por código e resolve dependência; sem ela, o regime legado (código único
+    por item) segue byte-idêntico. Ela chega como objeto cru e é validada como `CalcMatrix` no
+    corpo da rota — invariante do domínio (ciclo, código duplicado) volta como
+    `422 DOMAIN_VALIDATION_FAILED`, não como erro de esquema. É persistida na revisão nova
+    (`calc_matrix_json`) para auditoria antes de alimentar o builder.
     """
 
     base_version: int = Field(ge=1)
+    calc_matrix: dict[str, Any] | None = Field(default=None)
 
 
 class BuildAmendmentDossierRequest(ApiModel):
@@ -1752,6 +1761,13 @@ class BuildEstimateRequest(ApiModel):
     regime ele continua obrigatório: um orçamento de pré-licitação sem BDI declarado é
     orçamento incompleto, e assumir zero ali seria inventar a decisão mais consequente da
     planilha."""
+    calc_matrix: dict[str, Any] | None = Field(default=None)
+    """A matriz elemento x serviço (ADR-0053, F-038 T8), opcional e espelho da rota de calc.
+
+    Quando vem, o orçamento funde por código e resolve dependência; sem ela, o regime legado
+    (código único por item) segue byte-idêntico. Chega como objeto cru, é validada como
+    `CalcMatrix` no corpo da rota — invariante do domínio volta como
+    `422 DOMAIN_VALIDATION_FAILED` — e é persistida em `calc_matrix_json` antes do builder."""
 
 
 class ApproveEstimateRequest(ApiModel):
@@ -3495,6 +3511,25 @@ def _valuation_model_problem(error: ValidationError) -> HTTPException:
         "A decisão não corresponde ao contrato do modelo.",
         {"code": "MODEL_VALIDATION_FAILED"},
     )
+
+
+def _validate_calc_matrix(raw: Mapping[str, Any] | None) -> CalcMatrix | None:
+    """Valida a matriz de contribuições posta no build, ou `None` no regime legado.
+
+    A matriz chega como objeto cru no corpo da rota (não como campo tipado) de propósito: um
+    `CalcMatrix` embutido faria o Pydantic recusar durante o PARSING do corpo, e ali a
+    invariante do domínio (ciclo, código duplicado) sairia como erro de esquema do FastAPI, e
+    não no envelope `application/problem+json` das demais rotas. Validando aqui, a
+    `ValuationValidationError` embrulhada volta por `_valuation_model_problem` como
+    `422 DOMAIN_VALIDATION_FAILED` com o código estável do domínio — o mesmo caminho das
+    decisões de código.
+    """
+    if raw is None:
+        return None
+    try:
+        return CalcMatrix.model_validate(raw)
+    except ValidationError as error:
+        raise _valuation_model_problem(error) from error
 
 
 def _commit_valuation_revision(session: Session) -> None:
@@ -10368,9 +10403,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         em `/v1` esses rótulos são colunas de `ValuationRoundRecord` e o corpo carrega só a
         guarda de concorrência.
 
-        `calc_plan=None` de propósito: o plano de cálculo é artefato de DIRETÓRIO do
-        servidor de medição e a rodada de `/v1` não o publica. Sem ele, cada item recebe o
-        bloco de quantidade direta que o próprio domínio gera — nunca uma receita suposta.
+        `calc_plan=None` de propósito: o plano de cálculo POR ITEM é artefato de DIRETÓRIO do
+        servidor de medição e a rodada de `/v1` não o publica. A memória de cálculo que a
+        rodada aceita é a `CalcMatrix` (ADR-0053, F-038 T8), que vem no CORPO do build: quando
+        presente, o boletim funde por código e resolve dependência; ausente, cada item recebe
+        o bloco de quantidade direta que o próprio domínio gera — nunca uma receita suposta. A
+        matriz posta é validada aqui e persistida em `calc_matrix_json` da revisão nova, para
+        auditoria, antes de alimentar o builder.
 
         Esta rota **não aprova nada**: aprovação nominal da medição é ato próprio, com
         portão de saldo e contrato, e não pertence à construção do boletim.
@@ -10414,6 +10453,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
         packet = require_takeoff_packet(revision)
         assignments = require_assignments(revision)
+        calc_matrix = _validate_calc_matrix(payload.calc_matrix)
         valuation = build_worksite_valuation(
             packet,
             assignments,
@@ -10425,17 +10465,21 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             address=record.address,
             contract_label=record.contract_label,
             calc_plan=None,
+            calc_matrix=calc_matrix,
         )
         # Preservar não é aprovar: a aprovação anterior segue adiante já caduca, apontando
         # para o digest do conteúdo que ela cobria.
         valuation = carry_approval_forward(valuation, readable_valuation(revision))
 
         document = valuation.model_dump(mode="json")
+        # A matriz posta é gravada AO LADO do boletim (`None` no regime legado), auditável e
+        # re-legível: cada revisão registra exatamente a matriz que gerou a memória dela.
+        matrix_document = None if calc_matrix is None else calc_matrix.model_dump(mode="json")
         new_revision = append_revision(
             session,
             round_record=record,
             created_by=principal.subject,
-            changes={"valuation_json": document},
+            changes={"valuation_json": document, "calc_matrix_json": matrix_document},
         )
         record.updated_at = datetime.now(UTC)
         response = _bulletin_payload(record, new_revision, document=document, valuation=valuation)
@@ -12593,6 +12637,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         packet = estimate_rounds.require_takeoff_packet(revision)
         estimate_rounds.require_reviewed_takeoff_stage(packet)
         assignments = estimate_rounds.require_assignments(revision)
+        calc_matrix = _validate_calc_matrix(payload.calc_matrix)
         built = build_worksite_estimate(
             packet,
             assignments,
@@ -12602,17 +12647,25 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             bdi_percent=bdi_percent,
             address=record.address,
             calc_plan=None,
+            calc_matrix=calc_matrix,
         )
 
         estimate = estimate_rounds.carry_approval_forward(
             built.estimate, estimate_rounds.readable_estimate(revision)
         )
         document = estimate.model_dump(mode="json")
+        # A matriz posta é gravada AO LADO do orçamento (`None` no regime legado), auditável e
+        # re-legível: cada revisão registra exatamente a matriz que gerou a memória dela.
+        matrix_document = None if calc_matrix is None else calc_matrix.model_dump(mode="json")
         new_revision = estimate_rounds.append_revision(
             session,
             round_record=record,
             created_by=principal.subject,
-            changes={"estimate_json": document, "estimate_built_by": principal.subject},
+            changes={
+                "estimate_json": document,
+                "estimate_built_by": principal.subject,
+                "calc_matrix_json": matrix_document,
+            },
         )
         record.updated_at = datetime.now(UTC)
         response = _estimate_payload(record, new_revision, document=document, estimate=estimate)

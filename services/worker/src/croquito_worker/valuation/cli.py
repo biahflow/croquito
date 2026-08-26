@@ -89,6 +89,7 @@ from croquito_valuation.calc import (
     build_worksite_bulletin,
     build_worksite_valuation,
 )
+from croquito_valuation.calc_matrix import CalcMatrix
 from croquito_valuation.canonical import AuditReport, audit_workbook
 from croquito_valuation.catalog import (
     UNIT_ALIASES,
@@ -235,6 +236,7 @@ CODE_SUGGESTIONS_FILENAME = "code-suggestions.json"
 CODE_ASSIGNMENT_DECISIONS_FILENAME = "code-assignment-decisions.json"
 CODE_ASSIGNMENTS_FILENAME = "code-assignments.json"
 CALC_PLAN_FILENAME = "calc-plan.json"
+CALC_MATRIX_FILENAME = "calc-matrix.json"
 AMENDMENT_DOSSIER_FILENAME = "amendment-dossier.json"
 ESTIMATE_DEMO_SCO_SOURCE_FILENAME = "sco-catalogo-sintetico.xlsx"
 ESTIMATE_DEMO_EMOP_SOURCE_FILENAME = "emop-catalogo-sintetico.dbf"
@@ -1679,6 +1681,36 @@ def _excluded_item_ids(packet: TakeoffPacket, assignments: CodeAssignmentSet) ->
     return tuple(item.id for item in packet.confirmed_items() if item.id in rejected)
 
 
+def _load_calc_plan_and_matrix(
+    calc_plan_path: Path | None, calc_matrix_path: Path | None
+) -> tuple[CalcPlan | None, CalcMatrix | None]:
+    """Lê plano (por item) e matriz (por serviço) de memória; declarar os dois é recusa.
+
+    `CalcPlan` é o regime indexado por item e `CalcMatrix` o regime N:N indexado por serviço
+    (ADR-0053): são duas memórias mutuamente exclusivas para o mesmo build, e o domínio não
+    funde uma com a outra. Pedir as duas é `CALC_PLAN_AND_MATRIX_DECLARED`, recusado aqui
+    antes de tocar o builder.
+    """
+    if calc_plan_path is not None and calc_matrix_path is not None:
+        raise ValuationValidationError(
+            "CALC_PLAN_AND_MATRIX_DECLARED",
+            "plano de cálculo por item e matriz de contribuições por serviço não convivem "
+            "no mesmo build",
+            {"calc_plan": str(calc_plan_path), "calc_matrix": str(calc_matrix_path)},
+        )
+    calc_plan = (
+        None
+        if calc_plan_path is None
+        else CalcPlan.model_validate_json(calc_plan_path.read_text(encoding="utf-8"))
+    )
+    calc_matrix = (
+        None
+        if calc_matrix_path is None
+        else CalcMatrix.model_validate_json(calc_matrix_path.read_text(encoding="utf-8"))
+    )
+    return calc_plan, calc_matrix
+
+
 def run_build_calc(
     packet_path: Path,
     assignments_path: Path,
@@ -1692,6 +1724,7 @@ def run_build_calc(
     address: str | None,
     contract_label: str | None,
     calc_plan_path: Path | None,
+    calc_matrix_path: Path | None,
 ) -> BuildCalcResult:
     """Monta boletim e memória de cálculo da obra e grava a medição **sem aprovação**.
 
@@ -1703,11 +1736,7 @@ def run_build_calc(
         assignments_path.read_text(encoding="utf-8")
     )
     catalog = _load_catalog(catalog_path)
-    calc_plan = (
-        None
-        if calc_plan_path is None
-        else CalcPlan.model_validate_json(calc_plan_path.read_text(encoding="utf-8"))
-    )
+    calc_plan, calc_matrix = _load_calc_plan_and_matrix(calc_plan_path, calc_matrix_path)
     valuation = build_worksite_valuation(
         packet,
         assignments,
@@ -1719,6 +1748,7 @@ def run_build_calc(
         address=address,
         contract_label=contract_label,
         calc_plan=calc_plan,
+        calc_matrix=calc_matrix,
     )
     valuation_path = output_dir / VALUATION_FILENAME
     atomic_write_text(valuation_path, _document(valuation))
@@ -1761,6 +1791,7 @@ def run_build_estimate(
     bdi_percent: Decimal,
     address: str | None,
     calc_plan_path: Path | None,
+    calc_matrix_path: Path | None,
 ) -> BuildEstimateResult:
     """Monta o orçamento-base da obra sobre a cascata declarada e publica `estimate.json`.
 
@@ -1774,11 +1805,7 @@ def run_build_estimate(
         assignments_path.read_text(encoding="utf-8")
     )
     cascade = _load_cascade(catalog_paths)
-    calc_plan = (
-        None
-        if calc_plan_path is None
-        else CalcPlan.model_validate_json(calc_plan_path.read_text(encoding="utf-8"))
-    )
+    calc_plan, calc_matrix = _load_calc_plan_and_matrix(calc_plan_path, calc_matrix_path)
     result = build_worksite_estimate(
         packet,
         assignments,
@@ -1788,6 +1815,7 @@ def run_build_estimate(
         bdi_percent=bdi_percent,
         address=address,
         calc_plan=calc_plan,
+        calc_matrix=calc_matrix,
     )
     estimate_path = output_dir / ESTIMATE_FILENAME
     atomic_write_text(estimate_path, _document(result.estimate))
@@ -2682,6 +2710,7 @@ def _command_build_calc(args: argparse.Namespace) -> int:
             address=args.address,
             contract_label=args.contract_label,
             calc_plan_path=None if args.calc_plan is None else Path(args.calc_plan),
+            calc_matrix_path=None if args.calc_matrix is None else Path(args.calc_matrix),
         )
     except (ValuationValidationError, ValidationError) as error:
         _print(_refused_payload(error))
@@ -2750,6 +2779,7 @@ def _command_build_estimate(args: argparse.Namespace) -> int:
             bdi_percent=args.bdi,
             address=args.address,
             calc_plan_path=None if args.calc_plan is None else Path(args.calc_plan),
+            calc_matrix_path=None if args.calc_matrix is None else Path(args.calc_matrix),
         )
     except (ValuationValidationError, ValidationError) as error:
         _print(_refused_payload(error))
@@ -3255,6 +3285,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="plano de memória por item; sem ele cada item recebe quantidade direta",
     )
+    build_calc_command.add_argument(
+        "--calc-matrix",
+        type=Path,
+        default=None,
+        help=(
+            "matriz de contribuições por serviço (ADR-0053); funde por código e resolve "
+            "dependência. Mutuamente exclusiva com --calc-plan"
+        ),
+    )
     build_calc_command.add_argument("--output", type=Path, required=True)
 
     build_estimate_command = subcommands.add_parser(
@@ -3286,6 +3325,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="plano de memória por item; sem ele cada item recebe quantidade direta",
+    )
+    build_estimate_command.add_argument(
+        "--calc-matrix",
+        type=Path,
+        default=None,
+        help=(
+            "matriz de contribuições por serviço (ADR-0053); funde por código e resolve "
+            "dependência. Mutuamente exclusiva com --calc-plan"
+        ),
     )
     build_estimate_command.add_argument("--output", type=Path, required=True)
 

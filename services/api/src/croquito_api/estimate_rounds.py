@@ -72,6 +72,7 @@ from croquito_valuation.assignment import (
     CodeSuggestionSet,
     suggest_codes_over_cascade,
 )
+from croquito_valuation.calc_matrix import CalcMatrix
 from croquito_valuation.catalog import default_domain_synonyms, default_legend_noise
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.estimate import Estimate, EstimateApproval, EstimateApproverDecision
@@ -154,6 +155,7 @@ REVISION_DOCUMENT_COLUMNS: Final[tuple[str, ...]] = (
     "code_suggestions_json",
     "code_assignments_json",
     "estimate_json",
+    "calc_matrix_json",
     "extraction_lineage_json",
 )
 """Colunas JSON de artefato; ausentes são `NULL`, e `NULL` é "a etapa não aconteceu"."""
@@ -905,6 +907,16 @@ def assignments_of(revision: EstimateRoundRevisionRecord | None) -> CodeAssignme
     if revision is None or revision.code_assignments_json is None:
         return None
     return CodeAssignmentSet.model_validate(revision.code_assignments_json)
+
+
+def matrix_of(revision: EstimateRoundRevisionRecord | None) -> CalcMatrix | None:
+    """A `CalcMatrix` gravada nesta revisão (ADR-0053), ou `None` no regime legado.
+
+    Espelho de `assignments_of`: relê o artefato guardado no build, com a guarda de ciclo do
+    próprio `CalcMatrix` rodando de novo na leitura. `NULL` é código único por item."""
+    if revision is None or revision.calc_matrix_json is None:
+        return None
+    return CalcMatrix.model_validate(revision.calc_matrix_json)
 
 
 def suggestions_of(revision: EstimateRoundRevisionRecord | None) -> CodeSuggestionSet | None:

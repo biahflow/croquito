@@ -1210,10 +1210,17 @@ divergente.
 
 ### `POST /v1/valuation-rounds/{round_id}/calc`
 
-Entrada: **só** `base_version`. `worksite_key`, `worksite_name`, `period_number`,
-`reference_label`, `address` e `contract_label` são atributos da rodada, recebidos em
-`POST /v1/valuation-rounds`, e não voltam a viajar aqui — quem os quiser mudar abre rodada
-nova.
+Entrada: `base_version` e, opcional, `calc_matrix`. `worksite_key`, `worksite_name`,
+`period_number`, `reference_label`, `address` e `contract_label` são atributos da rodada,
+recebidos em `POST /v1/valuation-rounds`, e não voltam a viajar aqui — quem os quiser mudar
+abre rodada nova.
+
+`calc_matrix` é a matriz elemento x serviço (ADR-0053): quando presente, o boletim funde por
+código e resolve dependência entre serviços; ausente, vale o regime legado (código único por
+item), byte-idêntico ao de hoje. Ela chega como objeto e é persistida na revisão nova
+(`calc_matrix_json`), auditável e re-legível, antes de alimentar o build. Matriz malformada —
+ciclo, código duplicado, alvo de dependência inválido — devolve `422 DOMAIN_VALIDATION_FAILED`
+com o código estável do domínio (`CALC_MATRIX_*`, `CALC_MATRIX_DEPENDENCY_*`).
 
 Constrói o boletim e a memória de cálculo a partir do takeoff confirmado e das confirmações
 de código. Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para
@@ -1594,8 +1601,15 @@ divergente.
 
 ### `POST /v1/estimate-rounds/{round_id}/estimate`
 
-Entrada: `base_version` e `bdi_percent`, o percentual **único** do orçamento, como texto
-(ADR-0038, decisão 2). A identidade da obra é atributo da rodada e não viaja aqui.
+Entrada: `base_version`, `bdi_percent` (o percentual **único** do orçamento, como texto —
+ADR-0038, decisão 2) e, opcional, `calc_matrix`. A identidade da obra é atributo da rodada e
+não viaja aqui.
+
+`calc_matrix` é a matriz elemento x serviço (ADR-0053), espelho da rota de calc da medição:
+quando presente, o orçamento funde por código e resolve dependência; ausente, vale o regime
+legado (código único por item), byte-idêntico. É persistida na revisão nova
+(`calc_matrix_json`), auditável, antes do build; matriz malformada devolve
+`422 DOMAIN_VALIDATION_FAILED` com o código estável do domínio.
 
 Monta o orçamento sobre o takeoff confirmado, as decisões de código e a cascata, e grava a
 revisão. **Só monta**: desde a F-035 esta rota não audita nem publica planilha nenhuma —

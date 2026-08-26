@@ -44,7 +44,18 @@ from croquito_valuation.assignment import (
     CodeSuggestionSet,
     SuggestionRefinement,
 )
-from croquito_valuation.models import PriceCatalog, PriceCatalogEntry
+from croquito_valuation.calc_matrix import (
+    CalcContribution,
+    CalcMatrix,
+    ServiceContributions,
+)
+from croquito_valuation.models import (
+    CalcOperand,
+    CalcRecipe,
+    ContributionBasis,
+    PriceCatalog,
+    PriceCatalogEntry,
+)
 from croquito_valuation.takeoff import load_takeoff_packet
 from croquito_worker.providers import (
     EmbeddingsExecution,
@@ -64,6 +75,8 @@ from croquito_worker.providers import (
 from croquito_worker.valuation import local_server
 from croquito_worker.valuation.cli import (
     AMENDMENT_DOSSIER_FILENAME,
+    CALC_MATRIX_FILENAME,
+    CALC_PLAN_FILENAME,
     CATALOG_FILENAME,
     CODE_ASSIGNMENTS_FILENAME,
     CODE_SUGGESTIONS_FILENAME,
@@ -340,6 +353,51 @@ def test_full_flow_from_review_to_bulletin(client: TestClient, root: Path) -> No
         (Decimal(str(line["total"])) for line in lines), Decimal("0.00")
     )
     assert client.get("/state").json()["bulletin"]["present"] is True
+
+
+def test_calc_build_refuses_plan_and_matrix_in_the_same_round(
+    client: TestClient, root: Path
+) -> None:
+    """Plano por item E matriz por serviço no mesmo diretório é `CALC_PLAN_AND_MATRIX_DECLARED`.
+
+    São dois regimes de memória que não fundem (ADR-0053); a rodada recusa antes de montar.
+    """
+    _review_takeoff(client)
+    _confirm_codes(client)
+    (root / CALC_PLAN_FILENAME).write_text('{"plans": []}', encoding="utf-8")
+    matrix = CalcMatrix(
+        services=[
+            ServiceContributions(
+                code="CE02100010(/)",
+                contributions=[
+                    CalcContribution(
+                        label="CANTEIRO",
+                        basis=ContributionBasis.STANDALONE,
+                        recipe=CalcRecipe.DECLARED_PRODUCT,
+                        operands=[CalcOperand(name="VB", value=Decimal("1"))],
+                    )
+                ],
+            )
+        ]
+    )
+    (root / CALC_MATRIX_FILENAME).write_text(matrix.model_dump_json(), encoding="utf-8")
+
+    response = client.post(
+        "/calc/build",
+        json={
+            "worksite_key": "praca-sintetica-oeste",
+            "worksite_name": "PRACA SINTETICA OESTE",
+            "period_number": 3,
+            "reference_label": "3ª MEDICAO SINTETICA",
+            "address": "RUA SINTETICA, S/N",
+            "contract_label": "CONTRATO SINTETICO",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "CALC_PLAN_AND_MATRIX_DECLARED"
+    # Fail-closed: a recusa não grava boletim.
+    assert not (root / VALUATION_FILENAME).is_file()
 
 
 def test_a_second_decision_over_the_same_item_is_refused_and_writes_nothing(

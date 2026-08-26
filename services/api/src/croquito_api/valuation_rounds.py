@@ -50,6 +50,7 @@ from croquito_valuation.assignment import (
     CodeAssignmentSet,
     CodeSuggestionSet,
 )
+from croquito_valuation.calc_matrix import CalcMatrix
 from croquito_valuation.canonical import AuditReport, audit_workbook
 from croquito_valuation.catalog import default_domain_synonyms, default_legend_noise
 from croquito_valuation.contract import ContractLine, ContractWorkbook
@@ -138,6 +139,7 @@ REVISION_DOCUMENT_COLUMNS: Final[tuple[str, ...]] = (
     "code_suggestions_json",
     "code_assignments_json",
     "valuation_json",
+    "calc_matrix_json",
     "amendment_dossier_json",
     "extraction_lineage_json",
 )
@@ -354,6 +356,16 @@ def assignments_of(revision: ValuationRoundRevisionRecord | None) -> CodeAssignm
     if revision is None or revision.code_assignments_json is None:
         return None
     return CodeAssignmentSet.model_validate(revision.code_assignments_json)
+
+
+def matrix_of(revision: ValuationRoundRevisionRecord | None) -> CalcMatrix | None:
+    """A `CalcMatrix` gravada nesta revisão (ADR-0053), ou `None` no regime legado.
+
+    Espelho de `assignments_of`: relê o artefato guardado no build, com a guarda de ciclo do
+    próprio `CalcMatrix` rodando de novo na leitura. `NULL` é código único por item."""
+    if revision is None or revision.calc_matrix_json is None:
+        return None
+    return CalcMatrix.model_validate(revision.calc_matrix_json)
 
 
 def require_takeoff_packet(revision: ValuationRoundRevisionRecord | None) -> TakeoffPacket:

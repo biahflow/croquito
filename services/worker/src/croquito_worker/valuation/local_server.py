@@ -83,6 +83,7 @@ from croquito_valuation.assignment import (
     apply_code_assignments,
 )
 from croquito_valuation.calc import CalcPlan, build_worksite_valuation
+from croquito_valuation.calc_matrix import CalcMatrix
 from croquito_valuation.catalog import (
     DomainSynonyms,
     default_legend_noise,
@@ -117,6 +118,7 @@ from croquito_worker.valuation.catalog_search import (
 )
 from croquito_worker.valuation.cli import (
     AMENDMENT_DOSSIER_FILENAME,
+    CALC_MATRIX_FILENAME,
     CALC_PLAN_FILENAME,
     CATALOG_FILENAME,
     CODE_ASSIGNMENTS_FILENAME,
@@ -596,6 +598,16 @@ class _Run:
     def calc_plan(self) -> CalcPlan | None:
         found = self.read(CALC_PLAN_FILENAME)
         return None if found is None else CalcPlan.model_validate_json(found[0])
+
+    def calc_matrix(self) -> CalcMatrix | None:
+        """Matriz de contribuições por serviço da rodada (ADR-0053), ou `None` se ausente.
+
+        Irmã de `calc_plan()`: `calc-matrix.json` entra se estiver na rodada, e a guarda de
+        ciclo/auto-referência roda na leitura do artefato. Declarar plano E matriz é recusa
+        (`build_calc`), pelo mesmo motivo da CLI — são dois regimes de memória que não fundem.
+        """
+        found = self.read(CALC_MATRIX_FILENAME)
+        return None if found is None else CalcMatrix.model_validate_json(found[0])
 
     def synonyms(self) -> DomainSynonyms:
         """Sinônimos de domínio da rodada: `synonyms.json` do diretório se existir, senão o
@@ -1800,6 +1812,17 @@ def _build_app(run: _Run, *, origins: Sequence[str]) -> FastAPI:
         if assignments_found is None:
             raise _artifact_missing(CODE_ASSIGNMENTS_FILENAME)
         catalog = run.require_catalog()
+        # A recusa é por PRESENÇA dos dois artefatos, antes de validar o conteúdo de qualquer
+        # um: dois regimes de memória declarados na mesma rodada é a incoerência, não o que
+        # cada arquivo diz. Espelha o `_load_calc_plan_and_matrix` da CLI, que recusa pelos
+        # dois caminhos antes de ler.
+        if run.read(CALC_PLAN_FILENAME) is not None and run.read(CALC_MATRIX_FILENAME) is not None:
+            raise ValuationValidationError(
+                "CALC_PLAN_AND_MATRIX_DECLARED",
+                "plano de cálculo por item e matriz de contribuições por serviço não convivem "
+                "no mesmo build",
+                {"calc_plan": CALC_PLAN_FILENAME, "calc_matrix": CALC_MATRIX_FILENAME},
+            )
         valuation = build_worksite_valuation(
             packet,
             assignments_found[0],
@@ -1811,6 +1834,7 @@ def _build_app(run: _Run, *, origins: Sequence[str]) -> FastAPI:
             address=payload.address,
             contract_label=payload.contract_label,
             calc_plan=run.calc_plan(),
+            calc_matrix=run.calc_matrix(),
         )
         document = _document(valuation)
         atomic_write_text(run.path(VALUATION_FILENAME), document)
