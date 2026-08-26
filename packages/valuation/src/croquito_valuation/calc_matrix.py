@@ -433,7 +433,5 @@ def resolve_calc_matrix(
     de erro já existentes.
     """
     if calc_matrix is not None:
-        return _resolve_matrix(
-            included_items, assignments, calc_matrix, error_prefix=error_prefix
-        )
+        return _resolve_matrix(included_items, assignments, calc_matrix, error_prefix=error_prefix)
     return _resolve_legacy(included_items, assignments, calc_plan=calc_plan)
