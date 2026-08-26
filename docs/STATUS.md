@@ -2,8 +2,11 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-23 (F-030 `READY_FOR_BUILD` — ADR-0049 e Design Approval Package
-revisão 3 aprovados, plano autorizado e oito Task Contracts publicados; F-009 e F-012 `DONE`
+Última revisão: 2026-08-26 (F-038 — o item de legenda é um pacote de serviços — em código:
+epic #71 fechado com as doze tasks e a decisão 6 (#96) mergeadas, ADR-0053 e Design Approval
+Package rev.1/rev.2 aceitos, ver M9; recompute do braço de embeddings passou a registrar
+tokens e custo, #70. Antes, 2026-08-23: F-030 `READY_FOR_BUILD` — ADR-0049 e Design Approval
+Package revisão 3 aprovados, plano autorizado e oito Task Contracts publicados; F-009 e F-012 `DONE`
 — ADR-0035/0036 e entregas aceitos por ato
 humano após merges, infraestrutura aplicada e rodadas reais no HML; medição migrada para a
 API `/v1`, F-003; F-006
@@ -820,6 +823,55 @@ Portões do M8: `make check` e `make test` verdes ponta a ponta (pytest 1165 →
 vitest web 346; medição 126 → 127), goldens M1/M4 e matcher intocados. O que resta do
 M8 não é código: a importação do .DBF real da EMOP depende da assinatura GRE, e o
 primeiro dossiê de aditivo real depende da rodada da Toca homologada.
+
+### M9 em código: o item de legenda é um pacote de serviços (F-038)
+
+O orçamento real da Praça Campo do Toca (SCO-PCRJ Out/2023) refutou a premissa de que
+rótulo de legenda mapeia para **um** código: a relação é **N:N com quantidade por par**
+— um elemento dispara vários serviços (o `PISO EM CONCRETO`, medido uma vez, gera preparo
+de solo, base de saibro, tela, pavimento rígido, limpeza e polimento) e um serviço recebe
+parcelas de vários elementos. A [F-038](features/F-038-pacote-de-servicos/feature.md)
+tornou isso mecanismo, offline, atrás de dois gates humanos:
+[ADR-0053](adr/0053-cardinalidade-n-n-elemento-servico.md) aceito em 2026-08-25 e o Design
+Approval Package (revisão 1 em 2026-08-26; **revisão 2** — autoria de matriz e declaração
+`PARTIAL` — aprovada em 2026-08-26). O epic (#71) fechou com as doze tasks e o desdobramento
+da decisão 6 (#96) mergeados; a planilha é o oráculo, não os documentos do repositório.
+
+- **A matriz elemento × serviço como dado.** `CalcMatrix` declara as contribuições por
+  serviço, com a grandeza nomeada (`ContributionBasis`) e uma única receita aberta
+  `DECLARED_PRODUCT` — a memória real tem 45 formas de fórmula e 43 termos de operando, então
+  cinco receitas fixas deixariam quarenta de fora; o vocabulário ficou aberto e nomeado, não
+  enumerado. Dependência entre serviços é declarada e o ciclo é recusado por extenso
+  (`CALC_MATRIX_DEPENDENCY_CYCLE`, `CALC_MATRIX_SELF_DEPENDENCY`), com ordem topológica visível.
+  A tabela de derivação de transporte (112 linhas) entrou como dado, lida pelo cabeçalho que a
+  memória declara, não por posição.
+- **O digest de aprovação estável por versão veio antes de qualquer campo novo.**
+  `Estimate.content_digest()` serializa `calc_sheets`; um campo novo em `CalcBlock` mudaria o
+  digest e invalidaria orçamentos já assinados — o consolidado contratual da medição
+  ([ADR-0048](adr/0048-consolidado-contratual-do-orcamento-assinado.md)). Por isso o digest foi
+  protegido primeiro, e a nota obrigatória da parcela `PARTIAL` vive no lado da **autoria**
+  (`CalcContribution`), nunca no `CalcBlock` materializado.
+- **O vínculo é por par `(item_id, code)` e o pacote fecha por ato próprio.** Um elemento com
+  um de seis códigos confirmados aparece **pendente**, nunca pronto; os builders passaram a
+  iterar serviços, não itens, e a mesma aritmética reproduz os números do arquivo: `478,74` de
+  saibro somando quatro parcelas, `418,12` de pavimento rígido, `365,86 t.dam` de transporte
+  derivados sem digitação, e o digest de rodada antiga imóvel.
+- **A parcela parcial é declarada, com nota e teto (decisão 6, #96).** Os 170 m² de limpeza
+  dentro dos 418,12 do piso não saem de conta nenhuma: `PARTIAL` exige nota não-vazia
+  (`CALC_PARTIAL_NOTE_REQUIRED`) e respeita o teto `≤ quantidade do item`, conferido no **build**
+  onde as quantidades existem (`CALC_PARTIAL_EXCEEDS_ITEM`), nunca recomputado. A matriz inteira
+  viaja no `calc_matrix` da rota de build existente — sem novos campos de request, sem drift de
+  OpenAPI ou de contratos.
+- **A tela do orçamento passou a montar o pacote e ver a memória.** A etapa `codigos` deixou de
+  guardar um código único e passou a autorar a matriz por par — múltiplos códigos por item,
+  editor de contribuição (receita, operandos nomeados, dependência), ordem topológica à vista,
+  ciclo e teto excedido como erro por extenso, e a memória de cálculo aparecendo na jornada do
+  orçamento (antes só na medição). Estado sempre por texto além de cor.
+
+Portões do M9: `make check` e `make test` verdes na árvore combinada (vitest web 1173;
+os testes de rota de API e de `CalcMatrix` cobrindo nota, teto no limite e acima, e ciclo).
+O que resta não é código: a extração e o aceite reais do pacote do Campo do Toca pela
+orçamentista, com a planilha como oráculo do golden.
 
 ## Decisões aceitas
 
