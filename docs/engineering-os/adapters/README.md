@@ -1,19 +1,27 @@
-# Adapters
+# Adapters (M1: Bootstrap Phase)
 
-An adapter is a bootstrap: the smallest document that points one harness at this
-repository. It carries no rules of its own, and it cannot grant a harness authority the
-Core denies.
+An adapter is a bootstrap: the smallest document that points one harness at this repository. It carries no rules of its own, and it cannot grant a harness authority the Core denies.
 
-| Harness | Adapter | Installed at |
-| --- | --- | --- |
-| Claude Code | `claude/CLAUDE.md` | `${CLAUDE_CONFIG_DIR:-~/.claude}/engineering-os.md` |
-| Codex | `codex/AGENTS.md` | `${CODEX_HOME:-~/.codex}/AGENTS.md` |
+**Current Status (M1 — Bootstrap):** Adapters are installed individually by operators. Each harness is bootstrapped separately. You choose which harness to use.
 
-The Claude adapter is installed beside the global instruction file rather than as it:
-`CLAUDE.md` at that path is the operator's own document, and it imports the adapter with
-`@${CLAUDE_CONFIG_DIR:-~/.claude}/engineering-os.md`. Personal preferences and the
-Engineering OS bootstrap stay in separate files, and reinstalling never overwrites the
-operator's. Codex has no equivalent import convention, so its adapter is the global file.
+**Future Status (M7 — Orchestration):** Adapters become CLI bridges that Biah invokes programmatically. You use Biah; Biah selects workers by capability.
+
+## Current Adapters (M1)
+
+| Harness | Adapter | Installed at | Purpose |
+| --- | --- | --- | --- |
+| Claude Code | `claude/CLAUDE.md` | `${CLAUDE_CONFIG_DIR:-~/.claude}/engineering-os.md` | Bootstrap Claude Code with global Core references |
+| Codex | `codex/AGENTS.md` | `${CODEX_HOME:-~/.codex}/AGENTS.md` | Bootstrap Codex with global Core references |
+
+### Installation
+
+The Claude adapter is installed beside the global instruction file rather than replacing it:
+- `CLAUDE.md` at that path is the operator's own document
+- It imports the adapter with `@${CLAUDE_CONFIG_DIR:-~/.claude}/engineering-os.md`
+- Personal preferences and Engineering OS bootstrap stay in separate files
+- Reinstalling never overwrites the operator's own instructions
+
+Codex has no equivalent import convention, so its adapter becomes the global file directly.
 
 ## Why adapters are rendered, not copied
 
@@ -77,3 +85,94 @@ reviewed change in the consumer repository, not a side effect of editing this on
 
 A rendered file at the right path is not evidence that a harness loaded it. Confirm in
 each harness that the Core is present before treating global context as operational.
+
+## Adapters in M7: From Bootstrap to Worker Bridge
+
+**Current (M1):** Adapters bootstrap harnesses. You choose which one to use.
+
+**Future (M7):** Adapters become programmatic worker bridges. Biah invokes them, not vice versa.
+
+### M7 Adapter Model
+
+In M7, each adapter becomes a thin CLI bridge:
+
+```
+Biah (Orchestrator)
+    │
+    ├─→ adapters/claude/  → invoke claude CLI with task
+    ├─→ adapters/codex/   → invoke codex CLI with task
+    └─→ adapters/copilot/ → invoke copilot CLI with task
+```
+
+Each adapter:
+- Receives a task contract from Biah
+- Invokes the vendor's CLI in an isolated worktree
+- Collects and returns the BUILD REPORT
+- Does not modify task requirements or worker selection
+
+### Capability Registration (M7)
+
+Each adapter declares what the worker can do:
+
+```yaml
+# adapters/claude/manifest.yml
+worker: claude
+capabilities:
+  - architecture_reasoning
+  - large_context
+  - refactoring
+```
+
+Biah reads this registry when routing tasks. If a task requires `architecture_reasoning`, Biah sends it to Claude—not because you asked for Claude, but because the task requirements match Claude's capabilities.
+
+### Example M7 Flow
+
+```
+Task HC-006-backend requires: [implementation, testing]
+
+Biah checks registry:
+  claude: [architecture_reasoning, large_context, refactoring]
+  codex: [implementation, debugging, testing, code_review]  ← matches!
+  copilot: [implementation, github_native, repository_operations]
+
+Biah invokes: adapters/codex/bridge.sh HC-006-backend
+  → worker: codex
+  → worktree: /tmp/worktree-HC-006-backend
+  → BUILD REPORT: ✓ implementation complete
+
+Biah waits for dependencies, then:
+Biah invokes: adapters/claude/bridge.sh HC-006-review
+  → worker: claude
+  → worktree: /tmp/worktree-HC-006-review
+  → BUILD REPORT: ✓ architecture review complete
+
+All BUILD REPORTs collected → HUMAN_GATE
+```
+
+### Adding New Vendors (M7+)
+
+To add Gemini Code as a worker:
+
+1. Create `adapters/gemini/`
+2. Write `bridge.sh` to invoke Gemini CLI
+3. Write `manifest.yml` with Gemini's capabilities
+4. Register in Biah's worker registry
+
+Done. No changes to Core, contracts, or workflows. Existing tasks route to Gemini automatically when its capabilities match.
+
+### Backward Compatibility
+
+M1 adapters (bootstrap documents) continue to work. Teams that prefer to pick their own harness can still run:
+
+```bash
+scripts/install-adapters.sh
+```
+
+and bootstrap Claude Code or Codex individually. The adapters are designed to serve both purposes:
+- **M1 use:** As bootstrap documents for human harness selection
+- **M7 use:** As worker bridges invoked by Biah orchestrator
+
+## See Also
+
+- [`MILESTONES.md`](../MILESTONES.md) — Full roadmap from M1 through M7
+- [`.github/copilot-instructions.md`](../.github/copilot-instructions.md) — M7-aware instructions for Engineering OS

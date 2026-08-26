@@ -1,0 +1,82 @@
+name: Release
+
+# Uma tag é o pino que os projetos consumidores citam. Ela precisa ser imutável, precisa
+# apontar para algo que passou pelos portões, e precisa estar em `main` — uma tag numa
+# branch descartada leva o consumidor a um commit que some. Ver VERSIONING.md.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Valida e publica
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Histórico completo: a checagem de alcançabilidade compara com `main`.
+          fetch-depth: 0
+
+      - name: Tag é SemVer
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+          if ! printf '%s' "$tag" | grep -Eq "$semver"; then
+            echo "tag fora de SemVer: $tag (esperado vMAJOR.MINOR.PATCH, ex. v0.1.0)" >&2
+            exit 1
+          fi
+          echo "tag válida: $tag"
+
+      - name: Tag está em main
+        run: |
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "commit da tag não é alcançável a partir de main: $GITHUB_SHA" >&2
+            echo "releases são cortados de main; ver VERSIONING.md." >&2
+            exit 1
+          fi
+          echo "commit alcançável a partir de main"
+
+      - name: Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Dependências dos portões
+        run: pip install --quiet pyyaml
+
+      - name: Portões do repositório
+        run: |
+          scripts/check-links.py
+          scripts/check-tracked-artifacts.py
+          scripts/check-operator-paths.py
+          scripts/check-yaml.py
+          scripts/install-adapters.sh --dry-run
+
+      - name: Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: biah/go.mod
+          cache-dependency-path: biah/go.sum
+
+      - name: Portões do biah
+        working-directory: biah
+        run: |
+          test -z "$(gofmt -l .)" || { echo "arquivos fora do gofmt" >&2; exit 1; }
+          go vet ./...
+          go build ./...
+          go test ./...
+
+      - name: Publica release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Engineering OS $GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
