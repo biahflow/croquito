@@ -141,11 +141,28 @@ def _cases_for(catalog: str) -> list[dict[str, object]]:
     return [case for case in _golden_cases() if case["catalog"] == catalog]
 
 
-def _acceptable_codes(case: dict[str, object]) -> list[str]:
-    """Códigos que respondem o caso: um só, ou a FAMÍLIA inteira quando o rótulo não carrega
-    a evidência que separa as variantes (ver `note_family_oracle` no golden)."""
+def _package_of(case: dict[str, object]) -> list[dict[str, object]] | None:
+    """Lista de elementos do PACOTE (N:N, ADR-0053) quando o caso é da 4ª forma do oráculo,
+    `None` caso contrário. Cada elemento é `{code, role, required, basis, quantity, ...}`
+    (ver `note_package_cardinality` no golden)."""
     expected = case["expected"]
     assert isinstance(expected, dict)
+    package = expected.get("package")
+    if package is None:
+        return None
+    assert isinstance(package, list) and package, "pacote declarado sem nenhum código"
+    return [dict(element) for element in package]
+
+
+def _acceptable_codes(case: dict[str, object]) -> list[str]:
+    """Códigos que respondem o caso: um só, a FAMÍLIA inteira quando o rótulo não carrega a
+    evidência que separa as variantes (ver `note_family_oracle`), ou a lista de códigos do
+    PACOTE quando um elemento dispara vários serviços (ver `note_package_cardinality`)."""
+    expected = case["expected"]
+    assert isinstance(expected, dict)
+    package = _package_of(case)
+    if package is not None:
+        return [str(element["code"]) for element in package]
     codes = expected.get("codes")
     if isinstance(codes, list):
         assert codes, "família declarada sem nenhum código aceitável"
@@ -300,6 +317,41 @@ def _assert_known_gaps_did_not_regress(
         )
 
 
+def _assert_package_recall_did_not_regress(
+    cases: list[dict[str, object]], suggestions: dict[str, CodeSuggestion]
+) -> None:
+    """MEDIÇÃO-NÃO-GATEADA do oráculo de PACOTE (N:N, ADR-0053).
+
+    Para cada caso de pacote, mede o recall@20 do matcher de CÓDIGO ÚNICO sobre a lista de
+    códigos do pacote — quantos dos N serviços que o elemento dispara aparecem no top-20 —
+    e compara com o piso `package_recall_2026_08_26` registrado no golden. Espelha
+    exatamente o padrão `known_gap_rank`: uma PIORA reprova (o número registrado é o teto de
+    regressão), uma melhora nunca reprova e nunca roda no CI (o caso é `catalog: "real"`,
+    sob `skipif`). É o gap que o ADR-0053 manda publicar como medido, não esconder: o matcher
+    otimizado para "qual código É este elemento" não traz códigos de famílias diferentes, e o
+    piso nasce 0.0 (ver `note_package_cardinality`), catraca só para cima quando o suggester
+    de pacote entrar."""
+    for index, case in enumerate(cases):
+        package = _package_of(case)
+        if package is None:
+            continue
+        recorded = case.get("package_recall_2026_08_26")
+        assert isinstance(recorded, int | float), (
+            f"{case['label']!r}: caso de pacote sem `package_recall_2026_08_26` no golden"
+        )
+        acceptable = _acceptable_codes(case)
+        item_id = f"ti_{index:016x}"
+        suggestion = suggestions.get(item_id)
+        candidate_codes = [] if suggestion is None else [c.code for c in suggestion.candidates]
+        found = sum(1 for code in acceptable if code in candidate_codes)
+        recall = found / len(acceptable)
+        assert recall + 1e-9 >= recorded, (
+            f"{case['label']!r}: recall@20 do pacote caiu de {recorded} para {recall:.4f} "
+            f"({found}/{len(acceptable)} códigos no top-20) — atualize "
+            "package_recall_2026_08_26 no golden só se a piora for esperada"
+        )
+
+
 def test_synthetic_golden_cases_are_recalled_at_20(tmp_path: Path) -> None:
     cases = _cases_for("synthetic")
     assert cases, "o golden precisa declarar os casos sintéticos do oráculo do M4/M5"
@@ -348,6 +400,7 @@ def test_real_catalog_golden_cases_are_recalled_at_20() -> None:
     )
 
     _assert_known_gaps_did_not_regress(cases, packet, catalog)
+    _assert_package_recall_did_not_regress(cases, suggestions)
 
 
 @pytest.mark.skipif(
@@ -385,6 +438,11 @@ def test_real_catalog_hybrid_cases_are_recalled_at_20() -> None:
     for case in cases:
         acceptable = _acceptable_codes(case)
         if not acceptable:
+            continue
+        if _package_of(case) is not None:
+            # Pacote (N:N, ADR-0053): medido no braço LÉXICO (catálogo-only), em
+            # `_assert_package_recall_did_not_regress`. O híbrido exigiria um vetor de
+            # consulta em cache que a rodada paga não gerou para estes rótulos de pacote.
             continue
         label = str(case["label"])
         vector = cache.vectors.get(normalize_query_text(label))
