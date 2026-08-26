@@ -335,6 +335,35 @@ class CalcBlock(ValuationContractModel):
                     "derived_from_code": self.derived_from_code,
                 },
             )
+        # As três bases restantes afirmam que a parcela vem de UM elemento da prancha
+        # (`FULL`, `DERIVED`) ou é um recorte medido dele (`PARTIAL`); sem `source_item_id`
+        # o bloco afirma a origem e não a nomeia. `DEPENDENT` fica de fora porque a origem
+        # dela é outro serviço, não um elemento — se também carrega elemento de origem é
+        # decisão do builder (T4, ADR-0053), não deste modelo. `basis is None` fica de fora
+        # porque é o bloco pré-matriz, que não afirmou nada.
+        if (
+            self.basis
+            in (ContributionBasis.FULL, ContributionBasis.DERIVED, ContributionBasis.PARTIAL)
+            and self.source_item_id is None
+        ):
+            raise ValuationValidationError(
+                "CALC_CONTRIBUTION_WITHOUT_SOURCE_ITEM",
+                "parcela com origem em elemento precisa apontar para o elemento",
+                {"label": self.label, "basis": self.basis.value},
+            )
+        # `derived_from_code` é texto livre no schema, mas afirma ser um código de catálogo:
+        # sem checar a forma, "codigo com espaco" ou um `ti_...` copiado por engano passam
+        # como se fossem origem válida. Mesmo superset estrutural de `haulage.validate_codes`
+        # — o contrato real traz código fora do SCO (`IE...`), então não pode exigir SCO puro.
+        if self.derived_from_code is not None and (
+            re.fullmatch(SCO_CODE_PATTERN, self.derived_from_code) is None
+            and re.fullmatch(NON_SCO_CODE_PATTERN, self.derived_from_code) is None
+        ):
+            raise ValuationValidationError(
+                "CALC_CONTRIBUTION_CODE_INVALID",
+                "código de origem da parcela não tem formato de código de catálogo",
+                {"label": self.label, "derived_from_code": self.derived_from_code},
+            )
         return self
 
 

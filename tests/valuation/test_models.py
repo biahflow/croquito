@@ -491,9 +491,49 @@ def test_a_dependent_share_without_the_origin_service_is_refused() -> None:
 
 def test_only_a_dependent_share_cites_another_service() -> None:
     with pytest.raises(ValidationError) as raised:
-        _contribution(basis=ContributionBasis.FULL, derived_from_code="BP09100050(B)")
+        _contribution(
+            basis=ContributionBasis.FULL,
+            source_item_id=_ITEM_ID,
+            derived_from_code="BP09100050(B)",
+        )
 
     assert valuation_error_codes(raised.value) == ["CALC_CONTRIBUTION_CODE_WITHOUT_DEPENDENCY"]
+
+
+def test_a_full_share_without_the_element_it_came_from_is_refused() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _contribution(basis=ContributionBasis.FULL)
+
+    assert valuation_error_codes(raised.value) == ["CALC_CONTRIBUTION_WITHOUT_SOURCE_ITEM"]
+
+
+def test_a_partial_share_without_the_element_it_came_from_is_refused() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _contribution(basis=ContributionBasis.PARTIAL)
+
+    assert valuation_error_codes(raised.value) == ["CALC_CONTRIBUTION_WITHOUT_SOURCE_ITEM"]
+
+
+def test_a_dependent_share_without_an_element_is_accepted() -> None:
+    """A parcela de transporte vem de outro serviço, não de um elemento — exigir o elemento
+    de origem de uma `DEPENDENT` fica para a T4 (#76), que decide se ela também carrega um."""
+    block = _contribution(basis=ContributionBasis.DEPENDENT, derived_from_code="BP09100050(B)")
+
+    assert block.source_item_id is None
+
+
+def test_a_dependent_share_with_a_malformed_code_is_refused() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _contribution(basis=ContributionBasis.DEPENDENT, derived_from_code="codigo com espaco")
+
+    assert valuation_error_codes(raised.value) == ["CALC_CONTRIBUTION_CODE_INVALID"]
+
+
+def test_a_dependent_share_can_cite_a_non_sco_contract_code() -> None:
+    """O superset estrutural existe porque o contrato real traz código fora do SCO."""
+    block = _contribution(basis=ContributionBasis.DEPENDENT, derived_from_code="IE00040849")
+
+    assert block.derived_from_code == "IE00040849"
 
 
 def test_the_source_item_has_the_shape_of_a_takeoff_item() -> None:

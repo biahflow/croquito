@@ -193,6 +193,7 @@ não defeito.
 | `CALIBRATION_INVALID` | `proposal_calibration.py` | âncoras degeneradas ou erro acima da tolerância |
 | `BULLETIN_PRICE_ORIGIN_FORBIDDEN` | `valuation/calc.py`, reafirmado em `workbook_writer.py` | catálogo com origem diferente de `sco` na obra licitada — **duas linhas de defesa**, a segunda na hora de escrever a planilha |
 | `CALC_PLAN_QUANTITY_MISMATCH` | `valuation/calc.py` | o plano de cálculo não fecha com a quantidade que o humano confirmou |
+| `CALC_CONTRIBUTION_*` | `valuation/models.py` | a base declarada da parcela não bate com o que ela implica: canteiro com elemento de origem, parcela derivada sem dizer de qual serviço vem, código de origem fora de parcela derivada, parcela de elemento sem nomear o elemento, ou código de origem sem forma de código de catálogo |
 | `VALUATION_EXPORT_BLOCKED` | `valuation/models.py` | medição não aprovada, aprovação que não casa com o conteúdo, período fora de sequência, código fora do contrato, preço/unidade divergentes do contrato ou saldo estourado |
 | Auditoria da planilha | `valuation/canonical.py` | reabre o `.xlsx`, recanonicaliza e compara célula a célula; divergência não publica |
 | Entitlement de IA | rotas de extração | tenant sem autorização contratual — recusa **antes** de enfileirar |
