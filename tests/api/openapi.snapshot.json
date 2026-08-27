@@ -110,6 +110,94 @@
         "title": "AiProcessingEntitlementResponse",
         "type": "object"
       },
+      "AmendmentLineRequest": {
+        "additionalProperties": false,
+        "description": "Um código alterado por uma RE-RA: delta com sinal, ou item novo.\n\n`quantity_delta` viaja como TEXTO pelo mesmo motivo do fator do reajuste: é `Decimal`\nexato, e um `float` de JSON já teria perdido a escala escrita.\n\nO item novo **não** informa descrição, unidade nem preço: o servidor os materializa do\ncatálogo contratual instalado na rodada (ADR-0056, decisão 7), como o `catalog_version`\nfaz com o preço. Deixar o cliente informá-los aceitaria um número de contrato vindo de\nfora, que é o oposto do que este consolidado existe para garantir.",
+        "properties": {
+          "code": {
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "is_new_item": {
+            "default": false,
+            "title": "Is New Item",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "quantity_delta": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Quantity Delta",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "quantity_delta"
+        ],
+        "title": "AmendmentLineRequest",
+        "type": "object"
+      },
+      "AmendmentRequest": {
+        "additionalProperties": false,
+        "description": "Declaração de RE-RA na abertura da rodada (F-040, ADR-0056).\n\nEspelho de `PriceAdjustmentRequest`: só existe no caminho que tem contratado, é gravada\ncom o consolidado e imutável na rodada. O carimbo de identidade não entra por aqui —\n`declared_by` e `declared_at` vêm do `Principal` e do relógio do servidor.",
+        "properties": {
+          "label": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/AmendmentLineRequest"
+            },
+            "minItems": 1,
+            "title": "Lines",
+            "type": "array"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reference_period": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Reference Period",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "reference_period",
+          "lines"
+        ],
+        "title": "AmendmentRequest",
+        "type": "object"
+      },
       "AnnotateDimensionRequest": {
         "additionalProperties": false,
         "description": "Amarra uma cota confirmada a uma linha traçada; a cota passa a valer sobre o pixel.",
@@ -2036,6 +2124,16 @@
             ],
             "title": "Address"
           },
+          "amendment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AmendmentRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "catalog_upload_id": {
             "anyOf": [
               {
@@ -2078,6 +2176,18 @@
             "minimum": 1.0,
             "title": "Period Number",
             "type": "integer"
+          },
+          "previous_round_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Round Id"
           },
           "price_adjustment": {
             "anyOf": [
