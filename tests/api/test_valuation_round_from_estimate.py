@@ -49,8 +49,12 @@ from tests.api.test_valuation_round_routes import (
 )
 
 _CODE = "CE04100010(/)"
+#: Código presente no catálogo contratual mas AUSENTE do orçamento: é o item que só nasce por
+#: RE-RA, e o servidor materializa descrição, unidade e preço dele do catálogo (ADR-0056, dec. 7).
+_CODE_NEW = "CE04100020(/)"
 _WORKSITE_KEY = "praca-orcada-sintetica"
 _UNIT_PRICE = Decimal("50.00")
+_NEW_ITEM_PRICE = Decimal("30.00")
 _OBJECT_KEY = f"tenants/{_TENANT}/reference-catalogs/sco-sintetico.json"
 
 
@@ -71,7 +75,18 @@ def _catalog_bytes() -> bytes:
                 subgroup_code="CE0410",
                 subgroup_name="ITENS SINTETICOS",
                 origin=PriceOrigin.SCO,
-            )
+            ),
+            PriceCatalogEntry(
+                code=_CODE_NEW,
+                description="PORTAO SINTETICO GALVANIZADO",
+                unit="un",
+                unit_price=_NEW_ITEM_PRICE,
+                family_code="CE",
+                family_name="SERVICOS SINTETICOS",
+                subgroup_code="CE0410",
+                subgroup_name="ITENS SINTETICOS",
+                origin=PriceOrigin.SCO,
+            ),
         ],
     )
     return catalog.model_dump_json().encode("utf-8")
@@ -587,3 +602,122 @@ def test_ler_origens_exige_papel_de_medicao(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 403, response.text
+
+
+def _re_ra(**extra: Any) -> dict[str, Any]:
+    corpo: dict[str, Any] = {
+        "label": "1ª RE-RA",
+        "reference_period": "Processo 123/2026",
+        "lines": [{"code": _CODE, "quantity_delta": "-2.00"}],
+    }
+    corpo.update(extra)
+    return corpo
+
+
+def test_a_rodada_nasce_re_ratificada_e_o_contratado_nao_se_move(tmp_path: Path) -> None:
+    """F-040: o vigente é derivado; o contratado continua sendo o que foi assinado.
+
+    12,00 contratados − 2,00 da RE-RA = 10,00 vigentes, e o contratado permanece 12,00 na
+    mesma linha — é essa convivência que preserva o período anterior.
+    """
+    client = _client(tmp_path)
+    estimate_round_id = _seed_estimate_round(client, document=_signed(_estimate()))
+
+    response = _open_from(client, estimate_round_id, key="abrir-re-ratificada", amendment=_re_ra())
+
+    assert response.status_code == 201, response.text
+    leitura = client.get(
+        f"/v1/valuation-rounds/{response.json()['round_id']}",
+        headers=_headers(key="estado-re-ratificado"),
+    )
+    assert leitura.status_code == 200, leitura.text
+    contracted = leitura.json()["contracted"]
+
+    declaradas = contracted["amendments"]
+    assert len(declaradas) == 1
+    assert declaradas[0]["label"] == "1ª RE-RA"
+    assert declaradas[0]["reference_period"] == "Processo 123/2026"
+    # Identidade e relógio são do servidor, nunca do corpo.
+    assert declaradas[0]["declared_by"]
+    assert declaradas[0]["declared_at"]
+
+    quantidade = contracted["quantities"][0]
+    assert quantidade["contracted_quantity"] == "12.00"
+    assert quantidade["current_quantity"] == "10.00"
+    assert quantidade["re_ratified"] is True
+
+
+def test_rodada_sem_re_ra_declara_ausencia_em_vez_de_omitir(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    estimate_round_id = _seed_estimate_round(client, document=_signed(_estimate()))
+
+    response = _open_from(client, estimate_round_id, key="abrir-sem-re-ra")
+
+    assert response.status_code == 201, response.text
+    leitura = client.get(
+        f"/v1/valuation-rounds/{response.json()['round_id']}",
+        headers=_headers(key="estado-sem-re-ra"),
+    )
+    contracted = leitura.json()["contracted"]
+    assert contracted["amendments"] == []
+    quantidade = contracted["quantities"][0]
+    assert quantidade["current_quantity"] == quantidade["contracted_quantity"]
+    assert quantidade["re_ratified"] is False
+
+
+def test_item_novo_de_re_ra_nasce_materializado_do_catalogo(tmp_path: Path) -> None:
+    """O item novo não estava no orçamento: o servidor o materializa do catálogo contratual."""
+    client = _client(tmp_path)
+    estimate_round_id = _seed_estimate_round(client, document=_signed(_estimate()))
+
+    amendment = _re_ra(
+        lines=[{"code": _CODE_NEW, "quantity_delta": "6.00", "is_new_item": True}],
+    )
+    response = _open_from(client, estimate_round_id, key="abrir-item-novo", amendment=amendment)
+
+    assert response.status_code == 201, response.text
+    leitura = client.get(
+        f"/v1/valuation-rounds/{response.json()['round_id']}",
+        headers=_headers(key="estado-item-novo"),
+    )
+    quantidades = {q["code"]: q for q in leitura.json()["contracted"]["quantities"]}
+    assert _CODE_NEW in quantidades
+    nova = quantidades[_CODE_NEW]
+    # Contratual zero, vigente igual ao delta (ADR-0056, decisão 7).
+    assert nova["contracted_quantity"] == "0.00"
+    assert nova["current_quantity"] == "6.00"
+    precos = {p["code"]: p for p in leitura.json()["contracted"]["prices"]}
+    assert precos[_CODE_NEW]["contracted_unit_price"] == "30.00"
+
+
+def test_item_novo_com_codigo_fora_do_catalogo_recusa(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    estimate_round_id = _seed_estimate_round(client, document=_signed(_estimate()))
+
+    amendment = _re_ra(
+        lines=[{"code": "CE04109999(/)", "quantity_delta": "6.00", "is_new_item": True}],
+    )
+    response = _open_from(client, estimate_round_id, key="item-novo-fora", amendment=amendment)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "AMENDMENT_NEW_ITEM_CODE_MISSING"
+
+
+def test_re_ra_exige_contratado_e_recusa_no_caminho_do_upload(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    upload_id = str(new_uuid7())
+
+    response = client.post(
+        "/v1/valuation-rounds",
+        headers=_headers(key="re-ra-no-upload"),
+        json={
+            "catalog_upload_id": upload_id,
+            "worksite_key": _WORKSITE_KEY,
+            "worksite_name": "PRACA SINTETICA",
+            "reference_label": "Medição 1",
+            "period_number": 1,
+            "amendment": _re_ra(),
+        },
+    )
+
+    assert response.status_code == 422, response.text

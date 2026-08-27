@@ -188,7 +188,13 @@ from croquito_valuation.assignment import (
 )
 from croquito_valuation.calc import build_worksite_valuation
 from croquito_valuation.calc_matrix import CalcMatrix
-from croquito_valuation.contract import ContractWorkbook, PriceAdjustment
+from croquito_valuation.contract import (
+    Amendment,
+    AmendmentLine,
+    ContractWorkbook,
+    PriceAdjustment,
+    apply_declared_amendment,
+)
 from croquito_valuation.contract_from_estimate import build_contract_from_estimate
 from croquito_valuation.errors import ValuationValidationError, valuation_errors
 from croquito_valuation.estimate import Estimate, build_worksite_estimate
@@ -1333,6 +1339,38 @@ class PriceAdjustmentRequest(ApiModel):
         return self
 
 
+class AmendmentLineRequest(ApiModel):
+    """Um código alterado por uma RE-RA: delta com sinal, ou item novo.
+
+    `quantity_delta` viaja como TEXTO pelo mesmo motivo do fator do reajuste: é `Decimal`
+    exato, e um `float` de JSON já teria perdido a escala escrita.
+
+    O item novo **não** informa descrição, unidade nem preço: o servidor os materializa do
+    catálogo contratual instalado na rodada (ADR-0056, decisão 7), como o `catalog_version`
+    faz com o preço. Deixar o cliente informá-los aceitaria um número de contrato vindo de
+    fora, que é o oposto do que este consolidado existe para garantir.
+    """
+
+    code: str = Field(min_length=1, max_length=30)
+    quantity_delta: str = Field(min_length=1, max_length=20)
+    is_new_item: bool = False
+    note: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class AmendmentRequest(ApiModel):
+    """Declaração de RE-RA na abertura da rodada (F-040, ADR-0056).
+
+    Espelho de `PriceAdjustmentRequest`: só existe no caminho que tem contratado, é gravada
+    com o consolidado e imutável na rodada. O carimbo de identidade não entra por aqui —
+    `declared_by` e `declared_at` vêm do `Principal` e do relógio do servidor.
+    """
+
+    label: str = Field(min_length=1, max_length=60)
+    reference_period: str = Field(min_length=1, max_length=60)
+    note: str | None = Field(default=None, min_length=1, max_length=300)
+    lines: list[AmendmentLineRequest] = Field(min_length=1)
+
+
 class CreateValuationRoundRequest(ApiModel):
     """Rodada nova: a obra, o catálogo instalado e os rótulos que o boletim exige.
 
@@ -1368,6 +1406,9 @@ class CreateValuationRoundRequest(ApiModel):
     #: Reajuste do contrato, opcional (F-039). Só no caminho do orçamento assinado: sem
     #: contratado não há preço contratual a reajustar.
     price_adjustment: PriceAdjustmentRequest | None = None
+    #: RE-RA declarada na abertura, opcional (F-040). Como o reajuste, só no caminho do
+    #: orçamento assinado: sem contratado não há quantidade contratual a re-ratificar.
+    amendment: AmendmentRequest | None = None
 
     @model_validator(mode="after")
     def validate_origin(self) -> CreateValuationRoundRequest:
@@ -1399,6 +1440,11 @@ class CreateValuationRoundRequest(ApiModel):
             raise ValueError(
                 "reajuste exige rodada aberta a partir de orçamento assinado: sem contratado "
                 "não há preço contratual a reajustar"
+            )
+        if self.amendment is not None and not from_estimate:
+            raise ValueError(
+                "RE-RA exige rodada aberta a partir de orçamento assinado: sem contratado "
+                "não há quantidade contratual a re-ratificar"
             )
         return self
 
@@ -4170,6 +4216,76 @@ def _export_contract_for(record: ValuationRoundRecord, valuation: Valuation) -> 
         raise _valuation_model_problem(error) from error
 
 
+def _amendment_from_request(
+    application: FastAPI,
+    *,
+    payload: AmendmentRequest,
+    origin: _ValuationOrigin,
+    principal: Principal,
+) -> Amendment:
+    """A declaração de RE-RA do cliente vira o ato de domínio, com identidade e relógio do servidor.
+
+    O item novo é materializado AQUI, do catálogo contratual instalado na rodada (ADR-0056,
+    decisão 7): o cliente cita o código e o delta, e o servidor lê descrição, unidade e preço.
+    Código de item novo ausente do catálogo recusa — não há de onde a linha nascer.
+    """
+    declared_at = datetime.now(UTC)
+    needs_catalog = any(line.is_new_item for line in payload.lines)
+    entries: dict[str, Any] = {}
+    if needs_catalog:
+        catalog, _summary = _install_catalog(
+            application,
+            object_key=origin.catalog_object_key,
+            object_sha256=origin.catalog_source_sha256,
+            unreadable_code="CATALOG_REQUIRED",
+        )
+        entries = {entry.code: entry for entry in catalog.entries}
+
+    lines: list[AmendmentLine] = []
+    for line in payload.lines:
+        try:
+            quantity_delta = parse_quantity(line.quantity_delta)
+        except DomainValidationError as error:
+            raise _problem(
+                "DOMAIN_VALIDATION_FAILED",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "O delta de quantidade da RE-RA não é um decimal exato.",
+            ) from error
+        if line.is_new_item:
+            entry = entries.get(line.code)
+            if entry is None:
+                raise _problem(
+                    "AMENDMENT_NEW_ITEM_CODE_MISSING",
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "O item novo da RE-RA cita um código que o catálogo contratual não traz: "
+                    "não há de onde materializar descrição, unidade e preço.",
+                    {"code": line.code},
+                )
+            lines.append(
+                AmendmentLine(
+                    code=line.code,
+                    quantity_delta=quantity_delta,
+                    is_new_item=True,
+                    note=line.note,
+                    description=entry.description,
+                    unit=entry.unit,
+                    unit_price=entry.unit_price,
+                )
+            )
+        else:
+            lines.append(
+                AmendmentLine(code=line.code, quantity_delta=quantity_delta, note=line.note)
+            )
+    return Amendment(
+        label=payload.label,
+        lines=lines,
+        declared_by=principal.subject,
+        declared_at=declared_at,
+        reference_period=payload.reference_period,
+        note=payload.note,
+    )
+
+
 def _resolve_valuation_origin(
     session: Session,
     application: FastAPI,
@@ -4186,31 +4302,42 @@ def _resolve_valuation_origin(
             estimate_round_id=payload.estimate_round_id,
             principal=principal,
         )
-        if payload.price_adjustment is None:
+        if payload.price_adjustment is None and payload.amendment is None:
             return origin
-        # O reajuste entra no consolidado ANTES de ele ser gravado: depois disso ele é
-        # imutável na rodada (ADR-0048, decisão 7), e é essa imutabilidade que faz a
-        # declaração valer para o período inteiro sem poder mudar no meio dele.
+        # Reajuste e RE-RA entram no consolidado ANTES de ele ser gravado e compõem na ordem
+        # declarada (ADR-0056, decisão 6): depois disso ele é imutável na rodada (ADR-0048,
+        # decisão 7), e é essa imutabilidade que faz a declaração valer para o período inteiro.
         assert origin.contract_workbook_json is not None
         contract = ContractWorkbook.model_validate(dict(origin.contract_workbook_json))
-        adjustment = _price_adjustment_from_request(
-            application,
-            session,
-            payload=payload.price_adjustment,
-            contract=contract,
-            principal=principal,
-            storage_flavor=storage_flavor,
-        )
-        try:
-            reajustado = contract.model_copy(
-                update={"adjustments": [*contract.adjustments, adjustment]}
+        if payload.price_adjustment is not None:
+            adjustment = _price_adjustment_from_request(
+                application,
+                session,
+                payload=payload.price_adjustment,
+                contract=contract,
+                principal=principal,
+                storage_flavor=storage_flavor,
             )
-            # `model_copy` não revalida: a releitura é o que faz a cobertura por código do
-            # `catalog_version` ser conferida pelo domínio, e não só pela fronteira.
-            reajustado = ContractWorkbook.model_validate(reajustado.model_dump(mode="json"))
-        except ValidationError as error:
-            raise _valuation_model_problem(error) from error
-        return replace(origin, contract_workbook_json=reajustado.model_dump(mode="json"))
+            try:
+                reajustado = contract.model_copy(
+                    update={"adjustments": [*contract.adjustments, adjustment]}
+                )
+                # `model_copy` não revalida: a releitura é o que faz a cobertura por código do
+                # `catalog_version` ser conferida pelo domínio, e não só pela fronteira.
+                contract = ContractWorkbook.model_validate(reajustado.model_dump(mode="json"))
+            except ValidationError as error:
+                raise _valuation_model_problem(error) from error
+        if payload.amendment is not None:
+            declared = _amendment_from_request(
+                application, payload=payload.amendment, origin=origin, principal=principal
+            )
+            try:
+                contract = apply_declared_amendment(contract, declared)
+            except ValuationValidationError as error:
+                raise _valuation_domain_problem(error) from error
+            except ValidationError as error:
+                raise _valuation_model_problem(error) from error
+        return replace(origin, contract_workbook_json=contract.model_dump(mode="json"))
 
     # Caminho de sempre: obra declarada e catálogo por upload, sem contratado a conferir.
     assert payload.catalog_upload_id is not None
