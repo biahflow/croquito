@@ -12,6 +12,8 @@ import {
   ProgressoExportacao,
   RegimeDeConferencia,
   RegistroDaAprovacao,
+  ReRatificacaoDeclarada,
+  ReRatificacaoFieldset,
   TelaAuditoriaReprovada,
 } from "./MedicaoApp";
 import { AVISO_DOSSIE_GERADO, AVISO_DOSSIE_PREVIA } from "./labels";
@@ -551,5 +553,88 @@ describe("RegimeDeConferencia", () => {
     expect(html).toContain("não são verificados aqui");
     expect(html).toContain('role="alert"');
     expect(html).not.toContain("Confere contra o orçamento assinado");
+  });
+});
+
+describe("ReRatificacaoDeclarada", () => {
+  it("mostra a RE-RA declarada e a conta contratado → vigente → saldo", () => {
+    const html = renderToStaticMarkup(
+      <ReRatificacaoDeclarada
+        contracted={{
+          origin: "signed_estimate",
+          estimate_round_id: "0197f2a0-0000-7000-8000-0000000000c1",
+          estimate_digest: "9".repeat(64),
+          amendments: [
+            {
+              label: "1ª RE-RA",
+              reference_period: "Processo 123/2026",
+              declared_by: "ana",
+              declared_at: "2026-08-27T13:00:00+00:00",
+              lines: [{ code: "CE04100010(/)", quantity_delta: "-2.00" }],
+            },
+          ],
+          quantities: [
+            {
+              code: "CE04100010(/)",
+              item_number: "1",
+              description: "ALAMBRADO",
+              unit: "m",
+              contracted_quantity: "12.00",
+              current_quantity: "10.00",
+              current_balance_quantity: "10.00",
+              re_ratified: true,
+            },
+          ],
+        }}
+      />,
+    );
+
+    // O selo diz "re-ratificada" por escrito — a cor não é o único indicador.
+    expect(html).toContain("re-ratificada");
+    expect(html).toContain("1ª RE-RA");
+    expect(html).toContain("Processo 123/2026");
+    expect(html).toContain("declarada por ana");
+    // A conta é visível: contratado 12,00 → vigente 10,00, e não um número escrito à parte.
+    expect(html).toContain("12.00");
+    expect(html).toContain("10.00");
+  });
+
+  it("sem RE-RA declarada, não empurra o assunto para quem não o tem", () => {
+    const html = renderToStaticMarkup(
+      <ReRatificacaoDeclarada
+        contracted={{
+          origin: "signed_estimate",
+          estimate_round_id: "0197f2a0-0000-7000-8000-0000000000c1",
+          estimate_digest: "9".repeat(64),
+        }}
+      />,
+    );
+
+    expect(html).toBe("");
+  });
+});
+
+describe("ReRatificacaoFieldset", () => {
+  it("sem RE-RA, mostra só o convite a declarar", () => {
+    const html = renderToStaticMarkup(
+      <ReRatificacaoFieldset value={null} onChange={() => {}} />,
+    );
+
+    expect(html).toContain("Declarar uma RE-RA nesta abertura");
+    expect(html).not.toContain("Nome curto");
+  });
+
+  it("com RE-RA, mostra os campos e a linha de código e efeito", () => {
+    const html = renderToStaticMarkup(
+      <ReRatificacaoFieldset
+        value={{ label: "1ª RE-RA", referencePeriod: "", lines: [{ code: "", quantityDelta: "" }] }}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Nome curto");
+    expect(html).toContain("Processo ou publicação");
+    expect(html).toContain("adicionar código");
+    expect(html).toContain("item novo");
   });
 });

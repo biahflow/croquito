@@ -50,6 +50,7 @@ import {
   type TakeoffResponse,
   type ValuationOrigin,
   type PriceAdjustmentDraft,
+  type AmendmentDraft,
 } from "./api";
 import { signOut } from "../auth";
 import { BUSCA_DEBOUNCE_MS, consultaIncremental, resumoDaBusca } from "./busca";
@@ -104,6 +105,7 @@ import {
 } from "./labels";
 import { codeSearchTerm, worksiteKeyError } from "./requests";
 import { DICA_FATOR, REAJUSTE_OPCOES, reajusteIssue } from "./reajuste";
+import { DICA_DELTA, reRaIssue } from "./reratificacao";
 import { itemAnchor } from "./takeoff";
 import {
   bboxRect,
@@ -326,7 +328,184 @@ export function RegimeDeConferencia({
         </p>
       )}
       <ReajusteDeclarado contracted={contracted} />
+      <ReRatificacaoDeclarada contracted={contracted} />
     </div>
+  );
+}
+
+/**
+ * A RE-RA do contrato, e a conta de QUANTIDADE que ela produz (F-040, ADR-0056).
+ *
+ * Espelho de `ReajusteDeclarado`: não aparece sem re-ratificação — a ausência já está
+ * declarada na resposta, e a tela não precisa falar dela. O vigente aparece como resultado de
+ * uma conta visível (contratado → vigente), nunca como um número escrito à parte: é a decisão
+ * 3 do ADR-0056 tornada impossível de contornar pela interface. A cor nunca é o único
+ * indicador — o selo diz "re-ratificada" por escrito (decisão 9 do pacote de design).
+ */
+export function ReRatificacaoDeclarada({
+  contracted,
+}: {
+  contracted: RoundState["contracted"];
+}) {
+  const declaradas = contracted.amendments ?? [];
+  if (declaradas.length === 0) {
+    return null;
+  }
+  const reRatificados = (contracted.quantities ?? []).filter((q) => q.re_ratified);
+  return (
+    <div className="rera-declarada">
+      {declaradas.map((rera, indice) => (
+        <p key={`${rera.declared_at ?? rera.label}-${indice}`} className="rera-linha">
+          <span className="selo selo-rera">re-ratificada</span>{" "}
+          {rera.label}
+          {rera.reference_period ? ` · ${rera.reference_period}` : ""}{" "}
+          {rera.declared_by ? (
+            <span className="rera-autoria">declarada por {rera.declared_by}</span>
+          ) : null}
+        </p>
+      ))}
+      {reRatificados.length === 0 ? null : (
+        <table className="rera-tabela">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Descrição</th>
+              <th className="numero">Contratado</th>
+              <th className="numero">Vigente</th>
+              <th className="numero">Saldo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reRatificados.map((q) => (
+              <tr key={q.code}>
+                <td>{q.item_number}</td>
+                <td>{q.description}</td>
+                <td className="numero">{q.contracted_quantity}</td>
+                <td className="numero">{q.current_quantity}</td>
+                <td className="numero">{q.current_balance_quantity}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="dica">
+        A quantidade vigente é derivada do contratado pela declaração acima. Período já medido
+        guarda a quantidade que valeu nele.
+      </p>
+    </div>
+  );
+}
+
+const RERA_LINHA_VAZIA = { code: "", quantityDelta: "" };
+const RERA_DRAFT_VAZIO: AmendmentDraft = {
+  label: "",
+  referencePeriod: "",
+  lines: [RERA_LINHA_VAZIA],
+};
+
+/**
+ * A declaração da RE-RA na abertura (F-040), isolada em componente próprio: a lista de linhas
+ * é dinâmica, e mantê-la aqui deixa a forma testável fora do App inteiro.
+ *
+ * `null` é "sem RE-RA" e é o padrão — não re-ratificar é o caminho normal. O item novo não
+ * informa preço: o servidor o materializa do catálogo contratual (ADR-0056, decisão 7).
+ */
+export function ReRatificacaoFieldset({
+  value,
+  onChange,
+}: {
+  value: AmendmentDraft | null;
+  onChange: (value: AmendmentDraft | null) => void;
+}) {
+  const ativo = value !== null;
+  const draft = value ?? RERA_DRAFT_VAZIO;
+  const set = (patch: Partial<AmendmentDraft>) => onChange({ ...draft, ...patch });
+  const setLinha = (indice: number, patch: Partial<(typeof draft.lines)[number]>) =>
+    set({
+      lines: draft.lines.map((linha, j) => (j === indice ? { ...linha, ...patch } : linha)),
+    });
+  return (
+    <fieldset className="rera-do-contrato">
+      <legend>Re-ratificação (RE-RA)</legend>
+      <p className="dica">
+        A RE-RA vale deste período em diante. Período já aprovado não é reescrito, e o vigente
+        é derivado do contratado mais o efeito declarado.
+      </p>
+      <label className="rera-toggle">
+        <input
+          type="checkbox"
+          checked={ativo}
+          onChange={(event) => onChange(event.target.checked ? draft : null)}
+        />
+        Declarar uma RE-RA nesta abertura
+      </label>
+      {!ativo ? null : (
+        <div className="rera-campos">
+          <label>
+            Nome curto
+            <input
+              value={draft.label}
+              onChange={(event) => set({ label: event.target.value })}
+              placeholder="1ª RE-RA"
+            />
+          </label>
+          <label>
+            Processo ou publicação
+            <input
+              value={draft.referencePeriod}
+              onChange={(event) => set({ referencePeriod: event.target.value })}
+              placeholder="Processo 123/2026"
+            />
+          </label>
+          {draft.lines.map((linha, indice) => (
+            <div key={indice} className="rera-linha-campos">
+              <input
+                aria-label={`Código da linha ${indice + 1}`}
+                value={linha.code}
+                onChange={(event) => setLinha(indice, { code: event.target.value })}
+                placeholder="CE04100010(/)"
+              />
+              <input
+                aria-label={`Efeito da linha ${indice + 1}`}
+                value={linha.quantityDelta}
+                onChange={(event) => setLinha(indice, { quantityDelta: event.target.value })}
+                placeholder="-4 ou +6"
+              />
+              <label className="rera-item-novo">
+                <input
+                  type="checkbox"
+                  checked={linha.isNewItem ?? false}
+                  onChange={(event) => setLinha(indice, { isNewItem: event.target.checked })}
+                />
+                item novo
+              </label>
+              {draft.lines.length > 1 ? (
+                <button
+                  type="button"
+                  className="rera-remover"
+                  onClick={() =>
+                    set({ lines: draft.lines.filter((_, j) => j !== indice) })
+                  }
+                >
+                  remover
+                </button>
+              ) : null}
+            </div>
+          ))}
+          <button
+            type="button"
+            className="rera-adicionar"
+            onClick={() => set({ lines: [...draft.lines, { ...RERA_LINHA_VAZIA }] })}
+          >
+            adicionar código
+          </button>
+          <p className="dica">
+            {DICA_DELTA} Item novo não informa preço — o servidor o materializa do catálogo
+            contratual.
+          </p>
+        </div>
+      )}
+    </fieldset>
   );
 }
 
@@ -1147,6 +1326,9 @@ export function MedicaoApp({
   // existe e não se impõe. Só aparece no caminho do orçamento assinado, porque sem
   // contratado não há preço contratual a reajustar.
   const [reajuste, setReajuste] = useState<PriceAdjustmentDraft | null>(null);
+  // RE-RA declarada na abertura (F-040). `null` é "sem RE-RA", e é o padrão: não re-ratificar
+  // é o caminho normal. Como o reajuste, só no caminho contratado (orçamento assinado).
+  const [reRa, setReRa] = useState<AmendmentDraft | null>(null);
   const [catalogFile, setCatalogFile] = useState<File | null>(null);
 
   // Prancha (upload e leitura automática).
@@ -1399,18 +1581,27 @@ export function MedicaoApp({
           setAlertMessage(problema);
           return;
         }
+        const problemaReRa = reRaIssue(reRa);
+        if (problemaReRa !== null) {
+          setAlertMessage(problemaReRa);
+          return;
+        }
         const created = await createRound(token, {
           ...roundForm,
           estimateRoundId: origemEscolhida,
           priceAdjustment: reajuste ?? undefined,
+          amendment: reRa ?? undefined,
         });
         setRoundForm(EMPTY_ROUND_FORM);
         setOrigemEscolhida(null);
         setReajuste(null);
+        setReRa(null);
         setToast(
-          reajuste === null
-            ? "Rodada aberta com o contratado do orçamento assinado."
-            : "Rodada aberta com o contratado reajustado.",
+          reRa !== null
+            ? "Rodada aberta com o contratado re-ratificado."
+            : reajuste === null
+              ? "Rodada aberta com o contratado do orçamento assinado."
+              : "Rodada aberta com o contratado reajustado.",
         );
         abrirRodada(created.round_id);
         return;
@@ -2614,6 +2805,14 @@ export function MedicaoApp({
                     </>
                   )}
                 </fieldset>
+              ) : null}
+              {origemDoOrcamento ? (
+                <>
+                  <ReRatificacaoFieldset value={reRa} onChange={setReRa} />
+                  {reRaIssue(reRa) === null ? null : (
+                    <p className="campo-aviso">{reRaIssue(reRa)}</p>
+                  )}
+                </>
               ) : null}
               <button
                 type="submit"
