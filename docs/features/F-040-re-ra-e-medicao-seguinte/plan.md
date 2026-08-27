@@ -22,8 +22,8 @@ do domínio, sob pena de dois veredictos sobre a mesma planilha (feature.md, Ris
 
 | # | Tarefa | Estado |
 |---|---|---|
-| T1 | [A RE-RA com procedência e o vigente derivado no domínio](tasks/T1-re-ra-e-vigente-no-dominio.md) | Planejado |
-| T2 | [A medição seguinte: consolidado `n+1` a partir da rodada anterior](tasks/T2-medicao-seguinte.md) | Planejado |
+| T1 | [A RE-RA com procedência e o vigente derivado no domínio](tasks/T1-re-ra-e-vigente-no-dominio.md) | **Entregue** |
+| T2 | [A medição seguinte: consolidado `n+1` a partir da rodada anterior](tasks/T2-medicao-seguinte.md) | **Entregue** |
 | T3 | [Declarar a RE-RA e abrir a medição seguinte na API](tasks/T3-declaracao-e-abertura-na-api.md) | Planejado |
 | T4 | [A memória mostra contratado → vigente com a RE-RA](tasks/T4-memoria-com-a-re-ra.md) | Planejado |
 | T5 | [A tela: declarar a RE-RA e abrir a medição seguinte](tasks/T5-tela-da-medicao.md) | Planejado |

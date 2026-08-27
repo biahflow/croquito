@@ -22,6 +22,7 @@ Duas coisas do contrato real mandam na forma deste agregado:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
 from itertools import pairwise
@@ -750,4 +751,72 @@ def apply_declared_amendment(workbook: ContractWorkbook, amendment: Amendment) -
         lines=lines,
         amendments=[*workbook.amendments, amendment],
         adjustments=list(workbook.adjustments),
+    )
+
+
+def build_next_round_contract(
+    previous: ContractWorkbook,
+    *,
+    measured: Mapping[str, Decimal],
+    period_number: int,
+) -> ContractWorkbook:
+    """Consolidado da rodada `n+1`: nasce da rodada anterior mais o período aprovado nela.
+
+    Exerce a decisão 8 do ADR-0048 (da segunda medição em diante o consolidado soma os
+    períodos já lançados) e a decisão 4 do ADR-0056: **cita a rodada anterior, não o
+    orçamento**. Reajustes e RE-RA já estão no consolidado anterior e são preservados — não
+    reaplicados a partir do orçamento, o que exigiria reaplicar toda a história declarada e
+    concordar consigo mesma para sempre.
+
+    `measured` é a quantidade medida por código no período aprovado; o preço lançado é o
+    vigente na rodada anterior (`current_unit_price`), e ele só vira `unit_price` do período
+    quando difere do contratado — isto é, depois de um reajuste. Vigente e saldo continuam
+    derivados: a linha nova não grava `amended_quantity` nem `balance_quantity`.
+    """
+    if period_number != previous.next_period_number:
+        raise ValuationValidationError(
+            "NEXT_ROUND_PERIOD_NOT_SEQUENTIAL",
+            "a medição seguinte precisa ser o período imediatamente após o último lançado",
+            {"expected": previous.next_period_number, "declared": period_number},
+        )
+    lines: list[ContractLine] = []
+    for line in previous.lines:
+        price = previous.current_unit_price(line)
+        quantity = measured.get(line.code, Decimal("0.00"))
+        amount = money_trunc(quantity * price)
+        period = PeriodProgress(
+            period_number=period_number,
+            quantity=quantity,
+            amount=amount,
+            # Só quando o preço lançado difere do contratado (reajuste): ausente significa
+            # "medido pelo contratado", que é a verdade sobre todo período não reajustado.
+            unit_price=price if price != line.unit_price else None,
+        )
+        new_periods = [*line.periods, period]
+        # Reconstrói a linha (não `model_copy`) para reexecutar os validadores de período e
+        # acumulado sobre o período recém-lançado.
+        lines.append(
+            ContractLine(
+                group_label=line.group_label,
+                item_number=line.item_number,
+                code=line.code,
+                description=line.description,
+                unit=line.unit,
+                unit_price=line.unit_price,
+                contract_quantity=line.contract_quantity,
+                periods=new_periods,
+                accumulated_quantity=sum((p.quantity for p in new_periods), Decimal("0.00")),
+                accumulated_amount=sum((p.amount for p in new_periods), Decimal("0.00")),
+            )
+        )
+    return ContractWorkbook(
+        schema_version=CONTRACT_SCHEMA_VERSION,
+        id=previous.id,
+        source_label=previous.source_label,
+        source_sha256=previous.source_sha256,
+        contract_label=previous.contract_label,
+        period_numbers=[*previous.period_numbers, period_number],
+        lines=lines,
+        amendments=list(previous.amendments),
+        adjustments=list(previous.adjustments),
     )

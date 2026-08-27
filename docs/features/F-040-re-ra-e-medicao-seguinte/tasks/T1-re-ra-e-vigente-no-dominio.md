@@ -1,6 +1,6 @@
 # F-040 · T1 — A RE-RA com procedência e o vigente derivado no domínio
 
-Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Planejado**
+Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue**
 
 ## Objetivo
 

@@ -1,6 +1,6 @@
 # F-040 · T2 — A medição seguinte: consolidado `n+1` a partir da rodada anterior
 
-Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Planejado**
+Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue**
 
 ## Objetivo
 
