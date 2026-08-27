@@ -108,12 +108,34 @@ Tomadas por ato humano em 2026-08-27, na abertura da feature:
    preço, e preço vigente não depende de quantidade — mantê-los independentes evita que um erro
    de fator contamine saldo de quantitativo.
 
-7. **`ContractWorkbook.schema_version` sobe para `4.0.0`, aceitando `2.0.0` e `3.0.0`.** Mesma
+7. **Item novo declarado no sistema materializa descrição, unidade e preço do catálogo
+   contratual, e cria a linha no consolidado.** Achado ao produzir o Design Approval Package,
+   e é uma lacuna real: `AmendmentLine` carrega apenas `code`, `quantity_delta`, `is_new_item`
+   e `note`, e `AMENDMENT_NEW_ITEM_INVALID` (`contract.py:506-518`) exige que **já exista** no
+   consolidado uma linha com `contract_quantity == 0` para o código.
+
+   Isso funcionava porque a RE-RA só era lida do MAPÃO, onde a planilha da prefeitura **já
+   traz** a linha zerada. Um consolidado nascido do orçamento assinado não tem linha nenhuma
+   para um código que nunca foi contratado — e um item verdadeiramente novo é exatamente esse
+   caso. Declarado como está, ele recusaria com `AMENDMENT_TARGET_UNKNOWN`.
+
+   `AmendmentLine` ganha, **só quando `is_new_item`**, os campos que a linha nova precisa:
+   `description`, `unit` e `unit_price`, resolvidos no catálogo contratual instalado na rodada
+   e materializados no ato — mesmo argumento da decisão 4 do ADR-0055, que fez
+   `catalog_version` gravar o preço por código em vez de depender do catálogo continuar
+   instalado. Código ausente do consolidado **e** do catálogo recusa: não há de onde a linha
+   nascer.
+
+   A linha criada entra com `contract_quantity` zero e vigente igual ao delta — o que preserva
+   a leitura do MAPÃO histórico, onde a linha zerada já vinha pronta e os campos materializados
+   são redundantes e conferidos.
+
+8. **`ContractWorkbook.schema_version` sobe para `4.0.0`, aceitando `2.0.0` e `3.0.0`.** Mesma
    disciplina das duas vezes anteriores. Consolidado gravado antes desta decisão continua
    validando: ele traz `amended_quantity` preenchido e nenhuma RE-RA com procedência, o que é a
    verdade sobre ele — e o vigente derivado devolve exatamente o número que já estava lá.
 
-8. **Nenhum digest assinado se move.** O consolidado não está embutido na medição
+9. **Nenhum digest assinado se move.** O consolidado não está embutido na medição
    (`export_errors` o recebe por parâmetro) e o `Estimate` assinado não ganha campo — o mesmo
    argumento da decisão 8 do ADR-0055, que continua valendo pela mesma razão estrutural.
 
@@ -134,6 +156,13 @@ Tomadas por ato humano em 2026-08-27, na abertura da feature:
 - **Um `ContractWorkbook` novo por RE-RA** — rejeitada pelo mesmo motivo que o ADR-0055 rejeitou
   para reajuste: duplicaria o histórico de períodos junto, criando duas verdades sobre o mesmo
   acumulado.
+- **Exigir que o item novo já exista como linha zerada no consolidado** — rejeitada pela
+  decisão 7. É o que o código faz hoje, e só funciona porque a planilha da prefeitura traz a
+  linha pronta; obrigaria quem declara a criar antes uma linha zerada, que é o próprio ato
+  disfarçado de pré-requisito.
+- **Resolver descrição, unidade e preço do item novo por referência ao catálogo, sem
+  materializar** — rejeitada: o consolidado deixaria de explicar o próprio número quando o
+  catálogo daquela data não estivesse mais instalado.
 
 ## Consequências
 
@@ -168,6 +197,7 @@ Tomadas por ato humano em 2026-08-27, na abertura da feature:
 | Saldo apurado sobre período provisório | Decisão 5: rodada seguinte exige a anterior aprovada |
 | História reaplicada diferente a cada rodada | Decisão 4: a rodada seguinte cita a anterior, não o orçamento |
 | Item novo receber fator de ano em que não existia | ADR-0055, decisão 9, implementada aqui |
+| Item novo não ter de onde nascer no consolidado | Decisão 7: materializa do catálogo contratual e cria a linha; ausente dos dois, recusa |
 | Registro de pedido envelhecer sem sinal | Decisão 2: o pedido continua sendo o dossiê, fora do sistema |
 
 ## Rastreabilidade

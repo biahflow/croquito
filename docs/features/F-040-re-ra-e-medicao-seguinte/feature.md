@@ -126,6 +126,11 @@ donos do mesmo número.
 - **Vigente derivado**: `current_quantity` como propriedade; `amended_quantity` opcional e
   conferido; `balance_quantity` recebe o mesmo tratamento, porque saldo é `vigente − acumulado`
   e herda a mesma duplicação.
+- **Item novo passa a ter de onde nascer.** Achado ao produzir o Design Approval Package:
+  `AMENDMENT_NEW_ITEM_INVALID` exige uma linha zerada preexistente, o que a planilha da
+  prefeitura fornece e um consolidado vindo do orçamento assinado não tem. `AmendmentLine`
+  ganha `description`, `unit` e `unit_price` **só quando `is_new_item`**, resolvidos no
+  catálogo contratual e materializados no ato (ADR-0056, decisão 7).
 - **Declaração na abertura da rodada**: campo opcional no `POST /v1/valuation-rounds`, espelho
   de `price_adjustment` (`main.py:4192-4212`), aplicado ao consolidado **antes** de ele ser
   gravado — é a imutabilidade na rodada que faz a declaração valer para o período inteiro.
@@ -159,19 +164,22 @@ donos do mesmo número.
    código; sem RE-RA declarada, devolve `contract_quantity` **bit a bit**.
 3. Consolidado gravado antes desta feature (`schema_version` `2.0.0` e `3.0.0`) continua
    validando, e responde com vigente igual ao `amended_quantity` que ele já trazia.
-4. `amended_quantity` presente e divergente do derivado recusa com
+4. Item novo declarado sobre código ausente do consolidado cria a linha com `contract_quantity`
+   zero, descrição, unidade e preço materializados do catálogo; código ausente **também** do
+   catálogo recusa.
+5. `amended_quantity` presente e divergente do derivado recusa com
    `AMENDMENT_APPLICATION_MISMATCH` — o comportamento de hoje, preservado.
-5. Declarar RE-RA na abertura da rodada grava o consolidado já re-ratificado; a rodada
+6. Declarar RE-RA na abertura da rodada grava o consolidado já re-ratificado; a rodada
    permanece imutável depois disso.
-6. Abrir a rodada `n+1` produz consolidado com `period_numbers` = os períodos anteriores,
+7. Abrir a rodada `n+1` produz consolidado com `period_numbers` = os períodos anteriores,
    `periods` lançados com quantidade e valor de cada um, `accumulated_quantity` e
    `accumulated_amount` conferindo com a soma, e saldo `vigente − acumulado`.
-7. Medir no período `n+1` acima do vigente **novo** recusa com `BALANCE_EXCEEDED`; abaixo,
+8. Medir no período `n+1` acima do vigente **novo** recusa com `BALANCE_EXCEEDED`; abaixo,
    exporta.
-8. Nenhum digest assinado se move: o `Estimate` assinado não ganha campo e o consolidado
+9. Nenhum digest assinado se move: o `Estimate` assinado não ganha campo e o consolidado
    continua chegando a `Valuation.export_errors` por parâmetro.
-9. Portões verdes: `make check` e `make test`.
-10. Evidência renderizada da tela real: a classificação de validação é `BROWSER_REQUIRED`,
+10. Portões verdes: `make check` e `make test`.
+11. Evidência renderizada da tela real: a classificação de validação é `BROWSER_REQUIRED`,
     conforme o `browser-runtime-validation` do EngineeringOS.
 
 ## Constraints
@@ -228,7 +236,8 @@ donos do mesmo número.
   precisa de aceite humano antes do planejamento: ele decide o vigente derivado e a forma da
   continuidade entre medições.
 - **Design Approval** — `INTERFACE_CHANGE` exige Design Approval Package aprovado **antes** de
-  planejar a superfície (declaração da RE-RA e jornada da medição seguinte).
+  planejar a superfície. O pacote está em [mock/README.md](mock/README.md), revisão 1,
+  aguardando ato humano.
 - **Merge e aceite** — merge da `main` e o aceite que fecha a issue #100 são atos humanos, e o
   merge da F-039 precede o desta feature.
 
