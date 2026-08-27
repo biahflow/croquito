@@ -130,7 +130,11 @@ def _workbook(
 def test_consolidated_workbook_closes_periods_amendments_and_balance() -> None:
     workbook = _workbook()
 
-    assert workbook.schema_version == "2.0.0"
+    # O consolidado subiu de schema com a F-039 (reajuste), aditivamente: `2.0.0` continua
+    # validando e responde sem reajuste, que é a verdade sobre um consolidado escrito antes.
+    assert workbook.schema_version == "3.0.0"
+    assert workbook.adjustments == []
+    assert workbook.is_adjusted is False
     reduced = workbook.line_for_code(_CODE_A)
     assert reduced.expected_accumulated_quantity == Decimal("5.00")
     assert reduced.expected_accumulated_amount == Decimal("50.00")

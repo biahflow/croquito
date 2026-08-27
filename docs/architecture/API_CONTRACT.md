@@ -1099,6 +1099,43 @@ deles viaja em `POST .../calc`, que lê todos da rodada.
 O catálogo de preços é instalado na criação e é imutável na rodada: trocar de catálogo é
 abrir rodada nova. Erros: `422 DOMAIN_VALIDATION_FAILED` para catálogo ilegível ou inválido.
 
+#### `price_adjustment` — o reajuste do contrato (F-039, ADR-0055)
+
+Opcional, e **só na origem por orçamento assinado**: sem contratado não há preço contratual a
+reajustar. É declarado na abertura porque a rodada é de um período, e declarar ali é dizer "a
+partir deste período"; depois disso o consolidado é imutável na rodada, como já era.
+
+Duas formas, discriminadas por `kind`:
+
+- **`index_factor`** — `factor` (texto, `Decimal` exato e maior que zero), `index_label` e
+  `reference_period`, os três **obrigatórios juntos**. Fator sem índice não é conferível
+  contra a publicação oficial, e número que ninguém consegue conferir não entra na medição.
+- **`catalog_version`** — `catalog_upload_id` da versão nova da tabela e `reference_period`. O
+  servidor lê o catálogo e **materializa o preço de cada código contratado** na declaração,
+  com o digest da versão de onde saiu: o consolidado precisa explicar o próprio preço meses
+  depois, sem depender de aquele catálogo ainda estar instalado. O cliente **não** informa
+  preço.
+
+`declared_by` e `declared_at` vêm do `Principal` e do relógio do servidor, como toda decisão
+da cadeia — o corpo não os carimba.
+
+O preço vigente é **derivado**, nunca gravado: `contratado × Π fatores`, com o dinheiro
+truncado uma vez, no fim. Reajustes **compõem** — o do ano seguinte incide sobre o já
+reajustado —, e `catalog_version` substitui a base em vez de multiplicá-la.
+
+`GET /v1/valuation-rounds/{round_id}` devolve, em `contracted`: `price_adjustments` (as declarações
+como foram feitas; lista vazia é ausência de reajuste, declarada em vez de omitida) e `prices`
+(por código: `contracted_unit_price`, `current_unit_price` e `adjusted`).
+
+Erros: `422` para declaração incompleta (fator sem índice, versão sem catálogo, os dois
+mecanismos misturados), `422 DOMAIN_VALIDATION_FAILED` para fator ilegível, `422` para
+reajuste sem orçamento de origem, e `422 PRICE_ADJUSTMENT_CODE_MISSING` quando a versão nova
+não precifica algum código contratado — reprecificar metade do contrato é pior do que não
+reprecificar.
+
+O passado não se move: `PeriodProgress` declara o preço do período quando ele difere do
+contratado, e medição já aprovada não é recalculada.
+
 ### `GET /v1/valuation-rounds`
 
 Lista as rodadas do tenant, com cursor opaco. Devolve `round_id`, `worksite_key`,

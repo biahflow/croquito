@@ -199,12 +199,50 @@ export type RoundStateBulletin = {
   approval: ApprovalState;
 };
 
+/**
+ * Reajuste declarado na abertura da rodada (F-039, ADR-0055), como o servidor o gravou.
+ *
+ * Os campos de cada mecanismo são exclusivos: `index_factor` traz índice e fator,
+ * `catalog_version` traz a versão da tabela. `declared_by`/`declared_at` são do servidor.
+ */
+export type RoundPriceAdjustment = {
+  kind: "index_factor" | "catalog_version";
+  declared_by: string;
+  declared_at: string;
+  reference_period: string;
+  note?: string | null;
+  index_label?: string | null;
+  /** Texto: fator é `Decimal` exato e não passa por `number`. */
+  factor?: string | null;
+  catalog_label?: string | null;
+  catalog_sha256?: string | null;
+};
+
+/** Contratado e vigente por código — a conta que a memória mostra. */
+export type RoundContractedPrice = {
+  code: string;
+  item_number: string;
+  description: string;
+  unit: string;
+  contracted_unit_price: string;
+  current_unit_price: string;
+  adjusted: boolean;
+};
+
 /** O regime de conferência da rodada; sem origem assinada, saldo e período não são checados. */
 export type RoundStateContracted = {
   origin: "none" | "signed_estimate";
   estimate_round_id: string | null;
   estimate_digest: string | null;
   code_count?: number | null;
+  /**
+   * Reajustes declarados. Lista VAZIA é ausência de reajuste — fato sobre a rodada, e não
+   * campo que some: a tela precisa distinguir "não reajustou" de "não sei".
+   *
+   * Opcional porque rodada lida antes da F-039 responde sem o campo, e a tela usa `?? []`.
+   */
+  price_adjustments?: RoundPriceAdjustment[];
+  prices?: RoundContractedPrice[];
 };
 
 export type RoundState = {
@@ -434,6 +472,22 @@ export type ValuationOrigin = {
  * origem assinada ela vem do conteúdo aprovado, e o servidor **recusa** declará-la — aceitar
  * abriria a porta para medir uma praça diferente da que foi orçada.
  */
+/**
+ * A declaração do reajuste na abertura (F-039). Só existe no caminho do orçamento assinado:
+ * sem contratado não há preço contratual a reajustar, e o servidor recusa.
+ *
+ * `factor` é TEXTO pelo mesmo motivo da quantidade do takeoff: `Decimal` exato não passa por
+ * `number`.
+ */
+export type PriceAdjustmentDraft = {
+  kind: "index_factor" | "catalog_version";
+  referencePeriod: string;
+  indexLabel?: string;
+  factor?: string;
+  catalogUploadId?: string;
+  note?: string;
+};
+
 export type CreateRoundDraft = {
   worksiteKey: string;
   worksiteName: string;
@@ -443,6 +497,7 @@ export type CreateRoundDraft = {
   periodNumber: string;
   address?: string;
   contractLabel?: string;
+  priceAdjustment?: PriceAdjustmentDraft;
 };
 
 export type TakeoffDecisionDraft = {
