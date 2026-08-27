@@ -15,22 +15,37 @@ describe("versionBody", () => {
   });
 });
 
+/** As decisões do lote, já no formato do corpo, para inspeção item a item. */
+function decisoesDoCorpo(
+  body: Record<string, unknown>,
+): Record<string, unknown>[] {
+  return body.decisions as Record<string, unknown>[];
+}
+
 describe("takeoffDecisionBody", () => {
-  it("sempre cita a versão-base e nunca carimba identidade ou horário", () => {
+  it("a versão-base é UMA para o lote inteiro e nunca carimba identidade ou horário", () => {
     const body = takeoffDecisionBody({
-      itemId: "ti_af6f85a49ea0b93d",
-      action: "confirm",
       baseVersion: 7,
-      quantity: "18.40",
-      note: "quantidade lida na prancha",
+      decisions: [
+        {
+          itemId: "ti_af6f85a49ea0b93d",
+          action: "confirm",
+          quantity: "18.40",
+          note: "quantidade lida na prancha",
+        },
+      ],
     });
 
     expect(body).toEqual({
       base_version: 7,
-      item_id: "ti_af6f85a49ea0b93d",
-      action: "confirm",
-      quantity: "18.40",
-      note: "quantidade lida na prancha",
+      decisions: [
+        {
+          item_id: "ti_af6f85a49ea0b93d",
+          action: "confirm",
+          quantity: "18.40",
+          note: "quantidade lida na prancha",
+        },
+      ],
     });
     for (const forbidden of [
       "reviewer_id",
@@ -39,39 +54,74 @@ describe("takeoffDecisionBody", () => {
       "decision_id",
     ]) {
       expect(Object.keys(body)).not.toContain(forbidden);
+      expect(Object.keys(decisoesDoCorpo(body)[0])).not.toContain(forbidden);
+    }
+  });
+
+  it("o lote leva todas as decisões na ordem em que foram anotadas, e só uma versão-base", () => {
+    const body = takeoffDecisionBody({
+      baseVersion: 7,
+      decisions: [
+        { itemId: "ti_af6f85a49ea0b93d", action: "confirm", quantity: "18.40" },
+        { itemId: "ti_af6f85a49ea0b93e", action: "reject" },
+        { itemId: "ti_af6f85a49ea0b93f", action: "confirm", quantity: "3.00" },
+      ],
+    });
+
+    expect(body.base_version).toBe(7);
+    expect(decisoesDoCorpo(body).map((decisao) => decisao.item_id)).toEqual([
+      "ti_af6f85a49ea0b93d",
+      "ti_af6f85a49ea0b93e",
+      "ti_af6f85a49ea0b93f",
+    ]);
+    // A versão-base não se repete dentro de decisão nenhuma: ela é do ato, não do item.
+    for (const decisao of decisoesDoCorpo(body)) {
+      expect(decisao).not.toHaveProperty("base_version");
     }
   });
 
   it("omite campo em branco em vez de mandar correção vazia", () => {
     const body = takeoffDecisionBody({
-      itemId: "ti_af6f85a49ea0b93d",
-      action: "reject",
       baseVersion: 9,
-      quantity: "   ",
-      unit: "",
-      note: "  área de referência da prancha  ",
-      itemNote: undefined,
+      decisions: [
+        {
+          itemId: "ti_af6f85a49ea0b93d",
+          action: "reject",
+          quantity: "   ",
+          unit: "",
+          note: "  área de referência da prancha  ",
+          itemNote: undefined,
+        },
+      ],
     });
 
     expect(body).toEqual({
       base_version: 9,
-      item_id: "ti_af6f85a49ea0b93d",
-      action: "reject",
-      note: "área de referência da prancha",
+      decisions: [
+        {
+          item_id: "ti_af6f85a49ea0b93d",
+          action: "reject",
+          note: "área de referência da prancha",
+        },
+      ],
     });
   });
 
   it("manda a quantidade como texto: o decimal escrito não passa por número", () => {
     const body = takeoffDecisionBody({
-      itemId: "ti_af6f85a49ea0b93d",
-      action: "confirm",
       baseVersion: 3,
-      quantity: "58.50",
-      unit: "m2",
+      decisions: [
+        {
+          itemId: "ti_af6f85a49ea0b93d",
+          action: "confirm",
+          quantity: "58.50",
+          unit: "m2",
+        },
+      ],
     });
 
-    expect(body.quantity).toBe("58.50");
-    expect(typeof body.quantity).toBe("string");
+    expect(decisoesDoCorpo(body)[0].quantity).toBe("58.50");
+    expect(typeof decisoesDoCorpo(body)[0].quantity).toBe("string");
   });
 });
 

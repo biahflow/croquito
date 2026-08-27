@@ -436,11 +436,15 @@ def test_estimate_round_full_chain_through_v1_api(
             headers=_headers(f"decisao-takeoff-{index}"),
             json={
                 "base_version": version,
-                "item_id": decision.item_id,
-                "action": decision.action,
-                "quantity": None if decision.quantity is None else str(decision.quantity),
-                "unit": decision.unit,
-                "note": decision.note,
+                "decisions": [
+                    {
+                        "item_id": decision.item_id,
+                        "action": decision.action,
+                        "quantity": None if decision.quantity is None else str(decision.quantity),
+                        "unit": decision.unit,
+                        "note": decision.note,
+                    }
+                ],
             },
         )
         assert response.status_code == 200, response.text
@@ -822,11 +826,15 @@ def test_estimate_round_target_over_and_exact_limit_through_v1_api(
             headers=_headers(f"decisao-takeoff-teto-{index}"),
             json={
                 "base_version": version,
-                "item_id": decision.item_id,
-                "action": decision.action,
-                "quantity": None if decision.quantity is None else str(decision.quantity),
-                "unit": decision.unit,
-                "note": decision.note,
+                "decisions": [
+                    {
+                        "item_id": decision.item_id,
+                        "action": decision.action,
+                        "quantity": None if decision.quantity is None else str(decision.quantity),
+                        "unit": decision.unit,
+                        "note": decision.note,
+                    }
+                ],
             },
         )
         assert response.status_code == 200, response.text
@@ -1111,11 +1119,15 @@ def test_estimate_round_contracted_demand_regime_through_v1_api(
             headers=_headers(f"decisao-takeoff-regime-{index}"),
             json={
                 "base_version": version,
-                "item_id": decision.item_id,
-                "action": decision.action,
-                "quantity": None if decision.quantity is None else str(decision.quantity),
-                "unit": decision.unit,
-                "note": decision.note,
+                "decisions": [
+                    {
+                        "item_id": decision.item_id,
+                        "action": decision.action,
+                        "quantity": None if decision.quantity is None else str(decision.quantity),
+                        "unit": decision.unit,
+                        "note": decision.note,
+                    }
+                ],
             },
         )
         assert response.status_code == 200, response.text
@@ -1436,11 +1448,15 @@ def test_estimate_dispatch_gate_through_v1_api(
             headers=_headers(f"decisao-takeoff-portao-{index}"),
             json={
                 "base_version": version,
-                "item_id": decision.item_id,
-                "action": decision.action,
-                "quantity": None if decision.quantity is None else str(decision.quantity),
-                "unit": decision.unit,
-                "note": decision.note,
+                "decisions": [
+                    {
+                        "item_id": decision.item_id,
+                        "action": decision.action,
+                        "quantity": None if decision.quantity is None else str(decision.quantity),
+                        "unit": decision.unit,
+                        "note": decision.note,
+                    }
+                ],
             },
         )
         assert response.status_code == 200, response.text

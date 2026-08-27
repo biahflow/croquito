@@ -124,11 +124,15 @@ describe("leituras da rodada", () => {
 describe("mutações da rodada", () => {
   it("a decisão de takeoff cita base_version, manda Idempotency-Key e não carimba identidade", async () => {
     await postTakeoffDecision(TOKEN, ROUND, {
-      itemId: "ti_af6f85a49ea0b93d",
-      action: "confirm",
       baseVersion: 7,
-      quantity: "18.40",
-      note: "quantidade lida na prancha",
+      decisions: [
+        {
+          itemId: "ti_af6f85a49ea0b93d",
+          action: "confirm",
+          quantity: "18.40",
+          note: "quantidade lida na prancha",
+        },
+      ],
     });
 
     expect(chamadas[0].url).toBe(
@@ -142,13 +146,18 @@ describe("mutações da rodada", () => {
     const body = corpoDaChamada();
     expect(body).toEqual({
       base_version: 7,
-      item_id: "ti_af6f85a49ea0b93d",
-      action: "confirm",
-      quantity: "18.40",
-      note: "quantidade lida na prancha",
+      decisions: [
+        {
+          item_id: "ti_af6f85a49ea0b93d",
+          action: "confirm",
+          quantity: "18.40",
+          note: "quantidade lida na prancha",
+        },
+      ],
     });
+    const decisoes = body.decisions as Record<string, unknown>[];
     // A quantidade viaja como TEXTO: um `Number()` no caminho perderia a escala escrita.
-    expect(typeof body.quantity).toBe("string");
+    expect(typeof decisoes[0].quantity).toBe("string");
     for (const proibido of [
       "reviewer_id",
       "reviewer_role",
@@ -156,19 +165,18 @@ describe("mutações da rodada", () => {
       "decision_id",
     ]) {
       expect(Object.keys(body)).not.toContain(proibido);
+      expect(Object.keys(decisoes[0])).not.toContain(proibido);
     }
   });
 
   it("cada mutação nasce com uma chave de idempotência própria", async () => {
     await postTakeoffDecision(TOKEN, ROUND, {
-      itemId: "ti_af6f85a49ea0b93d",
-      action: "reject",
       baseVersion: 7,
+      decisions: [{ itemId: "ti_af6f85a49ea0b93d", action: "reject" }],
     });
     await postTakeoffDecision(TOKEN, ROUND, {
-      itemId: "ti_af6f85a49ea0b93e",
-      action: "reject",
       baseVersion: 8,
+      decisions: [{ itemId: "ti_af6f85a49ea0b93e", action: "reject" }],
     });
 
     expect(headersDaChamada(0)["Idempotency-Key"]).not.toBe(
@@ -467,9 +475,8 @@ describe("envelope de erro aninhado", () => {
     );
 
     const erro = (await postTakeoffDecision(TOKEN, ROUND, {
-      itemId: "ti_af6f85a49ea0b93d",
-      action: "confirm",
       baseVersion: 7,
+      decisions: [{ itemId: "ti_af6f85a49ea0b93d", action: "confirm" }],
     }).catch((error: unknown) => error)) as ApiError;
 
     expect(erro.code).toBe("DOMAIN_VALIDATION_FAILED");

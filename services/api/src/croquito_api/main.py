@@ -1404,8 +1404,8 @@ class ValuationTakeoffOverlayResponse(ApiModel):
     stale: bool
 
 
-class TakeoffDecisionRequest(ApiModel):
-    """Uma decisão do orçamentista sobre um item do takeoff.
+class TakeoffItemDecision(ApiModel):
+    """Uma decisão do orçamentista sobre um item do takeoff, dentro do lote.
 
     `quantity` viaja como TEXTO porque quantidade é `Decimal` exato neste contexto: um
     `float` de JSON já teria perdido a escala escrita na legenda antes de chegar aqui.
@@ -1419,13 +1419,38 @@ class TakeoffDecisionRequest(ApiModel):
     validador do domínio no meio da rota.
     """
 
-    base_version: int = Field(ge=1)
     item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
     action: Literal["confirm", "reject"]
     quantity: str | None = Field(default=None, min_length=1, max_length=40)
     unit: str | None = Field(default=None, min_length=1, max_length=20)
     note: str | None = Field(default=None, max_length=500)
     item_note: str | None = Field(default=None, max_length=300)
+
+
+class TakeoffDecisionRequest(ApiModel):
+    """O ato de revisão do takeoff é um LOTE, e só um lote.
+
+    A revisão da legenda é lida item a item mas decidida de uma vez: quem confere quinze
+    linhas contra a prancha termina com quinze decisões que valem juntas ou não valem. A
+    forma singular anterior transformava esse ato único em quinze atos — quinze revisões
+    na cadeia, quinze `base_version` em série (cada uma invalidando o formulário aberto),
+    quinze overlays reenfileirados para um desenho que só interessa no fim. A rodada real
+    do Guaxindiba acumulou 44 revisões para uma legenda de 15 itens; é esse rastro que a
+    forma de lote não produz.
+
+    O lote é ATÔMICO: uma revisão nova com todas as decisões, ou nenhuma. Aplicar metade
+    deixaria a cadeia num estado que o revisor não pediu e não viu.
+
+    Um item por lote — `TAKEOFF_DECISION_DUPLICATE_ITEM` é invariante do domínio
+    (`TakeoffDecisionBatch`), não checagem desta fronteira: duas decisões para o mesmo item
+    no mesmo ato não têm ordem definida, e escolher uma delas seria inventar a intenção.
+    """
+
+    base_version: int = Field(ge=1)
+    #: Teto de tamanho porque um lote é a legenda de uma prancha, não uma importação: o
+    #: maior pacote real observado tem dezenas de itens, e um corpo de milhares seria
+    #: outro caso de uso, com outro desenho.
+    decisions: list[TakeoffItemDecision] = Field(min_length=1, max_length=200)
 
 
 class RecomputeSuggestionsRequest(ApiModel):
@@ -9918,7 +9943,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         response_model=dict[str, Any],
         tags=["valuation"],
     )
-    async def decide_valuation_takeoff_item(
+    async def decide_valuation_takeoff_items(
         round_id: UUID,
         payload: TakeoffDecisionRequest,
         request: Request,
@@ -9926,7 +9951,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
         idempotency_key: Annotated[str, Depends(_require_idempotency)],
     ) -> dict[str, Any]:
-        """Aplica UMA decisão do orçamentista, grava a revisão nova e enfileira o overlay.
+        """Aplica o LOTE de decisões do orçamentista, grava a revisão e enfileira o overlay.
+
+        O ato de revisão é o lote inteiro — uma revisão nova para todas as decisões, ou
+        nenhuma. Decidir item a item produzia uma revisão por item, e com ela um
+        `base_version` novo que invalidava o formulário ainda aberto na tela.
 
         A decisão é ato humano: ela avança o contador da rodada e o da cadeia de revisões.
         O overlay, não — ele é consequência, e é reconstruído fora do request path
@@ -9953,18 +9982,29 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         try:
             # Identidade do `Principal` e instante do servidor: o corpo não carimba nenhum
             # dos dois. A regra de decisão é do domínio e não é reimplementada aqui.
-            decision = TakeoffDecisionInput(
-                item_id=payload.item_id,
-                action=payload.action,
-                reviewer_id=principal.subject,
-                reviewer_role=VALUATION_REVIEWER_ROLE,
-                decided_at=datetime.now(UTC),
-                quantity=parse_quantity(payload.quantity),
-                unit=payload.unit,
-                note=payload.note,
-                item_note=payload.item_note,
-            )
-            reviewed = apply_takeoff_decisions(packet, TakeoffDecisionBatch(decisions=[decision]))
+            #
+            # UM instante para o lote inteiro, e não um por decisão: elas foram tomadas no
+            # mesmo ato, e carimbá-las com milissegundos diferentes inventaria uma ordem
+            # que o revisor não declarou.
+            decided_at = datetime.now(UTC)
+            decisions = [
+                TakeoffDecisionInput(
+                    item_id=entrada.item_id,
+                    action=entrada.action,
+                    reviewer_id=principal.subject,
+                    reviewer_role=VALUATION_REVIEWER_ROLE,
+                    decided_at=decided_at,
+                    quantity=parse_quantity(entrada.quantity),
+                    unit=entrada.unit,
+                    note=entrada.note,
+                    item_note=entrada.item_note,
+                )
+                for entrada in payload.decisions
+            ]
+            # Lote atômico: `apply_takeoff_decisions` valida o conjunto (item repetido,
+            # item inexistente, quantidade ausente em item ambíguo) antes de produzir
+            # pacote nenhum, então metade aplicada não é estado alcançável.
+            reviewed = apply_takeoff_decisions(packet, TakeoffDecisionBatch(decisions=decisions))
         except ValidationError as error:
             raise _valuation_model_problem(error) from error
 
@@ -12125,7 +12165,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         response_model=dict[str, Any],
         tags=["estimate"],
     )
-    async def decide_estimate_takeoff_item(
+    async def decide_estimate_takeoff_items(
         round_id: UUID,
         payload: TakeoffDecisionRequest,
         request: Request,
@@ -12133,7 +12173,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
         idempotency_key: Annotated[str, Depends(_require_idempotency)],
     ) -> dict[str, Any]:
-        """Aplica UMA decisão do orçamentista, grava a revisão nova e enfileira o overlay."""
+        """Aplica o LOTE de decisões do orçamentista, grava a revisão e enfileira o overlay.
+
+        Espelho da rota gêmea da medição, inclusive na atomicidade do lote."""
         _require_valuation_reviewer(principal)
         operation = f"estimate-rounds.takeoff-decisions:{round_id}"
         request_hash = _request_hash(payload)
@@ -12156,18 +12198,29 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         try:
             # Identidade do `Principal` e instante do servidor: o corpo não carimba nenhum
             # dos dois. A regra de decisão é do domínio e não é reimplementada aqui.
-            decision = TakeoffDecisionInput(
-                item_id=payload.item_id,
-                action=payload.action,
-                reviewer_id=principal.subject,
-                reviewer_role=VALUATION_REVIEWER_ROLE,
-                decided_at=datetime.now(UTC),
-                quantity=parse_quantity(payload.quantity),
-                unit=payload.unit,
-                note=payload.note,
-                item_note=payload.item_note,
-            )
-            reviewed = apply_takeoff_decisions(packet, TakeoffDecisionBatch(decisions=[decision]))
+            #
+            # UM instante para o lote inteiro, e não um por decisão: elas foram tomadas no
+            # mesmo ato, e carimbá-las com milissegundos diferentes inventaria uma ordem
+            # que o revisor não declarou.
+            decided_at = datetime.now(UTC)
+            decisions = [
+                TakeoffDecisionInput(
+                    item_id=entrada.item_id,
+                    action=entrada.action,
+                    reviewer_id=principal.subject,
+                    reviewer_role=VALUATION_REVIEWER_ROLE,
+                    decided_at=decided_at,
+                    quantity=parse_quantity(entrada.quantity),
+                    unit=entrada.unit,
+                    note=entrada.note,
+                    item_note=entrada.item_note,
+                )
+                for entrada in payload.decisions
+            ]
+            # Lote atômico: `apply_takeoff_decisions` valida o conjunto (item repetido,
+            # item inexistente, quantidade ausente em item ambíguo) antes de produzir
+            # pacote nenhum, então metade aplicada não é estado alcançável.
+            reviewed = apply_takeoff_decisions(packet, TakeoffDecisionBatch(decisions=decisions))
         except ValidationError as error:
             raise _valuation_model_problem(error) from error
 

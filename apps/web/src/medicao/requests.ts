@@ -16,7 +16,7 @@ import type {
   CodeClosureDraft,
   CodeDecisionDraft,
   CreateRoundDraft,
-  TakeoffDecisionDraft,
+  TakeoffDecisionBatchDraft,
 } from "./api";
 
 /** Corpo mínimo de toda mutação da rodada: só a guarda de concorrência. */
@@ -88,26 +88,34 @@ export function createRoundBody(
 }
 
 export function takeoffDecisionBody(
-  draft: TakeoffDecisionDraft,
-): Record<string, string | number> {
-  const body: Record<string, string | number> = {
-    ...versionBody(draft.baseVersion),
-    item_id: draft.itemId,
-    action: draft.action,
+  batch: TakeoffDecisionBatchDraft,
+): Record<string, unknown> {
+  return {
+    // A versão-base é do ATO, não do item: ela cita a revisão que a pessoa tinha na tela
+    // quando decidiu, e o lote inteiro é gravado contra ela.
+    ...versionBody(batch.baseVersion),
+    decisions: batch.decisions.map((draft) => {
+      const decisao: Record<string, string> = {
+        item_id: draft.itemId,
+        action: draft.action,
+      };
+      // Campo opcional em branco NÃO viaja: string vazia não é "sem nota", é uma nota
+      // vazia, e o servidor a recusaria por `min_length`.
+      const optional: [string, string | undefined][] = [
+        ["quantity", draft.quantity],
+        ["unit", draft.unit],
+        ["note", draft.note],
+        ["item_note", draft.itemNote],
+      ];
+      for (const [key, value] of optional) {
+        const cleaned = value?.trim();
+        if (cleaned) {
+          decisao[key] = cleaned;
+        }
+      }
+      return decisao;
+    }),
   };
-  const optional: [string, string | undefined][] = [
-    ["quantity", draft.quantity],
-    ["unit", draft.unit],
-    ["note", draft.note],
-    ["item_note", draft.itemNote],
-  ];
-  for (const [key, value] of optional) {
-    const cleaned = value?.trim();
-    if (cleaned) {
-      body[key] = cleaned;
-    }
-  }
-  return body;
 }
 
 /**

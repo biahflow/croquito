@@ -599,12 +599,21 @@ export type CascadeRemoveDraft = {
 export type TakeoffDecisionDraft = {
   itemId: string;
   action: "confirm" | "reject";
-  baseVersion: number;
   /** Quantidade escrita pela orçamentista, em texto: `Decimal` não passa por `number`. */
   quantity?: string;
   unit?: string;
   note?: string;
   itemNote?: string;
+};
+
+/**
+ * O ato de revisão do takeoff é um LOTE: a rota `/takeoff/decisions` só aceita lote, e a
+ * `base_version` é UMA para o conjunto. Item a item, cada decisão avançava a versão e
+ * invalidava o formulário que ainda estava aberto na tela.
+ */
+export type TakeoffDecisionBatchDraft = {
+  baseVersion: number;
+  decisions: TakeoffDecisionDraft[];
 };
 
 export type CodeClosureDraft = {
@@ -978,7 +987,7 @@ export function getTakeoffOverlay(
 export function postTakeoffDecision(
   accessToken: string,
   roundId: string,
-  draft: TakeoffDecisionDraft,
+  draft: TakeoffDecisionBatchDraft,
 ): Promise<TakeoffDecisionResponse> {
   return post<TakeoffDecisionResponse>(
     roundPath(roundId, "/takeoff/decisions"),

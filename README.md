@@ -82,13 +82,13 @@ make test
 
 ### Subir a aplicação com Docker
 
-Os serviços locais (Postgres, LocalStack e Keycloak) sobem em contêineres via Docker
+Os serviços locais (Postgres, floci e Keycloak) sobem em contêineres via Docker
 Compose. Copie o `.env.local`, suba os serviços, crie o schema e rode a app:
 
 ```bash
 cp .env.local.example .env.local
-make dev-services   # docker compose -f docker-compose.local.yml up -d (Postgres, LocalStack, Keycloak)
-make db-init        # cria schema, bucket e fila de processamento locais
+make dev-services   # docker compose -f docker-compose.local.yml up -d (Postgres, floci, Keycloak)
+make db-init        # cria bucket, filas e schema locais
 make dev            # API + web em paralelo
 make dev-worker     # (opcional) consome uma mensagem da fila local
 make down-services  # derruba os serviços quando terminar
@@ -102,7 +102,7 @@ Endereços de acesso após `make dev`:
 | API (FastAPI) | http://localhost:8000 |
 | Keycloak (OIDC) | http://localhost:8083 |
 
-Postgres (`5432`) e LocalStack (`4566`) sobem via `make dev-services` e são usados pela
+Postgres (`5432`) e o emulador AWS floci (`4566`) sobem via `make dev-services` e são usados pela
 API; não é preciso acessá-los diretamente. `make dev` exige o `.env.local` copiado e os
 serviços de pé (`make dev-services` + `make db-init`).
 

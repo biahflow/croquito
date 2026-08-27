@@ -1128,10 +1128,22 @@ Overlay vencido devolve `200` com a marca, nunca erro: o desenho anterior contin
 
 ### `POST /v1/valuation-rounds/{round_id}/takeoff/decisions`
 
-Entrada: `base_version` e uma decisão do orçamentista sobre um item — `item_id`,
-`action` (`confirm` ou `reject`), `quantity`, `unit`, `note`, `item_note`. `quantity` viaja
-como **texto**, porque quantidade é `Decimal` exato neste contexto e um `float` de JSON já
-teria perdido a escala escrita.
+Entrada: `base_version` — uma só, do ato — e `decisions`, o **lote** de decisões do
+orçamentista, de 1 a 200 entradas. Cada decisão traz `item_id`, `action` (`confirm` ou
+`reject`), `quantity`, `unit`, `note`, `item_note`. `quantity` viaja como **texto**, porque
+quantidade é `Decimal` exato neste contexto e um `float` de JSON já teria perdido a escala
+escrita.
+
+A rota é **só-lote**: quem decide um item de cada vez manda um lote de um. A forma singular
+transformava o ato único de conferir a legenda em um ato por linha — uma revisão na cadeia,
+uma `base_version` nova (invalidando o formulário aberto) e um overlay reenfileirado por
+item.
+
+O lote é **atômico**: uma revisão nova com todas as decisões, ou nenhuma. Uma decisão
+recusada pelo domínio não grava as outras.
+
+Um item por lote: duas decisões para o mesmo `item_id` no mesmo ato devolvem
+`422 DOMAIN_VALIDATION_FAILED` com `TAKEOFF_DECISION_DUPLICATE_ITEM` em `details`.
 
 Decisão do orçamentista é imutável: item já confirmado ou rejeitado devolve
 `422 DOMAIN_VALIDATION_FAILED` com `TAKEOFF_ITEM_ALREADY_REVIEWED` em `details`. Correção de
@@ -1531,9 +1543,12 @@ Overlay vencido devolve `200` com a marca, nunca erro.
 
 ### `POST /v1/estimate-rounds/{round_id}/takeoff/decisions`
 
-Entrada: `base_version` e uma decisão sobre um item — `item_id`, `action`, `quantity`,
-`unit`, `note`, `item_note`. `quantity` viaja como **texto**, porque quantidade é `Decimal`
-exato neste contexto. Decisão é imutável: item já revisado devolve
+Espelho da rota gêmea da medição, inclusive na atomicidade. Entrada: `base_version` — uma
+só, do ato — e `decisions`, o lote de 1 a 200 decisões; cada uma com `item_id`, `action`,
+`quantity`, `unit`, `note`, `item_note`. `quantity` viaja como **texto**, porque quantidade é
+`Decimal` exato neste contexto. O lote grava tudo ou nada, e devolve uma versão nova só.
+Item repetido no lote devolve `422 DOMAIN_VALIDATION_FAILED` com
+`TAKEOFF_DECISION_DUPLICATE_ITEM`. Decisão é imutável: item já revisado devolve
 `422 DOMAIN_VALIDATION_FAILED` com `TAKEOFF_ITEM_ALREADY_REVIEWED`.
 
 ### `GET /v1/estimate-rounds/{round_id}/code-suggestions`

@@ -45,6 +45,7 @@ import {
   type PricingRegime,
   type ReferenceCatalogOption,
   type SuggestionsResponse,
+  type TakeoffDecisionDraft,
   type TakeoffItem,
   type TakeoffResponse,
 } from "./api";
@@ -88,6 +89,7 @@ import {
   AVISO_CONSUMO_COM_BDI,
   AVISO_DESPACHO_FAIL_CLOSED,
   AVISO_IDENTIDADE_DA_SESSAO,
+  AVISO_ITEM_JA_REVISADO,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
   AVISO_MEMORIA,
   AVISO_ORCAMENTO,
@@ -114,6 +116,7 @@ import {
   derivadaDeLabel,
   DICA_BDI,
   DICA_CANDIDATO_ADITIVO,
+  DICA_LOTE_ANOTADO,
   DICA_QUANTIDADE,
   DICA_REGIME,
   DICA_TETO,
@@ -174,6 +177,21 @@ import {
   type OperandDraft,
 } from "./matrix";
 import { overlayFreshness } from "./overlay";
+import {
+  aplicarZoom,
+  arrastarView,
+  caixaVisivel,
+  enquadrarCaixa,
+  fatorDeZoom,
+  paginaInteira,
+  PASSO_ZOOM,
+  pontoDaImagem,
+  viewBoxAttr,
+  ZOOM_MAXIMO,
+  type Caixa,
+  type Pagina,
+  type ViewBox,
+} from "./prancha";
 import { bdiPercentError, tetoAmountError, worksiteKeyError } from "./requests";
 import { derivarTeto, type TetoDerivado } from "./teto";
 
@@ -1173,6 +1191,271 @@ export function EstadoExtracao({
  * medição já faz: o desenho é reconstruído por comando de fila e, entre a decisão e o
  * re-render, o que está aqui é do pacote anterior.
  */
+/**
+ * A prancha aproximável, com a âncora de cada item desenhada por cima e ligada à lista.
+ *
+ * Duas coisas que a tela precisava e não tinha. **Zoom**, porque uma prancha A1 promovida
+ * a 200 DPI cabe na coluna em ~1.200 px: sem aproximar, conferir `418,12 m²` contra o
+ * desenho é aceitar o número no escuro. E **seleção cruzada**, porque a âncora já está
+ * publicada no pacote (`evidence.bbox`, em `source_image_pixels`) e mesmo assim quem
+ * revisava precisava procurar a olho de qual mancha do desenho aquele item saiu.
+ *
+ * O desenho interativo vem do PACOTE que está nesta tela, não do PNG de overlay: por isso
+ * ele nunca está vencido, e por isso não substitui o `OverlayDoTakeoff`. Aquele continua
+ * sendo a evidência renderizada pelo worker, com a idade declarada (ADR-0030) — os dois
+ * respondem perguntas diferentes e a tela mostra os dois.
+ *
+ * Enquanto as dimensões naturais da página não são conhecidas, renderiza a imagem simples:
+ * `viewBox` sem página é a origem de âncora desenhada no lugar errado.
+ */
+export function PranchaComAncoras({
+  src,
+  itens,
+  selectedItemId,
+  onSelect,
+}: {
+  src: string;
+  itens: TakeoffItem[];
+  selectedItemId: string;
+  onSelect: (itemId: string) => void;
+}) {
+  const [pagina, setPagina] = useState<Pagina | null>(null);
+  const [view, setView] = useState<ViewBox | null>(null);
+  const quadroRef = useRef<HTMLDivElement | null>(null);
+  const arrasto = useRef<{ x: number; y: number } | null>(null);
+
+  // As dimensões vêm da própria imagem carregada, e não de campo do pacote: é o pixel do
+  // arquivo servido que as âncoras endereçam.
+  useEffect(() => {
+    setPagina(null);
+    setView(null);
+    if (typeof Image === "undefined") {
+      return;
+    }
+    const imagem = new Image();
+    let vivo = true;
+    imagem.onload = () => {
+      if (!vivo || imagem.naturalWidth === 0 || imagem.naturalHeight === 0) {
+        return;
+      }
+      const medida = { width: imagem.naturalWidth, height: imagem.naturalHeight };
+      setPagina(medida);
+      setView(paginaInteira(medida));
+    };
+    imagem.src = src;
+    return () => {
+      vivo = false;
+      imagem.onload = null;
+    };
+  }, [src]);
+
+  const itensAncorados = useMemo(
+    () => itens.map((item, index) => ({ item, numero: index + 1, caixa: caixaDoItem(item) })),
+    [itens],
+  );
+
+  // Selecionar na lista leva o desenho até a âncora — mas só quando ela não está à vista:
+  // reenquadrar o que já se enxerga tira do lugar o que a pessoa estava olhando.
+  useEffect(() => {
+    if (pagina === null || selectedItemId === "") {
+      return;
+    }
+    const caixa = itensAncorados.find((entrada) => entrada.item.id === selectedItemId)?.caixa;
+    if (caixa === null || caixa === undefined) {
+      return;
+    }
+    setView((atual) => {
+      if (atual === null || caixaVisivel(caixa, atual)) {
+        return atual;
+      }
+      return enquadrarCaixa(caixa, pagina);
+    });
+  }, [itensAncorados, pagina, selectedItemId]);
+
+  if (pagina === null || view === null) {
+    return (
+      <img
+        className="overlay-imagem"
+        src={src}
+        alt="Página promovida da prancha deste orçamento"
+        draggable={false}
+      />
+    );
+  }
+
+  const zoom = fatorDeZoom(view, pagina);
+  const inteira = zoom <= 1.001;
+
+  const focoDoEvento = (evento: { clientX: number; clientY: number }) => {
+    const quadro = quadroRef.current?.getBoundingClientRect();
+    if (quadro === undefined || quadro.width === 0 || quadro.height === 0) {
+      return undefined;
+    }
+    return pontoDaImagem(
+      view,
+      (evento.clientX - quadro.left) / quadro.width,
+      (evento.clientY - quadro.top) / quadro.height,
+    );
+  };
+
+  return (
+    <div className="prancha">
+      <div className="prancha-controles">
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={() =>
+            setView((atual) => (atual === null ? atual : aplicarZoom(atual, pagina, PASSO_ZOOM)))
+          }
+          disabled={zoom >= ZOOM_MAXIMO - 0.001}
+        >
+          Aproximar
+        </button>
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={() =>
+            setView((atual) =>
+              atual === null ? atual : aplicarZoom(atual, pagina, 1 / PASSO_ZOOM),
+            )
+          }
+          disabled={inteira}
+        >
+          Afastar
+        </button>
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={() => setView(paginaInteira(pagina))}
+          disabled={inteira}
+        >
+          Prancha inteira
+        </button>
+        <span className="prancha-zoom" aria-live="polite">
+          {inteira ? "prancha inteira" : `${zoom.toFixed(1).replace(".", ",")}× de aproximação`}
+        </span>
+      </div>
+      <div
+        className={`prancha-quadro ${inteira ? "" : "arrastavel"}`}
+        ref={quadroRef}
+        onPointerDown={(evento) => {
+          if (inteira) {
+            return;
+          }
+          arrasto.current = { x: evento.clientX, y: evento.clientY };
+          evento.currentTarget.setPointerCapture(evento.pointerId);
+        }}
+        onPointerMove={(evento) => {
+          const origem = arrasto.current;
+          const quadro = quadroRef.current?.getBoundingClientRect();
+          if (origem === null || quadro === undefined || quadro.width === 0) {
+            return;
+          }
+          const dxTela = evento.clientX - origem.x;
+          const dyTela = evento.clientY - origem.y;
+          // Forma funcional, e não `view` do closure: entre dois renders cabem vários
+          // `pointermove`, e o segundo deles partiria de uma janela já vencida — o
+          // desenho saltaria de volta no meio do arrasto.
+          setView((atual) => {
+            if (atual === null) {
+              return atual;
+            }
+            // Arrastar move a PRANCHA, então a janela anda contra o ponteiro.
+            const escala = atual.width / quadro.width;
+            return arrastarView(atual, pagina, -dxTela * escala, -dyTela * escala);
+          });
+          arrasto.current = { x: evento.clientX, y: evento.clientY };
+        }}
+        onPointerUp={() => {
+          arrasto.current = null;
+        }}
+        onPointerCancel={() => {
+          arrasto.current = null;
+        }}
+        onWheel={(evento) => {
+          // Só com Ctrl/⌘, como em mapa: roda pura continua rolando a página, senão a
+          // tela sequestra o scroll de quem só queria chegar ao formulário abaixo.
+          if (!evento.ctrlKey && !evento.metaKey) {
+            return;
+          }
+          const foco = focoDoEvento(evento);
+          const fator = evento.deltaY < 0 ? PASSO_ZOOM : 1 / PASSO_ZOOM;
+          setView((atual) => (atual === null ? atual : aplicarZoom(atual, pagina, fator, foco)));
+        }}
+      >
+        <svg
+          className="prancha-svg"
+          viewBox={viewBoxAttr(view)}
+          role="img"
+          aria-label="Prancha do orçamento com as âncoras dos itens da legenda"
+        >
+          <image href={src} x={0} y={0} width={pagina.width} height={pagina.height} />
+          {/* A via de teclado e de leitor de tela é a LISTA ao lado, que já traz cada item
+              com rótulo, quantidade e estado. Duplicar tudo aqui como alvo focável dobraria
+              a navegação sem acrescentar informação. */}
+          <g aria-hidden="true">
+            {itensAncorados.map(({ item, numero, caixa }) => {
+              if (caixa === null) {
+                return null;
+              }
+              const selecionado = item.id === selectedItemId;
+              const largura = Math.max(caixa.right - caixa.left, 1);
+              const altura = Math.max(caixa.bottom - caixa.top, 1);
+              // A espessura acompanha o zoom para o traço não engordar ao aproximar.
+              const traco = Math.max(view.width / 400, 1);
+              return (
+                <g
+                  key={item.id}
+                  className={`ancora ancora-${itemAnchor(item)} ${
+                    selecionado ? "ancora-selecionada" : ""
+                  }`}
+                  onPointerDown={(evento) => evento.stopPropagation()}
+                  onClick={() => onSelect(item.id)}
+                >
+                  <rect
+                    x={caixa.left}
+                    y={caixa.top}
+                    width={largura}
+                    height={altura}
+                    strokeWidth={selecionado ? traco * 2 : traco}
+                    // Âncora ainda não registrada contra a tinta aparece tracejada: a
+                    // diferença não pode viver só na cor (folha de estilo do produto).
+                    strokeDasharray={
+                      itemAnchor(item) === "registered" ? undefined : `${traco * 4} ${traco * 3}`
+                    }
+                  />
+                  <text
+                    x={caixa.left + largura / 2}
+                    y={caixa.top - traco * 2}
+                    fontSize={Math.max(view.width / 55, 12)}
+                    textAnchor="middle"
+                  >
+                    {numero}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
+        </svg>
+      </div>
+      <p className="dica">
+        Clique numa âncora para escolher o item, ou escolha na lista para o desenho ir até
+        ele. As âncoras são as do pacote que está nesta tela. Ctrl/⌘ com a roda também
+        aproxima; arraste para percorrer.
+      </p>
+    </div>
+  );
+}
+
+/** Âncora do item em pixels da imagem, ou `null` quando a extração não gravou evidência. */
+function caixaDoItem(item: TakeoffItem): Caixa | null {
+  const bbox = item.evidence?.bbox;
+  if (bbox === undefined || bbox === null) {
+    return null;
+  }
+  return { left: bbox.left, top: bbox.top, right: bbox.right, bottom: bbox.bottom };
+}
+
 export function OverlayDoTakeoff({
   overlay,
   onRefresh,
@@ -1955,6 +2238,15 @@ function itemAnchor(item: TakeoffItem): "registered" | "raw" {
 }
 
 /**
+ * Item que já recebeu decisão do orçamentista. Decisão não se sobrescreve (o domínio
+ * recusa com `TAKEOFF_ITEM_ALREADY_REVIEWED`), e como o lote é atômico, deixar um item
+ * assim entrar na anotação derrubaria o ato inteiro por causa dele.
+ */
+export function itemJaRevisado(item: TakeoffItem | null): boolean {
+  return item !== null && (item.status === "confirmed" || item.status === "rejected");
+}
+
+/**
  * Jornada do orçamento-base sobre a API `/v1` autenticada (F-020, ADR-0027/ADR-0038).
  *
  * A sessão é da casca, não desta jornada: quem lê o OIDC, consome o authorization code
@@ -2039,6 +2331,12 @@ export function OrcamentoApp({
   // Revisão do takeoff.
   const [selectedItemId, setSelectedItemId] = useState("");
   const [decision, setDecision] = useState(EMPTY_DECISION);
+  /**
+   * Decisões anotadas e ainda NÃO gravadas. Vive só em memória, de propósito: rascunho
+   * persistido viraria uma segunda fonte de verdade sobre o que a pessoa decidiu, que
+   * ninguém revisou e que o servidor desconhece. A tela diz quantas estão pendentes.
+   */
+  const [loteDeDecisoes, setLoteDeDecisoes] = useState<TakeoffDecisionDraft[]>([]);
 
   // Códigos.
   const [selectedPendingId, setSelectedPendingId] = useState("");
@@ -2554,15 +2852,28 @@ export function OrcamentoApp({
     }
   };
 
-  const decidirItem = async () => {
-    const token = tokenDaSessao();
-    if (
-      token === null ||
-      orcamento === null ||
-      version === null ||
-      selectedItemId === "" ||
-      decision.action === ""
-    ) {
+  /**
+   * Anota a decisão do item no LOTE, sem gravar nada ainda.
+   *
+   * A rota é só-lote (`base_version` única para o conjunto), e o ato de revisão é a
+   * legenda inteira: quem confere quinze linhas contra a prancha termina com quinze
+   * decisões que valem juntas. Anotar aqui e gravar no fim é o que evita quinze revisões
+   * na cadeia — e evita que cada gravação avance a versão e invalide o formulário que a
+   * pessoa ainda tem aberto.
+   *
+   * Reanotar o mesmo item SUBSTITUI a anotação anterior: o servidor recusa duas decisões
+   * para o mesmo item no mesmo lote (`TAKEOFF_DECISION_DUPLICATE_ITEM`), e mandar as duas
+   * para descobrir isso seria fazer a pessoa perder o lote inteiro por ter mudado de
+   * ideia.
+   */
+  const anotarDecisao = () => {
+    if (selectedItemId === "" || decision.action === "") {
+      return;
+    }
+    // Item já decidido não entra no lote: o domínio o recusaria e, como o lote é atômico,
+    // levaria junto as decisões que estavam certas.
+    if (itemJaRevisado(itens.find((item) => item.id === selectedItemId) ?? null)) {
+      setAlertMessage(AVISO_ITEM_JA_REVISADO);
       return;
     }
     const quantidade =
@@ -2571,31 +2882,57 @@ export function OrcamentoApp({
         : (parseDecimalInput(decision.quantity) ?? undefined);
     if (decision.quantity.trim().length > 0 && quantidade === undefined) {
       setAlertMessage(
-        "A quantidade escrita não é um decimal exato; nada foi enviado. " +
+        "A quantidade escrita não é um decimal exato; nada foi anotado. " +
           DICA_QUANTIDADE,
       );
+      return;
+    }
+    const anotacao: TakeoffDecisionDraft = {
+      itemId: selectedItemId,
+      action: decision.action,
+      quantity: quantidade,
+      unit: decision.unit,
+      note: decision.note,
+      itemNote: decision.itemNote,
+    };
+    setLoteDeDecisoes((atual) => [
+      ...atual.filter((entrada) => entrada.itemId !== selectedItemId),
+      anotacao,
+    ]);
+    setDecision(EMPTY_DECISION);
+    setSelectedItemId("");
+    setAlertMessage(null);
+    setToast("Decisão anotada no lote; ela ainda não foi gravada.");
+  };
+
+  /** Grava o lote inteiro: uma revisão, um carimbo, um redesenho — ou nenhum. */
+  const gravarLote = async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null || loteDeDecisoes.length === 0) {
       return;
     }
     setSubmitting(true);
     try {
       const response = await postTakeoffDecision(token, orcamento, {
-        itemId: selectedItemId,
-        action: decision.action,
         baseVersion: version,
-        quantity: quantidade,
-        unit: decision.unit,
-        note: decision.note,
-        itemNote: decision.itemNote,
+        decisions: loteDeDecisoes,
       });
       aplicarVersao(response.version);
       setTakeoff(response);
+      setLoteDeDecisoes([]);
       setDecision(EMPTY_DECISION);
       setSelectedItemId("");
       setAlertMessage(null);
       setRevisionConflict(false);
-      setToast("Decisão registrada.");
+      setToast(
+        loteDeDecisoes.length === 1
+          ? "Decisão registrada."
+          : `${loteDeDecisoes.length} decisões registradas.`,
+      );
       await carregarEstado();
     } catch (error) {
+      // O lote é atômico: recusado, nenhuma decisão foi gravada — e por isso ele CONTINUA
+      // anotado aqui. Limpá-lo faria a pessoa reescrever quinze linhas por causa de uma.
       registrarRecusa(error);
     } finally {
       setSubmitting(false);
@@ -3754,11 +4091,11 @@ export function OrcamentoApp({
                     Imagem da página ainda não publicada pelo processamento.
                   </p>
                 ) : (
-                  <img
-                    className="overlay-imagem"
+                  <PranchaComAncoras
                     src={plateSrc}
-                    alt="Página promovida da prancha deste orçamento"
-                    draggable={false}
+                    itens={itens}
+                    selectedItemId={selectedItemId}
+                    onSelect={setSelectedItemId}
                   />
                 )}
                 <EstadoExtracao
@@ -3808,11 +4145,14 @@ export function OrcamentoApp({
               {plateSrc === null ? (
                 <p className="dica">Imagem da prancha ainda não publicada.</p>
               ) : (
-                <img
-                  className="overlay-imagem"
+                <PranchaComAncoras
                   src={plateSrc}
-                  alt="Página promovida da prancha deste orçamento"
-                  draggable={false}
+                  itens={itens}
+                  selectedItemId={selectedItemId}
+                  onSelect={(itemId) => {
+                    setSelectedItemId(itemId);
+                    setDecision(EMPTY_DECISION);
+                  }}
                 />
               )}
               {overlay === null ? null : <OverlayDoTakeoff overlay={overlay} />}
@@ -3863,6 +4203,13 @@ export function OrcamentoApp({
                             {AVISO_LOCALIZACAO_NAO_CONFIRMADA}
                           </span>
                         )}
+                        {loteDeDecisoes.some(
+                          (entrada) => entrada.itemId === item.id,
+                        ) ? (
+                          <span className="item-nota">
+                            Decisão anotada; ainda não gravada.
+                          </span>
+                        ) : null}
                       </span>
                     </button>
                   </li>
@@ -3879,12 +4226,15 @@ export function OrcamentoApp({
                   className="formulario"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    void decidirItem();
+                    anotarDecisao();
                   }}
                 >
                   <h3>{itemSelecionado.label}</h3>
                   {itemSelecionado.status === "ambiguous" ? (
                     <p className="campo-aviso">{AVISO_QUANTIDADE_AMBIGUA}</p>
+                  ) : null}
+                  {itemJaRevisado(itemSelecionado) ? (
+                    <p className="campo-aviso">{AVISO_ITEM_JA_REVISADO}</p>
                   ) : null}
                   <div className="acoes">
                     <label>
@@ -3952,13 +4302,96 @@ export function OrcamentoApp({
                   <div className="acoes-linha">
                     <button
                       type="submit"
-                      className="botao-primario"
-                      disabled={submitting || decision.action === ""}
+                      className="botao-secundario"
+                      disabled={
+                        submitting ||
+                        decision.action === "" ||
+                        itemJaRevisado(itemSelecionado)
+                      }
                     >
-                      {submitting ? "Registrando…" : "Registrar decisão"}
+                      Anotar decisão
                     </button>
                   </div>
                 </form>
+              )}
+
+              {/* O lote é o ato de revisão: enquanto ele não é gravado, a rodada não
+                  mudou de versão e nada foi para a cadeia. A tela diz isso em texto,
+                  porque "anotado" e "gravado" são estados diferentes do mundo. */}
+              {loteDeDecisoes.length === 0 ? null : (
+                <div className="lote-anotado">
+                  <h3>
+                    {loteDeDecisoes.length === 1
+                      ? "1 decisão anotada"
+                      : `${loteDeDecisoes.length} decisões anotadas`}
+                  </h3>
+                  <p className="dica">{DICA_LOTE_ANOTADO}</p>
+                  <ul className="itens">
+                    {loteDeDecisoes.map((anotacao) => {
+                      const item = itens.find(
+                        (candidato) => candidato.id === anotacao.itemId,
+                      );
+                      return (
+                        <li key={anotacao.itemId} className="item">
+                          <span className="item-corpo">
+                            <span className="item-rotulo">
+                              {item?.label ?? anotacao.itemId}
+                            </span>
+                            <span className="item-estado">
+                              {anotacao.action === "confirm"
+                                ? "confirmar"
+                                : "rejeitar"}
+                            </span>
+                            {anotacao.quantity === undefined ? null : (
+                              <span className="item-quantidade">
+                                {formatQuantityText(
+                                  anotacao.quantity,
+                                  unitLabel(anotacao.unit ?? item?.unit ?? ""),
+                                )}
+                              </span>
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            className="botao-secundario"
+                            onClick={() =>
+                              setLoteDeDecisoes((atual) =>
+                                atual.filter(
+                                  (entrada) => entrada.itemId !== anotacao.itemId,
+                                ),
+                              )
+                            }
+                            disabled={submitting}
+                          >
+                            Remover anotação
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <div className="acoes-linha">
+                    <button
+                      type="button"
+                      className="botao-primario"
+                      onClick={() => void gravarLote()}
+                      disabled={submitting}
+                    >
+                      {submitting
+                        ? "Gravando…"
+                        : loteDeDecisoes.length === 1
+                          ? "Gravar 1 decisão"
+                          : `Gravar ${loteDeDecisoes.length} decisões`}
+                    </button>
+                    <button
+                      type="button"
+                      className="botao-secundario"
+                      onClick={() => setLoteDeDecisoes([])}
+                      disabled={submitting}
+                    >
+                      Descartar anotações
+                    </button>
+                  </div>
+                </div>
               )}
             </section>
           </div>

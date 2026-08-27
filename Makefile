@@ -21,10 +21,18 @@ dev-services:
 down-services:
 	docker compose -f docker-compose.local.yml down
 
+# Recursos do emulador AWS local (bucket, CORS, filas com redrive, secret, state machine)
+# e, em seguida, o schema. Os dois no mesmo alvo porque o ambiente local só está de pé com
+# ambos: banco migrado apontando para bucket inexistente é o estado que mais confunde.
+#
+# O provisionamento AWS mora no repositório (`scripts/bootstrap_local_aws.py`) e não num
+# hook da imagem do emulador — é o que tornou a troca do LocalStack pelo floci barata.
+#
 # Runner de migrations revisadas (ADR-0029): aplica as revisões que faltam, adota banco
 # anterior ao runner por carimbo e recusa banco defasado. Mesmo comando que o job de banco
 # da esteira executa.
 db-init:
+	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run python scripts/bootstrap_local_aws.py
 	set -a; test ! -f .env.local || . ./.env.local; set +a; uv run python -m croquito_api.bootstrap
 
 # Gera revisão nova por autogenerate comparando `Base.metadata` com o banco apontado por

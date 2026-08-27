@@ -42,5 +42,4 @@ apps/*/dist
 docs
 infra
 keycloak
-localstack
 tests

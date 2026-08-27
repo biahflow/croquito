@@ -23,12 +23,12 @@ make test       # uv run pytest + vitest
 make dev        # API (uvicorn :8000) + web (vite :5173) em paralelo
 ```
 
-Ambiente local completo (PostgreSQL, LocalStack, Keycloak):
+Ambiente local completo (PostgreSQL, floci, Keycloak):
 
 ```bash
 cp .env.local.example .env.local
 make dev-services   # docker compose -f docker-compose.local.yml up -d
-make db-init        # cria schema + bucket/filas/state machine no LocalStack
+make db-init        # cria bucket/CORS/filas/state machine no floci + schema no banco
 make dev
 make dev-worker     # consome uma mensagem SQS local (local-worker-once)
 make down-services

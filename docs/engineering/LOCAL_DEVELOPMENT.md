@@ -161,11 +161,11 @@ make dev
 - API: `http://localhost:8000`.
 - OpenAPI: `http://localhost:8000/docs`.
 - Keycloak: `http://localhost:8083`, realm `croquito`.
-- LocalStack: `http://localhost:4566` (S3, SQS, Step Functions, EventBridge e
-  Secrets Manager).
+- floci (emulador AWS local): `http://localhost:4566` (S3, SQS, Step Functions,
+  EventBridge e Secrets Manager).
 - PostgreSQL: `127.0.0.1:5432`.
 
-O ambiente usa PostgreSQL real em Docker e LocalStack apenas para APIs AWS. A
+O ambiente usa PostgreSQL real em Docker e o floci apenas para APIs AWS. A
 credencial seed é exclusivamente local e está no realm importado; nunca a reuse
 fora deste ambiente. A API aceita tokens OIDC e não é acoplada a Cognito.
 O bucket local aceita PUT assinado somente dessas duas origens, com `Content-Type`
@@ -324,6 +324,11 @@ Não edite manualmente `packages/contracts/scene.schema.json` ou
   com `make down-services` seguido de `make dev-services` em volume limpo.
 - O Keycloak local não tem volume persistente: contas nominativas criadas na console
   desaparecem no `make down-services`. Só o realm importado sobrevive.
-- O LocalStack roda com `PERSISTENCE=0`. Ao reiniciá-lo, S3 e SQS voltam vazios enquanto
-  o PostgreSQL persiste — jobs e artefatos passam a apontar para objetos inexistentes.
-  Nesse caso, recrie também o volume do banco.
+- O emulador AWS local persiste em volume próprio (`floci-data`), como o PostgreSQL: um
+  `make down-services` não apaga mais bucket nem filas. Se você remover o volume
+  explicitamente (`docker compose -f docker-compose.local.yml down -v`), remova o do banco
+  junto — S3 vazio com PostgreSQL cheio deixa jobs e artefatos apontando para objetos
+  inexistentes, e a tela mostra imagem quebrada em vez de erro.
+- Os recursos locais (bucket, CORS, filas com redrive, secret e state machine) são criados
+  por `scripts/bootstrap_local_aws.py`, que o `make db-init` executa antes de migrar o
+  schema. Ele é idempotente e reescreve sempre o CORS a partir de `CROQUITO_WEB_ORIGIN`.

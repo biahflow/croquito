@@ -1727,12 +1727,19 @@ export function MedicaoApp({
               itemNote: decision.itemNote,
             }
           : {};
+      // A rota é só-lote. Esta tela ainda decide um item por vez, então manda um lote de
+      // um — o contrato é o mesmo, a UX de decidir a legenda inteira de uma vez existe
+      // hoje só no orçamento-base. Dívida declarada, não esquecimento.
       const response = await postTakeoffDecision(token, rodada, {
-        itemId: selectedItem.id,
-        action: decision.action,
         baseVersion: version,
-        note: decision.note,
-        ...correcoes,
+        decisions: [
+          {
+            itemId: selectedItem.id,
+            action: decision.action,
+            note: decision.note,
+            ...correcoes,
+          },
+        ],
       });
       aplicarVersao(response.version);
       setTakeoff(response);
