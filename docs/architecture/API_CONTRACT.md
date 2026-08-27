@@ -706,6 +706,40 @@ versão-base vencida, `422 DOMAIN_VALIDATION_FAILED` para proposta repetida, for
 snapshot ou rejeição com calibração, `422 PROPOSAL_ALREADY_DECIDED`,
 `422 CALIBRATION_REQUIRED`, `409 CALIBRATION_STALE` e `422 CALIBRATION_INVALID`.
 
+### `POST /v1/jobs/{job_id}/review/proposals/corrections`
+
+Correção humana de forma (F-018), sobre o
+[ADR-0050](../adr/0050-correcao-humana-de-forma-como-proposta-derivada.md): a forma
+corrigida é uma proposta **nova**, e a observada **não é tocada**. Sem esta rota, o único
+caminho para consertar uma forma errada era trocar o prompt e rerodar o provider pago.
+
+Entrada: `base_review_version`, `base_scene_version`, `derived_from` (1 a 20 ids de
+proposta do snapshot, sem repetição), `vertices` (2 a 200 pontos em **pixels da imagem
+fonte**), `closed` e `justification`. Dois vértices viram `line`; três ou mais, `polyline`
+— o tipo acompanha a forma desenhada, não a da proposta de origem, e é por isso que unir
+dois fragmentos retos produz uma polilinha com o recuo.
+
+`derived_from` é obrigatório e não vazio: sem forma de origem não há correção, há desenho
+livre — e é essa exigência que impede a rota de virar um editor de geometria. A
+justificativa é obrigatória como em `accept`/`reject`, porque corrigir a geometria que vai
+virar desenho é decisão de domínio.
+
+A correção é gravada num `VisionProposalSet` **separado**, de `detector_version`
+`human-correction-v1`, e volta na resposta em `shape_corrections`. As propostas
+observadas continuam intactas em `proposals`, com `algorithm`, `quality_score` e
+proveniência — é essa separação que preserva a comparação entre o que o modelo entregou e
+o que a pessoa corrigiu. A correção nasce sem `quality_score` (ausência de medida, nunca
+`1.0`), `precision = "unresolved"` e `export = false`: ela chega no máximo a
+`approximate`, e só por calibração.
+
+“Superada” **não** é campo gravado: uma proposta citada em `derived_from` de alguma
+correção é superada por definição, e a tela deriva o recolhimento dessa relação.
+
+Erros: `409 PROPOSALS_NOT_READY` sem snapshot de propostas, `409 REVISION_CONFLICT` para
+versão-base vencida, `422 DOMAIN_VALIDATION_FAILED` para derivação fora do snapshot ou
+forma que não satisfaz o contrato de proposta, e `422 PROPOSAL_ALREADY_DECIDED` quando
+alguma forma de origem já recebeu decisão — decisão registrada é imutável.
+
 ## Traçado em lote
 
 O traçado (`solve_trace`) resolve topologia, bandas ortogonais e restrições de cota; é

@@ -69,8 +69,11 @@ class RefreshInputs:
 @dataclass(frozen=True, slots=True)
 class ProposalRefreshDelta:
     proposal_id: str
-    quality_score_before: float
-    quality_score_after: float
+    # `None` quando a proposta não tem pontuação de detector (ADR-0050, decisão 2). O
+    # refino compara medida com medida; ausência viaja como ausência, e não como zero,
+    # porque zero afirmaria confiança medida e nula.
+    quality_score_before: float | None
+    quality_score_after: float | None
 
 
 @dataclass(frozen=True, slots=True)

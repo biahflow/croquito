@@ -480,7 +480,14 @@ def _coverage_stats(
     total = len(proposals)
     if not total:
         return 0.0, 0.0
-    coverages = [proposal.quality_score for proposal in proposals]
+    # Proposta sem pontuação conta como cobertura ZERO, e não é omitida do denominador:
+    # a eval mede o braço de extração, e uma forma que ele entregou sem número medido é
+    # cobertura que ele não provou (ADR-0050, decisão 2). Corrigir isso omitindo a forma
+    # inflaria a média do braço justamente onde ele foi mais fraco.
+    coverages = [
+        proposal.quality_score if proposal.quality_score is not None else 0.0
+        for proposal in proposals
+    ]
     corroborated = [value for value in coverages if value >= minimum_coverage]
     return round(sum(coverages) / total, 4), round(len(corroborated) / total, 4)
 

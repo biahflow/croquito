@@ -2,16 +2,21 @@
 
 ## Status
 
-`BLOCKED`
+`READY_FOR_REVIEW`
 
 > Registrada em 2026-08-19, por seleção humana, e **especificada em 2026-08-23** por seleção
 > humana nova, junto da [F-019](../F-019-preview-da-cena-resolvida/feature.md) — as duas foram
 > escolhidas por serem as que melhoram a geometria das cotas, na mesma linha da
 > [F-030](../F-030-levantamento-de-campo-na-revisao/feature.md).
 >
-> O gate de arquitetura foi **cumprido em 2026-08-23** — o
-> [ADR-0050](../../adr/0050-correcao-humana-de-forma-como-proposta-derivada.md) foi aceito.
-> Falta o **Design Approval Package**, e é ele que a mantém `BLOCKED`.
+> **Os dois gates humanos foram cumpridos.** O
+> [ADR-0050](../../adr/0050-correcao-humana-de-forma-como-proposta-derivada.md) foi aceito em
+> 2026-08-23, e o **Design Approval Package** foi **aprovado por ato humano em 2026-08-27**,
+> revisão 1 ([mock/README.md](mock/README.md)).
+>
+> **Implementada em 2026-08-27**, com portões verdes: domínio, migração `0019`, a rota
+> `POST /v1/jobs/{job_id}/review/proposals/corrections` e a tela. A evidência está em
+> [evidence.md](evidence.md); o que falta é revisão humana, merge e o aceite numa rodada real.
 
 ## Classification
 

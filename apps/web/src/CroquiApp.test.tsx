@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import type { SceneRevision } from "@croquito/contracts";
 import type { User } from "oidc-client-ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, postReviewChains } from "./api";
@@ -27,6 +28,7 @@ import {
   EMPTY_CHAIN_DRAFT,
   jobFailureMessage,
   jobPresentationChanged,
+  PreviewDaCena,
   readingIdsWithCandidate,
   toggleChainTerm,
   visibleReadings,
@@ -1224,5 +1226,133 @@ describe("revisão sem os campos de confiança", () => {
     expect(antiga.review_rate).toBeUndefined();
     // O `?? []` é o mesmo da tela: ausência vira lista vazia, nunca número.
     expect(antiga.reading_confidences ?? []).toEqual([]);
+  });
+});
+
+
+/**
+ * Preview da cena resolvida (F-019). O render é estático — `renderToStaticMarkup` não roda
+ * efeito nenhum —, então o que se lê aqui é exatamente o que a revisora vê antes de
+ * qualquer interação.
+ */
+describe("PreviewDaCena", () => {
+  const cena: SceneRevision.CroquitoSceneRevision = {
+    id: "01930000-0000-7000-8000-0000000000aa",
+    job_id: "01930000-0000-7000-8000-0000000000bb",
+    version: 5,
+    entities: [
+      {
+        id: "e1",
+        kind: "polyline",
+        layer: "MURO",
+        precision: "exact",
+        geometry: {
+          type: "polyline",
+          closed: false,
+          points: [
+            { x: 0, y: 0 },
+            { x: 0, y: 6 },
+            { x: 10, y: 6 },
+          ],
+        },
+      },
+      {
+        id: "e2",
+        kind: "circle",
+        layer: "CAMPO",
+        precision: "unresolved",
+        geometry: { type: "circle", center: { x: 12, y: 2 }, radius: 3 },
+      },
+    ],
+  };
+
+  it("sem cena, declara que não há o que desenhar em vez de mostrar erro", () => {
+    const html = renderToStaticMarkup(
+      <PreviewDaCena scene={null} estado="sem-cena" appliedSpans={[]} contestedSpans={[]} />,
+    );
+
+    expect(html).toContain("Ainda não há cena resolvida para ver");
+    expect(html).not.toContain("svg");
+  });
+
+  it("a legenda nomeia as quatro precisões E descreve o traço de cada uma", () => {
+    const html = renderToStaticMarkup(
+      <PreviewDaCena scene={cena} estado="pronto" appliedSpans={[]} contestedSpans={[]} />,
+    );
+
+    for (const nome of ["exata", "derivada", "aproximada", "não resolvida"]) {
+      expect(html).toContain(nome);
+    }
+    // O par escrito do estilo: quem não distingue traço fino de grosso lê a diferença.
+    for (const traco of [
+      "traço grosso contínuo",
+      "traço fino contínuo",
+      "tracejado",
+      "pontilhado",
+    ]) {
+      expect(html).toContain(traco);
+    }
+  });
+
+  it("cada forma leva a classe da própria precisão, e não uma cor", () => {
+    const html = renderToStaticMarkup(
+      <PreviewDaCena scene={cena} estado="pronto" appliedSpans={[]} contestedSpans={[]} />,
+    );
+
+    expect(html).toContain("cena-forma precisao-exact");
+    expect(html).toContain("cena-forma precisao-unresolved");
+    // Nenhuma cor viaja no markup: a distinção é de classe e de traço, resolvida na folha.
+    expect(html).not.toContain("stroke=");
+    expect(html).not.toContain("fill=");
+  });
+
+  it("entidade não resolvida é declarada como impedimento de exportação", () => {
+    const html = renderToStaticMarkup(
+      <PreviewDaCena scene={cena} estado="pronto" appliedSpans={[]} contestedSpans={[]} />,
+    );
+
+    expect(html).toContain("impede a exportação");
+    expect(html).toContain("leitura, não laudo");
+  });
+
+  it("vão aplicado vira cota desenhada; vão em disputa declara que não tem posição", () => {
+    const html = renderToStaticMarkup(
+      <PreviewDaCena
+        scene={cena}
+        estado="pronto"
+        appliedSpans={[
+          {
+            reading_id: "rd_0000000000000001",
+            axis: "x",
+            value_m: 9.5,
+            start_m: 0.5,
+            end_m: 10,
+            proposal_id: "vp_0000000000000001",
+          },
+        ]}
+        contestedSpans={[
+          {
+            axis: "x",
+            reading_ids: ["rd_0000000000000002", "rd_0000000000000003"],
+            values_m: [4.8, 3.3],
+            proposal_ids: ["vp_0000000000000002"],
+          },
+        ]}
+      />,
+    );
+
+    expect(html).toContain("aplicada · 9,50 m");
+    expect(html).toContain("eixo X em disputa · 4,80 m × 3,30 m");
+    // A limitação é dita na tela, e não escondida atrás de um desenho preciso demais.
+    expect(html).toContain("não é declarada pelo servidor");
+  });
+
+  it("o preview não oferece edição: ver e corrigir são features diferentes", () => {
+    const html = renderToStaticMarkup(
+      <PreviewDaCena scene={cena} estado="pronto" appliedSpans={[]} contestedSpans={[]} />,
+    );
+
+    expect(html).toContain("Ver não é corrigir");
+    expect(html).not.toContain("Corrigir forma");
   });
 });

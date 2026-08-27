@@ -2,14 +2,18 @@
 
 ## Status
 
-`BLOCKED`
+`READY_FOR_REVIEW`
 
 > Registrada em 2026-08-19, por seleção humana, e **especificada em 2026-08-23** por seleção
 > humana nova, junto da [F-018](../F-018-edicao-de-forma-da-proposta/feature.md).
 >
-> **Um gate humano** precede o planejamento — só o de design. Ao contrário das outras features
-> abertas nesta rodada, esta **não** exige decisão de arquitetura: ela lê uma rota que já
-> existe e desenha no cliente. Ver **Human Gates**.
+> **Um gate humano** precedia o planejamento — só o de design, porque esta feature não exige
+> decisão de arquitetura: ela lê uma rota que já existe e desenha no cliente. O **Design
+> Approval Package** foi **aprovado por ato humano em 2026-08-27**, revisão 1
+> ([mock/README.md](mock/README.md)).
+>
+> **Implementada em 2026-08-27**, com portões verdes e evidência renderizada do componente
+> real em [evidence.md](evidence.md). Nenhuma rota nova entrou: o diff é só de cliente.
 
 ## Classification
 
