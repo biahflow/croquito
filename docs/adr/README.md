@@ -76,6 +76,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0054](0054-indice-de-embeddings-publicado-e-braco-semantico-hospedado.md) | Índice de embeddings é artefato publicado da plataforma, encontrado por digest; o braço semântico roda no recompute explícito, nunca no GET | Accepted |
 | [0055](0055-reajuste-como-ato-declarado-sobre-o-consolidado.md) | Reajuste é ato declarado sobre o consolidado da rodada, com preço vigente derivado e passado intocável | Accepted |
 | [0056](0056-re-ra-declarada-e-o-consolidado-da-medicao-seguinte.md) | A RE-RA é declaração com procedência, o vigente é derivado como o preço, e a medição seguinte nasce da anterior | Proposed |
+| [0057](0057-multiplas-pranchas-por-praca-na-extracao-de-legenda.md) | A praça é o consolidado de pranchas, e a prancha continua a unidade de evidência | Proposed |
 | [0058](0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md) | O quantitativo nasce da cena aprovada, e antes disso o elemento precisa de identidade declarada, atribuída por ato humano na revisão | Proposed |
 
 ## Processo
