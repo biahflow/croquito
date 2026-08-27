@@ -725,7 +725,10 @@ class Valuation(ValuationContractModel):
                     )
                     continue
                 contract_line = matches[0]
-                if line.unit_price != contract_line.unit_price:
+                # O preço VIGENTE, não o contratado original: é o número que o contrato paga
+                # hoje (ADR-0055, decisão 7). Sem reajuste declarado os dois são o mesmo, e o
+                # comportamento é idêntico ao de antes da F-039.
+                if line.unit_price != contract.current_unit_price(contract_line):
                     errors.append(f"LINE_PRICE_NOT_IN_CONTRACT:{line.code}")
                 if line.unit != contract_line.unit:
                     errors.append(f"LINE_UNIT_NOT_IN_CONTRACT:{line.code}")

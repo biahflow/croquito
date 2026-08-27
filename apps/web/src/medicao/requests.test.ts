@@ -4,6 +4,7 @@ import {
   codeDecisionBody,
   codeSearchTerm,
   createRoundBody,
+  priceAdjustmentBody,
   takeoffDecisionBody,
   versionBody,
   worksiteKeyError,
@@ -300,5 +301,71 @@ describe("fechamento de pacote de serviços", () => {
     });
 
     expect(Object.keys(body)).not.toContain("note");
+  });
+});
+
+describe("priceAdjustmentBody", () => {
+  it("sem declaração o corpo não leva reajuste nenhum", () => {
+    expect(priceAdjustmentBody(undefined)).toBeNull();
+  });
+
+  it("por índice leva fator, índice e período — e nada da outra forma", () => {
+    const corpo = priceAdjustmentBody({
+      kind: "index_factor",
+      referencePeriod: "08/2025 a 07/2026",
+      indexLabel: "INCC-DI",
+      factor: "1,0432",
+    });
+
+    expect(corpo).toEqual({
+      kind: "index_factor",
+      reference_period: "08/2025 a 07/2026",
+      index_label: "INCC-DI",
+      factor: "1,0432",
+    });
+    // Os dois mecanismos não se misturam: mandar os dois seria declarar duas coisas
+    // fingindo ser uma.
+    expect(corpo).not.toHaveProperty("catalog_upload_id");
+  });
+
+  it("por versão de tabela leva o catálogo, e nunca o fator", () => {
+    const corpo = priceAdjustmentBody({
+      kind: "catalog_version",
+      referencePeriod: "data-base 07/2026",
+      catalogUploadId: "01930000-0000-7000-8000-0000000000aa",
+      // Resíduo do formulário anterior: o corpo não pode carregá-lo.
+      factor: "1,0432",
+      indexLabel: "INCC-DI",
+    });
+
+    expect(corpo).toEqual({
+      kind: "catalog_version",
+      reference_period: "data-base 07/2026",
+      catalog_upload_id: "01930000-0000-7000-8000-0000000000aa",
+    });
+  });
+
+  it("campo em branco não viaja: string vazia não é “sem índice”", () => {
+    const corpo = priceAdjustmentBody({
+      kind: "index_factor",
+      referencePeriod: "08/2025 a 07/2026",
+      indexLabel: "  ",
+      factor: "1,0432",
+      note: "   ",
+    });
+
+    expect(corpo).not.toHaveProperty("index_label");
+    expect(corpo).not.toHaveProperty("note");
+  });
+
+  it("o fator viaja como TEXTO: o decimal escrito não passa por número", () => {
+    const corpo = priceAdjustmentBody({
+      kind: "index_factor",
+      referencePeriod: "08/2025 a 07/2026",
+      indexLabel: "INCC-DI",
+      factor: "1,0432",
+    });
+
+    expect(typeof corpo?.factor).toBe("string");
   });
 });

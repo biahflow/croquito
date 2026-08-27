@@ -307,6 +307,124 @@ def test_a_leitura_da_rodada_declara_contra_o_que_ela_confere(tmp_path: Path) ->
     assert contracted["code_count"] == 1
 
 
+def _reajuste_por_indice(**extra: Any) -> dict[str, Any]:
+    corpo: dict[str, Any] = {
+        "kind": "index_factor",
+        "reference_period": "08/2025 a 07/2026",
+        "index_label": "INCC-DI",
+        "factor": "1.0432",
+    }
+    corpo.update(extra)
+    return corpo
+
+
+def test_a_rodada_nasce_reajustada_e_o_contratado_nao_se_move(tmp_path: Path) -> None:
+    """F-039: o vigente é derivado; o contratado continua sendo o que foi assinado.
+
+    50,00 x 1,0432 = 52,16, e o preço contratado permanece 50,00 na mesma linha — é essa
+    convivência que permite ao período anterior manter o dinheiro dele.
+    """
+    client = _client(tmp_path)
+    estimate_round_id = _seed_estimate_round(client, document=_signed(_estimate()))
+
+    response = _open_from(client, estimate_round_id, price_adjustment=_reajuste_por_indice())
+
+    assert response.status_code == 201, response.text
+    leitura = client.get(
+        f"/v1/valuation-rounds/{response.json()['round_id']}",
+        headers=_headers(key="estado-reajustado"),
+    )
+    assert leitura.status_code == 200, leitura.text
+    contracted = leitura.json()["contracted"]
+
+    declarados = contracted["price_adjustments"]
+    assert len(declarados) == 1
+    assert declarados[0]["kind"] == "index_factor"
+    assert declarados[0]["index_label"] == "INCC-DI"
+    assert declarados[0]["factor"] == "1.0432"
+    # Identidade e relógio são do servidor, nunca do corpo.
+    assert declarados[0]["declared_by"]
+    assert declarados[0]["declared_at"]
+
+    preco = contracted["prices"][0]
+    assert preco["contracted_unit_price"] == "50.00"
+    assert preco["current_unit_price"] == "52.16"
+    assert preco["adjusted"] is True
+
+
+def test_rodada_sem_reajuste_declara_ausencia_em_vez_de_omitir(tmp_path: Path) -> None:
+    """Ausência de reajuste é fato sobre a rodada, e a tela precisa distinguir de "não sei"."""
+    client = _client(tmp_path)
+    estimate_round_id = _seed_estimate_round(client, document=_signed(_estimate()))
+
+    response = _open_from(client, estimate_round_id)
+
+    assert response.status_code == 201, response.text
+    leitura = client.get(
+        f"/v1/valuation-rounds/{response.json()['round_id']}",
+        headers=_headers(key="estado-sem-reajuste"),
+    )
+    contracted = leitura.json()["contracted"]
+    assert contracted["price_adjustments"] == []
+    preco = contracted["prices"][0]
+    assert preco["current_unit_price"] == preco["contracted_unit_price"]
+    assert preco["adjusted"] is False
+
+
+def test_fator_sem_indice_recusa_na_fronteira(tmp_path: Path) -> None:
+    """Fator sem índice não é conferível contra a publicação oficial."""
+    client = _client(tmp_path)
+    estimate_round_id = _seed_estimate_round(client, document=_signed(_estimate()))
+
+    response = _open_from(
+        client,
+        estimate_round_id,
+        key="reajuste-sem-indice",
+        price_adjustment={
+            "kind": "index_factor",
+            "reference_period": "08/2025 a 07/2026",
+            "factor": "1.0432",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_fator_ilegivel_recusa_antes_de_abrir_a_rodada(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    estimate_round_id = _seed_estimate_round(client, document=_signed(_estimate()))
+
+    response = _open_from(
+        client,
+        estimate_round_id,
+        key="reajuste-ilegivel",
+        price_adjustment=_reajuste_por_indice(factor="um pouco mais"),
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "DOMAIN_VALIDATION_FAILED"
+
+
+def test_reajuste_exige_contratado_e_recusa_no_caminho_do_upload(tmp_path: Path) -> None:
+    """Sem orçamento assinado não há preço contratual a reajustar."""
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/v1/valuation-rounds",
+        headers=_headers(key="reajuste-sem-contratado"),
+        json={
+            "catalog_upload_id": "00000000-0000-7000-8000-000000000999",
+            "worksite_key": "PRACA-SINTETICA",
+            "worksite_name": "PRACA SINTETICA",
+            "reference_label": "Medição 1",
+            "period_number": 1,
+            "price_adjustment": _reajuste_por_indice(),
+        },
+    )
+
+    assert response.status_code == 422, response.text
+
+
 def test_orcamento_sem_o_regime_nao_abre_medicao(tmp_path: Path) -> None:
     """Fora da demanda contratada existem a licitação e o deságio entre os dois preços."""
     client = _client(tmp_path)

@@ -16,6 +16,7 @@ import type {
   CodeClosureDraft,
   CodeDecisionDraft,
   CreateRoundDraft,
+  PriceAdjustmentDraft,
   TakeoffDecisionBatchDraft,
 } from "./api";
 
@@ -60,10 +61,8 @@ export function worksiteKeyError(value: string): string | null {
  * quem os declarar. Aceitá-los abriria a porta para a rodada medir uma praça diferente da
  * que foi orçada, e nenhum número do consolidado é informado por humano.
  */
-export function createRoundBody(
-  draft: CreateRoundDraft,
-): Record<string, string | number> {
-  const body: Record<string, string | number> = {
+export function createRoundBody(draft: CreateRoundDraft): Record<string, unknown> {
+  const body: Record<string, unknown> = {
     reference_label: draft.referenceLabel.trim(),
     period_number: Number(draft.periodNumber.trim()),
   };
@@ -84,7 +83,51 @@ export function createRoundBody(
   if (contractLabel) {
     body.contract_label = contractLabel;
   }
+  const reajuste = priceAdjustmentBody(draft.priceAdjustment);
+  if (reajuste !== null) {
+    body.price_adjustment = reajuste;
+  }
   return body;
+}
+
+/**
+ * O reajuste do corpo, ou `null` quando não há declaração (F-039).
+ *
+ * Campo em branco NÃO viaja, como no resto da jornada: string vazia não é "sem índice", é um
+ * índice vazio, e o servidor a recusaria. E os dois mecanismos não se misturam — o que
+ * pertence ao outro `kind` fica de fora, porque mandá-lo seria declarar duas coisas fingindo
+ * ser uma.
+ */
+export function priceAdjustmentBody(
+  draft: PriceAdjustmentDraft | undefined,
+): Record<string, string> | null {
+  if (draft === undefined) {
+    return null;
+  }
+  const corpo: Record<string, string> = {
+    kind: draft.kind,
+    reference_period: draft.referencePeriod.trim(),
+  };
+  const nota = draft.note?.trim();
+  if (nota) {
+    corpo.note = nota;
+  }
+  if (draft.kind === "index_factor") {
+    const indice = draft.indexLabel?.trim();
+    const fator = draft.factor?.trim();
+    if (indice) {
+      corpo.index_label = indice;
+    }
+    if (fator) {
+      corpo.factor = fator;
+    }
+    return corpo;
+  }
+  const catalogo = draft.catalogUploadId?.trim();
+  if (catalogo) {
+    corpo.catalog_upload_id = catalogo;
+  }
+  return corpo;
 }
 
 export function takeoffDecisionBody(

@@ -1147,3 +1147,90 @@ p {
 
 /* Fecha o `.jornada-medicao` aberto no topo do arquivo. */
 }
+
+/*
+ * Reajuste do contrato (F-039). O roxo marca o que foi reajustado, e o selo escrito diz a
+ * mesma coisa sem depender dele: cor nunca é o único indicador.
+ */
+.jornada-medicao .reajuste-do-contrato {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d3c1e2;
+  border-radius: 8px;
+  background: #f3eefb;
+  padding: 12px 14px;
+}
+
+.jornada-medicao .reajuste-do-contrato legend {
+  font-size: 12px;
+  font-weight: 600;
+  color: #3f2d63;
+  padding: 0 6px;
+}
+
+.jornada-medicao .reajuste-escolha {
+  display: grid;
+  gap: 8px;
+}
+
+.jornada-medicao .reajuste-escolha label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 11px;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+.jornada-medicao .reajuste-escolha label.ativa {
+  border-color: #6b4ba1;
+  background: #f3eefb;
+}
+
+.jornada-medicao .reajuste-escolha small {
+  display: block;
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.jornada-medicao .reajuste-declarado {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.jornada-medicao .reajuste-linha {
+  margin: 0;
+  font-size: 13px;
+}
+
+.jornada-medicao .selo-reajuste {
+  border-color: #d3c1e2;
+  background: #f3eefb;
+  color: #6b4ba1;
+}
+
+.jornada-medicao .reajuste-autoria {
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.jornada-medicao .reajuste-tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.jornada-medicao .reajuste-tabela th,
+.jornada-medicao .reajuste-tabela td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.jornada-medicao .reajuste-tabela .numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

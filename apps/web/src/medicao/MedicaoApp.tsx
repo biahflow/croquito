@@ -49,6 +49,7 @@ import {
   type TakeoffItem,
   type TakeoffResponse,
   type ValuationOrigin,
+  type PriceAdjustmentDraft,
 } from "./api";
 import { signOut } from "../auth";
 import { BUSCA_DEBOUNCE_MS, consultaIncremental, resumoDaBusca } from "./busca";
@@ -102,6 +103,7 @@ import {
   violationDetailLine,
 } from "./labels";
 import { codeSearchTerm, worksiteKeyError } from "./requests";
+import { DICA_FATOR, REAJUSTE_OPCOES, reajusteIssue } from "./reajuste";
 import { itemAnchor } from "./takeoff";
 import {
   bboxRect,
@@ -323,6 +325,67 @@ export function RegimeDeConferencia({
           digest do conteúdo assinado {shortDigest(contracted.estimate_digest)}
         </p>
       )}
+      <ReajusteDeclarado contracted={contracted} />
+    </div>
+  );
+}
+
+/**
+ * O reajuste do contrato, e a conta que ele produz (F-039).
+ *
+ * Não aparece quando não há reajuste: rodada sem declaração imprime o que sempre imprimiu, e
+ * uma seção vazia dizendo "sem reajuste" empurraria o assunto para quem não tem esse assunto.
+ * A ausência já está declarada na resposta — a tela é que não precisa falar dela.
+ */
+export function ReajusteDeclarado({
+  contracted,
+}: {
+  contracted: RoundState["contracted"];
+}) {
+  const declarados = contracted.price_adjustments ?? [];
+  if (declarados.length === 0) {
+    return null;
+  }
+  const reajustados = (contracted.prices ?? []).filter((preco) => preco.adjusted);
+  return (
+    <div className="reajuste-declarado">
+      {declarados.map((reajuste, indice) => (
+        <p key={`${reajuste.declared_at}-${indice}`} className="reajuste-linha">
+          <span className="selo selo-reajuste">reajustado</span>{" "}
+          {reajuste.kind === "index_factor"
+            ? `${reajuste.index_label} · ${reajuste.reference_period} · fator ${reajuste.factor}`
+            : `${reajuste.catalog_label} · ${reajuste.reference_period}`}{" "}
+          <span className="reajuste-autoria">
+            declarado por {reajuste.declared_by}
+          </span>
+        </p>
+      ))}
+      {reajustados.length === 0 ? null : (
+        <table className="reajuste-tabela">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Descrição</th>
+              <th className="numero">Contratado</th>
+              <th className="numero">Vigente</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reajustados.map((preco) => (
+              <tr key={preco.code}>
+                <td>{preco.item_number}</td>
+                <td>{preco.description}</td>
+                <td className="numero">{preco.contracted_unit_price}</td>
+                <td className="numero">{preco.current_unit_price}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="dica">
+        O preço vigente é derivado do contratado pela declaração acima. Período já medido
+        guarda o valor que valeu nele.
+      </p>
     </div>
   );
 }
@@ -1080,6 +1143,10 @@ export function MedicaoApp({
   // não o otimismo: sem orçamento assinado, oferecer essa origem como padrão esconderia o
   // único caminho que funciona.
   const [origemDoOrcamento, setOrigemDoOrcamento] = useState(false);
+  // Reajuste declarado na abertura (F-039). `null` é "sem reajuste", e é o padrão: o ato
+  // existe e não se impõe. Só aparece no caminho do orçamento assinado, porque sem
+  // contratado não há preço contratual a reajustar.
+  const [reajuste, setReajuste] = useState<PriceAdjustmentDraft | null>(null);
   const [catalogFile, setCatalogFile] = useState<File | null>(null);
 
   // Prancha (upload e leitura automática).
@@ -1327,13 +1394,24 @@ export function MedicaoApp({
         }
         // Obra, catálogo e contratado vêm do conteúdo assinado; declará-los aqui é recusado
         // pelo servidor, e é por isso que o corpo não os leva.
+        const problema = reajusteIssue(reajuste);
+        if (problema !== null) {
+          setAlertMessage(problema);
+          return;
+        }
         const created = await createRound(token, {
           ...roundForm,
           estimateRoundId: origemEscolhida,
+          priceAdjustment: reajuste ?? undefined,
         });
         setRoundForm(EMPTY_ROUND_FORM);
         setOrigemEscolhida(null);
-        setToast("Rodada aberta com o contratado do orçamento assinado.");
+        setReajuste(null);
+        setToast(
+          reajuste === null
+            ? "Rodada aberta com o contratado do orçamento assinado."
+            : "Rodada aberta com o contratado reajustado.",
+        );
         abrirRodada(created.round_id);
         return;
       }
@@ -2440,11 +2518,109 @@ export function MedicaoApp({
               </label>
                 </>
               )}
+              {origemDoOrcamento ? (
+                <fieldset className="reajuste-do-contrato">
+                  <legend>Reajuste do contrato</legend>
+                  <p className="dica">
+                    O reajuste vale deste período em diante. Medição já aprovada não é
+                    recalculada — nem um centavo dela muda.
+                  </p>
+                  <div className="reajuste-escolha">
+                    {REAJUSTE_OPCOES.map((opcao) => (
+                      <label
+                        key={opcao.valor}
+                        className={
+                          (reajuste?.kind ?? "none") === opcao.valor ? "ativa" : ""
+                        }
+                      >
+                        <input
+                          type="radio"
+                          name="reajuste-do-contrato"
+                          checked={(reajuste?.kind ?? "none") === opcao.valor}
+                          onChange={() =>
+                            setReajuste(
+                              opcao.valor === "none"
+                                ? null
+                                : {
+                                    kind: opcao.valor,
+                                    referencePeriod: "",
+                                    indexLabel: "",
+                                    factor: "",
+                                  },
+                            )
+                          }
+                        />
+                        <span>
+                          {opcao.titulo}
+                          <small>{opcao.explicacao}</small>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  {reajuste === null ? null : (
+                    <>
+                      <label className="campo">
+                        Período de referência
+                        <span className="campo-dica">
+                          Como a publicação oficial o nomeia — “08/2025 a 07/2026”.
+                        </span>
+                        <input
+                          type="text"
+                          value={reajuste.referencePeriod}
+                          onChange={(event) =>
+                            setReajuste({
+                              ...reajuste,
+                              referencePeriod: event.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                      {reajuste.kind === "index_factor" ? (
+                        <>
+                          <label className="campo">
+                            Índice
+                            <input
+                              type="text"
+                              value={reajuste.indexLabel ?? ""}
+                              onChange={(event) =>
+                                setReajuste({
+                                  ...reajuste,
+                                  indexLabel: event.target.value,
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="campo">
+                            Fator
+                            <span className="campo-dica">{DICA_FATOR}</span>
+                            <input
+                              type="text"
+                              value={reajuste.factor ?? ""}
+                              onChange={(event) =>
+                                setReajuste({ ...reajuste, factor: event.target.value })
+                              }
+                            />
+                          </label>
+                        </>
+                      ) : (
+                        <p className="dica">
+                          A versão nova da tabela é enviada como catálogo; o servidor resolve
+                          o preço de cada código contratado e recusa se faltar algum.
+                        </p>
+                      )}
+                      {reajusteIssue(reajuste) === null ? null : (
+                        <p className="campo-aviso">{reajusteIssue(reajuste)}</p>
+                      )}
+                    </>
+                  )}
+                </fieldset>
+              ) : null}
               <button
                 type="submit"
                 className="botao-primario"
                 disabled={
                   submitting ||
+                  reajusteIssue(reajuste) !== null ||
                   (origemDoOrcamento
                     ? origemEscolhida === null
                     : catalogFile === null)

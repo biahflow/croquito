@@ -1070,7 +1070,49 @@ def _contracted_state(round_record: ValuationRoundRecord) -> dict[str, Any]:
         "estimate_round_id": round_record.estimate_round_id,
         "estimate_digest": round_record.estimate_digest,
         "code_count": len(lines) if isinstance(lines, list) else None,
+        # Reajustes declarados na abertura (F-039). Lista vazia é ausência de reajuste, que é
+        # a verdade sobre a rodada — e não um campo que some, porque a tela precisa distinguir
+        # "não reajustou" de "não sei".
+        "price_adjustments": _declared_adjustments(stored),
+        "prices": _contracted_prices(stored),
     }
+
+
+def _declared_adjustments(stored: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Os reajustes como foram declarados, sem revalidar o consolidado.
+
+    Leitura de estado não pode derrubar a tela por causa de um consolidado ilegível — mesma
+    razão do resto desta função. Quem revalida é o portão de exportação.
+    """
+    declarados = stored.get("adjustments")
+    if not isinstance(declarados, list):
+        return []
+    return [item for item in declarados if isinstance(item, dict)]
+
+
+def _contracted_prices(stored: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Contratado e vigente por código: a conta que a memória mostra.
+
+    O vigente é recomputado aqui a partir do consolidado gravado, e não lido de um campo —
+    ele é derivado por decisão (ADR-0055, decisão 3). Consolidado que não revalida devolve
+    lista vazia em vez de erro, pelo mesmo motivo dos demais campos desta leitura.
+    """
+    try:
+        contract = ContractWorkbook.model_validate(dict(stored))
+    except ValidationError:
+        return []
+    return [
+        {
+            "code": line.code,
+            "item_number": line.item_number,
+            "description": line.description,
+            "unit": line.unit,
+            "contracted_unit_price": str(line.unit_price),
+            "current_unit_price": str(contract.current_unit_price(line)),
+            "adjusted": contract.current_unit_price(line) != line.unit_price,
+        }
+        for line in contract.lines
+    ]
 
 
 def round_state_payload(

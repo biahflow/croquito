@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-039 — Reajuste de preços entre medições</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css (identidade "Grafite técnico"). O que é novo está
+         marcado como NOVO na tabela de proveniência do README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --recusa: #a33d32;
+        --atencao: #7c5210;
+        --reajuste: #6b4ba1;
+        --reajuste-soft: #f3eefb;
+        --reajuste-line: #d3c1e2;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0;
+        max-width: 76ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .duas {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 16px;
+        align-items: start;
+      }
+      .painel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+        background: var(--surface);
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: right;
+        padding: 7px 9px;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th:first-child,
+      td:first-child,
+      th:nth-child(2),
+      td:nth-child(2) {
+        text-align: left;
+      }
+      thead th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+      }
+      td.mono,
+      th.mono {
+        font-variant-numeric: tabular-nums;
+      }
+      tr.reajustada td {
+        background: var(--reajuste-soft);
+      }
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+      }
+      .selo.reajuste {
+        border-color: var(--reajuste-line);
+        background: #ffffff;
+        color: var(--reajuste);
+      }
+      .selo.contratado {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      label.campo {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      label.campo input,
+      label.campo select {
+        font: inherit;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      .linha-campos {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.primario {
+        background: var(--accent);
+        border-color: var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      button[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .acoes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .aviso {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.reajuste {
+        border-color: var(--reajuste-line);
+        background: var(--reajuste-soft);
+        color: #3f2d63;
+      }
+      .aviso.recusa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      .aviso.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .conta {
+        font-variant-numeric: tabular-nums;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 9px 11px;
+        border: 1px dashed var(--reajuste-line);
+        border-radius: 6px;
+        background: #ffffff;
+      }
+      .escolha {
+        display: grid;
+        gap: 8px;
+      }
+      .escolha label {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 13px;
+        color: var(--ink);
+      }
+      .escolha label.ativa {
+        border-color: var(--reajuste-line);
+        background: var(--reajuste-soft);
+      }
+      .escolha span small {
+        display: block;
+        color: var(--ink-secondary);
+        font-size: 12px;
+      }
+      .reservado {
+        border: 1px dashed var(--muted);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+        background: repeating-linear-gradient(
+          135deg,
+          rgba(154, 160, 168, 0.08) 0 8px,
+          transparent 8px 16px
+        );
+      }
+      .rodape {
+        border-top: 1px solid var(--line);
+        background: var(--surface-subtle);
+        padding: 10px 16px;
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-039 — Reajuste de preços entre medições</h1>
+      <p>
+        Design Approval Package, revisão 1. Rendição autocontida: abre no navegador sem build,
+        sem rede e sem servidor. Governado pelo <b>ADR-0055</b> — o reajuste é ato declarado
+        sobre o consolidado, o preço vigente é derivado e o passado é intocável. Os números são
+        sintéticos, no formato do MAPÃO.
+      </p>
+    </header>
+    <main>
+      <!-- 01 -->
+      <section class="estado" id="estado-01">
+        <h2>
+          01 · Abertura da rodada — o reajuste é opcional e declarado
+          <small
+            >Sem declarar nada, a rodada abre exatamente como abre hoje. O ato existe, e não se
+            impõe.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Abrir medição · Praça Campo do Toca · período 2</h3>
+              <p>
+                Consolidado de origem: orçamento assinado <span class="selo contratado">digest a3f1…9c</span>
+              </p>
+              <div class="escolha">
+                <label class="ativa">
+                  <input type="radio" name="reaj" checked />
+                  <span>
+                    Sem reajuste
+                    <small>O contrato paga os mesmos preços do período anterior.</small>
+                  </span>
+                </label>
+                <label>
+                  <input type="radio" name="reaj" />
+                  <span>
+                    Reajuste por índice
+                    <small>Fator sobre o preço contratado, com índice e período declarados.</small>
+                  </span>
+                </label>
+                <label>
+                  <input type="radio" name="reaj" />
+                  <span>
+                    Nova versão da tabela contratual
+                    <small>O contrato passou a pagar por outra data-base da tabela.</small>
+                  </span>
+                </label>
+              </div>
+              <div class="acoes">
+                <button class="primario">Abrir rodada</button>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>O que o reajuste não faz</h3>
+              <p>
+                Não recalcula medição já aprovada. O período 1 continua com o dinheiro que valeu
+                quando foi medido — inclusive no acumulado.
+              </p>
+              <div class="aviso">
+                Reajuste é do <b>contrato</b>, não da tabela: dois contratos sobre a mesma
+                tabela reajustam em datas diferentes.
+              </div>
+            </div>
+          </div>
+          <div class="rodape">
+            <span>rodada v1</span><span>consolidado imutável na rodada</span>
+            <span>nada declarado ainda</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 02 -->
+      <section class="estado" id="estado-02">
+        <h2>
+          02 · Reajuste por índice — fator, índice e período são obrigatórios juntos
+          <small
+            >O sistema não busca índice em lugar nenhum. Ele exige a declaração e a carimba,
+            para que quem revisa possa conferi-la contra a publicação oficial.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Declarar o reajuste</h3>
+              <div class="linha-campos">
+                <label class="campo">
+                  Fator
+                  <input value="1,0432" />
+                </label>
+                <label class="campo">
+                  Índice
+                  <input value="INCC-DI" />
+                </label>
+                <label class="campo">
+                  Período de referência
+                  <input value="08/2025 a 07/2026" />
+                </label>
+              </div>
+              <div class="conta">
+                17.23 · Tela galvanizada — <b>R$ 62,40</b> × 1,0432 =
+                <b>R$ 65,09</b>
+              </div>
+              <p>
+                Prévia sobre a primeira linha do contrato. Dinheiro <b>trunca</b>, nunca
+                arredonda — a regra é a mesma do resto da cadeia.
+              </p>
+              <div class="acoes">
+                <button class="primario">Declarar e abrir rodada</button>
+                <button>Cancelar</button>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Como isto é gravado</h3>
+              <span class="selo reajuste">ato declarado · autor e instante</span>
+              <p>
+                A declaração fica com o consolidado da rodada e é <b>imutável</b> nela, como o
+                consolidado já é.
+              </p>
+              <div class="aviso reajuste">
+                Reajustes <b>compõem</b>: o do ano seguinte incide sobre o preço já reajustado,
+                e a cadeia inteira fica gravada.
+              </div>
+              <div class="reservado">
+                <b>Reservado, não entregue nesta feature:</b> escolher o índice de uma tabela de
+                índices importada, em vez de digitar. O campo já é modelado para ela caber.
+              </div>
+            </div>
+          </div>
+          <div class="rodape">
+            <span>fator 1,0432</span><span>INCC-DI</span><span>08/2025 a 07/2026</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 03 -->
+      <section class="estado" id="estado-03">
+        <h2>
+          03 · Nova versão da tabela — o preço resolvido por código fica gravado
+          <small
+            >O consolidado precisa explicar o próprio preço meses depois, sem depender de aquele
+            catálogo ainda estar instalado em algum lugar.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Versão contratual nova</h3>
+              <label class="campo">
+                Catálogo
+                <select>
+                  <option>SCO-PCRJ · data-base 07/2026 · digest 7d21…4a</option>
+                </select>
+              </label>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th>Descrição</th>
+                    <th class="mono">Contratado</th>
+                    <th class="mono">Versão nova</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="reajustada">
+                    <td>17.23</td>
+                    <td>Tela galvanizada</td>
+                    <td class="mono">R$ 62,40</td>
+                    <td class="mono">R$ 65,90</td>
+                  </tr>
+                  <tr class="reajustada">
+                    <td>17.25</td>
+                    <td>Alambrado · estrutura tubular</td>
+                    <td class="mono">R$ 118,00</td>
+                    <td class="mono">R$ 123,15</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="acoes">
+                <button class="primario">Declarar e abrir rodada</button>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Recusa que existe de propósito</h3>
+              <div class="aviso recusa">
+                O código <b>IE00040849</b> está contratado e não existe na versão 07/2026. A
+                declaração é recusada inteira: reprecificar metade do contrato seria pior do que
+                não reprecificar.
+              </div>
+              <p>
+                O preço resolvido de cada código é gravado junto do digest da versão de onde
+                saiu.
+              </p>
+            </div>
+          </div>
+          <div class="rodape">
+            <span>2 códigos reprecificados</span><span>1 ausente → recusa</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 04 -->
+      <section class="estado" id="estado-04">
+        <h2>
+          04 · A memória mostra a conta
+          <small
+            >Preço contratado, fator com índice e período, preço vigente. Reajuste que a
+            prefeitura não consegue auditar na memória é reajuste devolvido.</small
+          >
+        </h2>
+        <div class="corpo">
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Descrição</th>
+                <th class="mono">Contratado</th>
+                <th class="mono">Fator</th>
+                <th class="mono">Vigente</th>
+                <th class="mono">Qtd. do período</th>
+                <th class="mono">Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="reajustada">
+                <td>17.23</td>
+                <td>Tela galvanizada</td>
+                <td class="mono">R$ 62,40</td>
+                <td class="mono">1,0432</td>
+                <td class="mono">R$ 65,09</td>
+                <td class="mono">120,00</td>
+                <td class="mono">R$ 7.810,80</td>
+              </tr>
+              <tr class="reajustada">
+                <td>17.25</td>
+                <td>Alambrado · estrutura tubular</td>
+                <td class="mono">R$ 118,00</td>
+                <td class="mono">1,0432</td>
+                <td class="mono">R$ 123,09</td>
+                <td class="mono">40,00</td>
+                <td class="mono">R$ 4.923,60</td>
+              </tr>
+            </tbody>
+          </table>
+          <p>
+            <span class="selo reajuste">reajustada</span> A linha reajustada é marcada com selo
+            escrito, e não só pelo fundo: cor nunca é o único indicador.
+          </p>
+          <div class="aviso reajuste">
+            Reajuste declarado em 27/08/2026 por Daniel Campos · <b>INCC-DI</b> ·
+            08/2025 a 07/2026 · fator <b>1,0432</b>.
+          </div>
+          <div class="rodape">
+            <span>período 2</span><span>preço vigente = contratado × fator, truncado</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 05 -->
+      <section class="estado" id="estado-05">
+        <h2>
+          05 · Duas medições em bases diferentes, na mesma linha
+          <small
+            >O acumulado soma períodos com preços distintos — e é assim que tem de ser.</small
+          >
+        </h2>
+        <div class="corpo">
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Período</th>
+                <th class="mono">Preço do período</th>
+                <th class="mono">Qtd.</th>
+                <th class="mono">Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>17.23</td>
+                <td>1 · antes do reajuste</td>
+                <td class="mono">R$ 62,40</td>
+                <td class="mono">80,00</td>
+                <td class="mono">R$ 4.992,00</td>
+              </tr>
+              <tr class="reajustada">
+                <td>17.23</td>
+                <td>2 · reajustado</td>
+                <td class="mono">R$ 65,09</td>
+                <td class="mono">120,00</td>
+                <td class="mono">R$ 7.810,80</td>
+              </tr>
+              <tr>
+                <td colspan="3"><b>Acumulado</b></td>
+                <td class="mono"><b>200,00</b></td>
+                <td class="mono"><b>R$ 12.802,80</b></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="aviso">
+            O período 1 guarda o valor que valeu quando foi medido. Nenhum centavo dele muda por
+            causa do reajuste, e o digest do que já foi assinado não se move.
+          </div>
+          <div class="rodape">
+            <span>2 períodos</span><span>2 bases de preço</span><span>1 linha de contrato</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 06 -->
+      <section class="estado" id="estado-06">
+        <h2>
+          06 · Sem reajuste — o controle
+          <small>Vigente igual a contratado, e a tela não fala de reajuste nenhum.</small>
+        </h2>
+        <div class="corpo">
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Descrição</th>
+                <th class="mono">Preço</th>
+                <th class="mono">Qtd. do período</th>
+                <th class="mono">Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>17.23</td>
+                <td>Tela galvanizada</td>
+                <td class="mono">R$ 62,40</td>
+                <td class="mono">80,00</td>
+                <td class="mono">R$ 4.992,00</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="aviso">
+            Nenhuma coluna nova, nenhum selo, nenhuma menção: rodada sem reajuste declarado
+            imprime o que imprime hoje.
+          </div>
+          <div class="rodape"><span>período 1</span><span>sem declaração</span></div>
+        </div>
+      </section>
+
+      <!-- 07 -->
+      <section class="estado" id="estado-07">
+        <h2>
+          07 · Recusas da declaração
+          <small>Fator sem índice, fator não positivo, e boletim divergindo do vigente.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Na declaração</h3>
+              <div class="aviso recusa">
+                O fator precisa vir com <b>índice</b> e <b>período de referência</b>. Sem eles a
+                declaração não é conferível contra a publicação oficial, e um número que ninguém
+                consegue conferir não entra na medição.
+              </div>
+              <div class="aviso recusa">
+                Fator precisa ser maior que zero. <b>0</b> não é "sem reajuste" — sem reajuste é
+                não declarar.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Na exportação</h3>
+              <div class="aviso atencao">
+                <b>LINE_PRICE_NOT_IN_CONTRACT</b> — o boletim traz R$ 62,40 para o item 17.23, e
+                o contrato vigente paga R$ 65,09. O guardrail é o mesmo de sempre; o que mudou é
+                que ele compara com o preço vigente.
+              </div>
+              <p>O portão continua fechando a exportação, como já fecha hoje.</p>
+            </div>
+          </div>
+          <div class="rodape">
+            <span>três recusas</span><span>nenhuma delas nova no vocabulário</span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -2079,6 +2079,16 @@
             "title": "Period Number",
             "type": "integer"
           },
+          "price_adjustment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PriceAdjustmentRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reference_label": {
             "maxLength": 120,
             "minLength": 1,
@@ -5587,6 +5597,83 @@
           "expires_at"
         ],
         "title": "PresignUploadResponse",
+        "type": "object"
+      },
+      "PriceAdjustmentRequest": {
+        "additionalProperties": false,
+        "description": "Declaração de reajuste na abertura da rodada (F-039, ADR-0055).\n\nO reajuste é do CONTRATO, e por isso só existe no caminho que tem contratado: rodada\naberta por upload de catálogo não tem consolidado a reajustar. A declaração é gravada com\no consolidado e é imutável na rodada, como ele (ADR-0048, decisão 7).\n\nO carimbo de identidade não entra por aqui: `declared_by` e `declared_at` vêm do\n`Principal` e do relógio do servidor, como em toda decisão da cadeia.\n\n`factor` viaja como TEXTO pelo mesmo motivo da quantidade do takeoff: fator é `Decimal`\nexato, e um `float` de JSON já teria perdido a escala escrita antes de chegar aqui.",
+        "properties": {
+          "catalog_upload_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Upload Id"
+          },
+          "factor": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Factor"
+          },
+          "index_label": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index Label"
+          },
+          "kind": {
+            "enum": [
+              "index_factor",
+              "catalog_version"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reference_period": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Reference Period",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "reference_period"
+        ],
+        "title": "PriceAdjustmentRequest",
         "type": "object"
       },
       "ProjectResponse": {

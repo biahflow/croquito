@@ -74,6 +74,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0052](0052-pino-da-camada-global-por-tag-do-remoto.md) | Pino da camada global por tag do remoto | Accepted |
 | [0053](0053-cardinalidade-n-n-elemento-servico.md) | A relação entre elemento da prancha e serviço do catálogo é N:N, com parcela por par | Accepted |
 | [0054](0054-indice-de-embeddings-publicado-e-braco-semantico-hospedado.md) | Índice de embeddings é artefato publicado da plataforma, encontrado por digest; o braço semântico roda no recompute explícito, nunca no GET | Accepted |
+| [0055](0055-reajuste-como-ato-declarado-sobre-o-consolidado.md) | Reajuste é ato declarado sobre o consolidado da rodada, com preço vigente derivado e passado intocável | Accepted |
 
 ## Processo
 

@@ -11,7 +11,7 @@ import re
 import time
 from collections.abc import Collection, Generator, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Final, Literal, cast
@@ -188,7 +188,7 @@ from croquito_valuation.assignment import (
 )
 from croquito_valuation.calc import build_worksite_valuation
 from croquito_valuation.calc_matrix import CalcMatrix
-from croquito_valuation.contract import ContractWorkbook
+from croquito_valuation.contract import ContractWorkbook, PriceAdjustment
 from croquito_valuation.contract_from_estimate import build_contract_from_estimate
 from croquito_valuation.errors import ValuationValidationError, valuation_errors
 from croquito_valuation.estimate import Estimate, build_worksite_estimate
@@ -1292,6 +1292,47 @@ class ChatSessionSummaryResponse(ApiModel):
 CATALOG_CONTENT_TYPE: Final = "application/json"
 
 
+class PriceAdjustmentRequest(ApiModel):
+    """Declaração de reajuste na abertura da rodada (F-039, ADR-0055).
+
+    O reajuste é do CONTRATO, e por isso só existe no caminho que tem contratado: rodada
+    aberta por upload de catálogo não tem consolidado a reajustar. A declaração é gravada com
+    o consolidado e é imutável na rodada, como ele (ADR-0048, decisão 7).
+
+    O carimbo de identidade não entra por aqui: `declared_by` e `declared_at` vêm do
+    `Principal` e do relógio do servidor, como em toda decisão da cadeia.
+
+    `factor` viaja como TEXTO pelo mesmo motivo da quantidade do takeoff: fator é `Decimal`
+    exato, e um `float` de JSON já teria perdido a escala escrita antes de chegar aqui.
+    """
+
+    kind: Literal["index_factor", "catalog_version"]
+    reference_period: str = Field(min_length=1, max_length=60)
+    note: str | None = Field(default=None, min_length=1, max_length=300)
+    #: `index_factor`: o índice e o fator, obrigatórios juntos — fator sem índice não é
+    #: conferível contra a publicação oficial.
+    index_label: str | None = Field(default=None, min_length=1, max_length=60)
+    factor: str | None = Field(default=None, min_length=1, max_length=20)
+    #: `catalog_version`: o upload da versão nova. O servidor resolve o preço de cada código
+    #: contratado a partir dela e materializa a tabela na declaração (ADR-0055, decisão 4) —
+    #: o cliente não informa preço nenhum.
+    catalog_upload_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_kind(self) -> PriceAdjustmentRequest:
+        if self.kind == "index_factor":
+            if self.factor is None or self.index_label is None:
+                raise ValueError("reajuste por índice exige fator e index_label")
+            if self.catalog_upload_id is not None:
+                raise ValueError("reajuste por índice não cita catálogo")
+            return self
+        if self.catalog_upload_id is None:
+            raise ValueError("reajuste por versão de tabela exige catalog_upload_id")
+        if self.factor is not None or self.index_label is not None:
+            raise ValueError("reajuste por versão de tabela não carrega fator de índice")
+        return self
+
+
 class CreateValuationRoundRequest(ApiModel):
     """Rodada nova: a obra, o catálogo instalado e os rótulos que o boletim exige.
 
@@ -1324,6 +1365,9 @@ class CreateValuationRoundRequest(ApiModel):
     period_number: int = Field(ge=1, le=999)
     address: str | None = Field(default=None, min_length=1, max_length=200)
     contract_label: str | None = Field(default=None, min_length=1, max_length=120)
+    #: Reajuste do contrato, opcional (F-039). Só no caminho do orçamento assinado: sem
+    #: contratado não há preço contratual a reajustar.
+    price_adjustment: PriceAdjustmentRequest | None = None
 
     @model_validator(mode="after")
     def validate_origin(self) -> CreateValuationRoundRequest:
@@ -1351,6 +1395,11 @@ class CreateValuationRoundRequest(ApiModel):
                 )
         elif self.worksite_key is None or self.worksite_name is None:
             raise ValueError("worksite_key e worksite_name são obrigatórios sem orçamento")
+        if self.price_adjustment is not None and not from_estimate:
+            raise ValueError(
+                "reajuste exige rodada aberta a partir de orçamento assinado: sem contratado "
+                "não há preço contratual a reajustar"
+            )
         return self
 
 
@@ -3923,6 +3972,81 @@ class _ValuationOrigin:
     """O registro de upload a marcar `VERIFIED`, quando a origem foi um upload do cliente."""
 
 
+def _price_adjustment_from_request(
+    application: FastAPI,
+    session: Session,
+    *,
+    payload: PriceAdjustmentRequest,
+    contract: ContractWorkbook,
+    principal: Principal,
+    storage_flavor: str,
+) -> PriceAdjustment:
+    """A declaração do cliente vira o ato de domínio, com identidade e relógio do servidor.
+
+    No tipo `catalog_version` é AQUI que o preço de cada código contratado é resolvido e
+    materializado (ADR-0055, decisão 4): o cliente cita a versão nova, e o servidor lê. O
+    cliente nunca informa preço — deixá-lo informar seria aceitar um número de contrato vindo
+    de fora, que é o oposto do que este consolidado existe para garantir.
+    """
+    declared_at = datetime.now(UTC)
+    if payload.kind == "index_factor":
+        try:
+            factor = parse_quantity(payload.factor)
+        except DomainValidationError as error:
+            raise _problem(
+                "DOMAIN_VALIDATION_FAILED",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "O fator do reajuste não é um decimal exato.",
+            ) from error
+        return PriceAdjustment(
+            kind="index_factor",
+            declared_by=principal.subject,
+            declared_at=declared_at,
+            reference_period=payload.reference_period,
+            note=payload.note,
+            index_label=payload.index_label,
+            factor=factor,
+        )
+
+    assert payload.catalog_upload_id is not None  # garantido pelo contrato de entrada
+    upload = _require_valuation_upload(
+        session,
+        application,
+        upload_id=payload.catalog_upload_id,
+        principal=principal,
+        content_type=CATALOG_CONTENT_TYPE,
+        storage_flavor=storage_flavor,
+    )
+    catalog, _summary = _install_catalog(
+        application,
+        object_key=upload.object_key,
+        object_sha256=upload.sha256.lower(),
+        unreadable_code="INVALID_UPLOAD",
+    )
+    precos = {entry.code: entry.unit_price for entry in catalog.entries}
+    contratados = {line.code for line in contract.lines}
+    faltando = sorted(contratados - set(precos))
+    if faltando:
+        # Recusa aqui, e não no modelo, para a mensagem citar o que falta: reprecificar
+        # metade do contrato é pior do que não reprecificar.
+        raise _problem(
+            "PRICE_ADJUSTMENT_CODE_MISSING",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "A versão nova da tabela não precifica todo código contratado.",
+            {"missing": faltando[:20]},
+        )
+    return PriceAdjustment(
+        kind="catalog_version",
+        declared_by=principal.subject,
+        declared_at=declared_at,
+        reference_period=payload.reference_period,
+        note=payload.note,
+        catalog_label=catalog.source_label,
+        catalog_sha256=catalog.source_sha256,
+        prices_by_code={code: precos[code] for code in sorted(contratados)},
+    )
+
+
 def _origin_from_signed_estimate(
     session: Session,
     application: FastAPI,
@@ -4056,12 +4180,37 @@ def _resolve_valuation_origin(
 ) -> _ValuationOrigin:
     """As duas portas da criação da rodada; o contrato já garantiu que só uma foi usada."""
     if payload.estimate_round_id is not None:
-        return _origin_from_signed_estimate(
+        origin = _origin_from_signed_estimate(
             session,
             application,
             estimate_round_id=payload.estimate_round_id,
             principal=principal,
         )
+        if payload.price_adjustment is None:
+            return origin
+        # O reajuste entra no consolidado ANTES de ele ser gravado: depois disso ele é
+        # imutável na rodada (ADR-0048, decisão 7), e é essa imutabilidade que faz a
+        # declaração valer para o período inteiro sem poder mudar no meio dele.
+        assert origin.contract_workbook_json is not None
+        contract = ContractWorkbook.model_validate(dict(origin.contract_workbook_json))
+        adjustment = _price_adjustment_from_request(
+            application,
+            session,
+            payload=payload.price_adjustment,
+            contract=contract,
+            principal=principal,
+            storage_flavor=storage_flavor,
+        )
+        try:
+            reajustado = contract.model_copy(
+                update={"adjustments": [*contract.adjustments, adjustment]}
+            )
+            # `model_copy` não revalida: a releitura é o que faz a cobertura por código do
+            # `catalog_version` ser conferida pelo domínio, e não só pela fronteira.
+            reajustado = ContractWorkbook.model_validate(reajustado.model_dump(mode="json"))
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+        return replace(origin, contract_workbook_json=reajustado.model_dump(mode="json"))
 
     # Caminho de sempre: obra declarada e catálogo por upload, sem contratado a conferir.
     assert payload.catalog_upload_id is not None
