@@ -1,6 +1,6 @@
 # F-040 · T5 — A tela: declarar a RE-RA e abrir a medição seguinte
 
-Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Planejado**
+Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Parcial** — declaração e memória entregues; porta da medição seguinte e evidência de navegador pendentes
 
 ## Objetivo
 

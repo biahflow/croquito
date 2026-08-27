@@ -139,8 +139,8 @@ def test_consolidated_workbook_closes_periods_amendments_and_balance() -> None:
     reduced = workbook.line_for_code(_CODE_A)
     assert reduced.expected_accumulated_quantity == Decimal("5.00")
     assert reduced.expected_accumulated_amount == Decimal("50.00")
-    # Vigente e saldo DERIVADOS (ADR-0056, decisão 3): 20 contratados − 4 da RE-RA = 16
-    # vigentes; 16 − 5 medidos = 11 de saldo.
+    # Vigente e saldo DERIVADOS (ADR-0056, decisão 3): 20 contratados - 4 da RE-RA = 16
+    # vigentes; 16 - 5 medidos = 11 de saldo.
     assert workbook.current_quantity(reduced) == Decimal("16.00")
     assert workbook.current_balance_quantity(reduced) == Decimal("11.00")
     assert workbook.line_for_code(_CODE_NEW).contract_quantity == Decimal("0.00")
@@ -254,7 +254,7 @@ def test_accumulated_above_the_current_quantity_is_refused() -> None:
 
 
 def test_declared_balance_must_be_current_minus_accumulated() -> None:
-    # `balance_quantity` gravado é conferência: presente e divergente do derivado (16 − 5 = 11)
+    # `balance_quantity` gravado é conferência: presente e divergente do derivado (16 - 5 = 11)
     # recusa no consolidado.
     with pytest.raises(ValidationError) as raised:
         _workbook(lines=[_first_line(balance_quantity="10.00"), _second_line(), _new_item_line()])

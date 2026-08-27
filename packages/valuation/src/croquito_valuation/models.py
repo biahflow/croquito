@@ -735,7 +735,7 @@ class Valuation(ValuationContractModel):
                 measured[line.code] = measured.get(line.code, Decimal("0.00")) + line.quantity
 
         for code, quantity in measured.items():
-            # O saldo VIGENTE, derivado (ADR-0056, decisão 3): contratado + RE-RA − acumulado.
+            # O saldo VIGENTE, derivado (ADR-0056, decisão 3): contratado + RE-RA - acumulado.
             # Sem RE-RA declarada é idêntico ao contratado menos o acumulado, bit a bit.
             if quantity > contract.current_balance_quantity(contract_lines[code][0]):
                 errors.append(f"BALANCE_EXCEEDED:{code}")

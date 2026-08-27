@@ -24,9 +24,15 @@ do domínio, sob pena de dois veredictos sobre a mesma planilha (feature.md, Ris
 |---|---|---|
 | T1 | [A RE-RA com procedência e o vigente derivado no domínio](tasks/T1-re-ra-e-vigente-no-dominio.md) | **Entregue** |
 | T2 | [A medição seguinte: consolidado `n+1` a partir da rodada anterior](tasks/T2-medicao-seguinte.md) | **Entregue** |
-| T3 | [Declarar a RE-RA e abrir a medição seguinte na API](tasks/T3-declaracao-e-abertura-na-api.md) | Planejado |
-| T4 | [A memória mostra contratado → vigente com a RE-RA](tasks/T4-memoria-com-a-re-ra.md) | Planejado |
-| T5 | [A tela: declarar a RE-RA e abrir a medição seguinte](tasks/T5-tela-da-medicao.md) | Planejado |
+| T3 | [Declarar a RE-RA e abrir a medição seguinte na API](tasks/T3-declaracao-e-abertura-na-api.md) | **Entregue** |
+| T4 | [A memória mostra contratado → vigente com a RE-RA](tasks/T4-memoria-com-a-re-ra.md) | **Entregue** |
+| T5 | [A tela: declarar a RE-RA e abrir a medição seguinte](tasks/T5-tela-da-medicao.md) | **Parcial** |
+
+> **T5 parcial**: a declaração da RE-RA na abertura e a memória (contratado → vigente → saldo,
+> com o selo "re-ratificada") estão entregues e testadas. Ficam para a próxima rodada a **porta
+> da medição seguinte** na tela (a API já a abre por `previous_round_id`, mas o seletor de
+> rodada anterior aprovada ainda não existe na UI) e a **evidência de navegador**
+> (`BROWSER_REQUIRED`, AC 11), que é gate humano da disciplina de design-approval.
 
 ## Compatibilidade de schema
 

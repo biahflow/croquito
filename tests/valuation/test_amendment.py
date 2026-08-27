@@ -47,7 +47,9 @@ def _line(
     )
 
 
-def _workbook(*, lines: list[ContractLine], amendments: list[Amendment] | None = None) -> ContractWorkbook:
+def _workbook(
+    *, lines: list[ContractLine], amendments: list[Amendment] | None = None
+) -> ContractWorkbook:
     return ContractWorkbook(
         source_label="MAPÃO SINTÉTICO (fixture)",
         source_sha256=_SOURCE_SHA256,
@@ -69,17 +71,22 @@ def _declared(lines: list[AmendmentLine], *, label: str = "1ª RE-RA") -> Amendm
 
 def test_amendment_lida_do_mapao_nao_exige_procedencia() -> None:
     """A RE-RA sem procedência continua válida no modelo: é a leitura do MAPÃO histórico."""
-    amendment = Amendment(label="RE-RA do MAPÃO", lines=[AmendmentLine(code=_CODE, quantity_delta=Decimal("-4.00"))])
+    amendment = Amendment(
+        label="RE-RA do MAPÃO", lines=[AmendmentLine(code=_CODE, quantity_delta=Decimal("-4.00"))]
+    )
     assert amendment.has_provenance is False
 
 
 def test_declaracao_sem_procedencia_recusa_no_ato() -> None:
-    amendment = Amendment(label="RE-RA", lines=[AmendmentLine(code=_CODE, quantity_delta=Decimal("-4.00"))])
+    amendment = Amendment(
+        label="RE-RA", lines=[AmendmentLine(code=_CODE, quantity_delta=Decimal("-4.00"))]
+    )
     with pytest.raises(ValuationValidationError) as raised:
         amendment.ensure_declared()
 
     assert raised.value.code == "AMENDMENT_PROVENANCE_MISSING"
-    assert set(raised.value.details["missing"]) == {"declared_by", "declared_at", "reference_period"}
+    # A ordem é determinística: `ensure_declared` lista na ordem em que confere os campos.
+    assert raised.value.details["missing"] == ["declared_by", "declared_at", "reference_period"]
 
 
 def test_declaracao_com_instante_ingenuo_recusa() -> None:
@@ -88,7 +95,7 @@ def test_declaracao_com_instante_ingenuo_recusa() -> None:
             label="RE-RA",
             lines=[AmendmentLine(code=_CODE, quantity_delta=Decimal("-4.00"))],
             declared_by="Ana",
-            declared_at=datetime(2026, 8, 27, 10, 0),  # noqa: DTZ001 — o ponto do teste
+            declared_at=datetime(2026, 8, 27, 10, 0),
             reference_period="Processo 123/2026",
         )
 
@@ -205,7 +212,9 @@ def test_consolidado_gravado_antes_da_feature_continua_validando(schema_version:
         source_label="MAPÃO SINTÉTICO (fixture)",
         source_sha256=_SOURCE_SHA256,
         period_numbers=[],
-        lines=[_line(contract_quantity="20.00", amended_quantity="20.00", balance_quantity="20.00")],
+        lines=[
+            _line(contract_quantity="20.00", amended_quantity="20.00", balance_quantity="20.00")
+        ],
     )
 
     line = workbook.line_for_code(_CODE)

@@ -38,8 +38,12 @@ def _line(*, contract_quantity: str = "20.00", unit_price: str = "10.00") -> Con
     )
 
 
-def _workbook(*, lines: list[ContractLine] | None = None, period_numbers: list[int] | None = None,
-             adjustments: list[PriceAdjustment] | None = None) -> ContractWorkbook:
+def _workbook(
+    *,
+    lines: list[ContractLine] | None = None,
+    period_numbers: list[int] | None = None,
+    adjustments: list[PriceAdjustment] | None = None,
+) -> ContractWorkbook:
     return ContractWorkbook(
         source_label="MAPÃO SINTÉTICO (fixture)",
         source_sha256=_SOURCE_SHA256,
@@ -62,7 +66,7 @@ def test_a_medicao_seguinte_lanca_o_periodo_e_soma_o_acumulado() -> None:
     # Sem reajuste, o período não carrega preço próprio: foi medido pelo contratado.
     assert line.periods[0].unit_price is None
     assert line.accumulated_quantity == Decimal("5.00")
-    # Saldo derivado: 20 vigentes − 5 medidos = 15.
+    # Saldo derivado: 20 vigentes - 5 medidos = 15.
     assert nxt.current_balance_quantity(line) == Decimal("15.00")
 
 
@@ -89,7 +93,7 @@ def test_a_medicao_seguinte_preserva_a_re_ra_da_rodada_anterior() -> None:
 
     line = nxt.line_for_code(_CODE)
     assert nxt.amendments[-1].has_provenance is True
-    # Vigente re-ratificado (16), preservado: 16 − 5 = 11 de saldo.
+    # Vigente re-ratificado (16), preservado: 16 - 5 = 11 de saldo.
     assert nxt.current_quantity(line) == Decimal("16.00")
     assert nxt.current_balance_quantity(line) == Decimal("11.00")
 
@@ -108,6 +112,6 @@ def test_a_medicao_seguinte_lanca_o_preco_reajustado_no_periodo() -> None:
     nxt = build_next_round_contract(previous, measured={_CODE: Decimal("5.00")}, period_number=1)
 
     period = nxt.line_for_code(_CODE).periods[0]
-    # Preço vigente reajustado: 10,00 × 1,10 = 11,00; o período carrega o preço próprio.
+    # Preço vigente reajustado: 10,00 x 1,10 = 11,00; o período carrega o preço próprio.
     assert period.unit_price == Decimal("11.00")
     assert period.amount == Decimal("55.00")

@@ -23,8 +23,8 @@ from croquito_api.database import (
     ValuationRoundRecord,
     ValuationRoundRevisionRecord,
 )
-from croquito_valuation.contract_from_estimate import build_contract_from_estimate
 from croquito_core.ids import new_uuid7
+from croquito_valuation.contract_from_estimate import build_contract_from_estimate
 from croquito_valuation.estimate import (
     CatalogSource,
     Estimate,
@@ -628,7 +628,7 @@ def _re_ra(**extra: Any) -> dict[str, Any]:
 def test_a_rodada_nasce_re_ratificada_e_o_contratado_nao_se_move(tmp_path: Path) -> None:
     """F-040: o vigente é derivado; o contratado continua sendo o que foi assinado.
 
-    12,00 contratados − 2,00 da RE-RA = 10,00 vigentes, e o contratado permanece 12,00 na
+    12,00 contratados - 2,00 da RE-RA = 10,00 vigentes, e o contratado permanece 12,00 na
     mesma linha — é essa convivência que preserva o período anterior.
     """
     client = _client(tmp_path)
@@ -808,7 +808,9 @@ def _seed_previous_round(
     return round_id
 
 
-def _open_next(client: TestClient, previous_round_id: str, *, period_number: int = 2, **extra: Any) -> Any:
+def _open_next(
+    client: TestClient, previous_round_id: str, *, period_number: int = 2, **extra: Any
+) -> Any:
     body: dict[str, Any] = {
         "previous_round_id": previous_round_id,
         "reference_label": "Medição 2 — setembro/2026",
@@ -847,7 +849,7 @@ def test_a_medicao_seguinte_nasce_da_rodada_anterior_aprovada(tmp_path: Path) ->
         f"/v1/valuation-rounds/{round_id}", headers=_headers(key="estado-seguinte")
     )
     quantidade = leitura.json()["contracted"]["quantities"][0]
-    # Saldo derivado: 12 vigentes − 5 acumulados = 7.
+    # Saldo derivado: 12 vigentes - 5 acumulados = 7.
     assert quantidade["current_balance_quantity"] == "7.00"
 
 

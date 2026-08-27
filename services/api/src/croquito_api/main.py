@@ -4316,9 +4316,7 @@ def _origin_from_previous_round(
     """
     record = load_round(session, round_id=str(previous_round_id), tenant_id=principal.tenant_id)
     if record is None:
-        raise _problem(
-            "NOT_FOUND", status.HTTP_404_NOT_FOUND, "Rodada anterior não encontrada."
-        )
+        raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Rodada anterior não encontrada.")
     stored = record.contract_workbook_json
     if stored is None:
         raise _problem(

@@ -321,7 +321,7 @@ class ContractLine(ValuationContractModel):
     accumulated_quantity: ExactDecimal = Field(ge=0)
     accumulated_amount: ExactDecimal = Field(ge=0)
     #: Saldo. Opcional e conferência, como `amended_quantity`: derivado por
-    #: `ContractWorkbook.current_balance_quantity` (`vigente − acumulado`). Presente, confere.
+    #: `ContractWorkbook.current_balance_quantity` (`vigente - acumulado`). Presente, confere.
     balance_quantity: ExactDecimal | None = Field(default=None, ge=0)
 
     @property
@@ -587,7 +587,7 @@ class ContractWorkbook(ValuationContractModel):
                         "declared": str(line.amended_quantity),
                     },
                 )
-            # Saldo vigente = vigente − acumulado. Negativo recusa; o saldo declarado, quando
+            # Saldo vigente = vigente - acumulado. Negativo recusa; o saldo declarado, quando
             # presente, é conferência contra o derivado (validação migrada da linha, que não
             # conhecia as RE-RA — feature.md, Risks).
             balance = vigente - line.accumulated_quantity
@@ -706,8 +706,10 @@ def apply_declared_amendment(workbook: ContractWorkbook, amendment: Amendment) -
             # aplicação é o delta, e `validate_amendments` confere. Item novo sem linha e sem
             # `is_new_item` cai em `AMENDMENT_TARGET_UNKNOWN` na revalidação.
             continue
-        if amendment_line.description is None or amendment_line.unit is None or (
-            amendment_line.unit_price is None
+        if (
+            amendment_line.description is None
+            or amendment_line.unit is None
+            or (amendment_line.unit_price is None)
         ):
             raise ValuationValidationError(
                 "AMENDMENT_NEW_ITEM_INVALID",

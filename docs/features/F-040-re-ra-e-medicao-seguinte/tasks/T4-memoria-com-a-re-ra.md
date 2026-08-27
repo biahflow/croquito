@@ -1,6 +1,6 @@
 # F-040 · T4 — A memória mostra contratado → vigente com a RE-RA
 
-Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Planejado**
+Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue**
 
 ## Objetivo
 

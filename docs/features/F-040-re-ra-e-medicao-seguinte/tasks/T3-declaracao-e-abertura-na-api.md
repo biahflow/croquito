@@ -1,6 +1,6 @@
 # F-040 · T3 — Declarar a RE-RA e abrir a medição seguinte na API
 
-Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Planejado**
+Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue**
 
 ## Objetivo
 
