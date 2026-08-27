@@ -116,12 +116,12 @@ def build_contract_from_estimate(
             # disparar `LINE_PRICE_NOT_IN_CONTRACT` no primeiro uso.
             unit_price=aggregate.unit_price,
             contract_quantity=aggregate.quantity,
-            # Sem RE-RA antes da primeira medição: o vigente é o contratado.
-            amended_quantity=aggregate.quantity,
+            # Vigente e saldo são derivados (ADR-0056, decisão 3). Sem RE-RA antes da primeira
+            # medição, `current_quantity` devolve o contratado e o saldo é o contratado inteiro;
+            # não se grava aqui um segundo dono do número.
             periods=[],
             accumulated_quantity=ZERO,
             accumulated_amount=ZERO,
-            balance_quantity=aggregate.quantity,
         )
         for index, aggregate in enumerate(aggregates.values(), start=1)
     ]

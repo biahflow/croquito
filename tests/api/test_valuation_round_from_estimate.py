@@ -268,7 +268,11 @@ def test_a_medicao_nasce_com_o_contratado_do_orcamento_assinado(tmp_path: Path) 
         assert [line["code"] for line in contract["lines"]] == [_CODE]
         # Preço de FONTE: o mesmo que o catálogo instalado traz, e que o boletim imprimirá.
         assert contract["lines"][0]["unit_price"] == "50.00"
-        assert contract["lines"][0]["balance_quantity"] == "12.00"
+        # Vigente e saldo são DERIVADOS (ADR-0056, decisão 3): o consolidado gravado não carrega
+        # um segundo dono do número. O contratado é a fonte; o saldo se deriva dele.
+        assert contract["lines"][0]["contract_quantity"] == "12.00"
+        assert contract["lines"][0]["balance_quantity"] is None
+        assert contract["lines"][0]["amended_quantity"] is None
 
 
 def test_o_mesmo_codigo_em_dois_itens_vira_uma_linha_do_contratado(tmp_path: Path) -> None:

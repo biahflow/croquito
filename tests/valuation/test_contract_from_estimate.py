@@ -160,8 +160,12 @@ def test_o_consolidado_nasce_com_saldo_igual_ao_contratado() -> None:
     assert len(contract.lines) == 1
     line = contract.lines[0]
     assert line.contract_quantity == Decimal("5.00")
-    assert line.amended_quantity == Decimal("5.00")
-    assert line.balance_quantity == Decimal("5.00")
+    # Vigente e saldo são DERIVADOS (ADR-0056, decisão 3): não se grava um segundo dono do
+    # número na abertura. Sem RE-RA, o vigente é o contratado e o saldo é o contrato inteiro.
+    assert line.amended_quantity is None
+    assert line.balance_quantity is None
+    assert contract.current_quantity(line) == Decimal("5.00")
+    assert contract.current_balance_quantity(line) == Decimal("5.00")
     assert line.accumulated_quantity == Decimal("0.00")
     assert line.accumulated_amount == Decimal("0.00")
     assert line.periods == []
@@ -203,7 +207,7 @@ def test_o_mesmo_codigo_em_dois_trechos_vira_uma_linha_somada() -> None:
 
     assert len(contract.lines) == 1
     assert contract.lines[0].contract_quantity == Decimal("8.50")
-    assert contract.lines[0].balance_quantity == Decimal("8.50")
+    assert contract.current_balance_quantity(contract.lines[0]) == Decimal("8.50")
 
 
 def test_codigos_diferentes_viram_linhas_diferentes_na_ordem_do_orcamento() -> None:
