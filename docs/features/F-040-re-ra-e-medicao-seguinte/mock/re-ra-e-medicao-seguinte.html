@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-040 — RE-RA declarada e a medição seguinte</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css (identidade "Grafite técnico"), com a família
+         --reajuste herdada do pacote da F-039. O que é novo está marcado como NOVO na tabela
+         de proveniência do README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --recusa: #a33d32;
+        --atencao: #7c5210;
+        --reajuste: #6b4ba1;
+        --reajuste-soft: #f3eefb;
+        --reajuste-line: #d3c1e2;
+        /* NOVO — família da RE-RA. Petróleo, escolhido por não colidir com nenhum significado
+           já em uso na medição: verde = contratado, roxo = reajustado, âmbar = aviso,
+           vermelho = recusa. */
+        --rera: #1f6f7a;
+        --rera-soft: #e9f4f5;
+        --rera-line: #a8ced4;
+        --rera-ink: #12474f;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0 0 6px;
+        max-width: 78ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .duas {
+        display: grid;
+        grid-template-columns: 1fr 330px;
+        gap: 16px;
+        align-items: start;
+      }
+      .painel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+        background: var(--surface);
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: right;
+        padding: 7px 9px;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th:first-child,
+      td:first-child,
+      th:nth-child(2),
+      td:nth-child(2) {
+        text-align: left;
+      }
+      thead th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+      }
+      td.mono,
+      th.mono {
+        font-variant-numeric: tabular-nums;
+      }
+      tr.rera td {
+        background: var(--rera-soft);
+      }
+      tr.reajustada td {
+        background: var(--reajuste-soft);
+      }
+      tr.total td {
+        font-weight: 600;
+        color: var(--ink);
+        background: var(--surface-subtle);
+      }
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+      }
+      .selo.rera {
+        border-color: var(--rera-line);
+        background: #ffffff;
+        color: var(--rera);
+      }
+      .selo.reajuste {
+        border-color: var(--reajuste-line);
+        background: #ffffff;
+        color: var(--reajuste);
+      }
+      .selo.contratado {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      .selo.aprovada {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      label.campo {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      label.campo input,
+      label.campo select,
+      label.campo textarea {
+        font: inherit;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      .linha-campos {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+      }
+      .linha-campos.duasc {
+        grid-template-columns: 1fr 1fr;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.primario {
+        background: var(--accent);
+        border-color: var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      button[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .acoes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .aviso {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.rera {
+        border-color: var(--rera-line);
+        background: var(--rera-soft);
+        color: var(--rera-ink);
+      }
+      .aviso.reajuste {
+        border-color: var(--reajuste-line);
+        background: var(--reajuste-soft);
+        color: #3f2d63;
+      }
+      .aviso.recusa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      .aviso.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .conta {
+        font-variant-numeric: tabular-nums;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 9px 11px;
+        border: 1px dashed var(--rera-line);
+        border-radius: 6px;
+        background: #ffffff;
+      }
+      .carimbo {
+        border: 1px solid var(--rera-line);
+        border-left: 3px solid var(--rera);
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: #ffffff;
+        display: grid;
+        gap: 3px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .carimbo b {
+        color: var(--ink);
+        font-size: 12.5px;
+      }
+      .escolha {
+        display: grid;
+        gap: 8px;
+      }
+      .escolha label {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 13px;
+        color: var(--ink);
+      }
+      .escolha label.ativa {
+        border-color: var(--rera-line);
+        background: var(--rera-soft);
+      }
+      .escolha label.indisponivel {
+        opacity: 0.55;
+      }
+      .escolha span small {
+        display: block;
+        color: var(--ink-secondary);
+        font-size: 12px;
+      }
+      .reservado {
+        border: 1px dashed var(--muted);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+        background: repeating-linear-gradient(
+          135deg,
+          rgba(154, 160, 168, 0.08) 0 8px,
+          transparent 8px 16px
+        );
+      }
+      .rodape {
+        border-top: 1px solid var(--line);
+        background: var(--surface-subtle);
+        padding: 10px 16px;
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .linhas-rera {
+        display: grid;
+        gap: 6px;
+      }
+      .linha-rera {
+        display: grid;
+        grid-template-columns: 150px 1fr 110px 96px;
+        gap: 8px;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 7px 9px;
+        font-size: 12.5px;
+      }
+      .linha-rera .desc {
+        color: var(--ink-secondary);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .delta {
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        font-weight: 600;
+      }
+      .delta.mais {
+        color: var(--accent-text);
+      }
+      .delta.menos {
+        color: var(--recusa);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-040 — RE-RA declarada e a medição seguinte</h1>
+      <p>
+        Design Approval Package, revisão 1. Rendição autocontida: abre no navegador sem build,
+        sem rede e sem servidor. Governado pelo <b>ADR-0056</b> — a RE-RA é declaração com
+        procedência, o vigente é derivado como o preço, e a medição seguinte nasce da anterior.
+      </p>
+      <p>
+        Os números são sintéticos e <b>aritmeticamente consistentes</b>. Obra do Campo do Toca,
+        dois códigos do alambrado sobre a mesma área, como no arquivo real.
+      </p>
+    </header>
+    <main>
+      <!-- 01 -->
+      <section class="estado" id="e01">
+        <h2>
+          01 · Abertura da rodada: as duas portas
+          <small>Hoje só existe a primeira. A segunda é o que esta feature abre.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>De onde vem esta medição</h3>
+              <div class="escolha">
+                <label>
+                  <input type="radio" name="porta" />
+                  <span>
+                    <b>Primeira medição da obra</b>
+                    <small>
+                      O contratado nasce do orçamento assinado. Nenhum período lançado, saldo
+                      igual ao contratado.
+                    </small>
+                  </span>
+                </label>
+                <label class="ativa">
+                  <input type="radio" name="porta" checked />
+                  <span>
+                    <b>Medição seguinte</b>
+                    <small>
+                      Continua a partir da rodada anterior: períodos lançados, acumulado somado
+                      e saldo já apurado.
+                    </small>
+                  </span>
+                </label>
+              </div>
+              <label class="campo">
+                Rodada anterior
+                <select>
+                  <option>Campo do Toca — período 1 · aprovada em 12/02/2026</option>
+                </select>
+              </label>
+              <div class="aviso rera">
+                O período desta rodada é o <b>2</b>, calculado a partir da anterior. Não é
+                digitado: período que se escolhe à mão abre espaço para pular ou repetir um.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>A rodada anterior</h3>
+              <span class="selo aprovada">✓ aprovada</span>
+              <p>
+                Campo do Toca, período 1, aprovada por Ana Beatriz Rangel em 12/02/2026.
+              </p>
+              <div class="aviso">
+                Só rodada <b>aprovada</b> abre a seguinte. Saldo apurado sobre período ainda
+                aberto afirma como medido o que ainda pode mudar.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0056, decisão 4 — a rodada seguinte cita a anterior, não o orçamento.</span>
+          <span>Decisão 5 — exige a anterior aprovada.</span>
+        </div>
+      </section>
+
+      <!-- 02 -->
+      <section class="estado" id="e02">
+        <h2>
+          02 · O que vem da rodada anterior
+          <small>A herança, antes de declarar qualquer coisa.</small>
+        </h2>
+        <div class="corpo">
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Descrição</th>
+                <th class="mono">Un</th>
+                <th class="mono">Preço</th>
+                <th class="mono">Contratado</th>
+                <th class="mono">Vigente</th>
+                <th class="mono">Período 1</th>
+                <th class="mono">Acumulado</th>
+                <th class="mono">Saldo</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>PJ14100500(/)</td>
+                <td>Tela em alambrado — fornecimento e colocação</td>
+                <td class="mono">m²</td>
+                <td class="mono">62,40</td>
+                <td class="mono">783,86</td>
+                <td class="mono">783,86</td>
+                <td class="mono">240,00</td>
+                <td class="mono">240,00</td>
+                <td class="mono">543,86</td>
+              </tr>
+              <tr>
+                <td>PJ14150203(A)</td>
+                <td>Alambrado — estrutura tubular</td>
+                <td class="mono">m²</td>
+                <td class="mono">148,20</td>
+                <td class="mono">783,86</td>
+                <td class="mono">783,86</td>
+                <td class="mono">240,00</td>
+                <td class="mono">240,00</td>
+                <td class="mono">543,86</td>
+              </tr>
+              <tr class="total">
+                <td colspan="7">Medido no período 1</td>
+                <td class="mono" colspan="2">R$ 50.544,00</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="aviso">
+            Sem RE-RA declarada, <b>vigente é igual a contratado</b> — as duas colunas repetem
+            o mesmo número de propósito, para que a diferença apareça quando existir.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>240,00 × 62,40 = 14.976,00 · 240,00 × 148,20 = 35.568,00 · soma 50.544,00</span>
+        </div>
+      </section>
+
+      <!-- 03 -->
+      <section class="estado" id="e03">
+        <h2>
+          03 · Declarar a RE-RA
+          <small>Ato humano, com a citação que o torna conferível.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Re-ratificação</h3>
+              <div class="linha-campos">
+                <label class="campo">
+                  Identificação
+                  <input value="RE-RA 001/2026" />
+                </label>
+                <label class="campo">
+                  Publicação de referência
+                  <input value="D.O. Rio 14/03/2026" />
+                </label>
+                <label class="campo">
+                  Processo
+                  <input value="04/000123/2026" />
+                </label>
+              </div>
+              <label class="campo">
+                Observação (opcional)
+                <input value="Extensão do alambrado no trecho norte, conforme vistoria." />
+              </label>
+              <h3 style="margin-top: 4px">Códigos que ela altera</h3>
+              <div class="linhas-rera">
+                <div class="linha-rera">
+                  <span>PJ14100500(/)</span>
+                  <span class="desc">Tela em alambrado — fornecimento e colocação</span>
+                  <span class="delta mais">+120,00 m²</span>
+                  <span class="selo">acréscimo</span>
+                </div>
+                <div class="linha-rera">
+                  <span>PJ14150203(A)</span>
+                  <span class="desc">Alambrado — estrutura tubular</span>
+                  <span class="delta menos">−83,86 m²</span>
+                  <span class="selo">redução</span>
+                </div>
+                <div class="linha-rera">
+                  <span>PJ25400100(B)</span>
+                  <span class="desc">Portão em tubo galvanizado</span>
+                  <span class="delta mais">+45,00 m²</span>
+                  <span class="selo rera">item novo</span>
+                </div>
+              </div>
+              <div class="aviso rera">
+                O <b>item novo</b> não estava no contrato, então descrição, unidade e preço são
+                resolvidos no <b>catálogo contratual instalado</b> e materializados na
+                declaração — o consolidado precisa explicar o próprio número meses depois, sem
+                depender de aquele catálogo ainda estar instalado.
+              </div>
+              <div class="acoes">
+                <button>Acrescentar código</button>
+                <button class="primario">Declarar a RE-RA</button>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Quem declara</h3>
+              <div class="carimbo">
+                <b>Ana Beatriz Rangel</b>
+                <span>27/03/2026, 14:22 (BRT)</span>
+                <span>D.O. Rio 14/03/2026 · processo 04/000123/2026</span>
+              </div>
+              <p>
+                Autor e instante são <b>carimbados pelo sistema</b>, não digitados. A citação da
+                publicação é digitada, e é ela que torna a declaração conferível contra o diário
+                oficial por quem revisa.
+              </p>
+              <div class="aviso atencao">
+                O sistema não confere o teor da publicação — não tem como. O que ele exige é que
+                a declaração <b>aponte</b> para ela.
+              </div>
+              <div class="reservado">
+                Reservado: anexar o PDF da publicação à declaração. Vira real quando existir o
+                acervo de documentos do contrato.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0056, decisão 1 — RE-RA é declaração com procedência.</span>
+          <span>Decisão 2 — não há estado de pedido; o pedido é o dossiê do aditivo.</span>
+        </div>
+      </section>
+
+      <!-- 04 -->
+      <section class="estado" id="e04">
+        <h2>
+          04 · A prévia, antes de gravar
+          <small>O efeito código a código, enquanto ainda dá para desistir.</small>
+        </h2>
+        <div class="corpo">
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Descrição</th>
+                <th class="mono">Contratado</th>
+                <th class="mono">RE-RA</th>
+                <th class="mono">Vigente</th>
+                <th class="mono">Acumulado</th>
+                <th class="mono">Saldo novo</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="rera">
+                <td>PJ14100500(/)</td>
+                <td>Tela em alambrado</td>
+                <td class="mono">783,86</td>
+                <td class="mono">+120,00</td>
+                <td class="mono">903,86</td>
+                <td class="mono">240,00</td>
+                <td class="mono">663,86</td>
+              </tr>
+              <tr class="rera">
+                <td>PJ14150203(A)</td>
+                <td>Alambrado — estrutura tubular</td>
+                <td class="mono">783,86</td>
+                <td class="mono">−83,86</td>
+                <td class="mono">700,00</td>
+                <td class="mono">240,00</td>
+                <td class="mono">460,00</td>
+              </tr>
+              <tr class="rera">
+                <td>PJ25400100(B) <span class="selo rera">item novo</span></td>
+                <td>Portão em tubo galvanizado</td>
+                <td class="mono">0,00</td>
+                <td class="mono">+45,00</td>
+                <td class="mono">45,00</td>
+                <td class="mono">0,00</td>
+                <td class="mono">45,00</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="conta">
+            783,86 + 120,00 = <b>903,86</b> &nbsp;·&nbsp; 903,86 − 240,00 = <b>663,86</b> de
+            saldo
+          </div>
+          <div class="aviso rera">
+            O vigente <b>não é digitado</b>: ele é a soma do contratado com os deltas
+            declarados. Não existe campo onde escrever 903,86 — existe o +120,00 que o produz.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0056, decisão 3 — o vigente é derivado, nunca gravado.</span>
+        </div>
+      </section>
+
+      <!-- 05 -->
+      <section class="estado" id="e05">
+        <h2>
+          05 · Item novo depois de um reajuste
+          <small>A regra que o ADR-0055 já tinha escrito, agora visível.</small>
+        </h2>
+        <div class="corpo">
+          <p>
+            Esta rodada tem <b>as duas declarações</b>: o reajuste por índice (F-039) e a RE-RA.
+            O item novo entra por último, e não recebe o fator do período em que não existia.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Descrição</th>
+                <th class="mono">Preço contratado</th>
+                <th class="mono">Fator</th>
+                <th class="mono">Preço vigente</th>
+                <th class="mono">Origem da base</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="reajustada">
+                <td>PJ14100500(/) <span class="selo reajuste">reajustada</span></td>
+                <td>Tela em alambrado</td>
+                <td class="mono">62,40</td>
+                <td class="mono">× 1,0432</td>
+                <td class="mono">65,09</td>
+                <td>contratado, reajustado</td>
+              </tr>
+              <tr class="reajustada">
+                <td>PJ14150203(A) <span class="selo reajuste">reajustada</span></td>
+                <td>Alambrado — estrutura tubular</td>
+                <td class="mono">148,20</td>
+                <td class="mono">× 1,0432</td>
+                <td class="mono">154,60</td>
+                <td>contratado, reajustado</td>
+              </tr>
+              <tr class="rera">
+                <td>PJ25400100(B) <span class="selo rera">item novo</span></td>
+                <td>Portão em tubo galvanizado</td>
+                <td class="mono">96,00</td>
+                <td class="mono">—</td>
+                <td class="mono">96,00</td>
+                <td>tabela na data da RE-RA</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="aviso reajuste">
+            O portão <b>não recebe</b> o fator 1,0432 do período 08/2025–07/2026: ele não estava
+            contratado naquele intervalo, e aplicar-lhe o índice inventaria história. Ele nasce
+            na base vigente na data da RE-RA e acompanha os reajustes <b>seguintes</b>.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0055, decisão 9 — implementada aqui, não redecidida.</span>
+          <span>62,40 × 1,0432 = 65,0956… truncado 65,09</span>
+        </div>
+      </section>
+
+      <!-- 06 -->
+      <section class="estado" id="e06">
+        <h2>
+          06 · A memória, com a conta e a declaração
+          <small>Onde a prefeitura audita.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Campo do Toca — período 2</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th class="mono">Contratado</th>
+                    <th class="mono">RE-RA</th>
+                    <th class="mono">Vigente</th>
+                    <th class="mono">Acum.</th>
+                    <th class="mono">Saldo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="rera">
+                    <td>PJ14100500(/) <span class="selo rera">re-ratificada</span></td>
+                    <td class="mono">783,86</td>
+                    <td class="mono">+120,00</td>
+                    <td class="mono">903,86</td>
+                    <td class="mono">240,00</td>
+                    <td class="mono">663,86</td>
+                  </tr>
+                  <tr class="rera">
+                    <td>PJ14150203(A) <span class="selo rera">re-ratificada</span></td>
+                    <td class="mono">783,86</td>
+                    <td class="mono">−83,86</td>
+                    <td class="mono">700,00</td>
+                    <td class="mono">240,00</td>
+                    <td class="mono">460,00</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="conta">saldo = vigente − acumulado</div>
+            </div>
+            <div class="painel">
+              <h3>A declaração</h3>
+              <div class="carimbo">
+                <b>RE-RA 001/2026</b>
+                <span>Ana Beatriz Rangel · 27/03/2026, 14:22 (BRT)</span>
+                <span>D.O. Rio 14/03/2026 · processo 04/000123/2026</span>
+                <span>3 códigos alterados · 1 item novo</span>
+              </div>
+              <p>
+                A declaração inteira fica <b>ao lado do número que ela produziu</b>. Quem audita
+                não precisa procurar em outro lugar de onde veio o 903,86.
+              </p>
+              <div class="aviso rera">
+                O selo diz "re-ratificada" <b>por escrito</b>. Cor nunca é o único indicador —
+                a linha continua legível em preto e branco.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>Mesma disciplina da memória do reajuste, F-039.</span>
+        </div>
+      </section>
+
+      <!-- 07 -->
+      <section class="estado" id="e07">
+        <h2>
+          07 · O controle: medição seguinte sem RE-RA
+          <small>Prova de que nada muda quando não há declaração.</small>
+        </h2>
+        <div class="corpo">
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Descrição</th>
+                <th class="mono">Contratado</th>
+                <th class="mono">Vigente</th>
+                <th class="mono">Acumulado</th>
+                <th class="mono">Saldo</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>PJ14100500(/)</td>
+                <td>Tela em alambrado</td>
+                <td class="mono">783,86</td>
+                <td class="mono">783,86</td>
+                <td class="mono">240,00</td>
+                <td class="mono">543,86</td>
+              </tr>
+              <tr>
+                <td>PJ14150203(A)</td>
+                <td>Alambrado — estrutura tubular</td>
+                <td class="mono">783,86</td>
+                <td class="mono">783,86</td>
+                <td class="mono">240,00</td>
+                <td class="mono">543,86</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="aviso">
+            Sem RE-RA e sem reajuste, a tela <b>não fala</b> de nenhum dos dois. Nenhum selo,
+            nenhuma coluna a mais, nenhum aviso. O período 2 imprime o que o período 1 imprimiu.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>Vigente derivado sem declaração devolve o contratado, bit a bit.</span>
+        </div>
+      </section>
+
+      <!-- 08 -->
+      <section class="estado" id="e08">
+        <h2>
+          08 · As recusas
+          <small>Cinco recusas e um aviso — cada um diz o que fazer.</small>
+        </h2>
+        <div class="corpo">
+          <div class="aviso recusa">
+            <b>A rodada anterior ainda não foi aprovada.</b> O saldo do período 2 se apura sobre
+            o que o período 1 mediu, e enquanto ele não é aprovado esse número ainda pode mudar.
+            Aprove o período 1 para abrir o 2.
+          </div>
+          <div class="aviso recusa">
+            <b>A RE-RA precisa citar a publicação.</b> Sem o diário e o processo, a declaração
+            não é conferível por quem revisa — e número que ninguém consegue conferir não entra
+            na medição.
+          </div>
+          <div class="aviso recusa">
+            <b>A redução deixaria o contratado negativo.</b> PJ14150203(A) tem 783,86 m²
+            contratados, e a redução declarada é de 900,00 m². Confira o quantitativo da RE-RA.
+          </div>
+          <div class="aviso recusa">
+            <b>Código não existe na tabela contratual.</b> PJ99999999(X) não está no consolidado
+            nem no catálogo SCO instalado nesta rodada. Item novo é resolvido no catálogo para
+            trazer descrição, unidade e preço; código que não está lá não tem de onde nascer.
+          </div>
+          <div class="aviso recusa">
+            <b>Este código já está contratado.</b> PJ14100500(/) tem 783,86 m² contratados e não
+            pode entrar como item novo. Item novo é o que nasce com a RE-RA; para mudar
+            quantitativo de código existente, declare um acréscimo.
+          </div>
+          <div class="aviso atencao">
+            <b>A mesma RE-RA altera PJ14100500(/) duas vezes.</b> Some os dois quantitativos numa
+            linha só: duas linhas para o mesmo código na mesma re-ratificação deixam ambíguo
+            qual delas vale.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>
+            Erros do domínio, não da tela: AMENDMENT_NEGATIVE_RESULT, AMENDMENT_TARGET_UNKNOWN,
+            AMENDMENT_NEW_ITEM_INVALID, AMENDMENT_DUPLICATE_CODE — todos já existem.
+          </span>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
