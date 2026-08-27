@@ -452,7 +452,10 @@ def _confirm_takeoff_item(
     return client.post(
         f"/v1/estimate-rounds/{round_id}/takeoff/decisions",
         headers=_headers(tenant, key=key),
-        json={"base_version": base_version, "item_id": item_id, "action": "confirm"},
+        json={
+            "base_version": base_version,
+            "decisions": [{"item_id": item_id, "action": "confirm"}],
+        },
     )
 
 
@@ -598,7 +601,7 @@ def _write_paths(round_id: str) -> list[tuple[str, dict[str, Any]]]:
         (f"/v1/estimate-rounds/{round_id}/plate/extractions", {"base_version": 1}),
         (
             f"/v1/estimate-rounds/{round_id}/takeoff/decisions",
-            {"base_version": 1, "item_id": _ITEM_FIRST, "action": "confirm"},
+            {"base_version": 1, "decisions": [{"item_id": _ITEM_FIRST, "action": "confirm"}]},
         ),
         (f"/v1/estimate-rounds/{round_id}/code-suggestions/recompute", {"base_version": 1}),
         (
@@ -2617,6 +2620,44 @@ def test_o_estado_da_rodada_declara_cascata_orcamento_e_aprovacao(tmp_path: Path
     item = listagem.json()["items"][0]
     assert item["stage"] == "estimate"
     assert item["cascade_origins"] == ["sco", "emop"]
+
+
+def test_o_lote_do_orcamento_decide_a_legenda_inteira_numa_revisao_so(tmp_path: Path) -> None:
+    """A rota gêmea do orçamento também é só-lote, e o lote é UM ato.
+
+    A tela do orçamento anota decisão por decisão e grava tudo no fim; é aqui que se prova
+    que a rota sustenta esse desenho — duas decisões, uma versão nova, e nenhum item
+    revisado duas vezes pelo caminho.
+    """
+    client = _client(tmp_path)
+    packet = _takeoff_packet([_takeoff_item(_ITEM_FIRST), _takeoff_item(_ITEM_SECOND)])
+    created = _create_round(client)
+    round_id = created["round_id"]
+    published = _publish_takeoff(client, round_id, packet)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{round_id}/takeoff/decisions",
+        headers=_headers(key="lote-orcamento"),
+        json={
+            "base_version": published["version"],
+            "decisions": [
+                {"item_id": _ITEM_FIRST, "action": "confirm", "quantity": "12.00"},
+                {"item_id": _ITEM_SECOND, "action": "reject", "note": "fora do escopo"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == published["version"] + 1
+    itens = {item["id"]: item for item in body["packet"]["items"]}
+    assert itens[_ITEM_FIRST]["status"] == "confirmed"
+    assert itens[_ITEM_SECOND]["status"] == "rejected"
+    # Mesmo ato, mesmo carimbo: a ordem entre as duas não foi declarada por ninguém.
+    assert (
+        itens[_ITEM_FIRST]["decision"]["decided_at"]
+        == itens[_ITEM_SECOND]["decision"]["decided_at"]
+    )
 
 
 def test_takeoff_com_item_pendente_recusa_a_montagem(tmp_path: Path) -> None:

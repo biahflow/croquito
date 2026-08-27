@@ -30,6 +30,7 @@ import {
   SeloRegimeDaRodada,
   SemPrecoNaCascata,
   TelaAuditoriaReprovada,
+  itemJaRevisado,
 } from "./OrcamentoApp";
 import {
   AVISO_ACERVO_FILTRADO,
@@ -1536,5 +1537,29 @@ describe("ResumoDaMatriz", () => {
 
     expect(html).toContain('role="alert"');
     expect(html).toContain("não pode derivar de si mesmo");
+  });
+});
+
+/**
+ * A guarda que o lote atômico exige da tela: item já decidido não entra na anotação.
+ * Sem ela, uma linha já revisada derrubaria com ela todas as outras decisões do ato —
+ * o servidor recusa o lote inteiro (`TAKEOFF_ITEM_ALREADY_REVIEWED`), não só a linha.
+ */
+describe("itemJaRevisado", () => {
+  const item = (status: string): Parameters<typeof itemJaRevisado>[0] =>
+    ({ status }) as Parameters<typeof itemJaRevisado>[0];
+
+  it("item já decidido não pode ser anotado de novo", () => {
+    expect(itemJaRevisado(item("confirmed"))).toBe(true);
+    expect(itemJaRevisado(item("rejected"))).toBe(true);
+  });
+
+  it("item pendente — proposto ou ambíguo — é justamente o que se decide", () => {
+    expect(itemJaRevisado(item("proposed"))).toBe(false);
+    expect(itemJaRevisado(item("ambiguous"))).toBe(false);
+  });
+
+  it("sem item selecionado não há o que anotar, e nada é bloqueado por engano", () => {
+    expect(itemJaRevisado(null)).toBe(false);
   });
 });

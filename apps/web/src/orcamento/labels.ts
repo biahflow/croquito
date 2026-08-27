@@ -286,6 +286,24 @@ export const AVISO_QUANTIDADE_AMBIGUA =
 export const DICA_QUANTIDADE =
   "Escreva 18,40 ou 18.40 — a quantidade viaja como texto e o servidor a lê exata.";
 
+/**
+ * Item que já foi decidido não entra no lote. A guarda é da tela porque o lote é ATÔMICO:
+ * uma anotação sobre item já revisado seria recusada pelo domínio
+ * (`TAKEOFF_ITEM_ALREADY_REVIEWED`) e derrubaria com ela todas as outras decisões do ato.
+ */
+export const AVISO_ITEM_JA_REVISADO =
+  "Este item já foi decidido; decisão não se sobrescreve. Corrigir é ato declarado, " +
+  "fora deste lote.";
+
+/**
+ * O que "anotado" significa e o que ele ainda NÃO é. A distinção é o ponto do lote: a
+ * rodada só muda de versão quando o lote é gravado, e até lá nada foi para a cadeia de
+ * revisões. Sem essa frase, "anotar decisão" pareceria já ter gravado.
+ */
+export const DICA_LOTE_ANOTADO =
+  "Nada foi gravado ainda. O lote vale junto: uma revisão para todas as decisões, ou " +
+  "nenhuma. Reanotar um item substitui a anotação anterior.";
+
 /** Item que nenhuma fonte da cascata precifica: declarado, nunca precificado por fora. */
 export const AVISO_SEM_PRECO =
   "Nenhuma fonte da cascata tem código para este item. Ele entra no orçamento declarado, " +

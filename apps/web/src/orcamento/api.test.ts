@@ -224,13 +224,18 @@ describe("mutações do orçamento", () => {
     expect(headersDaChamada()["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
   });
 
-  it("a decisão de takeoff cita base_version e não carimba identidade", async () => {
+  it("o lote de takeoff cita UMA base_version para todas as decisões e não carimba identidade", async () => {
     await postTakeoffDecision(TOKEN, ROUND, {
-      itemId: "ti_af6f85a49ea0b93d",
-      action: "confirm",
       baseVersion: 7,
-      quantity: "340.50",
-      note: "quantidade lida na prancha",
+      decisions: [
+        {
+          itemId: "ti_af6f85a49ea0b93d",
+          action: "confirm",
+          quantity: "340.50",
+          note: "quantidade lida na prancha",
+        },
+        { itemId: "ti_af6f85a49ea0b93e", action: "reject" },
+      ],
     });
 
     expect(chamadas[0].url).toBe(
@@ -238,7 +243,9 @@ describe("mutações do orçamento", () => {
     );
     const corpo = corpoDaChamada();
     expect(corpo.base_version).toBe(7);
-    expect(corpo.quantity).toBe("340.50");
+    const decisoes = corpo.decisions as Record<string, unknown>[];
+    expect(decisoes).toHaveLength(2);
+    expect(decisoes[0].quantity).toBe("340.50");
     for (const proibido of [
       "reviewer_id",
       "reviewer_role",
@@ -246,6 +253,9 @@ describe("mutações do orçamento", () => {
       "decision_id",
     ]) {
       expect(corpo).not.toHaveProperty(proibido);
+      for (const decisao of decisoes) {
+        expect(decisao).not.toHaveProperty(proibido);
+      }
     }
   });
 

@@ -45,6 +45,7 @@ import {
   type PricingRegime,
   type ReferenceCatalogOption,
   type SuggestionsResponse,
+  type TakeoffDecisionDraft,
   type TakeoffItem,
   type TakeoffResponse,
 } from "./api";
@@ -88,6 +89,7 @@ import {
   AVISO_CONSUMO_COM_BDI,
   AVISO_DESPACHO_FAIL_CLOSED,
   AVISO_IDENTIDADE_DA_SESSAO,
+  AVISO_ITEM_JA_REVISADO,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
   AVISO_MEMORIA,
   AVISO_ORCAMENTO,
@@ -114,6 +116,7 @@ import {
   derivadaDeLabel,
   DICA_BDI,
   DICA_CANDIDATO_ADITIVO,
+  DICA_LOTE_ANOTADO,
   DICA_QUANTIDADE,
   DICA_REGIME,
   DICA_TETO,
@@ -2235,6 +2238,15 @@ function itemAnchor(item: TakeoffItem): "registered" | "raw" {
 }
 
 /**
+ * Item que já recebeu decisão do orçamentista. Decisão não se sobrescreve (o domínio
+ * recusa com `TAKEOFF_ITEM_ALREADY_REVIEWED`), e como o lote é atômico, deixar um item
+ * assim entrar na anotação derrubaria o ato inteiro por causa dele.
+ */
+export function itemJaRevisado(item: TakeoffItem | null): boolean {
+  return item !== null && (item.status === "confirmed" || item.status === "rejected");
+}
+
+/**
  * Jornada do orçamento-base sobre a API `/v1` autenticada (F-020, ADR-0027/ADR-0038).
  *
  * A sessão é da casca, não desta jornada: quem lê o OIDC, consome o authorization code
@@ -2319,6 +2331,12 @@ export function OrcamentoApp({
   // Revisão do takeoff.
   const [selectedItemId, setSelectedItemId] = useState("");
   const [decision, setDecision] = useState(EMPTY_DECISION);
+  /**
+   * Decisões anotadas e ainda NÃO gravadas. Vive só em memória, de propósito: rascunho
+   * persistido viraria uma segunda fonte de verdade sobre o que a pessoa decidiu, que
+   * ninguém revisou e que o servidor desconhece. A tela diz quantas estão pendentes.
+   */
+  const [loteDeDecisoes, setLoteDeDecisoes] = useState<TakeoffDecisionDraft[]>([]);
 
   // Códigos.
   const [selectedPendingId, setSelectedPendingId] = useState("");
@@ -2834,15 +2852,28 @@ export function OrcamentoApp({
     }
   };
 
-  const decidirItem = async () => {
-    const token = tokenDaSessao();
-    if (
-      token === null ||
-      orcamento === null ||
-      version === null ||
-      selectedItemId === "" ||
-      decision.action === ""
-    ) {
+  /**
+   * Anota a decisão do item no LOTE, sem gravar nada ainda.
+   *
+   * A rota é só-lote (`base_version` única para o conjunto), e o ato de revisão é a
+   * legenda inteira: quem confere quinze linhas contra a prancha termina com quinze
+   * decisões que valem juntas. Anotar aqui e gravar no fim é o que evita quinze revisões
+   * na cadeia — e evita que cada gravação avance a versão e invalide o formulário que a
+   * pessoa ainda tem aberto.
+   *
+   * Reanotar o mesmo item SUBSTITUI a anotação anterior: o servidor recusa duas decisões
+   * para o mesmo item no mesmo lote (`TAKEOFF_DECISION_DUPLICATE_ITEM`), e mandar as duas
+   * para descobrir isso seria fazer a pessoa perder o lote inteiro por ter mudado de
+   * ideia.
+   */
+  const anotarDecisao = () => {
+    if (selectedItemId === "" || decision.action === "") {
+      return;
+    }
+    // Item já decidido não entra no lote: o domínio o recusaria e, como o lote é atômico,
+    // levaria junto as decisões que estavam certas.
+    if (itemJaRevisado(itens.find((item) => item.id === selectedItemId) ?? null)) {
+      setAlertMessage(AVISO_ITEM_JA_REVISADO);
       return;
     }
     const quantidade =
@@ -2851,31 +2882,57 @@ export function OrcamentoApp({
         : (parseDecimalInput(decision.quantity) ?? undefined);
     if (decision.quantity.trim().length > 0 && quantidade === undefined) {
       setAlertMessage(
-        "A quantidade escrita não é um decimal exato; nada foi enviado. " +
+        "A quantidade escrita não é um decimal exato; nada foi anotado. " +
           DICA_QUANTIDADE,
       );
+      return;
+    }
+    const anotacao: TakeoffDecisionDraft = {
+      itemId: selectedItemId,
+      action: decision.action,
+      quantity: quantidade,
+      unit: decision.unit,
+      note: decision.note,
+      itemNote: decision.itemNote,
+    };
+    setLoteDeDecisoes((atual) => [
+      ...atual.filter((entrada) => entrada.itemId !== selectedItemId),
+      anotacao,
+    ]);
+    setDecision(EMPTY_DECISION);
+    setSelectedItemId("");
+    setAlertMessage(null);
+    setToast("Decisão anotada no lote; ela ainda não foi gravada.");
+  };
+
+  /** Grava o lote inteiro: uma revisão, um carimbo, um redesenho — ou nenhum. */
+  const gravarLote = async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null || version === null || loteDeDecisoes.length === 0) {
       return;
     }
     setSubmitting(true);
     try {
       const response = await postTakeoffDecision(token, orcamento, {
-        itemId: selectedItemId,
-        action: decision.action,
         baseVersion: version,
-        quantity: quantidade,
-        unit: decision.unit,
-        note: decision.note,
-        itemNote: decision.itemNote,
+        decisions: loteDeDecisoes,
       });
       aplicarVersao(response.version);
       setTakeoff(response);
+      setLoteDeDecisoes([]);
       setDecision(EMPTY_DECISION);
       setSelectedItemId("");
       setAlertMessage(null);
       setRevisionConflict(false);
-      setToast("Decisão registrada.");
+      setToast(
+        loteDeDecisoes.length === 1
+          ? "Decisão registrada."
+          : `${loteDeDecisoes.length} decisões registradas.`,
+      );
       await carregarEstado();
     } catch (error) {
+      // O lote é atômico: recusado, nenhuma decisão foi gravada — e por isso ele CONTINUA
+      // anotado aqui. Limpá-lo faria a pessoa reescrever quinze linhas por causa de uma.
       registrarRecusa(error);
     } finally {
       setSubmitting(false);
@@ -4146,6 +4203,13 @@ export function OrcamentoApp({
                             {AVISO_LOCALIZACAO_NAO_CONFIRMADA}
                           </span>
                         )}
+                        {loteDeDecisoes.some(
+                          (entrada) => entrada.itemId === item.id,
+                        ) ? (
+                          <span className="item-nota">
+                            Decisão anotada; ainda não gravada.
+                          </span>
+                        ) : null}
                       </span>
                     </button>
                   </li>
@@ -4162,12 +4226,15 @@ export function OrcamentoApp({
                   className="formulario"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    void decidirItem();
+                    anotarDecisao();
                   }}
                 >
                   <h3>{itemSelecionado.label}</h3>
                   {itemSelecionado.status === "ambiguous" ? (
                     <p className="campo-aviso">{AVISO_QUANTIDADE_AMBIGUA}</p>
+                  ) : null}
+                  {itemJaRevisado(itemSelecionado) ? (
+                    <p className="campo-aviso">{AVISO_ITEM_JA_REVISADO}</p>
                   ) : null}
                   <div className="acoes">
                     <label>
@@ -4235,13 +4302,96 @@ export function OrcamentoApp({
                   <div className="acoes-linha">
                     <button
                       type="submit"
-                      className="botao-primario"
-                      disabled={submitting || decision.action === ""}
+                      className="botao-secundario"
+                      disabled={
+                        submitting ||
+                        decision.action === "" ||
+                        itemJaRevisado(itemSelecionado)
+                      }
                     >
-                      {submitting ? "Registrando…" : "Registrar decisão"}
+                      Anotar decisão
                     </button>
                   </div>
                 </form>
+              )}
+
+              {/* O lote é o ato de revisão: enquanto ele não é gravado, a rodada não
+                  mudou de versão e nada foi para a cadeia. A tela diz isso em texto,
+                  porque "anotado" e "gravado" são estados diferentes do mundo. */}
+              {loteDeDecisoes.length === 0 ? null : (
+                <div className="lote-anotado">
+                  <h3>
+                    {loteDeDecisoes.length === 1
+                      ? "1 decisão anotada"
+                      : `${loteDeDecisoes.length} decisões anotadas`}
+                  </h3>
+                  <p className="dica">{DICA_LOTE_ANOTADO}</p>
+                  <ul className="itens">
+                    {loteDeDecisoes.map((anotacao) => {
+                      const item = itens.find(
+                        (candidato) => candidato.id === anotacao.itemId,
+                      );
+                      return (
+                        <li key={anotacao.itemId} className="item">
+                          <span className="item-corpo">
+                            <span className="item-rotulo">
+                              {item?.label ?? anotacao.itemId}
+                            </span>
+                            <span className="item-estado">
+                              {anotacao.action === "confirm"
+                                ? "confirmar"
+                                : "rejeitar"}
+                            </span>
+                            {anotacao.quantity === undefined ? null : (
+                              <span className="item-quantidade">
+                                {formatQuantityText(
+                                  anotacao.quantity,
+                                  unitLabel(anotacao.unit ?? item?.unit ?? ""),
+                                )}
+                              </span>
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            className="botao-secundario"
+                            onClick={() =>
+                              setLoteDeDecisoes((atual) =>
+                                atual.filter(
+                                  (entrada) => entrada.itemId !== anotacao.itemId,
+                                ),
+                              )
+                            }
+                            disabled={submitting}
+                          >
+                            Remover anotação
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <div className="acoes-linha">
+                    <button
+                      type="button"
+                      className="botao-primario"
+                      onClick={() => void gravarLote()}
+                      disabled={submitting}
+                    >
+                      {submitting
+                        ? "Gravando…"
+                        : loteDeDecisoes.length === 1
+                          ? "Gravar 1 decisão"
+                          : `Gravar ${loteDeDecisoes.length} decisões`}
+                    </button>
+                    <button
+                      type="button"
+                      className="botao-secundario"
+                      onClick={() => setLoteDeDecisoes([])}
+                      disabled={submitting}
+                    >
+                      Descartar anotações
+                    </button>
+                  </div>
+                </div>
               )}
             </section>
           </div>

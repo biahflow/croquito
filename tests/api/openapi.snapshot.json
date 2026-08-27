@@ -7714,7 +7714,33 @@
       },
       "TakeoffDecisionRequest": {
         "additionalProperties": false,
-        "description": "Uma decisão do orçamentista sobre um item do takeoff.\n\n`quantity` viaja como TEXTO porque quantidade é `Decimal` exato neste contexto: um\n`float` de JSON já teria perdido a escala escrita na legenda antes de chegar aqui.\n\nO carimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`,\n`decided_at` e `decision_id` são recusados pelo `extra=\"forbid\"` do `ApiModel`, não por\nlista negra: a identidade vem do `Principal` e o instante, do servidor.\n\nO padrão de `item_id` repete o do domínio (`TakeoffDecisionInput`) de propósito: ele é\no que faz um id malformado ser `422` de contrato na fronteira, em vez de estourar o\nvalidador do domínio no meio da rota.",
+        "description": "O ato de revisão do takeoff é um LOTE, e só um lote.\n\nA revisão da legenda é lida item a item mas decidida de uma vez: quem confere quinze\nlinhas contra a prancha termina com quinze decisões que valem juntas ou não valem. A\nforma singular anterior transformava esse ato único em quinze atos — quinze revisões\nna cadeia, quinze `base_version` em série (cada uma invalidando o formulário aberto),\nquinze overlays reenfileirados para um desenho que só interessa no fim. A rodada real\ndo Guaxindiba acumulou 44 revisões para uma legenda de 15 itens; é esse rastro que a\nforma de lote não produz.\n\nO lote é ATÔMICO: uma revisão nova com todas as decisões, ou nenhuma. Aplicar metade\ndeixaria a cadeia num estado que o revisor não pediu e não viu.\n\nUm item por lote — `TAKEOFF_DECISION_DUPLICATE_ITEM` é invariante do domínio\n(`TakeoffDecisionBatch`), não checagem desta fronteira: duas decisões para o mesmo item\nno mesmo ato não têm ordem definida, e escolher uma delas seria inventar a intenção.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/TakeoffItemDecision"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Decisions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "base_version",
+          "decisions"
+        ],
+        "title": "TakeoffDecisionRequest",
+        "type": "object"
+      },
+      "TakeoffItemDecision": {
+        "additionalProperties": false,
+        "description": "Uma decisão do orçamentista sobre um item do takeoff, dentro do lote.\n\n`quantity` viaja como TEXTO porque quantidade é `Decimal` exato neste contexto: um\n`float` de JSON já teria perdido a escala escrita na legenda antes de chegar aqui.\n\nO carimbo de identidade não entra por aqui — `reviewer_id`, `reviewer_role`,\n`decided_at` e `decision_id` são recusados pelo `extra=\"forbid\"` do `ApiModel`, não por\nlista negra: a identidade vem do `Principal` e o instante, do servidor.\n\nO padrão de `item_id` repete o do domínio (`TakeoffDecisionInput`) de propósito: ele é\no que faz um id malformado ser `422` de contrato na fronteira, em vez de estourar o\nvalidador do domínio no meio da rota.",
         "properties": {
           "action": {
             "enum": [
@@ -7723,11 +7749,6 @@
             ],
             "title": "Action",
             "type": "string"
-          },
-          "base_version": {
-            "minimum": 1.0,
-            "title": "Base Version",
-            "type": "integer"
           },
           "item_id": {
             "pattern": "^ti_[a-f0-9]{16}$",
@@ -7786,11 +7807,10 @@
           }
         },
         "required": [
-          "base_version",
           "item_id",
           "action"
         ],
-        "title": "TakeoffDecisionRequest",
+        "title": "TakeoffItemDecision",
         "type": "object"
       },
       "TextGeometry": {
@@ -10648,8 +10668,8 @@
     },
     "/v1/estimate-rounds/{round_id}/takeoff/decisions": {
       "post": {
-        "description": "Aplica UMA decisão do orçamentista, grava a revisão nova e enfileira o overlay.",
-        "operationId": "decide_estimate_takeoff_item_v1_estimate_rounds__round_id__takeoff_decisions_post",
+        "description": "Aplica o LOTE de decisões do orçamentista, grava a revisão e enfileira o overlay.\n\nEspelho da rota gêmea da medição, inclusive na atomicidade do lote.",
+        "operationId": "decide_estimate_takeoff_items_v1_estimate_rounds__round_id__takeoff_decisions_post",
         "parameters": [
           {
             "in": "path",
@@ -10694,7 +10714,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Decide Estimate Takeoff Item V1 Estimate Rounds  Round Id  Takeoff Decisions Post",
+                  "title": "Response Decide Estimate Takeoff Items V1 Estimate Rounds  Round Id  Takeoff Decisions Post",
                   "type": "object"
                 }
               }
@@ -10717,7 +10737,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Decide Estimate Takeoff Item",
+        "summary": "Decide Estimate Takeoff Items",
         "tags": [
           "estimate"
         ]
@@ -15611,8 +15631,8 @@
     },
     "/v1/valuation-rounds/{round_id}/takeoff/decisions": {
       "post": {
-        "description": "Aplica UMA decisão do orçamentista, grava a revisão nova e enfileira o overlay.\n\nA decisão é ato humano: ela avança o contador da rodada e o da cadeia de revisões.\nO overlay, não — ele é consequência, e é reconstruído fora do request path\n(ADR-0030). Entre a decisão e o desenho novo, a resposta já declara o overlay\nvencido, para que a tela não mostre o desenho anterior como se fosse deste pacote.",
-        "operationId": "decide_valuation_takeoff_item_v1_valuation_rounds__round_id__takeoff_decisions_post",
+        "description": "Aplica o LOTE de decisões do orçamentista, grava a revisão e enfileira o overlay.\n\nO ato de revisão é o lote inteiro — uma revisão nova para todas as decisões, ou\nnenhuma. Decidir item a item produzia uma revisão por item, e com ela um\n`base_version` novo que invalidava o formulário ainda aberto na tela.\n\nA decisão é ato humano: ela avança o contador da rodada e o da cadeia de revisões.\nO overlay, não — ele é consequência, e é reconstruído fora do request path\n(ADR-0030). Entre a decisão e o desenho novo, a resposta já declara o overlay\nvencido, para que a tela não mostre o desenho anterior como se fosse deste pacote.",
+        "operationId": "decide_valuation_takeoff_items_v1_valuation_rounds__round_id__takeoff_decisions_post",
         "parameters": [
           {
             "in": "path",
@@ -15657,7 +15677,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response Decide Valuation Takeoff Item V1 Valuation Rounds  Round Id  Takeoff Decisions Post",
+                  "title": "Response Decide Valuation Takeoff Items V1 Valuation Rounds  Round Id  Takeoff Decisions Post",
                   "type": "object"
                 }
               }
@@ -15680,7 +15700,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Decide Valuation Takeoff Item",
+        "summary": "Decide Valuation Takeoff Items",
         "tags": [
           "valuation"
         ]

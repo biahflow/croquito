@@ -129,25 +129,36 @@ describe("corpos das mutações", () => {
     expect(body).toEqual({ base_version: 5, source_sha256: "a".repeat(64) });
   });
 
-  it("a decisão de takeoff não carrega carimbo de identidade", () => {
+  it("o lote de takeoff não carrega carimbo de identidade", () => {
     const body = takeoffDecisionBody({
-      itemId: "ti_af6f85a49ea0b93d",
-      action: "confirm",
       baseVersion: 3,
-      quantity: "340.50",
-      unit: "m2",
-      note: "  ",
+      decisions: [
+        {
+          itemId: "ti_af6f85a49ea0b93d",
+          action: "confirm",
+          quantity: "340.50",
+          unit: "m2",
+          note: "  ",
+        },
+      ],
     });
 
     expect(body).toEqual({
       base_version: 3,
-      item_id: "ti_af6f85a49ea0b93d",
-      action: "confirm",
-      quantity: "340.50",
-      unit: "m2",
+      decisions: [
+        {
+          item_id: "ti_af6f85a49ea0b93d",
+          action: "confirm",
+          quantity: "340.50",
+          unit: "m2",
+        },
+      ],
     });
     for (const carimbo of CARIMBOS) {
       expect(body).not.toHaveProperty(carimbo);
+      for (const decisao of body.decisions as Record<string, unknown>[]) {
+        expect(decisao).not.toHaveProperty(carimbo);
+      }
     }
   });
 });

@@ -581,7 +581,7 @@ def test_sem_authorization_toda_rota_de_medicao_devolve_401(tmp_path: Path) -> N
         client.get(f"/v1/valuation-rounds/{round_id}/takeoff/overlay"),
         client.post(
             f"/v1/valuation-rounds/{round_id}/takeoff/decisions",
-            json={"base_version": 1, "item_id": _ITEM_CLEAR, "action": "confirm"},
+            json={"base_version": 1, "decisions": [{"item_id": _ITEM_CLEAR, "action": "confirm"}]},
         ),
     ]
 
@@ -616,7 +616,7 @@ def test_papel_e_exigido_antes_do_lookup_da_rodada(tmp_path: Path) -> None:
         client.post(
             f"/v1/valuation-rounds/{unknown}/takeoff/decisions",
             headers=headers,
-            json={"base_version": 1, "item_id": _ITEM_CLEAR, "action": "confirm"},
+            json={"base_version": 1, "decisions": [{"item_id": _ITEM_CLEAR, "action": "confirm"}]},
         ),
     ]
 
@@ -648,7 +648,7 @@ def test_rodada_de_outro_tenant_e_404_e_nunca_403(tmp_path: Path) -> None:
     decision = client.post(
         f"/v1/valuation-rounds/{round_id}/takeoff/decisions",
         headers=_headers(_OTHER_TENANT, key="intruso-002"),
-        json={"base_version": 1, "item_id": _ITEM_CLEAR, "action": "confirm"},
+        json={"base_version": 1, "decisions": [{"item_id": _ITEM_CLEAR, "action": "confirm"}]},
     )
 
     assert [state.status_code, plate.status_code, associate.status_code] == [404, 404, 404]
@@ -1247,17 +1247,134 @@ def _decide(
     key: str = "decisao-001",
     **body: Any,
 ) -> Any:
+    # O ato é um LOTE. `**body` continua descrevendo UMA decisão para os testes que só
+    # precisam de uma, e o helper a embrulha; quem prova o lote passa `decisions`.
+    decisao: dict[str, Any] = {"item_id": _ITEM_CLEAR, "action": "confirm"}
+    decisao.update({chave: valor for chave, valor in body.items() if chave != "decisions"})
     payload: dict[str, Any] = {
         "base_version": base_version,
-        "item_id": _ITEM_CLEAR,
-        "action": "confirm",
+        "decisions": body.get("decisions", [decisao]),
     }
-    payload.update(body)
     return client.post(
         f"/v1/valuation-rounds/{round_id}/takeoff/decisions",
         headers=_headers(tenant, key=key),
         json=payload,
     )
+
+
+def test_o_lote_inteiro_vira_uma_revisao_so_e_um_carimbo_so(tmp_path: Path) -> None:
+    """O ato é o lote: duas decisões avançam UMA versão, não duas.
+
+    É a diferença que motivou a forma. Item a item, uma legenda de quinze linhas produzia
+    quinze revisões e quinze `base_version` — e cada uma invalidava o formulário que a
+    pessoa ainda tinha aberto na tela.
+    """
+    client = _client(tmp_path)
+    queue = _observed_queue(client)
+    published = _round_with_takeoff(
+        client,
+        _takeoff_packet([_takeoff_item(), _takeoff_item(item_id=_ITEM_SECOND)]),
+    )
+
+    response = _decide(
+        client,
+        published["round_id"],
+        base_version=published["version"],
+        decisions=[
+            {"item_id": _ITEM_CLEAR, "action": "confirm", "quantity": "12.00"},
+            {"item_id": _ITEM_SECOND, "action": "reject", "note": "não faz parte do escopo"},
+        ],
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == published["version"] + 1
+    assert body["confirmed"] == 1
+    assert body["pending"] == 0
+    itens = {item["id"]: item for item in body["packet"]["items"]}
+    assert itens[_ITEM_CLEAR]["status"] == "confirmed"
+    assert itens[_ITEM_SECOND]["status"] == "rejected"
+    # Mesmo instante para as duas: elas foram tomadas no mesmo ato, e carimbos diferentes
+    # inventariam uma ordem que o revisor não declarou.
+    assert (
+        itens[_ITEM_CLEAR]["decision"]["decided_at"]
+        == itens[_ITEM_SECOND]["decision"]["decided_at"]
+    )
+    # Um redesenho para o lote, não um por item.
+    assert len(queue.messages) == 1
+
+
+def test_o_lote_com_uma_decisao_invalida_nao_grava_nenhuma(tmp_path: Path) -> None:
+    """Atomicidade: metade aplicada deixaria a cadeia num estado que ninguém pediu."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(
+        client,
+        _takeoff_packet(
+            [
+                _takeoff_item(),
+                _takeoff_item(item_id=_ITEM_AMBIGUOUS, status=TakeoffItemStatus.AMBIGUOUS),
+            ]
+        ),
+    )
+
+    response = _decide(
+        client,
+        published["round_id"],
+        base_version=published["version"],
+        decisions=[
+            {"item_id": _ITEM_CLEAR, "action": "confirm", "quantity": "12.00"},
+            # Item ambíguo confirmado sem quantidade: invariante do domínio.
+            {"item_id": _ITEM_AMBIGUOUS, "action": "confirm"},
+        ],
+    )
+
+    assert response.status_code == 422, response.text
+    estado = client.get(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff", headers=_headers(_TENANT)
+    ).json()
+    # A rodada não andou e NENHUM item recebeu decisão — nem o do lote que era válido.
+    # (O segundo item nasce `ambiguous` na fixture, então o que se afirma é a ausência de
+    # decisão, não um status uniforme.)
+    assert estado["version"] == published["version"]
+    assert all(item["decision"] is None for item in estado["packet"]["items"])
+    assert not any(
+        item["status"] in {"confirmed", "rejected"} for item in estado["packet"]["items"]
+    )
+
+
+def test_o_lote_recusa_duas_decisoes_para_o_mesmo_item(tmp_path: Path) -> None:
+    """Duas decisões para o mesmo item no mesmo ato não têm ordem; escolher uma seria inventar."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client)
+
+    response = _decide(
+        client,
+        published["round_id"],
+        base_version=published["version"],
+        decisions=[
+            {"item_id": _ITEM_CLEAR, "action": "confirm", "quantity": "12.00"},
+            {"item_id": _ITEM_CLEAR, "action": "reject"},
+        ],
+    )
+
+    assert response.status_code == 422, response.text
+    corpo = response.json()["detail"]
+    # O vocabulário do domínio viaja DENTRO do erro (ADR-0028 D4): a API não republica a
+    # lista de invariantes de `packages/valuation` como código dela.
+    assert corpo["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert corpo["details"]["code"] == "TAKEOFF_DECISION_DUPLICATE_ITEM"
+
+
+def test_o_lote_vazio_e_recusado_na_fronteira(tmp_path: Path) -> None:
+    """Lote sem decisão nenhuma não é ato: seria uma revisão nova que não decide nada."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client)
+
+    response = _decide(
+        client, published["round_id"], base_version=published["version"], decisions=[]
+    )
+
+    assert response.status_code == 422, response.text
 
 
 def test_a_decisao_grava_revisao_avanca_a_rodada_e_enfileira_o_overlay(tmp_path: Path) -> None:
@@ -1501,7 +1618,10 @@ def test_decisao_sem_idempotency_key_recusa(tmp_path: Path) -> None:
     response = client.post(
         f"/v1/valuation-rounds/{published['round_id']}/takeoff/decisions",
         headers=headers,
-        json={"base_version": published["version"], "item_id": _ITEM_CLEAR, "action": "confirm"},
+        json={
+            "base_version": published["version"],
+            "decisions": [{"item_id": _ITEM_CLEAR, "action": "confirm"}],
+        },
     )
 
     assert response.status_code == 400

@@ -345,11 +345,15 @@ def _build_round_through_calc(
             headers=_headers(f"decisao-takeoff-{index}"),
             json={
                 "base_version": version,
-                "item_id": decision.item_id,
-                "action": decision.action,
-                "quantity": None if decision.quantity is None else str(decision.quantity),
-                "unit": decision.unit,
-                "note": decision.note,
+                "decisions": [
+                    {
+                        "item_id": decision.item_id,
+                        "action": decision.action,
+                        "quantity": None if decision.quantity is None else str(decision.quantity),
+                        "unit": decision.unit,
+                        "note": decision.note,
+                    }
+                ],
             },
         )
         assert response.status_code == 200, response.text
