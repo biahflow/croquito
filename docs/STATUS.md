@@ -2,7 +2,10 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-26 (F-038 — o item de legenda é um pacote de serviços — em código:
+Última revisão: 2026-08-27 (**F-018 e F-019 `DONE`** — correção humana de forma e preview da
+cena resolvida, integradas pelo PR #105 e aceitas por ato humano; o `deploy-hml` da revisão
+aplicou a migração `0019`. Antes, 2026-08-26: F-038 — o item de legenda é um pacote de
+serviços — em código:
 epic #71 fechado com as doze tasks e a decisão 6 (#96) mergeadas, ADR-0053 e Design Approval
 Package rev.1/rev.2 aceitos, ver M9; recompute do braço de embeddings passou a registrar
 tokens e custo, #70. Antes, 2026-08-23: F-030 `READY_FOR_BUILD` — ADR-0049 e Design Approval
@@ -16,6 +19,26 @@ ADR-0033 aceitos)
 > Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
 > trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
 > lifecycle e evidências está no [Project Context](engineering/PROJECT_CONTEXT.md).
+
+## A geometria da revisão: F-018 e F-019 no ar
+
+Desde 2026-08-27 a revisão do croqui ganhou os dois lados que faltavam na geometria das cotas,
+**aceitos por ato humano** na mesma data (PR #105):
+
+- **[F-018](features/F-018-edicao-de-forma-da-proposta/feature.md)** — corrigir a forma na
+  tela deixou de exigir trocar o prompt e rerodar o provider pago. A correção é proposta
+  **nova**, derivada, num conjunto de proveniência própria
+  ([ADR-0050](adr/0050-correcao-humana-de-forma-como-proposta-derivada.md)): a observação da
+  máquina fica intacta, e é dela que sai a única medida objetiva de quanto o modelo erra.
+  Precisão não sobe por edição — `precision` e `export` seguem `Literal`.
+- **[F-019](features/F-019-preview-da-cena-resolvida/feature.md)** — a cena resolvida passou a
+  ser **vista** antes da aprovação. Nenhuma rota nova: a SPA passou a chamar o
+  `GET /v1/jobs/{id}/scene` que já existia. As quatro precisões se distinguem por traço e por
+  texto, nunca só por cor.
+
+O que **não** está coberto pelo aceite, e continua declarado nas evidências: o arrasto da
+F-018 nunca foi exercido numa revisão real com propostas, e o preview ainda não decidiu uma
+aprovação de verdade.
 
 ## Trabalho atual — F-030
 

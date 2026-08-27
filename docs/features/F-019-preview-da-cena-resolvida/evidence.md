@@ -1,7 +1,7 @@
 # F-019 — Evidência
 
 Feature: [Ver a cena resolvida antes de exportar](feature.md)  
-Estado: `READY_FOR_REVIEW`  
+Estado: `DONE`  
 Data: 2026-08-27
 
 ## Gates humanos
@@ -73,7 +73,16 @@ texto do desenho ficava ilegível ao cruzar uma linha (ganhou halo por `paint-or
 - O preview é um **segundo desenhista** ao lado do `dxf.py`; divergirem é questão de
   tempo, e é por isso que ele não é laudo — o portão continua sendo `ensure_exportable()`.
 
-## Decisões humanas pendentes
+## Integração
 
-- Revisão do PR e merge (o merge é ato humano; a harness não mescla).
-- Aceite do preview numa rodada real, com cena de verdade.
+| Fato | Referência |
+| --- | --- |
+| PR mergeado na `main` | [#105](https://github.com/biahflow/croquito/pull/105), commit `80d251d` |
+| `deploy-hml` da revisão | `success` em 2026-08-27 |
+| Aceite | **ato humano de Daniel Campos, 2026-08-27** |
+
+## O que o aceite NÃO cobre
+
+- O preview ainda não foi usado para **decidir** uma aprovação numa rodada real; o aceite é da
+  entrega, não de uma sessão de trabalho com ele.
+- Desempenho com cena de muitas entidades continua sem medição.
