@@ -1073,14 +1073,21 @@ da lista em vez de derrubar a tela; quem recusa de verdade é a abertura da roda
 
 ### `POST /v1/valuation-rounds`
 
-Entrada, em **uma de duas origens** (F-036, ADR-0048), exatamente uma por pedido:
+Entrada, em **uma de três origens** (F-036/ADR-0048; medição seguinte F-040/ADR-0056),
+exatamente uma por pedido:
 
 - **catálogo por upload**: `worksite_key`, `worksite_name`, `catalog_upload_id`, mais
   `address` (opcional);
 - **orçamento assinado**: `estimate_round_id`. A obra, o catálogo e o contratado vêm do
   conteúdo **assinado**, e por isso `worksite_key`, `worksite_name` e `address` são
   **recusados** neste caminho — aceitá-los abriria a porta para a rodada medir uma praça
-  diferente da que foi orçada, e nenhum número do consolidado é informado por humano.
+  diferente da que foi orçada, e nenhum número do consolidado é informado por humano;
+- **medição seguinte**: `previous_round_id` (F-040). A rodada `n+1` nasce da rodada anterior
+  **aprovada**: obra, catálogo e contratado vêm dela, e o consolidado soma os períodos já
+  lançados (ADR-0048 decisão 8; ADR-0056 decisão 4). Obra e endereço também são recusados
+  aqui. Exige a anterior aprovada e não caduca (`409 NEXT_ROUND_PREVIOUS_NOT_APPROVED`) e o
+  período imediatamente sequente (`409 PERIOD_NOT_SEQUENTIAL`); rodada sem consolidado é
+  `409 NEXT_ROUND_PREVIOUS_WITHOUT_CONTRACT`, e de outro tenant é `404`.
 
 Em ambas: `reference_label`, `period_number` e `contract_label` (opcional).  
 Saída: `round_id`, `version=1`, `status`, `created_at`.
@@ -1136,6 +1143,32 @@ reprecificar.
 O passado não se move: `PeriodProgress` declara o preço do período quando ele difere do
 contratado, e medição já aprovada não é recalculada.
 
+#### `amendment` — a RE-RA do contrato (F-040, ADR-0056)
+
+Opcional, e **só na origem contratada** (orçamento assinado ou medição seguinte): sem
+contratado não há quantidade a re-ratificar. Como o reajuste, é declarada na abertura e
+imutável na rodada, e compõe com o reajuste na ordem declarada.
+
+Campos: `label`, `reference_period` (o processo/publicação que a torna conferível), `note`
+(opcional) e `lines` (≥ 1). Cada linha: `code`, `quantity_delta` (texto, `Decimal` exato com
+sinal — `-4` reduz, `+6` acresce) e `is_new_item` (opcional). O item novo **não** informa
+descrição, unidade nem preço: o servidor os **materializa do catálogo contratual** instalado
+na rodada (decisão 7), como o `catalog_version` faz com o preço. `declared_by` e `declared_at`
+vêm do `Principal` e do relógio do servidor.
+
+A quantidade vigente é **derivada**, nunca gravada: `contratado + Σ deltas`. O item novo nasce
+com contratual zero e vigente igual ao delta.
+
+`GET /v1/valuation-rounds/{round_id}` devolve, em `contracted`: `amendments` (as declarações
+como foram feitas, com procedência; lista vazia é ausência, declarada em vez de omitida) e
+`quantities` (por código: `contracted_quantity`, `current_quantity`, `current_balance_quantity`
+e `re_ratified`).
+
+Erros: `422` para RE-RA sem origem contratada, `422 DOMAIN_VALIDATION_FAILED` para delta
+ilegível, `422 AMENDMENT_NEW_ITEM_CODE_MISSING` quando o item novo cita código ausente do
+catálogo contratual (não há de onde materializá-lo), e os erros de domínio da aplicação
+(`AMENDMENT_NEW_ITEM_INVALID`, `AMENDMENT_APPLICATION_MISMATCH`) como `422`.
+
 ### `GET /v1/valuation-rounds`
 
 Lista as rodadas do tenant, com cursor opaco. Devolve `round_id`, `worksite_key`,
@@ -1150,10 +1183,11 @@ comando assíncrono da extração.
 
 Traz também `contracted`, o **regime de conferência** da rodada (ADR-0048, decisão 9):
 `origin` (`none` | `signed_estimate`), `estimate_round_id`, `estimate_digest` e, com origem
-assinada, `code_count`. Rodada sem origem assinada continua conferindo o boletim contra o
-consolidado **fabricado** a partir da própria medição, com saldo, período e código fora do
-contrato não verificados — e isso é declarado, não deduzido da ausência de um campo: as duas
-rodadas não podem parecer iguais.
+assinada, `code_count`, além de `price_adjustments`/`prices` (F-039) e
+`amendments`/`quantities` (F-040), descritos acima. Rodada sem origem assinada continua
+conferindo o boletim contra o consolidado **fabricado** a partir da própria medição, com
+saldo, período e código fora do contrato não verificados — e isso é declarado, não deduzido da
+ausência de um campo: as duas rodadas não podem parecer iguais.
 
 ### `POST /v1/valuation-rounds/{round_id}/plate`
 
