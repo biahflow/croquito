@@ -2,10 +2,11 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-27 (**F-018 e F-019 `READY_FOR_REVIEW`** — os Design Approval
-Packages das duas foram aprovados por ato humano em 2026-08-27 e as duas foram implementadas
-com portões verdes: a correção humana de forma como proposta derivada (ADR-0050) e o preview
-da cena resolvida antes da aprovação. Antes: **F-030 `READY_FOR_BUILD`** — ADR-0049 emendado, Design Approval
+Última revisão: 2026-08-27 (**F-018 e F-019 `DONE`** — Design Approval Packages aprovados,
+implementação integrada na `main` pelo PR #105 e **aceite por ato humano** na mesma data; a
+correção humana de forma como proposta derivada (ADR-0050) e o preview da cena resolvida antes
+da aprovação. O `deploy-hml` da revisão aplicou a migração `0019`. Antes:
+**F-030 `READY_FOR_BUILD`** — ADR-0049 emendado, Design Approval
 Package revisão 3 aprovado, plano autorizado e oito Task Contracts publicados; antes:
 **F-009 e F-012 `DONE`** — ADR-0035/0036 e entregas aceitos por
 ato humano após merges, infraestrutura aplicada e rodadas reais no HML; antes: **F-036
@@ -58,8 +59,8 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-015 | A DEFINIR | READY_FOR_SPEC | Recriar job a partir de upload já usado (`jobs.upload_id` é `UNIQUE`) — a definir em contrato |
 | F-016 | A DEFINIR | READY_FOR_SPEC | Rotação de chaves e segredos de provider (a definir em contrato) |
 | F-017 | A DEFINIR | READY_FOR_SPEC | Trilha de auditoria do entitlement na tela — o custo por tenant já saiu na F-031 (a definir em contrato) |
-| F-018 | HIGH | READY_FOR_REVIEW | [Corrigir a forma da proposta na tela, sem rerodar o provider](../features/F-018-edicao-de-forma-da-proposta/feature.md) |
-| F-019 | HIGH | READY_FOR_REVIEW | [Ver a cena resolvida antes de exportar](../features/F-019-preview-da-cena-resolvida/feature.md) |
+| F-018 | HIGH | DONE | [Corrigir a forma da proposta na tela, sem rerodar o provider](../features/F-018-edicao-de-forma-da-proposta/feature.md) |
+| F-019 | HIGH | DONE | [Ver a cena resolvida antes de exportar](../features/F-019-preview-da-cena-resolvida/feature.md) |
 | F-020 | HIGH | DONE | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
 | F-021 | HIGH | DONE | [Nota pré-classificada na decisão da leitura](../features/F-021-nota-pre-classificada/feature.md) |
 | F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |

@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_REVIEW`
+`DONE`
 
 > Registrada em 2026-08-19, por seleção humana, e **especificada em 2026-08-23** por seleção
 > humana nova, junto da [F-018](../F-018-edicao-de-forma-da-proposta/feature.md).
@@ -12,8 +12,10 @@
 > Approval Package** foi **aprovado por ato humano em 2026-08-27**, revisão 1
 > ([mock/README.md](mock/README.md)).
 >
-> **Implementada em 2026-08-27**, com portões verdes e evidência renderizada do componente
-> real em [evidence.md](evidence.md). Nenhuma rota nova entrou: o diff é só de cliente.
+> **Implementada, integrada e ACEITA em 2026-08-27.** A entrega está na `main` (PR #105,
+> `80d251d`), com portões verdes e evidência renderizada do componente real em
+> [evidence.md](evidence.md). Nenhuma rota nova entrou: o diff é só de cliente. O **aceite foi
+> ato humano de Daniel Campos** na mesma data.
 
 ## Classification
 

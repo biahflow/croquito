@@ -1,7 +1,7 @@
 # F-018 — Evidência
 
 Feature: [Corrigir a forma da proposta na tela, sem rerodar o provider](feature.md)  
-Estado: `READY_FOR_REVIEW`  
+Estado: `DONE`  
 Data: 2026-08-27
 
 ## Gates humanos
@@ -99,8 +99,22 @@ fluxo. Fica declarado como pendência de aceite, não como verificado.
   aceite precisa cobrir.
 - Correção sobre prancha com muitas formas não teve desempenho medido.
 
-## Decisões humanas pendentes
+## Integração
 
-- Revisão do PR e merge (o merge é ato humano).
-- Aplicar a migração `0019` no ambiente hospedado, no deploy.
-- Aceite numa rodada real, com o caso do Guaxindiba V3.
+| Fato | Referência |
+| --- | --- |
+| PR mergeado na `main` | [#105](https://github.com/biahflow/croquito/pull/105), commit `80d251d` |
+| `deploy-hml` da revisão | `success` em 2026-08-27, o que **aplicou a migração `0019`** no banco de homologação |
+| Aceite | **ato humano de Daniel Campos, 2026-08-27** |
+
+O PR #104 havia sido aberto contra a branch do #103, e ao ser mergeado entregou o trabalho
+naquela branch em vez da `main`. O conserto foi recolher o commit a partir da `main` já com o
+#103 dentro, rodar os portões de novo nessa árvore e abrir o #105. Fica registrado porque o
+sintoma — dois PRs marcados `MERGED` e os arquivos ausentes da `main` — não é óbvio.
+
+## O que o aceite NÃO cobre
+
+- **O fluxo de arrasto nunca foi exercido numa revisão real com propostas.** Ele é o primeiro
+  uso, e continua declarado como tal: nenhuma captura de tela deste repositório mostra uma
+  correção feita sobre um job de verdade.
+- Correção sobre prancha com muitas formas não teve desempenho medido.

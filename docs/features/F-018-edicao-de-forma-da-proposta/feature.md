@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_REVIEW`
+`DONE`
 
 > Registrada em 2026-08-19, por seleção humana, e **especificada em 2026-08-23** por seleção
 > humana nova, junto da [F-019](../F-019-preview-da-cena-resolvida/feature.md) — as duas foram
@@ -14,9 +14,12 @@
 > 2026-08-23, e o **Design Approval Package** foi **aprovado por ato humano em 2026-08-27**,
 > revisão 1 ([mock/README.md](mock/README.md)).
 >
-> **Implementada em 2026-08-27**, com portões verdes: domínio, migração `0019`, a rota
-> `POST /v1/jobs/{job_id}/review/proposals/corrections` e a tela. A evidência está em
-> [evidence.md](evidence.md); o que falta é revisão humana, merge e o aceite numa rodada real.
+> **Implementada, integrada e ACEITA em 2026-08-27.** A entrega está na `main` (PR #105,
+> `80d251d`), o `deploy-hml` publicou a revisão e aplicou a migração `0019`, e o **aceite foi
+> ato humano de Daniel Campos** na mesma data. A evidência está em [evidence.md](evidence.md).
+>
+> Uma limitação continua declarada, e o aceite não a apaga: o fluxo de arrasto nunca foi
+> exercido numa revisão real com propostas. Ele é o primeiro uso, não um portão pendente.
 
 ## Classification
 
