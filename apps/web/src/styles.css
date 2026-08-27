@@ -3153,3 +3153,390 @@ footer {
   gap: 12px;
   padding: 16px;
 }
+
+/*
+ * Preview da cena resolvida (F-019), na etapa de aprovação.
+ *
+ * A precisão é dita pelo TRAÇO — grosso contínuo, fino contínuo, tracejado, pontilhado —
+ * e repetida por escrito na legenda e no rótulo de cada entidade. Cor não distingue
+ * precisão nenhuma aqui: as quatro são pretas, e a não resolvida é a única esmaecida,
+ * porque "não se sabe" é diferente de "se sabe pouco".
+ */
+.preview-cena {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px;
+  margin: 12px 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.preview-cena-desenho {
+  position: relative;
+  min-width: 0;
+}
+
+.preview-cena-svg {
+  width: 100%;
+  height: 320px;
+  display: block;
+  background: #fdfdfb;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.preview-cena-svg:active {
+  cursor: grabbing;
+}
+
+.preview-cena-controles {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+}
+
+.preview-cena-controles button {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--ink);
+}
+
+.preview-cena-legenda {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--ink-secondary);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+}
+
+.preview-cena-legenda strong {
+  color: var(--ink);
+}
+
+.amostra-precisao {
+  display: inline-block;
+  width: 30px;
+  height: 0;
+  vertical-align: middle;
+  margin-right: 7px;
+  border-top-color: var(--ink);
+}
+
+.amostra-precisao.precisao-exact {
+  border-top: 3px solid var(--ink);
+}
+
+.amostra-precisao.precisao-derived {
+  border-top: 1.5px solid var(--ink);
+}
+
+.amostra-precisao.precisao-approximate {
+  border-top: 2px dashed var(--ink);
+}
+
+.amostra-precisao.precisao-unresolved {
+  border-top: 2px dotted var(--muted);
+}
+
+/* O traço é constante em pixels: o viewBox está em METROS, e sem isto uma cena de 40 m
+   desenharia linhas de espessura sub-pixel — o mesmo motivo de `.proposal-shape`. */
+.cena-forma {
+  fill: none;
+  stroke: var(--ink);
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+}
+
+.cena-forma.precisao-exact {
+  stroke-width: 3;
+}
+
+.cena-forma.precisao-derived {
+  stroke-width: 1.5;
+}
+
+.cena-forma.precisao-approximate {
+  stroke-width: 2;
+  stroke-dasharray: 7 5;
+}
+
+.cena-forma.precisao-unresolved {
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-dasharray: 1 5;
+  stroke-linecap: round;
+}
+
+/* Seleção não altera o traço da precisão: ela acrescenta um halo. Engrossar a linha
+   selecionada faria uma aproximada parecer exata enquanto estivesse escolhida. */
+.cena-forma.selecionada {
+  filter: drop-shadow(0 0 3px rgba(22, 106, 131, 0.9));
+}
+
+.cena-vao-aplicado line {
+  stroke: #166a83;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.cena-vao-aplicado text {
+  fill: #166a83;
+}
+
+.cena-vao-disputa rect {
+  fill: rgba(163, 61, 50, 0.09);
+  stroke: #a33d32;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.cena-vao-disputa text {
+  fill: #a33d32;
+}
+
+.cena-escala line {
+  stroke: var(--ink);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.cena-escala text {
+  fill: var(--ink);
+}
+
+.preview-cena-painel {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
+
+.preview-cena-resumo {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.preview-cena-contagem {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.preview-cena-contagem strong {
+  color: var(--ink);
+}
+
+.preview-cena-aviso {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e2c79a;
+  border-radius: 6px;
+  background: #fdf5e8;
+  color: #7c5210;
+  font-size: 12px;
+}
+
+.preview-cena-entidade {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  font-size: 12px;
+}
+
+.preview-cena-dica,
+.preview-cena-vazio {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.preview-cena-vazio {
+  padding: 20px;
+  text-align: center;
+  border: 1px dashed var(--muted);
+  border-radius: 6px;
+  background: #fdfdfb;
+}
+
+/* Estados sem desenho (sem cena, carregando, falha) não têm painel lateral: a grade de
+   duas colunas deixaria 280px vazios ao lado de uma frase. */
+.preview-cena.preview-cena-simples {
+  display: block;
+}
+
+/* Texto do desenho sobre linha: o halo da própria cor de fundo é o que mantém a cota
+   legível quando ela cruza a geometria. */
+.preview-cena-svg text {
+  paint-order: stroke;
+  stroke: #fdfdfb;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.cena-escala polyline {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/*
+ * Correção humana de forma (F-018).
+ *
+ * A correção tem traço PRÓPRIO — contínuo e mais espesso — contra o tracejado laranja da
+ * proposta de máquina. Cor não é o único indicador: o traço, o selo escrito no painel e o
+ * rótulo na lista dizem a mesma coisa sem depender dela.
+ */
+.correcao-overlay {
+  /* Só alça e ponto de inserção respondem: sem isto o SVG roubaria o clique de quem quer
+     escolher uma forma por baixo para uni-la ao rascunho. */
+  pointer-events: none;
+}
+
+.correcao-rascunho,
+.correcao-gravada {
+  fill: none;
+  stroke: #1f5fa8;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.correcao-gravada {
+  stroke-dasharray: none;
+}
+
+.correcao-alca {
+  fill: #ffffff;
+  stroke: #1f5fa8;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.correcao-alca.ativa {
+  fill: #1f5fa8;
+}
+
+.correcao-inserir {
+  fill: rgba(31, 95, 168, 0.18);
+  stroke: #1f5fa8;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: auto;
+  cursor: copy;
+}
+
+/* Observação que é origem do rascunho: continua desenhada, mais apagada, para a pessoa
+   ver de onde a correção saiu enquanto a move. */
+.proposal-shape.fantasma {
+  stroke-dasharray: 2 5;
+  opacity: 0.5;
+}
+
+/* Forma superada por correção gravada: recolhida, nunca apagada — o dado permanece
+   (ADR-0050, decisão 4). */
+.proposal-shape.superada {
+  stroke-dasharray: 2 5;
+  opacity: 0.32;
+}
+
+.correcao-de-forma {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #b7cde8;
+  border-radius: 6px;
+  background: #eaf1fa;
+  font-size: 13px;
+  color: #164272;
+}
+
+.correcao-de-forma label {
+  display: grid;
+  gap: 4px;
+}
+
+.correcao-precisao {
+  margin: 0;
+  font-size: 12px;
+  color: #164272;
+}
+
+.correcao-derivacao {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.correcao-derivacao li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.correcao-dica,
+.correcao-superadas {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.correcao-recusa {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e0b7b1;
+  border-radius: 6px;
+  background: #fbf0ee;
+  color: #7a2c22;
+  font-size: 12px;
+}
+
+.acao-correcao {
+  border-color: #b7cde8;
+  color: #1f5fa8;
+}
+
+.proposal-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.ligacao {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent-text);
+  text-decoration: underline;
+  font-size: inherit;
+}

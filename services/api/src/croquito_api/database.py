@@ -331,6 +331,17 @@ class ReviewRevisionRecord(Base):
     packet_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     associations_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     proposals_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    shape_corrections_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    """Correções humanas de forma, num `VisionProposalSet` de proveniência própria (F-018).
+
+    Conjunto SEPARADO de `proposals_json` porque `detector_version` é do conjunto, não da
+    proposta (ADR-0050, decisão 1): a observação da máquina e a correção da pessoa
+    precisam continuar distinguíveis depois de gravadas — é dessa distinção que sai a
+    única medida objetiva de quanto o modelo erra.
+
+    `NULL` em revisão onde ninguém corrigiu forma, que é a verdade sobre ela. As formas
+    aqui continuam `unresolved` e `export=false`; nada nesta coluna promove precisão.
+    """
     selected_associations_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     declared_chains_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     """Cadeias de cotas que uma pessoa DECLAROU partilharem o mesmo total.

@@ -169,7 +169,8 @@ def _write_unregistered_artifact(
             sum(
                 1
                 for item in corroborated
-                if item.quality_score >= config.ink_corroboration_min_coverage
+                if item.quality_score is not None
+                and item.quality_score >= config.ink_corroboration_min_coverage
             )
             / total,
             4,
@@ -187,7 +188,7 @@ def _write_unregistered_artifact(
                 "prompt_version": "geometry-extraction@2.0.1",
                 "element_count": total,
                 "ink_coverage_mean": (
-                    round(sum(item.quality_score for item in corroborated) / total, 4)
+                    round(sum(item.quality_score or 0.0 for item in corroborated) / total, 4)
                     if total
                     else 0.0
                 ),

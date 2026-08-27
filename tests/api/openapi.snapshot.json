@@ -1527,6 +1527,60 @@
         "title": "ContestedSpanOut",
         "type": "object"
       },
+      "CorrectProposalShapeRequest": {
+        "additionalProperties": false,
+        "description": "Correção humana de forma: cria proposta NOVA, jamais altera a observada.\n\nA regra inteira é do ADR-0050 — `docs/adr/0050-correcao-humana-de-forma-como-`\n`proposta-derivada.md`. A forma corrigida nasce num `VisionProposalSet` de proveniência própria\n(`human-correction-v1`), declara em `derived_from` de quais propostas OBSERVADAS ela\nnasceu, e continua `unresolved`/`export=false` — a promoção de precisão segue sendo\nexclusiva da calibração, e `exact` só nasce de cota confirmada.\n\n`derived_from` obrigatório e não vazio é o que impede a feature de virar um editor de\ngeometria dentro do navegador: sem forma de origem não há correção, há desenho.\n\nA justificativa é obrigatória como em `accept`/`reject` — corrigir a geometria que vai\nvirar desenho é decisão de domínio, não ajuste de interface.",
+        "properties": {
+          "base_review_version": {
+            "minimum": 1.0,
+            "title": "Base Review Version",
+            "type": "integer"
+          },
+          "base_scene_version": {
+            "minimum": 1.0,
+            "title": "Base Scene Version",
+            "type": "integer"
+          },
+          "closed": {
+            "default": false,
+            "title": "Closed",
+            "type": "boolean"
+          },
+          "derived_from": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Derived From",
+            "type": "array"
+          },
+          "justification": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Justification",
+            "type": "string"
+          },
+          "vertices": {
+            "items": {
+              "$ref": "#/components/schemas/ShapeCorrectionVertexRequest"
+            },
+            "maxItems": 200,
+            "minItems": 2,
+            "title": "Vertices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "base_review_version",
+          "base_scene_version",
+          "derived_from",
+          "vertices",
+          "justification"
+        ],
+        "title": "CorrectProposalShapeRequest",
+        "type": "object"
+      },
       "CreateChatSessionRequest": {
         "additionalProperties": false,
         "description": "Corpo vazio (`{}`): a revisão-base é fixada pelo servidor, não escolhida pelo cliente.",
@@ -6894,6 +6948,16 @@
             "title": "Selected Associations",
             "type": "object"
           },
+          "shape_corrections": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VisionProposalSet"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "suggested_chains": {
             "items": {
               "$ref": "#/components/schemas/DimensionChain"
@@ -7263,6 +7327,28 @@
           "auto_choices"
         ],
         "title": "ShadowDecisionResponse",
+        "type": "object"
+      },
+      "ShapeCorrectionVertexRequest": {
+        "additionalProperties": false,
+        "description": "Um vértice da forma corrigida, em PIXELS da imagem fonte — o espaço da proposta.",
+        "properties": {
+          "x": {
+            "minimum": 0.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "minimum": 0.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "ShapeCorrectionVertexRequest",
         "type": "object"
       },
       "SplineGeometry": {
@@ -8670,6 +8756,14 @@
             "title": "Arc Angles Observed",
             "type": "boolean"
           },
+          "derived_from": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Derived From",
+            "type": "array"
+          },
           "export": {
             "const": false,
             "default": false,
@@ -8743,18 +8837,24 @@
             "type": "string"
           },
           "quality_score": {
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "title": "Quality Score",
-            "type": "number"
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Score"
           }
         },
         "required": [
           "id",
           "kind",
           "geometry",
-          "algorithm",
-          "quality_score"
+          "algorithm"
         ],
         "title": "VisionProposal",
         "type": "object"
@@ -8783,7 +8883,8 @@
             "default": "opencv-proposals-v1",
             "enum": [
               "opencv-proposals-v1",
-              "provider-geometry-extraction-v1"
+              "provider-geometry-extraction-v1",
+              "human-correction-v1"
             ],
             "title": "Detector Version",
             "type": "string"
@@ -12814,6 +12915,81 @@
           }
         ],
         "summary": "Decide Proposal Batch",
+        "tags": [
+          "review"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/review/proposals/corrections": {
+      "post": {
+        "description": "Grava a correção humana de forma como proposta NOVA, derivada das observadas.\n\nA observação da máquina não é tocada: ela continua em `proposals_json`, com o\n`algorithm`, a pontuação e a proveniência dela. A correção vai para\n`shape_corrections_json`, num conjunto de `detector_version` próprio — é essa\nseparação que preserva a comparação entre máquina e humano depois da correção\n(ADR-0050, decisões 1 e 4).\n\nNada aqui promove precisão: a forma nasce `unresolved` e `export=false` por\n`Literal` do modelo, e o portão de exportação não é consultado nem alterado.",
+        "operationId": "correct_proposal_shape_v1_jobs__job_id__review_proposals_corrections_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorrectProposalShapeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Correct Proposal Shape",
         "tags": [
           "review"
         ]

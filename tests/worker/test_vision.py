@@ -317,6 +317,10 @@ def test_ink_corroboration_separates_drawn_geometry_from_invention(tmp_path: Pat
 
     corroborated, notes = corroborate_with_ink(candidates, source)
 
+    # A corroboração por tinta SEMPRE pontua: `quality_score` só é ausente na correção
+    # humana (ADR-0050, decisão 2), que não passa por aqui.
+    assert corroborated[0].quality_score is not None
+    assert corroborated[1].quality_score is not None
     assert corroborated[0].quality_score > 0.6
     assert corroborated[1].quality_score < 0.6
     assert "INK_NOT_FOUND:muro que não existe" in notes
@@ -358,7 +362,14 @@ def test_registration_recovers_a_systematic_offset(tmp_path: Path) -> None:
     assert registration.coverage_after > registration.coverage_before
     assert registration.moved is True
     corroborated, _notes = corroborate_with_ink(registered, source)
-    assert sum(1 for item in corroborated if item.quality_score >= 0.6) > 0
+    assert (
+        sum(
+            1
+            for item in corroborated
+            if item.quality_score is not None and item.quality_score >= 0.6
+        )
+        > 0
+    )
 
 
 def test_registration_moves_the_whole_set_and_never_reshapes_one_element(

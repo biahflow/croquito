@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
@@ -16,7 +17,7 @@ from typing import Annotated, Any, Final, Literal, Protocol
 import cv2
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from croquito_worker.io_utils import atomic_write_text
 
@@ -101,7 +102,11 @@ class VisionProposal(VisionModel):
     kind: Literal["line", "circle", "contour"]
     geometry: PixelGeometry
     algorithm: str
-    quality_score: float = Field(ge=0, le=1)
+    # Opcional desde o ADR-0050 (decisão 2): mede confiança de DETECTOR, e para uma forma
+    # que uma pessoa desenhou não existe número honesto a pôr aqui. `1.0` seria afirmar
+    # certeza máxima justamente onde não houve medição nenhuma; ausência é o que se sabe.
+    # Aditivo, no mesmo idioma de `arc_angles_observed`: artefato antigo continua válido.
+    quality_score: float | None = Field(default=None, ge=0, le=1)
     precision: Literal["unresolved"] = "unresolved"
     export: Literal[False] = False
     # Semântica observada, quando a proposta vem de um modelo. Opcional: o caminho
@@ -113,6 +118,23 @@ class VisionProposal(VisionModel):
     # que ele declara — ninguém observou. É o que autoriza o refino a apenas LAPIDAR a
     # orientação, em vez de reconquistá-la varrendo a volta inteira.
     arc_angles_observed: bool = False
+    # De quais propostas OBSERVADAS esta forma nasceu (ADR-0050, decisão 3). Vazio em toda
+    # proposta de máquina; obrigatório e não vazio na correção humana — sem forma de origem
+    # não há correção, há desenho livre, e desenho livre é CAD, não revisão.
+    #
+    # Não existe o par `superseded_by` no fragmento (decisão 4): "superada" é derivado
+    # desta relação, e um campo gravado que duplica a relação acaba discordando dela.
+    derived_from: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("derived_from")
+    @classmethod
+    def validate_derived_from(cls, value: list[str]) -> list[str]:
+        for proposal_id in value:
+            if not re.fullmatch(r"vp_[a-f0-9]{16}", proposal_id):
+                raise ValueError(f"derivação aponta para id inválido: {proposal_id}")
+        if len(set(value)) != len(value):
+            raise ValueError("derivação repete a mesma proposta")
+        return value
 
 
 class VisionProposalSet(VisionModel):
@@ -126,9 +148,15 @@ class VisionProposalSet(VisionModel):
     # O conjunto declara quem o produziu: o detector OpenCV local ou a extração de
     # geometria por provider registrada na tinta. Cada proposta segue carregando o
     # próprio `algorithm`; nada aqui muda os invariantes (`unresolved`, export=false).
-    detector_version: Literal["opencv-proposals-v1", "provider-geometry-extraction-v1"] = (
-        DETECTOR_VERSION
-    )
+    # `human-correction-v1` é o conjunto de proveniência própria da correção humana
+    # (ADR-0050, decisão 1): não se cria um tipo paralelo, porque associação, calibração e
+    # solver consomem `VisionProposal` e um segundo formato duplicaria, em três lugares, os
+    # invariantes `unresolved`/`export=false` que nunca podem divergir.
+    detector_version: Literal[
+        "opencv-proposals-v1",
+        "provider-geometry-extraction-v1",
+        "human-correction-v1",
+    ] = DETECTOR_VERSION
     configured_limits: dict[str, int]
     limit_reached: list[str]
     proposals: list[VisionProposal]
@@ -140,6 +168,27 @@ class VisionProposalSet(VisionModel):
         if not value or len(value) > 64:
             raise ValueError("dataset_id inválido")
         return value
+
+    @model_validator(mode="after")
+    def validate_derivation_matches_provenance(self) -> VisionProposalSet:
+        """Derivação e proveniência dizem a mesma coisa, ou o conjunto não é válido.
+
+        Correção humana SEM origem seria desenho livre (ADR-0050, decisão 3); proposta de
+        máquina COM origem seria uma observação afirmando derivar de outra, que é o
+        contrário do que o detector faz. As duas metades da regra moram aqui porque é o
+        conjunto que declara quem o produziu.
+        """
+        correcao = self.detector_version == "human-correction-v1"
+        for proposal in self.proposals:
+            if correcao and not proposal.derived_from:
+                raise ValueError(
+                    f"correção humana sem forma de origem: {proposal.id}",
+                )
+            if not correcao and proposal.derived_from:
+                raise ValueError(
+                    f"proposta de máquina não deriva de outra: {proposal.id}",
+                )
+        return self
 
 
 @dataclass(frozen=True)
@@ -2944,7 +2993,17 @@ def detect_proposals(
             ]
             suppressed_outside_drawing = len(proposals) - len(inside)
             proposals = inside
-    proposals.sort(key=lambda item: (item.kind, -item.quality_score, item.id))
+    # Sem pontuação, a proposta vai para o FIM do próprio tipo, e não para o topo:
+    # ausência de medida não é qualidade máxima (ADR-0050, decisão 2). Este caminho é o do
+    # detector, onde toda proposta tem score; a guarda existe para o dia em que um conjunto
+    # sem score passar por aqui, e não para inventar ordem entre máquina e pessoa.
+    proposals.sort(
+        key=lambda item: (
+            item.kind,
+            -item.quality_score if item.quality_score is not None else 1.0,
+            item.id,
+        )
+    )
     configured_limits = {
         "line": effective_config.max_lines,
         "circle": effective_config.max_circles,
@@ -2995,10 +3054,14 @@ def _write_overlay(image_path: Path, proposals: VisionProposalSet, output_path: 
     colors = {"line": (67, 160, 71), "circle": (171, 71, 183), "contour": (42, 137, 224)}
     prefixes = {"line": "L", "circle": "C", "contour": "P"}
     overlay_thresholds = {"line": 0.20, "circle": 0.83, "contour": 0.04}
+    # Proposta sem pontuação não é comparável a limiar de detector, e por isso é sempre
+    # desenhada: esconder uma forma porque falta o número que ninguém mediu apagaria da
+    # visão justamente o que uma pessoa declarou (ADR-0050, decisão 2).
     visible_proposals = [
         proposal
         for proposal in proposals.proposals
-        if proposal.quality_score >= overlay_thresholds[proposal.kind]
+        if proposal.quality_score is None
+        or proposal.quality_score >= overlay_thresholds[proposal.kind]
     ]
     for proposal in visible_proposals:
         counters[proposal.kind] += 1
