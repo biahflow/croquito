@@ -1480,6 +1480,12 @@ class ValuationRoundSummary(ApiModel):
     extraction_status: str
     created_at: datetime
     updated_at: datetime
+    #: Se a medição da rodada foi aprovada e não caducou (F-040): é o que a tela mostra com o
+    #: selo, e a base do saldo da medição seguinte.
+    approved: bool = False
+    #: Se esta rodada pode abrir a medição seguinte: aprovada E com consolidado gravado. Sem
+    #: contratado de origem não há acumulado a somar (ADR-0056, decisão 4).
+    can_open_next: bool = False
 
 
 class ValuationRoundPage(ApiModel):
@@ -3791,6 +3797,16 @@ def _load_valuation_round(
     if record is None:
         raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Rodada de medição não encontrada.")
     return record
+
+
+def _round_is_approved(revision: ValuationRoundRevisionRecord | None) -> bool:
+    """Se a medição da rodada foi aprovada e não caducou (F-040).
+
+    Espelha o portão: aprovação caduca não abre a medição seguinte, porque o acumulado seria
+    apurado sobre conteúdo que mudou depois do ato humano.
+    """
+    state = approval_state(readable_valuation(revision))
+    return bool(state["approved"]) and not bool(state["stale"])
 
 
 def _valuation_round_heads(
@@ -10222,6 +10238,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     extraction_status=record.extraction_status,
                     created_at=record.created_at,
                     updated_at=record.updated_at,
+                    approved=_round_is_approved(heads.get(record.id)),
+                    can_open_next=_round_is_approved(heads.get(record.id))
+                    and record.contract_workbook_json is not None,
                 )
                 for record in page
             ],

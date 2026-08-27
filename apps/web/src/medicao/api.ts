@@ -96,6 +96,10 @@ export type RoundSummary = {
   extraction_status: ExtractionStatus;
   created_at: string;
   updated_at: string;
+  /** Se a medição foi aprovada e não caducou (F-040): o selo da tela. */
+  approved?: boolean;
+  /** Se esta rodada pode abrir a medição seguinte: aprovada E com consolidado gravado. */
+  can_open_next?: boolean;
 };
 
 /** Página da listagem; `next_cursor` é opaco e só volta quando há mais o que ler. */

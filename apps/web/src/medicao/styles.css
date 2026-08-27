@@ -851,6 +851,13 @@ p {
   border-radius: 6px;
 }
 
+.rodada-acoes {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 /* Overlay das âncoras --------------------------------------------------------- */
 /* O desenho publicado pelo servidor, com a idade dele. A borda tracejada é redundância
    do texto que já vai no `summary` ("desenho do pacote anterior"): cor e forma nunca

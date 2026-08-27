@@ -1558,6 +1558,40 @@ export function MedicaoApp({
   };
 
   /**
+   * A medição seguinte (F-040): abre a rodada `n+1` a partir de uma rodada anterior aprovada.
+   *
+   * O período NÃO é digitado — é o da rodada anterior mais um, calculado e enviado (decisão 2
+   * do pacote de design). Obra, catálogo e contratado vêm da rodada anterior; o corpo só cita
+   * `previous_round_id`. Reajuste e RE-RA da rodada seguinte podem ser declarados depois, na
+   * própria rodada nova.
+   */
+  const abrirMedicaoSeguinte = async (round: RoundSummary) => {
+    if (submitting) {
+      return;
+    }
+    const token = tokenDaSessao();
+    if (token === null) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const created = await createRound(token, {
+        ...EMPTY_ROUND_FORM,
+        previousRoundId: round.round_id,
+        referenceLabel: `Medição ${round.period_number + 1} — ${round.worksite_name}`,
+        periodNumber: String(round.period_number + 1),
+      });
+      setToast("Medição seguinte aberta a partir da rodada anterior aprovada.");
+      abrirRodada(created.round_id);
+    } catch (error) {
+      setAlertMessage(describeError(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
    * Abre a rodada nova: o catálogo sobe pelo presign (PUT direto no armazenamento) e a
    * rodada nasce com ele instalado. O catálogo é imutável na rodada — trocar de catálogo é
    * abrir outra —, e por isso ele é escolhido aqui e em nenhum outro lugar da jornada.
@@ -2519,7 +2553,10 @@ export function MedicaoApp({
                   <li key={round.round_id} className="rodada-linha">
                     <div>
                       <strong>{round.worksite_name}</strong>{" "}
-                      <span className="mono">({round.worksite_key})</span>
+                      <span className="mono">({round.worksite_key})</span>{" "}
+                      {round.approved ? (
+                        <span className="selo selo-ok">aprovada</span>
+                      ) : null}
                       <p className="topbar-meta">
                         {round.reference_label} · medição {round.period_number} · etapa{" "}
                         {stageLabel(round.stage)} · leitura da legenda{" "}
@@ -2530,13 +2567,25 @@ export function MedicaoApp({
                         Atualizada em {formatTimestamp(round.updated_at)}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      className="botao-primario"
-                      onClick={() => abrirRodada(round.round_id)}
-                    >
-                      Abrir rodada
-                    </button>
+                    <div className="rodada-acoes">
+                      <button
+                        type="button"
+                        className="botao-primario"
+                        onClick={() => abrirRodada(round.round_id)}
+                      >
+                        Abrir rodada
+                      </button>
+                      {round.can_open_next ? (
+                        <button
+                          type="button"
+                          className="botao-secundario"
+                          disabled={submitting}
+                          onClick={() => void abrirMedicaoSeguinte(round)}
+                        >
+                          Abrir a medição {round.period_number + 1}
+                        </button>
+                      ) : null}
+                    </div>
                   </li>
                 ))}
               </ul>

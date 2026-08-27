@@ -8819,6 +8819,16 @@
       "ValuationRoundSummary": {
         "additionalProperties": false,
         "properties": {
+          "approved": {
+            "default": false,
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "can_open_next": {
+            "default": false,
+            "title": "Can Open Next",
+            "type": "boolean"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",

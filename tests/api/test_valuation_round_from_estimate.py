@@ -880,3 +880,26 @@ def test_a_medicao_seguinte_nao_declara_obra_no_corpo(tmp_path: Path) -> None:
     response = _open_next(client, previous, worksite_key="outra-praca")
 
     assert response.status_code == 422, response.text
+
+
+def test_a_lista_marca_a_rodada_aprovada_como_apta_a_medicao_seguinte(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    _seed_previous_round(client, approved=True)
+
+    resposta = client.get("/v1/valuation-rounds", headers=_headers(key="lista-aprovadas"))
+
+    assert resposta.status_code == 200, resposta.text
+    item = resposta.json()["items"][0]
+    assert item["approved"] is True
+    assert item["can_open_next"] is True
+
+
+def test_a_lista_nao_marca_rodada_nao_aprovada_como_apta(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    _seed_previous_round(client, approved=False)
+
+    resposta = client.get("/v1/valuation-rounds", headers=_headers(key="lista-nao-aprovadas"))
+
+    item = resposta.json()["items"][0]
+    assert item["approved"] is False
+    assert item["can_open_next"] is False
