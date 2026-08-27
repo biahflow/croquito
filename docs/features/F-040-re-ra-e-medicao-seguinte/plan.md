@@ -28,11 +28,11 @@ do domínio, sob pena de dois veredictos sobre a mesma planilha (feature.md, Ris
 | T4 | [A memória mostra contratado → vigente com a RE-RA](tasks/T4-memoria-com-a-re-ra.md) | **Entregue** |
 | T5 | [A tela: declarar a RE-RA e abrir a medição seguinte](tasks/T5-tela-da-medicao.md) | **Parcial** |
 
-> **T5 parcial**: a declaração da RE-RA na abertura e a memória (contratado → vigente → saldo,
-> com o selo "re-ratificada") estão entregues e testadas. Ficam para a próxima rodada a **porta
-> da medição seguinte** na tela (a API já a abre por `previous_round_id`, mas o seletor de
-> rodada anterior aprovada ainda não existe na UI) e a **evidência de navegador**
-> (`BROWSER_REQUIRED`, AC 11), que é gate humano da disciplina de design-approval.
+> **T5 parcial**: a declaração da RE-RA na abertura, a memória (contratado → vigente → saldo,
+> com o selo "re-ratificada") e a **porta da medição seguinte** (a rodada aprovada aparece com
+> o selo e o botão "Abrir a medição n+1"; o período é calculado, não digitado) estão entregues
+> e testadas. Fica para o gate humano a **evidência de navegador** (`BROWSER_REQUIRED`, AC 11),
+> que exige subir o stack completo e é parte da disciplina de design-approval.
 
 ## Compatibilidade de schema
 
