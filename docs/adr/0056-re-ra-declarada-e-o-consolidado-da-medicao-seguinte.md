@@ -1,7 +1,7 @@
 # ADR-0056: A RE-RA é declaração, e a medição seguinte nasce da anterior
 
-Status: Proposed  
-Data: 2026-08-27  
+Status: Accepted  
+Data: 2026-08-27 (aceito por ato humano em 2026-08-27, Daniel Campos)  
 Responsável: Product / Engineering
 
 ## Contexto
