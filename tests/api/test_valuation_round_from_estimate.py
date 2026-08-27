@@ -21,7 +21,9 @@ from croquito_api.database import (
     EstimateRoundRecord,
     EstimateRoundRevisionRecord,
     ValuationRoundRecord,
+    ValuationRoundRevisionRecord,
 )
+from croquito_valuation.contract_from_estimate import build_contract_from_estimate
 from croquito_core.ids import new_uuid7
 from croquito_valuation.estimate import (
     CatalogSource,
@@ -47,6 +49,12 @@ from tests.api.test_valuation_round_routes import (
     _headers,
     _store,
 )
+from tests.valuation.builders import (
+    MeasuredItem,
+    MeasuredWorksite,
+    build_approval,
+    build_valuation_from_catalog,
+)
 
 _CODE = "CE04100010(/)"
 #: Código presente no catálogo contratual mas AUSENTE do orçamento: é o item que só nasce por
@@ -58,8 +66,8 @@ _NEW_ITEM_PRICE = Decimal("30.00")
 _OBJECT_KEY = f"tenants/{_TENANT}/reference-catalogs/sco-sintetico.json"
 
 
-def _catalog_bytes() -> bytes:
-    catalog = PriceCatalog(
+def _price_catalog() -> PriceCatalog:
+    return PriceCatalog(
         source_label="SCO CONTRATUAL SINTETICO",
         reference_month="2026-01",
         source_sha256="c" * 64,
@@ -89,7 +97,10 @@ def _catalog_bytes() -> bytes:
             ),
         ],
     )
-    return catalog.model_dump_json().encode("utf-8")
+
+
+def _catalog_bytes() -> bytes:
+    return _price_catalog().model_dump_json().encode("utf-8")
 
 
 def _calc_sheet(item_number: str, quantity: Decimal) -> CalcSheet:
@@ -719,5 +730,151 @@ def test_re_ra_exige_contratado_e_recusa_no_caminho_do_upload(tmp_path: Path) ->
             "amendment": _re_ra(),
         },
     )
+
+    assert response.status_code == 422, response.text
+
+
+def _seed_previous_round(
+    client: TestClient,
+    *,
+    measured: Decimal = Decimal("5.00"),
+    period_number: int = 1,
+    approved: bool = True,
+    tenant: str = _TENANT,
+) -> str:
+    """Uma rodada de medição anterior, aprovada, com consolidado gravado e um período medido.
+
+    O consolidado nasce do orçamento assinado (período 1, sem lançamento); a medição do período
+    mede `_CODE` e é aprovada, para que a rodada seguinte tenha de onde somar o acumulado.
+    """
+    contract = build_contract_from_estimate(
+        Estimate.model_validate(_signed(_estimate())),
+        group_label="DEMANDA 2026/014",
+        source_label="orçamento assinado sintético",
+    )
+    valuation = build_valuation_from_catalog(
+        _price_catalog(),
+        period_number,
+        [
+            MeasuredWorksite(
+                worksite_key=_WORKSITE_KEY,
+                worksite_name="PRACA ORCADA SINTETICA",
+                items=(MeasuredItem(code=_CODE, quantity=measured),),
+            )
+        ],
+    )
+    if approved:
+        valuation = build_approval(valuation)
+
+    database: Database = _database(client)
+    round_id = str(new_uuid7())
+    now = datetime.now(UTC)
+    with database.sessions() as session:
+        session.add(
+            ValuationRoundRecord(
+                id=round_id,
+                tenant_id=tenant,
+                worksite_key=_WORKSITE_KEY,
+                worksite_name="PRACA ORCADA SINTETICA",
+                reference_label="Medição 1 — agosto/2026",
+                period_number=period_number,
+                address="RUA SINTETICA, 100",
+                catalog_object_key=_OBJECT_KEY,
+                catalog_source_sha256="c" * 64,
+                catalog_summary_json={},
+                estimate_round_id=str(new_uuid7()),
+                estimate_digest=contract.source_sha256,
+                contract_workbook_json=contract.model_dump(mode="json"),
+                extraction_status="idle",
+                status="OPEN",
+                version=1,
+                created_by="orcamentista-sintetica",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add(
+            ValuationRoundRevisionRecord(
+                id=str(new_uuid7()),
+                tenant_id=tenant,
+                round_id=round_id,
+                version=1,
+                valuation_json=valuation.model_dump(mode="json"),
+                created_by="orcamentista-sintetica",
+                created_at=now,
+            )
+        )
+        session.commit()
+    return round_id
+
+
+def _open_next(client: TestClient, previous_round_id: str, *, period_number: int = 2, **extra: Any) -> Any:
+    body: dict[str, Any] = {
+        "previous_round_id": previous_round_id,
+        "reference_label": "Medição 2 — setembro/2026",
+        "period_number": period_number,
+    }
+    body.update(extra)
+    return client.post(
+        "/v1/valuation-rounds", headers=_headers(key=f"medicao-seguinte-{period_number}"), json=body
+    )
+
+
+def test_a_medicao_seguinte_nasce_da_rodada_anterior_aprovada(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    previous = _seed_previous_round(client, measured=Decimal("5.00"))
+
+    response = _open_next(client, previous)
+
+    assert response.status_code == 201, response.text
+    round_id = response.json()["round_id"]
+    with _database(client).sessions() as session:
+        record = session.get(ValuationRoundRecord, round_id)
+        assert record is not None
+        # Obra e catálogo vêm da rodada anterior, não do corpo.
+        assert record.worksite_key == _WORKSITE_KEY
+        assert record.period_number == 2
+        stored = record.contract_workbook_json
+        assert stored is not None
+        # O consolidado n+1 soma o período aprovado: period_numbers = [1].
+        assert stored["period_numbers"] == [1]
+        linha = stored["lines"][0]
+        assert linha["accumulated_quantity"] == "5.00"
+        assert linha["periods"][0]["period_number"] == 1
+        assert linha["periods"][0]["quantity"] == "5.00"
+
+    leitura = client.get(
+        f"/v1/valuation-rounds/{round_id}", headers=_headers(key="estado-seguinte")
+    )
+    quantidade = leitura.json()["contracted"]["quantities"][0]
+    # Saldo derivado: 12 vigentes − 5 acumulados = 7.
+    assert quantidade["current_balance_quantity"] == "7.00"
+
+
+def test_a_medicao_seguinte_exige_a_rodada_anterior_aprovada(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    previous = _seed_previous_round(client, approved=False)
+
+    response = _open_next(client, previous)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "NEXT_ROUND_PREVIOUS_NOT_APPROVED"
+
+
+def test_a_medicao_seguinte_recusa_periodo_fora_de_sequencia(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    previous = _seed_previous_round(client)
+
+    response = _open_next(client, previous, period_number=3)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "PERIOD_NOT_SEQUENTIAL"
+
+
+def test_a_medicao_seguinte_nao_declara_obra_no_corpo(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    previous = _seed_previous_round(client)
+
+    response = _open_next(client, previous, worksite_key="outra-praca")
 
     assert response.status_code == 422, response.text
