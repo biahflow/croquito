@@ -1075,6 +1075,10 @@ def _contracted_state(round_record: ValuationRoundRecord) -> dict[str, Any]:
         # "não reajustou" de "não sei".
         "price_adjustments": _declared_adjustments(stored),
         "prices": _contracted_prices(stored),
+        # RE-RA declaradas na abertura (F-040). Lista vazia é ausência de re-ratificação, que
+        # é a verdade sobre a rodada — mesma disciplina do reajuste.
+        "amendments": _declared_amendments(stored),
+        "quantities": _contracted_quantities(stored),
     }
 
 
@@ -1088,6 +1092,40 @@ def _declared_adjustments(stored: Mapping[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(declarados, list):
         return []
     return [item for item in declarados if isinstance(item, dict)]
+
+
+def _declared_amendments(stored: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """As RE-RA como foram declaradas, sem revalidar o consolidado (mesma razão do reajuste)."""
+    declaradas = stored.get("amendments")
+    if not isinstance(declaradas, list):
+        return []
+    return [item for item in declaradas if isinstance(item, dict)]
+
+
+def _contracted_quantities(stored: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Contratado e vigente por código: a conta de quantidade que a memória mostra.
+
+    O vigente é recomputado do consolidado gravado, e não lido de um campo — ele é derivado
+    por decisão (ADR-0056, decisão 3). Consolidado que não revalida devolve lista vazia em vez
+    de erro, pelo mesmo motivo dos demais campos desta leitura.
+    """
+    try:
+        contract = ContractWorkbook.model_validate(dict(stored))
+    except ValidationError:
+        return []
+    return [
+        {
+            "code": line.code,
+            "item_number": line.item_number,
+            "description": line.description,
+            "unit": line.unit,
+            "contracted_quantity": str(line.contract_quantity),
+            "current_quantity": str(contract.current_quantity(line)),
+            "current_balance_quantity": str(contract.current_balance_quantity(line)),
+            "re_ratified": contract.current_quantity(line) != line.contract_quantity,
+        }
+        for line in contract.lines
+    ]
 
 
 def _contracted_prices(stored: Mapping[str, Any]) -> list[dict[str, Any]]:

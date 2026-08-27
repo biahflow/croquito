@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Aguardando aprovação humana**  
+Status: **Approved (2026-08-27)**  
 Date: 2026-08-27  
 Produced by: agente (Claude Code)
 
@@ -11,16 +11,18 @@ Produced by: agente (Claude Code)
 > código de aplicação. **Nenhum agente aprova design.**
 >
 > O outro gate desta feature é o
-> [ADR-0056](../../../adr/0056-re-ra-declarada-e-o-consolidado-da-medicao-seguinte.md), que
-> está `Proposed` e também aguarda ato humano. Os dois precedem o planejamento.
+> [ADR-0056](../../../adr/0056-re-ra-declarada-e-o-consolidado-da-medicao-seguinte.md).
+> **Aprovado por ato humano em 2026-08-27** (Daniel Campos), junto com o aceite do ADR-0056
+> na mesma data; com os dois gates humanos passados, a feature sai de `READY_FOR_PLANNING`
+> para planejamento e construção.
 
 ## Registro de aprovação
 
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a composição visual da revisão 1 e as nove decisões listadas em "Decisões que este pacote carrega" |
-| Aprovado por | — |
-| Data | — |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-27 |
 | Revisão | 1 |
 | Explicitamente **não** coberto | a copy final; os números, nomes e datas das capturas, que são sintéticos; o layout impresso do MAPÃO e do boletim, que seguem o modelo da prefeitura; e as decisões do ADR-0056, que são gate próprio |
 

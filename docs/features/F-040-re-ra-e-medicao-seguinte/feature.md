@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`IN_PROGRESS`
 
 > Registrada em 2026-08-27, por seleção humana, a partir da
 > [issue #100](https://github.com/biahflow/croquito/issues/100). Três decisões de domínio

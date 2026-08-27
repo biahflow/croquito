@@ -96,6 +96,10 @@ export type RoundSummary = {
   extraction_status: ExtractionStatus;
   created_at: string;
   updated_at: string;
+  /** Se a medição foi aprovada e não caducou (F-040): o selo da tela. */
+  approved?: boolean;
+  /** Se esta rodada pode abrir a medição seguinte: aprovada E com consolidado gravado. */
+  can_open_next?: boolean;
 };
 
 /** Página da listagem; `next_cursor` é opaco e só volta quando há mais o que ler. */
@@ -229,6 +233,43 @@ export type RoundContractedPrice = {
   adjusted: boolean;
 };
 
+/** O efeito de uma RE-RA sobre um código: delta com sinal, ou item novo materializado. */
+export type RoundAmendmentLine = {
+  code: string;
+  /** Texto: delta é `Decimal` exato e não passa por `number`. */
+  quantity_delta: string;
+  is_new_item?: boolean;
+  note?: string | null;
+  description?: string | null;
+  unit?: string | null;
+  unit_price?: string | null;
+};
+
+/**
+ * Uma RE-RA declarada, com a procedência que a torna conferível (F-040, ADR-0056).
+ * `declared_by`/`declared_at` são do servidor.
+ */
+export type RoundAmendment = {
+  label: string;
+  declared_by?: string | null;
+  declared_at?: string | null;
+  reference_period?: string | null;
+  note?: string | null;
+  lines: RoundAmendmentLine[];
+};
+
+/** Contratado e vigente por código, em QUANTIDADE — a conta que a memória mostra (F-040). */
+export type RoundContractedQuantity = {
+  code: string;
+  item_number: string;
+  description: string;
+  unit: string;
+  contracted_quantity: string;
+  current_quantity: string;
+  current_balance_quantity: string;
+  re_ratified: boolean;
+};
+
 /** O regime de conferência da rodada; sem origem assinada, saldo e período não são checados. */
 export type RoundStateContracted = {
   origin: "none" | "signed_estimate";
@@ -243,6 +284,13 @@ export type RoundStateContracted = {
    */
   price_adjustments?: RoundPriceAdjustment[];
   prices?: RoundContractedPrice[];
+  /**
+   * RE-RA declaradas na abertura (F-040). Lista VAZIA é ausência de re-ratificação — fato
+   * sobre a rodada, como o reajuste. Opcional porque rodada lida antes da F-040 responde sem
+   * o campo, e a tela usa `?? []`.
+   */
+  amendments?: RoundAmendment[];
+  quantities?: RoundContractedQuantity[];
 };
 
 export type RoundState = {
@@ -488,16 +536,40 @@ export type PriceAdjustmentDraft = {
   note?: string;
 };
 
+/** Uma linha da RE-RA na tela: código, delta em texto e, se item novo, o marcador. */
+export type AmendmentLineDraft = {
+  code: string;
+  /** Texto: delta é `Decimal` exato e não passa por `number`. */
+  quantityDelta: string;
+  isNewItem?: boolean;
+  note?: string;
+};
+
+/**
+ * A declaração da RE-RA na abertura (F-040). Só existe no caminho contratado (orçamento
+ * assinado ou medição seguinte): sem contratado não há quantidade a re-ratificar. O item novo
+ * NÃO informa preço — o servidor o materializa do catálogo contratual (ADR-0056, decisão 7).
+ */
+export type AmendmentDraft = {
+  label: string;
+  referencePeriod: string;
+  note?: string;
+  lines: AmendmentLineDraft[];
+};
+
 export type CreateRoundDraft = {
   worksiteKey: string;
   worksiteName: string;
   catalogUploadId?: string;
   estimateRoundId?: string;
+  /** A medição seguinte (F-040): abre a rodada `n+1` a partir da rodada anterior aprovada. */
+  previousRoundId?: string;
   referenceLabel: string;
   periodNumber: string;
   address?: string;
   contractLabel?: string;
   priceAdjustment?: PriceAdjustmentDraft;
+  amendment?: AmendmentDraft;
 };
 
 export type TakeoffDecisionDraft = {

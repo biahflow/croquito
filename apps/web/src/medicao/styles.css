@@ -851,6 +851,13 @@ p {
   border-radius: 6px;
 }
 
+.rodada-acoes {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 /* Overlay das âncoras --------------------------------------------------------- */
 /* O desenho publicado pelo servidor, com a idade dele. A borda tracejada é redundância
    do texto que já vai no `summary` ("desenho do pacote anterior"): cor e forma nunca
@@ -1233,4 +1240,93 @@ p {
 .jornada-medicao .reajuste-tabela .numero {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* RE-RA (F-040): petróleo, escolhido por não colidir com contratado (verde), reajustado
+   (roxo), aviso (âmbar) nem recusa (vermelho). A cor nunca é o único indicador: o selo diz
+   "re-ratificada" por escrito. */
+.jornada-medicao .rera-declarada {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.jornada-medicao .rera-linha {
+  margin: 0;
+  font-size: 13px;
+}
+
+.jornada-medicao .selo-rera {
+  border-color: #9cc9d1;
+  background: #e6f2f4;
+  color: #1f6f7a;
+}
+
+.jornada-medicao .rera-autoria {
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.jornada-medicao .rera-tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.jornada-medicao .rera-tabela th,
+.jornada-medicao .rera-tabela td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.jornada-medicao .rera-tabela .numero {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.jornada-medicao .rera-do-contrato {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.jornada-medicao .rera-do-contrato legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+
+.jornada-medicao .rera-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.jornada-medicao .rera-campos {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.jornada-medicao .rera-campos label {
+  display: grid;
+  gap: 4px;
+  font-size: 12.5px;
+}
+
+.jornada-medicao .rera-linha-campos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.jornada-medicao .rera-item-novo {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
 }

@@ -243,6 +243,51 @@ describe("createRoundBody", () => {
     expect(body.contract_label).toBe("Contrato 05/2024");
     expect(body.worksite_key).toBeUndefined();
   });
+
+  it("na medição seguinte, cita a rodada anterior e não declara obra (F-040)", () => {
+    const body = createRoundBody({
+      worksiteKey: "praca-que-nao-deve-ir",
+      worksiteName: "Praça que não deve ir",
+      previousRoundId: "0197f2a0-0000-7000-8000-0000000000dd",
+      periodNumber: "2",
+      referenceLabel: "2ª MEDIÇÃO",
+      address: "Rua que não deve ir",
+    });
+
+    expect(body).toEqual({
+      previous_round_id: "0197f2a0-0000-7000-8000-0000000000dd",
+      period_number: 2,
+      reference_label: "2ª MEDIÇÃO",
+    });
+  });
+
+  it("leva a RE-RA declarada, sem preço de item novo (o servidor materializa)", () => {
+    const body = createRoundBody({
+      worksiteKey: "",
+      worksiteName: "",
+      estimateRoundId: "0197f2a0-0000-7000-8000-0000000000cc",
+      periodNumber: "1",
+      referenceLabel: "1ª MEDIÇÃO",
+      amendment: {
+        label: " 1ª RE-RA ",
+        referencePeriod: " Processo 123/2026 ",
+        lines: [
+          { code: " CE04100010(/) ", quantityDelta: " -4,00 " },
+          { code: "CE04100020(/)", quantityDelta: "6,00", isNewItem: true },
+          { code: "", quantityDelta: "" },
+        ],
+      },
+    });
+
+    expect(body.amendment).toEqual({
+      label: "1ª RE-RA",
+      reference_period: "Processo 123/2026",
+      lines: [
+        { code: "CE04100010(/)", quantity_delta: "-4,00" },
+        { code: "CE04100020(/)", quantity_delta: "6,00", is_new_item: true },
+      ],
+    });
+  });
 });
 
 describe("codeSearchTerm", () => {

@@ -130,17 +130,24 @@ def _workbook(
 def test_consolidated_workbook_closes_periods_amendments_and_balance() -> None:
     workbook = _workbook()
 
-    # O consolidado subiu de schema com a F-039 (reajuste), aditivamente: `2.0.0` continua
-    # validando e responde sem reajuste, que é a verdade sobre um consolidado escrito antes.
-    assert workbook.schema_version == "3.0.0"
+    # O consolidado subiu de schema com a F-040 (RE-RA declarada, vigente derivado),
+    # aditivamente: `2.0.0` e `3.0.0` continuam validando, que é a verdade sobre um
+    # consolidado escrito antes.
+    assert workbook.schema_version == "4.0.0"
     assert workbook.adjustments == []
     assert workbook.is_adjusted is False
     reduced = workbook.line_for_code(_CODE_A)
     assert reduced.expected_accumulated_quantity == Decimal("5.00")
     assert reduced.expected_accumulated_amount == Decimal("50.00")
-    assert reduced.expected_balance_quantity == Decimal("11.00")
+    # Vigente e saldo DERIVADOS (ADR-0056, decisão 3): 20 contratados - 4 da RE-RA = 16
+    # vigentes; 16 - 5 medidos = 11 de saldo.
+    assert workbook.current_quantity(reduced) == Decimal("16.00")
+    assert workbook.current_balance_quantity(reduced) == Decimal("11.00")
     assert workbook.line_for_code(_CODE_NEW).contract_quantity == Decimal("0.00")
-    assert workbook.line_for_code(_CODE_B).balance_quantity == Decimal("5.50")
+    # Sem RE-RA, o vigente é o contratado, bit a bit (AC 2).
+    unchanged = workbook.line_for_code(_CODE_B)
+    assert workbook.current_quantity(unchanged) == unchanged.contract_quantity
+    assert workbook.current_balance_quantity(unchanged) == Decimal("5.50")
 
 
 def test_contract_workbook_id_is_derived_from_the_source_digest() -> None:
@@ -223,16 +230,34 @@ def test_accumulated_amount_must_match_the_sum_of_the_periods() -> None:
     assert valuation_errors(raised.value)[0].details["field"] == "accumulated_amount"
 
 
-def test_accumulated_above_the_amended_quantity_is_refused() -> None:
+def test_accumulated_above_the_current_quantity_is_refused() -> None:
+    # O saldo é derivado e conferido no consolidado, que conhece as RE-RA (a validação
+    # migrou da linha, que não conhecia — feature.md, Risks). Linha com 4,00 vigentes e 5,00
+    # medidos tem saldo negativo. `amended_quantity` ausente para isolar o saldo, sem esbarrar
+    # antes em `AMENDMENT_APPLICATION_MISMATCH`.
+    overdrawn = ContractLine(
+        group_label="PAVIMENTACAO",
+        item_number="1",
+        code=_CODE_A,
+        description="PISO INTERTRAVADO SINTETICO 6CM",
+        unit="m2",
+        unit_price=Decimal("10.00"),
+        contract_quantity=Decimal("4.00"),
+        periods=[_period(1, "3.00", "30.00"), _period(2, "2.00", "20.00")],
+        accumulated_quantity=Decimal("5.00"),
+        accumulated_amount=Decimal("50.00"),
+    )
     with pytest.raises(ValidationError) as raised:
-        _first_line(amended_quantity="4.00", balance_quantity="0.00")
+        _workbook(lines=[overdrawn], amendments=[], period_numbers=[1, 2])
 
     assert valuation_error_codes(raised.value) == ["CONTRACT_BALANCE_NEGATIVE"]
 
 
-def test_declared_balance_must_be_amended_minus_accumulated() -> None:
+def test_declared_balance_must_be_current_minus_accumulated() -> None:
+    # `balance_quantity` gravado é conferência: presente e divergente do derivado (16 - 5 = 11)
+    # recusa no consolidado.
     with pytest.raises(ValidationError) as raised:
-        _first_line(balance_quantity="10.00")
+        _workbook(lines=[_first_line(balance_quantity="10.00"), _second_line(), _new_item_line()])
 
     assert valuation_error_codes(raised.value) == ["CONTRACT_BALANCE_MISMATCH"]
 

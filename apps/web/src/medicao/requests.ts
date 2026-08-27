@@ -13,6 +13,7 @@
  */
 
 import type {
+  AmendmentDraft,
   CodeClosureDraft,
   CodeDecisionDraft,
   CreateRoundDraft,
@@ -68,6 +69,10 @@ export function createRoundBody(draft: CreateRoundDraft): Record<string, unknown
   };
   if (draft.estimateRoundId) {
     body.estimate_round_id = draft.estimateRoundId;
+  } else if (draft.previousRoundId) {
+    // A medição seguinte (F-040): obra, catálogo e contratado vêm da rodada anterior, e por
+    // isso a obra também não vai no corpo — mesma regra da origem assinada.
+    body.previous_round_id = draft.previousRoundId;
   } else {
     body.worksite_key = draft.worksiteKey.trim();
     body.worksite_name = draft.worksiteName.trim();
@@ -87,7 +92,55 @@ export function createRoundBody(draft: CreateRoundDraft): Record<string, unknown
   if (reajuste !== null) {
     body.price_adjustment = reajuste;
   }
+  const reRa = amendmentBody(draft.amendment);
+  if (reRa !== null) {
+    body.amendment = reRa;
+  }
   return body;
+}
+
+/**
+ * A RE-RA do corpo, ou `null` quando não há declaração (F-040).
+ *
+ * Linha em branco não viaja: código vazio não é "sem código". O item novo NÃO informa preço
+ * — o servidor o materializa do catálogo contratual (ADR-0056, decisão 7). `declared_by` e
+ * `declared_at` também não vão daqui: são do servidor, como no reajuste.
+ */
+export function amendmentBody(
+  draft: AmendmentDraft | undefined,
+): Record<string, unknown> | null {
+  if (draft === undefined) {
+    return null;
+  }
+  const lines = draft.lines
+    .filter((line) => line.code.trim().length > 0 && line.quantityDelta.trim().length > 0)
+    .map((line) => {
+      const corpo: Record<string, unknown> = {
+        code: line.code.trim(),
+        quantity_delta: line.quantityDelta.trim(),
+      };
+      if (line.isNewItem) {
+        corpo.is_new_item = true;
+      }
+      const nota = line.note?.trim();
+      if (nota) {
+        corpo.note = nota;
+      }
+      return corpo;
+    });
+  if (lines.length === 0) {
+    return null;
+  }
+  const corpo: Record<string, unknown> = {
+    label: draft.label.trim(),
+    reference_period: draft.referencePeriod.trim(),
+    lines,
+  };
+  const nota = draft.note?.trim();
+  if (nota) {
+    corpo.note = nota;
+  }
+  return corpo;
 }
 
 /**

@@ -788,6 +788,7 @@ def _general_line_cells(
     line: ContractLine,
     row: int,
     current_quantity: Decimal,
+    contract_current_quantity: Decimal,
     period_numbers: Sequence[int],
     pairs: Sequence[tuple[str, str]],
     accumulated: tuple[str, str],
@@ -825,7 +826,10 @@ def _general_line_cells(
         _number(
             f"{amended_column}{row}",
             "general_amended_quantity",
-            line.amended_quantity,
+            # Vigente DERIVADO (ADR-0056, decisão 3): contratado + RE-RA. Para o MAPÃO histórico
+            # é bit a bit igual ao `amended_quantity` que a planilha declarava; para o
+            # consolidado nascido do orçamento, é o número que não tem segundo dono.
+            contract_current_quantity,
             number_format=quantity_format,
             item_number=item,
         ),
@@ -918,7 +922,7 @@ def _general_line_cells(
             f"{balance_column}{row}",
             "general_balance",
             f"={amended_column}{row}-{accumulated_quantity_ref}",
-            line.amended_quantity - accumulated_quantity,
+            contract_current_quantity - accumulated_quantity,
             number_format=quantity_format,
             item_number=item,
         )
@@ -984,6 +988,7 @@ def _plan_general(
                 line=line,
                 row=row,
                 current_quantity=current_quantity,
+                contract_current_quantity=contract.current_quantity(line),
                 period_numbers=contract.period_numbers,
                 pairs=pairs,
                 accumulated=accumulated,
@@ -1136,7 +1141,8 @@ def _plan_amendment_sheet(
                 _number(
                     f"{layout.amended_quantity_column}{row}",
                     "amendment_amended_quantity",
-                    line.amended_quantity,
+                    # Vigente derivado (ADR-0056, decisão 3), como na GERAL.
+                    contract.current_quantity(line),
                     number_format=number_format,
                     item_number=line.item_number,
                 )
