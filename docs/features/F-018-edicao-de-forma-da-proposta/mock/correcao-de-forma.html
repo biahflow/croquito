@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-018 — Corrigir a forma da proposta na tela</title>
+    <style>
+      /* Tokens copiados de apps/web/src/styles.css (identidade "Grafite técnico").
+         Nenhum valor visual é inventado aqui: o que for novo está marcado como NOVO
+         na legenda de proveniência do README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --proposta: #bd7a20;
+        --selecionada: #166a83;
+        --recusa: #a33d32;
+        --amarracao: #7a3fa0;
+        --correcao: #1f5fa8;
+        --correcao-soft: #eaf1fa;
+        --correcao-line: #b7cde8;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        padding: 28px 32px 8px;
+        max-width: 1180px;
+        margin: 0 auto;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0;
+        color: var(--ink-secondary);
+        font-size: 14px;
+        max-width: 74ch;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      .tela {
+        display: grid;
+        grid-template-columns: 1fr 340px;
+        min-height: 340px;
+      }
+      .prancha {
+        position: relative;
+        background: var(--surface-sunken);
+        border-right: 1px solid var(--line);
+        padding: 14px;
+      }
+      .prancha svg {
+        width: 100%;
+        height: 300px;
+        display: block;
+        background:
+          repeating-linear-gradient(
+            0deg,
+            rgba(20, 24, 29, 0.045) 0 1px,
+            transparent 1px 28px
+          ),
+          repeating-linear-gradient(
+            90deg,
+            rgba(20, 24, 29, 0.045) 0 1px,
+            transparent 1px 28px
+          ),
+          #f7f7f4;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+      .painel {
+        padding: 14px 16px;
+        display: grid;
+        align-content: start;
+        gap: 12px;
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 15px;
+      }
+      .painel p,
+      .painel li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      .etapas {
+        display: flex;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--ink-secondary);
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface);
+      }
+      .etapas span {
+        padding: 3px 9px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface-subtle);
+      }
+      .etapas span.ativa {
+        background: var(--accent-soft);
+        border-color: var(--accent-line);
+        color: var(--accent-text);
+        font-weight: 600;
+      }
+      ul.formas {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 6px;
+      }
+      ul.formas li {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px 10px;
+        background: var(--surface);
+        display: grid;
+        gap: 2px;
+      }
+      ul.formas li.selecionada {
+        border-color: var(--selecionada);
+        box-shadow: inset 3px 0 0 var(--selecionada);
+      }
+      ul.formas li.correcao {
+        border-color: var(--correcao-line);
+        background: var(--correcao-soft);
+      }
+      ul.formas li.superada {
+        opacity: 0.62;
+      }
+      .rotulo {
+        font-size: 13px;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .selo {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        border-radius: 999px;
+        padding: 2px 8px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+        width: fit-content;
+      }
+      .selo.maquina {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: #7c5210;
+      }
+      .selo.humana {
+        border-color: var(--correcao-line);
+        background: #ffffff;
+        color: var(--correcao);
+      }
+      .selo.precisao {
+        border-color: #d9d9d2;
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .acoes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.primario {
+        background: var(--accent);
+        border-color: var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      button.correcao {
+        border-color: var(--correcao-line);
+        color: var(--correcao);
+        background: #ffffff;
+      }
+      button[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      label.campo {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      label.campo textarea,
+      label.campo input {
+        font: inherit;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        resize: vertical;
+      }
+      .aviso {
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.recusa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      .aviso.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: #7c5210;
+      }
+      .aviso.correcao {
+        border-color: var(--correcao-line);
+        background: var(--correcao-soft);
+        color: #164272;
+      }
+      .legenda-desenho {
+        position: absolute;
+        left: 22px;
+        bottom: 22px;
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 7px 9px;
+        font-size: 11px;
+        color: var(--ink-secondary);
+        display: grid;
+        gap: 3px;
+      }
+      .legenda-desenho b {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .traco-legenda {
+        display: inline-block;
+        width: 26px;
+        height: 0;
+        border-top-width: 2px;
+        vertical-align: middle;
+        margin-right: 6px;
+      }
+      /* Traços do desenho — os mesmos de .proposal-shape em styles.css */
+      .forma-maquina {
+        fill: none;
+        stroke: var(--proposta);
+        stroke-width: 2;
+        stroke-dasharray: 6 4;
+      }
+      .forma-superada {
+        fill: none;
+        stroke: var(--proposta);
+        stroke-width: 2;
+        stroke-dasharray: 2 5;
+        opacity: 0.45;
+      }
+      .forma-correcao {
+        fill: none;
+        stroke: var(--correcao);
+        stroke-width: 3;
+        stroke-dasharray: none;
+      }
+      .forma-fantasma {
+        fill: none;
+        stroke: var(--proposta);
+        stroke-width: 2;
+        stroke-dasharray: 2 5;
+        opacity: 0.5;
+      }
+      .forma-aceita {
+        fill: none;
+        stroke: var(--accent-text);
+        stroke-width: 2;
+      }
+      .alca {
+        fill: #ffffff;
+        stroke: var(--correcao);
+        stroke-width: 2;
+      }
+      .alca.ativa {
+        fill: var(--correcao);
+      }
+      .alca-nova {
+        fill: #ffffff;
+        stroke: var(--correcao);
+        stroke-width: 2;
+        stroke-dasharray: 3 2;
+      }
+      .cota-texto {
+        font-size: 11px;
+        fill: var(--ink-secondary);
+        font-family: inherit;
+      }
+      .marca-passo {
+        font-size: 11px;
+        fill: var(--correcao);
+        font-family: inherit;
+      }
+      .barra-inferior {
+        grid-column: 1 / -1;
+        border-top: 1px solid var(--line);
+        padding: 10px 16px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      .reservado {
+        border: 1px dashed var(--muted);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+        background: repeating-linear-gradient(
+          135deg,
+          rgba(154, 160, 168, 0.08) 0 8px,
+          transparent 8px 16px
+        );
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-018 — Corrigir a forma da proposta na tela, sem rerodar o provider</h1>
+      <p>
+        Design Approval Package, revisão 1. Rendição autocontida: abre no navegador sem build,
+        sem rede e sem servidor. O caso desenhado é o real que originou a feature — o muro do
+        Guaxindiba V3 com recuo 4,80 → 3,30, que a extração paga entregou como duas
+        <code>line</code> retas. Governado pelo
+        <b>ADR-0050</b>: a correção é proposta derivada, nunca edição da observação.
+      </p>
+    </header>
+    <main>
+      <!-- 01 -->
+      <section class="estado" id="estado-01">
+        <h2>
+          01 · Decisões — o ato novo ao lado de aceitar e rejeitar
+          <small
+            >A correção vive na etapa <b>Decisões</b>, junto das propostas. Não é etapa nova:
+            é decisão sobre proposta, e é lá que a proposta é decidida.</small
+          >
+        </h2>
+        <div class="etapas">
+          <span class="ativa">Decisões</span><span>Traçado</span><span>Aprovação</span
+          ><span>Exportação</span>
+        </div>
+        <div class="tela">
+          <div class="prancha">
+            <svg viewBox="0 0 520 300" role="img" aria-label="Duas linhas retas propostas pela extração, no lugar de um muro com recuo">
+              <line class="forma-maquina" x1="60" y1="90" x2="270" y2="90" />
+              <line class="forma-maquina" x1="300" y1="196" x2="470" y2="196" />
+              <text class="cota-texto" x="60" y="78">① linha · extração paga</text>
+              <text class="cota-texto" x="300" y="184">② linha · extração paga</text>
+              <text class="cota-texto" x="272" y="150">recuo que ninguém desenhou</text>
+            </svg>
+            <div class="legenda-desenho">
+              <div><span class="traco-legenda" style="border-top: 2px dashed #bd7a20"></span><b>observação da máquina</b> · traço tracejado</div>
+              <div>duas formas, nenhuma com o recuo</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Forma ① · linha</h3>
+            <span class="selo maquina">origem: extração paga · geometry-extraction@2.0.1</span>
+            <span class="selo precisao">não resolvida · não exporta</span>
+            <p>
+              Qualidade declarada pelo detector: <b>0,82</b>. A decisão é sua: aceitar, rejeitar
+              ou corrigir a forma.
+            </p>
+            <div class="acoes">
+              <button class="primario">Aceitar</button>
+              <button>Rejeitar</button>
+              <button class="correcao">Corrigir forma</button>
+            </div>
+            <p>
+              Corrigir <b>não</b> altera esta proposta: cria uma forma nova, de origem humana, ao
+              lado desta, que continua legível.
+            </p>
+          </div>
+          <div class="barra-inferior">
+            <span>revisão de propostas v7</span><span>cena v4</span>
+            <span>2 formas sem decisão</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 02 -->
+      <section class="estado" id="estado-02">
+        <h2>
+          02 · Mover vértice
+          <small
+            >A observação original fica no desenho, em traço fantasma. O que se arrasta é a
+            cópia de trabalho — nada foi gravado ainda.</small
+          >
+        </h2>
+        <div class="tela">
+          <div class="prancha">
+            <svg viewBox="0 0 520 300" role="img" aria-label="Vértice sendo arrastado, com a forma original em traço fantasma">
+              <line class="forma-fantasma" x1="60" y1="90" x2="270" y2="90" />
+              <polyline class="forma-correcao" points="60,90 268,116" />
+              <circle class="alca" cx="60" cy="90" r="6" />
+              <circle class="alca ativa" cx="268" cy="116" r="7" />
+              <text class="marca-passo" x="280" y="120">arrastando · vértice 2 de 2</text>
+              <text class="cota-texto" x="60" y="122">traço fantasma = a proposta original, intacta</text>
+            </svg>
+            <div class="legenda-desenho">
+              <div><span class="traco-legenda" style="border-top: 2px dotted #bd7a20"></span>original preservada</div>
+              <div><span class="traco-legenda" style="border-top: 3px solid #1f5fa8"></span><b>correção em rascunho</b></div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Corrigindo a forma ①</h3>
+            <span class="selo humana">origem: correção humana · rascunho</span>
+            <span class="selo precisao">nasce não resolvida · não exporta</span>
+            <p>1 vértice movido · 12 px do ponto observado.</p>
+            <div class="aviso correcao">
+              Mover vértice não muda precisão. Uma forma desenhada à mão chega no máximo a
+              <b>aproximada</b>, e só por calibração — nunca a exata.
+            </div>
+            <div class="acoes">
+              <button>Desfazer</button>
+              <button>Cancelar</button>
+              <button class="primario" disabled>Gravar correção</button>
+            </div>
+            <p>Gravar exige justificativa — ver estado 05.</p>
+          </div>
+          <div class="barra-inferior">
+            <span>revisão de propostas v7</span><span>cena v4</span>
+            <span>rascunho local; o servidor ainda não sabe dele</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 03 -->
+      <section class="estado" id="estado-03">
+        <h2>
+          03 · Inserir e remover vértice
+          <small>Clique no meio do segmento insere; a alça selecionada pode ser removida.</small>
+        </h2>
+        <div class="tela">
+          <div class="prancha">
+            <svg viewBox="0 0 520 300" role="img" aria-label="Ponto novo inserido no meio do segmento">
+              <line class="forma-fantasma" x1="60" y1="90" x2="270" y2="90" />
+              <polyline class="forma-correcao" points="60,90 165,116 268,116" />
+              <circle class="alca" cx="60" cy="90" r="6" />
+              <circle class="alca-nova" cx="165" cy="116" r="7" />
+              <circle class="alca" cx="268" cy="116" r="6" />
+              <text class="marca-passo" x="120" y="140">vértice inserido</text>
+            </svg>
+            <div class="legenda-desenho">
+              <div><b>3 vértices</b> · o novo aparece com contorno tracejado até ser movido</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Vértice 2 de 3</h3>
+            <span class="selo humana">origem: correção humana · rascunho</span>
+            <div class="acoes">
+              <button>Remover vértice</button>
+              <button>Desfazer</button>
+            </div>
+            <div class="aviso">
+              Uma linha corrigida vira <b>polilinha</b> a partir de três vértices. O tipo muda
+              com a forma; a origem, não.
+            </div>
+            <div class="aviso atencao">
+              Remover até sobrar menos de dois vértices não é permitido: forma sem segmento não
+              é forma.
+            </div>
+          </div>
+          <div class="barra-inferior">
+            <span>revisão de propostas v7</span><span>cena v4</span>
+            <span>3 vértices · 2 segmentos</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 04 -->
+      <section class="estado" id="estado-04">
+        <h2>
+          04 · Unir fragmentos — o caso que originou a feature
+          <small
+            >Duas <code>line</code> viram UMA polilinha com o recuo. É a operação que o
+            Guaxindiba V3 pedia.</small
+          >
+        </h2>
+        <div class="tela">
+          <div class="prancha">
+            <svg viewBox="0 0 520 300" role="img" aria-label="Dois fragmentos unidos em uma polilinha com o recuo">
+              <line class="forma-fantasma" x1="60" y1="90" x2="270" y2="90" />
+              <line class="forma-fantasma" x1="300" y1="196" x2="470" y2="196" />
+              <polyline class="forma-correcao" points="60,84 286,84 286,204 470,204" />
+              <circle class="alca" cx="60" cy="84" r="6" />
+              <circle class="alca ativa" cx="286" cy="84" r="6" />
+              <circle class="alca ativa" cx="286" cy="204" r="6" />
+              <circle class="alca" cx="470" cy="204" r="6" />
+              <text class="marca-passo" x="300" y="150">recuo declarado</text>
+              <text class="cota-texto" x="60" y="122">① e ② seguem desenhadas, em traço fantasma, onde a máquina as viu</text>
+            </svg>
+            <div class="legenda-desenho">
+              <div><b>1 forma</b> derivada de 2 fragmentos</div>
+              <div>os fragmentos não são apagados — ADR-0050, decisão 4</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>União de ① e ②</h3>
+            <span class="selo humana">origem: correção humana · deriva de 2 formas</span>
+            <span class="selo precisao">não resolvida · não exporta</span>
+            <p>4 vértices · polilinha aberta.</p>
+            <ul class="formas">
+              <li class="superada">
+                <span class="rotulo">① linha · extração paga</span>
+                <p>entra na derivação</p>
+              </li>
+              <li class="superada">
+                <span class="rotulo">② linha · extração paga</span>
+                <p>entra na derivação</p>
+              </li>
+            </ul>
+            <div class="acoes">
+              <button>Tirar ② da união</button>
+              <button class="primario">Continuar</button>
+            </div>
+          </div>
+          <div class="barra-inferior">
+            <span>revisão de propostas v7</span><span>cena v4</span>
+            <span>derivação: 2 formas citadas</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 05 -->
+      <section class="estado" id="estado-05">
+        <h2>
+          05 · Justificativa obrigatória
+          <small>Corrigir geometria é decisão de domínio, como aceitar e rejeitar já são.</small>
+        </h2>
+        <div class="tela">
+          <div class="prancha">
+            <svg viewBox="0 0 520 300" role="img" aria-label="Forma corrigida pronta para gravar">
+              <line class="forma-fantasma" x1="60" y1="90" x2="270" y2="90" />
+              <line class="forma-fantasma" x1="300" y1="196" x2="470" y2="196" />
+              <polyline class="forma-correcao" points="60,84 286,84 286,204 470,204" />
+            </svg>
+            <div class="legenda-desenho">
+              <div>pronta para gravar · nada foi enviado ainda</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Gravar a correção</h3>
+            <label class="campo">
+              Justificativa (obrigatória)
+              <textarea rows="3" placeholder="Por que esta forma substitui as observadas">Muro com recuo 4,80 → 3,30; a extração entregou dois trechos retos e perdeu o degrau.</textarea>
+            </label>
+            <div class="aviso correcao">
+              A correção será gravada declarando <b>autor, papel e instante</b>, e as duas formas
+              de que derivou. A observação original permanece.
+            </div>
+            <div class="acoes">
+              <button>Cancelar</button>
+              <button class="primario">Gravar correção</button>
+            </div>
+            <div class="reservado">
+              <b>Reservado, não entregue nesta feature:</b> aceitar a correção em seguida, no
+              mesmo ato. Continua sendo o fluxo de aceite existente, com calibração — vira real
+              somente se uma decisão futura o pedir.
+            </div>
+          </div>
+          <div class="barra-inferior">
+            <span>revisão de propostas v7</span><span>cena v4</span>
+            <span>justificativa: 96 de 500 caracteres</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 06 -->
+      <section class="estado" id="estado-06">
+        <h2>
+          06 · Gravada — a correção ao lado da observação
+          <small
+            >A lista recolhe os fragmentos superados; o dado permanece e pode ser
+            reaberto.</small
+          >
+        </h2>
+        <div class="tela">
+          <div class="prancha">
+            <svg viewBox="0 0 520 300" role="img" aria-label="Correção gravada, com os fragmentos superados recolhidos">
+              <line class="forma-superada" x1="60" y1="90" x2="270" y2="90" />
+              <line class="forma-superada" x1="300" y1="196" x2="470" y2="196" />
+              <polyline class="forma-correcao" points="60,84 286,84 286,204 470,204" />
+              <text class="cota-texto" x="300" y="56">③ correção humana · deriva de ① e ②</text>
+            </svg>
+            <div class="legenda-desenho">
+              <div><span class="traco-legenda" style="border-top: 3px solid #1f5fa8"></span><b>correção humana</b> · traço contínuo</div>
+              <div><span class="traco-legenda" style="border-top: 2px dotted #bd7a20"></span>superada, recolhida na lista</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Formas da revisão</h3>
+            <ul class="formas">
+              <li class="correcao selecionada">
+                <span class="rotulo">③ polilinha · correção humana</span>
+                <span class="selo humana">Daniel Campos · revisor · 27/08 09:14</span>
+                <span class="selo precisao">não resolvida · não exporta</span>
+                <p>deriva de ① e ② · sem pontuação de qualidade</p>
+              </li>
+              <li class="superada">
+                <span class="rotulo">2 formas superadas</span>
+                <p>① e ② continuam gravadas · <u>mostrar</u></p>
+              </li>
+            </ul>
+            <div class="aviso">
+              “Superada” é derivado da derivação, não um estado gravado: uma forma citada por
+              alguma correção é superada por definição.
+            </div>
+          </div>
+          <div class="barra-inferior">
+            <span>revisão de propostas v8</span><span>cena v4</span>
+            <span>1 correção · 2 observações preservadas</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 07 -->
+      <section class="estado" id="estado-07">
+        <h2>
+          07 · Conflito de versão
+          <small>Outra pessoa gravou antes. O rascunho não se perde.</small>
+        </h2>
+        <div class="tela">
+          <div class="prancha">
+            <svg viewBox="0 0 520 300" role="img" aria-label="Correção recusada por conflito de versão">
+              <line class="forma-fantasma" x1="60" y1="90" x2="270" y2="90" />
+              <line class="forma-fantasma" x1="300" y1="196" x2="470" y2="196" />
+              <polyline class="forma-correcao" points="60,84 286,84 286,204 470,204" />
+            </svg>
+            <div class="legenda-desenho">
+              <div>rascunho preservado na tela</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Correção não gravada</h3>
+            <div class="aviso recusa">
+              Existe uma revisão de propostas mais recente que a sua (v7 → v9). Nada foi gravado.
+              Recarregue o estado atual e confira se a correção ainda é a que você quer.
+            </div>
+            <div class="acoes">
+              <button class="primario">Recarregar a revisão</button>
+              <button>Manter rascunho</button>
+            </div>
+            <p>
+              É o mesmo mecanismo das demais mutações da revisão:
+              <code>base_review_version</code> e <code>base_scene_version</code>.
+            </p>
+          </div>
+          <div class="barra-inferior">
+            <span>sua base: v7</span><span>servidor: v9</span>
+            <span>rascunho local intacto</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 08 -->
+      <section class="estado" id="estado-08">
+        <h2>
+          08 · Recusa: correção sem forma de origem
+          <small>Sem observação por trás não é correção — é desenho, e desenho é CAD.</small>
+        </h2>
+        <div class="tela">
+          <div class="prancha">
+            <svg viewBox="0 0 520 300" role="img" aria-label="Recusa de correção sem derivação">
+              <polyline class="forma-correcao" points="60,84 286,84 286,204 470,204" />
+              <text class="cota-texto" x="60" y="250">nenhuma forma citada na derivação</text>
+            </svg>
+            <div class="legenda-desenho">
+              <div>a tela não permite chegar até aqui pelo caminho normal</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Correção recusada</h3>
+            <div class="aviso recusa">
+              Uma correção precisa citar ao menos uma forma observada de origem. Recoloque ① ou ②
+              na derivação, ou cancele.
+            </div>
+            <div class="acoes">
+              <button>Recolocar ①</button>
+              <button>Cancelar</button>
+            </div>
+            <p>ADR-0050, decisão 3: <code>derived_from</code> obrigatório e não vazio.</p>
+          </div>
+          <div class="barra-inferior">
+            <span>revisão de propostas v7</span><span>cena v4</span>
+            <span>derivação vazia</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 09 -->
+      <section class="estado" id="estado-09">
+        <h2>
+          09 · O que não é corrigível
+          <small>Proposta já decidida e conta sem papel de revisão.</small>
+        </h2>
+        <div class="tela">
+          <div class="prancha">
+            <svg viewBox="0 0 520 300" role="img" aria-label="Proposta já aceita, sem ato de correção">
+              <line class="forma-aceita" x1="60" y1="120" x2="440" y2="120" />
+              <text class="cota-texto" x="60" y="108">④ aceita · virou entidade da cena</text>
+            </svg>
+            <div class="legenda-desenho">
+              <div><span class="traco-legenda" style="border-top: 2px solid #00744a"></span>aceita, já na cena</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Forma ④ · aceita</h3>
+            <div class="aviso atencao">
+              Decisão registrada é imutável: esta forma já entrou na cena e não é corrigível por
+              aqui. Corrigir geometria já resolvida é outro portão, fora desta feature.
+            </div>
+            <div class="acoes">
+              <button disabled>Corrigir forma</button>
+            </div>
+            <div class="aviso">
+              <b>Conta sem papel de revisão:</b> os três atos aparecem desabilitados, com o
+              motivo escrito — “sua conta não tem papel de revisão neste tenant”.
+            </div>
+          </div>
+          <div class="barra-inferior">
+            <span>revisão de propostas v8</span><span>cena v5</span>
+            <span>1 forma decidida</span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

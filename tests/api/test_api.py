@@ -1041,6 +1041,182 @@ def _seed_review_session(
     return job_id
 
 
+def _corrigir_forma(
+    client: Any,
+    job_id: Any,
+    *,
+    key: str,
+    base_review_version: int = 1,
+    base_scene_version: int = 1,
+    **corpo: Any,
+) -> Any:
+    payload: dict[str, Any] = {
+        "base_review_version": base_review_version,
+        "base_scene_version": base_scene_version,
+        "derived_from": ["vp_1111111111111111"],
+        "vertices": [{"x": 0, "y": 0}, {"x": 100, "y": 0}, {"x": 100, "y": 40}],
+        "justification": "Muro com recuo; a extração entregou dois trechos retos.",
+    }
+    payload.update(corpo)
+    return client.post(
+        f"/v1/jobs/{job_id}/review/proposals/corrections",
+        headers={**_headers("tenant-a"), "Idempotency-Key": key},
+        json=payload,
+    )
+
+
+def test_shape_correction_creates_new_proposal_and_preserves_the_observation(
+    tmp_path: Path,
+) -> None:
+    """O caso do Guaxindiba V3: duas `line` viram UMA forma com o recuo (F-018).
+
+    A observação da máquina é o que a feature existe para preservar — depois da correção,
+    as duas propostas originais continuam legíveis, com o `algorithm` e a pontuação delas.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+
+    response = _corrigir_forma(
+        client,
+        job_id,
+        key="correcao-1",
+        derived_from=["vp_1111111111111111", "vp_2222222222222222"],
+    )
+
+    assert response.status_code == 200, response.text
+    corpo = response.json()
+    assert corpo["version"] == 2
+    # A observação NÃO foi tocada: mesmas propostas, mesma proveniência, mesma pontuação.
+    assert corpo["proposals"]["detector_version"] == "opencv-proposals-v1"
+    originais = {item["id"]: item for item in corpo["proposals"]["proposals"]}
+    assert originais["vp_1111111111111111"]["quality_score"] == 0.9
+    assert originais["vp_1111111111111111"]["derived_from"] == []
+
+    # A correção vive num conjunto de proveniência PRÓPRIA (ADR-0050, decisão 1).
+    correcoes = corpo["shape_corrections"]
+    assert correcoes["detector_version"] == "human-correction-v1"
+    assert len(correcoes["proposals"]) == 1
+    correcao = correcoes["proposals"][0]
+    assert correcao["derived_from"] == ["vp_1111111111111111", "vp_2222222222222222"]
+    assert correcao["geometry"]["type"] == "polyline"
+    assert len(correcao["geometry"]["points"]) == 3
+
+
+def test_shape_correction_never_promotes_precision(tmp_path: Path) -> None:
+    """Negativo explícito: vértice arrastado com capricho não vira dimensão exata."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+
+    correcao = _corrigir_forma(client, job_id, key="correcao-precisao").json()["shape_corrections"][
+        "proposals"
+    ][0]
+
+    assert correcao["precision"] == "unresolved"
+    assert correcao["export"] is False
+    # Sem pontuação, e não `1.0`: não houve medição nenhuma para pontuar.
+    assert correcao["quality_score"] is None
+
+
+def test_shape_correction_requires_a_form_of_origin(tmp_path: Path) -> None:
+    """Sem forma de origem não é correção, é desenho — e desenho é CAD, não revisão."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+
+    vazio = _corrigir_forma(client, job_id, key="correcao-vazia", derived_from=[])
+    fora = _corrigir_forma(
+        client, job_id, key="correcao-fora", derived_from=["vp_9999999999999999"]
+    )
+
+    assert vazio.status_code == 422
+    assert fora.status_code == 422
+    assert fora.json()["detail"]["code"] == "DOMAIN_VALIDATION_FAILED"
+
+
+def test_shape_correction_refuses_a_proposal_already_decided(tmp_path: Path) -> None:
+    """Decisão registrada é imutável, e a fronteira repete a regra que a tela já aplica."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    rejeitada = client.post(
+        f"/v1/jobs/{job_id}/review/proposals",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "rejeita-para-corrigir"},
+        json={
+            "base_review_version": 1,
+            "base_scene_version": 1,
+            "proposal_id": "vp_1111111111111111",
+            "action": "reject",
+            "justification": "Linha que não corresponde ao muro.",
+        },
+    )
+    assert rejeitada.status_code == 200, rejeitada.text
+
+    response = _corrigir_forma(client, job_id, key="correcao-decidida", base_review_version=2)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "PROPOSAL_ALREADY_DECIDED"
+
+
+def test_shape_correction_respects_optimistic_concurrency(tmp_path: Path) -> None:
+    """Duas pessoas corrigindo a mesma forma recusam pela versão, não pelo último a salvar."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    primeira = _corrigir_forma(client, job_id, key="correcao-a")
+    assert primeira.status_code == 200
+
+    atrasada = _corrigir_forma(client, job_id, key="correcao-b", base_review_version=1)
+
+    assert atrasada.status_code == 409
+    assert atrasada.json()["detail"]["code"] == "REVISION_CONFLICT"
+
+
+def test_shape_corrections_accumulate_and_survive_the_next_revision(tmp_path: Path) -> None:
+    """Correção é registro histórico: ela viaja para a revisão seguinte, verbatim."""
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+    primeira = _corrigir_forma(client, job_id, key="acumula-1").json()
+    segunda = _corrigir_forma(
+        client,
+        job_id,
+        key="acumula-2",
+        base_review_version=primeira["version"],
+        derived_from=["vp_2222222222222222"],
+    ).json()
+
+    assert len(segunda["shape_corrections"]["proposals"]) == 2
+    # Ids distintos mesmo com o mesmo job: a segunda correção não sobrescreve a primeira.
+    ids = {item["id"] for item in segunda["shape_corrections"]["proposals"]}
+    assert len(ids) == 2
+
+    # Um ato QUALQUER da revisão (aqui, rejeitar uma proposta) cria revisão nova; as
+    # correções precisam continuar lá, senão trabalho humano some em silêncio.
+    depois = client.post(
+        f"/v1/jobs/{job_id}/review/proposals",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "rejeita-depois"},
+        json={
+            "base_review_version": segunda["version"],
+            "base_scene_version": 1,
+            "proposal_id": "vp_3333333333333333",
+            "action": "reject",
+            "justification": "Círculo sem correspondência.",
+        },
+    )
+
+    assert depois.status_code == 200, depois.text
+    assert len(depois.json()["shape_corrections"]["proposals"]) == 2
+
+
+def test_shape_correction_is_idempotent(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client)
+
+    primeira = _corrigir_forma(client, job_id, key="idempotente")
+    repetida = _corrigir_forma(client, job_id, key="idempotente")
+
+    assert primeira.status_code == 200
+    assert repetida.status_code == 200
+    assert repetida.json()["review_id"] == primeira.json()["review_id"]
+    assert len(repetida.json()["shape_corrections"]["proposals"]) == 1
+
+
 def test_professional_calibrates_and_accepts_approximate_proposal(tmp_path: Path) -> None:
     client = _client(tmp_path)
     job_id = _seed_review_session(client)

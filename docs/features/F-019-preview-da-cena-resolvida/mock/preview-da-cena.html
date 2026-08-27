@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-019 — Ver a cena resolvida antes de exportar</title>
+    <style>
+      /* Tokens copiados de apps/web/src/styles.css (identidade "Grafite técnico").
+         O que é novo está marcado como NOVO na tabela de proveniência do README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --geometria: #14181d;
+        --disputa: #a33d32;
+        --aplicado: #166a83;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        padding: 28px 32px 8px;
+        max-width: 1180px;
+        margin: 0 auto;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0;
+        color: var(--ink-secondary);
+        font-size: 14px;
+        max-width: 74ch;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      .etapas {
+        display: flex;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--ink-secondary);
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface);
+      }
+      .etapas span {
+        padding: 3px 9px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface-subtle);
+      }
+      .etapas span.ativa {
+        background: var(--accent-soft);
+        border-color: var(--accent-line);
+        color: var(--accent-text);
+        font-weight: 600;
+      }
+      .tela {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        min-height: 360px;
+      }
+      .desenho {
+        position: relative;
+        padding: 14px;
+        background: var(--surface-sunken);
+        border-right: 1px solid var(--line);
+      }
+      .desenho svg.cena {
+        width: 100%;
+        height: 320px;
+        display: block;
+        background: #fdfdfb;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+      .painel {
+        padding: 14px 16px;
+        display: grid;
+        align-content: start;
+        gap: 12px;
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 15px;
+      }
+      .painel p,
+      .painel li {
+        margin: 0;
+        font-size: 13px;
+        color: var(--ink-secondary);
+      }
+      .barra-inferior {
+        grid-column: 1 / -1;
+        border-top: 1px solid var(--line);
+        padding: 10px 16px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      .controles {
+        position: absolute;
+        right: 24px;
+        top: 24px;
+        display: grid;
+        gap: 4px;
+        background: rgba(255, 255, 255, 0.95);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 5px;
+      }
+      .controles button {
+        font: inherit;
+        font-size: 13px;
+        min-width: 30px;
+        padding: 3px 7px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      /* No fluxo, logo abaixo do desenho: absoluta, ela se soltava do SVG quando o painel
+         ao lado crescia, e legenda longe do desenho não é legenda. */
+      .legenda {
+        margin-top: 10px;
+        background: rgba(255, 255, 255, 0.95);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 11px;
+        color: var(--ink-secondary);
+        display: grid;
+        gap: 4px;
+      }
+      .legenda b {
+        color: var(--ink);
+      }
+      .amostra {
+        display: inline-block;
+        width: 30px;
+        height: 0;
+        vertical-align: middle;
+        margin-right: 7px;
+      }
+      .amostra.exata {
+        border-top: 3px solid #14181d;
+      }
+      .amostra.derivada {
+        border-top: 1.5px solid #14181d;
+      }
+      .amostra.aproximada {
+        border-top: 2px dashed #14181d;
+      }
+      .amostra.naoresolvida {
+        border-top: 2px dotted #9aa0a8;
+      }
+      .amostra.aplicado {
+        border-top: 2px solid #166a83;
+      }
+      .amostra.disputa {
+        border-top: 3px double #a33d32;
+      }
+      /* Traço por precisão — a distinção NÃO depende de cor */
+      .e-exact {
+        fill: none;
+        stroke: var(--geometria);
+        stroke-width: 3;
+        vector-effect: non-scaling-stroke;
+      }
+      .e-derived {
+        fill: none;
+        stroke: var(--geometria);
+        stroke-width: 1.5;
+        vector-effect: non-scaling-stroke;
+      }
+      .e-approximate {
+        fill: none;
+        stroke: var(--geometria);
+        stroke-width: 2;
+        stroke-dasharray: 7 5;
+        vector-effect: non-scaling-stroke;
+      }
+      .e-unresolved {
+        fill: none;
+        stroke: var(--muted);
+        stroke-width: 2;
+        stroke-dasharray: 1 5;
+        stroke-linecap: round;
+        vector-effect: non-scaling-stroke;
+      }
+      .rotulo-entidade {
+        font-size: 9px;
+        fill: var(--ink-secondary);
+        font-family: inherit;
+      }
+      .cota-aplicada {
+        stroke: var(--aplicado);
+        stroke-width: 2;
+        fill: none;
+        vector-effect: non-scaling-stroke;
+      }
+      .cota-aplicada-texto {
+        font-size: 9px;
+        fill: var(--aplicado);
+        font-family: inherit;
+      }
+      .faixa-disputa {
+        fill: rgba(163, 61, 50, 0.09);
+        stroke: var(--disputa);
+        stroke-width: 1.5;
+        stroke-dasharray: 4 3;
+      }
+      .disputa-texto {
+        font-size: 9px;
+        fill: var(--disputa);
+        font-family: inherit;
+      }
+      .escala {
+        stroke: var(--ink);
+        stroke-width: 2;
+        fill: none;
+      }
+      .escala-texto {
+        font-size: 9px;
+        fill: var(--ink);
+        font-family: inherit;
+      }
+      ul.entidades {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 5px;
+      }
+      ul.entidades li {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 7px 9px;
+        display: grid;
+        gap: 2px;
+        background: var(--surface);
+      }
+      ul.entidades li.selecionada {
+        border-color: var(--aplicado);
+        box-shadow: inset 3px 0 0 var(--aplicado);
+      }
+      .rotulo {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        font-size: 11px;
+        border-radius: 999px;
+        padding: 2px 8px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+        width: fit-content;
+      }
+      .selo.disputa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      .aviso {
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: #7c5210;
+      }
+      .aviso.recusa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      .vazio {
+        display: grid;
+        place-content: center;
+        gap: 8px;
+        height: 320px;
+        border: 1px dashed var(--muted);
+        border-radius: 6px;
+        background: #fdfdfb;
+        text-align: center;
+        color: var(--ink-secondary);
+        font-size: 13px;
+        padding: 20px;
+      }
+      button[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      button.primario {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border-radius: 6px;
+        background: var(--accent);
+        border: 1px solid var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .reservado {
+        border: 1px dashed var(--muted);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+        background: repeating-linear-gradient(
+          135deg,
+          rgba(154, 160, 168, 0.08) 0 8px,
+          transparent 8px 16px
+        );
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-019 — Ver a cena resolvida antes de exportar</h1>
+      <p>
+        Design Approval Package, revisão 1. Rendição autocontida: abre no navegador sem build,
+        sem rede e sem servidor. O desenho é montado no cliente a partir do
+        <code>SceneRevision</code> que <code>GET /v1/jobs/{job_id}/scene</code> já devolve —
+        nenhuma rota nova, nenhum render no servidor.
+      </p>
+    </header>
+    <main>
+      <!-- 01 -->
+      <section class="estado" id="estado-01">
+        <h2>
+          01 · Aprovação — a cena resolvida, com a precisão de cada entidade
+          <small
+            >O preview vive na etapa <b>Aprovação</b>: é ali que a decisão que ele informa
+            acontece.</small
+          >
+        </h2>
+        <div class="etapas">
+          <span>Decisões</span><span>Traçado</span><span class="ativa">Aprovação</span
+          ><span>Exportação</span>
+        </div>
+        <div class="tela">
+          <div class="desenho">
+            <svg class="cena" viewBox="0 0 560 320" role="img" aria-label="Cena resolvida: contorno exato, muro derivado, patamar aproximado e canteiro não resolvido">
+              <!-- contorno externo · exact -->
+              <polyline class="e-exact" points="70,250 470,250 470,80 70,80 70,250" />
+              <text class="rotulo-entidade" x="74" y="266">CONTORNO · exata</text>
+              <!-- muro interno · derived -->
+              <polyline class="e-derived" points="110,215 300,215 300,140 430,140" />
+              <text class="rotulo-entidade" x="114" y="209">MURO · derivada</text>
+              <!-- patamar · approximate -->
+              <polyline class="e-approximate" points="120,110 220,110 220,160 120,160 120,110" />
+              <text class="rotulo-entidade" x="124" y="104">PATAMAR · aproximada</text>
+              <!-- canteiro · unresolved -->
+              <circle class="e-unresolved" cx="390" cy="205" r="28" />
+              <text class="rotulo-entidade" x="352" y="168">CANTEIRO · não resolvida</text>
+              <!-- barra de escala -->
+              <g>
+                <line class="escala" x1="70" y1="296" x2="170" y2="296" />
+                <line class="escala" x1="70" y1="291" x2="70" y2="301" />
+                <line class="escala" x1="120" y1="293" x2="120" y2="299" />
+                <line class="escala" x1="170" y1="291" x2="170" y2="301" />
+                <text class="escala-texto" x="70" y="312">0</text>
+                <text class="escala-texto" x="114" y="312">2,5 m</text>
+                <text class="escala-texto" x="160" y="312">5 m</text>
+              </g>
+              <!-- orientação -->
+              <g>
+                <line class="escala" x1="520" y1="296" x2="520" y2="266" />
+                <polyline class="escala" points="516,272 520,264 524,272" />
+                <text class="escala-texto" x="512" y="312">Y+</text>
+              </g>
+            </svg>
+            <div class="legenda">
+              <div><span class="amostra exata"></span><b>exata</b> · traço grosso contínuo</div>
+              <div><span class="amostra derivada"></span><b>derivada</b> · traço fino contínuo</div>
+              <div><span class="amostra aproximada"></span><b>aproximada</b> · tracejado</div>
+              <div><span class="amostra naoresolvida"></span><b>não resolvida</b> · pontilhado</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Cena v5 · 14 entidades</h3>
+            <p>Traçado resolvido em 27/08 09:41 · sem blockers críticos.</p>
+            <ul class="entidades">
+              <li><span class="rotulo">6 exatas</span><p>de cota confirmada</p></li>
+              <li><span class="rotulo">4 derivadas</span><p>fecham por construção</p></li>
+              <li><span class="rotulo">3 aproximadas</span><p>de calibração; exigem aceite</p></li>
+              <li><span class="rotulo">1 não resolvida</span><p>bloqueia a exportação</p></li>
+            </ul>
+            <div class="aviso atencao">
+              Uma entidade não resolvida impede a exportação. O portão continua sendo
+              <code>ensure_exportable()</code> — este desenho é leitura, não laudo.
+            </div>
+            <button class="primario" disabled>Aprovar a cena</button>
+          </div>
+          <div class="barra-inferior">
+            <span>escala do desenho: 1 px ≈ 0,05 m</span><span>Y para cima, como a cena</span>
+            <span>somente leitura</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 02 -->
+      <section class="estado" id="estado-02">
+        <h2>
+          02 · Os vãos do consultor, sobre a geometria
+          <small
+            >`applied_spans` ancoram em metros e viram cota desenhada. `contested_spans` não
+            declaram posição: aparecem como faixa do eixo, e o desenho diz isso.</small
+          >
+        </h2>
+        <div class="tela">
+          <div class="desenho">
+            <svg class="cena" viewBox="0 0 560 320" role="img" aria-label="Vãos aplicados desenhados como cotas e vão em disputa como faixa do eixo">
+              <polyline class="e-exact" points="70,250 470,250 470,80 70,80 70,250" />
+              <polyline class="e-derived" points="110,215 300,215 300,140 430,140" />
+              <!-- vão aplicado no eixo X -->
+              <g>
+                <line class="cota-aplicada" x1="110" y1="272" x2="300" y2="272" />
+                <line class="cota-aplicada" x1="110" y1="266" x2="110" y2="278" />
+                <line class="cota-aplicada" x1="300" y1="266" x2="300" y2="278" />
+                <text class="cota-aplicada-texto" x="176" y="264">aplicada · 9,50 m</text>
+              </g>
+              <!-- vão aplicado no eixo Y -->
+              <g>
+                <line class="cota-aplicada" x1="492" y1="140" x2="492" y2="250" />
+                <line class="cota-aplicada" x1="486" y1="140" x2="498" y2="140" />
+                <line class="cota-aplicada" x1="486" y1="250" x2="498" y2="250" />
+                <text class="cota-aplicada-texto" x="500" y="198">5,50 m</text>
+              </g>
+              <!-- vão em disputa: faixa do eixo X -->
+              <rect class="faixa-disputa" x="300" y="42" width="170" height="14" />
+              <text class="disputa-texto" x="300" y="36">
+                eixo X em disputa · 4,80 m × 3,30 m (2 leituras)
+              </text>
+              <text class="disputa-texto" x="300" y="68">
+                posição no eixo não é declarada pelo servidor
+              </text>
+            </svg>
+            <div class="legenda">
+              <div><span class="amostra aplicado"></span><b>vão aplicado</b> · cota desenhada onde ancorou</div>
+              <div><span class="amostra disputa"></span><b>vão em disputa</b> · faixa do eixo, sem posição</div>
+              <div>diagnóstico, não bloqueio — quem decide é o resíduo</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Consultor do traçado</h3>
+            <ul class="entidades">
+              <li class="selecionada">
+                <span class="rotulo">2 vãos aplicados</span>
+                <p>9,50 m no eixo X · 5,50 m no eixo Y</p>
+              </li>
+              <li>
+                <span class="rotulo">1 vão em disputa</span>
+                <span class="selo disputa">leituras rd_4f… e rd_91…</span>
+                <p>4,80 m × 3,30 m no mesmo eixo</p>
+              </li>
+            </ul>
+            <div class="aviso">
+              Disputa não muda <code>solve_status</code> e não é blocker. Ela é mostrada porque
+              é exatamente o que a lista ao lado nunca deixou ver: onde, no desenho, as duas
+              cotas se contradizem.
+            </div>
+          </div>
+          <div class="barra-inferior">
+            <span>mesmo dado da F-025</span><span>nenhuma chamada nova ao servidor</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 03 -->
+      <section class="estado" id="estado-03">
+        <h2>
+          03 · Sem traçado resolvido — estado honesto, não erro
+          <small>Sem geometria métrica não há o que desenhar, e o preview diz isso.</small>
+        </h2>
+        <div class="tela">
+          <div class="desenho">
+            <div class="vazio">
+              <b>Ainda não há cena resolvida para ver.</b>
+              <span
+                >O traçado é a etapa anterior. Quando ele resolver, a geometria aparece aqui,
+                antes da aprovação.</span
+              >
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Nada a desenhar</h3>
+            <p>Job sem traçado: a etapa Aprovação continua bloqueada, como já era.</p>
+            <div class="aviso">
+              Nenhuma chamada é feita: sem cena, não há <code>GET .../scene</code> a pedir.
+            </div>
+          </div>
+          <div class="barra-inferior">
+            <span>cena: nenhuma</span><span>comportamento idêntico ao de hoje</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 04 -->
+      <section class="estado" id="estado-04">
+        <h2>
+          04 · Cena resolvida com conflito
+          <small
+            >O desenho existe e mostra o que não fecha; ele não esconde nem promove
+            nada.</small
+          >
+        </h2>
+        <div class="tela">
+          <div class="desenho">
+            <svg class="cena" viewBox="0 0 560 320" role="img" aria-label="Cena com trecho não resolvido e cota contestada">
+              <polyline class="e-exact" points="70,250 470,250 470,80 70,80 70,250" />
+              <polyline class="e-unresolved" points="110,215 300,215 300,140 430,140" />
+              <text class="rotulo-entidade" x="114" y="209">MURO · não resolvida</text>
+              <rect class="faixa-disputa" x="110" y="196" width="190" height="14" />
+              <text class="disputa-texto" x="114" y="192">trecho em disputa</text>
+            </svg>
+            <div class="legenda">
+              <div><span class="amostra naoresolvida"></span>o trecho que não fechou</div>
+              <div>a cena continua desenhada — esconder seria pior</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Traçado em conflito</h3>
+            <div class="aviso recusa">
+              1 entidade não resolvida e 1 vão em disputa. A aprovação segue disponível apenas
+              se o portão de exportação permitir — e ele não permite com entidade não resolvida.
+            </div>
+            <p>O caminho é voltar ao traçado, não aprovar pelo desenho.</p>
+            <button class="primario" disabled>Aprovar a cena</button>
+          </div>
+          <div class="barra-inferior">
+            <span>solve_status: conflict</span><span>o preview não muda portão nenhum</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 05 -->
+      <section class="estado" id="estado-05">
+        <h2>
+          05 · Cena grande — aproximar e enquadrar
+          <small
+            >Mesma interação do zoom da prancha: roda aproxima, arrasto move,
+            "enquadrar" volta ao todo.</small
+          >
+        </h2>
+        <div class="tela">
+          <div class="desenho">
+            <svg class="cena" viewBox="180 60 240 140" role="img" aria-label="Cena aproximada, com recorte da região do muro">
+              <polyline class="e-exact" points="70,250 470,250 470,80 70,80 70,250" />
+              <polyline class="e-derived" points="110,215 300,215 300,140 430,140" />
+              <polyline class="e-approximate" points="120,110 220,110 220,160 120,160 120,110" />
+              <text class="rotulo-entidade" x="224" y="116">PATAMAR · aproximada</text>
+              <text class="rotulo-entidade" x="304" y="136">MURO · derivada</text>
+              <g>
+                <line class="escala" x1="200" y1="188" x2="250" y2="188" />
+                <line class="escala" x1="200" y1="185" x2="200" y2="191" />
+                <line class="escala" x1="250" y1="185" x2="250" y2="191" />
+                <text class="escala-texto" x="212" y="198">2,5 m</text>
+              </g>
+            </svg>
+            <div class="controles">
+              <button>+</button>
+              <button>−</button>
+              <button>⤢</button>
+            </div>
+            <div class="legenda">
+              <div><b>2,3×</b> · a barra de escala acompanha o zoom</div>
+              <div>a precisão continua legível em qualquer aproximação</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>Recorte</h3>
+            <p>
+              Aproximar não muda o dado: o desenho é o mesmo <code>SceneRevision</code>, só
+              enquadrado. O <code>viewBox</code> move desenho e cotas juntos, por construção.
+            </p>
+            <div class="reservado">
+              <b>Reservado, não entregue nesta feature:</b> a prancha do projetista sob o
+              desenho. Exige registro entre pixels e metros com incerteza própria, e um overlay
+              desalinhado é pior que nenhum — vira real só com decisão nova.
+            </div>
+          </div>
+          <div class="barra-inferior">
+            <span>zoom 2,3×</span><span>somente leitura</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 06 -->
+      <section class="estado" id="estado-06">
+        <h2>
+          06 · Entidade escolhida
+          <small>O desenho e a lista são a mesma seleção, nos dois sentidos.</small>
+        </h2>
+        <div class="tela">
+          <div class="desenho">
+            <svg class="cena" viewBox="0 0 560 320" role="img" aria-label="Entidade selecionada realçada no desenho">
+              <polyline class="e-exact" points="70,250 470,250 470,80 70,80 70,250" />
+              <polyline class="e-approximate" points="120,110 220,110 220,160 120,160 120,110" />
+              <rect
+                x="112"
+                y="102"
+                width="116"
+                height="66"
+                fill="none"
+                stroke="#166a83"
+                stroke-width="1.5"
+                stroke-dasharray="4 3"
+              />
+              <text class="rotulo-entidade" x="232" y="112">PATAMAR · aproximada · 4,00 × 2,50 m</text>
+            </svg>
+            <div class="legenda">
+              <div>seleção: contorno tracejado, não preenchimento</div>
+              <div>a precisão do traço não muda por estar selecionada</div>
+            </div>
+          </div>
+          <div class="painel">
+            <h3>PATAMAR</h3>
+            <span class="selo">precisão: aproximada</span>
+            <span class="selo">camada: PATAMAR</span>
+            <p>
+              Origem: proposta <code>vp_9c…</code> aceita sobre a calibração
+              <code>cal_31…</code>, em 26/08.
+            </p>
+            <div class="aviso atencao">
+              Aproximada exige aceite explícito para exportar. O aceite continua sendo ato da
+              etapa de aprovação — este painel só mostra o que ele vai carimbar.
+            </div>
+          </div>
+          <div class="barra-inferior">
+            <span>1 de 14 entidades</span><span>sem edição por aqui — ver é a F-019, corrigir é a F-018</span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

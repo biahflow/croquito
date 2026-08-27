@@ -1,3 +1,5 @@
+import type { SceneRevision } from "@croquito/contracts";
+
 export type JobSummary = {
   job_id: string;
   status: string;
@@ -91,14 +93,38 @@ export type VisionProposal = {
   // acompanham toda proposta; ficam opcionais porque nenhuma tela depende deles.
   label?: string | null;
   layer_hint?: string | null;
-  quality_score?: number;
+  // Opcional no contrato desde o ADR-0050 (decisão 2): a correção humana não tem
+  // pontuação de detector, e `null` ali é ausência de medida — nunca zero medido.
+  quality_score?: number | null;
   algorithm?: string;
+  /**
+   * De quais propostas OBSERVADAS esta forma nasceu. Vazio em proposta de máquina; nunca
+   * vazio em correção humana (ADR-0050, decisão 3). É desta relação que a tela deriva
+   * quais formas foram superadas — não existe campo gravado dizendo isso.
+   */
+  derived_from?: string[];
   geometry:
     | { type: "line"; start: PixelPoint; end: PixelPoint }
     | { type: "circle"; center: PixelPoint; radius: number }
     // Contorno aberto existe: muro e limite de lote raramente fecham, e o worker
     // envia `closed: false` em vez de fechá-los à força.
     | { type: "polyline"; points: PixelPoint[]; closed: boolean };
+};
+
+/**
+ * Correção humana de forma pronta para o servidor (F-018).
+ *
+ * `derivedFrom` nunca vai vazio: sem forma de origem não há correção. A geometria viaja
+ * como lista de vértices em PIXELS da imagem fonte — o mesmo espaço da proposta —, e é o
+ * servidor que decide se aquilo é linha ou polilinha.
+ */
+export type ShapeCorrectionDraft = {
+  baseReviewVersion: number;
+  baseSceneVersion: number;
+  derivedFrom: string[];
+  vertices: { x: number; y: number }[];
+  closed: boolean;
+  justification: string;
 };
 
 export type ProposalCalibration = {
@@ -220,6 +246,18 @@ export type Review = {
   proposals: {
     image_width_px: number;
     image_height_px: number;
+    proposals: VisionProposal[];
+  } | null;
+  /**
+   * Correções humanas de forma (F-018), num conjunto de proveniência própria
+   * (`detector_version: "human-correction-v1"`). Separado de `proposals` porque a
+   * observação da máquina precisa continuar legível depois da correção.
+   *
+   * Opcional: revisão gravada antes da feature responde sem o campo, e a tela lê com
+   * `?? null` — ausência é ausência de correção, nunca lista vazia inventada.
+   */
+  shape_corrections?: {
+    detector_version: string;
     proposals: VisionProposal[];
   } | null;
   selected_associations: Record<string, string>;
@@ -920,6 +958,32 @@ export async function submitProposalDecision(
  * O traçado é trabalho pesado e roda no worker: a API valida, persiste a intenção e
  * devolve 202. O resultado vem por polling em `getTraceSolve`, nunca nesta resposta.
  */
+/**
+ * Grava a correção humana de forma. Cria proposta NOVA, derivada — a observada continua
+ * onde está, e é ela que segue sendo a medida objetiva do erro do modelo.
+ */
+export async function correctProposalShape(
+  accessToken: string,
+  jobId: string,
+  draft: ShapeCorrectionDraft,
+): Promise<Review> {
+  return apiJson<Review>(`/v1/jobs/${jobId}/review/proposals/corrections`, accessToken, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify({
+      base_review_version: draft.baseReviewVersion,
+      base_scene_version: draft.baseSceneVersion,
+      derived_from: draft.derivedFrom,
+      vertices: draft.vertices,
+      closed: draft.closed,
+      justification: draft.justification.trim(),
+    }),
+  });
+}
+
 export async function createTraceSolve(
   accessToken: string,
   jobId: string,
@@ -1009,6 +1073,27 @@ export async function listChatSessions(
 ): Promise<ChatSessionSummary[]> {
   return apiJson<ChatSessionSummary[]>(
     `/v1/jobs/${jobId}/chat-sessions`,
+    accessToken,
+  );
+}
+
+/**
+ * A cena resolvida INTEIRA, para o preview da F-019.
+ *
+ * `Review.scene` traz uma vista estreita — só os extremos de linha, que é o que a etiqueta
+ * da aresta métrica precisava. O preview desenha polilinha, arco, círculo e spline, e por
+ * isso lê a rota que já devolve o `SceneRevision` completo, com os tipos gerados. Nenhuma
+ * rota nova entra por causa desta feature.
+ *
+ * `409 JOB_NOT_READY` é o job sem cena — estado honesto que a tela declara, não erro a
+ * mostrar como falha.
+ */
+export async function getScene(
+  accessToken: string,
+  jobId: string,
+): Promise<SceneRevision.CroquitoSceneRevision> {
+  return apiJson<SceneRevision.CroquitoSceneRevision>(
+    `/v1/jobs/${jobId}/scene`,
     accessToken,
   );
 }

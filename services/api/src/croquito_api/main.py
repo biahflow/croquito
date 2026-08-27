@@ -290,7 +290,14 @@ from croquito_worker.valuation.round_view import (
     takeoff_counts,
 )
 from croquito_worker.valuation.suggestions import SemanticArmTelemetry
-from croquito_worker.vision import VisionProposalSet
+from croquito_worker.vision import (
+    PixelGeometryValue,
+    PixelLine,
+    PixelPoint,
+    PixelPolyline,
+    VisionProposal,
+    VisionProposalSet,
+)
 
 
 class ApiModel(BaseModel):
@@ -827,6 +834,49 @@ class DecideProposalRequest(ApiModel):
     calibration_id: UUID | None = None
 
 
+class ShapeCorrectionVertexRequest(ApiModel):
+    """Um vértice da forma corrigida, em PIXELS da imagem fonte — o espaço da proposta."""
+
+    x: float = Field(ge=0)
+    y: float = Field(ge=0)
+
+
+class CorrectProposalShapeRequest(ApiModel):
+    """Correção humana de forma: cria proposta NOVA, jamais altera a observada.
+
+    A regra inteira é do ADR-0050 — `docs/adr/0050-correcao-humana-de-forma-como-`
+    `proposta-derivada.md`. A forma corrigida nasce num `VisionProposalSet` de proveniência própria
+    (`human-correction-v1`), declara em `derived_from` de quais propostas OBSERVADAS ela
+    nasceu, e continua `unresolved`/`export=false` — a promoção de precisão segue sendo
+    exclusiva da calibração, e `exact` só nasce de cota confirmada.
+
+    `derived_from` obrigatório e não vazio é o que impede a feature de virar um editor de
+    geometria dentro do navegador: sem forma de origem não há correção, há desenho.
+
+    A justificativa é obrigatória como em `accept`/`reject` — corrigir a geometria que vai
+    virar desenho é decisão de domínio, não ajuste de interface.
+    """
+
+    base_review_version: int = Field(ge=1)
+    base_scene_version: int = Field(ge=1)
+    derived_from: list[str] = Field(min_length=1, max_length=20)
+    #: Dois vértices são uma linha; três ou mais, uma polilinha. O teto acompanha o do
+    #: contrato de geometria (`PixelPolyline`), e não é escolha desta fronteira.
+    vertices: list[ShapeCorrectionVertexRequest] = Field(min_length=2, max_length=200)
+    closed: bool = False
+    justification: str = Field(min_length=3, max_length=500)
+
+    @field_validator("derived_from")
+    @classmethod
+    def validate_derived_from(cls, value: list[str]) -> list[str]:
+        for proposal_id in value:
+            if not re.fullmatch(r"vp_[a-f0-9]{16}", proposal_id):
+                raise ValueError("derivação aponta para id de proposta inválido")
+        if len(set(value)) != len(value):
+            raise ValueError("derivação repete a mesma proposta")
+        return value
+
+
 class DecideProposalBatchRequest(ApiModel):
     """Uma decisão para muitas propostas: traçar um croqui inteiro uma a uma é inviável.
 
@@ -992,6 +1042,15 @@ class ReviewResponse(ApiModel):
     packet: ReviewPacket
     associations: AssociationSet
     proposals: VisionProposalSet | None = None
+    # Correções humanas de forma (F-018), num conjunto de proveniência própria
+    # (`detector_version = "human-correction-v1"`, ADR-0050 decisão 1). Separado de
+    # `proposals` para que a observação da máquina continue legível depois da correção —
+    # é dela que sai a única medida objetiva de quanto o modelo erra.
+    #
+    # `None` quando ninguém corrigiu forma nesta revisão, que é o que a coluna diz. Mesmo
+    # motivo de default dos demais: resposta idempotente gravada antes do campo é
+    # revalidada no replay e não pode virar 500.
+    shape_corrections: VisionProposalSet | None = None
     selected_associations: dict[str, str]
     calibration: ProposalCalibrationResponse | None = None
     proposal_decisions: list[ProposalDecisionResponse] = Field(default_factory=list)
@@ -4190,11 +4249,34 @@ def _latest_scene(session: Session, *, job_id: UUID, tenant_id: str) -> Revision
     )
 
 
-def _carried_field_review_context(record: ReviewRevisionRecord) -> dict[str, Any]:
-    """Campos laterais da F-030 que toda revisão sucessora preserva verbatim."""
+#: O `algorithm` da forma corrigida por pessoa. Nome, e não versão de detector: quem
+#: produziu o conjunto já está dito em `detector_version` (ADR-0050, decisão 1).
+HUMAN_SHAPE_CORRECTION_ALGORITHM: Final = "human-shape-correction-v1"
+
+
+def _shape_correction_id(job_id: UUID, review_version: int, ordinal: int) -> str:
+    """Id determinístico da correção, no formato que `VisionProposal` exige.
+
+    Determinístico e não aleatório para que o replay idempotente da mesma requisição
+    produza o mesmo id: `Idempotency-Key` repetida devolve a resposta gravada, e um id
+    sorteado faria a segunda tentativa divergir da primeira se ela chegasse a executar.
+    """
+    semente = f"{job_id}:{review_version}:{ordinal}".encode()
+    return f"vp_{hashlib.sha256(semente).hexdigest()[:16]}"
+
+
+def _carried_review_context(record: ReviewRevisionRecord) -> dict[str, Any]:
+    """Campos laterais que toda revisão sucessora preserva verbatim.
+
+    Testemunhas e observações de campo (F-030) e as correções humanas de forma (F-018)
+    não são recomputadas por ato nenhum da revisão: elas são registro histórico e viajam
+    inteiras para a revisão seguinte. Ficam num lugar só justamente porque esquecer uma
+    delas em um dos caminhos de escrita apagaria trabalho humano em silêncio.
+    """
     return {
         "field_witnesses_json": list(record.field_witnesses_json),
         "field_observations_json": list(record.field_observations_json),
+        "shape_corrections_json": record.shape_corrections_json,
     }
 
 
@@ -4722,6 +4804,11 @@ def _review_response(
         if record.proposals_json is not None
         else None
     )
+    shape_corrections = (
+        VisionProposalSet.model_validate(record.shape_corrections_json)
+        if record.shape_corrections_json is not None
+        else None
+    )
     scene_record = (
         session.scalar(select(RevisionRecord).where(RevisionRecord.id == record.scene_revision_id))
         if record.scene_revision_id is not None
@@ -4764,6 +4851,7 @@ def _review_response(
         packet=packet,
         associations=associations,
         proposals=proposals,
+        shape_corrections=shape_corrections,
         selected_associations=record.selected_associations_json,
         calibration=_calibration_response(record.calibration_json),
         proposal_decisions=[
@@ -6343,7 +6431,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=selected_associations,
             declared_chains_json=current.declared_chains_json,
-            **_carried_field_review_context(current),
+            **_carried_review_context(current),
             confidence_shadow_json=confidence_shadow_json(
                 reviewed_packet, associations, current.declared_chains_json
             ),
@@ -6632,7 +6720,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=selected_associations,
             declared_chains_json=current.declared_chains_json,
-            **_carried_field_review_context(current),
+            **_carried_review_context(current),
             confidence_shadow_json=confidence_shadow_json(
                 rectified_packet, associations, current.declared_chains_json
             ),
@@ -6847,7 +6935,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=declared_chains,
-            **_carried_field_review_context(current),
+            **_carried_review_context(current),
             # A cadeia declarada é sinal de confiança de leitura: declarar ou retratar
             # muda o shadow, então ele é recomputado sobre a lista NOVA.
             confidence_shadow_json=confidence_shadow_json(
@@ -7020,6 +7108,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             confidence_shadow_json=current.confidence_shadow_json,
             field_witnesses_json=witnesses,
             field_observations_json=current.field_observations_json,
+            shape_corrections_json=current.shape_corrections_json,
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             trace_acceptance_json=current.trace_acceptance_json,
@@ -7220,6 +7309,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             confidence_shadow_json=current.confidence_shadow_json,
             field_witnesses_json=current.field_witnesses_json,
             field_observations_json=observations,
+            shape_corrections_json=current.shape_corrections_json,
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
             trace_acceptance_json=current.trace_acceptance_json,
@@ -7363,7 +7453,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
-            **_carried_field_review_context(current),
+            **_carried_review_context(current),
             confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=calibration.model_dump(mode="json"),
             proposal_decisions_json=current.proposal_decisions_json,
@@ -7563,7 +7653,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
-            **_carried_field_review_context(current),
+            **_carried_review_context(current),
             confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=decisions,
@@ -7639,6 +7729,205 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 "proposals_total": 1,
                 "accepted": 1 if payload.action == "accept" else 0,
                 "rejected": 1 if payload.action == "reject" else 0,
+            },
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/review/proposals/corrections",
+        response_model=ReviewResponse,
+        tags=["review"],
+    )
+    async def correct_proposal_shape(
+        job_id: UUID,
+        payload: CorrectProposalShapeRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReviewResponse:
+        """Grava a correção humana de forma como proposta NOVA, derivada das observadas.
+
+        A observação da máquina não é tocada: ela continua em `proposals_json`, com o
+        `algorithm`, a pontuação e a proveniência dela. A correção vai para
+        `shape_corrections_json`, num conjunto de `detector_version` próprio — é essa
+        separação que preserva a comparação entre máquina e humano depois da correção
+        (ADR-0050, decisões 1 e 4).
+
+        Nada aqui promove precisão: a forma nasce `unresolved` e `export=false` por
+        `Literal` do modelo, e o portão de exportação não é consultado nem alterado.
+        """
+        reviewer_role = _reviewer_role(principal)
+        job = session.scalar(
+            select(JobRecord).where(
+                JobRecord.id == str(job_id), JobRecord.tenant_id == principal.tenant_id
+            )
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        operation = f"review.shape-correction:{job_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ReviewResponse.model_validate(existing)
+        current = _latest_review(session, job_id=job_id, tenant_id=principal.tenant_id)
+        if current is None or current.proposals_json is None:
+            raise _problem(
+                "PROPOSALS_NOT_READY",
+                status.HTTP_409_CONFLICT,
+                "Snapshot de propostas ainda não está disponível.",
+            )
+        if current.version != payload.base_review_version:
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Existe uma revisão de propostas mais recente.",
+            )
+        scene_record = _latest_scene(session, job_id=job_id, tenant_id=principal.tenant_id)
+        if scene_record is None or scene_record.version != payload.base_scene_version:
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Existe uma cena mais recente para a correção.",
+            )
+
+        proposals = VisionProposalSet.model_validate(current.proposals_json)
+        conhecidas = {proposal.id: proposal for proposal in proposals.proposals}
+        desconhecidas = sorted(set(payload.derived_from) - set(conhecidas))
+        if desconhecidas:
+            raise _problem(
+                "DOMAIN_VALIDATION_FAILED",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "A correção deriva de proposta fora do snapshot da revisão.",
+            )
+        # Decisão registrada é imutável, e a tela já não oferece o ato sobre forma decidida.
+        # A fronteira repete a regra porque quem chama a rota direto não passa pela tela.
+        decididas = {
+            str(decision.get("proposal_id")) for decision in (current.proposal_decisions_json or [])
+        }
+        if decididas & set(payload.derived_from):
+            raise _problem(
+                "PROPOSAL_ALREADY_DECIDED",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Proposta já decidida não recebe correção de forma.",
+            )
+
+        vertices = [PixelPoint(x=vertice.x, y=vertice.y) for vertice in payload.vertices]
+        # Dois vértices são uma reta; três ou mais, uma polilinha. O tipo acompanha a
+        # forma que a pessoa desenhou, e não o tipo da proposta de origem: unir dois
+        # fragmentos retos é justamente o caso em que ele muda.
+        geometry: PixelGeometryValue = (
+            PixelLine(start=vertices[0], end=vertices[1])
+            if len(vertices) == 2 and not payload.closed
+            else PixelPolyline(points=vertices, closed=payload.closed)
+        )
+        correcoes = list((current.shape_corrections_json or {}).get("proposals", []))
+        try:
+            correcao = VisionProposal(
+                id=_shape_correction_id(job_id, current.version, len(correcoes)),
+                kind="line" if geometry.type == "line" else "contour",
+                geometry=geometry,
+                algorithm=HUMAN_SHAPE_CORRECTION_ALGORITHM,
+                # Sem pontuação, e não `1.0`: para uma forma que uma pessoa desenhou não
+                # existe número honesto de confiança de detector (ADR-0050, decisão 2).
+                quality_score=None,
+                derived_from=list(payload.derived_from),
+            )
+            conjunto = VisionProposalSet(
+                dataset_id=proposals.dataset_id,
+                page_number=proposals.page_number,
+                image_sha256=proposals.image_sha256,
+                image_width_px=proposals.image_width_px,
+                image_height_px=proposals.image_height_px,
+                detector_version="human-correction-v1",
+                configured_limits={},
+                limit_reached=[],
+                proposals=[
+                    *(VisionProposal.model_validate(item) for item in correcoes),
+                    correcao,
+                ],
+                safety_notes=[
+                    "Formas corrigidas por pessoa; as observações originais permanecem "
+                    "no conjunto de propostas da revisão.",
+                    "Correção humana não promove precisão: continua não resolvida e não "
+                    "exportável até que uma calibração a torne aproximada.",
+                    "Cada forma declara de quais propostas observadas ela derivou.",
+                ],
+            )
+        except ValidationError as error:
+            # O vocabulário do domínio viaja no corpo do erro; a fronteira não republica a
+            # lista de invariantes de `VisionProposal` como código dela.
+            raise _problem(
+                "DOMAIN_VALIDATION_FAILED",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "A forma corrigida não satisfaz o contrato de proposta.",
+            ) from error
+
+        next_review = ReviewRevisionRecord(
+            id=str(new_uuid7()),
+            tenant_id=principal.tenant_id,
+            job_id=str(job_id),
+            version=current.version + 1,
+            parent_review_id=current.id,
+            packet_json=current.packet_json,
+            associations_json=current.associations_json,
+            proposals_json=current.proposals_json,
+            selected_associations_json=current.selected_associations_json,
+            declared_chains_json=current.declared_chains_json,
+            **{
+                **_carried_review_context(current),
+                # O único campo que ESTE ato substitui.
+                "shape_corrections_json": conjunto.model_dump(mode="json"),
+            },
+            confidence_shadow_json=_carried_confidence_shadow(current),
+            calibration_json=current.calibration_json,
+            proposal_decisions_json=current.proposal_decisions_json,
+            trace_acceptance_json=current.trace_acceptance_json,
+            evidence_refs_json=current.evidence_refs_json,
+            solver_request_json=current.solver_request_json,
+            solver_blockers_json=current.solver_blockers_json,
+            required_blocker_codes_json=current.required_blocker_codes_json,
+            required_criteria_texts_json=current.required_criteria_texts_json,
+            scene_revision_id=current.scene_revision_id,
+            created_by=principal.subject,
+        )
+        session.add(next_review)
+        try:
+            session.flush()
+        except IntegrityError as error:
+            session.rollback()
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Uma atualização concorrente criou nova revisão.",
+            ) from error
+        response = _review_response(application, session, next_review)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="PROPOSAL_SHAPE_CORRECTED",
+            resource_type="review_revision",
+            resource_id=next_review.id,
+            request_id=request.state.request_id,
+            details={
+                "derived_from": len(payload.derived_from),
+                "vertices": len(payload.vertices),
+                "reviewer_role": reviewer_role,
             },
         )
         session.commit()
@@ -7810,7 +8099,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
-            **_carried_field_review_context(current),
+            **_carried_review_context(current),
             confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=decisions,
@@ -7984,7 +8273,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
-            **_carried_field_review_context(current),
+            **_carried_review_context(current),
             confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,
@@ -8114,7 +8403,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             proposals_json=current.proposals_json,
             selected_associations_json=current.selected_associations_json,
             declared_chains_json=current.declared_chains_json,
-            **_carried_field_review_context(current),
+            **_carried_review_context(current),
             confidence_shadow_json=_carried_confidence_shadow(current),
             calibration_json=current.calibration_json,
             proposal_decisions_json=current.proposal_decisions_json,

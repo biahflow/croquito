@@ -7,8 +7,41 @@ import {
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
 } from "react";
 import type { User } from "oidc-client-ts";
+import type { SceneRevision } from "@croquito/contracts";
+
+import {
+  MINIMO_DE_VERTICES,
+  correcaoIssue,
+  formaCorrigivel,
+  iniciarCorrecao,
+  inserirVertice,
+  moverVertice,
+  propostasSuperadas,
+  removerDerivacao,
+  removerVertice,
+  unirFragmento,
+  type CorrecaoEmCurso,
+} from "./shapeCorrection";
+import {
+  PASSO_DE_ZOOM_DA_CENA,
+  PRECISOES_NO_DESENHO,
+  aplicarZoomDaCena,
+  arrastarViewDaCena,
+  barraDeEscala,
+  caixaDasFormas,
+  contagemPorPrecisao,
+  enquadramentoInicial,
+  fatorDeZoomDaCena,
+  formasDaCena,
+  vaosAplicadosDesenhados,
+  vaosEmDisputaDesenhados,
+  viewBoxDaCenaAttr,
+  type PontoDoDesenho,
+  type ViewBoxDaCena,
+} from "./scenePreview";
 
 import {
   annotateDimension,
@@ -17,12 +50,14 @@ import {
   createChatTurn,
   createProjectUpload,
   createProposalCalibration,
+  correctProposalShape,
   createTraceSolve,
   getChatSession,
   getExport,
   getFieldEvidence,
   getJob,
   getReview,
+  getScene,
   getTraceSolve,
   listChatSessions,
   listProjects,
@@ -45,6 +80,9 @@ import {
   type ReviewReading,
   type ProjectSummary,
   type Job,
+  type TraceAppliedSpan,
+  type VisionProposal,
+  type TraceContestedSpan,
   type TraceSolveResponse,
 } from "./api";
 import {
@@ -73,6 +111,7 @@ import {
   measurementKindLabel,
   metricEdgeLabel,
   ocrWitnessHint,
+  precisionLabel,
   proposalDisplayName,
   readingConfidenceLabel,
   readingLabel,
@@ -1310,6 +1349,352 @@ export function DecisionAuthorLine({ reading }: { reading: ReviewReading }) {
  * `readSession()` consome o authorization code do redirect, que é de uso único, então
  * ela tem um dono só. A casca também é quem decide não montar esta jornada sem sessão.
  */
+
+/**
+ * Estado da leitura da cena para o preview. `sem-cena` é um estado do MUNDO — job sem
+ * traçado resolvido —, não uma falha: a tela o declara com todas as letras, e o `409
+ * JOB_NOT_READY` da rota cai aqui.
+ */
+export type EstadoDoPreview = "sem-cena" | "carregando" | "pronto" | "falhou";
+
+/**
+ * Preview da cena resolvida (F-019), na etapa de aprovação.
+ *
+ * Desenha o `SceneRevision` que a rota já devolve. Não resolve geometria, não chama
+ * solver e não decide nada: a aritmética inteira mora em `scenePreview.ts`, e aqui só
+ * existe SVG, evento de ponteiro e texto.
+ *
+ * A precisão é dita por TRAÇO e por ESCRITO — a legenda nomeia as quatro e descreve o
+ * traço de cada uma, então quem lê sem distinguir cor continua distinguindo precisão.
+ */
+export function PreviewDaCena({
+  scene,
+  estado,
+  appliedSpans,
+  contestedSpans,
+}: {
+  scene: SceneRevision.CroquitoSceneRevision | null;
+  estado: EstadoDoPreview;
+  appliedSpans: TraceAppliedSpan[];
+  contestedSpans: TraceContestedSpan[];
+}) {
+  const formas = useMemo(() => formasDaCena(scene?.entities ?? []), [scene]);
+  const caixa = useMemo(() => caixaDasFormas(formas), [formas]);
+  const inteiro = useMemo(
+    () => (caixa === null ? null : enquadramentoInicial(caixa)),
+    [caixa],
+  );
+  const [view, setView] = useState<ViewBoxDaCena | null>(null);
+  const [selecionada, setSelecionada] = useState<string | null>(null);
+  const arrasto = useRef<{ x: number; y: number } | null>(null);
+  // Cena nova é enquadramento novo: manter o recorte da cena anterior mostraria um pedaço
+  // de outra geometria com toda a autoridade de um desenho.
+  const chaveDaCena = scene === null ? "" : `${scene.id ?? ""}:${scene.version}`;
+  useEffect(() => {
+    setView(null);
+    setSelecionada(null);
+  }, [chaveDaCena]);
+
+  if (estado === "sem-cena" || (estado === "pronto" && caixa === null)) {
+    return (
+      <section
+        className="preview-cena preview-cena-simples"
+        aria-label="Preview da cena resolvida"
+      >
+        <p className="preview-cena-vazio">
+          <strong>Ainda não há cena resolvida para ver.</strong> O traçado é a etapa
+          anterior; quando ele resolver, a geometria aparece aqui, antes da aprovação.
+        </p>
+      </section>
+    );
+  }
+  if (estado === "carregando" || inteiro === null) {
+    return (
+      <section
+        className="preview-cena preview-cena-simples"
+        aria-label="Preview da cena resolvida"
+      >
+        <p className="preview-cena-vazio">Lendo a cena resolvida…</p>
+      </section>
+    );
+  }
+  if (estado === "falhou") {
+    return (
+      <section
+        className="preview-cena preview-cena-simples"
+        aria-label="Preview da cena resolvida"
+      >
+        <p className="preview-cena-vazio">
+          Não foi possível ler a cena para o desenho. A aprovação e o portão de exportação
+          não dependem deste preview.
+        </p>
+      </section>
+    );
+  }
+
+  const vista = view ?? inteiro;
+  const zoom = fatorDeZoomDaCena(vista, inteiro);
+  const barra = barraDeEscala(vista);
+  const escrita = vista.width * 0.022;
+  const aplicados = caixa === null ? [] : vaosAplicadosDesenhados(appliedSpans, caixa);
+  const disputas = caixa === null ? [] : vaosEmDisputaDesenhados(contestedSpans, caixa);
+  const contagem = contagemPorPrecisao(scene?.entities ?? []);
+  const entidadeSelecionada = (scene?.entities ?? []).find(
+    (entity) => (entity.id ?? "") === selecionada,
+  );
+  const naoResolvidas = contagem.find((item) => item.precisao === "unresolved");
+
+  /** Ponto do evento em metros do desenho: o SVG carrega a conversão, não a tela. */
+  const pontoDoEvento = (
+    event: ReactPointerEvent<SVGSVGElement> | ReactWheelEvent<SVGSVGElement>,
+  ): PontoDoDesenho => {
+    const caixaDoElemento = event.currentTarget.getBoundingClientRect();
+    if (caixaDoElemento.width === 0 || caixaDoElemento.height === 0) {
+      return { x: vista.x + vista.width / 2, y: vista.y + vista.height / 2 };
+    }
+    return {
+      x:
+        vista.x +
+        ((event.clientX - caixaDoElemento.left) / caixaDoElemento.width) * vista.width,
+      y:
+        vista.y +
+        ((event.clientY - caixaDoElemento.top) / caixaDoElemento.height) * vista.height,
+    };
+  };
+
+  const aproximar = (fator: number) => {
+    setView(
+      aplicarZoomDaCena(vista, inteiro, fator, {
+        x: vista.x + vista.width / 2,
+        y: vista.y + vista.height / 2,
+      }),
+    );
+  };
+
+  return (
+    <section className="preview-cena" aria-label="Preview da cena resolvida">
+      <div className="preview-cena-desenho">
+        <svg
+          className="preview-cena-svg"
+          viewBox={viewBoxDaCenaAttr(vista)}
+          role="img"
+          aria-label={`Cena resolvida com ${formas.length} formas desenhadas`}
+          onWheel={(event) => {
+            setView(
+              aplicarZoomDaCena(
+                vista,
+                inteiro,
+                event.deltaY < 0 ? PASSO_DE_ZOOM_DA_CENA : 1 / PASSO_DE_ZOOM_DA_CENA,
+                pontoDoEvento(event),
+              ),
+            );
+          }}
+          onPointerDown={(event) => {
+            arrasto.current = pontoDoEvento(event);
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            const origem = arrasto.current;
+            if (origem === null) {
+              return;
+            }
+            const atual = pontoDoEvento(event);
+            setView(
+              arrastarViewDaCena(vista, inteiro, origem.x - atual.x, origem.y - atual.y),
+            );
+          }}
+          onPointerUp={() => {
+            arrasto.current = null;
+          }}
+        >
+          {formas.map((forma) =>
+            forma.tipo === "circulo" ? (
+              <circle
+                key={forma.entityId}
+                className={`cena-forma precisao-${forma.precisao} ${
+                  forma.entityId === selecionada ? "selecionada" : ""
+                }`}
+                cx={forma.centro.x}
+                cy={forma.centro.y}
+                r={forma.raio}
+                onClick={() => setSelecionada(forma.entityId)}
+              />
+            ) : (
+              <polyline
+                key={forma.entityId}
+                className={`cena-forma precisao-${forma.precisao} ${
+                  forma.entityId === selecionada ? "selecionada" : ""
+                }`}
+                points={(forma.fechado
+                  ? [...forma.pontos, forma.pontos[0]]
+                  : forma.pontos
+                )
+                  .map((ponto) => `${ponto.x},${ponto.y}`)
+                  .join(" ")}
+                onClick={() => setSelecionada(forma.entityId)}
+              />
+            ),
+          )}
+
+          {aplicados.map((vao) => (
+            <g key={`${vao.readingId}-${vao.eixo}`} className="cena-vao-aplicado">
+              {vao.eixo === "x" ? (
+                <>
+                  <line x1={vao.de} y1={vao.offset} x2={vao.ate} y2={vao.offset} />
+                  <text
+                    x={(vao.de + vao.ate) / 2}
+                    y={vao.offset - escrita * 0.4}
+                    fontSize={escrita}
+                    textAnchor="middle"
+                  >
+                    {`aplicada · ${vao.rotulo}`}
+                  </text>
+                </>
+              ) : (
+                <>
+                  <line x1={vao.offset} y1={vao.de} x2={vao.offset} y2={vao.ate} />
+                  <text
+                    x={vao.offset + escrita * 0.4}
+                    y={(vao.de + vao.ate) / 2}
+                    fontSize={escrita}
+                  >
+                    {`aplicada · ${vao.rotulo}`}
+                  </text>
+                </>
+              )}
+            </g>
+          ))}
+
+          {disputas.map((vao, indice) => (
+            <g key={`disputa-${indice}`} className="cena-vao-disputa">
+              {vao.eixo === "x" ? (
+                <>
+                  <rect
+                    x={caixa?.left ?? vista.x}
+                    y={vao.offset}
+                    width={(caixa?.right ?? vista.x) - (caixa?.left ?? vista.x)}
+                    height={escrita * 0.8}
+                  />
+                  <text x={caixa?.left ?? vista.x} y={vao.offset - escrita * 0.4} fontSize={escrita}>
+                    {vao.rotulo}
+                  </text>
+                </>
+              ) : (
+                <>
+                  <rect
+                    x={vao.offset}
+                    y={caixa?.top ?? vista.y}
+                    width={escrita * 0.8}
+                    height={(caixa?.bottom ?? vista.y) - (caixa?.top ?? vista.y)}
+                  />
+                  <text x={vao.offset} y={(caixa?.top ?? vista.y) - escrita * 0.4} fontSize={escrita}>
+                    {vao.rotulo}
+                  </text>
+                </>
+              )}
+            </g>
+          ))}
+
+          <g className="cena-escala">
+            <line
+              x1={vista.x + vista.width * 0.035}
+              y1={vista.y + vista.height * 0.955}
+              x2={vista.x + vista.width * 0.035 + barra.metros}
+              y2={vista.y + vista.height * 0.955}
+            />
+            <text
+              x={vista.x + vista.width * 0.035}
+              y={vista.y + vista.height * 0.955 + escrita * 1.4}
+              fontSize={escrita}
+            >
+              {barra.rotulo}
+            </text>
+            <line
+              x1={vista.x + vista.width * 0.965}
+              y1={vista.y + vista.height * 0.955}
+              x2={vista.x + vista.width * 0.965}
+              y2={vista.y + vista.height * 0.955 - Math.min(vista.height * 0.1, barra.metros)}
+            />
+            <polyline
+              points={[
+                [vista.x + vista.width * 0.965 - escrita * 0.35, vista.y + vista.height * 0.955 - Math.min(vista.height * 0.1, barra.metros) + escrita * 0.5],
+                [vista.x + vista.width * 0.965, vista.y + vista.height * 0.955 - Math.min(vista.height * 0.1, barra.metros)],
+                [vista.x + vista.width * 0.965 + escrita * 0.35, vista.y + vista.height * 0.955 - Math.min(vista.height * 0.1, barra.metros) + escrita * 0.5],
+              ]
+                .map(([x, y]) => `${x},${y}`)
+                .join(" ")}
+            />
+            <text
+              x={vista.x + vista.width * 0.965}
+              y={vista.y + vista.height * 0.955 + escrita * 1.4}
+              fontSize={escrita}
+            >
+              Y+
+            </text>
+          </g>
+        </svg>
+        <div className="preview-cena-controles">
+          <button type="button" onClick={() => aproximar(PASSO_DE_ZOOM_DA_CENA)}>
+            Aproximar
+          </button>
+          <button type="button" onClick={() => aproximar(1 / PASSO_DE_ZOOM_DA_CENA)}>
+            Afastar
+          </button>
+          <button type="button" onClick={() => setView(null)}>
+            Enquadrar
+          </button>
+        </div>
+        <ul className="preview-cena-legenda">
+          {PRECISOES_NO_DESENHO.map((item) => (
+            <li key={item.precisao}>
+              <span className={`amostra-precisao precisao-${item.precisao}`} aria-hidden="true" />
+              <strong>{item.nome}</strong> · {item.traco}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="preview-cena-painel">
+        <p className="preview-cena-resumo">
+          {`Cena v${scene?.version ?? 0} · ${formas.length} formas desenhadas · zoom ${zoom.toFixed(1)}×`}
+        </p>
+        <ul className="preview-cena-contagem">
+          {contagem.map((item) => (
+            <li key={item.precisao}>
+              <strong>{item.quantidade}</strong> {item.nome}
+            </li>
+          ))}
+        </ul>
+        {naoResolvidas ? (
+          <p className="preview-cena-aviso">
+            Entidade não resolvida impede a exportação. O portão continua sendo o do
+            servidor; este desenho é leitura, não laudo.
+          </p>
+        ) : null}
+        {disputas.length > 0 ? (
+          <p className="preview-cena-aviso">
+            {`${disputas.length} vão em disputa: a faixa cobre o eixo inteiro porque a posição ao longo dele não é declarada pelo servidor.`}
+          </p>
+        ) : null}
+        {entidadeSelecionada ? (
+          <div className="preview-cena-entidade">
+            <strong>{entidadeSelecionada.layer}</strong>
+            <span>{`precisão: ${precisionLabel(entidadeSelecionada.precision)}`}</span>
+            <span>{`tipo: ${entidadeSelecionada.kind}`}</span>
+            {entidadeSelecionada.provenance ? (
+              <span>{`origem: ${entidadeSelecionada.provenance.source_type}`}</span>
+            ) : null}
+          </div>
+        ) : (
+          <p className="preview-cena-dica">
+            Escolha uma forma para ver precisão, camada e origem. Ver não é corrigir:
+            corrigir forma é ato da etapa de decisões.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function CroquiApp({
   session,
   onSessionLost,
@@ -1434,6 +1819,17 @@ export function CroquiApp({
   const [traceDeclarations, setTraceDeclarations] =
     useState<TraceDraft>(emptyTraceDraft);
   const [traceSolve, setTraceSolve] = useState<TraceSolveResponse | null>(null);
+  // Rascunho da correção de forma (F-018). Vive só na tela: enquanto não for gravado, o
+  // servidor não sabe dele, e a observação da máquina segue intocada.
+  const [correcao, setCorrecao] = useState<CorrecaoEmCurso | null>(null);
+  const [verticeAtivo, setVerticeAtivo] = useState<number | null>(null);
+  const [mostrarSuperadas, setMostrarSuperadas] = useState(false);
+  // Cena INTEIRA para o preview da F-019. `review.scene` é uma vista estreita (só os
+  // extremos de linha); o desenho precisa de polilinha, arco e círculo, e por isso lê a
+  // rota que já devolve o `SceneRevision` completo.
+  const [cenaDoPreview, setCenaDoPreview] =
+    useState<SceneRevision.CroquitoSceneRevision | null>(null);
+  const [estadoDoPreview, setEstadoDoPreview] = useState<EstadoDoPreview>("sem-cena");
   const [detailId, setDetailId] = useState("");
   const [detailTitle, setDetailTitle] = useState("");
   const [detailMode, setDetailMode] = useState<TraceDetailMode>("solve");
@@ -1668,6 +2064,13 @@ export function CroquiApp({
   const selectedGeometryProposal =
     proposals.find((proposal) => proposal.id === selectedGeometryProposalId) ??
     null;
+  // Correções humanas de forma já gravadas, e as observações que elas superam. "Superada"
+  // é DERIVADO da derivação (ADR-0050, decisão 4): nenhum campo do fragmento diz isso.
+  const correcoesGravadas = review?.shape_corrections?.proposals ?? [];
+  const superadas = useMemo(
+    () => propostasSuperadas(correcoesGravadas),
+    [correcoesGravadas],
+  );
   const readiness = review
     ? approvalReadiness(review, approvalForm)
     : { canApprove: false, reasons: [] };
@@ -1805,6 +2208,35 @@ export function CroquiApp({
     8,
     Math.round(Math.max(imageWidthPx, imageHeightPx) / 300),
   );
+  // Alça de vértice em unidades da FOLHA, pelo mesmo motivo do `hitStrokeWidth`: um raio
+  // fixo em pixels de tela viraria um ponto invisível numa prancha de milhares de px.
+  const raioDaAlca = Math.max(6, Math.round(Math.max(imageWidthPx, imageHeightPx) / 220));
+  /** Índice do vértice em arrasto; `null` fora dele. */
+  const verticeArrastado = useRef<number | null>(null);
+
+  /** Ponto do evento em PIXELS da imagem fonte — o espaço em que a proposta vive. */
+  const pontoDaProposta = (event: ReactPointerEvent<SVGElement>) => {
+    const caixa = event.currentTarget.getBoundingClientRect();
+    if (caixa.width === 0 || caixa.height === 0) {
+      return { x: 0, y: 0 };
+    }
+    return {
+      x: ((event.clientX - caixa.left) / caixa.width) * imageWidthPx,
+      y: ((event.clientY - caixa.top) / caixa.height) * imageHeightPx,
+    };
+  };
+
+  /** Os pontos de uma correção gravada, no formato do atributo `points`. */
+  const pontosDaCorrecaoGravada = (gravada: VisionProposal): string => {
+    const geometry = gravada.geometry;
+    if (geometry.type === "line") {
+      return `${geometry.start.x},${geometry.start.y} ${geometry.end.x},${geometry.end.y}`;
+    }
+    if (geometry.type === "polyline") {
+      return geometry.points.map((ponto) => `${ponto.x},${ponto.y}`).join(" ");
+    }
+    return "";
+  };
 
   const dispatchCapture = useCallback((event: CaptureEvent) => {
     const result = reduceCapture(captureRef.current, event);
@@ -3254,6 +3686,40 @@ export function CroquiApp({
     return () => window.clearTimeout(poll);
   }, [traceSolve, jobId, session?.access_token]);
 
+  // A cena só é lida quando a etapa de aprovação está aberta: preview é leitura de
+  // trabalho, e buscá-la em toda revisão custaria uma chamada por revisão para um desenho
+  // que ninguém abriu. Recarrega quando a cena muda de versão.
+  useEffect(() => {
+    const token = session?.access_token;
+    const cena = review?.scene ?? null;
+    if (!token || jobId === "" || visibleStep !== "approval" || cena === null) {
+      setEstadoDoPreview("sem-cena");
+      setCenaDoPreview(null);
+      return;
+    }
+    let cancelado = false;
+    setEstadoDoPreview("carregando");
+    void getScene(token, jobId)
+      .then((resolvida) => {
+        if (cancelado) {
+          return;
+        }
+        setCenaDoPreview(resolvida);
+        setEstadoDoPreview("pronto");
+      })
+      .catch(() => {
+        if (cancelado) {
+          return;
+        }
+        // Falhar aqui não derruba a aprovação: o portão é do servidor, não do desenho.
+        setCenaDoPreview(null);
+        setEstadoDoPreview("falhou");
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [jobId, review?.scene?.id, review?.scene?.version, session?.access_token, visibleStep]);
+
   useEffect(() => {
     const token = session?.access_token;
     if (!token || traceSolve?.status !== "COMPLETED") {
@@ -3852,6 +4318,65 @@ export function CroquiApp({
       );
     } catch (error) {
       showApiError(error, "Não foi possível solicitar a exportação.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  /** Abre o rascunho de correção a partir da proposta escolhida. */
+  function iniciarCorrecaoDaForma(): void {
+    if (!selectedGeometryProposal) {
+      return;
+    }
+    const rascunho = iniciarCorrecao(selectedGeometryProposal);
+    if (rascunho === null) {
+      setMessage(
+        "Forma circular não é corrigida por vértices: corrigir um círculo seria mexer " +
+          "em centro e raio, e isso não é o que esta correção faz.",
+      );
+      return;
+    }
+    setCorrecao(rascunho);
+    setVerticeAtivo(null);
+    setMessage(null);
+  }
+
+  /**
+   * Grava a correção como proposta NOVA. A observação original não é tocada, e por isso o
+   * rascunho continua na tela quando o servidor recusa: ninguém reescreve quatro vértices
+   * por causa de uma versão vencida.
+   */
+  async function gravarCorrecaoDaForma(): Promise<void> {
+    if (!review?.scene || !session.access_token || correcao === null) {
+      return;
+    }
+    const issue = correcaoIssue(correcao);
+    if (issue) {
+      setMessage(issue);
+      return;
+    }
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const next = await correctProposalShape(session.access_token, jobId, {
+        baseReviewVersion: review.version,
+        baseSceneVersion: review.scene.version,
+        derivedFrom: correcao.derivedFrom,
+        vertices: correcao.vertices,
+        closed: false,
+        justification: correcao.justificativa,
+      });
+      setReview(next);
+      setCorrecao(null);
+      setVerticeAtivo(null);
+      setConflict(false);
+    } catch (error) {
+      const text =
+        error instanceof Error
+          ? error.message
+          : "Não foi possível gravar a correção de forma.";
+      setConflict(text.includes("REVISION_CONFLICT"));
+      setMessage(text);
     } finally {
       setSubmitting(false);
     }
@@ -5743,8 +6268,133 @@ export function CroquiApp({
                           >
                             Rejeitar proposta
                           </button>
+                          {/* Terceiro ato, ao lado dos dois — e não escondido em menu:
+                              hoje ele é o caminho que não existe, e caminho que ninguém
+                              encontra continua não existindo. */}
+                          <button
+                            type="button"
+                            className="acao-correcao"
+                            disabled={
+                              submitting ||
+                              correcao !== null ||
+                              !formaCorrigivel(selectedGeometryProposal)
+                            }
+                            onClick={iniciarCorrecaoDaForma}
+                          >
+                            Corrigir forma
+                          </button>
                         </div>
+                        <p className="proposal-hint">
+                          Corrigir não altera esta proposta: cria uma forma nova, de origem
+                          humana, ao lado desta, que continua legível.
+                        </p>
                       </div>
+                    ) : null}
+                    {correcao !== null ? (
+                      <div
+                        className="correcao-de-forma"
+                        aria-label="Correção humana de forma"
+                      >
+                        <strong>Corrigindo a forma</strong>
+                        <p className="correcao-precisao">
+                          Nasce não resolvida · não exporta. Uma forma desenhada à mão
+                          chega no máximo a aproximada, e só por calibração — nunca a
+                          exata.
+                        </p>
+                        <p>
+                          {correcao.vertices.length} vértices ·{" "}
+                          {correcao.derivedFrom.length}{" "}
+                          {correcao.derivedFrom.length === 1
+                            ? "forma de origem"
+                            : "formas de origem"}
+                        </p>
+                        <ul className="correcao-derivacao">
+                          {correcao.derivedFrom.map((origem) => (
+                            <li key={origem}>
+                              {proposalName(origem)}
+                              <button
+                                type="button"
+                                disabled={submitting}
+                                onClick={() =>
+                                  setCorrecao(removerDerivacao(correcao, origem))
+                                }
+                              >
+                                Tirar da união
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="correcao-dica">
+                          Escolha outra forma no desenho para uni-la a esta. Arraste uma
+                          alça para mover o vértice; clique no meio de um segmento para
+                          inserir.
+                        </p>
+                        {verticeAtivo !== null ? (
+                          <button
+                            type="button"
+                            disabled={
+                              submitting ||
+                              correcao.vertices.length <= MINIMO_DE_VERTICES
+                            }
+                            onClick={() => {
+                              setCorrecao(removerVertice(correcao, verticeAtivo));
+                              setVerticeAtivo(null);
+                            }}
+                          >
+                            Remover vértice {verticeAtivo + 1}
+                          </button>
+                        ) : null}
+                        <label>
+                          Justificativa
+                          <input
+                            value={correcao.justificativa}
+                            onChange={(event) =>
+                              setCorrecao({
+                                ...correcao,
+                                justificativa: event.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <div>
+                          <button
+                            type="button"
+                            disabled={submitting || correcaoIssue(correcao) !== null}
+                            onClick={() => void gravarCorrecaoDaForma()}
+                          >
+                            {submitting ? "Gravando…" : "Gravar correção"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={submitting}
+                            onClick={() => {
+                              setCorrecao(null);
+                              setVerticeAtivo(null);
+                            }}
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                        {correcaoIssue(correcao) ? (
+                          <p className="correcao-recusa">{correcaoIssue(correcao)}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {superadas.size > 0 ? (
+                      <p className="correcao-superadas">
+                        {superadas.size}{" "}
+                        {superadas.size === 1
+                          ? "forma superada por correção humana"
+                          : "formas superadas por correção humana"}{" "}
+                        — elas continuam gravadas.{" "}
+                        <button
+                          type="button"
+                          className="ligacao"
+                          onClick={() => setMostrarSuperadas(!mostrarSuperadas)}
+                        >
+                          {mostrarSuperadas ? "recolher" : "mostrar"}
+                        </button>
+                      </p>
                     ) : null}
                   </section>
                 ) : null}
@@ -5790,6 +6440,12 @@ export function CroquiApp({
                     <dd>{exportStatusLabel(exportArtifact)}</dd>
                   </div>
                 </dl>
+                <PreviewDaCena
+                  scene={cenaDoPreview}
+                  estado={estadoDoPreview}
+                  appliedSpans={traceSolve?.applied_spans ?? []}
+                  contestedSpans={traceSolve?.contested_spans ?? []}
+                />
                 <section className="issue-panel" aria-label="Bloqueios e issues">
                   <strong>Bloqueios visíveis</strong>
                   {review.blockers.length ? (
@@ -6367,12 +7023,22 @@ export function CroquiApp({
                         const bindable =
                           bindingReadingId !== null &&
                           tracedProposalIds.has(proposal.id);
-                        const className = `proposal-shape ${selected ? "selected" : ""} ${associating ? "associating" : ""} ${batched ? "batched" : ""} ${bindable ? "bindable" : ""} ${decision?.action ?? "pending"}`;
+                        // Origem do rascunho em curso vira FANTASMA, e forma já citada
+                        // por uma correção gravada fica recolhida: nos dois casos a
+                        // observação continua desenhada, porque é ela que preserva o que
+                        // a máquina entregou (ADR-0050, decisão 4).
+                        const emCorrecao =
+                          correcao?.derivedFrom.includes(proposal.id) ?? false;
+                        const recolhida =
+                          superadas.has(proposal.id) && !mostrarSuperadas;
+                        const className = `proposal-shape ${selected ? "selected" : ""} ${associating ? "associating" : ""} ${batched ? "batched" : ""} ${bindable ? "bindable" : ""} ${emCorrecao ? "fantasma" : ""} ${recolhida ? "superada" : ""} ${decision?.action ?? "pending"}`;
                         // Na captura toda forma responde, inclusive a já decidida: um
                         // vão pode amarrar um elemento aceito antes. Amarrando uma cota,
                         // só linha já traçada responde. Fora disso, só o que ainda não
                         // foi decidido: decisão registrada é imutável.
-                        const pick = capturing
+                        const pick = correcao
+                          ? () => setCorrecao(unirFragmento(correcao, proposal))
+                          : capturing
                           ? (event: ReactMouseEvent<SVGElement>) =>
                               handleCaptureShapeClick(proposal.id, event)
                           : bindingReadingId
@@ -6448,6 +7114,82 @@ export function CroquiApp({
                           width={marqueeRect.right - marqueeRect.left}
                           height={marqueeRect.bottom - marqueeRect.top}
                         />
+                      ) : null}
+                    </svg>
+                  ) : null}
+                  {/* Correções humanas JÁ GRAVADAS e o rascunho em curso. SVG próprio,
+                      com `pointer-events` só nas alças: sem isso ele roubaria o cursor de
+                      quem quer clicar numa forma por baixo para uni-la. */}
+                  {review.proposals &&
+                  (correcao !== null || correcoesGravadas.length > 0) ? (
+                    <svg
+                      className="proposal-overlay correcao-overlay"
+                      aria-hidden="true"
+                      viewBox={`0 0 ${review.proposals.image_width_px} ${review.proposals.image_height_px}`}
+                      preserveAspectRatio="none"
+                      onPointerMove={(event) => {
+                        if (verticeArrastado.current === null || correcao === null) {
+                          return;
+                        }
+                        setCorrecao(
+                          moverVertice(
+                            correcao,
+                            verticeArrastado.current,
+                            pontoDaProposta(event),
+                          ),
+                        );
+                      }}
+                      onPointerUp={() => {
+                        verticeArrastado.current = null;
+                      }}
+                    >
+                      {correcoesGravadas.map((gravada) => (
+                        <polyline
+                          key={gravada.id}
+                          className="correcao-gravada"
+                          points={pontosDaCorrecaoGravada(gravada)}
+                        />
+                      ))}
+                      {correcao !== null ? (
+                        <>
+                          <polyline
+                            className="correcao-rascunho"
+                            points={correcao.vertices
+                              .map((vertice) => `${vertice.x},${vertice.y}`)
+                              .join(" ")}
+                          />
+                          {correcao.vertices.slice(0, -1).map((vertice, indice) => {
+                            const proximo = correcao.vertices[indice + 1];
+                            return (
+                              <circle
+                                key={`inserir-${indice}`}
+                                className="correcao-inserir"
+                                cx={(vertice.x + proximo.x) / 2}
+                                cy={(vertice.y + proximo.y) / 2}
+                                r={raioDaAlca * 0.7}
+                                onClick={() =>
+                                  setCorrecao(inserirVertice(correcao, indice))
+                                }
+                              />
+                            );
+                          })}
+                          {correcao.vertices.map((vertice, indice) => (
+                            <circle
+                              key={`alca-${indice}`}
+                              className={`correcao-alca ${
+                                verticeAtivo === indice ? "ativa" : ""
+                              }`}
+                              cx={vertice.x}
+                              cy={vertice.y}
+                              r={raioDaAlca}
+                              onPointerDown={(event) => {
+                                verticeArrastado.current = indice;
+                                setVerticeAtivo(indice);
+                                event.currentTarget.setPointerCapture(event.pointerId);
+                              }}
+                            />
+                          ))}
+                        </>
                       ) : null}
                     </svg>
                   ) : null}
