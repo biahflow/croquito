@@ -10204,6 +10204,57 @@
         ]
       }
     },
+    "/v1/estimate-rounds/{round_id}/calc-matrix": {
+      "get": {
+        "description": "A `CalcMatrix` gravada na revisão corrente, revalidada na leitura — leitura pura.\n\nNão grava, não avança a versão da rodada e não tem `base_version`, como a leitura da\netapa de códigos, cujo papel ela também usa (`_require_estimate_reader`): quem assina\no orçamento precisa ler o que assina.\n\nExiste porque a matriz não saía em resposta nenhuma: a tela montava o rascunho, mandava\nno build e, depois de um recarregamento, não tinha como saber o que já estava gravado —\no que fazia montar o orçamento apagar do banco o que o acervo tinha aplicado.\n\n`calc_matrix` é `null` no regime legado (revisão sem matriz, ou rodada ainda sem\nrevisão), e não `409`: não ter matriz é estado normal da rodada, não etapa fora de\nordem. O documento sai **como está gravado**, depois de passar de novo pelo validador\ndo domínio (`matrix_of`, espelho de `load_kit`) — servir o que não valida faria a tela\nrenderizar número que ninguém conferiu.",
+        "operationId": "get_estimate_calc_matrix_v1_estimate_rounds__round_id__calc_matrix_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Estimate Calc Matrix V1 Estimate Rounds  Round Id  Calc Matrix Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Estimate Calc Matrix",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
     "/v1/estimate-rounds/{round_id}/catalog/search": {
       "get": {
         "description": "Busca léxica na cascata inteira; cada resultado diz de qual fonte e posição veio.\n\nSem `arm`, e a razão MUDOU com a F-041: o índice de embeddings agora é publicado\n(`/v1/platform/reference-catalog-indexes`), então o que impede o braço híbrido aqui\nnão é mais a falta do artefato — é o verbo. Resolver o vetor da consulta é chamada\npaga, e esta rota é um `GET` que dispara a cada tecla; pagar por tecla é o oposto\nexato da decisão 7 do ADR-0054, que concentrou o gasto no recompute explícito.\nExpor o parâmetro só para devolver `503` acrescentaria superfície que não existe —\no motivo do braço ausente continua viajando em `semantic_notes`, e a busca nunca\ndegrada em silêncio.",
@@ -11642,7 +11693,7 @@
     },
     "/v1/estimate-rounds/{round_id}/site-setup/preview": {
       "post": {
-        "description": "O que vai nascer se o acervo for aplicado — **sem gravar nada**.\n\nÉ LEITURA, e o corpo diz isso: sem `base_version`, sem `Idempotency-Key`, sem revisão\nnova e sem avançar a versão da rodada, como o `GET` da shortlist (ADR-0054 D7). O\ncontrole que a feature exige contra \"aplicar sem olhar\" é justamente esta lista, com a\nconta de cada parcela à vista e a remoção individual antes do ato.\n\n`POST` e não `GET` porque o corpo carrega os parâmetros de obra e a lista de exclusões:\npô-los em query string publicaria valores da obra na URL, que é o que os logs de\ninfraestrutura registram.\n\nFalha fechada, e ela é do motor do domínio: parâmetro citado e não declarado recusa\nnomeando **todos** os que faltam, código fora do catálogo da cascata recusa nomeando o\ncódigo, e nenhuma linha nasce parcialmente. As duas chegam como\n`422 DOMAIN_VALIDATION_FAILED` com o código estável em `details.code`.\n\nDecimais saem como TEXTO, como no resto da jornada: a quantidade é `Decimal` no\ndomínio, e um número de JSON já teria passado por binário.",
+        "description": "O que vai nascer se o acervo for aplicado — **sem gravar nada**.\n\nÉ LEITURA, e o corpo diz isso: sem `base_version`, sem `Idempotency-Key`, sem revisão\nnova e sem avançar a versão da rodada, como o `GET` da shortlist (ADR-0054 D7). O\ncontrole que a feature exige contra \"aplicar sem olhar\" é justamente esta lista, com a\nconta de cada parcela à vista e a remoção individual antes do ato.\n\n`POST` e não `GET` porque o corpo carrega os parâmetros de obra e a lista de exclusões:\npô-los em query string publicaria valores da obra na URL, que é o que os logs de\ninfraestrutura registram.\n\n**Ela MARCA o que não pode nascer; quem RECUSA é o apply.** Parâmetro citado e não\ndeclarado sai em `missing_parameters` da linha, com `quantity: null`; código fora do\ncatálogo da cascata sai em `code_absent`; e `blocked_parcel_ids` reúne as parcelas não\nexcluídas que estão num dos dois estados. Recusar aqui era um beco sem saída: a saída\noferecida pela recusa — remover na pré-visualização as parcelas que citam o parâmetro\nfaltante — exigia a pré-visualização que a recusa impedia de existir.\n\nO que continua recusando: acervo invisível (`404`), acervo fora de circulação (`409`),\nparâmetro ilegível (`422 SITE_SETUP_PARAMETER_INVALID`) e exclusão que cita parcela\nque o acervo não tem (`422` com `SITE_SETUP_UNKNOWN_PARCEL`) — as três últimas são erro\nde quem chama, não estado do trabalho.\n\nDecimais saem como TEXTO, como no resto da jornada: a quantidade é `Decimal` no\ndomínio, e um número de JSON já teria passado por binário. Quantidade que não pôde ser\ncalculada sai `null`, nunca `\"0\"`.",
         "operationId": "preview_estimate_site_setup_v1_estimate_rounds__round_id__site_setup_preview_post",
         "parameters": [
           {

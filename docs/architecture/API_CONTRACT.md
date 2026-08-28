@@ -2018,22 +2018,49 @@ query string publicaria valores da obra na URL.
 
 Entrada: `kit_id`, `parameters` (mapa `nome -> valor`, sempre **texto**, como o BDI e a
 quantidade do takeoff) e `excluded_parcel_ids`. Saída: `round_id`, `version`, `kit_id`,
-`kit_version`, `rows` e `excluded_parcel_ids`. Cada linha traz `parcel_id`, `code`, `label`,
-`operands` (`name`, `value`, `unit`) e `quantity` — todo decimal como texto.
+`kit_version`, `rows`, `excluded_parcel_ids` e `blocked_parcel_ids`. Cada linha traz
+`parcel_id`, `code`, `label`, `operands`, `quantity`, `missing_parameters` e `code_absent` —
+todo decimal como texto. Cada operando traz `name`, `value`, `unit` e `parameter`: `value` é
+`null` quando o parâmetro que ele cita não foi declarado, e `parameter` nomeia esse parâmetro
+(é `null` só na constante literal).
 
-Recusas, sempre **por extenso** e sem materializar nada parcialmente:
+**A pré-visualização MARCA o que não pode nascer; quem recusa é o apply.** Parâmetro citado e
+não declarado sai em `missing_parameters` da linha, com `quantity: null`; código que o
+catálogo da cascata não tem sai em `code_absent` (com a quantidade preenchida, porque a conta
+fecha — o que falta é o código). `blocked_parcel_ids` reúne as parcelas **não excluídas** que
+estão num dos dois estados, para a tela não reimplementar a regra; parcela excluída nunca
+aparece nele, porque ela não vai nascer de qualquer jeito. `quantity` ausente é `null`, nunca
+`"0"`: zero é um valor, ausência não.
+
+Recusar aqui era beco sem saída, e foi corrigido em 2026-08-28 (F-042 T4): a saída oferecida
+pela recusa — remover na pré-visualização as parcelas que citam o parâmetro faltante — exigia
+a pré-visualização que a própria recusa impedia de existir.
+
+Recusas que continuam, todas erro de quem chama ou do estado do acervo, nunca do
+preenchimento em curso:
 
 - `404 NOT_FOUND` para acervo que este tenant não enxerga;
 - `409 SITE_SETUP_KIT_WITHDRAWN` para acervo fora de circulação;
 - `422 SITE_SETUP_PARAMETER_INVALID` com `details.parameters` para valor que não é decimal
   exato, finito e não negativo — todos de uma vez, nunca o primeiro;
-- `422 DOMAIN_VALIDATION_FAILED` com `details.code = SITE_SETUP_PARAMETER_MISSING` e
-  `details.parameters` **nomeando todos** os parâmetros citados e não declarados;
-- `422 DOMAIN_VALIDATION_FAILED` com `details.code = SITE_SETUP_CODE_ABSENT` e
-  `details.codes` nomeando o código que o catálogo da cascata da rodada não tem — o risco do
-  acervo silenciosamente desatualizado é recusado aqui, e não depois de aplicar;
 - `422 DOMAIN_VALIDATION_FAILED` com `details.code = SITE_SETUP_UNKNOWN_PARCEL` para exclusão
   que cita parcela que o acervo não tem.
+
+### `GET /v1/estimate-rounds/{round_id}/calc-matrix`
+
+Requer `orcamentista` ou `aprovador`, como a leitura da etapa de códigos; rodada de outro
+tenant é `404`. **Leitura pura**: não grava, não avança a versão da rodada e não tem
+`base_version`.
+
+Devolve `round_id`, `version` e `calc_matrix` — o documento da revisão corrente **como está
+gravado**, depois de passar de novo pelo validador do domínio na leitura, no mesmo desenho de
+`load_kit` e de `matrix_of`. `calc_matrix` é `null` no regime legado (revisão sem matriz, ou
+rodada ainda sem revisão): não ter matriz é estado normal da rodada, não etapa fora de ordem.
+Documento gravado que não revalida devolve `422`, nunca `200` com número que ninguém conferiu.
+
+Existe porque a matriz não saía em resposta nenhuma: a tela montava o rascunho, mandava no
+build e, depois de um recarregamento, não tinha como saber o que já estava gravado — o que
+fazia montar o orçamento apagar do banco o que o acervo tinha aplicado.
 
 ### `POST /v1/estimate-rounds/{round_id}/site-setup/apply`
 

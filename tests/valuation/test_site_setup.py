@@ -222,6 +222,131 @@ def test_code_absent_from_available_codes_is_refused_naming_the_code() -> None:
     assert raised.value.details["codes"] == [_ANDAIME]
 
 
+# --------------------------------------------------------------------------------------
+# a assimetria: a prévia marca, o apply recusa
+# --------------------------------------------------------------------------------------
+
+
+def test_preview_shows_every_parcel_and_marks_the_ones_that_cannot_be_born() -> None:
+    """Só `_ID_ANDAIME` cita os dois parâmetros que faltam; as outras cinco calculam."""
+    rows = preview_site_setup_kit(_kit(), {"prazo_meses": Decimal("2")})
+
+    assert [row.parcel_id for row in rows] == [
+        _ID_BANHEIRO,
+        _ID_CONTAINER,
+        _ID_VIGIA_DIA,
+        _ID_VIGIA_NOITE,
+        _ID_PLACA,
+        _ID_ANDAIME,
+    ]
+    andaime = rows[-1]
+    assert andaime.blocked is True
+    assert andaime.missing_parameters == ("semi_perimetro", "altura_alambrado")
+    # Ausência, e não zero: o operando não resolvido não tem valor nenhum a mostrar.
+    assert andaime.quantity is None
+    assert [(operand.name, operand.value, operand.parameter) for operand in andaime.operands] == [
+        ("SEMI PERIMETRO", None, "semi_perimetro"),
+        ("ALTURA", None, "altura_alambrado"),
+    ]
+    for row in rows[:-1]:
+        assert row.blocked is False
+        assert row.missing_parameters == ()
+        assert row.quantity is not None
+    assert rows[0].quantity == Decimal("2.00")
+
+
+def test_apply_refuses_the_same_state_the_preview_merely_marks() -> None:
+    """A assimetria provada lado a lado: a mesma entrada, marcada de um lado, recusada do outro."""
+    parameters = {"prazo_meses": Decimal("2")}
+
+    preview_site_setup_kit(_kit(), parameters)  # não levanta
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_site_setup_kit(_kit(), parameters)
+
+    assert raised.value.code == "SITE_SETUP_PARAMETER_MISSING"
+    assert raised.value.details["parameters"] == ["semi_perimetro", "altura_alambrado"]
+
+
+def test_preview_marks_the_code_absent_from_the_catalog_without_refusing() -> None:
+    """A conta fecha e a quantidade sai; o que falta é o código no catálogo da rodada."""
+    rows = {
+        row.parcel_id: row
+        for row in preview_site_setup_kit(
+            _kit(),
+            _PARAMETERS,
+            available_codes=[_BANHEIRO, _CONTAINER, _VIGIA, _PLACA],
+        )
+    }
+
+    andaime = rows[_ID_ANDAIME]
+    assert andaime.code_absent is True
+    assert andaime.blocked is True
+    assert andaime.quantity == Decimal("396.63")
+    assert andaime.missing_parameters == ()
+    assert all(not row.code_absent for parcel_id, row in rows.items() if parcel_id != _ID_ANDAIME)
+
+
+def test_preview_marks_a_parcel_blocked_by_both_reasons_at_once() -> None:
+    rows = {
+        row.parcel_id: row
+        for row in preview_site_setup_kit(
+            _kit(),
+            {"prazo_meses": Decimal("2")},
+            available_codes=[_BANHEIRO, _CONTAINER, _VIGIA, _PLACA],
+        )
+    }
+
+    andaime = rows[_ID_ANDAIME]
+    assert andaime.missing_parameters == ("semi_perimetro", "altura_alambrado")
+    assert andaime.code_absent is True
+    assert andaime.quantity is None
+
+
+def test_preview_of_an_excluded_blocked_parcel_produces_no_row_at_all() -> None:
+    """Parcela removida não vira linha, e por isso não vira marca: ela não vai nascer."""
+    rows = preview_site_setup_kit(
+        _kit(),
+        {"prazo_meses": Decimal("2")},
+        excluded_parcel_ids=[_ID_ANDAIME],
+    )
+
+    assert _ID_ANDAIME not in [row.parcel_id for row in rows]
+    assert all(not row.blocked for row in rows)
+
+
+def test_a_missing_parameter_cited_only_by_a_deduction_still_blocks_the_row() -> None:
+    """Dedução é parte da conta: parâmetro citado nela também impede o subtotal."""
+    kit = SiteSetupKit(
+        version=_KIT_VERSION,
+        source_label="fixture sintética F-042 (dedução paramétrica)",
+        parcels=[
+            SiteSetupParcel(
+                id=_ID_PLACA,
+                code=_PLACA,
+                label="PLACA DE OBRA COM DESCONTO",
+                recipe=CalcRecipe.DECLARED_PRODUCT,
+                operands=[_operand("LARGURA", value=Decimal("2.00"), unit="m")],
+                deductions=[_operand("VAO", parameter="vao_descontado", unit="m")],
+            )
+        ],
+    )
+
+    (row,) = preview_site_setup_kit(kit, {})
+
+    assert row.missing_parameters == ("vao_descontado",)
+    assert row.quantity is None
+
+
+def test_preview_still_refuses_an_exclusion_id_the_kit_does_not_have() -> None:
+    """A única recusa que sobra na prévia é erro de quem chama, não estado do trabalho."""
+    with pytest.raises(ValuationValidationError) as raised:
+        preview_site_setup_kit(_kit(), _PARAMETERS, excluded_parcel_ids=["ss_ffffffffffffffff"])
+
+    assert raised.value.code == "SITE_SETUP_UNKNOWN_PARCEL"
+    assert raised.value.details["ids"] == ["ss_ffffffffffffffff"]
+
+
 def test_unknown_excluded_parcel_id_is_refused() -> None:
     with pytest.raises(ValuationValidationError) as raised:
         apply_site_setup_kit(_kit(), _PARAMETERS, excluded_parcel_ids=["ss_ffffffffffffffff"])

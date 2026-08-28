@@ -215,17 +215,44 @@ def kit_option_payload(record: SiteSetupKitRecord, kit: SiteSetupKit) -> dict[st
 
 
 def preview_row_payload(row: SiteSetupPreviewRow) -> dict[str, Any]:
-    """Uma linha da pré-visualização; todo decimal como TEXTO, como no resto da jornada."""
+    """Uma linha da pré-visualização; todo decimal como TEXTO, como no resto da jornada.
+
+    Ausência sai como `null`, e **nunca** como `"0"`: zero é um valor que a orçamentista pode
+    ter declarado, e um zero no lugar de "não deu para calcular" faria a tela mostrar uma
+    parcela que vale nada onde há uma parcela que não pôde ser contada.
+    """
     return {
         "parcel_id": row.parcel_id,
         "code": row.code,
         "label": row.label,
         "operands": [
-            {"name": operand.name, "value": str(operand.value), "unit": operand.unit}
+            {
+                "name": operand.name,
+                "value": None if operand.value is None else str(operand.value),
+                "unit": operand.unit,
+                "parameter": operand.parameter,
+            }
             for operand in row.operands
         ],
-        "quantity": str(row.quantity),
+        "quantity": None if row.quantity is None else str(row.quantity),
+        "missing_parameters": list(row.missing_parameters),
+        "code_absent": row.code_absent,
     }
+
+
+def blocked_parcel_ids(rows: Sequence[SiteSetupPreviewRow]) -> list[str]:
+    """As parcelas que a tela precisa marcar: não podem nascer como estão.
+
+    É o que dispensa a tela de reimplementar a regra ("cita parâmetro não declarado OU código
+    fora do catálogo") para saber o que falta — a mesma razão de `allowed_cascade_origins`
+    sair do servidor.
+
+    Parcela EXCLUÍDA nunca aparece aqui, e não por filtro: o domínio já não produz linha para
+    ela (`_included_parcels`, `site_setup.py`), e uma parcela que não vai nascer de qualquer
+    jeito não é um impedimento a resolver. Marcá-la mandaria a orçamentista declarar um
+    parâmetro para uma parcela que ela acabou de remover.
+    """
+    return [row.parcel_id for row in rows if row.blocked]
 
 
 # --- merge na matriz ----------------------------------------------------------------------
