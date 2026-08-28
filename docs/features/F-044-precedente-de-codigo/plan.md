@@ -23,7 +23,7 @@ pacote de códigos idêntico ou contido.
 | # | Tarefa | Estado |
 |---|---|---|
 | T1 | [Medir a repetição de rótulo entre praças](tasks/T1-medir-a-repeticao.md) | **Entregue** |
-| T2 | O índice de precedentes, com as duas fontes (`tasks/T2-indice-e-semeadura.md`, chega com a T2) | Em execução |
+| T2 | [O índice de precedentes, com as duas fontes](tasks/T2-indice-e-semeadura.md) | **Entregue** |
 | T3 | Precedente no topo da shortlist e aceite de pacote em um clique | Não iniciada |
 
 ## A semeadura entrou no escopo, e é ela que tira o ganho da espera

@@ -79,7 +79,10 @@ praça** têm precedente com pacote exato ou contido.
 
 Isso a coloca acima da [F-042](../F-042-acervo-de-parcelas-de-canteiro/feature.md) (24
 linhas) em volume, e a estimativa original está subdimensionada por um fator de cerca de
-cinco. A prioridade merece revisão pelo dono.
+cinco. **A prioridade foi elevada para `HIGH` pelo dono em 2026-08-28**, e a semeadura de
+orçamentos passados entrou no escopo da feature na mesma decisão — sem ela o índice nasceria
+vazio, porque só uma rodada real existe no banco, e o ganho medido esperaria várias praças
+novas.
 
 ### Unknown 2 — como normalizar o rótulo
 
@@ -185,8 +188,8 @@ trocá-la exigiria refazer a medição que a sustenta.
 - **Unknown 3 — quantas praças fazem um precedente confiável.** A medição não decide limiar.
   Com três praças, o caso de "uma praça só" é comum e é justamente o que o desenho marca com
   aviso. A T2 não decide limiar: ela devolve a contagem, e quem a usa é a T3.
-- **A prioridade da feature**, à luz do volume medido. O contrato da T2 registra que ela subiu
-  para `HIGH`, mas nem [`feature.md`](feature.md) nem o
-  [roadmap](../../product/ROADMAP.md) registram essa decisão — os dois ainda dizem `MEDIUM`,
-  a revisar pelo dono. A divergência é anterior a esta execução e continua aberta.
+- ~~**A prioridade da feature**~~ — **elevada para `HIGH` em 2026-08-28** (Daniel Campos),
+  junto com a decisão de trazer a semeadura para o escopo. A divergência que a T2 registrou
+  entre o contrato dela e o [`feature.md`](feature.md)/[roadmap](../../product/ROADMAP.md)
+  existia porque a worktree da T2 saiu antes desse commit; os três estão alinhados agora.
 - **A mudança na shortlist e a tela** — é a T3, e o pacote de design já aprovado a governa.
