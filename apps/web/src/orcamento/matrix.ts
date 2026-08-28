@@ -72,6 +72,14 @@ export const CALC_RECIPES: readonly CalcRecipe[] = [
 /** Operando impresso da memória: `name` é dado (chega em português), `value` é decimal texto. */
 export type CalcOperand = { name: string; value: string; unit?: string | null };
 
+/**
+ * Proveniência de uma parcela nascida de um acervo de canteiro (F-042), no fio.
+ *
+ * Espelha `CalcContribution.kit_origin` do domínio, que é OPCIONAL: parcela autorada à mão
+ * não tem o campo, e a matriz dela continua saindo byte-idêntica à de antes da feature.
+ */
+export type KitOrigin = { kit_version: number; parcel_id: string };
+
 /** A célula da matriz: a parcela que UM elemento acrescenta à quantidade de UM serviço. */
 export type CalcContribution = {
   source_item_id: string | null;
@@ -82,6 +90,7 @@ export type CalcContribution = {
   deductions: CalcOperand[];
   depends_on_code: string | null;
   note: string | null;
+  kit_origin?: KitOrigin;
 };
 
 /** As parcelas que um serviço (`code`) recebe de todos os elementos que o alimentam. */
@@ -132,6 +141,27 @@ export type CalcContributionDraft = {
   deductions: OperandDraft[];
   dependsOnCode: string;
   note: string;
+  /**
+   * De qual acervo de canteiro a parcela nasceu (F-042). Ausente é "autorada à mão", e é o
+   * caso de toda contribuição autorada no editor. Carrega mais do que o fio (`kitId` e o
+   * nome do acervo) porque é a tela que precisa distinguir DOIS acervos aplicados na mesma
+   * rodada — reaplicar substitui as do mesmo acervo e não toca nas outras.
+   */
+  kitOrigin?: KitProvenance;
+  /**
+   * A quantidade que o SERVIDOR computou para esta parcela, guardada só para ser exibida.
+   * Ela não viaja de volta: o fio leva os operandos, e o subtotal é recomputado lá. A tela
+   * nunca a recalcula — ela é a string decimal que chegou.
+   */
+  kitQuantity?: string;
+};
+
+/** Proveniência de acervo do lado da TELA; o fio leva só `{kit_version, parcel_id}`. */
+export type KitProvenance = {
+  kitId: string;
+  kitName: string;
+  kitVersion: number;
+  parcelId: string;
 };
 
 // --- Códigos de recusa client-side ------------------------------------------
@@ -328,7 +358,7 @@ function toContribution(draft: CalcContributionDraft): CalcContribution {
       ? draft.dependsOnCode
       : null;
   const note = draft.note.trim();
-  return {
+  const contribution: CalcContribution = {
     source_item_id,
     label: draft.label,
     basis: draft.basis,
@@ -338,6 +368,15 @@ function toContribution(draft: CalcContributionDraft): CalcContribution {
     depends_on_code,
     note: note.length > 0 ? note : null,
   };
+  // A proveniência só entra quando existe: parcela autorada à mão continua saindo sem a
+  // chave, e a matriz de quem não usa acervo é a mesma de antes da F-042.
+  if (draft.kitOrigin !== undefined) {
+    contribution.kit_origin = {
+      kit_version: draft.kitOrigin.kitVersion,
+      parcel_id: draft.kitOrigin.parcelId,
+    };
+  }
+  return contribution;
 }
 
 /**

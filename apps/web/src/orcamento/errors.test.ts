@@ -10,6 +10,9 @@ import {
   isWorkbookAuditFailure,
   orcamentoErrorCode,
   recusaDeMutacao,
+  recusaDoAcervo,
+  siteSetupAbsentCodes,
+  siteSetupMissingParameters,
   workbookAuditFindings,
 } from "./errors";
 import { errorMessage, MENSAGEM_ORCAMENTO_MUDOU } from "./labels";
@@ -231,5 +234,66 @@ describe("cancelamento da busca incremental", () => {
     expect(isAbortError(new DOMException("cancelado", "AbortError"))).toBe(true);
     expect(isAbortError(new Error("AbortError"))).toBe(false);
     expect(isAbortError(apiError("NOT_FOUND", 404))).toBe(false);
+  });
+});
+
+/**
+ * As duas recusas do acervo de parcelas de canteiro (F-042), as duas em falha FECHADA.
+ *
+ * O que elas precisam garantir é que a frase NOMEIA o que faltou: aplicar "o que dá"
+ * produziria uma planilha parcial com aparência de completa, e mostrar um faltante de cada
+ * vez faria a orçamentista voltar tantas vezes quantos forem os campos.
+ */
+describe("recusas do acervo de canteiro", () => {
+  it("nomeia TODOS os parâmetros faltantes, e devolve a lista para marcar os campos", () => {
+    const recusa = recusaDoAcervo(
+      apiError("SITE_SETUP_PARAMETER_MISSING", 422, null, {
+        parameters: ["semiperímetro", "altura do alambrado"],
+      }),
+    );
+
+    expect(recusa.parametros).toEqual(["semiperímetro", "altura do alambrado"]);
+    expect(recusa.mensagem).toContain("Nada foi aplicado");
+    expect(recusa.mensagem).toContain("semiperímetro");
+    expect(recusa.mensagem).toContain("altura do alambrado");
+    expect(recusa.conflito).toBe(false);
+    expect(recusa.codigos).toEqual([]);
+  });
+
+  it("nomeia o código ausente do catálogo em vez de pular a parcela em silêncio", () => {
+    const recusa = recusaDoAcervo(
+      apiError("SITE_SETUP_CODE_ABSENT", 422, null, {
+        codes: ["AC03100050"],
+      }),
+    );
+
+    expect(recusa.codigos).toEqual(["AC03100050"]);
+    expect(recusa.mensagem).toContain("AC03100050");
+    expect(recusa.mensagem).toContain("Nada foi aplicado");
+  });
+
+  it("envelope sem a lista devolve a frase base, nunca um faltante fabricado", () => {
+    const recusa = recusaDoAcervo(apiError("SITE_SETUP_PARAMETER_MISSING"));
+
+    expect(recusa.parametros).toEqual([]);
+    expect(recusa.mensagem).toContain("Nada foi aplicado");
+  });
+
+  it("lista de outro código não é lida como faltante deste", () => {
+    expect(
+      siteSetupMissingParameters(
+        apiError("SITE_SETUP_CODE_ABSENT", 422, null, { parameters: ["prazo"] }),
+      ),
+    ).toEqual([]);
+    expect(siteSetupAbsentCodes(new Error("rede caiu"))).toEqual([]);
+  });
+
+  /** O `409` continua tendo banner próprio: ele não é falha do ato, é o orçamento andando. */
+  it("o conflito de revisão não vira recusa do acervo", () => {
+    const recusa = recusaDoAcervo(apiError("REVISION_CONFLICT", 409));
+
+    expect(recusa.conflito).toBe(true);
+    expect(recusa.parametros).toEqual([]);
+    expect(recusa.mensagem).toBe(MENSAGEM_ORCAMENTO_MUDOU);
   });
 });
