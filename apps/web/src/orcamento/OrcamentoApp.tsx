@@ -51,7 +51,13 @@ import {
 } from "./api";
 import { signOut } from "../auth";
 import { canMove, entryOfDigest, reorderedDigests } from "./cascata";
-import { derivarEtapas, etapaStatusLabel, type Etapa, type EtapaId } from "./etapas";
+import {
+  derivarEtapas,
+  deveCarregarSugestoes,
+  etapaStatusLabel,
+  type Etapa,
+  type EtapaId,
+} from "./etapas";
 import {
   describeError,
   exportBlockedViolations,
@@ -68,7 +74,6 @@ import {
   formatPercentText,
   formatQuantityText,
   formatTimestamp,
-  parseDecimalInput,
   shortDigest,
 } from "./format";
 import {
@@ -111,12 +116,15 @@ import {
   CONVITE_TABELA_PROPRIA,
   DESCRICAO_CALCULO_SHORTLIST,
   DESCRICAO_MONTAGEM,
+  DESCRICAO_RECALCULO_SHORTLIST,
   DESCRICAO_REGIME,
   DESCRICAO_TABELA_PROPRIA,
   derivadaDeLabel,
+  descricaoDaShortlist,
   DICA_BDI,
   DICA_CANDIDATO_ADITIVO,
   DICA_LOTE_ANOTADO,
+  DICA_LOTE_VAZIO,
   DICA_QUANTIDADE,
   DICA_REGIME,
   DICA_TETO,
@@ -147,6 +155,7 @@ import {
   tetoClasse,
   tetoEtiqueta,
   TITULO_ACERVO_VAZIO,
+  TITULO_NOTAS_SEMANTICAS,
   TITULO_TABELA_PROPRIA,
   unitLabel,
   unitMismatchHint,
@@ -181,9 +190,11 @@ import {
   aplicarZoom,
   arrastarView,
   caixaVisivel,
+  emblemaDaCaixa,
   enquadrarCaixa,
   fatorDeZoom,
   paginaInteira,
+  raioDoEmblema,
   PASSO_ZOOM,
   pontoDaImagem,
   viewBoxAttr,
@@ -194,6 +205,14 @@ import {
 } from "./prancha";
 import { bdiPercentError, tetoAmountError, worksiteKeyError } from "./requests";
 import { derivarTeto, type TetoDerivado } from "./teto";
+import {
+  avisoDeAnotacaoEmMassa,
+  CAMPOS_VAZIOS,
+  itemJaRevisado,
+  montarAnotacao,
+  motivoNaoMarcavel,
+  rotuloAnotarEmMassa,
+} from "./takeoffLote";
 
 /** Duração do aviso de sucesso; recusa nenhuma expira sozinha. */
 const TOAST_MS = 5000;
@@ -650,6 +669,50 @@ export function SemPrecoNaCascata({ rotulos }: { rotulos: readonly string[] }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+/**
+ * O que a shortlist custa e qual delas está na tela (F-041, ADR-0054).
+ *
+ * Três coisas, e nenhuma delas é decorativa:
+ *
+ * - **Os dois custos, sempre juntos.** Ler não paga (invariante testada do `GET`) e
+ *   recalcular pode pagar (D7). Mostrar só o do gesto do momento esconderia da pessoa que
+ *   o outro existe, e é justamente a diferença entre os dois que mudou nesta feature.
+ * - **Qual braço produziu a lista que está aí, em palavra.** Lido do `matching` que o
+ *   servidor declarou, e nunca deduzido: o artefato pode ter sido gravado por outra sessão,
+ *   inclusive uma que tinha índice publicado e esta não tem. `matching` nulo é a shortlist
+ *   ainda não lida — e aí não há braço a nomear.
+ * - **As notas de degradação como vieram.** Elas nomeiam a fonte que ficou sem índice, e
+ *   reescrevê-las aqui faria a tela discordar de quem calculou. O que esta tela acrescenta
+ *   é o título que diz o que aquela lista é.
+ */
+export function EstadoDoBracoSemantico({
+  matching,
+  notas,
+}: {
+  matching: "lexical" | "hybrid" | null;
+  notas: readonly string[];
+}) {
+  return (
+    <>
+      <p className="dica">{DESCRICAO_CALCULO_SHORTLIST}</p>
+      <p className="aviso-fixo aviso-inline">{DESCRICAO_RECALCULO_SHORTLIST}</p>
+      {matching === null ? null : (
+        <p className="dica">{descricaoDaShortlist(matching)}</p>
+      )}
+      {notas.length > 0 ? (
+        <>
+          <p className="dica">{TITULO_NOTAS_SEMANTICAS}</p>
+          <ul className="dica notas-semanticas">
+            {notas.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -1221,6 +1284,12 @@ export function PranchaComAncoras({
 }) {
   const [pagina, setPagina] = useState<Pagina | null>(null);
   const [view, setView] = useState<ViewBox | null>(null);
+  /**
+   * Tela cheia. Aproximar 8× dentro da coluna não resolve conferir quantidade contra
+   * desenho: a prancha é A1 e a coluna tem centenas de pixels. Ampliar NÃO reseta a
+   * janela — quem chegou até o item aproximando quer continuar nele, maior.
+   */
+  const [expandida, setExpandida] = useState(false);
   const quadroRef = useRef<HTMLDivElement | null>(null);
   const arrasto = useRef<{ x: number; y: number } | null>(null);
 
@@ -1248,6 +1317,25 @@ export function PranchaComAncoras({
       imagem.onload = null;
     };
   }, [src]);
+
+  // `Escape` fecha a tela cheia, como qualquer sobreposição que cobre a página. O
+  // listener só existe ENQUANTO ela está aberta: registrado sempre, ele capturaria a
+  // tecla de quem está no formulário ao lado. `document` é conferido porque a suíte roda
+  // sem DOM (`environment: "node"`), e o componente é renderizado por `renderToStaticMarkup`.
+  useEffect(() => {
+    if (!expandida || typeof document === "undefined") {
+      return;
+    }
+    const aoTeclar = (evento: KeyboardEvent) => {
+      if (evento.key === "Escape") {
+        setExpandida(false);
+      }
+    };
+    document.addEventListener("keydown", aoTeclar);
+    return () => {
+      document.removeEventListener("keydown", aoTeclar);
+    };
+  }, [expandida]);
 
   const itensAncorados = useMemo(
     () => itens.map((item, index) => ({ item, numero: index + 1, caixa: caixaDoItem(item) })),
@@ -1299,7 +1387,13 @@ export function PranchaComAncoras({
   };
 
   return (
-    <div className="prancha">
+    <div
+      className={`prancha${expandida ? " expandida" : ""}`}
+      // Expandida, ela cobre a página inteira: é uma sobreposição, e quem navega por
+      // leitor de tela precisa saber disso e como sair (a tecla está escrita no rodapé).
+      role={expandida ? "dialog" : undefined}
+      aria-label={expandida ? "Prancha ampliada" : undefined}
+    >
       <div className="prancha-controles">
         <button
           type="button"
@@ -1330,6 +1424,14 @@ export function PranchaComAncoras({
           disabled={inteira}
         >
           Prancha inteira
+        </button>
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={() => setExpandida((atual) => !atual)}
+          aria-pressed={expandida}
+        >
+          {expandida ? "Reduzir" : "Ampliar"}
         </button>
         <span className="prancha-zoom" aria-live="polite">
           {inteira ? "prancha inteira" : `${zoom.toFixed(1).replace(".", ",")}× de aproximação`}
@@ -1403,6 +1505,9 @@ export function PranchaComAncoras({
               const altura = Math.max(caixa.bottom - caixa.top, 1);
               // A espessura acompanha o zoom para o traço não engordar ao aproximar.
               const traco = Math.max(view.width / 400, 1);
+              // O raio sai de `raioDoEmblema`: fração da janela, limitada por meia altura
+              // da linha para que emblemas de itens vizinhos não se cubram.
+              const emblema = emblemaDaCaixa(caixa, raioDoEmblema(view, caixa), pagina);
               return (
                 <g
                   key={item.id}
@@ -1424,10 +1529,19 @@ export function PranchaComAncoras({
                       itemAnchor(item) === "registered" ? undefined : `${traco * 4} ${traco * 3}`
                     }
                   />
+                  {/* O mesmo emblema da lista ao lado, e sempre FORA do bbox: dentro,
+                      ele cobre letras da linha da legenda que o item marca. É ele que liga
+                      desenho e item para quem não distingue cor. */}
+                  <circle
+                    cx={emblema.cx}
+                    cy={emblema.cy}
+                    r={emblema.r}
+                    strokeWidth={traco}
+                  />
                   <text
-                    x={caixa.left + largura / 2}
-                    y={caixa.top - traco * 2}
-                    fontSize={Math.max(view.width / 55, 12)}
+                    x={emblema.cx}
+                    y={emblema.cy + emblema.r * 0.35}
+                    fontSize={emblema.r * 1.2}
                     textAnchor="middle"
                   >
                     {numero}
@@ -1442,6 +1556,7 @@ export function PranchaComAncoras({
         Clique numa âncora para escolher o item, ou escolha na lista para o desenho ir até
         ele. As âncoras são as do pacote que está nesta tela. Ctrl/⌘ com a roda também
         aproxima; arraste para percorrer.
+        {expandida ? " Esc reduz a prancha de volta à coluna." : null}
       </p>
     </div>
   );
@@ -2238,12 +2353,175 @@ function itemAnchor(item: TakeoffItem): "registered" | "raw" {
 }
 
 /**
- * Item que já recebeu decisão do orçamentista. Decisão não se sobrescreve (o domínio
- * recusa com `TAKEOFF_ITEM_ALREADY_REVIEWED`), e como o lote é atômico, deixar um item
- * assim entrar na anotação derrubaria o ato inteiro por causa dele.
+ * Regra de item já decidido: mora em `takeoffLote.ts`, com o resto das regras do lote, e é
+ * reexportada aqui porque a tela e os testes dela sempre a citaram por este módulo.
  */
-export function itemJaRevisado(item: TakeoffItem | null): boolean {
-  return item !== null && (item.status === "confirmed" || item.status === "rejected");
+export { itemJaRevisado };
+
+/**
+ * Uma linha da legenda na revisão do takeoff.
+ *
+ * A caixa de seleção fica FORA do botão de propósito: dentro dele, marcar dispararia
+ * também a seleção do item na prancha, e quem quisesse só marcar veria o desenho saltar.
+ * São dois atos diferentes — escolher o item para decidir, e marcá-lo para confirmar
+ * junto com os outros.
+ *
+ * Nada nasce marcado, e o item que não pode ser marcado diz POR QUÊ, em texto: caixa
+ * cinzenta sem explicação é a tela recusando em silêncio.
+ */
+export function ItemDaLegenda({
+  item,
+  numero,
+  selecionado,
+  anotado,
+  marcado,
+  onSelecionar,
+  onAlternarMarcado,
+}: {
+  item: TakeoffItem;
+  numero: number;
+  selecionado: boolean;
+  anotado: boolean;
+  marcado: boolean;
+  onSelecionar: () => void;
+  onAlternarMarcado: () => void;
+}) {
+  const motivo = motivoNaoMarcavel(item);
+  return (
+    <li className={`item ${item.status} ${selecionado ? "selecionado" : ""}`}>
+      <div className="item-linha">
+        <input
+          type="checkbox"
+          className="item-marcador"
+          checked={marcado}
+          disabled={motivo !== null}
+          onChange={onAlternarMarcado}
+          aria-label={`Marcar ${item.label} para confirmar em lote`}
+        />
+        <button
+          type="button"
+          className="item-botao"
+          onClick={onSelecionar}
+          aria-pressed={selecionado}
+        >
+          <span className="item-numero" aria-hidden="true">
+            {numero}
+          </span>
+          <span className="item-corpo">
+            <span className="item-rotulo">{item.label}</span>
+            <span className="item-estado">{itemStatusLabel(item.status)}</span>
+            <span className="item-quantidade">
+              {formatQuantityText(item.quantity ?? null, unitLabel(item.unit))}
+            </span>
+            {item.raw_text ? (
+              <span className="item-raw">lido da legenda: “{item.raw_text}”</span>
+            ) : null}
+            {itemAnchor(item) === "registered" ? null : (
+              <span className="item-nota">{AVISO_LOCALIZACAO_NAO_CONFIRMADA}</span>
+            )}
+            {anotado ? (
+              <span className="item-nota">Decisão anotada; ainda não gravada.</span>
+            ) : null}
+          </span>
+        </button>
+      </div>
+      {motivo === null ? null : (
+        <span className="item-nota item-nota-marcacao">{motivo}</span>
+      )}
+    </li>
+  );
+}
+
+/**
+ * O painel do lote, presente SEMPRE — inclusive com zero anotações.
+ *
+ * Marcado, anotado e gravado são três estados do mundo, e o painel é onde a tela os
+ * distingue. Vazio, ele diz o que ainda não aconteceu e NÃO oferece gravar: não há o que
+ * gravar, e um botão ali convidaria a gravar nada. Com anotações, ele lista o que vai
+ * junto no ato atômico e oferece os dois caminhos — gravar tudo ou descartar tudo.
+ */
+export function PainelDoLote({
+  lote,
+  itens,
+  submitting,
+  onRemover,
+  onGravar,
+  onDescartar,
+}: {
+  lote: TakeoffDecisionDraft[];
+  itens: TakeoffItem[];
+  submitting: boolean;
+  onRemover: (itemId: string) => void;
+  onGravar: () => void;
+  onDescartar: () => void;
+}) {
+  if (lote.length === 0) {
+    return (
+      <div className="lote-anotado">
+        <h3>Nenhuma decisão anotada ainda</h3>
+        <p className="dica">{DICA_LOTE_VAZIO}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="lote-anotado">
+      <h3>{lote.length === 1 ? "1 decisão anotada" : `${lote.length} decisões anotadas`}</h3>
+      <p className="dica">{DICA_LOTE_ANOTADO}</p>
+      <ul className="itens">
+        {lote.map((anotacao) => {
+          const item = itens.find((candidato) => candidato.id === anotacao.itemId);
+          return (
+            <li key={anotacao.itemId} className="item">
+              <span className="item-corpo">
+                <span className="item-rotulo">{item?.label ?? anotacao.itemId}</span>
+                <span className="item-estado">
+                  {anotacao.action === "confirm" ? "confirmar" : "rejeitar"}
+                </span>
+                {anotacao.quantity === undefined ? null : (
+                  <span className="item-quantidade">
+                    {formatQuantityText(
+                      anotacao.quantity,
+                      unitLabel(anotacao.unit ?? item?.unit ?? ""),
+                    )}
+                  </span>
+                )}
+              </span>
+              <button
+                type="button"
+                className="botao-secundario"
+                onClick={() => onRemover(anotacao.itemId)}
+                disabled={submitting}
+              >
+                Remover anotação
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="acoes-linha">
+        <button
+          type="button"
+          className="botao-primario"
+          onClick={onGravar}
+          disabled={submitting}
+        >
+          {submitting
+            ? "Gravando…"
+            : lote.length === 1
+              ? "Gravar 1 decisão"
+              : `Gravar ${lote.length} decisões`}
+        </button>
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={onDescartar}
+          disabled={submitting}
+        >
+          Descartar anotações
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -2337,6 +2615,12 @@ export function OrcamentoApp({
    * ninguém revisou e que o servidor desconhece. A tela diz quantas estão pendentes.
    */
   const [loteDeDecisoes, setLoteDeDecisoes] = useState<TakeoffDecisionDraft[]>([]);
+  /**
+   * Itens MARCADOS para confirmar em lote. Nasce vazio e nada o pré-preenche: marcar
+   * continua sendo ato por item, e "confirmar tudo" não existe nesta jornada. Marcar
+   * também não é anotar — quem anota é o botão, e quem grava é outro ainda.
+   */
+  const [marcados, setMarcados] = useState<ReadonlySet<string>>(new Set());
 
   // Códigos.
   const [selectedPendingId, setSelectedPendingId] = useState("");
@@ -2516,12 +2800,18 @@ export function OrcamentoApp({
               ?.image_url ?? null)
           : null,
       );
-      // A shortlist só é buscada quando já existe na rodada: a primeira leitura
-      // **calcula e grava** o artefato, e isso é ato da orçamentista, não efeito
-      // colateral de abrir a tela.
+      // A shortlist é carregada sozinha assim que o pacote está revisado — não há botão
+      // para pedi-la. O `GET` pode calcular e gravar na primeira leitura, e isso É seguro
+      // como efeito de abrir a tela: ele roda SEM braço semântico (`arms=None`), então
+      // nenhuma chamada paga acontece, e grava com `advance_version=False`, então não move
+      // o token de concorrência e não faz a próxima decisão levar 409 (ADR-0054 D7).
+      // Quem gasta e versiona é o recálculo explícito, que continua sendo ato humano.
+      //
+      // `review_status` é a MESMA condição que a rota exige (`require_reviewed_packet`):
+      // pedir antes disso seria recusa garantida, e a tela pediria a cada volta do poll.
       setSuggestions(
-        next.codes.suggestions_present
-          ? await getSuggestions(token, orcamento)
+        deveCarregarSugestoes(next)
+          ? await leituraObservacional(() => getSuggestions(token, orcamento))
           : null,
       );
       const montado = next.estimate.present
@@ -2613,6 +2903,34 @@ export function OrcamentoApp({
     const timer = setInterval(() => void carregarEstado(), EXTRACTION_POLL_MS);
     return () => clearInterval(timer);
   }, [carregarEstado, state?.extraction.status]);
+
+  /**
+   * Relê o estado quando a aba volta ao foco.
+   *
+   * Substitui o botão "Recarregar estado atual", que existia só para cobrir mudança vinda
+   * de FORA desta aba — toda mutação daqui já relê, e o poll acima cobre a extração em
+   * andamento. Voltar para a aba é exatamente o momento em que essa mudança pode ter
+   * acontecido, e é de graça: aba parada não faz requisição nenhuma.
+   *
+   * `document`/`window` são conferidos porque a suíte roda sem DOM (`environment: "node"`)
+   * e o componente é renderizado por `renderToStaticMarkup`.
+   */
+  useEffect(() => {
+    if (!autenticado || orcamento === null || typeof document === "undefined") {
+      return;
+    }
+    const aoVoltar = () => {
+      if (document.visibilityState === "visible") {
+        void carregarEstado();
+      }
+    };
+    document.addEventListener("visibilitychange", aoVoltar);
+    window.addEventListener("focus", aoVoltar);
+    return () => {
+      document.removeEventListener("visibilitychange", aoVoltar);
+      window.removeEventListener("focus", aoVoltar);
+    };
+  }, [autenticado, carregarEstado, orcamento]);
 
   const abrirOrcamento = useCallback(
     (next: string | null) => {
@@ -2870,31 +3188,17 @@ export function OrcamentoApp({
     if (selectedItemId === "" || decision.action === "") {
       return;
     }
-    // Item já decidido não entra no lote: o domínio o recusaria e, como o lote é atômico,
-    // levaria junto as decisões que estavam certas.
-    if (itemJaRevisado(itens.find((item) => item.id === selectedItemId) ?? null)) {
-      setAlertMessage(AVISO_ITEM_JA_REVISADO);
+    const item = itens.find((candidato) => candidato.id === selectedItemId) ?? null;
+    if (item === null) {
       return;
     }
-    const quantidade =
-      decision.quantity.trim().length === 0
-        ? undefined
-        : (parseDecimalInput(decision.quantity) ?? undefined);
-    if (decision.quantity.trim().length > 0 && quantidade === undefined) {
-      setAlertMessage(
-        "A quantidade escrita não é um decimal exato; nada foi anotado. " +
-          DICA_QUANTIDADE,
-      );
+    // A montagem é a MESMA da marcação em massa (`takeoffLote.ts`): item já decidido e
+    // quantidade que não é decimal recusam aqui, antes de o lote atômico viajar.
+    const { anotacao, recusa } = montarAnotacao(item, decision.action, decision);
+    if (anotacao === null) {
+      setAlertMessage(recusa);
       return;
     }
-    const anotacao: TakeoffDecisionDraft = {
-      itemId: selectedItemId,
-      action: decision.action,
-      quantity: quantidade,
-      unit: decision.unit,
-      note: decision.note,
-      itemNote: decision.itemNote,
-    };
     setLoteDeDecisoes((atual) => [
       ...atual.filter((entrada) => entrada.itemId !== selectedItemId),
       anotacao,
@@ -2903,6 +3207,47 @@ export function OrcamentoApp({
     setSelectedItemId("");
     setAlertMessage(null);
     setToast("Decisão anotada no lote; ela ainda não foi gravada.");
+  };
+
+  /** Marca ou desmarca um item para a confirmação em lote. Ato por item, sempre. */
+  const alternarMarcado = (itemId: string) => {
+    setMarcados((atual) => {
+      const proximo = new Set(atual);
+      if (!proximo.delete(itemId)) {
+        proximo.add(itemId);
+      }
+      return proximo;
+    });
+  };
+
+  /**
+   * Anota as marcadas como CONFIRMADAS, sem tocar em quantidade nem unidade.
+   *
+   * O que a orçamentista afirma ao marcar quinze linhas obviamente certas é uma coisa só:
+   * "a legenda leu certo". Mandar a quantidade de volta seria a tela reescrevendo o dado
+   * lido, e o item ambíguo — onde não há quantidade lida — nem chega aqui, porque a caixa
+   * dele nasce desabilitada e o filtro repete a regra.
+   *
+   * Continua sendo ANOTAÇÃO: nada foi gravado, a rodada não mudou de versão, e o lote
+   * inteiro ainda vale junto ou não vale.
+   */
+  const anotarMarcadasComoConfirmadas = () => {
+    const anotacoes = itens
+      .filter((item) => marcados.has(item.id) && motivoNaoMarcavel(item) === null)
+      .map((item) => montarAnotacao(item, "confirm", CAMPOS_VAZIOS).anotacao)
+      .filter((anotacao): anotacao is TakeoffDecisionDraft => anotacao !== null);
+    if (anotacoes.length === 0) {
+      return;
+    }
+    setLoteDeDecisoes((atual) => [
+      // Reanotar SUBSTITUI, como no formulário: o servidor recusa duas decisões do mesmo
+      // item no mesmo lote, e descobrir isso no servidor custaria o lote inteiro.
+      ...atual.filter((entrada) => !anotacoes.some((nova) => nova.itemId === entrada.itemId)),
+      ...anotacoes,
+    ]);
+    setMarcados(new Set());
+    setAlertMessage(null);
+    setToast(avisoDeAnotacaoEmMassa(anotacoes.length));
   };
 
   /** Grava o lote inteiro: uma revisão, um carimbo, um redesenho — ou nenhum. */
@@ -2920,6 +3265,7 @@ export function OrcamentoApp({
       aplicarVersao(response.version);
       setTakeoff(response);
       setLoteDeDecisoes([]);
+      setMarcados(new Set());
       setDecision(EMPTY_DECISION);
       setSelectedItemId("");
       setAlertMessage(null);
@@ -3893,14 +4239,6 @@ export function OrcamentoApp({
             {etapa.title} · {etapaStatusLabel(etapa.status)}
           </button>
         ))}
-        <button
-          type="button"
-          className="botao-secundario recarregar"
-          onClick={() => void carregarEstado()}
-          disabled={loading}
-        >
-          {loading ? "Recarregando…" : "Recarregar estado atual"}
-        </button>
       </nav>
 
       {/* Uma vez só, FORA da etapa visível: o estouro é condição da rodada, não da etapa
@@ -4162,57 +4500,44 @@ export function OrcamentoApp({
               <div className="painel-cabecalho">
                 <h2>Itens da legenda</h2>
               </div>
+              {/* A linha de ação só existe quando há marcação: sem item marcado ela
+                  seria um botão que não faz nada, e "anotar nenhuma" não é um ato. */}
+              {marcados.size === 0 ? null : (
+                <div className="acoes-linha marcacao-em-massa">
+                  <button
+                    type="button"
+                    className="botao-primario"
+                    onClick={anotarMarcadasComoConfirmadas}
+                    disabled={submitting}
+                  >
+                    {rotuloAnotarEmMassa(marcados.size)}
+                  </button>
+                  <button
+                    type="button"
+                    className="botao-secundario"
+                    onClick={() => setMarcados(new Set())}
+                    disabled={submitting}
+                  >
+                    Limpar seleção
+                  </button>
+                </div>
+              )}
+
               <ul className="itens">
                 {itens.map((item, index) => (
-                  <li
+                  <ItemDaLegenda
                     key={item.id}
-                    className={`item ${item.status} ${
-                      item.id === selectedItemId ? "selecionado" : ""
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      className="item-botao"
-                      onClick={() => {
-                        setSelectedItemId(item.id);
-                        setDecision(EMPTY_DECISION);
-                      }}
-                      aria-pressed={item.id === selectedItemId}
-                    >
-                      <span className="item-numero" aria-hidden="true">
-                        {index + 1}
-                      </span>
-                      <span className="item-corpo">
-                        <span className="item-rotulo">{item.label}</span>
-                        <span className="item-estado">
-                          {itemStatusLabel(item.status)}
-                        </span>
-                        <span className="item-quantidade">
-                          {formatQuantityText(
-                            item.quantity ?? null,
-                            unitLabel(item.unit),
-                          )}
-                        </span>
-                        {item.raw_text ? (
-                          <span className="item-raw">
-                            lido da legenda: “{item.raw_text}”
-                          </span>
-                        ) : null}
-                        {itemAnchor(item) === "registered" ? null : (
-                          <span className="item-nota">
-                            {AVISO_LOCALIZACAO_NAO_CONFIRMADA}
-                          </span>
-                        )}
-                        {loteDeDecisoes.some(
-                          (entrada) => entrada.itemId === item.id,
-                        ) ? (
-                          <span className="item-nota">
-                            Decisão anotada; ainda não gravada.
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  </li>
+                    item={item}
+                    numero={index + 1}
+                    selecionado={item.id === selectedItemId}
+                    anotado={loteDeDecisoes.some((entrada) => entrada.itemId === item.id)}
+                    marcado={marcados.has(item.id)}
+                    onSelecionar={() => {
+                      setSelectedItemId(item.id);
+                      setDecision(EMPTY_DECISION);
+                    }}
+                    onAlternarMarcado={() => alternarMarcado(item.id)}
+                  />
                 ))}
               </ul>
 
@@ -4316,83 +4641,21 @@ export function OrcamentoApp({
               )}
 
               {/* O lote é o ato de revisão: enquanto ele não é gravado, a rodada não
-                  mudou de versão e nada foi para a cadeia. A tela diz isso em texto,
-                  porque "anotado" e "gravado" são estados diferentes do mundo. */}
-              {loteDeDecisoes.length === 0 ? null : (
-                <div className="lote-anotado">
-                  <h3>
-                    {loteDeDecisoes.length === 1
-                      ? "1 decisão anotada"
-                      : `${loteDeDecisoes.length} decisões anotadas`}
-                  </h3>
-                  <p className="dica">{DICA_LOTE_ANOTADO}</p>
-                  <ul className="itens">
-                    {loteDeDecisoes.map((anotacao) => {
-                      const item = itens.find(
-                        (candidato) => candidato.id === anotacao.itemId,
-                      );
-                      return (
-                        <li key={anotacao.itemId} className="item">
-                          <span className="item-corpo">
-                            <span className="item-rotulo">
-                              {item?.label ?? anotacao.itemId}
-                            </span>
-                            <span className="item-estado">
-                              {anotacao.action === "confirm"
-                                ? "confirmar"
-                                : "rejeitar"}
-                            </span>
-                            {anotacao.quantity === undefined ? null : (
-                              <span className="item-quantidade">
-                                {formatQuantityText(
-                                  anotacao.quantity,
-                                  unitLabel(anotacao.unit ?? item?.unit ?? ""),
-                                )}
-                              </span>
-                            )}
-                          </span>
-                          <button
-                            type="button"
-                            className="botao-secundario"
-                            onClick={() =>
-                              setLoteDeDecisoes((atual) =>
-                                atual.filter(
-                                  (entrada) => entrada.itemId !== anotacao.itemId,
-                                ),
-                              )
-                            }
-                            disabled={submitting}
-                          >
-                            Remover anotação
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                  <div className="acoes-linha">
-                    <button
-                      type="button"
-                      className="botao-primario"
-                      onClick={() => void gravarLote()}
-                      disabled={submitting}
-                    >
-                      {submitting
-                        ? "Gravando…"
-                        : loteDeDecisoes.length === 1
-                          ? "Gravar 1 decisão"
-                          : `Gravar ${loteDeDecisoes.length} decisões`}
-                    </button>
-                    <button
-                      type="button"
-                      className="botao-secundario"
-                      onClick={() => setLoteDeDecisoes([])}
-                      disabled={submitting}
-                    >
-                      Descartar anotações
-                    </button>
-                  </div>
-                </div>
-              )}
+                  mudou de versão e nada foi para a cadeia. O painel está SEMPRE aqui,
+                  inclusive vazio, porque "marcado", "anotado" e "gravado" são estados
+                  diferentes do mundo e a tela precisa nomear os três. */}
+              <PainelDoLote
+                lote={loteDeDecisoes}
+                itens={itens}
+                submitting={submitting}
+                onRemover={(itemId) =>
+                  setLoteDeDecisoes((atual) =>
+                    atual.filter((entrada) => entrada.itemId !== itemId),
+                  )
+                }
+                onGravar={() => void gravarLote()}
+                onDescartar={() => setLoteDeDecisoes([])}
+              />
             </section>
           </div>
         ) : etapaVisivel === "codigos" ? (
@@ -4400,25 +4663,29 @@ export function OrcamentoApp({
             <section className="painel" aria-label="Decisões de código">
               <div className="painel-cabecalho">
                 <h2>Decisões</h2>
-                <div className="cabecalho-controles">
-                  <button
-                    type="button"
-                    className="botao-secundario"
-                    onClick={() => void calcularShortlist(suggestions !== null)}
-                    disabled={submitting}
-                  >
-                    {suggestions === null
-                      ? "Calcular shortlist"
-                      : "Recalcular shortlist"}
-                  </button>
-                </div>
+                {/* Não há botão para CALCULAR: a lista já vem carregada com a tela. O que
+                    sobra é o recálculo, e ele não pode ser automático — é onde o braço
+                    semântico roda (chamada paga) e onde a versão da rodada avança. Só
+                    aparece quando já existe lista, porque antes disso não há o que
+                    refazer. */}
+                {suggestions === null ? null : (
+                  <div className="cabecalho-controles">
+                    <button
+                      type="button"
+                      className="botao-secundario"
+                      onClick={() => void calcularShortlist(true)}
+                      disabled={submitting}
+                      title="Refaz a lista com a cascata atual; é o caminho que usa o braço semântico."
+                    >
+                      Recalcular com a cascata atual
+                    </button>
+                  </div>
+                )}
               </div>
-              <p className="dica">{DESCRICAO_CALCULO_SHORTLIST}</p>
-              {(suggestions?.semantic_notes ?? []).map((note) => (
-                <p key={note} className="dica">
-                  {note}
-                </p>
-              ))}
+              <EstadoDoBracoSemantico
+                matching={suggestions?.matching ?? null}
+                notas={suggestions?.semantic_notes ?? []}
+              />
 
               {/* Sob contrato, a rejeição muda de nome, e a tela diz de onde o nome vem:
                   do julgamento de quem revisou, nunca de uma conferência contra um

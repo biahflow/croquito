@@ -47,6 +47,7 @@ from croquito_worker.valuation.cli import (
 from croquito_worker.valuation.legend_registration import (
     LabeledSpan,
     TextBand,
+    detect_table_columns,
     detect_text_bands,
     estimate_global_transform,
     match_spans_to_bands,
@@ -235,9 +236,16 @@ def test_content_fields_are_byte_identical_only_the_bbox_moves(
         assert after.evidence.plate_id == before.evidence.plate_id
         assert after.evidence.page_number == before.evidence.page_number
         assert after.evidence.image_sha256 == before.evidence.image_sha256
-        assert after.evidence.bbox.left == before.evidence.bbox.left
-        assert after.evidence.bbox.right == before.evidence.bbox.right
         assert after.evidence.bbox != before.evidence.bbox
+
+    # O X TAMBÉM pode se mover — antes ele era declarado imóvel aqui, e essa era a
+    # limitação, não a garantia: a extração erra a faixa horizontal (na prancha real ela
+    # começava sobre o rótulo e terminava fora da tabela) e o registro passou a medi-la na
+    # tinta. Na prancha sintética a borda desenhada fica 1 px à esquerda do que o gabarito
+    # declara, então o X anda pouco — o que importa é que ele é o MESMO para todo item,
+    # porque a borda da tabela é uma só.
+    x_bands = {(item.evidence.bbox.left, item.evidence.bbox.right) for item in registered.items}
+    assert len(x_bands) == 1
 
 
 def test_registration_is_fully_deterministic(plate: PlateArtifacts, truth: TakeoffPacket) -> None:
@@ -813,6 +821,90 @@ def test_ruling_cells_give_an_exact_bijection_even_with_a_scale_applied_to_the_b
         true_bottom = round(true_centers[index] + 25)
         contained = min(got.bottom, true_bottom) - max(got.top, true_top)
         assert contained > (got.bottom - got.top) * CONTAINMENT_THRESHOLD
+
+
+def _draw_ruled_table_at(
+    path: Path, *, rows: int, top0: int, row_height: int, x_range: tuple[int, int]
+) -> list[float]:
+    """`_draw_ruled_table` com a faixa X escolhida pelo teste — as réguas vão de ponta a
+    ponta da tabela, que é o que o registro horizontal mede."""
+    left, right = x_range
+    image = Image.new("RGB", (right + 300, top0 + rows * row_height + 200), "white")
+    draw = ImageDraw.Draw(image)
+    for index in range(rows + 1):
+        y = top0 + index * row_height
+        draw.line((left, y, right, y), fill="black", width=1)
+    centers = []
+    for index in range(rows):
+        y = top0 + index * row_height
+        draw.rectangle((left + 5, y + 15, left + 100, y + 30), fill="black")
+        draw.rectangle((right - 80, y + 15, right - 5, y + 30), fill="black")
+        centers.append(y + row_height / 2)
+    image.save(path, format="PNG")
+    return centers
+
+
+def test_detect_table_columns_ignores_a_short_stray_ruling(tmp_path: Path) -> None:
+    """Uma linha curta no meio das réguas — sublinhado de título, na prancha real do
+    Guaxindiba — não pode derrubar a medição que as réguas de verdade concordam em dar.
+    O filtro é pelo comprimento MEDIANO do run, não pela largura proposta."""
+    image_path = tmp_path / "ruled-with-stray.png"
+    image = Image.new("RGB", (700, 900), "white")
+    draw = ImageDraw.Draw(image)
+    stray_y = 180
+    draw.line((250, stray_y, 380, stray_y), fill="black", width=1)  # traço curto
+    rulings = [stray_y]
+    for index in range(6):
+        y = 300 + index * 50
+        draw.line((100, y, 500, y), fill="black", width=1)
+        rulings.append(y)
+    image.save(image_path, format="PNG")
+    frame = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    assert frame is not None
+
+    assert detect_table_columns(frame, rulings, left=140, right=520) == (100, 500)
+
+
+def test_register_legend_bboxes_pulls_the_x_band_back_onto_the_table(tmp_path: Path) -> None:
+    """O defeito da prancha real: a extração entrega uma faixa X deslocada para DENTRO da
+    tabela à esquerda (por cima do rótulo) e para FORA dela à direita. O Y está certo e
+    mesmo assim o retângulo desenhado na tela não é o da linha. O registro mede as bordas
+    na tinta das réguas e devolve o X da tabela."""
+    image_path = tmp_path / "ruled-table-x.png"
+    centers = _draw_ruled_table_at(image_path, rows=6, top0=300, row_height=50, x_range=(100, 500))
+    image_sha256 = file_sha256(image_path)
+    boxes = [
+        PlateBox(left=180, top=round(center - 20), right=560, bottom=round(center + 20))
+        for center in centers
+    ]
+    packet = _synthetic_packet("plate-teste-coluna", image_sha256, boxes)
+
+    registered, report = register_legend_bboxes(image_path, packet)
+
+    assert report.column_span == (100, 500)
+    assert report.unmatched_item_ids == []
+    for item in registered.items:
+        assert (item.evidence.bbox.left, item.evidence.bbox.right) == (100, 500)
+
+
+def test_disagreeing_rulings_leave_the_x_exactly_as_extracted(tmp_path: Path) -> None:
+    """Réguas que não concordam sobre onde a tabela começa não são uma tabela só. Aqui o
+    módulo prefere não mexer no X a mexer errado: bbox com X da extração ainda aponta a
+    linha certa, bbox com X inventado apontaria uma coluna que não existe."""
+    image_path = tmp_path / "ruled-table-disagreeing.png"
+    image = Image.new("RGB", (900, 900), "white")
+    draw = ImageDraw.Draw(image)
+    rulings = []
+    for index in range(6):
+        y = 300 + index * 50
+        left = 100 if index % 2 == 0 else 300
+        draw.line((left, y, left + 400, y), fill="black", width=1)
+        rulings.append(y)
+    image.save(image_path, format="PNG")
+    frame = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    assert frame is not None
+
+    assert detect_table_columns(frame, rulings, left=180, right=560) is None
 
 
 def test_a_plate_without_rulings_falls_back_to_the_text_band_pipeline(tmp_path: Path) -> None:

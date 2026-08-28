@@ -5,8 +5,10 @@ determinístico contra a tinta, aplicada à legenda em vez de à geometria. Este
 corrige o **assentamento**, nunca o **conteúdo**: rótulo, quantidade, unidade, id e
 status permanecem exatamente os que a extração leu. Só `evidence.bbox` pode mudar.
 
-Quatro rodadas reais de homologação mostraram quatro defeitos distintos, e o método
-reflete os quatro:
+Cinco rodadas reais de homologação mostraram cinco defeitos distintos, e o método
+reflete os cinco. As quatro primeiras são todas de assentamento VERTICAL; a quinta é de
+outro eixo, e por muito tempo passou despercebida porque o Y certo faz o desenho parecer
+certo.
 
 - **Toca, 1ª rodada**: bboxes deslocados verticalmente por um viés aproximadamente
   constante. Um Δ único bastava, mas o casamento ordem-preservado sozinho "deslizava em
@@ -44,6 +46,21 @@ reflete os quatro:
   foi **retirado por completo**: sem bijeção de réguas e sem transformação global
   confiante, NENHUM item é assentado — todos ficam intocados e em `unmatched_item_ids`.
   Errado nunca; intocado e declarado, sempre.
+- **Campo do Toca (orçamento-base)**: o Y estava certo e o retângulo desenhado na tela AINDA
+  não era o da linha da legenda. O X nunca havia sido registrado — o assentamento copiava
+  `left`/`right` da extração — e a extração entregava, para TODOS os 15 itens, a mesma
+  faixa constante `7256-8379`, enquanto a tabela media `7132-8140`: começava 124 px DENTRO
+  dela, já em cima do rótulo, e terminava 239 px FORA, sobre o quadro da folha. O emblema
+  numerado, desenhado "fora do bbox", caía portanto em cima do texto — e a correção óbvia
+  na tela (afastar o emblema) só espalhava o erro, porque a âncora é que estava errada.
+  A correção é medir as bordas na tinta das RÉGUAS que já decidem o Y (`detect_table_columns`):
+  a régua entre duas linhas vai de borda a borda da tabela, então o dado já estava ali.
+  Duas armadilhas nessa medição, as duas vistas nesta prancha: o `min`/`max` da linha é
+  errado (a linha do quadro da folha cruza o mesmo Y ~280 px à direita, e esticaria o bbox
+  até lá — vale o maior run CONTÍGUO), e nem toda linha detectada é régua de tabela (o
+  sublinhado do título entra com 254 px contra 1.009 px das réguas de verdade, e um único
+  outlier desses derrubava a medição inteira quando a concordância era exigida ANTES do
+  filtro por comprimento mediano).
 
 O método é determinístico e sem chamada paga:
 
@@ -319,6 +336,44 @@ caso do cabeçalho de coluna (prancha sintética, desvio uniforme OU heterogêne
 sistemático) fica em ~0,007-0,45; o caso da nota no meio da tabela real fica em ~2,8 —
 folga grande nos dois sentidos."""
 
+COLUMN_SEARCH_MARGIN_RATIO: Final = 0.5
+"""Folga lateral, como fração da largura X PROPOSTA, na busca das bordas da tabela.
+
+A borda verdadeira pode estar FORA da janela proposta — é exatamente o defeito que o
+registro horizontal existe para corrigir —, então procurar só dentro dela nunca acharia
+o que falta. Medido na prancha real do Campo do Toca, o resultado é idêntico com 0,25, 0,5
+e 1,0 de folga (`left` sem dispersão nenhuma): o run contíguo de uma régua de tabela é
+longo demais para que traço solto de desenho vizinho o substitua. 0,5 fica no meio dessa
+faixa chata."""
+
+COLUMN_AGREEMENT_MAX_SPREAD_PX: Final = 12
+"""Dispersão máxima (maior menos menor) das bordas medidas em réguas DIFERENTES para que
+a medição seja aceita.
+
+Réguas da mesma tabela começam e terminam no mesmo X — na prancha real a dispersão é 0
+px no `left` e 1 px no `right`. Dispersão grande significa que os runs não são todos da
+mesma tabela (régua confundida com traço do desenho, tabela em perspectiva, duas tabelas
+na janela), e aí o módulo prefere não mexer no X a mexer errado."""
+
+COLUMN_RUN_LENGTH_AGREEMENT_RATIO: Final = 0.8
+"""Quanto o run de uma régua pode ser mais curto que o run MEDIANO e ainda contar como
+borda da mesma tabela.
+
+Nem toda linha que `detect_rulings` acha é régua de tabela: na prancha real do Campo do Toca
+o sublinhado do título `PISO E REVESTIMENTO` entra na lista com 254 px, contra 1.009 px
+das doze réguas de verdade. Filtrar pelo comprimento MEDIANO — e não pela largura da
+janela proposta — mantém o critério auto-referente: serve tanto para uma extração que
+propôs faixa larga demais quanto para uma que propôs estreita demais, que é justamente o
+caso que este registro conserta."""
+
+COLUMN_MIN_RULINGS: Final = 2
+"""Mínimo de réguas para medir a coluna. Com uma só não há como saber se aquele run é a
+borda da tabela ou um traço qualquer do desenho que por acaso passou ali."""
+
+COLUMN_MIN_WIDTH_PX: Final = 8
+"""Largura mínima da tabela medida. Abaixo disso o run não é uma linha de tabela, e
+aplicar o resultado colapsaria todo bbox do pacote numa fatia inútil."""
+
 LEGEND_REGISTRATION_DIGEST_MISMATCH: Final = "LEGEND_REGISTRATION_DIGEST_MISMATCH"
 """Código próprio deste módulo, e não o do overlay (`TAKEOFF_OVERLAY_DIGEST_MISMATCH`):
 o defeito que os dois checam é o mesmo — âncora de evidência sobre a imagem errada mente
@@ -399,7 +454,12 @@ class LegendRegistrationReport:
     não precisa de transformação nenhuma); `global_scale`/`global_shift_px` em particular
     são `None` sempre que a transformação estimada NÃO foi aplicada — inclusive quando
     `shift_score`/`shift_confidence` existem, porque a ambiguidade foi detectada e
-    declarada, não escondida."""
+    declarada, não escondida.
+
+    `column_span` é o `(left, right)` medido nas réguas e aplicado a TODO item do pacote
+    (ver `detect_table_columns`), ou `None` quando a medição não foi confiável e o X ficou
+    exatamente como a extração o entregou. Diferente dos campos verticais, ele não é por
+    item: a borda da tabela é uma só, e a extração que erra o X erra igual para todos."""
 
     adjusted: list[dict[str, object]]
     unmatched_item_ids: list[str]
@@ -409,6 +469,7 @@ class LegendRegistrationReport:
     global_shift_px: int | None
     shift_score: float | None
     shift_confidence: float | None
+    column_span: tuple[int, int] | None
 
 
 def detect_text_bands(image: np.ndarray, *, left: int, right: int) -> list[TextBand]:
@@ -523,6 +584,88 @@ def detect_vertical_rulings(image: np.ndarray, *, left: int, right: int) -> list
         for start, end in runs
         if (end - start + 1) <= VERTICAL_DIVIDER_MAX_WIDTH_PX
     ]
+
+
+def _longest_ink_run(row: np.ndarray, offset: int) -> tuple[int, int, int] | None:
+    """Maior sequência CONTÍGUA de tinta da linha, como `(largura, x_inicial, x_final)`
+    em coordenadas da imagem. `None` quando a linha não tem tinta nenhuma."""
+    indices = np.flatnonzero(row)
+    if indices.size == 0:
+        return None
+    best = (0, 0, 0)
+    start = previous = int(indices[0])
+    for value in indices[1:]:
+        value = int(value)
+        if value - previous > 1:
+            if previous - start + 1 > best[0]:
+                best = (previous - start + 1, start, previous)
+            start = value
+        previous = value
+    if previous - start + 1 > best[0]:
+        best = (previous - start + 1, start, previous)
+    return (best[0], offset + best[1], offset + best[2])
+
+
+def detect_table_columns(
+    image: np.ndarray, rulings: Sequence[int], *, left: int, right: int
+) -> tuple[int, int] | None:
+    """Bordas X da tabela da legenda, medidas na TINTA das réguas horizontais.
+
+    A régua entre duas linhas da legenda é um segmento que vai da borda esquerda à borda
+    direita da tabela — ela JÁ carrega a informação que falta, e por isso a medida sai
+    das mesmas réguas que decidem o Y, sem detector novo nem segunda passada de visão.
+
+    O critério é o maior run CONTÍGUO de tinta, e não o `min`/`max` da linha: na prancha
+    real a linha do quadro da folha cruza o mesmo Y ~280 px à direita da tabela, e um
+    `max` ingênuo esticaria o bbox até lá. Mediana entre as réguas, e fail-closed
+    (`None`, X intocado) quando há régua de menos, quando elas discordam além de
+    `COLUMN_AGREEMENT_MAX_SPREAD_PX` ou quando a largura medida é degenerada.
+
+    Pública para ser testável direto com uma imagem sintética, como `detect_rulings`."""
+    if len(rulings) < COLUMN_MIN_RULINGS:
+        return None
+    height, width = image.shape[0], image.shape[1]
+    margin = round(COLUMN_SEARCH_MARGIN_RATIO * max(0, right - left))
+    search_left = max(0, left - margin)
+    search_right = min(width, right + margin)
+    if search_right <= search_left:
+        return None
+    grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    ink = grayscale < INK_LUMINANCE_THRESHOLD
+
+    runs: list[tuple[int, int, int]] = []
+    for y in rulings:
+        if not 0 <= y < height:
+            continue
+        found = _longest_ink_run(ink[y, search_left:search_right], search_left)
+        if found is not None:
+            runs.append(found)
+
+    if len(runs) < COLUMN_MIN_RULINGS:
+        return None
+    # Descarta o que não tem o comprimento da MAIORIA antes de exigir concordância: um
+    # único traço curto no meio das réguas (sublinhado de título) não pode derrubar uma
+    # medição que doze réguas concordam em dar.
+    median_length = _median([float(length) for length, _, _ in runs])
+    if median_length is None:
+        return None
+    kept = [run for run in runs if run[0] >= COLUMN_RUN_LENGTH_AGREEMENT_RATIO * median_length]
+    if len(kept) < COLUMN_MIN_RULINGS:
+        return None
+    lefts = [run_left for _, run_left, _ in kept]
+    rights = [run_right for _, _, run_right in kept]
+    if max(lefts) - min(lefts) > COLUMN_AGREEMENT_MAX_SPREAD_PX:
+        return None
+    if max(rights) - min(rights) > COLUMN_AGREEMENT_MAX_SPREAD_PX:
+        return None
+    median_left = _median([float(value) for value in lefts])
+    median_right = _median([float(value) for value in rights])
+    if median_left is None or median_right is None:
+        return None
+    measured_left, measured_right = round(median_left), round(median_right)
+    if measured_right - measured_left < COLUMN_MIN_WIDTH_PX:
+        return None
+    return measured_left, measured_right
 
 
 def _cell_has_internal_divider(image: np.ndarray, cell: TextBand, *, left: int, right: int) -> bool:
@@ -1081,6 +1224,11 @@ def register_legend_bboxes(
         else []
     )
 
+    # Bordas X da tabela, medidas nas MESMAS réguas que decidem o Y. Sem isto o X é o
+    # que a extração propôs, e na prancha real ela propôs uma faixa deslocada para a
+    # direita: começava sobre o rótulo e terminava além da borda da tabela.
+    column_span = detect_table_columns(image, rulings, left=left, right=right)
+
     raw_text_bands = _offset(detect_text_bands(search_image, left=left, right=right))
     text_bands = _filter_item_row_bands(
         image, raw_text_bands, left=left, right=right, item_count=item_count
@@ -1114,10 +1262,15 @@ def register_legend_bboxes(
             updated_items.append(item)
             continue
         before = item.evidence.bbox
+        # O X vem da tabela quando ela foi medida com confiança, e do próprio item quando
+        # não foi: bbox com Y certo e X da extração ainda aponta a linha certa, mas bbox
+        # com X inventado apontaria uma coluna que não existe.
+        box_left = before.left if column_span is None else column_span[0]
+        box_right = before.right if column_span is None else column_span[1]
         after = PlateBox(
-            left=before.left,
+            left=box_left,
             top=max(0, band.top - BAND_VERTICAL_MARGIN_PX),
-            right=before.right,
+            right=box_right,
             bottom=min(height, band.bottom + BAND_VERTICAL_MARGIN_PX),
         )
         if after == before:
@@ -1150,6 +1303,7 @@ def register_legend_bboxes(
         shift_confidence=None
         if transform_estimate is None
         else transform_estimate.confidence_margin,
+        column_span=column_span,
     )
     registered_packet = _with_items(packet, updated_items) if changed else packet
     return registered_packet, report

@@ -164,3 +164,117 @@ export function pontoDaImagem(
 export function viewBoxAttr(view: ViewBox): string {
   return `${view.x} ${view.y} ${view.width} ${view.height}`;
 }
+
+/** Piso do raio do emblema, em pixels de tela: abaixo disto o número não se lê. */
+const RAIO_MINIMO_DO_EMBLEMA = 10;
+
+/** Fração da janela visível que o emblema ocupa quando a linha é alta o bastante. */
+const FRACAO_DA_JANELA = 1 / 45;
+
+/**
+ * Raio do emblema de um item: fração da JANELA, e não da página — senão aproximar 8×
+ * deixaria o emblema do tamanho de um item inteiro —, mas nunca maior que meia altura da
+ * linha que ele marca.
+ *
+ * O teto pela altura é o que impede emblemas de linhas vizinhas de se cobrirem: numa
+ * legenda densa o passo entre linhas é menor que o diâmetro que a janela pediria, e seis
+ * itens viravam uma coluna de círculos empilhados em que não se lê número nenhum. O piso
+ * de {@link RAIO_MINIMO_DO_EMBLEMA} vence o teto quando a linha é fininha: emblema
+ * ilegível é pior que emblema que encosta no vizinho.
+ */
+export function raioDoEmblema(view: ViewBox, caixa: Caixa): number {
+  const altura = Math.max(caixa.bottom - caixa.top, 1);
+  return Math.max(Math.min(view.width * FRACAO_DA_JANELA, altura / 2), RAIO_MINIMO_DO_EMBLEMA);
+}
+
+/** Centro e raio do emblema numerado de um item, em pixels da imagem fonte. */
+export type Emblema = { cx: number; cy: number; r: number };
+
+/**
+ * Múltiplo do RAIO entre o centro do emblema e a borda do bbox que ele marca.
+ *
+ * Meio diâmetro apenas encosta: 1,6 dá o respiro que separa o emblema da borda sem o
+ * jogar longe da linha que ele identifica.
+ *
+ * Este número já foi 4,5 por um motivo que não era dele. Na prancha real o emblema caía
+ * sobre o rótulo, e afastá-lo mais parecia o conserto — mas a causa era o bbox: a
+ * extração entregava uma faixa X deslocada para dentro da tabela, e o "fora do bbox"
+ * ficava em cima do texto justamente porque o bbox não era o da linha. Quem conserta isso
+ * é `register_legend_bboxes`, que agora mede as bordas da tabela na tinta das réguas.
+ * Afastamento de tela não compensa âncora errada — só espalha o erro.
+ */
+const AFASTAMENTO_DO_EMBLEMA = 1.6;
+
+/** Mantém `valor` dentro de `[min, max]`; faixa degenerada (emblema maior que a página)
+ * cai no meio dela, em vez de produzir um valor fora dos dois lados. */
+function prenderEntre(valor: number, min: number, max: number): number {
+  if (min > max) {
+    return (min + max) / 2;
+  }
+  return Math.min(max, Math.max(min, valor));
+}
+
+/** Distância do centro do emblema ao ponto mais próximo do retângulo, ao quadrado, contra
+ * o raio ao quadrado: verdadeiro só quando emblema e retângulo realmente se sobrepõem
+ * (encostar na borda não conta). */
+function emblemaSobrepoe(
+  emblema: Emblema,
+  x: number,
+  y: number,
+  largura: number,
+  altura: number,
+): boolean {
+  const proximoX = Math.max(x, Math.min(emblema.cx, x + largura));
+  const proximoY = Math.max(y, Math.min(emblema.cy, y + altura));
+  const dx = emblema.cx - proximoX;
+  const dy = emblema.cy - proximoY;
+  return dx * dx + dy * dy < emblema.r * emblema.r;
+}
+
+/**
+ * Centro e raio do emblema numerado de um item, sempre **fora** do próprio bbox — nunca
+ * sobre a linha da legenda que ele marca. O defeito que originou a regra foi visto na
+ * prancha real da medição: o número desenhado dentro da caixa cobria letras de
+ * "PISO EM(1)CONCRETO", e quem conferia quantidade contra desenho perdia justamente o
+ * texto que precisava ler.
+ *
+ * Tenta a borda esquerda primeiro, com o centro a `AFASTAMENTO_DO_EMBLEMA` raios de
+ * `caixa.left` e centralizado na altura da linha; quando o item está encostado na borda
+ * esquerda da página e não sobra espaço, cai para acima do canto superior-esquerdo.
+ * Direita e abaixo entram como terceira e quarta tentativa, só para o canto raro em que o
+ * item encosta nas bordas esquerda E superior ao mesmo tempo; se nenhuma das quatro
+ * direções couber, vence a segunda (acima), que é o fallback pedido.
+ *
+ * Porte da mesma intenção de `pinPlacement` (`apps/web/src/medicao/viewport.ts`), e não
+ * import: as duas jornadas não compartilham módulo de apresentação, e lá a função fala em
+ * `PlateBox`/`SvgRect` e diâmetro fixo, enquanto aqui ela fala em `Caixa`, `Pagina` e um
+ * raio que o chamador calcula a partir do zoom corrente.
+ *
+ * Caixa degenerada (largura ou altura zero, que o pacote admite quando a extração marcou
+ * um ponto) recebe lado mínimo, como em `enquadrarCaixa`, em vez de virar divisão por
+ * zero. Tudo é clampado para dentro da página.
+ */
+export function emblemaDaCaixa(caixa: Caixa, raio: number, pagina: Pagina): Emblema {
+  const r = Number.isFinite(raio) && raio > 0 ? raio : 1;
+  const largura = Math.max(caixa.right - caixa.left, 1);
+  const altura = Math.max(caixa.bottom - caixa.top, 1);
+  const afastamento = AFASTAMENTO_DO_EMBLEMA * r;
+  const minX = r;
+  const maxX = pagina.width - r;
+  const minY = r;
+  const maxY = pagina.height - r;
+  const centroX = prenderEntre(caixa.left + largura / 2, minX, maxX);
+  const centroY = prenderEntre(caixa.top + altura / 2, minY, maxY);
+
+  const candidatos: Emblema[] = [
+    { cx: prenderEntre(caixa.left - afastamento, minX, maxX), cy: centroY, r }, // esquerda (pedido)
+    { cx: centroX, cy: prenderEntre(caixa.top - afastamento, minY, maxY), r }, // acima (fallback)
+    { cx: prenderEntre(caixa.left + largura + afastamento, minX, maxX), cy: centroY, r }, // direita
+    { cx: centroX, cy: prenderEntre(caixa.top + altura + afastamento, minY, maxY), r }, // abaixo
+  ];
+
+  const cabe = candidatos.find(
+    (candidato) => !emblemaSobrepoe(candidato, caixa.left, caixa.top, largura, altura),
+  );
+  return cabe ?? candidatos[1];
+}

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { ApprovalState, CascadeEntry, EstimateState } from "./api";
-import { derivarEtapas, etapaStatusLabel, type EtapaId } from "./etapas";
+import {
+  derivarEtapas,
+  deveCarregarSugestoes,
+  etapaStatusLabel,
+  type EtapaId,
+} from "./etapas";
 
 function fonte(overrides: Partial<CascadeEntry> = {}): CascadeEntry {
   return {
@@ -418,5 +423,35 @@ describe("estado da etapa em texto", () => {
     expect(etapaStatusLabel("blocked")).toBe("bloqueada");
     expect(etapaStatusLabel("available")).toBe("em aberto");
     expect(etapaStatusLabel("done")).toBe("concluída");
+  });
+});
+
+/**
+ * A shortlist de códigos não tem botão: ela é carregada sozinha. Estes testes fixam
+ * QUANDO, porque pedir cedo demais é recusa repetida a cada volta do poll do estado.
+ */
+describe("deveCarregarSugestoes", () => {
+  const comCodigos = (
+    review: "complete" | "review_required",
+    present: boolean,
+  ): EstimateState => {
+    const base = estado({ takeoff: { present: true, review_status: review } });
+    return { ...base, codes: { ...base.codes, suggestions_present: present } };
+  };
+
+  it("pede assim que a revisão do takeoff está completa, mesmo sem lista gravada", () => {
+    expect(deveCarregarSugestoes(comCodigos("complete", false))).toBe(true);
+  });
+
+  it("não pede com a revisão incompleta: a rota recusaria com TAKEOFF_REVIEW_INCOMPLETE", () => {
+    expect(deveCarregarSugestoes(comCodigos("review_required", false))).toBe(false);
+  });
+
+  it("pede a lista já gravada mesmo que a revisão não esteja completa", () => {
+    expect(deveCarregarSugestoes(comCodigos("review_required", true))).toBe(true);
+  });
+
+  it("sem estado não pede nada", () => {
+    expect(deveCarregarSugestoes(null)).toBe(false);
   });
 });

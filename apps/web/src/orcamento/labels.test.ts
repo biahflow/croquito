@@ -3,13 +3,17 @@ import { describe, expect, it } from "vitest";
 import {
   assignmentStatusLabel,
   AVISO_ACERVO_FILTRADO,
+  DESCRICAO_CALCULO_SHORTLIST,
   DESCRICAO_MONTAGEM,
+  DESCRICAO_RECALCULO_SHORTLIST,
+  descricaoDaShortlist,
   errorMessage,
   opcaoDoAcervo,
   origensAceitasNaCascata,
   priceOriginLabel,
   priceOriginSeloClass,
   procedenciaDaFonte,
+  TITULO_NOTAS_SEMANTICAS,
   tituloDaAprovacao,
 } from "./labels";
 
@@ -245,5 +249,83 @@ describe("copy da montagem depois da quebra declarada", () => {
   it("não promete planilha, e aponta a etapa que publica", () => {
     expect(DESCRICAO_MONTAGEM).toContain("não publica planilha nenhuma");
     expect(DESCRICAO_MONTAGEM).toContain("Aprovação e despacho");
+  });
+});
+
+/**
+ * A copy da aba "Códigos" depois de o braço semântico existir no caminho hospedado
+ * (F-041, ADR-0054).
+ *
+ * A frase anterior — "Nenhum provider é chamado" — ficou FALSA quando o recompute passou a
+ * poder embutir rótulos. O que estes testes fixam é o par de afirmações que substituiu
+ * aquela: ler nunca paga, recalcular pode pagar, e nenhuma das duas promete híbrido.
+ */
+describe("copy da shortlist: ler não paga, recalcular pode pagar", () => {
+  it("não afirma mais que nenhum provider é chamado", () => {
+    expect(DESCRICAO_CALCULO_SHORTLIST).not.toContain("Nenhum provider");
+    expect(DESCRICAO_RECALCULO_SHORTLIST).not.toContain("Nenhum provider");
+  });
+
+  /** A invariante testada do servidor: o `GET` não faz chamada paga nenhuma. */
+  it("a leitura declara que não chama provider e que grava a lista léxica", () => {
+    expect(DESCRICAO_CALCULO_SHORTLIST).toContain("não chama provider nenhum");
+    expect(DESCRICAO_CALCULO_SHORTLIST).toContain("léxica");
+  });
+
+  /** O recálculo é ato à parte, e o custo é dito ANTES do clique. */
+  it("o recálculo declara que pode ser chamada paga, com as duas condições", () => {
+    expect(DESCRICAO_RECALCULO_SHORTLIST).toContain("chamada paga");
+    expect(DESCRICAO_RECALCULO_SHORTLIST).toContain("índice de embeddings publicado");
+    expect(DESCRICAO_RECALCULO_SHORTLIST).toContain("autorização contratual");
+  });
+
+  /**
+   * Fonte sem índice é estado NORMAL (ADR-0054 D6). Prometer shortlist híbrida faria a
+   * tela dever um resultado que a cascata da pessoa pode não ter como entregar.
+   */
+  it("nenhuma das duas promete que a shortlist vai sair híbrida", () => {
+    for (const frase of [
+      DESCRICAO_CALCULO_SHORTLIST,
+      DESCRICAO_RECALCULO_SHORTLIST,
+    ]) {
+      expect(frase).not.toContain("híbrida");
+      expect(frase).not.toContain("vai sair");
+    }
+    expect(DESCRICAO_RECALCULO_SHORTLIST).toContain("Onde não houver índice");
+  });
+});
+
+/**
+ * Qual das duas shortlists está na tela é lido do `matching` que o SERVIDOR declarou: o
+ * artefato pode ter sido gravado por outra sessão, inclusive uma que tinha índice.
+ */
+describe("descricaoDaShortlist", () => {
+  it("nomeia o braço em palavra, nos dois casos", () => {
+    expect(descricaoDaShortlist("lexical")).toContain("léxica");
+    expect(descricaoDaShortlist("lexical")).toContain(
+      "nenhuma fonte da cascata",
+    );
+    expect(descricaoDaShortlist("hybrid")).toContain("híbrida");
+    // Na cascata "híbrida" significa AO MENOS UMA fonte, não todas.
+    expect(descricaoDaShortlist("hybrid")).toContain("ao menos uma fonte");
+  });
+
+  it("as duas frases são distintas: nenhuma cobre a outra", () => {
+    expect(descricaoDaShortlist("lexical")).not.toBe(
+      descricaoDaShortlist("hybrid"),
+    );
+  });
+});
+
+/**
+ * As notas de degradação vêm prontas do servidor, nomeando a fonte que ficou sem índice.
+ * A tela acrescenta só o título — reescrevê-las aqui faria a tela discordar de quem
+ * calculou a shortlist.
+ */
+describe("título das notas de degradação", () => {
+  it("dá nome à lista sem reescrever o que o servidor mandou", () => {
+    expect(TITULO_NOTAS_SEMANTICAS).toBe("Onde o braço semântico não entrou");
+    expect(TITULO_NOTAS_SEMANTICAS).not.toContain("índice");
+    expect(TITULO_NOTAS_SEMANTICAS).not.toContain("fonte 1");
   });
 });

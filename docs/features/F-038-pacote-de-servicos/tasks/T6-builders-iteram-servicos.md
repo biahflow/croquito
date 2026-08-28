@@ -33,10 +33,14 @@ literalmente o `SUM` do arquivo.
 ## Out of scope
 
 - Teto e nota de `PARTIAL` (`≤` quantidade do item): T3 direcionou a "builder (T4/T6)", mas
-  o aceite do #78 não a exige e a dívida continua registrada — o resolver materializa a
-  parcela `PARTIAL` sem conferir o teto. Fica para tarefa própria.
+  o aceite do #78 não a exige e a dívida ficou registrada — o resolver materializava a
+  parcela `PARTIAL` sem conferir o teto. **Quitada depois pela #96**: `_check_partial_cap`
+  (`calc_matrix.py:312`, `CALC_PARTIAL_EXCEEDS_ITEM`) confere no build, onde as quantidades
+  existem, e a nota virou obrigatória no validador de `CalcContribution`
+  (`CALC_PARTIAL_NOTE_REQUIRED`).
 - Ligar a matriz ao CLI/rotas/migração (T8, #80) e à tela (T9, #81). Aqui os builders
   aceitam `calc_matrix`, mas o `valuation-demo`/`estimate-demo` seguem no regime legado.
+  **Ambas entregues depois**, nas suas próprias tarefas.
 
 ## Acceptance
 

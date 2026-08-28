@@ -296,10 +296,33 @@ export const AVISO_ITEM_JA_REVISADO =
   "fora deste lote.";
 
 /**
+ * Por que o item de quantidade ambígua fica FORA da marcação em massa.
+ *
+ * `AVISO_QUANTIDADE_AMBIGUA` explica a ambiguidade; esta frase explica a consequência no
+ * lote: marcar em massa é confirmar a quantidade lida da legenda, e no item ambíguo não há
+ * quantidade lida — quem a informa é quem revisa, olhando a prancha. Confirmá-lo junto com
+ * os outros seria carimbar um número que ninguém escreveu.
+ */
+export const AVISO_AMBIGUO_FORA_DO_LOTE =
+  "Quantidade ambígua não entra na marcação em massa: este item se decide um a um, " +
+  "olhando a prancha, porque o número que vai valer é o que você escrever.";
+
+/**
  * O que "anotado" significa e o que ele ainda NÃO é. A distinção é o ponto do lote: a
  * rodada só muda de versão quando o lote é gravado, e até lá nada foi para a cadeia de
  * revisões. Sem essa frase, "anotar decisão" pareceria já ter gravado.
  */
+/**
+ * O painel do lote com ZERO anotações. Ele existe mesmo vazio porque são três estados
+ * diferentes e a tela precisa nomear os três: marcado (a pessoa escolheu o item), anotado
+ * (a decisão está no lote, em memória) e gravado (a rodada mudou de versão). Painel que
+ * só aparece depois da primeira anotação deixa quem marcou dez itens sem saber que ainda
+ * não anotou nenhum.
+ */
+export const DICA_LOTE_VAZIO =
+  "Marcar um item não é anotar, e anotar não é gravar. O que você anotar aparece aqui, " +
+  "e a rodada só muda quando o lote inteiro for gravado.";
+
 export const DICA_LOTE_ANOTADO =
   "Nada foi gravado ainda. O lote vale junto: uma revisão para todas as decisões, ou " +
   "nenhuma. Reanotar um item substitui a anotação anterior.";
@@ -316,14 +339,58 @@ export const AVISO_SEM_PRECO =
 export const AVISO_LOCALIZACAO_NAO_CONFIRMADA =
   "Localização na prancha não confirmada para este item — decida pela lista e pela prancha.";
 
+/* Shortlist de código: ler não paga, recalcular pode pagar (F-041, ADR-0054) ---- */
+
 /**
- * O que o clique em "calcular/recalcular shortlist" vai custar. É o texto ao lado do
- * botão que grava artefato na rodada: nenhuma rota de `/v1` publica índice de embeddings,
- * então o braço semântico não participa e nenhum provider é chamado.
+ * O que LER a shortlist custa: nada.
+ *
+ * A frase anterior — "nenhum provider é chamado" — descrevia o produto inteiro e ficou
+ * falsa quando o índice de embeddings passou a ser artefato publicado da plataforma
+ * (ADR-0054 D7). O que continua verdadeiro, e é invariante testada do servidor, é que o
+ * `GET` não paga nada: a primeira leitura calcula e grava a shortlist léxica.
  */
 export const DESCRICAO_CALCULO_SHORTLIST =
-  "Nenhum provider é chamado: a shortlist é calculada só pelo braço lexical, sobre a " +
-  "cascata inteira e na ordem instalada.";
+  "Ler a shortlist não chama provider nenhum: a primeira leitura calcula e grava a lista " +
+  "léxica da rodada, sobre a cascata inteira e na ordem instalada.";
+
+/**
+ * O que RECALCULAR pode custar, dito antes do clique — mesmo tom do aviso que acompanha o
+ * disparo da leitura automática da legenda, que é o outro ato pago desta jornada.
+ *
+ * A frase não promete shortlist híbrida, e isso é deliberado: o braço semântico entra só
+ * nas fontes que têm índice publicado, e fonte sem índice é estado NORMAL, não falha
+ * (ADR-0054 D6). Prometer o híbrido faria a tela dever um resultado que a cascata da
+ * pessoa pode não ter como entregar.
+ */
+export const DESCRICAO_RECALCULO_SHORTLIST =
+  "Recalcular é ato à parte e pode ser chamada paga de IA: o braço semântico entra só nas " +
+  "fontes que já têm índice de embeddings publicado, e só com autorização contratual ativa " +
+  "no seu tenant. Onde não houver índice, aquela fonte continua entrando só pelo braço " +
+  "léxico.";
+
+/**
+ * Qual das duas shortlists está na tela, em palavra.
+ *
+ * Lida do `matching` que o SERVIDOR declarou, e não do que a tela supõe: o artefato pode
+ * ter sido gravado por outra sessão — inclusive uma que tinha índice e esta não tem. É a
+ * mesma regra que a medição já pratica (`MedicaoApp.tsx`), com a diferença de que aqui a
+ * cascata tem várias fontes, e por isso "híbrida" significa **ao menos uma**.
+ */
+export function descricaoDaShortlist(matching: "lexical" | "hybrid"): string {
+  return matching === "hybrid"
+    ? "Esta shortlist é híbrida: ao menos uma fonte da cascata entrou com o braço " +
+        "semântico, além do léxico."
+    : "Esta shortlist é léxica: nenhuma fonte da cascata entrou com o braço semântico.";
+}
+
+/**
+ * Título do bloco de notas de degradação.
+ *
+ * As notas chegam prontas do servidor e são renderizadas como vêm — elas nomeiam a fonte
+ * que ficou sem índice, e reescrevê-las aqui faria a tela discordar de quem calculou. O
+ * que a tela acrescenta é só o título que diz o que aquela lista é.
+ */
+export const TITULO_NOTAS_SEMANTICAS = "Onde o braço semântico não entrou";
 
 /**
  * O que a montagem faz, dito antes do clique. Desde a F-035 ela só MONTA: a planilha

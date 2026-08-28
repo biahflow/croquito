@@ -249,8 +249,13 @@ p {
   align-items: start;
 }
 
+/*
+ * A PRIMEIRA coluna é a prancha (a lista vem depois, no JSX). Ela é a maior porque a
+ * pergunta desta etapa é "a quantidade lida bate com o desenho?": aproximar 8× dentro de
+ * 300 px não responde nada, e a lista ao lado lê bem numa coluna estreita.
+ */
 .workspace.duas-colunas {
-  grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.4fr);
+  grid-template-columns: minmax(420px, 1.6fr) minmax(320px, 1fr);
 }
 
 @media (max-width: 1200px) {
@@ -387,6 +392,18 @@ p {
   color: var(--ink-secondary);
 }
 
+/*
+ * Notas de degradação do braço semântico (F-041). Ao contrário das outras listas desta
+ * folha, esta MANTÉM o marcador: são frases independentes, uma por fonte da cascata, e o
+ * marcador é o que impede duas notas seguidas de serem lidas como uma só. O recuo é o
+ * mínimo para o marcador caber — o padrão do navegador (40px) desalinharia o bloco do
+ * texto acima dele.
+ */
+.notas-semanticas {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
 /* Listas de item ----------------------------------------------------------- */
 
 .itens,
@@ -470,6 +487,36 @@ p {
 .item-nota {
   font-size: 0.8rem;
   color: var(--ink-secondary);
+}
+
+/*
+ * A caixa de seleção fica FORA do botão do item — dentro dele, marcar dispararia também a
+ * seleção na prancha. Daí a linha: caixa e botão lado a lado, e o motivo de a caixa estar
+ * desabilitada em texto embaixo, porque cinza sozinho não explica nada.
+ */
+.item-linha {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.item-linha .item-botao {
+  flex: 1;
+  min-width: 0;
+}
+
+.item-marcador {
+  flex: 0 0 auto;
+  margin: 14px 0 0 8px;
+}
+
+.item-nota-marcacao {
+  display: block;
+  padding: 0 8px 8px 34px;
+}
+
+.marcacao-em-massa {
+  margin-bottom: 10px;
 }
 
 /* Formulários -------------------------------------------------------------- */
@@ -995,6 +1042,29 @@ p {
   cursor: grabbing;
 }
 
+/*
+ * Tela cheia: mesma prancha, mesma janela de zoom, sobre a página inteira. A coluna, por
+ * mais larga que seja, ainda é uma fração de uma A1 a 200 DPI — e conferir cota escrita
+ * contra desenho é exatamente o trabalho que precisa de área.
+ */
+.prancha.expandida {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  margin: 0;
+  padding: 16px;
+  background: var(--surface);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.prancha.expandida .prancha-quadro,
+.prancha.expandida .prancha-svg {
+  max-height: 88vh;
+  flex: 1;
+}
+
 .prancha-svg {
   display: block;
   width: 100%;
@@ -1012,12 +1082,22 @@ p {
   cursor: pointer;
 }
 
+/*
+ * O emblema é o MESMO da lista ao lado (`.item-numero`): bola verde, número na tinta do
+ * acento. Quem lê a lista e olha o desenho reconhece a mesma coisa, em vez de traduzir
+ * uma bola verde num número azul. O contorno do círculo é que carrega o estado —
+ * registrada, bruta ou selecionada —, e o tracejado do retângulo o repete: a distinção
+ * nunca vive só na cor.
+ */
+.ancora circle {
+  fill: var(--accent);
+  stroke: #2f6fd0;
+  pointer-events: none;
+}
+
 .ancora text {
-  fill: #2f6fd0;
+  fill: var(--accent-ink);
   font-weight: 700;
-  paint-order: stroke;
-  stroke: var(--surface);
-  stroke-width: 3px;
   pointer-events: none;
 }
 
@@ -1026,17 +1106,8 @@ p {
 }
 
 .ancora-raw rect,
-.ancora-raw text {
+.ancora-raw circle {
   stroke: #b26a00;
-}
-
-.ancora-raw rect {
-  stroke: #b26a00;
-}
-
-.ancora-raw text {
-  fill: #b26a00;
-  stroke: var(--surface);
 }
 
 .ancora-selecionada rect {
@@ -1044,8 +1115,8 @@ p {
   fill: rgba(0, 200, 119, 0.16);
 }
 
-.ancora-selecionada text {
-  fill: var(--accent-text);
+.ancora-selecionada circle {
+  stroke: var(--accent-text);
 }
 
 /* Teto de verba: consumo e estouro (F-027) ---------------------------------- */

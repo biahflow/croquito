@@ -14,10 +14,15 @@
 > humano em 2026-08-25**, e o **Design Approval Package** foi **aprovado por ato humano em
 > 2026-08-26**, revisão 1 ([mock/README.md](mock/README.md)).
 >
-> **Quatro tarefas entregues** na branch `feat/f-038-digest-estavel`, cada uma com os
-> portões verdes: digest governado pela versão (#74), base de preço Out/2023 importada
-> (#73), tabela de derivação de transporte como dado (#83) e a base da contribuição no
-> bloco de cálculo (#75). Pendentes: #76 a #82 e #84.
+> **As doze tarefas estão entregues e mergeadas na `main`**, cada uma com os portões
+> verdes, mais o desdobramento da decisão 6 (#96, parcela `PARTIAL` com nota e teto). O
+> epic (#71) fechou em 2026-08-26 e nenhuma issue da feature segue aberta. A revisão 2 do
+> Design Approval Package — autoria de matriz e declaração `PARTIAL` — foi **aprovada por
+> ato humano em 2026-08-26** ([mock/rev2/README.md](mock/rev2/README.md)).
+>
+> **O que falta não é código, e por isso o status não é `DONE`**: a extração e o aceite
+> reais do pacote do Campo do Toca pela orçamentista, com a planilha como oráculo do
+> golden. `DONE` é decisão humana, não consequência de merge.
 >
 > Princípio desta feature, fixado pelo dono do produto: **a planilha é a fonte da verdade**.
 > Em qualquer dúvida de modelagem, regra ou preço, o comportamento do arquivo manda —
@@ -85,15 +90,18 @@ recebe, inclusive o capítulo de transporte, que passa a ser derivado em vez de 
    pacote. Sem ele, item com um de seis códigos pareceria pronto. **Entregue (#77)**, ponta
    a ponta: domínio, rotas `/v1`, CLI, servidor local e as duas telas.
 3. **A linha do orçamento agrupa por código**, com uma `CalcSheet` por linha e um bloco por
-   elemento contribuinte. **Pendente (#78).**
+   elemento contribuinte. **Entregue (#78)**: os builders passaram a iterar serviços, não
+   itens.
 4. **Dependência entre serviços** resolvida no build e materializada como operando literal,
-   com recusa de ciclo. Dado e cálculo **entregues (#83)**; a integração é **pendente
-   (#76)**.
+   com recusa de ciclo. Dado e cálculo **entregues (#83)**; a integração, **entregue
+   (#76)** — `CalcMatrix` com ordem topológica e recusa por extenso
+   (`CALC_MATRIX_DEPENDENCY_CYCLE`, `CALC_MATRIX_SELF_DEPENDENCY`).
 5. **A base de preço é a da planilha** (Out/2023), nunca a de jul/2026. **Entregue (#73).**
 6. **O digest de aprovação sobrevive à mudança**, governado pela versão declarada.
    **Entregue (#74).**
-7. **A tela monta o pacote e mostra a memória** — que hoje não existe na jornada do
-   orçamento, só na de medição. **Pendente (#81).**
+7. **A tela monta o pacote e mostra a memória** — que não existia na jornada do orçamento,
+   só na de medição. **Entregue (#81)**, com a declaração `PARTIAL` no desdobramento
+   (#96).
 
 ## Out of Scope
 
