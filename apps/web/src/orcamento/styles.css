@@ -1500,5 +1500,245 @@ p {
   border-radius: 999px;
 }
 
+/*
+ * Acervo de parcelas de canteiro (F-042, pacote de design revisão 1 aprovado).
+ *
+ * Esta é a ÚNICA família de cor nova da jornada, e o pacote a justifica: azul-ardósia foi
+ * escolhido por não colidir com nenhum significado já em uso no orçamento — verde é
+ * confirmado/contratado, roxo é reajuste, petróleo é RE-RA, âmbar é aviso e vermelho é
+ * recusa. `--acervo` (#3a5f8f) é usado como TEXTO sobre branco (6,6:1) e como borda; ele
+ * nunca preenche fundo com texto por cima, que é o papel reservado a `--accent`.
+ *
+ * Como no resto da folha, a cor é redundância: o passo diz o próprio estado por extenso, a
+ * parcela removida é dita "removida" além de riscada, e a origem da parcela é uma palavra
+ * dentro do selo — nunca só a borda.
+ */
+/* `&` e não `.jornada-orcamento`: o arquivo inteiro já está aninhado nela, e repetir a
+   classe aqui produziria `.jornada-orcamento .jornada-orcamento` — um seletor que nunca
+   casa, e tokens que nunca chegariam a lugar nenhum. */
+& {
+  --acervo: #3a5f8f;
+  --acervo-soft: #eef3fa;
+  --acervo-line: #b9cde6;
+  --acervo-ink: #24405f;
+}
+
+/* Selo de ORIGEM da parcela vinda de acervo. Contorno, como o do regime: origem de parcela
+   e origem de preço não podem ler igual. A palavra ("do acervo v1") vai dentro. */
+.selo-acervo {
+  border-color: var(--acervo-line);
+  color: var(--acervo);
+}
+
+/* O painel do canteiro, irmão da lista de elementos. */
+.canteiro-lista {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+}
+
+.canteiro-lista li {
+  margin-bottom: 10px;
+}
+
+.canteiro-parcela-rotulo {
+  font-weight: 600;
+}
+
+.canteiro-parcela-conta {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-secondary);
+}
+
+/* Os três passos da aplicação. O andado é dito na etiqueta de cada passo; a veste
+   acompanha. */
+.acervo-fluxo {
+  padding: 12px;
+  border: 1px solid var(--acervo-line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.acervo-passos {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.acervo-passo {
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+  background: var(--surface-subtle);
+  border-right: 1px solid var(--line);
+}
+
+.acervo-passo:last-child {
+  border-right: 0;
+}
+
+.acervo-passo b {
+  display: block;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.acervo-passo-estado {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.acervo-passo-feito {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.acervo-passo-agora {
+  color: var(--acervo-ink);
+  background: var(--surface);
+  font-weight: 600;
+}
+
+/* Passo 1: os cartões de acervo, com a versão à vista. */
+.acervo-lista {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.acervo-cartao {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.acervo-cartao.escolhido {
+  border-color: var(--acervo-line);
+  border-left: 3px solid var(--acervo);
+  background: var(--acervo-soft);
+}
+
+.acervo-cartao-botao {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+
+.acervo-cartao-titulo {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.acervo-cartao-corpo {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+}
+
+/* Passo 2: os campos que nascem vazios, um por parâmetro citado. */
+.acervo-parametros {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0;
+}
+
+/* Passo 3: a prévia, com a conta à vista e a parcela removida visível. */
+.acervo-previa {
+  margin: 10px 0;
+}
+
+.acervo-tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.acervo-tabela th,
+.acervo-tabela td {
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+
+.acervo-tabela thead th {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+  background: var(--surface-subtle);
+}
+
+.acervo-conta {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+/* A parcela removida sai da conta, não da tela: ela fica riscada e com a palavra
+   "removida" ao lado — o risco é redundância, nunca o único sinal. O botão de trazer de
+   volta não é riscado, porque ele continua clicável. */
+.acervo-linha-removida td {
+  color: var(--ink-secondary);
+  background: var(--surface-sunken);
+  text-decoration: line-through;
+}
+
+.acervo-linha-removida td:last-child,
+.acervo-linha-removida .selo {
+  text-decoration: none;
+}
+
+/* A parcela BLOQUEADA não é riscada como a removida: riscar diria "saiu", e o que se quer
+   dizer é "continua aqui, e é ela que está impedindo". O que distingue é o texto — o selo
+   "não pode nascer" e o motivo escrito no lugar da quantidade —, e a veste é redundância. */
+.acervo-linha-bloqueada td {
+  background: var(--surface-sunken);
+}
+
+.acervo-linha-bloqueada td:first-child {
+  /* O mesmo vermelho do selo `.selo-atencao` que a linha carrega: um sinal só, e a palavra
+     continua sendo a que informa. */
+  box-shadow: inset 3px 0 0 0 #a02323;
+}
+
+/* O carimbo da última aplicação: leitura, para reaplicar não ser um salto no escuro. */
+.acervo-carimbo {
+  display: grid;
+  gap: 3px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+  background: var(--surface);
+  border: 1px solid var(--acervo-line);
+  border-left: 3px solid var(--acervo);
+  border-radius: 6px;
+}
+
 /* Fecha o `.jornada-orcamento` aberto no topo do arquivo. */
 }

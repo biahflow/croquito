@@ -43,6 +43,11 @@ SHA256_PATTERN: Final = r"^[a-f0-9]{64}$"
 TAKEOFF_ITEM_ID_PATTERN: Final = r"^ti_[a-f0-9]{16}$"
 """Identidade do item de legenda. Vive aqui, e não em `takeoff`, porque a memória de
 cálculo passa a apontar para o elemento e `takeoff` importa deste módulo, não o contrário."""
+SITE_SETUP_PARCEL_ID_PATTERN: Final = r"^ss_[a-f0-9]{16}$"
+"""Identidade de uma parcela dentro de um acervo de canteiro (F-042). Mesmo molde de
+`TAKEOFF_ITEM_ID_PATTERN`: prefixo curto e opaco (`ss` de "site setup") mais 16 hex.
+Vive aqui, e não em `site_setup`, pelo mesmo motivo de `SiteSetupOrigin` logo abaixo —
+`calc_matrix.py` precisa validar o formato da proveniência sem importar `site_setup.py`."""
 NON_SCO_CODE_PATTERN: Final = r"^[A-Z0-9][A-Z0-9./()-]{1,29}$"
 """Superset ESTRUTURAL do código de origem EMOP/composição: maiúsculas e dígitos com
 pontuação limitada (`./()-`), sem espaço, 2 a 30 caracteres. Só garante estrutura — o
@@ -260,6 +265,22 @@ class CalcOperand(ValuationContractModel):
     name: str = Field(min_length=1, max_length=60)
     value: ExactDecimal
     unit: str | None = Field(default=None, min_length=1, max_length=20)
+
+
+class SiteSetupOrigin(ValuationContractModel):
+    """Proveniência de uma `CalcContribution` nascida de um acervo de parcelas de canteiro
+    (F-042): qual acervo, em que versão, e qual parcela dele.
+
+    Vive aqui, e não em `site_setup.py` (onde moram `SiteSetupKit`/`SiteSetupParcel` e
+    `apply_site_setup_kit`), para quebrar um ciclo de import: `site_setup.py` monta
+    `ServiceContributions`/`CalcContribution`, então já importa de `calc_matrix.py`; se
+    `SiteSetupOrigin` morasse em `site_setup.py`, `calc_matrix.py` precisaria importar de
+    volta para tipar `CalcContribution.kit_origin`, fechando o ciclo. `models.py` é
+    importado por ambos e não importa nenhum dos dois — é o lugar sem aresta de volta.
+    """
+
+    kit_version: str = Field(min_length=1, max_length=40)
+    parcel_id: str = Field(pattern=SITE_SETUP_PARCEL_ID_PATTERN)
 
 
 class CalcBlock(ValuationContractModel):

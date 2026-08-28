@@ -35,6 +35,11 @@ import type {
 } from "@croquito/contracts";
 
 import { apiJson, ApiError } from "../api";
+import type {
+  SiteSetupApplyResponse,
+  SiteSetupKitListResponse,
+  SiteSetupPreviewResponse,
+} from "./acervo";
 import type { CalcMatrix } from "./matrix";
 import {
   buildEstimateBody,
@@ -46,6 +51,8 @@ import {
   installCatalogBody,
   installReferenceCatalogBody,
   regimeBody,
+  siteSetupApplyBody,
+  siteSetupPreviewBody,
   takeoffDecisionBody,
   targetBody,
   versionBody,
@@ -632,6 +639,21 @@ export type CodeDecisionDraft = {
   note?: string;
 };
 
+/**
+ * O que a pré-visualização do acervo de canteiro cita (F-042): o acervo, os parâmetros de
+ * obra declarados e as parcelas removidas. Os valores são decimais em TEXTO.
+ */
+export type SiteSetupPreviewDraft = {
+  kitId: string;
+  parameters: Readonly<Record<string, string>>;
+  excludedParcelIds: readonly string[];
+};
+
+/** A aplicação é o mesmo conteúdo da prévia mais a guarda otimista da rodada. */
+export type SiteSetupApplyDraft = SiteSetupPreviewDraft & {
+  baseVersion: number;
+};
+
 const JSON_HEADERS: Record<string, string> = {
   "Content-Type": "application/json",
 };
@@ -1095,6 +1117,95 @@ export function postCodeClosure(
     roundPath(roundId, "/code-assignments/closures"),
     accessToken,
     codeClosureBody(draft),
+  );
+}
+
+/**
+ * Os acervos de parcelas de canteiro que ESTA rodada pode aplicar (F-042).
+ *
+ * Leitura pura, no molde de `listReferenceCatalogs`: sem `Idempotency-Key`, sem gravar nada
+ * e sem parâmetro de filtro. Cada acervo declara a versão, quantas parcelas traz e quais
+ * parâmetros de obra ele CITA — a tela não deduz nenhum deles.
+ */
+export function listSiteSetupKits(
+  accessToken: string,
+  roundId: string,
+): Promise<SiteSetupKitListResponse> {
+  return apiJson<SiteSetupKitListResponse>(
+    roundPath(roundId, "/site-setup-kits"),
+    accessToken,
+  );
+}
+
+/**
+ * Pré-visualiza as parcelas que nasceriam: **não avança versão e não grava nada**.
+ *
+ * É o passo obrigatório do desenho aprovado, e a razão de ele existir é o risco declarado
+ * na feature — o ganho é não digitar, e o risco é aplicar sem olhar. A resposta traz a
+ * CONTA de cada parcela (os operandos nomeados) e a quantidade que o servidor computou;
+ * nenhuma delas é recalculada aqui.
+ *
+ * Recusas próprias: `SITE_SETUP_PARAMETER_MISSING` nomeia TODOS os parâmetros faltantes e
+ * `SITE_SETUP_CODE_ABSENT` nomeia os códigos que o catálogo da rodada não tem. As duas são
+ * falha fechada: nada é materializado, nem as parcelas que estariam completas.
+ */
+export function postSiteSetupPreview(
+  accessToken: string,
+  roundId: string,
+  draft: SiteSetupPreviewDraft,
+): Promise<SiteSetupPreviewResponse> {
+  return post<SiteSetupPreviewResponse>(
+    roundPath(roundId, "/site-setup/preview"),
+    accessToken,
+    siteSetupPreviewBody(draft),
+  );
+}
+
+/**
+ * Aplica o acervo — ato humano, que avança a versão da rodada.
+ *
+ * O corpo repete o que foi pré-visualizado (acervo, parâmetros, exclusões) e acrescenta a
+ * `base_version`. Reaplicar o mesmo acervo é o caminho normal, não erro: o servidor
+ * substitui as parcelas dele, e as autoradas à mão continuam intactas.
+ */
+export function postSiteSetupApply(
+  accessToken: string,
+  roundId: string,
+  draft: SiteSetupApplyDraft,
+): Promise<SiteSetupApplyResponse> {
+  return post<SiteSetupApplyResponse>(
+    roundPath(roundId, "/site-setup/apply"),
+    accessToken,
+    siteSetupApplyBody(draft),
+  );
+}
+
+/**
+ * A matriz de contribuições GRAVADA da rodada. `calc_matrix: null` é a rodada que nunca
+ * teve matriz — o regime legado —, e não é o mesmo que uma matriz vazia.
+ */
+export type CalcMatrixResponse = {
+  round_id: string;
+  version: number;
+  calc_matrix: CalcMatrix | null;
+};
+
+/**
+ * Lê a matriz gravada da rodada. Leitura PURA: sem `Idempotency-Key`, sem `base_version` e
+ * sem gravar nada.
+ *
+ * Ela existe porque a matriz tinha dois donos: o `apply` do acervo (F-042) grava no
+ * servidor, e a tela mandava no build a matriz montada só do que a sessão viu. Depois de um
+ * recarregamento, montar o orçamento apagava do banco o que o acervo tinha aplicado. É por
+ * esta rota que o rascunho volta a partir do que está gravado.
+ */
+export function getCalcMatrix(
+  accessToken: string,
+  roundId: string,
+): Promise<CalcMatrixResponse> {
+  return apiJson<CalcMatrixResponse>(
+    roundPath(roundId, "/calc-matrix"),
+    accessToken,
   );
 }
 

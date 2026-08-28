@@ -812,6 +812,244 @@ export const RESUMO_MATRIZ_VAZIO =
   "por item, como antes.";
 
 /**
+ * Copy do ACERVO de parcelas de canteiro (F-042). Como a da autoria, a copy final continua
+ * sendo decisão-à-parte do pacote de design aprovado — o que está fixado é a direção: o
+ * acervo é receita e não medida, o parâmetro é declarado e nunca inferido, a prévia mostra
+ * a conta, e a origem da parcela é dita por TEXTO, nunca só por cor.
+ */
+export const CANTEIRO_TITULO = "Parcelas de canteiro";
+
+export const CANTEIRO_SEM_PARCELAS = "nenhuma parcela nesta rodada";
+
+export const CANTEIRO_DICA =
+  "Canteiro, mão de obra, andaime, transporte e entulho não têm origem na prancha. Saem " +
+  "de um punhado de parâmetros da obra que se repetem em toda praça.";
+
+export const CANTEIRO_ACAO_APLICAR = "Aplicar um acervo";
+
+export const CANTEIRO_ACAO_REAPLICAR = "Reaplicar um acervo";
+
+/** A quantidade de uma parcela autorada à mão só existe depois que o servidor a recomputa. */
+export const CANTEIRO_QUANTIDADE_NA_MONTAGEM =
+  "quantidade recomputada pelo servidor na montagem";
+
+export const ACERVO_PASSO_ESCOLHER = "Escolher o acervo";
+export const ACERVO_PASSO_PARAMETROS = "Declarar os parâmetros";
+export const ACERVO_PASSO_PREVIA = "Revisar e aplicar";
+
+/** O que um acervo é — dito antes da escolha, porque é o que evita esperar quantidade dele. */
+export const ACERVO_E_RECEITA =
+  "O acervo é receita, não medida: ele diz como a parcela se calcula, e nunca traz " +
+  "quantidade pronta. Os números saem dos parâmetros que você declara no passo seguinte.";
+
+/**
+ * Por que o campo nasce vazio (decisão 4 do pacote). A frase nomeia a tentação — a área
+ * impressa na prancha — e diz por que ela não é usada: ninguém verificou que ela alimenta
+ * alguma destas parcelas.
+ */
+export const ACERVO_PARAMETRO_DECLARADO =
+  "Cada parâmetro é declarado por você, uma vez por rodada, e vale para todas as parcelas " +
+  "que o citarem. O sistema não preenche nenhum sozinho e não sugere valor: número " +
+  "impresso na prancha só viraria parâmetro depois de verificado que ele alimenta estas " +
+  "parcelas, e isso ainda não foi verificado.";
+
+/** Por que a prévia mostra a conta, e não só o resultado (decisão 3). */
+export const ACERVO_CONTA_A_VISTA =
+  "A coluna Conta mostra os operandos nomeados, não só o resultado: é exatamente o que vai " +
+  "sair impresso na memória de cálculo, e é o que permite conferir sem abrir a planilha. " +
+  "As quantidades são as que o servidor computou — a tela não multiplica nada.";
+
+/** A parcela removida some da conta, não da tela (decisão 6). */
+export const ACERVO_REMOVIDA_VISIVEL =
+  "A parcela removida continua visível, riscada: ela sai da conta, não da tela. Remover é " +
+  "reversível até aplicar, e remover uma não altera as demais.";
+
+/** O que reaplicar faz — e o que ele nunca toca (decisão 8). */
+export const ACERVO_REAPLICAR_SUBSTITUI =
+  "Reaplicar o mesmo acervo substitui as parcelas dele — não duplica. As parcelas " +
+  "autoradas à mão nunca são tocadas.";
+
+/** O carimbo mostra os parâmetros da última aplicação; ele não os pré-preenche. */
+export const ACERVO_CARIMBO_DICA =
+  "Os parâmetros da última aplicação ficam registrados aqui para serem relidos. Reaplicar " +
+  "começa com os campos vazios: declarar de novo é ato de quem digita.";
+
+export const ACERVO_TEXTO_REMOVER = "Remover";
+export const ACERVO_TEXTO_TRAZER_DE_VOLTA = "Trazer de volta";
+export const ACERVO_PARCELA_NAO_NASCE = "não nasce nesta rodada";
+
+/**
+ * A parcela BLOQUEADA na pré-visualização (emenda de 2026-08-28 à decisão 5).
+ *
+ * A prévia deixou de recusar e passou a MARCAR: a linha que não pode nascer diz o que falta
+ * no lugar da quantidade, e continua removível — remover as bloqueadas é a saída que a copy
+ * da recusa prometia e que não existia. O selo é a redundância em TEXTO do risco na fonte;
+ * a cor nunca é o único indicador.
+ */
+export const ACERVO_PARCELA_BLOQUEADA = "não pode nascer";
+
+/** O operando cujo parâmetro não foi declarado; a conta o diz em vez de mostrar um número. */
+export const ACERVO_OPERANDO_NAO_DECLARADO = "não declarado";
+
+/** Bloqueio que o servidor declarou sem a linha nomear a causa: falha fechada, dita assim. */
+export const ACERVO_BLOQUEIO_SEM_MOTIVO = "não pode nascer nesta rodada";
+
+/** O código do acervo que o catálogo da rodada não tem (decisão 9), na linha da parcela. */
+export const ACERVO_CODIGO_FORA_DO_CATALOGO = "código fora do catálogo desta rodada";
+
+/**
+ * O que falta para UMA parcela nascer, por extenso e nomeando — nunca só uma cor ou um
+ * traço. É o texto que ocupa o lugar da quantidade na linha bloqueada.
+ */
+export function motivoDaParcelaBloqueada(
+  parametrosFaltantes: readonly string[],
+  codigoAusente: boolean,
+): string {
+  const motivos: string[] = [];
+  if (codigoAusente) {
+    motivos.push(ACERVO_CODIGO_FORA_DO_CATALOGO);
+  }
+  if (parametrosFaltantes.length > 0) {
+    motivos.push(`falta declarar ${listarPorExtenso(parametrosFaltantes)}`);
+  }
+  return motivos.length === 0 ? ACERVO_BLOQUEIO_SEM_MOTIVO : motivos.join("; ");
+}
+
+/**
+ * O motivo de aplicar estar indisponível, ao lado do controle — nunca só o botão apagado.
+ *
+ * A diferença para a recusa do servidor é que agora a tela SABE, parcela a parcela, o que
+ * falta: a prévia trouxe. O servidor continua recusando fechado se o ato chegar mesmo
+ * assim. A frase termina pelas saídas, e "remover essas parcelas" é sempre uma delas —
+ * é ela que a copy antiga prometia sem existir.
+ */
+export function fraseAplicarBloqueado(
+  parcelas: number,
+  parametrosFaltantes: readonly string[],
+  codigosAusentes: readonly string[],
+): string {
+  const cabeca =
+    parcelas === 1
+      ? "1 parcela não pode nascer"
+      : `${parcelas} parcelas não podem nascer`;
+  const motivos: string[] = [];
+  const saidas: string[] = [];
+  if (parametrosFaltantes.length > 0) {
+    motivos.push(`falta declarar ${listarPorExtenso(parametrosFaltantes)}`);
+    saidas.push("declare os parâmetros");
+  }
+  if (codigosAusentes.length > 0) {
+    const rotulo = codigosAusentes.length === 1 ? "o código" : "os códigos";
+    const verbo = codigosAusentes.length === 1 ? "não está" : "não estão";
+    motivos.push(
+      `${rotulo} ${listarPorExtenso(codigosAusentes)} ${verbo} no catálogo desta rodada`,
+    );
+    saidas.push("escolha outro acervo");
+  }
+  saidas.push(parcelas === 1 ? "remova essa parcela" : "remova essas parcelas");
+  const explicacao = motivos.length === 0 ? "" : `: ${motivos.join("; ")}`;
+  const saida = saidas.join(" ou ");
+  return `${cabeca}${explicacao}. ${saida[0].toUpperCase()}${saida.slice(1)}.`;
+}
+
+/**
+ * O carimbo do que está GRAVADO na rodada, quando a sessão não aplicou nada — depois de um
+ * recarregamento, as parcelas vêm da matriz gravada, e ela diz a versão do acervo e a
+ * parcela, não o acervo de origem.
+ */
+export function fraseAcervoGravado(
+  porVersao: readonly { kitVersion: string; parcelas: number }[],
+): string {
+  const trechos = porVersao.map(
+    (entrada) =>
+      `${entrada.parcelas} ${entrada.parcelas === 1 ? "parcela" : "parcelas"} do ` +
+      `acervo ${entrada.kitVersion}`,
+  );
+  return `Do que está gravado nesta rodada: ${listarPorExtenso(trechos)}.`;
+}
+
+/** Por que o nome do acervo não aparece na parcela lida do que está gravado. */
+export const CANTEIRO_GRAVADO_DICA =
+  "A matriz gravada registra a versão do acervo e a parcela, não o acervo de origem: o " +
+  "nome dele só aparece na aplicação que acontecer nesta sessão.";
+
+/**
+ * A matriz gravada não pôde ser lida — e montar, aqui, apagaria o que está no banco.
+ *
+ * A montagem manda a matriz INTEIRA. Sem saber o que está gravado, montar gravaria só o que
+ * esta sessão viu, o que é exatamente o defeito que a hidratação corrige. Indisponível com
+ * o motivo à vista é melhor do que disponível e destrutivo.
+ */
+export const AVISO_MATRIZ_GRAVADA_NAO_LIDA =
+  "A matriz de contribuições já gravada nesta rodada não pôde ser lida, então a tela não " +
+  "sabe o que está no banco. Montar agora gravaria só o que esta sessão viu e apagaria o " +
+  "resto — por isso a montagem fica indisponível até a leitura funcionar.";
+
+/** O ato que devolve a leitura: ele não grava nada, e é dito assim. */
+export const ACAO_RELER_MATRIZ_GRAVADA = "Tentar ler de novo";
+
+/** Enquanto a leitura está em voo: a montagem espera por ela, e a espera é dita. */
+export const LENDO_MATRIZ_GRAVADA =
+  "Lendo a matriz de contribuições já gravada nesta rodada. A montagem espera por ela: é " +
+  "o que está gravado mais o que esta sessão autorou que vai ao servidor.";
+
+/** Origem da parcela, por EXTENSO: é o texto que distingue, nunca a cor (decisão 7). */
+export function seloDeOrigemDaParcela(kitVersion: string | null): string {
+  // A versão do acervo é TEXTO e já se identifica ("sco-site-setup-v1"); prefixar com "v"
+  // produziria "do acervo vsco-site-setup-v1".
+  return kitVersion === null ? "autorada à mão" : `do acervo ${kitVersion}`;
+}
+
+/** "a" · "a e b" · "a, b e c" — a lista escrita como se fala, para caber na frase. */
+export function listarPorExtenso(itens: readonly string[]): string {
+  if (itens.length === 0) {
+    return "";
+  }
+  if (itens.length === 1) {
+    return itens[0];
+  }
+  return `${itens.slice(0, -1).join(", ")} e ${itens[itens.length - 1]}`;
+}
+
+/**
+ * As duas recusas do acervo, em falha FECHADA: as duas começam declarando que nada foi
+ * aplicado, porque o modo de falha mais caro da feature é a planilha parcial com aparência
+ * de completa. Elas são a base da frase; quem nomeia o que falta é a função abaixo.
+ */
+export const RECUSA_PARAMETRO_FALTANTE =
+  "Nada foi aplicado — nenhuma parcela nasceu, nem as que estariam completas. O acervo " +
+  "cita parâmetros de obra que não foram declarados.";
+
+export const RECUSA_CODIGO_AUSENTE =
+  "Nada foi aplicado. O acervo cita código de serviço que não existe no catálogo desta " +
+  "rodada; pular a parcela em silêncio produziria um orçamento com uma linha a menos e " +
+  "nenhum sinal. Escolha outro acervo ou publique uma versão nova dele.";
+
+/**
+ * A recusa do parâmetro faltante, NOMEANDO todos (decisão 5 do pacote).
+ *
+ * Nomear todos é o ponto: mostrar um faltante de cada vez faria a orçamentista voltar
+ * tantas vezes quantos forem os campos. Sem lista legível sobra a frase base, que já diz
+ * que nada foi aplicado — nunca um faltante inventado.
+ */
+export function fraseParametrosFaltantes(nomes: readonly string[]): string {
+  if (nomes.length === 0) {
+    return RECUSA_PARAMETRO_FALTANTE;
+  }
+  const rotulo = nomes.length === 1 ? "o parâmetro" : "os parâmetros";
+  return `${RECUSA_PARAMETRO_FALTANTE} Falta declarar ${rotulo}: ${listarPorExtenso(nomes)}.`;
+}
+
+/** A recusa do código ausente do catálogo, nomeando o código (decisão 9). */
+export function fraseCodigosAusentes(codigos: readonly string[]): string {
+  if (codigos.length === 0) {
+    return RECUSA_CODIGO_AUSENTE;
+  }
+  const rotulo = codigos.length === 1 ? "o código" : "os códigos";
+  return `${RECUSA_CODIGO_AUSENTE} O catálogo não tem ${rotulo}: ${listarPorExtenso(codigos)}.`;
+}
+
+/**
  * Frase curta que explica cada base na hora de escolher — não é o rótulo do resultado
  * (`contributionBasisLabel`), é a ajuda da autoria. `null` quando a base não é conhecida.
  */
@@ -1007,6 +1245,14 @@ const ERROR_MESSAGES: LookupTable = {
     "A parcela precisa de ao menos um operando nomeado com valor.",
   CALC_OPERAND_INVALID:
     "Cada operando tem um nome e um valor decimal (escreva 20,00 ou 20.00); o valor viaja como texto para o servidor lê-lo exato.",
+  // Acervo de parcelas de canteiro (F-042). As duas primeiras chegam com a lista do que
+  // falta em `details`, e quem a nomeia é `fraseParametrosFaltantes`/`fraseCodigosAusentes`
+  // — a frase aqui é a base, para quando o envelope vier sem a lista.
+  SITE_SETUP_PARAMETER_MISSING: RECUSA_PARAMETRO_FALTANTE,
+  SITE_SETUP_CODE_ABSENT: RECUSA_CODIGO_AUSENTE,
+  SITE_SETUP_UNKNOWN_PARCEL:
+    "A remoção cita uma parcela que não está neste acervo; nada foi aplicado. Recarregue a " +
+    "pré-visualização e refaça a escolha.",
   // Dependência resolvida no build do orçamento (`error_prefix="ESTIMATE"`): a parcela
   // derivada aponta para um serviço que precisa existir no boletim e ter código confirmado.
   ESTIMATE_MATRIX_DEPENDENCY_UNKNOWN:

@@ -4,6 +4,7 @@ import {
   associatePlate,
   createEstimate,
   createPlateExtraction,
+  getCalcMatrix,
   getCodes,
   getEstimate,
   getEstimateState,
@@ -14,11 +15,14 @@ import {
   installReferenceCatalog,
   listEstimates,
   listReferenceCatalogs,
+  listSiteSetupKits,
   postApproveEstimate,
   postBuildEstimate,
   postCodeDecision,
   postExportEstimate,
   postRegime,
+  postSiteSetupApply,
+  postSiteSetupPreview,
   postSuggestionsRecompute,
   postTakeoffDecision,
   postTarget,
@@ -702,5 +706,104 @@ describe("recusas traduzidas", () => {
       expect(describeError(error)).toContain("não está na cascata");
     });
     expect.assertions(3);
+  });
+});
+
+/**
+ * As três rotas do acervo de parcelas de canteiro (F-042). O que estes testes guardam é a
+ * diferença entre as duas mutações: pré-visualizar NÃO avança a rodada e por isso não cita
+ * versão; aplicar é ato e cita as duas coisas — `base_version` e chave de idempotência.
+ */
+describe("acervo de parcelas de canteiro", () => {
+  it("a lista é leitura pura, sob a rodada e sem chave de idempotência", async () => {
+    await listSiteSetupKits(TOKEN, ROUND);
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/estimate-rounds/${ROUND}/site-setup-kits`,
+    );
+    expect(chamadas[0].init?.method ?? "GET").toBe("GET");
+    expect(headersDaChamada().Authorization).toBe(`Bearer ${TOKEN}`);
+    expect(headersDaChamada()).not.toHaveProperty("Idempotency-Key");
+  });
+
+  it("a prévia não cita base_version: ela não grava nada e não avança a rodada", async () => {
+    await postSiteSetupPreview(TOKEN, ROUND, {
+      kitId: "kit-canteiro-smh",
+      parameters: { "prazo de obra": "2" },
+      excludedParcelIds: ["p2"],
+    });
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/estimate-rounds/${ROUND}/site-setup/preview`,
+    );
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(corpoDaChamada()).toEqual({
+      kit_id: "kit-canteiro-smh",
+      parameters: { "prazo de obra": "2" },
+      excluded_parcel_ids: ["p2"],
+    });
+  });
+
+  it("aplicar cita a versão-base, manda a chave e repete o que foi pré-visualizado", async () => {
+    await postSiteSetupApply(TOKEN, ROUND, {
+      kitId: "kit-canteiro-smh",
+      parameters: { "prazo de obra": "2", "semiperímetro": "132.21" },
+      excludedParcelIds: [],
+      baseVersion: 7,
+    });
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/estimate-rounds/${ROUND}/site-setup/apply`,
+    );
+    expect(headersDaChamada()).toHaveProperty("Idempotency-Key");
+    expect(corpoDaChamada()).toEqual({
+      base_version: 7,
+      kit_id: "kit-canteiro-smh",
+      parameters: { "prazo de obra": "2", "semiperímetro": "132.21" },
+      excluded_parcel_ids: [],
+    });
+    // Decimal atravessa como TEXTO: nenhum parâmetro vira número de JSON no caminho.
+    const parametros = corpoDaChamada().parameters as Record<string, unknown>;
+    expect(typeof parametros["semiperímetro"]).toBe("string");
+  });
+
+  /**
+   * A leitura de volta da matriz gravada (F-042 T5). Ela existe porque a matriz tinha dois
+   * donos: sem ela, montar o orçamento depois de um recarregamento apagava do banco o que o
+   * acervo tinha aplicado.
+   */
+  it("a matriz gravada é leitura pura, sob a rodada e sem chave de idempotência", async () => {
+    await getCalcMatrix(TOKEN, ROUND);
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/estimate-rounds/${ROUND}/calc-matrix`,
+    );
+    expect(chamadas[0].init?.method ?? "GET").toBe("GET");
+    expect(headersDaChamada().Authorization).toBe(`Bearer ${TOKEN}`);
+    expect(headersDaChamada()).not.toHaveProperty("Idempotency-Key");
+  });
+
+  it("a recusa do parâmetro faltante chega com a lista de TODOS os que faltam", async () => {
+    stub(() =>
+      problema(422, "SITE_SETUP_PARAMETER_MISSING", "parâmetro não declarado", {
+        parameters: ["semiperímetro", "altura do alambrado"],
+      }),
+    );
+
+    const erro = await postSiteSetupApply(TOKEN, ROUND, {
+      kitId: "kit-canteiro-smh",
+      parameters: {},
+      excludedParcelIds: [],
+      baseVersion: 7,
+    }).catch((falha: unknown) => falha);
+
+    expect(erro).toBeInstanceOf(ApiError);
+    expect((erro as ApiError).details.parameters).toEqual([
+      "semiperímetro",
+      "altura do alambrado",
+    ]);
+    expect(orcamentoErrorCode(erro as ApiError)).toBe(
+      "SITE_SETUP_PARAMETER_MISSING",
+    );
   });
 });

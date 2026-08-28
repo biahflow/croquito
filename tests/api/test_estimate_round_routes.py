@@ -554,7 +554,7 @@ def test_a_rodada_nasce_sem_cascata_e_com_versao_um(tmp_path: Path) -> None:
 
 
 def _read_paths(round_id: str) -> list[str]:
-    """As 10 LEITURAS de `/v1/estimate-rounds`, com rodada existente e inexistente.
+    """As 14 LEITURAS de `/v1/estimate-rounds`, com rodada existente e inexistente.
 
     Fonte única dos dois testes de papel: uma lista por teste deixaria o teste do papel novo
     cobrir menos rotas que o antigo sem ninguém perceber, que é exatamente como uma rota
@@ -574,11 +574,13 @@ def _read_paths(round_id: str) -> list[str]:
         f"/v1/estimate-rounds/{round_id}/catalog/search?q=alambrado",
         f"/v1/estimate-rounds/{round_id}/code-assignments",
         f"/v1/estimate-rounds/{round_id}/estimate",
+        f"/v1/estimate-rounds/{round_id}/site-setup-kits",
+        f"/v1/estimate-rounds/{round_id}/calc-matrix",
     ]
 
 
 def _write_paths(round_id: str) -> list[tuple[str, dict[str, Any]]]:
-    """As 13 MUTAÇÕES que exigem `orcamentista`, com um corpo mínimo válido de schema.
+    """As 17 MUTAÇÕES que exigem `orcamentista`, com um corpo mínimo válido de schema.
 
     `.../estimate/approve` fica de fora porque é a única mutação que NÃO exige este papel
     (ADR-0046, decisão 5); ela é conferida à parte em cada teste de papel.
@@ -627,6 +629,20 @@ def _write_paths(round_id: str) -> list[tuple[str, dict[str, Any]]]:
         (
             f"/v1/estimate-rounds/{round_id}/regime",
             {"base_version": 1, "pricing_regime": "contracted_demand"},
+        ),
+        # A pré-visualização do acervo (F-042) é POST e NÃO grava nada; mesmo assim exige
+        # `orcamentista`, porque ela é etapa da autoria da matriz e o aprovador não a percorre.
+        (
+            f"/v1/estimate-rounds/{round_id}/site-setup/preview",
+            {"kit_id": str(uuid4())},
+        ),
+        (
+            f"/v1/estimate-rounds/{round_id}/site-setup/apply",
+            {"base_version": 1, "kit_id": str(uuid4())},
+        ),
+        (
+            f"/v1/estimate-rounds/{round_id}/site-setup/kits",
+            {"base_version": 1, "name": "CANTEIRO SINTETICO", "kit_version": "1.0.0"},
         ),
     ]
 
@@ -705,10 +721,10 @@ def test_com_so_o_papel_aprovador_a_leitura_passa_e_toda_mutacao_recusa(tmp_path
     """Critério 6 da F-035, e o maior risco da entrega: dar leitura sem afrouxar mutação.
 
     O aprovador precisa ABRIR a jornada para ver o que assina (ADR-0046, decisão 5) — mas
-    ler não é mutar. Este teste percorre as MESMAS 22 rotas do irmão acima mais as duas que a
-    F-035 acrescentou, e é ele que reprova se uma mutação passar a aceitar o papel novo por
-    engano. `.../estimate/approve` é a única exceção, e recusa aqui por outra causa: sem
-    orçamento montado, ela é ordem da cadeia (`409`), nunca `403`.
+    ler não é mutar. Este teste percorre as MESMAS rotas do irmão acima, lidas das duas listas
+    que o drift guard obriga a manter completas, e é ele que reprova se uma mutação passar a
+    aceitar o papel novo por engano. `.../estimate/approve` é a única exceção, e recusa aqui
+    por outra causa: sem orçamento montado, ela é ordem da cadeia (`409`), nunca `403`.
     """
     client = _client(tmp_path)
     created = _create_round(client)

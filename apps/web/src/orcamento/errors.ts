@@ -9,7 +9,12 @@
  */
 
 import { ApiError } from "../api";
-import { errorMessage, MENSAGEM_ORCAMENTO_MUDOU } from "./labels";
+import {
+  errorMessage,
+  fraseCodigosAusentes,
+  fraseParametrosFaltantes,
+  MENSAGEM_ORCAMENTO_MUDOU,
+} from "./labels";
 
 /** O `409` da guarda otimista da rodada de orçamento. */
 export const REVISION_CONFLICT_CODE = "REVISION_CONFLICT";
@@ -32,6 +37,16 @@ export const SELF_APPROVAL_FORBIDDEN_CODE = "ESTIMATE_SELF_APPROVAL_FORBIDDEN";
 
 /** Portão de domínio do despacho: viaja em `details.code` do `DOMAIN_VALIDATION_FAILED`. */
 export const EXPORT_BLOCKED_CODE = "ESTIMATE_EXPORT_BLOCKED";
+
+/**
+ * As duas recusas próprias do acervo de canteiro (F-042), as duas em falha fechada.
+ *
+ * A primeira traz em `details.parameters` a lista de TODOS os parâmetros faltantes; a
+ * segunda, em `details.codes`, os códigos que o catálogo da rodada não tem. Nenhuma das
+ * duas materializa parcela nenhuma — nem as que estariam completas.
+ */
+export const SITE_SETUP_PARAMETER_MISSING_CODE = "SITE_SETUP_PARAMETER_MISSING";
+export const SITE_SETUP_CODE_ABSENT_CODE = "SITE_SETUP_CODE_ABSENT";
 
 /**
  * O orçamento avançou depois desta leitura. Não é falha: é o sinal de recarregar antes de
@@ -148,6 +163,83 @@ export function describeError(error: unknown): string {
     return code === null ? error.message : errorMessage(code, error.detail);
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Nomes dos parâmetros de obra que faltaram, na ordem em que o servidor os mandou.
+ *
+ * A recusa nomeia TODOS de uma vez (`details.parameters`), e é assim que ela chega aqui:
+ * mostrar um por vez faria a orçamentista voltar tantas vezes quantos forem os campos.
+ * Envelope sem a lista devolve vazio, nunca um faltante fabricado.
+ */
+export function siteSetupMissingParameters(error: unknown): string[] {
+  return listaDeTexto(error, SITE_SETUP_PARAMETER_MISSING_CODE, "parameters");
+}
+
+/** Códigos que o catálogo da rodada não tem, na ordem em que o servidor os mandou. */
+export function siteSetupAbsentCodes(error: unknown): string[] {
+  return listaDeTexto(error, SITE_SETUP_CODE_ABSENT_CODE, "codes");
+}
+
+/** A lista de textos de um `details`, só quando a recusa é a que a declara. */
+function listaDeTexto(error: unknown, code: string, chave: string): string[] {
+  if (!(error instanceof ApiError) || orcamentoErrorCode(error) !== code) {
+    return [];
+  }
+  const valores = error.details[chave];
+  if (!Array.isArray(valores)) {
+    return [];
+  }
+  return valores.filter((valor): valor is string => typeof valor === "string");
+}
+
+/**
+ * Desfecho de uma recusa do acervo de canteiro (F-042), para a tela dizer o que falta.
+ *
+ * As duas recusas próprias são falha FECHADA e ganham a frase que NOMEIA o que faltou —
+ * parâmetros ou códigos. `parametros` também volta preenchida para a tela poder marcar os
+ * campos correspondentes: os nomes são os do servidor, e a tela não deduz nenhum. Qualquer
+ * outra recusa cai no envelope comum das mutações, com o `409` continuando a ter banner
+ * próprio.
+ */
+export function recusaDoAcervo(error: unknown): {
+  conflito: boolean;
+  parametros: string[];
+  codigos: string[];
+  mensagem: string;
+} {
+  if (isRevisionConflict(error)) {
+    return {
+      conflito: true,
+      parametros: [],
+      codigos: [],
+      mensagem: MENSAGEM_ORCAMENTO_MUDOU,
+    };
+  }
+  const parametros = siteSetupMissingParameters(error);
+  if (parametros.length > 0) {
+    return {
+      conflito: false,
+      parametros,
+      codigos: [],
+      mensagem: fraseParametrosFaltantes(parametros),
+    };
+  }
+  const codigos = siteSetupAbsentCodes(error);
+  if (codigos.length > 0) {
+    return {
+      conflito: false,
+      parametros: [],
+      codigos,
+      mensagem: fraseCodigosAusentes(codigos),
+    };
+  }
+  return {
+    conflito: false,
+    parametros: [],
+    codigos: [],
+    mensagem: describeError(error),
+  };
 }
 
 /**

@@ -36,6 +36,7 @@ from croquito_valuation.models import (
     CalcOperand,
     CalcRecipe,
     ContributionBasis,
+    SiteSetupOrigin,
     ValuationContractModel,
     product_of,
 )
@@ -72,6 +73,10 @@ class CalcContribution(ValuationContractModel):
     deductions: list[CalcOperand] = Field(default_factory=list)
     depends_on_code: str | None = Field(default=None, min_length=1, max_length=30)
     note: str | None = Field(default=None, max_length=500)
+    kit_origin: SiteSetupOrigin | None = None
+    """Proveniência quando a parcela nasceu de um acervo de canteiro (F-042), em vez de
+    autorada à mão. `None` é o regime de hoje: nenhuma matriz já válida deixa de ser válida
+    por causa deste campo, que é opcional e tem default."""
 
     @model_validator(mode="after")
     def validate_contribution(self) -> CalcContribution:
@@ -120,6 +125,12 @@ class CalcContribution(ValuationContractModel):
                 "CALC_CONTRIBUTION_CODE_INVALID",
                 "código de origem da parcela não tem formato de código de catálogo",
                 {"label": self.label, "depends_on_code": self.depends_on_code},
+            )
+        if self.kit_origin is not None and self.basis is not ContributionBasis.STANDALONE:
+            raise ValuationValidationError(
+                "CALC_CONTRIBUTION_KIT_ORIGIN_NOT_STANDALONE",
+                "proveniência de acervo de canteiro só é válida em parcela standalone",
+                {"label": self.label, "basis": self.basis.value},
             )
         return self
 
@@ -235,8 +246,14 @@ class ResolvedMatrix:
     services: tuple[ResolvedService, ...]
 
 
-def _materialize(contribution: CalcContribution, *, upstream_quantity: Decimal | None) -> CalcBlock:
+def materialize_contribution(
+    contribution: CalcContribution, *, upstream_quantity: Decimal | None
+) -> CalcBlock:
     """Constrói o `CalcBlock` literal de uma parcela; o subtotal é recomputado, não declarado.
+
+    Pública desde a F-042: `site_setup.py` precisa da mesma materialização para pré-visualizar
+    o que uma parcela de acervo vai virar, e uma segunda aritmética de quantidade no
+    repositório divergiria da primeira no primeiro ajuste.
 
     A parcela `DEPENDENT` recebe, como PRIMEIRO operando literal, a quantidade já resolvida
     do serviço de que ela depende (o código citado no nome) — é o que mantém a memória sem
@@ -387,7 +404,7 @@ def _resolve_matrix(
         service = service_by_code[code]
         materialized: list[CalcBlock] = []
         for contribution in service.contributions:
-            block = _materialize(
+            block = materialize_contribution(
                 contribution,
                 upstream_quantity=(
                     resolved_by_code[contribution.depends_on_code].total_quantity

@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`IN_PROGRESS`
 
 > Nasce em 2026-08-28, de uma pergunta de ROI do dono do produto: *"o que a gente pode fazer
 > no sistema para acelerar a entrega desse documento pelo orçamentista?"*, feita sobre a
@@ -149,11 +149,17 @@ digitadas de novo a cada praça.
 ## Human Gates
 
 1. **Design Approval Package** — `INTERFACE_CHANGE`: a superfície de escolher acervo,
-   declarar parâmetros e pré-visualizar. Precede o planejamento.
+   declarar parâmetros e pré-visualizar. Revisão 1 **aprovada em 2026-08-28** (Daniel Campos).
+   A implementação da tela expôs um beco sem saída no próprio pacote — a recusa oferecia
+   "remova na pré-visualização" e acontecia antes de a pré-visualização existir —, e a emenda
+   aprovada no mesmo dia produziu a **revisão 2**, que aguarda aprovação:
+   [`mock/README.md`](mock/README.md).
 2. ~~Aceite do [ADR-0059](../../adr/0059-item-contratado-fora-da-tabela-sco.md)~~ —
    **cumprido em 2026-08-28** (Daniel Campos), alternativa A.
-3. **Decisão do unknown 1** (onde o acervo vive) — pode exigir ADR próprio se o acervo virar
-   artefato de plataforma.
+3. ~~**Decisão do unknown 1** (onde o acervo vive)~~ — virou o
+   [ADR-0060](../../adr/0060-onde-vive-o-acervo-de-parcelas-de-canteiro.md), **`Accepted` em
+   2026-08-28** (Daniel Campos): plataforma e tenant como duas origens de um contrato de
+   leitura só.
 4. **Autoria do primeiro acervo** — ato da orçamentista, a partir de uma praça já feita.
 
 ## References

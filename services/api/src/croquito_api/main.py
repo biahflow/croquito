@@ -38,7 +38,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from croquito_api import estimate_rounds
+from croquito_api import estimate_rounds, site_setup_kits
 from croquito_api.auth import (
     OidcAuthenticator,
     Principal,
@@ -71,6 +71,7 @@ from croquito_api.database import (
     ReviewDecisionRecord,
     ReviewRevisionRecord,
     RevisionRecord,
+    SiteSetupKitRecord,
     SurveyMediaRecord,
     SurveyOperationRecord,
     SurveyRecord,
@@ -155,6 +156,7 @@ from croquito_api.valuation_rounds import (
     round_state_payload,
     search_round_catalog,
     signed_artifact_url,
+    stage_not_ready,
     suggestions_of,
     takeoff_overlay_state,
 )
@@ -217,6 +219,11 @@ from croquito_valuation.models import (
     PriceCatalog,
     PriceOrigin,
     Valuation,
+)
+from croquito_valuation.site_setup import (
+    SiteSetupKit,
+    apply_site_setup_kit,
+    preview_site_setup_kit,
 )
 from croquito_valuation.takeoff import (
     TakeoffDecisionBatch,
@@ -521,6 +528,66 @@ class ReferenceCatalogResponse(ApiModel):
 
 class ReferenceCatalogListResponse(ApiModel):
     catalogs: list[ReferenceCatalogResponse]
+
+
+#: Nome de um parâmetro de obra na fronteira `/v1`. O teto é o de `SiteSetupOperand.parameter`
+#: (`site_setup.py`): um nome que o domínio recusaria não chega a ser procurado no acervo.
+SiteSetupParameterName = Annotated[str, Field(min_length=1, max_length=60)]
+
+#: Valor declarado de um parâmetro, sempre TEXTO. Decimal exato não viaja como número de JSON
+#: (ADR-0038, decisão 2): ele já teria passado por binário antes de chegar aqui.
+SiteSetupParameterValue = Annotated[str, Field(min_length=1, max_length=40)]
+
+#: Id de parcela do acervo citado numa exclusão. Sem `pattern` de propósito: id malformado é,
+#: por definição, id que este acervo não tem, e o domínio já o recusa por extenso
+#: (`SITE_SETUP_UNKNOWN_PARCEL`). Recusá-lo no esquema faria a mesma causa sair como erro do
+#: FastAPI numa rota e como `problem+json` na outra.
+SiteSetupParcelId = Annotated[str, Field(min_length=1, max_length=40)]
+
+
+class PublishSiteSetupKitRequest(ApiModel):
+    """Publica no acervo da PLATAFORMA um acervo de parcelas de canteiro (F-042, ADR-0060).
+
+    O corpo tem dois campos, e é deliberado que não tenha mais: `version` e `source_label` são
+    lidos de DENTRO do documento, nunca informados ao lado. Rótulo que se digita ao lado do
+    conteúdo é rótulo que pode discordar dele — e um acervo publicado com a versão errada
+    passaria a ser confundido, na matriz, com as parcelas de outra aplicação (o merge do apply
+    é por `kit_version`).
+
+    `document` chega como objeto CRU, e não como `SiteSetupKit` tipado, pelo mesmo motivo de
+    `BuildEstimateRequest.calc_matrix`: um modelo do domínio embutido faria o Pydantic recusar
+    durante o parsing do corpo, e a invariante sairia como erro de esquema do FastAPI em vez do
+    `application/problem+json` com o código estável do domínio.
+    """
+
+    name: str = Field(min_length=3, max_length=200)
+    document: dict[str, Any]
+
+
+class SiteSetupKitResponse(ApiModel):
+    """Um acervo de parcelas de canteiro como a administração o lê.
+
+    O documento inteiro NÃO sai daqui: são dezenas de parcelas com rótulo e operando por linha
+    de listagem, e quem precisa delas é a pré-visualização, que as lê do banco. O que sai é o
+    que distingue duas linhas — nome, versão, de onde foi autorado e quantas parcelas tem.
+    """
+
+    kit_id: UUID
+    name: str
+    kit_version: str
+    origin: Literal["platform", "tenant"]
+    """Derivado de `tenant_id` na leitura, nunca uma terceira coluna que possa discordar."""
+    source_label: str
+    parcel_count: int
+    document_sha256: str
+    available: bool
+    created_by: str
+    created_at: datetime
+    withdrawn_at: datetime | None = None
+
+
+class SiteSetupKitListResponse(ApiModel):
+    kits: list[SiteSetupKitResponse]
 
 
 class PresignReferenceCatalogIndexRequest(ApiModel):
@@ -1991,6 +2058,94 @@ class EstimateReferenceCatalogListResponse(ApiModel):
 
     round_id: UUID
     catalogs: list[EstimateReferenceCatalogOption]
+
+
+class EstimateSiteSetupKitParameter(ApiModel):
+    """Um parâmetro de obra que o acervo cita, como a tela pede o campo.
+
+    `unit` é a unidade do PRIMEIRO operando que cita o parâmetro, e `null` quando os operandos
+    discordam entre si — escolher um faria o campo ser rotulado com uma unidade que metade das
+    parcelas desmente. `cited_by` é quantas PARCELAS citam o parâmetro, que é o que a tela
+    mostra ("citado por 6 parcelas") para que declarar um número tenha consequência visível.
+    """
+
+    name: str
+    unit: str | None = None
+    cited_by: int
+
+
+class EstimateSiteSetupKitOption(ApiModel):
+    """Um acervo como a ESCOLHA da rodada o oferece (F-042, ADR-0060).
+
+    Mais pobre que `SiteSetupKitResponse` pelo mesmo motivo de `EstimateReferenceCatalogOption`:
+    `created_by` de um acervo de plataforma é a identidade de um operador de outro tenant, e
+    quem escolhe um acervo não tem por que saber quem o publicou.
+    """
+
+    kit_id: UUID
+    name: str
+    kit_version: str
+    origin: Literal["platform", "tenant"]
+    source_label: str
+    parcel_count: int
+    parameters: list[EstimateSiteSetupKitParameter]
+    created_at: datetime
+
+
+class EstimateSiteSetupKitListResponse(ApiModel):
+    """O que ESTA rodada pode aplicar: acervo de plataforma em circulação mais o do tenant."""
+
+    round_id: UUID
+    version: int
+    kits: list[EstimateSiteSetupKitOption]
+
+
+class SiteSetupPreviewRequest(ApiModel):
+    """Pré-visualização da aplicação do acervo: leitura, e por isso sem guarda de escrita.
+
+    Não tem `base_version` nem aceita `Idempotency-Key` de propósito — ela não grava nada e não
+    avança a versão da rodada, como o `GET` da shortlist (ADR-0054 D7). Pedir uma guarda de
+    concorrência a um ato que não escreve faria a tela ter de recarregar para conferir uma
+    conta.
+    """
+
+    kit_id: UUID
+    parameters: dict[SiteSetupParameterName, SiteSetupParameterValue] = Field(default_factory=dict)
+    excluded_parcel_ids: list[SiteSetupParcelId] = Field(default_factory=list)
+
+
+class ApplySiteSetupKitRequest(ApiModel):
+    """Aplicação do acervo na matriz: ato humano, com guarda de concorrência.
+
+    Mesmo corpo da pré-visualização mais `base_version`, e a diferença é exatamente essa: aqui
+    a matriz muda, a revisão nova nasce e o contador da rodada anda.
+    """
+
+    base_version: int = Field(ge=1)
+    kit_id: UUID
+    parameters: dict[SiteSetupParameterName, SiteSetupParameterValue] = Field(default_factory=dict)
+    excluded_parcel_ids: list[SiteSetupParcelId] = Field(default_factory=list)
+
+
+class AuthorSiteSetupKitRequest(ApiModel):
+    """Autoria de acervo DO TENANT a partir das parcelas `STANDALONE` da rodada corrente.
+
+    `parameter_bindings` mapeia `"<índice da parcela standalone>.<nome do operando>"` para o
+    nome do parâmetro de obra, e é ele que diz QUAIS operandos viram parâmetro — todo operando
+    não citado vira constante. O sistema **não** infere: `1 x 2` pode ser "uma unidade por dois
+    meses de obra" ou "duas placas de um metro", e adivinhar produziria um acervo que nasce
+    errado e só é descoberto na praça seguinte.
+
+    O índice é a posição da parcela na lista de contribuições `STANDALONE` da matriz da revisão
+    corrente, percorrida na ordem dos serviços e, dentro de cada serviço, na ordem gravada.
+    """
+
+    base_version: int = Field(ge=1)
+    name: str = Field(min_length=3, max_length=200)
+    kit_version: str = Field(min_length=1, max_length=40)
+    parameter_bindings: dict[
+        Annotated[str, Field(min_length=3, max_length=80)], SiteSetupParameterName
+    ] = Field(default_factory=dict)
 
 
 class EstimateCodeAssignmentDecisionRequest(ApiModel):
@@ -3877,6 +4032,21 @@ def _validate_calc_matrix(raw: Mapping[str, Any] | None) -> CalcMatrix | None:
         return None
     try:
         return CalcMatrix.model_validate(raw)
+    except ValidationError as error:
+        raise _valuation_model_problem(error) from error
+
+
+def _validate_site_setup_kit(raw: Mapping[str, Any]) -> SiteSetupKit:
+    """Valida o documento do acervo publicado, com a MESMA disciplina da matriz de cálculo.
+
+    O documento chega como objeto cru no corpo (não como campo tipado) pelo mesmo motivo de
+    `_validate_calc_matrix`: um `SiteSetupKit` embutido faria o Pydantic recusar durante o
+    PARSING do corpo, e a invariante do domínio (operando que é constante e parâmetro ao mesmo
+    tempo, código fora do formato de catálogo, parcela com id repetido) sairia como erro de
+    esquema do FastAPI em vez do envelope `application/problem+json` das demais rotas.
+    """
+    try:
+        return SiteSetupKit.model_validate(raw)
     except ValidationError as error:
         raise _valuation_model_problem(error) from error
 
@@ -6848,6 +7018,230 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     "reference_catalog_id": record.reference_catalog_id,
                     "text_recipe": record.text_recipe,
                 },
+            )
+        session.commit()
+        return response
+
+    # --- acervo de parcelas de canteiro da plataforma (F-042, ADR-0060) -------------------
+    #
+    # Molde da F-037, com uma diferença que é a decisão do ADR-0060: aqui a tabela tem
+    # `tenant_id`, e ele é ANULÁVEL. Estas três rotas administram a metade de PLATAFORMA do
+    # acervo (`tenant_id IS NULL`); a metade do tenant nasce em
+    # `POST /v1/estimate-rounds/{round_id}/site-setup/kits`, e é a rodada que a lê.
+
+    def _load_platform_site_setup_kit(session: Session, *, kit_id: UUID) -> SiteSetupKitRecord:
+        """O acervo DE PLATAFORMA com este id, ou `404`.
+
+        A cláusula `tenant_id IS NULL` não é redundante com o id: sem ela, um operador de
+        plataforma poderia retirar de circulação o acervo que a orçamentista de um tenant
+        autorou — que é dado do cliente, e não coisa que a plataforma administra.
+        """
+        record = session.scalar(
+            select(SiteSetupKitRecord).where(
+                SiteSetupKitRecord.id == str(kit_id),
+                SiteSetupKitRecord.tenant_id.is_(None),
+            )
+        )
+        if record is None:
+            raise _problem(
+                "NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Acervo de parcelas de canteiro não encontrado.",
+            )
+        return record
+
+    @application.post(
+        "/v1/platform/site-setup-kits",
+        response_model=SiteSetupKitResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["platform"],
+    )
+    async def publish_site_setup_kit(
+        payload: PublishSiteSetupKitRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> SiteSetupKitResponse:
+        """Publica um acervo de parcelas de canteiro para TODOS os tenants (F-042, ADR-0060).
+
+        O que entra é um `SiteSetupKit` cru, validado pelo domínio ANTES de virar linha:
+        operando que é constante e referência ao mesmo tempo, código fora do formato de
+        catálogo e parcela com id repetido recusam com `422 DOMAIN_VALIDATION_FAILED` e o
+        código estável do domínio, nunca como erro de esquema do FastAPI.
+
+        Duas recusas, as duas ANTES de qualquer escrita:
+
+        - **papel**, antes de qualquer lookup: quem não é `platform_operator` recebe `403` e
+          não descobre o que existe no acervo;
+        - **mesma `(name, kit_version)` já publicada**: `409 SITE_SETUP_KIT_ALREADY_PUBLISHED`.
+          Acervo é imutável — uma rodada que aplicou a versão `1.0.0` cita essa versão nas
+          parcelas que materializou, e reescrever o conteúdo por baixo mudaria em silêncio o
+          que aquelas parcelas dizem ter nascido de.
+
+        Não há upload nem objeto no store: o acervo é receita curta, lida inteira em todo
+        preview e em todo apply, e não há bytes de arquivo de terceiro a preservar.
+        """
+        _require_platform_operator(principal)
+        operation = "platform.site-setup-kits"
+        request_hash = _request_hash(payload)
+        existing_response = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing_response is not None:
+            return SiteSetupKitResponse.model_validate(existing_response)
+
+        kit = _validate_site_setup_kit(payload.document)
+        published = session.scalar(
+            select(SiteSetupKitRecord).where(
+                SiteSetupKitRecord.tenant_id.is_(None),
+                SiteSetupKitRecord.name == payload.name,
+                SiteSetupKitRecord.kit_version == kit.version,
+            )
+        )
+        if published is not None:
+            raise site_setup_kits.already_published(payload.name, kit.version)
+
+        document = kit.model_dump(mode="json")
+        record = SiteSetupKitRecord(
+            id=str(new_uuid7()),
+            # A ausência é a origem: acervo de plataforma não tem dono (ADR-0060).
+            tenant_id=None,
+            name=payload.name,
+            # Versão e rótulo de origem vêm de DENTRO do documento: o que se digita ao lado
+            # do conteúdo pode discordar dele, e a versão é a chave do merge do apply.
+            kit_version=kit.version,
+            source_label=kit.source_label,
+            document_json=document,
+            document_sha256=site_setup_kits.kit_document_digest(document),
+            withdrawn_at=None,
+            created_by=principal.subject,
+            created_at=datetime.now(UTC),
+        )
+        session.add(record)
+        response = SiteSetupKitResponse.model_validate(
+            site_setup_kits.kit_record_payload(record, kit)
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="SITE_SETUP_KIT_PUBLISHED",
+            resource_type="site_setup_kit",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+            # Sem tenant alvo: o ato vale para todos, e o `tenant_id` gravado é o do OPERADOR
+            # (ADR-0047 decisão 11). Só identificador e versão — o nome de exibição é rótulo
+            # digitado, e rótulo não entra em auditoria.
+            details={"site_setup_kit_id": record.id, "kit_version": record.kit_version},
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/platform/site-setup-kits",
+        response_model=SiteSetupKitListResponse,
+        tags=["platform"],
+    )
+    async def list_site_setup_kits(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> SiteSetupKitListResponse:
+        """O acervo DE PLATAFORMA inteiro, inclusive o que está fora de circulação.
+
+        `tenant_id IS NULL` é filtro, não otimização: o acervo que a orçamentista de um tenant
+        autorou é dado dele, e listá-lo aqui daria a um operador de plataforma a lista dos
+        acervos de todos os clientes. Quem lê acervo de tenant é a rodada daquele tenant.
+
+        Leitura sem `Idempotency-Key` e sem auditoria, como as demais listagens de plataforma.
+        O que foi retirado continua na lista, com `withdrawn_at` carimbado.
+
+        Ordenação em Python, como em `list_reference_catalogs`: SQLite (testes) e PostgreSQL
+        (hospedado) não ordenam texto do mesmo jeito, e a tela lê a ordem.
+        """
+        _require_platform_operator(principal)
+        records = session.scalars(
+            select(SiteSetupKitRecord).where(SiteSetupKitRecord.tenant_id.is_(None))
+        ).all()
+        ordered = sorted(records, key=lambda record: (record.name, record.kit_version, record.id))
+        return SiteSetupKitListResponse(
+            kits=[
+                SiteSetupKitResponse.model_validate(
+                    site_setup_kits.kit_record_payload(record, site_setup_kits.load_kit(record))
+                )
+                for record in ordered
+            ]
+        )
+
+    @application.post(
+        "/v1/platform/site-setup-kits/{site_setup_kit_id}/withdraw",
+        response_model=SiteSetupKitResponse,
+        tags=["platform"],
+    )
+    async def withdraw_site_setup_kit(
+        site_setup_kit_id: UUID,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> SiteSetupKitResponse:
+        """Tira o acervo de circulação: ele deixa de ser oferecido e **não** é apagado.
+
+        Apagar quebraria a leitura de toda rodada que já o aplicou — as parcelas materializadas
+        citam a versão do acervo, e o registro é o que permite dizer de onde elas vieram. Por
+        isso o ato carimba `withdrawn_at`, e nada mais.
+
+        Sem corpo: o ato é inteiramente identificado pela rota. Retirar o que já está fora de
+        circulação devolve o registro como está, sem recarimbar a data nem auditar de novo.
+        """
+        _require_platform_operator(principal)
+        operation = f"platform.site-setup-kits.withdraw:{site_setup_kit_id}"
+        request_hash = _request_hash(_PARAMETERLESS_COMMAND)
+        existing_response = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing_response is not None:
+            return SiteSetupKitResponse.model_validate(existing_response)
+
+        record = _load_platform_site_setup_kit(session, kit_id=site_setup_kit_id)
+        already_withdrawn = record.withdrawn_at is not None
+        if not already_withdrawn:
+            record.withdrawn_at = datetime.now(UTC)
+        response = SiteSetupKitResponse.model_validate(
+            site_setup_kits.kit_record_payload(record, site_setup_kits.load_kit(record))
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        if not already_withdrawn:
+            _record_audit(
+                session,
+                principal=principal,
+                action="SITE_SETUP_KIT_WITHDRAWN",
+                resource_type="site_setup_kit",
+                resource_id=record.id,
+                request_id=request.state.request_id,
+                details={"site_setup_kit_id": record.id, "kit_version": record.kit_version},
             )
         session.commit()
         return response
@@ -14332,6 +14726,432 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             tenant_id=principal.tenant_id,
         )
         return {**payload, "workbook_url": workbook_url}
+
+    # --- acervo de parcelas de canteiro na rodada (F-042, ADR-0060) -----------------------
+    #
+    # Quatro rotas e uma só fronteira: `site_setup_kits.visible_kits` — acervo de plataforma
+    # (`tenant_id IS NULL`) MAIS o do tenant do JWT. Nenhuma delas recebe `tenant_id` no corpo.
+    #
+    # A divisão entre elas é a do Design Approval Package: escolher (lista), CONFERIR
+    # (pré-visualização, que não grava) e aplicar (ato humano, com `base_version`). O motor é
+    # `croquito_valuation.site_setup`, e ele não é reimplementado aqui.
+
+    def _load_visible_site_setup_kit(
+        session: Session, *, kit_id: UUID, tenant_id: str
+    ) -> SiteSetupKitRecord:
+        """O acervo que ESTE tenant enxerga, ou `404`.
+
+        Acervo de outro tenant é indistinguível de inexistente, exatamente como uma rodada de
+        outro tenant — é a fronteira do ADR-0060 aplicada ao lookup, e não só à listagem.
+
+        Acervo fora de circulação existe e é encontrado, mas recusa com
+        `409 SITE_SETUP_KIT_WITHDRAWN`: dizer `404` para algo que a rodada anterior aplicou
+        faria a tela afirmar que o acervo nunca existiu.
+        """
+        record = session.scalar(
+            select(SiteSetupKitRecord).where(
+                SiteSetupKitRecord.id == str(kit_id),
+                site_setup_kits.visible_kits(tenant_id),
+            )
+        )
+        if record is None:
+            raise _problem(
+                "NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Acervo de parcelas de canteiro não encontrado.",
+            )
+        if record.withdrawn_at is not None:
+            raise site_setup_kits.kit_withdrawn(record.id)
+        return record
+
+    def _estimate_available_codes(record: EstimateRoundRecord) -> set[str]:
+        """Os códigos que a cascata desta rodada oferece, para a falha fechada do acervo.
+
+        Passá-los ao motor é o que faz o código ausente recusar na PRÉ-VISUALIZAÇÃO, e não só
+        na aplicação: o risco nomeado na feature é o acervo silenciosamente desatualizado —
+        catálogo novo que retirou um código que o acervo cita —, e descobri-lo depois de
+        aplicar seria descobri-lo com a matriz já mexida.
+        """
+        return {entry.code for catalog in _estimate_cascade(record) for entry in catalog.entries}
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/site-setup-kits",
+        response_model=EstimateSiteSetupKitListResponse,
+        tags=["estimate"],
+    )
+    async def list_estimate_site_setup_kits(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> EstimateSiteSetupKitListResponse:
+        """Os acervos que ESTA rodada pode aplicar (F-042, ADR-0060).
+
+        Dois filtros, e só dois: **origem visível** — plataforma mais o acervo deste tenant,
+        nunca o de outro — e **em circulação**, porque o que foi retirado deixa de ser
+        oferecido sem sumir do registro nem quebrar a rodada que já o aplicou.
+
+        Cada acervo sai com os parâmetros de obra que ele cita e quantas parcelas citam cada
+        um: é o que a tela precisa para pedir os campos antes da pré-visualização, e é o
+        servidor quem o calcula porque a regra é do domínio (`SiteSetupKit.parameter_names`).
+
+        A rodada continua sendo do tenant — rodada alheia é `404`, e o papel é exigido antes de
+        qualquer lookup.
+        """
+        _require_estimate_reader(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        records = session.scalars(
+            select(SiteSetupKitRecord).where(
+                site_setup_kits.visible_kits(principal.tenant_id),
+                SiteSetupKitRecord.withdrawn_at.is_(None),
+            )
+        ).all()
+        # Ordenação em Python, como nas demais listagens: SQLite e PostgreSQL não ordenam
+        # texto do mesmo jeito, e a tela lê a ordem.
+        ordered = sorted(records, key=lambda kit: (kit.name, kit.kit_version, kit.id))
+        return EstimateSiteSetupKitListResponse(
+            round_id=round_id,
+            version=record.version,
+            kits=[
+                EstimateSiteSetupKitOption.model_validate(
+                    site_setup_kits.kit_option_payload(kit, site_setup_kits.load_kit(kit))
+                )
+                for kit in ordered
+            ],
+        )
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/site-setup/preview",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def preview_estimate_site_setup(
+        round_id: UUID,
+        payload: SiteSetupPreviewRequest,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """O que vai nascer se o acervo for aplicado — **sem gravar nada**.
+
+        É LEITURA, e o corpo diz isso: sem `base_version`, sem `Idempotency-Key`, sem revisão
+        nova e sem avançar a versão da rodada, como o `GET` da shortlist (ADR-0054 D7). O
+        controle que a feature exige contra "aplicar sem olhar" é justamente esta lista, com a
+        conta de cada parcela à vista e a remoção individual antes do ato.
+
+        `POST` e não `GET` porque o corpo carrega os parâmetros de obra e a lista de exclusões:
+        pô-los em query string publicaria valores da obra na URL, que é o que os logs de
+        infraestrutura registram.
+
+        **Ela MARCA o que não pode nascer; quem RECUSA é o apply.** Parâmetro citado e não
+        declarado sai em `missing_parameters` da linha, com `quantity: null`; código fora do
+        catálogo da cascata sai em `code_absent`; e `blocked_parcel_ids` reúne as parcelas não
+        excluídas que estão num dos dois estados. Recusar aqui era um beco sem saída: a saída
+        oferecida pela recusa — remover na pré-visualização as parcelas que citam o parâmetro
+        faltante — exigia a pré-visualização que a recusa impedia de existir.
+
+        O que continua recusando: acervo invisível (`404`), acervo fora de circulação (`409`),
+        parâmetro ilegível (`422 SITE_SETUP_PARAMETER_INVALID`) e exclusão que cita parcela
+        que o acervo não tem (`422` com `SITE_SETUP_UNKNOWN_PARCEL`) — as três últimas são erro
+        de quem chama, não estado do trabalho.
+
+        Decimais saem como TEXTO, como no resto da jornada: a quantidade é `Decimal` no
+        domínio, e um número de JSON já teria passado por binário. Quantidade que não pôde ser
+        calculada sai `null`, nunca `"0"`.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        kit_record = _load_visible_site_setup_kit(
+            session, kit_id=payload.kit_id, tenant_id=principal.tenant_id
+        )
+        kit = site_setup_kits.load_kit(kit_record)
+        parameters = site_setup_kits.parse_parameters(payload.parameters)
+        rows = preview_site_setup_kit(
+            kit,
+            parameters,
+            excluded_parcel_ids=payload.excluded_parcel_ids,
+            available_codes=_estimate_available_codes(record),
+        )
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "kit_id": kit_record.id,
+            "kit_version": kit.version,
+            "rows": [site_setup_kits.preview_row_payload(row) for row in rows],
+            "excluded_parcel_ids": list(payload.excluded_parcel_ids),
+            "blocked_parcel_ids": site_setup_kits.blocked_parcel_ids(rows),
+        }
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/calc-matrix",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def get_estimate_calc_matrix(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """A `CalcMatrix` gravada na revisão corrente, revalidada na leitura — leitura pura.
+
+        Não grava, não avança a versão da rodada e não tem `base_version`, como a leitura da
+        etapa de códigos, cujo papel ela também usa (`_require_estimate_reader`): quem assina
+        o orçamento precisa ler o que assina.
+
+        Existe porque a matriz não saía em resposta nenhuma: a tela montava o rascunho, mandava
+        no build e, depois de um recarregamento, não tinha como saber o que já estava gravado —
+        o que fazia montar o orçamento apagar do banco o que o acervo tinha aplicado.
+
+        `calc_matrix` é `null` no regime legado (revisão sem matriz, ou rodada ainda sem
+        revisão), e não `409`: não ter matriz é estado normal da rodada, não etapa fora de
+        ordem. O documento sai **como está gravado**, depois de passar de novo pelo validador
+        do domínio (`matrix_of`, espelho de `load_kit`) — servir o que não valida faria a tela
+        renderizar número que ninguém conferiu.
+        """
+        _require_estimate_reader(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        document = None if revision is None else revision.calc_matrix_json
+        try:
+            matrix = estimate_rounds.matrix_of(revision)
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "calc_matrix": None if matrix is None else document,
+        }
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/site-setup/apply",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def apply_estimate_site_setup(
+        round_id: UUID,
+        payload: ApplySiteSetupKitRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Materializa as parcelas do acervo na `CalcMatrix` da rodada — ato humano.
+
+        **A semântica de merge é o coração desta rota**, e ela é uma só: reaplicar substitui
+        apenas as parcelas DAQUELE acervo.
+
+        - lê a `calc_matrix_json` da revisão corrente, que pode ser `NULL` (regime legado); aí
+          a matriz nasce só das contribuições geradas;
+        - **remove** toda contribuição cuja `kit_origin.kit_version` seja igual à do acervo
+          aplicado — são as da aplicação anterior do mesmo acervo, e mantê-las duplicaria cada
+          parcela a cada reaplicação;
+        - **preserva intactas** todas as demais: a autorada à mão (`kit_origin` nulo) e a de
+          OUTRO acervo. É isso que torna reaplicar idempotente sem apagar trabalho manual;
+        - insere as novas e grava a `CalcMatrix` resultante **validada** — nenhuma invariante
+          de `calc_matrix.py` é contornada, inclusive a que proíbe parcela `STANDALONE` com
+          elemento de origem.
+
+        A guarda de concorrência é a de sempre (`base_version`), a revisão é append-only e a
+        versão da rodada avança, porque aqui houve decisão humana. A pré-visualização, que não
+        decidiu nada, não avança.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.site-setup-apply:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        kit_record = _load_visible_site_setup_kit(
+            session, kit_id=payload.kit_id, tenant_id=principal.tenant_id
+        )
+        kit = site_setup_kits.load_kit(kit_record)
+        parameters = site_setup_kits.parse_parameters(payload.parameters)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        produced = apply_site_setup_kit(
+            kit,
+            parameters,
+            excluded_parcel_ids=payload.excluded_parcel_ids,
+            available_codes=_estimate_available_codes(record),
+        )
+        try:
+            merged, replaced = site_setup_kits.merge_site_setup_contributions(
+                estimate_rounds.matrix_of(revision), produced, kit_version=kit.version
+            )
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+
+        document = merged.model_dump(mode="json")
+        new_revision = estimate_rounds.append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"calc_matrix_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response: dict[str, Any] = {
+            "round_id": record.id,
+            "version": record.version,
+            "revision_id": new_revision.id,
+            "revision_version": new_revision.version,
+            "kit_id": kit_record.id,
+            "kit_version": kit.version,
+            "applied_parcel_count": sum(len(service.contributions) for service in produced),
+            "replaced_parcel_count": replaced,
+            "excluded_parcel_ids": list(payload.excluded_parcel_ids),
+            "calc_matrix": document,
+        }
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_SITE_SETUP_APPLIED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_SITE_SETUP_APPLIED",
+            record=record,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/site-setup/kits",
+        response_model=SiteSetupKitResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["estimate"],
+    )
+    async def author_estimate_site_setup_kit(
+        round_id: UUID,
+        payload: AuthorSiteSetupKitRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> SiteSetupKitResponse:
+        """Grava um acervo DO TENANT a partir das parcelas `STANDALONE` da rodada corrente.
+
+        É o Human Gate 4 da feature exercido pela API: o primeiro acervo é autorado por gente,
+        a partir de uma praça já feita — o sistema não o infere de planilha antiga.
+
+        Só entra contribuição `STANDALONE`: a base é a definição de "parcela de canteiro" no
+        domínio, e uma parcela com origem em elemento da prancha viraria um acervo que só
+        serviria àquela praça.
+
+        `parameter_bindings` diz QUAIS operandos viram parâmetro; o resto vira constante. O
+        sistema **não** adivinha, e binding que aponte para operando inexistente é recusa que
+        **nomeia o binding** — ignorá-lo congelaria como constante um número que a orçamentista
+        quis declarar, e o acervo nasceria errado sem ninguém ver.
+
+        `base_version` é conferido porque o acervo é recortado da matriz que a orçamentista
+        estava vendo; a rodada, porém, **não muda** — nenhuma revisão é gravada e o contador
+        dela não avança, porque nada nela mudou. Avançar a versão faria as edições em voo da
+        própria orçamentista devolverem `409` por um ato que não tocou a rodada.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.site-setup-kits:{round_id}"
+        request_hash = _request_hash(payload)
+        existing_response = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing_response is not None:
+            return SiteSetupKitResponse.model_validate(existing_response)
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        matrix = estimate_rounds.matrix_of(revision)
+        if matrix is None:
+            raise stage_not_ready(
+                estimate_rounds.STAGE_ESTIMATE,
+                detail="a rodada ainda não tem matriz de cálculo de onde recortar o acervo",
+            )
+        published = session.scalar(
+            select(SiteSetupKitRecord).where(
+                SiteSetupKitRecord.tenant_id == principal.tenant_id,
+                SiteSetupKitRecord.name == payload.name,
+                SiteSetupKitRecord.kit_version == payload.kit_version,
+            )
+        )
+        if published is not None:
+            raise site_setup_kits.already_published(payload.name, payload.kit_version)
+
+        try:
+            kit = site_setup_kits.author_site_setup_kit(
+                matrix,
+                kit_version=payload.kit_version,
+                # De onde o acervo foi autorado, no molde de `HaulageTable.source_label`. É a
+                # obra da própria rodada, e o acervo é do tenant dela.
+                source_label=record.worksite_name,
+                parameter_bindings=payload.parameter_bindings,
+            )
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+
+        document = kit.model_dump(mode="json")
+        kit_record = SiteSetupKitRecord(
+            id=str(new_uuid7()),
+            tenant_id=principal.tenant_id,
+            name=payload.name,
+            kit_version=kit.version,
+            source_label=kit.source_label,
+            document_json=document,
+            document_sha256=site_setup_kits.kit_document_digest(document),
+            withdrawn_at=None,
+            created_by=principal.subject,
+            created_at=datetime.now(UTC),
+        )
+        session.add(kit_record)
+        response = SiteSetupKitResponse.model_validate(
+            site_setup_kits.kit_record_payload(kit_record, kit)
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_SITE_SETUP_KIT_AUTHORED",
+            resource_type="site_setup_kit",
+            resource_id=kit_record.id,
+            request_id=request.state.request_id,
+            details={"site_setup_kit_id": kit_record.id, "kit_version": kit_record.kit_version},
+        )
+        session.commit()
+        return response
 
     @application.get("/v1/surveys", response_model=CompletedSurveyPage, tags=["surveys"])
     async def list_completed_surveys(
