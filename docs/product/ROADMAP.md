@@ -2,7 +2,12 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-27 (**F-018 e F-019 `DONE`** — Design Approval Packages aprovados,
+Última revisão: 2026-08-28 (**F-042, F-043 e F-044 registradas** `READY_FOR_PLANNING`, de
+uma pergunta de ROI do dono do produto medida contra a planilha orçamentária real do Campo do
+Toca: das 43 linhas preenchidas, 24 não têm origem na prancha, e a saída atual não é o
+documento que a prefeitura recebe. O **ADR-0059** foi **aceito por ato humano na mesma data** (alternativa A) e é precondição das três —
+sem ele a lista de preços do contrato não carrega, porque 2 códigos em 823 não casam o padrão
+SCO estrito. Antes: **F-018 e F-019 `DONE`** — Design Approval Packages aprovados,
 implementação integrada na `main` pelo PR #105 e **aceite por ato humano** na mesma data; a
 correção humana de forma como proposta derivada (ADR-0050) e o preview da cena resolvida antes
 da aprovação. O `deploy-hml` da revisão aplicou a migração `0019`. Antes:
@@ -80,6 +85,10 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-038 | HIGH | IN_PROGRESS | [O item de legenda é um pacote de serviços, não um código](../features/F-038-pacote-de-servicos/feature.md) |
 | F-039 | HIGH | READY_FOR_REVIEW | [Reajuste de preços entre medições](../features/F-039-reajuste-entre-medicoes/feature.md) |
 | F-040 | HIGH | IN_PROGRESS | [RE-RA declarada e a medição seguinte](../features/F-040-re-ra-e-medicao-seguinte/feature.md) |
+| F-041 | HIGH | READY_FOR_PLANNING | [O braço semântico roda no caminho hospedado](../features/F-041-braco-semantico-hospedado/feature.md) |
+| F-042 | HIGH | READY_FOR_PLANNING | [O canteiro sai de um acervo parametrizado, não da digitação](../features/F-042-acervo-de-parcelas-de-canteiro/feature.md) |
+| F-043 | HIGH | READY_FOR_PLANNING | [A planilha sai no gabarito da prefeitura, com memória de cálculo](../features/F-043-planilha-no-gabarito-da-prefeitura/feature.md) |
+| F-044 | MEDIUM | READY_FOR_PLANNING | [A shortlist aprende com as decisões de código já tomadas](../features/F-044-precedente-de-codigo/feature.md) |
 | F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 | F-031 | MEDIUM | READY_FOR_HUMAN_REVIEW | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — branch isolada `feat/f-031-value-events`, não integra no MVP |
 

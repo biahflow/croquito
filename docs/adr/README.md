@@ -78,6 +78,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0056](0056-re-ra-declarada-e-o-consolidado-da-medicao-seguinte.md) | A RE-RA é declaração com procedência, o vigente é derivado como o preço, e a medição seguinte nasce da anterior | Accepted |
 | [0057](0057-multiplas-pranchas-por-praca-na-extracao-de-legenda.md) | A praça é o consolidado de pranchas, e a prancha continua a unidade de evidência | Proposed |
 | [0058](0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md) | O quantitativo nasce da cena aprovada, e antes disso o elemento precisa de identidade declarada, atribuída por ato humano na revisão | Proposed |
+| [0059](0059-item-contratado-fora-da-tabela-sco.md) | Em demanda contratada a fonte de preço é o contrato, e ele carrega item fora da tabela SCO | Accepted |
 
 ## Processo
 
