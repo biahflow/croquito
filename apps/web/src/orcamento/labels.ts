@@ -878,6 +878,121 @@ export const ACERVO_TEXTO_REMOVER = "Remover";
 export const ACERVO_TEXTO_TRAZER_DE_VOLTA = "Trazer de volta";
 export const ACERVO_PARCELA_NAO_NASCE = "não nasce nesta rodada";
 
+/**
+ * A parcela BLOQUEADA na pré-visualização (emenda de 2026-08-28 à decisão 5).
+ *
+ * A prévia deixou de recusar e passou a MARCAR: a linha que não pode nascer diz o que falta
+ * no lugar da quantidade, e continua removível — remover as bloqueadas é a saída que a copy
+ * da recusa prometia e que não existia. O selo é a redundância em TEXTO do risco na fonte;
+ * a cor nunca é o único indicador.
+ */
+export const ACERVO_PARCELA_BLOQUEADA = "não pode nascer";
+
+/** O operando cujo parâmetro não foi declarado; a conta o diz em vez de mostrar um número. */
+export const ACERVO_OPERANDO_NAO_DECLARADO = "não declarado";
+
+/** Bloqueio que o servidor declarou sem a linha nomear a causa: falha fechada, dita assim. */
+export const ACERVO_BLOQUEIO_SEM_MOTIVO = "não pode nascer nesta rodada";
+
+/** O código do acervo que o catálogo da rodada não tem (decisão 9), na linha da parcela. */
+export const ACERVO_CODIGO_FORA_DO_CATALOGO = "código fora do catálogo desta rodada";
+
+/**
+ * O que falta para UMA parcela nascer, por extenso e nomeando — nunca só uma cor ou um
+ * traço. É o texto que ocupa o lugar da quantidade na linha bloqueada.
+ */
+export function motivoDaParcelaBloqueada(
+  parametrosFaltantes: readonly string[],
+  codigoAusente: boolean,
+): string {
+  const motivos: string[] = [];
+  if (codigoAusente) {
+    motivos.push(ACERVO_CODIGO_FORA_DO_CATALOGO);
+  }
+  if (parametrosFaltantes.length > 0) {
+    motivos.push(`falta declarar ${listarPorExtenso(parametrosFaltantes)}`);
+  }
+  return motivos.length === 0 ? ACERVO_BLOQUEIO_SEM_MOTIVO : motivos.join("; ");
+}
+
+/**
+ * O motivo de aplicar estar indisponível, ao lado do controle — nunca só o botão apagado.
+ *
+ * A diferença para a recusa do servidor é que agora a tela SABE, parcela a parcela, o que
+ * falta: a prévia trouxe. O servidor continua recusando fechado se o ato chegar mesmo
+ * assim. A frase termina pelas saídas, e "remover essas parcelas" é sempre uma delas —
+ * é ela que a copy antiga prometia sem existir.
+ */
+export function fraseAplicarBloqueado(
+  parcelas: number,
+  parametrosFaltantes: readonly string[],
+  codigosAusentes: readonly string[],
+): string {
+  const cabeca =
+    parcelas === 1
+      ? "1 parcela não pode nascer"
+      : `${parcelas} parcelas não podem nascer`;
+  const motivos: string[] = [];
+  const saidas: string[] = [];
+  if (parametrosFaltantes.length > 0) {
+    motivos.push(`falta declarar ${listarPorExtenso(parametrosFaltantes)}`);
+    saidas.push("declare os parâmetros");
+  }
+  if (codigosAusentes.length > 0) {
+    const rotulo = codigosAusentes.length === 1 ? "o código" : "os códigos";
+    const verbo = codigosAusentes.length === 1 ? "não está" : "não estão";
+    motivos.push(
+      `${rotulo} ${listarPorExtenso(codigosAusentes)} ${verbo} no catálogo desta rodada`,
+    );
+    saidas.push("escolha outro acervo");
+  }
+  saidas.push(parcelas === 1 ? "remova essa parcela" : "remova essas parcelas");
+  const explicacao = motivos.length === 0 ? "" : `: ${motivos.join("; ")}`;
+  const saida = saidas.join(" ou ");
+  return `${cabeca}${explicacao}. ${saida[0].toUpperCase()}${saida.slice(1)}.`;
+}
+
+/**
+ * O carimbo do que está GRAVADO na rodada, quando a sessão não aplicou nada — depois de um
+ * recarregamento, as parcelas vêm da matriz gravada, e ela diz a versão do acervo e a
+ * parcela, não o acervo de origem.
+ */
+export function fraseAcervoGravado(
+  porVersao: readonly { kitVersion: number; parcelas: number }[],
+): string {
+  const trechos = porVersao.map(
+    (entrada) =>
+      `${entrada.parcelas} ${entrada.parcelas === 1 ? "parcela" : "parcelas"} do ` +
+      `acervo v${entrada.kitVersion}`,
+  );
+  return `Do que está gravado nesta rodada: ${listarPorExtenso(trechos)}.`;
+}
+
+/** Por que o nome do acervo não aparece na parcela lida do que está gravado. */
+export const CANTEIRO_GRAVADO_DICA =
+  "A matriz gravada registra a versão do acervo e a parcela, não o acervo de origem: o " +
+  "nome dele só aparece na aplicação que acontecer nesta sessão.";
+
+/**
+ * A matriz gravada não pôde ser lida — e montar, aqui, apagaria o que está no banco.
+ *
+ * A montagem manda a matriz INTEIRA. Sem saber o que está gravado, montar gravaria só o que
+ * esta sessão viu, o que é exatamente o defeito que a hidratação corrige. Indisponível com
+ * o motivo à vista é melhor do que disponível e destrutivo.
+ */
+export const AVISO_MATRIZ_GRAVADA_NAO_LIDA =
+  "A matriz de contribuições já gravada nesta rodada não pôde ser lida, então a tela não " +
+  "sabe o que está no banco. Montar agora gravaria só o que esta sessão viu e apagaria o " +
+  "resto — por isso a montagem fica indisponível até a leitura funcionar.";
+
+/** O ato que devolve a leitura: ele não grava nada, e é dito assim. */
+export const ACAO_RELER_MATRIZ_GRAVADA = "Tentar ler de novo";
+
+/** Enquanto a leitura está em voo: a montagem espera por ela, e a espera é dita. */
+export const LENDO_MATRIZ_GRAVADA =
+  "Lendo a matriz de contribuições já gravada nesta rodada. A montagem espera por ela: é " +
+  "o que está gravado mais o que esta sessão autorou que vai ao servidor.";
+
 /** Origem da parcela, por EXTENSO: é o texto que distingue, nunca a cor (decisão 7). */
 export function seloDeOrigemDaParcela(kitVersion: number | null): string {
   return kitVersion === null ? "autorada à mão" : `do acervo v${kitVersion}`;

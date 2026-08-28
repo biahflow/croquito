@@ -1713,6 +1713,19 @@ p {
   text-decoration: none;
 }
 
+/* A parcela BLOQUEADA não é riscada como a removida: riscar diria "saiu", e o que se quer
+   dizer é "continua aqui, e é ela que está impedindo". O que distingue é o texto — o selo
+   "não pode nascer" e o motivo escrito no lugar da quantidade —, e a veste é redundância. */
+.acervo-linha-bloqueada td {
+  background: var(--surface-sunken);
+}
+
+.acervo-linha-bloqueada td:first-child {
+  /* O mesmo vermelho do selo `.selo-atencao` que a linha carrega: um sinal só, e a palavra
+     continua sendo a que informa. */
+  box-shadow: inset 3px 0 0 0 #a02323;
+}
+
 /* O carimbo da última aplicação: leitura, para reaplicar não ser um salto no escuro. */
 .acervo-carimbo {
   display: grid;

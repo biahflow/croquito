@@ -39,6 +39,7 @@ import {
 } from "./OrcamentoApp";
 import {
   ACERVO_E_RECEITA,
+  ACERVO_OPERANDO_NAO_DECLARADO,
   ACERVO_PARCELA_NAO_NASCE,
   ACERVO_REAPLICAR_SUBSTITUI,
   ACERVO_TEXTO_TRAZER_DE_VOLTA,
@@ -48,9 +49,11 @@ import {
   AVISO_MEMORIA,
   AVISO_ORCAMENTO,
   AVISO_ORCAMENTO_SEM_RODADA,
+  CANTEIRO_GRAVADO_DICA,
   CANTEIRO_QUANTIDADE_NA_MONTAGEM,
   DICA_LOTE_VAZIO,
   DICA_REGIME,
+  fraseAplicarBloqueado,
   fraseCodigosAusentes,
   fraseParametrosFaltantes,
   RESUMO_MATRIZ_VAZIO,
@@ -69,6 +72,7 @@ import {
 } from "./acervo";
 import {
   assembleCalcMatrix,
+  disassembleCalcMatrix,
   emptyContributionForm,
   type CalcContributionDraft,
   type CalcContributionForm,
@@ -1837,23 +1841,67 @@ const PREVIA_DO_CANTEIRO: SiteSetupPreviewResponse = {
       code: "AC01100010",
       label: "Aluguel de banheiro químico",
       operands: [
-        { name: "UNIDADES", value: "1", unit: "un" },
-        { name: "PRAZO", value: "2", unit: "mes" },
+        { name: "UNIDADES", value: "1", unit: "un", parameter: null },
+        { name: "PRAZO", value: "2", unit: "mes", parameter: "prazo de obra" },
       ],
       quantity: "2.00",
+      missing_parameters: [],
+      code_absent: false,
     },
     {
       parcel_id: "p2",
       code: "AC02200030",
       label: "Vigia diurno",
       operands: [
-        { name: "DIAS", value: "23", unit: null },
-        { name: "HORAS", value: "12", unit: "h" },
+        { name: "DIAS", value: "23", unit: null, parameter: "dias de vigia" },
+        { name: "HORAS", value: "12", unit: "h", parameter: null },
       ],
       quantity: "276.00",
+      missing_parameters: [],
+      code_absent: false,
     },
   ],
   excluded_parcel_ids: [],
+  blocked_parcel_ids: [],
+};
+
+/**
+ * A prévia que MARCA em vez de recusar (emenda de 2026-08-28 à decisão 5): duas parcelas
+ * não podem nascer — uma por parâmetro não declarado, outra por código fora do catálogo —,
+ * e as demais continuam calculadas, à espera da remoção que destrava o ato.
+ */
+const PREVIA_COM_BLOQUEIO: SiteSetupPreviewResponse = {
+  ...PREVIA_DO_CANTEIRO,
+  rows: [
+    PREVIA_DO_CANTEIRO.rows[0],
+    {
+      ...PREVIA_DO_CANTEIRO.rows[1],
+      operands: [
+        { name: "SEMIPERÍMETRO", value: null, unit: "m", parameter: "semiperímetro" },
+        {
+          name: "ALTURA",
+          value: null,
+          unit: "m",
+          parameter: "altura do alambrado",
+        },
+      ],
+      quantity: null,
+      missing_parameters: ["semiperímetro", "altura do alambrado"],
+    },
+    // Código ausente vem COM quantidade: a conta fecha, e o que falta é o código no
+    // catálogo desta rodada. A linha mostra o MOTIVO no lugar do número — a parcela não
+    // vai nascer, e imprimir a quantidade dela sugeriria o contrário.
+    {
+      parcel_id: "p3",
+      code: "AC03100050",
+      label: "Placa de obra",
+      operands: [{ name: "ÁREA", value: "6", unit: "m2", parameter: null }],
+      quantity: "6.00",
+      missing_parameters: [],
+      code_absent: true,
+    },
+  ],
+  blocked_parcel_ids: ["p2", "p3"],
 };
 
 function fluxoNoPasso(passo: "acervo" | "parametros" | "previa"): FluxoDoAcervo {
@@ -1994,6 +2042,72 @@ describe("FormularioDoAcervo", () => {
     expect(html).toContain("Aplicar 1 parcela");
   });
 
+  /**
+   * A linha BLOQUEADA, e a saída que ela abre. A recusa antiga era um beco sem saída: ela
+   * prometia "remova na pré-visualização as parcelas que os citam" e acontecia antes de
+   * existir pré-visualização onde remover.
+   */
+  it("a linha bloqueada diz o que falta, nomeando, e continua removível", () => {
+    const html = render({
+      ...fluxoNoPasso("previa"),
+      previa: PREVIA_COM_BLOQUEIO,
+    });
+
+    // No lugar da quantidade, o que falta — por extenso e nomeando os dois parâmetros.
+    expect(html).toContain("falta declarar semiperímetro e altura do alambrado");
+    expect(html).toContain("código fora do catálogo desta rodada");
+    // Não é só a veste da linha: o estado vai escrito no selo.
+    expect(html).toContain("acervo-linha-bloqueada");
+    expect(html).toContain("não pode nascer");
+    // O operando sem valor é dito ausente, nunca mostrado como zero.
+    expect(html).toContain(`SEMIPERÍMETRO ${ACERVO_OPERANDO_NAO_DECLARADO}`);
+    // A bloqueada continua removível: é isso que destrava o ato.
+    expect(html.match(/Remover</g) ?? []).toHaveLength(3);
+    expect(html).toContain("1 será aplicada");
+    expect(html).toContain("2 bloqueadas");
+    // A bloqueada por CÓDIGO tem quantidade calculada, e ainda assim o que a célula diz é
+    // o motivo: ela não vai nascer, e o número sugeriria o contrário.
+    expect(html).not.toContain("6,00");
+  });
+
+  /** O motivo vai ao LADO do controle: indisponível e mudo é o que não pode acontecer. */
+  it("aplicar indisponível traz o motivo nomeado, não só o botão apagado", () => {
+    const html = render({
+      ...fluxoNoPasso("previa"),
+      previa: PREVIA_COM_BLOQUEIO,
+    });
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain(
+      fraseAplicarBloqueado(
+        2,
+        ["semiperímetro", "altura do alambrado"],
+        ["AC03100050"],
+      ),
+    );
+    expect(html).toContain("remova essas parcelas");
+    const aplicar = html.match(/<button[^>]*>Aplicar 1 parcela</)?.[0] ?? "";
+    expect(aplicar).not.toBe("");
+    expect(aplicar).toContain("disabled");
+  });
+
+  /** **O teste do defeito corrigido**: remover as bloqueadas destrava o aplicar. */
+  it("removidas as bloqueadas, o ato fica disponível e o motivo some", () => {
+    const html = render({
+      ...fluxoNoPasso("previa"),
+      previa: PREVIA_COM_BLOQUEIO,
+      excluidos: ["p2", "p3"],
+    });
+
+    const aplicar = html.match(/<button[^>]*>Aplicar 1 parcela</)?.[0] ?? "";
+    expect(aplicar).not.toBe("");
+    expect(aplicar).not.toContain("disabled");
+    expect(html).not.toContain("não podem nascer");
+    // As removidas continuam na tela, riscadas — elas saem da conta, não da lista.
+    expect(html).toContain("Placa de obra");
+    expect(html).toContain(ACERVO_TEXTO_TRAZER_DE_VOLTA);
+  });
+
   it("com todas removidas o ato fica indisponível — não há o que aplicar", () => {
     const html = render({
       ...fluxoNoPasso("previa"),
@@ -2088,6 +2202,35 @@ describe("PainelParcelasDeCanteiro", () => {
     expect(html).toContain(ACERVO_REAPLICAR_SUBSTITUI);
     // Com acervo já aplicado, o ato oferecido é reaplicar.
     expect(html).toContain("Reaplicar um acervo");
+  });
+
+  /**
+   * Depois de um recarregamento não há aplicação NESTA sessão, e o carimbo possível é o do
+   * que está gravado: a matriz diz a versão do acervo e a parcela, e não diz mais. O nome
+   * do acervo não é deduzido para preencher a lacuna.
+   */
+  it("sem aplicação na sessão, carimba o que está GRAVADO: versão e contagem", () => {
+    const hidratadas = disassembleCalcMatrix(
+      assembleCalcMatrix(doAcervo),
+    );
+    const html = renderToStaticMarkup(
+      <PainelParcelasDeCanteiro
+        parcelas={hidratadas}
+        aplicacao={null}
+        aviso={null}
+        onAplicarAcervo={() => undefined}
+        submitting={false}
+      />,
+    );
+
+    expect(html).toContain("Do que está gravado nesta rodada: 2 parcelas do acervo v1");
+    expect(html).toContain(CANTEIRO_GRAVADO_DICA);
+    expect(html).toContain(ACERVO_REAPLICAR_SUBSTITUI);
+    // O selo continua distinguindo por texto, com a versão que a matriz afirma.
+    expect(html).toContain("do acervo v1");
+    // Nenhum nome de acervo inventado, e nenhum parâmetro fabricado.
+    expect(html).not.toContain("Canteiro — contrato SMH/Rio");
+    expect(html).not.toContain("prazo de obra");
   });
 
   /** Falha de leitura não some em silêncio, e não esconde o resto da etapa. */

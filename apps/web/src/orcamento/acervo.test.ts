@@ -1,16 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  acervoGravado,
   alternarExclusao,
   avancarParaParametros,
+  codigosBloqueantes,
   contribuicoesDoAcervo,
   declararParametro,
   escolherAcervo,
   estaExcluida,
   fluxoInicial,
+  parcelaBloqueada,
   parcelasAplicaveis,
+  parcelasBloqueadas,
   parcelasDeCanteiro,
+  parametrosBloqueantes,
   parametrosDoCorpo,
+  pedidoDaPrevia,
   podeAplicar,
   podeAvancarParaParametros,
   receberPrevia,
@@ -21,7 +27,12 @@ import {
   type SiteSetupKit,
   type SiteSetupPreviewResponse,
 } from "./acervo";
-import { assembleCalcMatrix, contributionKey, type CalcContributionDraft } from "./matrix";
+import {
+  assembleCalcMatrix,
+  contributionKey,
+  disassembleCalcMatrix,
+  type CalcContributionDraft,
+} from "./matrix";
 import { siteSetupApplyBody, siteSetupPreviewBody } from "./requests";
 
 const KIT: SiteSetupKit = {
@@ -50,33 +61,73 @@ const PREVIA: SiteSetupPreviewResponse = {
       code: "AC01100010",
       label: "Aluguel de banheiro químico",
       operands: [
-        { name: "UNIDADES", value: "1", unit: "un" },
-        { name: "PRAZO", value: "2", unit: "mes" },
+        { name: "UNIDADES", value: "1", unit: "un", parameter: null },
+        { name: "PRAZO", value: "2", unit: "mes", parameter: "prazo de obra" },
       ],
       quantity: "2.00",
+      missing_parameters: [],
+      code_absent: false,
     },
     {
       parcel_id: "p2",
       code: "AC01100020",
       label: "Aluguel de container",
       operands: [
-        { name: "UNIDADES", value: "1", unit: "un" },
-        { name: "PRAZO", value: "2", unit: "mes" },
+        { name: "UNIDADES", value: "1", unit: "un", parameter: null },
+        { name: "PRAZO", value: "2", unit: "mes", parameter: "prazo de obra" },
       ],
       quantity: "2.00",
+      missing_parameters: [],
+      code_absent: false,
     },
     {
       parcel_id: "p3",
       code: "AC02200030",
       label: "Vigia diurno",
       operands: [
-        { name: "DIAS", value: "23", unit: null },
-        { name: "HORAS", value: "12", unit: "h" },
+        { name: "DIAS", value: "23", unit: null, parameter: "dias de vigia" },
+        { name: "HORAS", value: "12", unit: "h", parameter: null },
       ],
       quantity: "276.00",
+      missing_parameters: [],
+      code_absent: false,
     },
   ],
   excluded_parcel_ids: [],
+  blocked_parcel_ids: [],
+};
+
+/**
+ * A mesma prévia, agora com duas parcelas que NÃO podem nascer — uma por parâmetro não
+ * declarado, outra por código fora do catálogo.
+ *
+ * É a emenda de 2026-08-28 à decisão 5: a prévia MARCA em vez de recusar. Antes, o pedido
+ * inteiro voltava recusado e a saída que a copy prometia ("remova na pré-visualização as
+ * parcelas que os citam") não existia, porque não havia pré-visualização onde remover.
+ */
+const PREVIA_COM_BLOQUEIO: SiteSetupPreviewResponse = {
+  ...PREVIA,
+  rows: [
+    PREVIA.rows[0],
+    {
+      ...PREVIA.rows[1],
+      operands: [
+        { name: "SEMIPERÍMETRO", value: null, unit: "m", parameter: "semiperímetro" },
+        {
+          name: "ALTURA",
+          value: null,
+          unit: "m",
+          parameter: "altura do alambrado",
+        },
+      ],
+      quantity: null,
+      missing_parameters: ["semiperímetro", "altura do alambrado"],
+    },
+    // Código ausente vem COM quantidade: a conta fecha, o que falta é o código no
+    // catálogo da rodada (contrato confirmado pela T4).
+    { ...PREVIA.rows[2], code_absent: true },
+  ],
+  blocked_parcel_ids: ["p2", "p3"],
 };
 
 /** O fluxo já no passo 3, que é o único de onde a aplicação sai. */
@@ -231,6 +282,142 @@ describe("remoção por parcela", () => {
   });
 });
 
+/**
+ * A parcela BLOQUEADA e a saída que ela abre. Este bloco é o defeito 1 desta task: a recusa
+ * antiga era um beco sem saída — ela prometia "remova na pré-visualização as parcelas que
+ * os citam" e acontecia ANTES de existir pré-visualização.
+ */
+describe("parcela bloqueada na prévia", () => {
+  function fluxoComBloqueio(): FluxoDoAcervo {
+    return receberPrevia(
+      declararParametro(
+        avancarParaParametros(escolherAcervo(fluxoInicial(), KIT.kit_id), KIT),
+        "prazo de obra",
+        "2",
+      ),
+      PREVIA_COM_BLOQUEIO,
+    );
+  }
+
+  it("bloqueia por parâmetro faltante, por código ausente e pela lista do servidor", () => {
+    const previa = PREVIA_COM_BLOQUEIO;
+
+    expect(parcelaBloqueada(previa, previa.rows[0])).toBe(false);
+    expect(parcelaBloqueada(previa, previa.rows[1])).toBe(true);
+    expect(parcelaBloqueada(previa, previa.rows[2])).toBe(true);
+    // Falha FECHADA: bloqueio que só o servidor conhece continua bloqueando, mesmo com a
+    // linha sem nomear causa nenhuma.
+    expect(
+      parcelaBloqueada(
+        { ...previa, blocked_parcel_ids: ["p1"] },
+        previa.rows[0],
+      ),
+    ).toBe(true);
+  });
+
+  it("a bloqueada sai da conta e fecha o ato, com os faltantes nomeados", () => {
+    const fluxo = fluxoComBloqueio();
+
+    expect(parcelasBloqueadas(fluxo).map((row) => row.parcel_id)).toEqual([
+      "p2",
+      "p3",
+    ]);
+    // Ela não é contada entre as que vão nascer: o botão prometeria o que não materializa.
+    expect(parcelasAplicaveis(fluxo).map((row) => row.parcel_id)).toEqual(["p1"]);
+    expect(podeAplicar(fluxo)).toBe(false);
+    expect(parametrosBloqueantes(fluxo)).toEqual([
+      "semiperímetro",
+      "altura do alambrado",
+    ]);
+    expect(codigosBloqueantes(fluxo)).toEqual(["AC02200030"]);
+  });
+
+  /**
+   * **O teste do defeito corrigido.** Remover as bloqueadas destrava o ato — é a saída que
+   * a copy prometia e que não existia.
+   */
+  it("remover as bloqueadas destrava o aplicar, e as demais continuam intactas", () => {
+    let fluxo = fluxoComBloqueio();
+    expect(podeAplicar(fluxo)).toBe(false);
+
+    fluxo = alternarExclusao(fluxo, "p2");
+    // Uma só não basta: a outra continua bloqueando, e o motivo continua nomeado.
+    expect(podeAplicar(fluxo)).toBe(false);
+    expect(parcelasBloqueadas(fluxo).map((row) => row.parcel_id)).toEqual(["p3"]);
+
+    fluxo = alternarExclusao(fluxo, "p3");
+    expect(parcelasBloqueadas(fluxo)).toEqual([]);
+    expect(podeAplicar(fluxo)).toBe(true);
+    // A que sempre pôde nascer atravessou tudo isso sem mudar.
+    expect(parcelasAplicaveis(fluxo)).toEqual([PREVIA_COM_BLOQUEIO.rows[0]]);
+  });
+
+  it("trazer a bloqueada de volta fecha o ato outra vez", () => {
+    const fluxo = alternarExclusao(
+      alternarExclusao(alternarExclusao(fluxoComBloqueio(), "p2"), "p3"),
+      "p2",
+    );
+
+    expect(podeAplicar(fluxo)).toBe(false);
+    expect(parcelasBloqueadas(fluxo).map((row) => row.parcel_id)).toEqual(["p2"]);
+  });
+
+  it("sem parcela livre, remover as bloqueadas não inventa o que aplicar", () => {
+    let fluxo = receberPrevia(fluxoInicial(), {
+      ...PREVIA_COM_BLOQUEIO,
+      kit_id: "",
+      rows: PREVIA_COM_BLOQUEIO.rows.slice(1),
+    });
+    fluxo = alternarExclusao(alternarExclusao(fluxo, "p2"), "p3");
+
+    expect(parcelasBloqueadas(fluxo)).toEqual([]);
+    expect(parcelasAplicaveis(fluxo)).toEqual([]);
+    expect(podeAplicar(fluxo)).toBe(false);
+  });
+});
+
+/**
+ * A remoção é LOCAL. A prévia devolve linha só para as parcelas não excluídas: pedir a
+ * prévia citando as removidas as faria sumir da resposta — e o pacote de design exige que a
+ * removida continue visível e riscada, com "Trazer de volta". Nenhuma rota devolve as
+ * parcelas cruas do acervo fora da prévia, então uma linha que sumisse não voltaria.
+ */
+describe("a remoção é local, e a prévia é pedida sem exclusões", () => {
+  it("o pedido da prévia nunca leva exclusão, mesmo com parcelas removidas", () => {
+    const fluxo = alternarExclusao(alternarExclusao(fluxoComPrevia(), "p2"), "p3");
+
+    expect(pedidoDaPrevia(fluxo)).toEqual({
+      kitId: KIT.kit_id,
+      parameters: { "prazo de obra": "2" },
+      excludedParcelIds: [],
+    });
+  });
+
+  it("prévia nova preserva as marcações locais em vez de adotar a lista vazia", () => {
+    const comRemocao = alternarExclusao(fluxoComPrevia(), "p2");
+    const outroParametro = declararParametro(comRemocao, "prazo de obra", "3");
+
+    // A prévia recalculada volta com todas as linhas e sem exclusão nenhuma ecoada.
+    const recalculada = receberPrevia(outroParametro, PREVIA);
+
+    expect(estaExcluida(recalculada, "p2")).toBe(true);
+    expect(recalculada.previa?.rows).toHaveLength(3);
+    expect(parcelasAplicaveis(recalculada).map((row) => row.parcel_id)).toEqual([
+      "p1",
+      "p3",
+    ]);
+  });
+
+  it("o que o servidor declarar excluído entra por cima, sem duplicar", () => {
+    const fluxo = receberPrevia(alternarExclusao(fluxoComPrevia(), "p2"), {
+      ...PREVIA,
+      excluded_parcel_ids: ["p2", "p3"],
+    });
+
+    expect(fluxo.excluidos).toEqual(["p2", "p3"]);
+  });
+});
+
 describe("parâmetros no corpo", () => {
   /**
    * Campo vazio é OMITIDO: `""` não é "declarei vazio", é a ausência da declaração — e é
@@ -308,6 +495,8 @@ describe("da aplicação para a matriz", () => {
     const [primeira] = contribuicoesDoAcervo(KIT, PREVIA, [PREVIA.rows[0]]);
 
     expect(primeira.basis).toBe("standalone");
+    // O rascunho leva nome, valor e unidade; o `parameter` do fio fica de fora, porque a
+    // matriz não guarda de qual parâmetro o operando saiu — ele é da prévia.
     expect(primeira.operands).toEqual([
       { name: "UNIDADES", value: "1", unit: "un" },
       { name: "PRAZO", value: "2", unit: "mes" },
@@ -401,6 +590,60 @@ describe("reaplicação", () => {
 
     expect(parcelas).toHaveLength(4);
     expect(parcelas.filter((p) => p.kitOrigin === undefined)).toHaveLength(1);
+  });
+
+  /**
+   * A parcela HIDRATADA não sabe de qual acervo nasceu — a matriz gravada leva
+   * `{kit_version, parcel_id}` e nada mais. Sem alcançá-la pela lista de `parcel_id` da
+   * resposta, reaplicar depois de recarregar deixaria de pé, em silêncio, a parcela que a
+   * nova aplicação removeu.
+   */
+  it("a reaplicação alcança a parcela hidratada, que não sabe o acervo de origem", () => {
+    const hidratadas = Object.fromEntries(
+      disassembleCalcMatrix(
+        assembleCalcMatrix(contribuicoesDoAcervo(KIT, PREVIA, PREVIA.rows)),
+      ).map((draft) => [contributionKey(draft.itemId, draft.code), draft]),
+    );
+    const mao = autoradaAMao();
+    const atual = { ...hidratadas, [contributionKey(mao.itemId, mao.code)]: mao };
+    expect(atual[contributionKey("p1", "AC01100010")]?.kitOrigin?.kitId).toBe("");
+
+    // Reaplica só a primeira; a resposta enumera as três parcelas do acervo.
+    const proximo = substituirParcelasDoAcervo(
+      atual,
+      KIT.kit_id,
+      contribuicoesDoAcervo(KIT, PREVIA, [PREVIA.rows[0]]),
+      PREVIA.rows.map((row) => row.parcel_id),
+    );
+
+    expect(proximo[contributionKey("p1", "AC01100010")]?.kitOrigin?.kitId).toBe(
+      KIT.kit_id,
+    );
+    expect(proximo[contributionKey("p2", "AC01100020")]).toBeUndefined();
+    expect(proximo[contributionKey("p3", "AC02200030")]).toBeUndefined();
+    // A autorada à mão continua intocada, como em toda reaplicação.
+    expect(proximo[contributionKey("entulho-extra", "AC09900001")]).toEqual(mao);
+  });
+});
+
+/** O carimbo possível depois de um recarregamento: versão e contagem, e nada mais. */
+describe("o que a matriz gravada diz de acervo", () => {
+  it("conta as parcelas por versão e ignora as autoradas à mão", () => {
+    const doAcervo = contribuicoesDoAcervo(KIT, PREVIA, PREVIA.rows);
+    const deOutraVersao = contribuicoesDoAcervo(
+      KIT,
+      { ...PREVIA, kit_version: 3 },
+      [PREVIA.rows[0]],
+    );
+
+    expect(acervoGravado([...doAcervo, autoradaAMao(), ...deOutraVersao])).toEqual([
+      { kitVersion: 1, parcelas: 3 },
+      { kitVersion: 3, parcelas: 1 },
+    ]);
+  });
+
+  it("rodada sem parcela de acervo não produz carimbo nenhum", () => {
+    expect(acervoGravado([autoradaAMao()])).toEqual([]);
   });
 });
 

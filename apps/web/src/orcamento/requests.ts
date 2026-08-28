@@ -327,8 +327,13 @@ export function codeDecisionBody(
  * dos três passos custaria à orçamentista tudo o que ela declarou.
  *
  * `parameters` é `nome → decimal em TEXTO`, já montado por `parametrosDoCorpo`: parâmetro
- * não declarado é OMITIDO, e é da ausência que o servidor lê o faltante — ele recusa
- * nomeando todos de uma vez (`SITE_SETUP_PARAMETER_MISSING`).
+ * não declarado é OMITIDO, e é da ausência que o servidor lê o faltante — a prévia devolve
+ * a parcela MARCADA (`missing_parameters`), e quem recusa fechado é o `apply`.
+ *
+ * `excluded_parcel_ids` existe porque a rota o aceita, mas **a tela manda sempre vazio na
+ * prévia** (`pedidoDaPrevia`): a resposta traz linha só para as parcelas não excluídas, e
+ * citar as removidas as faria sumir de uma tela que precisa mostrá-las riscadas. A remoção
+ * é local e viaja no `apply`.
  */
 export function siteSetupPreviewBody(draft: SiteSetupPreviewDraft): Record<string, unknown> {
   return {

@@ -158,7 +158,13 @@ export type CalcContributionDraft = {
 
 /** Proveniência de acervo do lado da TELA; o fio leva só `{kit_version, parcel_id}`. */
 export type KitProvenance = {
+  /**
+   * `""` quando a parcela foi HIDRATADA da matriz gravada: o fio não diz de qual acervo ela
+   * nasceu, e afirmar um seria inventar identidade a partir de uma versão. Quem reaplica
+   * alcança essas parcelas pela lista de `parcel_id` da resposta, não por este campo.
+   */
   kitId: string;
+  /** `""` na parcela hidratada, pela mesma razão. */
   kitName: string;
   kitVersion: number;
   parcelId: string;
@@ -405,6 +411,146 @@ export function assembleCalcMatrix(
     services.push({ code, contributions });
   }
   return { schema_version: CALC_MATRIX_SCHEMA_VERSION, services };
+}
+
+// --- A volta: da matriz GRAVADA para o rascunho da tela ---------------------
+//
+// A matriz tinha dois donos. O `apply` do acervo (F-042) a grava no servidor; a tela monta
+// o rascunho em memória e manda a matriz INTEIRA no build. Enquanto a sessão vive, os dois
+// concordam — mas depois de um recarregamento a tela perde o rascunho, e montar o orçamento
+// apagava do banco o que estava gravado. A raiz é anterior ao acervo (a matriz nunca foi
+// lida de volta desde a F-038, e o mesmo valia para as contribuições autoradas à mão); o
+// acervo, que grava vinte e quatro parcelas de uma vez, a tornou grave.
+//
+// Decisão do dono, 2026-08-28: a tela HIDRATA o rascunho a partir do que está gravado.
+
+/**
+ * O elemento de origem SINTÉTICO de uma contribuição que o fio não amarra a elemento
+ * nenhum: `STANDALONE` e `DEPENDENT` viajam com `source_item_id: null` por regra do
+ * domínio, e a chave `(elemento, código)` da tela precisa de alguma metade estável.
+ *
+ * Ele é chave de TELA e nunca volta ao fio: `toContribution` devolve `null` para essas duas
+ * bases, então a matriz remontada sai igual à que foi lida.
+ */
+const ELEMENTO_SINTETICO = "sem-elemento";
+
+/** Operando do fio → linha do rascunho; unidade ausente é `""`, que é como a tela a lê. */
+function toOperandDraft(operand: CalcOperand): OperandDraft {
+  return { name: operand.name, value: operand.value, unit: operand.unit ?? "" };
+}
+
+/**
+ * A inversa de `assembleCalcMatrix`: a matriz gravada volta a ser rascunho da tela.
+ *
+ * O espelho é à mão, como o resto deste arquivo, e a volta perde exatamente três coisas
+ * que o fio não carrega — nenhuma delas fabricada aqui:
+ *
+ * - `itemQuantity` (o teto da parcela `PARTIAL`) não existe na matriz; ele volta `null`, e
+ *   quem reabre o editor recebe o teto do elemento de novo (`abrirAutoria`), que é a fonte;
+ * - a IDENTIDADE do acervo (`kitId`/`kitName`) não está no fio — ele leva só
+ *   `{kit_version, parcel_id}` —, então a proveniência reconstruída tem `kitId` vazio. O
+ *   selo continua dizendo "do acervo v1", que é o que a matriz afirma;
+ * - o elemento de origem de `STANDALONE`/`DEPENDENT`, que o domínio proíbe no fio.
+ *
+ * `null` (rodada sem matriz gravada) devolve rascunho vazio: é o regime legado, e ele não
+ * pode virar contribuição nenhuma.
+ */
+export function disassembleCalcMatrix(
+  matrix: CalcMatrix | null,
+): CalcContributionDraft[] {
+  if (matrix === null) {
+    return [];
+  }
+  const drafts: CalcContributionDraft[] = [];
+  for (const service of matrix.services) {
+    service.contributions.forEach((contribution, index) => {
+      const itemId =
+        contribution.source_item_id ??
+        contribution.kit_origin?.parcel_id ??
+        `${ELEMENTO_SINTETICO}:${service.code}:${index}`;
+      const draft: CalcContributionDraft = {
+        itemId,
+        code: service.code,
+        itemQuantity: null,
+        label: contribution.label,
+        basis: contribution.basis,
+        recipe: contribution.recipe,
+        operands: contribution.operands.map(toOperandDraft),
+        deductions: contribution.deductions.map(toOperandDraft),
+        dependsOnCode: contribution.depends_on_code ?? "",
+        note: contribution.note ?? "",
+      };
+      if (contribution.kit_origin !== undefined) {
+        draft.kitOrigin = {
+          kitId: "",
+          kitName: "",
+          kitVersion: contribution.kit_origin.kit_version,
+          parcelId: contribution.kit_origin.parcel_id,
+        };
+      }
+      drafts.push(draft);
+    });
+  }
+  return drafts;
+}
+
+/**
+ * O rascunho da matriz E a rodada a que ele pertence, juntos num estado só.
+ *
+ * A rodada anda no mesmo lugar que os rascunhos de propósito: com a hidratação, um rascunho
+ * que sobrevive à troca de rodada deixa de ser sujeira de tela e vira contribuição de uma
+ * praça aplicada a outra — corrupção silenciosa, que ninguém lê como erro.
+ */
+export type MatrixDraftState = {
+  /** `null` é "nenhuma rodada aberta". */
+  roundId: string | null;
+  /** As contribuições salvas, indexadas por `contributionKey`. */
+  drafts: Record<string, CalcContributionDraft>;
+};
+
+/** O rascunho de uma rodada recém-aberta: vazio, sempre. */
+export function emptyMatrixDraft(roundId: string | null): MatrixDraftState {
+  return { roundId, drafts: {} };
+}
+
+/**
+ * Abre uma rodada no rascunho. Rodada DIFERENTE zera tudo — nada da anterior atravessa —, e
+ * a mesma rodada devolve o estado intacto, para reabrir a mesma rodada não custar o que já
+ * foi autorado.
+ */
+export function openMatrixDraft(
+  state: MatrixDraftState,
+  roundId: string | null,
+): MatrixDraftState {
+  if (state.roundId === roundId) {
+    return state;
+  }
+  return emptyMatrixDraft(roundId);
+}
+
+/**
+ * Hidrata o rascunho com a matriz GRAVADA da rodada `roundId`.
+ *
+ * Duas guardas, as duas por causa do mesmo risco:
+ *
+ * - leitura de OUTRA rodada é descartada. A leitura é assíncrona, e trocar de rodada com
+ *   ela em voo faria a matriz da anterior pousar sobre a nova;
+ * - o que a SESSÃO autorou vence o gravado na mesma chave. O gravado é o ponto de partida,
+ *   não uma correção do que a pessoa acabou de escrever.
+ */
+export function hydrateMatrixDraft(
+  state: MatrixDraftState,
+  roundId: string,
+  stored: CalcMatrix | null,
+): MatrixDraftState {
+  if (state.roundId !== roundId) {
+    return state;
+  }
+  const drafts: Record<string, CalcContributionDraft> = {};
+  for (const draft of disassembleCalcMatrix(stored)) {
+    drafts[contributionKey(draft.itemId, draft.code)] = draft;
+  }
+  return { roundId, drafts: { ...drafts, ...state.drafts } };
 }
 
 /** Grafo `code → {códigos de que ele depende}`, só das parcelas `DEPENDENT`. */
