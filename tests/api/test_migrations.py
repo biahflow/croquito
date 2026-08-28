@@ -390,10 +390,16 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
             "field_photo_value_confirmations",
             "job_stage_events",
             "domain_events",
-            # `0014` (F-037): acervo de catálogos da plataforma. É a ÚNICA tabela sem
+            # `0014` (F-037): acervo de catálogos da plataforma. Primeira tabela sem
             # `tenant_id` (ADR-0047 decisão 1) e, por isso mesmo, sem índice de listagem por
             # tenant: a listagem é do acervo inteiro, de dezenas de linhas.
             "reference_catalogs",
+            # `0020` (F-041): índice de embeddings do catálogo público (ADR-0054 D2). A
+            # SEGUNDA e, até aqui, última tabela sem `tenant_id`: índice de catálogo sem
+            # dono também não tem dono. Sem índice composto para a consulta por
+            # (`catalog_source_sha256`, `text_recipe`, `status`) — a tabela é de dezenas de
+            # linhas e a consulta acontece no recompute, que é ato humano.
+            "reference_catalog_embeddings",
         }
         for table, index_name in (
             ("valuation_rounds", "ix_valuation_rounds_tenant_created"),

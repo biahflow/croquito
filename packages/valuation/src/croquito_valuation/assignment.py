@@ -38,7 +38,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Final, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -59,13 +59,27 @@ from croquito_valuation.models import (
 from croquito_valuation.sco import SCO_CODE_PATTERN
 from croquito_valuation.takeoff import TakeoffItem, TakeoffItemStatus, TakeoffPacket
 
-SUGGESTION_SCHEMA_VERSION: Final = "1.2.0"
-"""Não bumpou na Fase 1 do M7 (léxico melhorado + sinônimos), de propósito: nenhum campo
+SUGGESTION_SCHEMA_VERSION: Final = "1.3.0"
+"""Bumpou em 2026-08-28 (ADR-0054, aceite humano item 3) porque `semantic` mudou de FORMA:
+era **um** bloco de lineage e passou a ser a lista dos braços que participaram da fusão.
+
+A cascata do orçamento-base roda o braço semântico por fonte (ADR-0054 D5), então um
+conjunto pode ter nascido de N índices — um por catálogo com índice publicado —, e um campo
+singular só conseguiria declarar o primeiro deles. Declarar menos lineage do que a fusão
+usou é pior do que não declarar nenhum: a auditoria da ordem publicada ficaria
+silenciosamente incompleta.
+
+`1.2.0` continua no `Literal` de `schema_version` e continua sendo lido, com a forma
+singular convertida para lista de um elemento na carga (`_wrap_singular_semantics`). Não é
+gentileza: os blobs `code_suggestions_json` das rodadas gravadas até aqui declaram `1.2.0`,
+e `suggestions_of` trata artefato ilegível como AUSENTE — um conjunto que deixasse de
+validar apagaria em silêncio o refino pago que ele carrega.
+
+Não bumpou na Fase 1 do M7 (léxico melhorado + sinônimos), de propósito: nenhum campo
 mudou de forma, só de comportamento (`unmatched_item_ids` fica mais raro porque o corte de
 `min_lexical_score` caiu, e `CodeCandidate.lexical_score` pode refletir score calculado com
-sinônimo). Um artefato 1.1.0 antigo continua carregável pelo mesmo `CodeSuggestionSet`;
-`synonyms`/`ExpandedTerms` não têm campo correspondente no artefato — a expansão é
-`expanded_terms` da CAMADA do servidor local (observação de busca), não do suggester."""
+sinônimo). `synonyms`/`ExpandedTerms` não têm campo correspondente no artefato — a expansão
+é `expanded_terms` da CAMADA do servidor local (observação de busca), não do suggester."""
 ASSIGNMENT_SCHEMA_VERSION: Final = "2.0.0"
 """Bumpou em 2026-08-26 (ADR-0053 decisão 2) porque a IDENTIDADE da confirmação mudou: era o
 `item_id` e passou a ser o par `(item_id, code)`, com fechamento explícito de pacote.
@@ -146,6 +160,21 @@ ficava sem chamador.
 A linha do híbrido acima NÃO autoriza mexer na fusão: são 8 amostras de uma prancha contra
 os 12/12 contra 4/12 que calibraram os pesos noutro catálogo (`ADR-0021`). Reponderar é decisão
 humana pendente, não conclusão desta medição."""
+
+SCO_HYBRID_CASCADE_SUGGESTER_VERSION: Final = SCO_HYBRID_SUGGESTER_FAMILY + "cascade-v1"
+"""A fusão híbrida rodada **por fonte** da cascata do orçamento-base (ADR-0054 D5).
+
+Pertence à FAMÍLIA híbrida — o prefixo é o mesmo — porque é isso que faz
+`validate_semantic_lineage` exigir `semantic` dela: o conjunto declara que pelo menos uma
+fonte teve vizinhança semântica na fusão, e sem o lineage ninguém saberia qual índice
+produziu a ordem daquele bloco.
+
+A versão é própria, e não `hybrid-sco-suggester-v2`, porque o que ela afirma é diferente em
+dois pontos que a auditoria precisa distinguir: os candidatos vêm de catálogos diferentes
+(cada um declara o seu em `CodeCandidate.catalog_origin`/`catalog_sha256`) e a COBERTURA
+semântica é parcial por construção — fonte sem índice publicado entra na mesma shortlist com
+o braço léxico só (ADR-0054 D6), e `semantic` tem uma entrada por fonte que de fato teve
+índice, nunca uma por fonte da cascata."""
 
 LLM_RERANK_SUFFIX: Final = "+llm-rerank-v1"
 """Sufixo que o refino pago acrescenta ao suggester que produziu a shortlist de entrada."""
@@ -251,12 +280,19 @@ class SuggestionRefinement(ValuationContractModel):
 
 
 class SuggestionSemantics(ValuationContractModel):
-    """Lineage do braço semântico que participou da fusão.
+    """Lineage do braço semântico de UMA fonte que participou da fusão.
 
     Embedding não tem prompt: o que identifica a ordem produzida é o modelo, a dimensão do
     espaço e o digest do índice do catálogo usado (`catalog-embeddings.json`). O digest do
     próprio catálogo já viaja em `CodeSuggestionSet.catalog_sha256`, e é o índice que fica
     amarrado a ele — trocar de índice sem trocar de catálogo aparece aqui.
+
+    `catalog_sha256` diz de QUAL fonte é este lineage, e existe porque desde o ADR-0054 D5 o
+    conjunto pode carregar N destes blocos, um por catálogo da cascata com índice publicado.
+    Com um bloco só ele é redundante com o cabeçalho, e é por isso que ele é opcional:
+    ausente significa "a fonte do cabeçalho", que é exatamente o que um artefato gravado
+    antes deste campo afirmava. Deduzir a fonte pela POSIÇÃO na lista seria amarrar a
+    auditoria à ordem da cascata do dia em que o conjunto foi gravado.
 
     `provider` é string simples pelo mesmo motivo de `SuggestionRefinement.provider`: o
     `ADR-0016` proíbe este pacote de importar o enum de provider do worker.
@@ -266,6 +302,7 @@ class SuggestionSemantics(ValuationContractModel):
     model_id: str = Field(min_length=1, max_length=160)
     dims: int = Field(ge=1, le=8192)
     index_sha256: str = Field(pattern=SHA256_PATTERN)
+    catalog_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
 
 
 class CodeSuggestionSet(ValuationContractModel):
@@ -296,9 +333,17 @@ class CodeSuggestionSet(ValuationContractModel):
     **cabeça** da cascata e a proveniência autoritativa passa a ser a de cada candidato
     (`CodeCandidate.catalog_origin`/`catalog_sha256`). O cabeçalho continua existindo
     porque ele amarra o conjunto à rodada; ele não afirma que todo candidato veio dali.
+
+    `semantic` é a LISTA dos braços semânticos que participaram (ADR-0054, aceite humano
+    item 3): uma entrada por fonte que tinha índice publicado, e nenhuma para as que
+    entraram só com o braço léxico. Continua valendo "existe se e somente se o estágio
+    aconteceu" — `None` quando nenhum embedding participou, e nunca lista vazia, que seria
+    um terceiro estado dizendo a mesma coisa que `None`. A forma SINGULAR gravada até
+    `1.2.0` é convertida na carga, porque uma shortlist que deixasse de validar seria tratada
+    como ausente por `suggestions_of` e levaria junto o refino pago que ela carrega.
     """
 
-    schema_version: Literal["1.2.0"] = SUGGESTION_SCHEMA_VERSION
+    schema_version: Literal["1.2.0", "1.3.0"] = SUGGESTION_SCHEMA_VERSION
     plate_id: str = Field(min_length=1, max_length=64)
     page_number: int = Field(ge=1)
     image_sha256: str = Field(pattern=SHA256_PATTERN)
@@ -314,12 +359,33 @@ class CodeSuggestionSet(ValuationContractModel):
         "hybrid-sco-suggester-v1+llm-rerank-v1",
         "hybrid-sco-suggester-v2",
         "hybrid-sco-suggester-v2+llm-rerank-v1",
+        "hybrid-sco-suggester-cascade-v1",
+        "hybrid-sco-suggester-cascade-v1+llm-rerank-v1",
     ] = SCO_SUGGESTER_VERSION
     refinement: SuggestionRefinement | None = None
-    semantic: SuggestionSemantics | None = None
+    semantic: Annotated[list[SuggestionSemantics], Field(min_length=1)] | None = None
     suggestions: list[CodeSuggestion]
     unmatched_item_ids: list[str]
     safety_notes: list[str] = Field(min_length=3)
+
+    @field_validator("semantic", mode="before")
+    @classmethod
+    def wrap_singular_semantics(cls, value: object) -> object:
+        """Lê a forma SINGULAR de `semantic` gravada até o schema `1.2.0` como lista de um.
+
+        A conversão é de leitura, não de escrita: nada aqui grava a forma antiga. Ela existe
+        porque `suggestions_of` (`valuation_rounds.py`) trata artefato ilegível como
+        AUSENTE, e uma shortlist gravada antes deste bump que deixasse de validar apagaria em
+        silêncio o refino pago que ela carrega — o lineage da chamada que explica por que a
+        ordem publicada é aquela.
+
+        Só o que é inequivocamente um bloco só entra na conversão: um mapa (o artefato JSON
+        relido) ou um `SuggestionSemantics` já construído (o chamador em Python). Qualquer
+        outra coisa segue intacta para o pydantic recusar com a mensagem dele.
+        """
+        if isinstance(value, Mapping | SuggestionSemantics):
+            return [value]
+        return value
 
     @model_validator(mode="after")
     def validate_refinement_lineage(self) -> CodeSuggestionSet:

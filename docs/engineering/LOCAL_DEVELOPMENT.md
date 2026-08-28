@@ -168,6 +168,31 @@ make dev
 O ambiente usa PostgreSQL real em Docker e o floci apenas para APIs AWS. A
 credencial seed é exclusivamente local e está no realm importado; nunca a reuse
 fora deste ambiente. A API aceita tokens OIDC e não é acoplada a Cognito.
+
+### Usuários locais: o realm traz três, `make seed-users` traz o resto
+
+A lista canônica, com papéis e senha, está na tabela de
+[Usuários e perfis locais](../../README.md#usuários-e-perfis-locais) do README. O que
+importa saber aqui é que ela tem **duas fontes**, e é essa divisão que faz procurar um
+usuário e não achar:
+
+- `keycloak/croquito-realm.json` traz `engenheiro.local`, `orcamentista.local` e
+  `aprovador.local`, aplicados no `make dev-services`;
+- `make seed-users` cria os outros cinco pela Admin API — entre eles
+  **`operador.local`, o único com o papel `platform_operator`**, que é quem entra na
+  jornada de Plataforma (acervo de catálogos e índices de embeddings).
+
+Nenhum usuário se chama como o papel: não existe `platform_operator` nem
+`platform_operator.local`. O Keycloak local **não tem volume** (só `postgres-data` e
+`floci-data` persistem), então os cinco do seed somem a cada `make down-services` e o
+`make seed-users` precisa ser repetido — ele é idempotente.
+
+Duas armadilhas ao trocar de usuário:
+
+- o SSO reaproveita a sessão anterior e nem pede senha; faça logout ou use aba anônima;
+- `platform_operator` não abre jornada nenhuma (`/v1/me` devolve `journeys: []` e a topbar
+  diz que a conta não tem jornada liberada). Isso é por design — o que ele ganha é o botão
+  **Plataforma**.
 O bucket local aceita PUT assinado somente dessas duas origens, com `Content-Type`
 e `x-amz-checksum-sha256`.
 Configure ambas em `CROQUITO_WEB_ORIGIN`, separadas por vírgula, para que a API

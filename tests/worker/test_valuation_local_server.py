@@ -2145,7 +2145,8 @@ def test_the_shortlist_is_hybrid_when_the_round_has_an_index(
     assert payload["matching"] == "hybrid"
     assert payload["semantic_notes"] == []
     assert payload["suggestions"]["suggester_version"] == SCO_HYBRID_SUGGESTER_VERSION
-    assert payload["suggestions"]["semantic"]["model_id"] == FIXTURE_EMBEDDINGS_MODEL
+    # Lista desde o ADR-0054 (aceite humano item 3); o servidor local roda um catálogo só.
+    assert payload["suggestions"]["semantic"][0]["model_id"] == FIXTURE_EMBEDDINGS_MODEL
     # Servida do arquivo depois, o `matching` continua vindo do artefato, não do processo.
     assert client.get("/suggestions").json()["matching"] == "hybrid"
 

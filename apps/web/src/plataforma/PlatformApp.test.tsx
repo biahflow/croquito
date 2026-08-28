@@ -7,6 +7,7 @@ import type {
   JourneyEntitlement,
   PlatformTenant,
   ReferenceCatalog,
+  ReferenceCatalogIndex,
 } from "./api";
 import {
   AcervoDeCatalogos,
@@ -16,8 +17,11 @@ import {
   EstadoDasJornadas,
   FormularioDeAutorizacao,
   FormularioDePublicacao,
+  FormularioDePublicacaoDeIndice,
+  IndicesDeEmbeddings,
   LinhaAutorizacao,
   LinhaCatalogo,
+  LinhaIndice,
   LinhaTenant,
   PlatformApp,
 } from "./PlatformApp";
@@ -667,12 +671,272 @@ describe("composição da jornada de plataforma", () => {
 
     expect(
       html.split('class="authenticated-workspace"').length - 1,
-    ).toBe(3);
+    ).toBe(4);
     expect(html).toContain("Autorização contratual de IA");
     expect(html).toContain("Quais jornadas existem para cada cliente");
     expect(html).toContain("Tabelas publicadas");
+    expect(html).toContain("Índices publicados");
     expect(html).not.toContain('role="tablist"');
     expect(html).not.toContain('role="tab"');
     expect(html).not.toContain("Acervo de tabelas<");
+  });
+});
+
+/**
+ * Índices de embeddings (F-041, ADR-0054).
+ *
+ * `renderToStaticMarkup` não roda efeitos: o que sai destes renders é o primeiro estado,
+ * antes de qualquer resposta da API. É o que garante que nenhum índice, digest ou carimbo
+ * seja fabricado pela tela.
+ */
+function catalogoIndexado(
+  overrides: Partial<ReferenceCatalog> = {},
+): ReferenceCatalog {
+  return {
+    reference_catalog_id: "0198-aaa",
+    display_name: "SCO-Rio FGV06 desonerado",
+    origin: "sco",
+    reference_month: "2026-07",
+    entry_count: 4964,
+    object_sha256: "6f314c9".padEnd(64, "0"),
+    source_sha256: "a17b3e0".padEnd(64, "0"),
+    available: true,
+    published_by: "daniel",
+    published_at: "2026-08-22T09:14:00Z",
+    withdrawn_at: null,
+    ...overrides,
+  };
+}
+
+function indicePublicado(
+  overrides: Partial<ReferenceCatalogIndex> = {},
+): ReferenceCatalogIndex {
+  return {
+    reference_catalog_index_id: "0198-idx",
+    reference_catalog_id: "0198-aaa",
+    catalog_source_sha256: "a17b3e0".padEnd(64, "0"),
+    text_recipe: "code-description-unit-v1",
+    provider: "openai",
+    model_id: "text-embedding-3-small",
+    dims: 1536,
+    code_count: 4964,
+    object_sha256: "6f314c9".padEnd(64, "0"),
+    available: true,
+    published_by: "daniel",
+    published_at: "2026-08-28T09:14:00Z",
+    withdrawn_at: null,
+    ...overrides,
+  };
+}
+
+describe("LinhaIndice", () => {
+  const inertes = { enviando: false, onRetirar: () => {} };
+
+  it("mostra a identidade da publicação e o estado por extenso", () => {
+    const html = renderToStaticMarkup(
+      <LinhaIndice
+        indice={indicePublicado()}
+        catalogos={[catalogoIndexado()]}
+        {...inertes}
+      />,
+    );
+
+    expect(html).toContain("SCO-Rio FGV06 desonerado");
+    expect(html).toContain("em circulação");
+    expect(html).toContain("code-description-unit-v1");
+    expect(html).toContain("text-embedding-3-small");
+    expect(html).toContain("1536 dimensões");
+    expect(html).toContain("4.964 códigos");
+    expect(html).toContain("sha256 6f314c900000");
+    expect(html).toContain("publicado por daniel em 28/08/2026");
+    expect(html).toContain("Retirar de circulação");
+  });
+
+  /** Nenhum vetor sai na resposta, e nem a chave do objeto: nada disso pode aparecer. */
+  it("não mostra chave de objeto nem vetor, e não oferece baixar o índice", () => {
+    const html = renderToStaticMarkup(
+      <LinhaIndice
+        indice={indicePublicado()}
+        catalogos={[catalogoIndexado()]}
+        {...inertes}
+      />,
+    );
+
+    expect(html).not.toContain("platform/reference-catalog-indexes/");
+    expect(html).not.toContain("vectors");
+    expect(html).not.toContain("Baixar");
+    expect(html).not.toContain("<a ");
+  });
+
+  /**
+   * Retirado continua na lista, com a palavra e a data — e sem o botão, porque o ato já
+   * aconteceu. Cor nunca carrega isso sozinha: a pastilha traz a PALAVRA.
+   */
+  it("o índice retirado fica na lista, com a palavra e a data, e sem botão", () => {
+    const html = renderToStaticMarkup(
+      <LinhaIndice
+        indice={indicePublicado({
+          available: false,
+          withdrawn_at: "2026-08-28T11:00:00Z",
+        })}
+        catalogos={[catalogoIndexado()]}
+        {...inertes}
+      />,
+    );
+
+    expect(html).toContain("fora de circulação");
+    expect(html).toContain("FORA DE CIRCULAÇÃO");
+    expect(html).toContain("retirado de circulação em 28/08/2026");
+    expect(html).not.toContain("Retirar de circulação");
+  });
+
+  /** Sem o acervo lido, a linha cita o digest da fonte em vez de inventar um nome. */
+  it("cai no digest da fonte quando o acervo ainda não foi lido", () => {
+    const html = renderToStaticMarkup(
+      <LinhaIndice indice={indicePublicado()} catalogos={null} {...inertes} />,
+    );
+
+    expect(html).toContain("sha256 a17b3e000000");
+    expect(html).not.toContain("SCO-Rio FGV06 desonerado");
+  });
+});
+
+describe("FormularioDePublicacaoDeIndice", () => {
+  const inertes = {
+    campoArquivoKey: 0,
+    onArquivo: () => {},
+    onCatalogo: () => {},
+    onPublicar: () => {},
+  };
+
+  it("pede o arquivo e a tabela, e diz que o índice vem do CLI", () => {
+    const html = renderToStaticMarkup(
+      <FormularioDePublicacaoDeIndice
+        catalogos={[catalogoIndexado()]}
+        catalogoId="0198-aaa"
+        arquivoEscolhido
+        enviando={false}
+        {...inertes}
+      />,
+    );
+
+    expect(html).toContain("Índice de embeddings (JSON)");
+    expect(html).toContain('type="file"');
+    expect(html).toContain("Tabela indexada");
+    expect(html).toContain("<code>index-catalog</code>");
+    expect(html).toContain("<code>catalog-embeddings.json</code>");
+    expect(html).toContain("nunca o constrói");
+    expect(html).toContain("não são digitados");
+    expect(html).toContain("Publicar índice");
+    expect(html).not.toContain('type="submit" disabled=""');
+  });
+
+  /** Nada na tela sugere que o índice é construído aqui (ADR-0054 D4). */
+  it("não oferece construir índice nem campo que descreva o conteúdo", () => {
+    const html = renderToStaticMarkup(
+      <FormularioDePublicacaoDeIndice
+        catalogos={[catalogoIndexado()]}
+        catalogoId="0198-aaa"
+        arquivoEscolhido
+        enviando={false}
+        {...inertes}
+      />,
+    );
+
+    expect(html).not.toContain("Construir");
+    expect(html).not.toContain("Gerar");
+    expect(html).not.toContain("Indexar");
+    expect(html).not.toContain("Receita de texto<");
+    expect(html).not.toContain("Modelo<");
+    expect(html).not.toContain("Dimensões");
+  });
+
+  it("não publica sem arquivo nem sem tabela escolhida", () => {
+    const semArquivo = renderToStaticMarkup(
+      <FormularioDePublicacaoDeIndice
+        catalogos={[catalogoIndexado()]}
+        catalogoId="0198-aaa"
+        arquivoEscolhido={false}
+        enviando={false}
+        {...inertes}
+      />,
+    );
+    const semTabela = renderToStaticMarkup(
+      <FormularioDePublicacaoDeIndice
+        catalogos={[]}
+        catalogoId=""
+        arquivoEscolhido
+        enviando={false}
+        {...inertes}
+      />,
+    );
+
+    expect(semArquivo).toContain('type="submit" disabled=""');
+    expect(semTabela).toContain('type="submit" disabled=""');
+    expect(semTabela).toContain("Nenhuma tabela no acervo para indexar");
+  });
+
+  /**
+   * A tabela fora de circulação continua na escolha, com a palavra ao lado: o índice é
+   * resolvido pelo digest da FONTE (ADR-0054 D3), então ele segue servindo qualquer
+   * catálogo com os mesmos bytes de origem.
+   */
+  it("oferece também a tabela fora de circulação, dizendo qual é qual", () => {
+    const html = renderToStaticMarkup(
+      <FormularioDePublicacaoDeIndice
+        catalogos={[
+          catalogoIndexado(),
+          catalogoIndexado({
+            reference_catalog_id: "0198-bbb",
+            display_name: "SCO-Rio FGV06 anterior",
+            available: false,
+            withdrawn_at: "2026-08-22T11:00:00Z",
+          }),
+        ]}
+        catalogoId="0198-aaa"
+        arquivoEscolhido
+        enviando={false}
+        {...inertes}
+      />,
+    );
+
+    expect(html).toContain("SCO-Rio FGV06 anterior · 07/2026 (fora de circulação)");
+  });
+});
+
+describe("IndicesDeEmbeddings", () => {
+  it("não aparece sem sessão: a seção inteira é autenticada", () => {
+    expect(renderToStaticMarkup(<IndicesDeEmbeddings session={null} />)).toBe("");
+  });
+
+  it("antes da primeira resposta não fabrica índice nenhum", () => {
+    const html = renderToStaticMarkup(<IndicesDeEmbeddings session={sessao} />);
+
+    expect(html).toContain("ÍNDICES DE EMBEDDINGS");
+    expect(html).toContain("Índices publicados");
+    expect(html).toContain("Os índices ainda não foram lidos.");
+    expect(html).not.toContain("sha256");
+    expect(html).not.toContain("FORA DE CIRCULAÇÃO");
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain("app-toast");
+  });
+
+  /**
+   * A consequência de retirar só aparece junto das linhas onde o botão existe — sem lista
+   * não há ato a explicar, e o estado da seção já está escrito na coluna ao lado.
+   */
+  it("o aviso de que retirar não apaga só aparece junto da lista", () => {
+    const html = renderToStaticMarkup(<IndicesDeEmbeddings session={sessao} />);
+
+    expect(html).not.toContain("Retirar não apaga");
+  });
+
+  /** Publicar é ato de plataforma; construir continua sendo do CLI. */
+  it("declara que o servidor lê o índice e nunca o constrói", () => {
+    const html = renderToStaticMarkup(<IndicesDeEmbeddings session={sessao} />);
+
+    expect(html).toContain("<code>index-catalog</code>");
+    expect(html).toContain("nunca o constrói");
+    expect(html).not.toContain("Construir índice");
   });
 });

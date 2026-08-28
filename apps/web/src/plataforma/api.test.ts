@@ -12,17 +12,27 @@ import {
   getEntitlement,
   journeyEntitlementBody,
   listJourneys,
+  listReferenceCatalogIndexes,
   listReferenceCatalogs,
   listTenants,
   publishCatalogBody,
+  publishIndexBody,
   publishReferenceCatalog,
+  publishReferenceCatalogIndex,
+  referenceCatalogIndexPresignBody,
   referenceCatalogPresignBody,
   setEntitlement,
   setJourneyEntitlement,
   uploadReferenceCatalog,
+  uploadReferenceCatalogIndex,
   withdrawReferenceCatalog,
+  withdrawReferenceCatalogIndex,
 } from "./api";
-import { describeAcervoError, describeError } from "./labels";
+import {
+  describeAcervoError,
+  describeError,
+  describeIndiceError,
+} from "./labels";
 
 /** Base do build de teste: `VITE_API_BASE_URL` não é declarada neste ambiente. */
 const BASE = "http://localhost:8000";
@@ -579,5 +589,248 @@ describe("recusas do acervo", () => {
     const erro = await listReferenceCatalogs(TOKEN).catch((e: unknown) => e);
 
     expect(describeAcervoError(erro)).toContain("CODIGO_QUE_NAO_EXISTE");
+  });
+});
+
+/**
+ * Índice de embeddings (F-041, ADR-0054).
+ *
+ * O oráculo continua sendo o que SAIU no `fetch`. Três coisas são fixadas aqui porque um
+ * erro nelas só apareceria como `422` em produção: o presign do índice tem rota PRÓPRIA e
+ * não manda `content_type`, a publicação manda dois campos e nada mais, e a retirada não
+ * tem corpo. Uma quarta é fixada pela ausência: nada aqui baixa o índice.
+ */
+describe("índices de embeddings", () => {
+  /** Um `catalog-embeddings.json` sintético; o conteúdo não importa, o digest dele sim. */
+  function indexFile(conteudo = '{"schema_version":"catalog-embeddings-v1"}'): File {
+    return new File([conteudo], "catalog-embeddings.json", {
+      type: "application/json",
+    });
+  }
+
+  it("lê os índices inteiros numa chamada, sem chave de idempotência", async () => {
+    stub(() =>
+      ok({
+        indexes: [
+          {
+            reference_catalog_index_id: "0198-idx",
+            reference_catalog_id: "0198-aaa",
+            catalog_source_sha256: "a17b3e0".padEnd(64, "0"),
+            text_recipe: "code-description-unit-v1",
+            provider: "openai",
+            model_id: "text-embedding-3-small",
+            dims: 1536,
+            code_count: 4964,
+            object_sha256: "6f314c9".padEnd(64, "0"),
+            available: true,
+            published_by: "daniel",
+            published_at: "2026-08-28T09:14:00Z",
+            withdrawn_at: null,
+          },
+        ],
+      }),
+    );
+
+    const indices = await listReferenceCatalogIndexes(TOKEN);
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/platform/reference-catalog-indexes`,
+    );
+    expect(chamadas[0].init?.method).toBeUndefined();
+    expect(headersDaChamada()).not.toHaveProperty("Idempotency-Key");
+    expect(indices).toHaveLength(1);
+    expect(indices[0].model_id).toBe("text-embedding-3-small");
+  });
+
+  /**
+   * O tipo é FIXO na rota (`application/json`) e o corpo recusa campo desconhecido:
+   * mandar `content_type` "por garantia" derrubaria a publicação com `422`.
+   */
+  it("o corpo do presign não carrega content_type", () => {
+    expect(
+      referenceCatalogIndexPresignBody({
+        filename: "catalog-embeddings.json",
+        sizeBytes: 42_700_000,
+        sha256: "a".repeat(64),
+      }),
+    ).toEqual({
+      filename: "catalog-embeddings.json",
+      size_bytes: 42_700_000,
+      sha256: "a".repeat(64),
+    });
+  });
+
+  /**
+   * DOIS campos: receita, provider, modelo, dimensões e contagem vêm de dentro do
+   * documento, e o servidor recusa qualquer um deles no corpo.
+   */
+  it("o corpo da publicação tem dois campos e nenhum descreve o índice", () => {
+    expect(
+      publishIndexBody({
+        uploadId: "0198-upload",
+        referenceCatalogId: "0198-aaa",
+      }),
+    ).toEqual({
+      upload_id: "0198-upload",
+      reference_catalog_id: "0198-aaa",
+    });
+  });
+
+  it("sobe pelo presign PRÓPRIO do índice e faz o PUT direto no store", async () => {
+    stub((call) =>
+      call.url.endsWith("/presign")
+        ? ok({
+            upload_id: "0198-upload",
+            url: "https://store.example/indice?assinado",
+            headers: { "Content-Type": "application/json" },
+          })
+        : ok(),
+    );
+
+    const upload = await uploadReferenceCatalogIndex(TOKEN, indexFile());
+
+    // A rota é a do ÍNDICE, e não a do acervo nem `/v1/uploads/presign`: são três
+    // presigns diferentes, e o do croqui está sob o portão de disponibilidade da F-034.
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/platform/reference-catalog-indexes/presign`,
+    );
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(headersDaChamada(0)["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(corpoDaChamada(0)).not.toHaveProperty("content_type");
+    expect(chamadas[1].url).toBe("https://store.example/indice?assinado");
+    expect(chamadas[1].init?.method).toBe("PUT");
+    expect(upload.uploadId).toBe("0198-upload");
+    expect(upload.objectSha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("publica com POST, dois campos e chave de idempotência", async () => {
+    await publishReferenceCatalogIndex(TOKEN, {
+      uploadId: "0198-upload",
+      referenceCatalogId: "0198-aaa",
+    });
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/platform/reference-catalog-indexes`,
+    );
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(headersDaChamada()["Content-Type"]).toBe("application/json");
+    expect(headersDaChamada()["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(corpoDaChamada()).toEqual({
+      upload_id: "0198-upload",
+      reference_catalog_id: "0198-aaa",
+    });
+  });
+
+  /** Sem corpo: o ato é inteiramente identificado pela rota. */
+  it("retira de circulação pelo identificador escapado, sem corpo", async () => {
+    await withdrawReferenceCatalogIndex(TOKEN, "0198 idx/bbb");
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/platform/reference-catalog-indexes/0198%20idx%2Fbbb/withdraw`,
+    );
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(chamadas[0].init?.body).toBeUndefined();
+    expect(headersDaChamada()).toHaveProperty("Idempotency-Key");
+    expect(headersDaChamada()).not.toHaveProperty("Content-Type");
+  });
+
+  it("dá uma chave de idempotência NOVA a cada retirada", async () => {
+    await withdrawReferenceCatalogIndex(TOKEN, "a");
+    await withdrawReferenceCatalogIndex(TOKEN, "a");
+
+    expect(headersDaChamada(0)["Idempotency-Key"]).not.toBe(
+      headersDaChamada(1)["Idempotency-Key"],
+    );
+  });
+
+  /**
+   * O `PUT` que não conclui vira recusa com código próprio, e a publicação nem sai: o
+   * índice é lido pelo servidor, e uma linha apontando para objeto inexistente degradaria
+   * a busca com um índice que falha na leitura.
+   */
+  it("o PUT que não conclui impede a publicação", async () => {
+    stub((call) =>
+      call.url.endsWith("/presign")
+        ? ok({ upload_id: "u", url: "https://store.example/o", headers: {} })
+        : new Response("", { status: 503 }),
+    );
+
+    const erro = await uploadReferenceCatalogIndex(TOKEN, indexFile()).catch(
+      (e: unknown) => e,
+    );
+
+    expect(erro).toBeInstanceOf(ApiError);
+    expect((erro as ApiError).code).toBe("UPLOAD_TRANSFER_FAILED");
+    expect(chamadas).toHaveLength(2);
+  });
+});
+
+/**
+ * O contrato de leitura do índice, fixado pela AUSÊNCIA: nenhuma rota assina o objeto e o
+ * cliente nunca o baixa. O módulo não pode ganhar uma função de download sem alguém
+ * derrubar este teste de propósito.
+ */
+describe("o cliente nunca baixa o índice", () => {
+  it("o módulo não exporta nenhuma função de download do índice", async () => {
+    const modulo = await import("./api");
+
+    for (const nome of Object.keys(modulo)) {
+      expect(nome).not.toMatch(/download|fetchIndexObject|getIndexObject/i);
+    }
+  });
+});
+
+describe("recusas do índice", () => {
+  it("o índice maior que o teto é recusado por inteiro, com o teto declarado", async () => {
+    stub(() =>
+      new Response(
+        JSON.stringify({
+          detail: {
+            code: "REFERENCE_CATALOG_INDEX_TOO_LARGE",
+            detail: "excede",
+            details: { max_bytes: 67108864, size_bytes: 90000000 },
+          },
+        }),
+        { status: 422, headers: { "Content-Type": "application/problem+json" } },
+      ),
+    );
+
+    const erro = await publishReferenceCatalogIndex(TOKEN, {
+      uploadId: "u",
+      referenceCatalogId: "c",
+    }).catch((e: unknown) => e);
+
+    expect(describeIndiceError(erro)).toContain("64 MiB");
+    expect(describeIndiceError(erro)).toContain("Nada foi publicado");
+  });
+
+  it("republicar o mesmo índice é recusado com a razão da imutabilidade", async () => {
+    stub(() =>
+      problema(
+        409,
+        "REFERENCE_CATALOG_INDEX_ALREADY_PUBLISHED",
+        "Este índice já está publicado.",
+      ),
+    );
+
+    const erro = await publishReferenceCatalogIndex(TOKEN, {
+      uploadId: "u",
+      referenceCatalogId: "c",
+    }).catch((e: unknown) => e);
+
+    expect(describeIndiceError(erro)).toContain("publicação é imutável");
+    expect(describeIndiceError(erro)).toContain("entrada nova");
+  });
+
+  /** Código desconhecido continua caindo na frase do transporte, que cita o código. */
+  it("código desconhecido não vira explicação inventada", async () => {
+    stub(() => problema(422, "CODIGO_QUE_NAO_EXISTE", "sem frase própria"));
+
+    const erro = await publishReferenceCatalogIndex(TOKEN, {
+      uploadId: "u",
+      referenceCatalogId: "c",
+    }).catch((e: unknown) => e);
+
+    expect(describeIndiceError(erro)).toContain("CODIGO_QUE_NAO_EXISTE");
   });
 });

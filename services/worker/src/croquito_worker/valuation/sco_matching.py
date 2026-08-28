@@ -47,6 +47,7 @@ import numpy.typing as npt
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from croquito_valuation.assignment import (
+    SCO_HYBRID_CASCADE_SUGGESTER_VERSION,
     SCO_HYBRID_SUGGESTER_VERSION,
     SCO_LEXICAL_IDF_SUGGESTER_VERSION,
     CodeCandidate,
@@ -54,6 +55,7 @@ from croquito_valuation.assignment import (
     CodeSuggestionSet,
     SuggestionConfig,
     SuggestionSemantics,
+    ensure_price_cascade,
 )
 from croquito_valuation.catalog import (
     DomainSynonyms,
@@ -910,17 +912,140 @@ def build_hybrid_code_suggestions(
         suggester_version=(
             SCO_HYBRID_SUGGESTER_VERSION if index is not None else SCO_LEXICAL_IDF_SUGGESTER_VERSION
         ),
-        semantic=(
-            None
-            if index is None
-            else SuggestionSemantics(
-                provider=index.provider,
-                model_id=index.model_id,
-                dims=index.dims,
-                index_sha256=index.index_sha256,
-            )
-        ),
+        semantic=(None if index is None else [_semantic_lineage(index, catalog)]),
         suggestions=suggestions,
         unmatched_item_ids=unmatched_item_ids,
         safety_notes=list(_HYBRID_SAFETY_NOTES if index is not None else _LEXICAL_IDF_SAFETY_NOTES),
+    )
+
+
+def _semantic_lineage(index: SemanticIndex, catalog: PriceCatalog) -> SuggestionSemantics:
+    """Lineage de UM braço semântico, carimbado com a fonte a que ele pertence.
+
+    `catalog_sha256` sai do CATÁLOGO e não do índice de propósito, embora
+    `bind_index_to_catalog` já tenha conferido que os dois são o mesmo: quem lê o artefato
+    procura a fonte da cascata, e a fonte é o catálogo.
+    """
+    return SuggestionSemantics(
+        provider=index.provider,
+        model_id=index.model_id,
+        dims=index.dims,
+        index_sha256=index.index_sha256,
+        catalog_sha256=catalog.source_sha256,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class CascadeSemanticSource:
+    """O braço semântico de UMA fonte da cascata: índice e vetores, ou nenhum dos dois.
+
+    Existe para que a fonte e o seu índice viajem amarrados até o builder, em vez de duas
+    sequências paralelas que só a posição relaciona. `index=None` é o estado NORMAL de uma
+    fonte sem índice publicado (ADR-0054 D6), não uma falha: ela entra na shortlist com o
+    braço léxico e nada mais.
+
+    `query_vectors` é por fonte, e não do conjunto, porque índices de modelos diferentes
+    vivem em espaços vetoriais diferentes: o vetor da consulta resolvido para um deles não
+    responde pelo outro. Resolver uma vez só e reusar seria misturar espaços incomparáveis,
+    que é exatamente a mistura que `load_query_cache` recusa quando o cache é de outro
+    modelo.
+    """
+
+    index: SemanticIndex | None
+    query_vectors: Mapping[str, tuple[float, ...]] | None = None
+
+
+def build_hybrid_code_suggestions_over_cascade(
+    packet: TakeoffPacket,
+    cascade: Sequence[PriceCatalog],
+    sources: Sequence[CascadeSemanticSource],
+    *,
+    config: SuggestionConfig | None = None,
+    synonyms: DomainSynonyms | None = None,
+    noise: LegendNoiseList | None = None,
+) -> CodeSuggestionSet:
+    """Shortlist por FUSÃO rodada uma vez por fonte da cascata, com o índice de cada uma.
+
+    Espelho de `suggest_codes_over_cascade` (`croquito_valuation.assignment`) na forma e nas
+    duas regras que ele existe para proteger, agora com a perna semântica:
+
+    - **os blocos saem na ordem da CASCATA**, cada um com o ranqueamento interno que a fusão
+      daquela fonte produziu. Não há RRF entre fontes (ADR-0054 D5): misturar os blocos por
+      score faria similaridade de texto desempatar a precedência das tabelas, que é decisão
+      declarada de quem monta o orçamento e não vizinhança vetorial;
+    - **o corte de `max_candidates_per_item` vale POR fonte**, pelo mesmo motivo: uma fonte
+      não pode ser espremida para fora da shortlist por outra que ficou na frente da cascata.
+
+    Cobertura parcial é estado normal (ADR-0054 D6): fonte com `index=None` contribui só com
+    o braço léxico por cobertura ponderada, e o conjunto continua declarando qual índice
+    produziu cada bloco que teve um, em `semantic`.
+
+    Cobertura ZERO, porém, é recusa de chamador e não degradação: sem nenhuma fonte indexada
+    não há fusão híbrida a montar, e a shortlist daquele caso já tem dona — a via lexical de
+    `suggest_codes_over_cascade`. Deixar esta função responder ao caso degenerado a faria
+    trocar, em silêncio, o algoritmo da shortlist de toda rodada que ainda não tem índice
+    publicado; quem chama decide isso à luz do dia (ver `compute_cascade_suggestions`).
+
+    Não há contrato aqui, como no espelho lexical: pré-licitação não tem contrato, então
+    `in_contract` é sempre falso e `contract_sha256` fica vazio.
+    """
+    ensure_price_cascade(cascade)
+    if len(sources) != len(cascade):
+        raise ValuationValidationError(
+            "SEMANTIC_CASCADE_SOURCES_MISMATCH",
+            "cada fonte da cascata precisa de exatamente um braço semântico declarado",
+            {"cascade": len(cascade), "sources": len(sources)},
+        )
+    if all(source.index is None for source in sources):
+        raise ValuationValidationError(
+            "SEMANTIC_CASCADE_NO_INDEX",
+            "shortlist híbrida sobre cascata exige ao menos uma fonte com índice; sem "
+            "nenhuma, a shortlist é a lexical de `suggest_codes_over_cascade`",
+            {"cascade": len(cascade)},
+        )
+
+    candidates_by_item: dict[str, list[CodeCandidate]] = {}
+    lineage: list[SuggestionSemantics] = []
+    for catalog, source in zip(cascade, sources, strict=True):
+        block = build_hybrid_code_suggestions(
+            packet,
+            catalog,
+            None,
+            index=source.index,
+            query_vectors=source.query_vectors,
+            config=config,
+            synonyms=synonyms,
+            noise=noise,
+        )
+        if source.index is not None:
+            lineage.append(_semantic_lineage(source.index, catalog))
+        for suggestion in block.suggestions:
+            # `catalog_origin` já vem carimbado da construção; aqui só entra o digest, que é
+            # o que distingue duas fontes da MESMA origem em rodadas diferentes. Mesma linha
+            # do espelho lexical, e de propósito: a proveniência do candidato é uma só.
+            candidates_by_item.setdefault(suggestion.item_id, []).extend(
+                candidate.model_copy(update={"catalog_sha256": catalog.source_sha256})
+                for candidate in suggestion.candidates
+            )
+
+    suggestions: list[CodeSuggestion] = []
+    unmatched_item_ids: list[str] = []
+    for item in packet.confirmed_items():
+        candidates = candidates_by_item.get(item.id)
+        if not candidates:
+            unmatched_item_ids.append(item.id)
+            continue
+        suggestions.append(CodeSuggestion(item_id=item.id, candidates=candidates))
+
+    return CodeSuggestionSet(
+        plate_id=packet.plate_id,
+        page_number=packet.page_number,
+        image_sha256=packet.image_sha256,
+        catalog_sha256=cascade[0].source_sha256,
+        contract_sha256=None,
+        suggester_version=SCO_HYBRID_CASCADE_SUGGESTER_VERSION,
+        semantic=lineage,
+        suggestions=suggestions,
+        unmatched_item_ids=unmatched_item_ids,
+        safety_notes=list(_HYBRID_SAFETY_NOTES),
     )

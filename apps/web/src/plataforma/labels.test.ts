@@ -6,13 +6,18 @@ import type {
   JourneyEntitlement,
   PlatformTenant,
   ReferenceCatalog,
+  ReferenceCatalogIndex,
 } from "./api";
 import {
+  AVISO_INDICE_VEM_DO_CLI,
+  AVISO_RETIRADA_INDICE,
   describeError,
+  describeIndiceError,
   describeJourneyError,
   digestCurto,
   errorMessage,
   estadoDaAutorizacao,
+  estadoDoIndice,
   estadoLabel,
   ESTADO_JORNADA_CLASSE,
   ESTADO_JORNADA_LABEL,
@@ -22,11 +27,18 @@ import {
   formatarInstante,
   MENSAGEM_ACERVO_SEM_LEITURA,
   MENSAGEM_ACERVO_VAZIO,
+  MENSAGEM_INDICE_NAO_ENCONTRADO,
+  MENSAGEM_INDICES_SEM_LEITURA,
+  MENSAGEM_INDICES_VAZIO,
   MENSAGEM_REDE,
   mensagemForaDoPiloto,
+  mensagemIndiceDeOutroCatalogo,
+  mensagemIndiceGrandeDemais,
   mensagemSemAutorizacao,
+  nomeDoCatalogoIndexado,
   resumoDoAcervo,
   resumoDoAmbiente,
+  resumoDosIndices,
 } from "./labels";
 
 function tenant(overrides: Partial<PlatformTenant> = {}): PlatformTenant {
@@ -349,5 +361,232 @@ describe("recusas do acervo em palavra", () => {
   /** A regra da casa que a seção nova não afrouxa. */
   it("código de acervo desconhecido continua devolvendo null", () => {
     expect(errorMessage("REFERENCE_CATALOG_QUALQUER_COISA")).toBeNull();
+  });
+});
+
+/**
+ * Índice de embeddings (F-041, ADR-0054).
+ *
+ * O oráculo destas asserções é o que o SERVIDOR recusa — `reference_catalog_indexes.py` e
+ * as quatro rotas de `main.py` —, não uma mensagem inventada aqui. Os quatro códigos novos
+ * precisam ter frase estável: nenhum deles pode chegar cru à tela pelo caminho genérico.
+ */
+function catalogoDoAcervo(
+  overrides: Partial<ReferenceCatalog> = {},
+): ReferenceCatalog {
+  return {
+    reference_catalog_id: "0198-aaa",
+    display_name: "SCO-Rio FGV06 desonerado",
+    origin: "sco",
+    reference_month: "2026-07",
+    entry_count: 4865,
+    object_sha256: "a".repeat(64),
+    source_sha256: "b".repeat(64),
+    available: true,
+    published_by: "daniel",
+    published_at: "2026-08-22T09:14:00Z",
+    withdrawn_at: null,
+    ...overrides,
+  };
+}
+
+function indice(
+  overrides: Partial<ReferenceCatalogIndex> = {},
+): ReferenceCatalogIndex {
+  return {
+    reference_catalog_index_id: "0198-idx",
+    reference_catalog_id: "0198-aaa",
+    catalog_source_sha256: "a17b3e0".padEnd(64, "0"),
+    text_recipe: "code-description-unit-v1",
+    provider: "openai",
+    model_id: "text-embedding-3-small",
+    dims: 1536,
+    code_count: 4964,
+    object_sha256: "6f314c9".padEnd(64, "0"),
+    available: true,
+    published_by: "daniel",
+    published_at: "2026-08-28T09:14:00Z",
+    withdrawn_at: null,
+    ...overrides,
+  };
+}
+
+describe("recusas do índice em palavra", () => {
+  /** Nenhum dos quatro cai no caminho genérico que mostraria o código cru. */
+  it("os quatro códigos novos têm frase estável no mapa", () => {
+    expect(errorMessage("REFERENCE_CATALOG_INDEX_TOO_LARGE")).toContain(
+      "recusado por inteiro",
+    );
+    expect(errorMessage("REFERENCE_CATALOG_INDEX_UNREADABLE")).toContain(
+      "não pôde ser lido",
+    );
+    expect(
+      errorMessage("REFERENCE_CATALOG_INDEX_CATALOG_MISMATCH"),
+    ).toContain("construído sobre outro catálogo");
+    expect(
+      errorMessage("REFERENCE_CATALOG_INDEX_ALREADY_PUBLISHED"),
+    ).toContain("publicação é imutável");
+  });
+
+  /** Nenhuma das quatro frases devolve o código cru para a tela. */
+  it("nenhuma das frases carrega o código de erro dentro dela", () => {
+    for (const code of [
+      "REFERENCE_CATALOG_INDEX_TOO_LARGE",
+      "REFERENCE_CATALOG_INDEX_UNREADABLE",
+      "REFERENCE_CATALOG_INDEX_CATALOG_MISMATCH",
+      "REFERENCE_CATALOG_INDEX_ALREADY_PUBLISHED",
+    ]) {
+      expect(errorMessage(code)).not.toBeNull();
+      expect(errorMessage(code)).not.toContain(code);
+    }
+  });
+
+  /**
+   * O teto vem do `details` do servidor (`max_bytes`), e não de um número copiado para a
+   * tela: 64 MiB é decisão de `CATALOG_INDEX_MAX_BYTES`, e o dia em que ela mudar a frase
+   * muda junto. Sem o fato, a frase segue verdadeira e não inventa teto nenhum.
+   */
+  it("a recusa por tamanho cita o teto que o servidor declarou", () => {
+    const erro = new ApiError(
+      "grande demais",
+      422,
+      "REFERENCE_CATALOG_INDEX_TOO_LARGE",
+      "excede",
+      { max_bytes: 64 * 1024 * 1024, size_bytes: 90_000_000 },
+    );
+
+    expect(describeIndiceError(erro)).toContain("64 MiB");
+    expect(describeIndiceError(erro)).toContain("Nada foi publicado");
+    expect(mensagemIndiceGrandeDemais(null)).not.toContain("MiB");
+  });
+
+  /**
+   * O código de domínio que o servidor declara em `details.code` escolhe o complemento;
+   * código que a tela não conhece não vira explicação inventada.
+   */
+  it("a recusa de leitura traduz o motivo de domínio declarado", () => {
+    const invalido = new ApiError("ilegível", 422, "REFERENCE_CATALOG_INDEX_UNREADABLE", "", {
+      code: "INDEX_PAYLOAD_INVALID",
+    });
+    const desconhecido = new ApiError(
+      "ilegível",
+      422,
+      "REFERENCE_CATALOG_INDEX_UNREADABLE",
+      "",
+      { code: "INDEX_CODIGO_QUE_NAO_EXISTE" },
+    );
+
+    expect(describeIndiceError(invalido)).toContain("contrato do índice");
+    expect(describeIndiceError(desconhecido)).toContain("não pôde ser lido");
+    expect(describeIndiceError(desconhecido)).not.toContain(
+      "INDEX_CODIGO_QUE_NAO_EXISTE",
+    );
+    // As duas mandam construir pelo CLI, porque é lá que o índice nasce (ADR-0054 D4).
+    expect(describeIndiceError(invalido)).toContain("index-catalog");
+  });
+
+  /** Os dois digests vêm do servidor; sem eles a frase não inventa nenhum. */
+  it("o índice de outro catálogo confronta os digests declarados", () => {
+    const erro = new ApiError("outro catálogo", 422, "REFERENCE_CATALOG_INDEX_CATALOG_MISMATCH", "", {
+      index_catalog_sha256: "aaaaaaaaaaaa".padEnd(64, "1"),
+      catalog_source_sha256: "bbbbbbbbbbbb".padEnd(64, "2"),
+    });
+
+    expect(describeIndiceError(erro)).toContain("aaaaaaaaaaaa");
+    expect(describeIndiceError(erro)).toContain("bbbbbbbbbbbb");
+    expect(mensagemIndiceDeOutroCatalogo(null, null)).not.toContain("sha256");
+  });
+
+  /**
+   * `NOT_FOUND` significa três coisas diferentes nesta jornada. Na seção de índices ele não
+   * pode dizer "tenant nunca autorizado" nem "não está no acervo".
+   */
+  it("NOT_FOUND na seção de índices não mostra a frase da seção vizinha", () => {
+    const erro = new ApiError("não achado", 404, "NOT_FOUND", "", {});
+
+    expect(describeIndiceError(erro)).toBe(MENSAGEM_INDICE_NAO_ENCONTRADO);
+    expect(describeIndiceError(erro)).not.toContain("autorização contratual");
+    expect(describeIndiceError(erro)).not.toContain("não está no acervo");
+  });
+});
+
+describe("estado e resumo dos índices", () => {
+  /** Estado por extenso, nas duas pontas: cor nunca carrega isso sozinha. */
+  it("escreve os dois estados de circulação", () => {
+    expect(estadoDoIndice(indice())).toBe("em circulação");
+    expect(
+      estadoDoIndice(
+        indice({ available: false, withdrawn_at: "2026-08-28T11:00:00Z" }),
+      ),
+    ).toBe("fora de circulação");
+  });
+
+  it("distingue não ter lido de ter lido e não haver nada", () => {
+    expect(resumoDosIndices(null, false)).toBe(MENSAGEM_INDICES_SEM_LEITURA);
+    expect(resumoDosIndices(null, true)).toContain("Lendo os índices");
+    expect(resumoDosIndices([], false)).toBe(MENSAGEM_INDICES_VAZIO);
+  });
+
+  /** O que saiu de circulação continua na lista, e é contado à parte. */
+  it("conta em circulação e fora de circulação separadamente", () => {
+    expect(resumoDosIndices([indice()], false)).toBe("1 índice em circulação.");
+    expect(
+      resumoDosIndices(
+        [
+          indice(),
+          indice({ reference_catalog_index_id: "0198-idy" }),
+          indice({
+            reference_catalog_index_id: "0198-idz",
+            available: false,
+            withdrawn_at: "2026-08-28T11:00:00Z",
+          }),
+        ],
+        false,
+      ),
+    ).toBe("2 índices em circulação · 1 fora de circulação.");
+  });
+
+  /**
+   * O nome da tabela vem do acervo lido ao lado. Sem ele, a frase cita o digest da FONTE,
+   * que o próprio índice carrega — nome nenhum é adivinhado pelo identificador.
+   */
+  it("nomeia a tabela pelo acervo, e cai no digest da fonte quando ele não foi lido", () => {
+    const acervo = [
+      catalogoDoAcervo({
+        reference_catalog_id: "0198-aaa",
+        display_name: "SCO-Rio FGV06 desonerado",
+      }),
+    ];
+
+    expect(nomeDoCatalogoIndexado(indice(), acervo)).toBe(
+      "SCO-Rio FGV06 desonerado",
+    );
+    expect(nomeDoCatalogoIndexado(indice(), null)).toContain("sha256 a17b3e0");
+    expect(
+      nomeDoCatalogoIndexado(indice({ reference_catalog_id: "outro" }), acervo),
+    ).toContain("sha256 a17b3e0");
+  });
+});
+
+/**
+ * O que a seção afirma sobre si mesma, fixado por teste porque as duas afirmações são
+ * decisões escritas do ADR-0054 e não escolha de copy: o índice nasce no CLI (D4) e
+ * retirar não apaga.
+ */
+describe("copy da administração de índices", () => {
+  it("diz que o índice é construído pelo CLI, nunca pela tela", () => {
+    expect(AVISO_INDICE_VEM_DO_CLI.comando).toBe("index-catalog");
+    expect(AVISO_INDICE_VEM_DO_CLI.depois).toContain("nunca o constrói");
+  });
+
+  it("diz que retirar não apaga, e por que a shortlist gravada continua valendo", () => {
+    expect(AVISO_RETIRADA_INDICE).toContain("Retirar não apaga");
+    expect(AVISO_RETIRADA_INDICE).toContain("digest do índice que a produziu");
+    expect(AVISO_RETIRADA_INDICE).toContain("braço léxico");
+  });
+
+  /** Sem índice a shortlist sai léxica, e isso é estado normal (D6), não falha. */
+  it("a lista vazia declara a consequência sem chamá-la de erro", () => {
+    expect(MENSAGEM_INDICES_VAZIO).toContain("estado normal");
   });
 });

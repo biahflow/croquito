@@ -93,6 +93,7 @@ from croquito_worker.valuation.round_view import (
 from croquito_worker.valuation.suggestions import (
     SemanticArmTelemetry,
     compute_suggestions,
+    query_cache_path_for_model,
     require_reviewed_takeoff,
 )
 
@@ -440,21 +441,31 @@ def require_assignments(revision: ValuationRoundRevisionRecord | None) -> CodeAs
 
 
 SEMANTIC_ARM_ABSENT: Final = (
-    f"{SEMANTIC_UNAVAILABLE_MESSAGE}: a rodada da API não publica índice de embeddings"
+    f"{SEMANTIC_UNAVAILABLE_MESSAGE}: a shortlist gravada é léxica; o braço semântico roda "
+    "no recálculo explícito"
 )
-"""Motivo declarado do braço semântico nas duas saídas de código (shortlist e busca).
+"""Motivo declarado do braço semântico onde ele NÃO é sequer tentado.
 
-O índice de embeddings é artefato do CLI local (39 MB) e nenhuma rota de `/v1` o publica —
-a F-003 não migra dado nenhum. Dizer isso na resposta é o contrário de degradar em
-silêncio: a shortlist e a busca continuam sendo as lexicais, e o cliente sabe por quê."""
+Dois caminhos usam esta frase, e nos dois ela é verdade por decisão, não por falta:
+
+- o `GET` da shortlist, que não pode pagar nada (ADR-0054 D7). A shortlist gravada na
+  primeira leitura é léxica, e a híbrida exige o recompute — que é ato humano, com
+  `Idempotency-Key` e `base_version`;
+- a busca do catálogo, que é `GET` pelo mesmo motivo.
+
+Ela não é mais o motivo do RECOMPUTE: lá o braço é tentado de verdade, e o que se declara é
+o que aconteceu com cada fonte (`croquito_api.semantic_arm`)."""
 
 _NO_QUERY_CACHE: Final = Path(os.devnull)
 """Cache de vetores inexistente, passado a `compute_suggestions` para ser NÃO usado.
 
-A via paga só é tentada quando a rodada tem índice (`SemanticArm.index`), e a rodada de
-`/v1` nunca tem; o cache é insumo dessa via e não artefato de decisão. O dispositivo nulo
-está aqui para que um caminho que tentasse usá-lo não escrevesse em lugar nenhum — e, mesmo
-se tentasse, `adapter=None` recusa a consulta ausente em vez de embuti-la."""
+Segue vivo porque segue existindo caminho que NÃO paga: o `GET` da shortlist chama o
+cálculo sem braço semântico (`semantic=None`), e o cache é insumo da via paga, não artefato
+de decisão. O dispositivo nulo está aqui para que esse caminho não escreva em lugar nenhum
+— e, mesmo se tentasse, `adapter=None` recusa a consulta ausente em vez de embuti-la.
+
+O recompute **não** o usa: lá o cache é um diretório temporário do próprio ato, descartado
+ao sair (ADR-0054, emenda de 2026-08-28)."""
 
 
 def suggestions_of(revision: ValuationRoundRevisionRecord | None) -> CodeSuggestionSet | None:
@@ -493,31 +504,58 @@ def require_unrefined_suggestions(suggestions: CodeSuggestionSet | None) -> None
 
 
 def compute_round_suggestions(
-    packet: TakeoffPacket, catalog: PriceCatalog
+    packet: TakeoffPacket, catalog: PriceCatalog, *, semantic: SemanticArm | None = None
 ) -> tuple[CodeSuggestionSet, list[str], SemanticArmTelemetry]:
-    """Shortlist recalculada do zero pelo algoritmo corrente; nenhuma chamada paga acontece.
+    """Shortlist recalculada do zero pelo algoritmo corrente, com ou sem o braço pago.
 
-    Mesmo cálculo do servidor de medição (`compute_suggestions`), com as três coisas que na
+    Mesmo cálculo do servidor de medição (`compute_suggestions`), com as duas coisas que na
     rodada de `/v1` só podem ser estas: sinônimos do seed empacotado (não há `synonyms.json`
-    de diretório), consolidado contratual ausente — a rodada guarda catálogo, não contrato —
-    e braço semântico declarado indisponível, porque nenhuma rota publica índice de
-    embeddings. A revisão completa do takeoff é precondição e continua sendo conferida lá
-    dentro.
+    de diretório) e consolidado contratual ausente — a rodada guarda catálogo, não contrato.
+    A revisão completa do takeoff é precondição e continua sendo conferida lá dentro.
 
-    A terceira saída é a telemetria do braço semântico. Hoje ela é sempre `arm_ran=False`
-    com `SEMANTIC_ARM_ABSENT` — a rodada da API não tem índice para pagar —, e é isso que o
-    recompute registra no evento e no log: a vizinhança semântica não participou. Quando o
-    índice publicado da plataforma (ADR-0054) chegar ao caminho hospedado, o `SemanticArm`
-    passa a rodar e a mesma telemetria carrega tokens, custo e model id sem tocar aqui.
+    `semantic=None` é o caminho que **não paga nada**, e é o do `GET` (ADR-0054 D7): nenhum
+    índice é procurado, nenhum rótulo é embutido, o cache de consulta é o dispositivo nulo e
+    a nota diz que a shortlist gravada é léxica até o recálculo. É a invariante que protege
+    a leitura de virar chamada paga, e ela tem teste próprio.
+
+    Com um `SemanticArm` montado (é o recompute quem o monta, por
+    `croquito_api.semantic_arm`), o braço roda: os rótulos dos itens confirmados são
+    embutidos numa chamada paga pequena e a fusão ganha a vizinhança semântica. O cache de
+    vetores é um **diretório temporário do ato**, descartado ao sair — decisão de fronteira
+    de dado registrada na emenda de 2026-08-28 do ADR-0054, e explicada onde ele é criado.
+
+    A terceira saída é a telemetria do gasto, que o recompute registra no evento e no log.
     """
-    return compute_suggestions(
-        packet,
-        catalog,
-        None,
-        default_domain_synonyms(),
-        semantic=SemanticArm(None, None, "unavailable", SEMANTIC_ARM_ABSENT),
-        query_cache_path=_NO_QUERY_CACHE,
-    )
+    if semantic is None or semantic.index is None:
+        # Sem braço, ou com braço sem índice, nenhum vetor de consulta é resolvido: o cálculo
+        # nem chega ao cache. O dispositivo nulo é o que declara isso — abrir um diretório
+        # temporário aqui prometeria uma escrita que não acontece.
+        return compute_suggestions(
+            packet,
+            catalog,
+            None,
+            default_domain_synonyms(),
+            semantic=semantic or SemanticArm(None, None, "unavailable", SEMANTIC_ARM_ABSENT),
+            query_cache_path=_NO_QUERY_CACHE,
+        )
+    with tempfile.TemporaryDirectory(prefix="croquito-query-vectors-") as directory:
+        # O cache de vetores de consulta VIVE E MORRE dentro deste ato, por decisão humana
+        # de 2026-08-28 (ADR-0054, emenda). A razão é fronteira de dado, não custo: o índice
+        # do catálogo é dado PÚBLICO da plataforma — por isso ele é publicado e cacheado no
+        # processo —, enquanto o vetor de um rótulo é derivado de TEXTO DO CLIENTE.
+        # Persisti-lo (objeto sob `tenants/`, coluna na revisão, qualquer coisa) criaria uma
+        # classe nova de dado privado para governar, com retenção, isolamento e ciclo de
+        # vida próprios, em troca de poupar centésimos de centavo num ato humano raro.
+        # Recompute repetido repaga, e isso é o preço aceito. NÃO "otimize" persistindo:
+        # essa mudança é de arquitetura de dado, e o lugar dela é o ADR.
+        return compute_suggestions(
+            packet,
+            catalog,
+            None,
+            default_domain_synonyms(),
+            semantic=semantic,
+            query_cache_path=query_cache_path_for_model(Path(directory), semantic.index.model_id),
+        )
 
 
 def search_round_catalog(catalog: PriceCatalog, query: str, limit: int) -> dict[str, Any]:

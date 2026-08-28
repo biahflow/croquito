@@ -2526,9 +2526,13 @@ def _command_suggest_codes(args: argparse.Namespace) -> int:
     if result.semantic_reason is not None:
         payload["semantic_reason"] = result.semantic_reason
     if result.matching == "hybrid":
+        # `semantic` é a LISTA dos braços que participaram (ADR-0054, aceite humano item 3).
+        # Aqui é sempre um: `matching == "hybrid"` só acontece com UM catálogo — a cascata do
+        # CLI degrada declaradamente para lexical (`SEMANTIC_CASCADE_UNSUPPORTED`), e a fusão
+        # por fonte é do caminho hospedado. Ler o primeiro é dizer exatamente isso.
         semantic = result.suggestions.semantic
         payload["semantic"] = {
-            "model_id": None if semantic is None else semantic.model_id,
+            "model_id": None if not semantic else semantic[0].model_id,
             "embedded_queries": result.embedded_queries,
             **_embeddings_payload(result.embeddings_execution),
         }

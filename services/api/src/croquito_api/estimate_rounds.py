@@ -84,7 +84,7 @@ from croquito_valuation.estimate_workbook import (
 from croquito_valuation.models import PriceCatalog, PriceOrigin
 from croquito_valuation.takeoff import TakeoffPacket
 from croquito_valuation.template import WorkbookTemplate
-from croquito_worker.valuation.catalog_search import search_catalog
+from croquito_worker.valuation.catalog_search import SemanticArm, search_catalog
 from croquito_worker.valuation.round_extraction import (
     TAKEOFF_OVERLAY_DIGEST,
     TAKEOFF_OVERLAY_PACKET_DIGEST,
@@ -99,7 +99,10 @@ from croquito_worker.valuation.round_view import (
     review_status,
     takeoff_counts,
 )
-from croquito_worker.valuation.suggestions import SemanticArmTelemetry
+from croquito_worker.valuation.suggestions import (
+    SemanticArmTelemetry,
+    compute_cascade_suggestions,
+)
 
 ESTIMATE_CASCADE_ORIGIN_DUPLICATE: Final = "ESTIMATE_CASCADE_ORIGIN_DUPLICATE"
 ESTIMATE_CASCADE_ORDER_INVALID: Final = "ESTIMATE_CASCADE_ORDER_INVALID"
@@ -1081,27 +1084,59 @@ def current_stage(
 
 
 def compute_round_suggestions(
-    packet: TakeoffPacket, cascade: Sequence[PriceCatalog]
+    packet: TakeoffPacket,
+    cascade: Sequence[PriceCatalog],
+    *,
+    arms: Sequence[SemanticArm] | None = None,
 ) -> tuple[CodeSuggestionSet, list[str], SemanticArmTelemetry]:
-    """Shortlist recalculada do zero sobre a CASCATA; nenhuma chamada paga acontece.
+    """Shortlist recalculada do zero sobre a CASCATA, com ou sem o braço pago.
 
     Os candidatos saem na ordem da cascata — todos os da primeira fonte, depois os da
     segunda — porque misturar os blocos por score faria a ordem das fontes, que é decisão
-    declarada do orçamentista, ser desempatada por similaridade de texto. O braço semântico
-    é declarado indisponível pelo mesmo motivo da medição: nenhuma rota de `/v1` publica
-    índice de embeddings.
+    declarada do orçamentista, ser desempatada por similaridade de texto. Isso vale com ou
+    sem braço semântico: a fusão RRF é estritamente DENTRO de uma fonte (ADR-0054 D5).
 
-    A terceira saída é a telemetria do braço semântico. `sources_total` é o tamanho da
-    cascata e `sources_with_index` é zero: nenhuma fonte tem índice publicado hoje, então
-    nenhuma pagou embedding. É isso que o recompute registra — quantas fontes da cascata
-    tinham índice —, e o número passa a ser real quando o índice por fonte (ADR-0054 D5)
-    chegar ao caminho hospedado.
+    `arms=None` é o caminho que **não paga nada**, e é o do `GET` (ADR-0054 D7): nenhum
+    índice é procurado e a shortlist sai pela via lexical de sempre
+    (`suggest_codes_over_cascade`). O algoritmo dela não muda nesta feature — trocar a via da
+    shortlist gravada sem índice nenhum seria mudança de comportamento que ninguém mediu.
+
+    Com os braços montados (é o recompute quem os monta, por `croquito_api.semantic_arm`), a
+    shortlist passa pela fusão por fonte, e **só as fontes sem índice** ficam com o braço
+    léxico. Nenhuma fonte com índice é perdida porque outra não tinha um: cobertura parcial é
+    estado normal, e a nota diz qual ficou de fora.
+
+    Com braços montados e NENHUM índice — que é o estado do mundo enquanto o operador não
+    publicar o primeiro —, a shortlist é byte a byte a mesma do `GET`: o algoritmo não troca
+    por causa de uma perna que não existe, e o que a rodada ganha são as notas explicando por
+    quê. A regra mora em `compute_cascade_suggestions`, com o motivo escrito.
+
+    A terceira saída é a telemetria do gasto: `sources_total` é o tamanho da cascata e
+    `sources_with_index` é quantas fontes de fato rodaram o braço.
     """
-    return (
-        suggest_codes_over_cascade(packet, cascade, synonyms=default_domain_synonyms()),
-        [SEMANTIC_ARM_ABSENT],
-        SemanticArmTelemetry.lexical_only(SEMANTIC_ARM_ABSENT, sources_total=len(cascade)),
-    )
+    if arms is None:
+        return (
+            suggest_codes_over_cascade(packet, cascade, synonyms=default_domain_synonyms()),
+            [SEMANTIC_ARM_ABSENT],
+            SemanticArmTelemetry.lexical_only(SEMANTIC_ARM_ABSENT, sources_total=len(cascade)),
+        )
+    with tempfile.TemporaryDirectory(prefix="croquito-query-vectors-") as directory:
+        # O cache de vetores de consulta VIVE E MORRE dentro deste ato, por decisão humana de
+        # 2026-08-28 (ADR-0054, emenda). A razão é fronteira de dado, não custo: o índice do
+        # catálogo é dado PÚBLICO da plataforma — por isso ele é publicado e cacheado no
+        # processo —, enquanto o vetor de um rótulo é derivado de TEXTO DO CLIENTE.
+        # Persisti-lo (objeto sob `tenants/`, coluna na revisão, qualquer coisa) criaria uma
+        # classe nova de dado privado para governar, com retenção, isolamento e ciclo de vida
+        # próprios, em troca de poupar centésimos de centavo num ato humano raro. Recompute
+        # repetido repaga, e isso é o preço aceito. NÃO "otimize" persistindo: essa mudança é
+        # de arquitetura de dado, e o lugar dela é o ADR.
+        return compute_cascade_suggestions(
+            packet,
+            cascade,
+            default_domain_synonyms(),
+            arms=arms,
+            query_cache_dir=Path(directory),
+        )
 
 
 def search_round_cascade(cascade: Sequence[PriceCatalog], query: str, limit: int) -> dict[str, Any]:

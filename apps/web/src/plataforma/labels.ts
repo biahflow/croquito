@@ -16,6 +16,7 @@ import type {
   JourneyState,
   PlatformTenant,
   ReferenceCatalog,
+  ReferenceCatalogIndex,
 } from "./api";
 
 /** O que esta tela é e o que ela não é; fica visível acima da lista. */
@@ -89,6 +90,16 @@ const MENSAGENS_POR_CODIGO: Record<string, string> = {
   UPLOAD_TRANSFER_FAILED:
     "O envio direto do arquivo ao armazenamento não foi concluído. Nada foi publicado — " +
     "tente de novo.",
+  // Índice de embeddings (F-041). Duas destas entradas são a forma SEM o fato que o
+  // servidor declara no `details` — quem tem o fato passa por `describeIndiceError`, que
+  // monta a frase citando o teto ou os digests. A copy é a mesma função nos dois caminhos.
+  REFERENCE_CATALOG_INDEX_TOO_LARGE: mensagemIndiceGrandeDemais(null),
+  REFERENCE_CATALOG_INDEX_UNREADABLE: mensagemIndiceIlegivel(null),
+  REFERENCE_CATALOG_INDEX_CATALOG_MISMATCH: mensagemIndiceDeOutroCatalogo(null, null),
+  REFERENCE_CATALOG_INDEX_ALREADY_PUBLISHED:
+    "Este índice já está publicado, com o mesmo conteúdo. Publicar de novo não o " +
+    "substitui: publicação é imutável, e um índice reconstruído — receita ou modelo " +
+    "novos — tem digest novo e entra como entrada nova.",
 };
 
 /**
@@ -524,6 +535,240 @@ export function describeAcervoError(
     }
     if (error.code === "NOT_FOUND") {
       return MENSAGEM_CATALOGO_NAO_ENCONTRADO;
+    }
+  }
+  return describeError(error);
+}
+
+// --------------------------------------------------------------------------------------
+// Índice de embeddings publicado (F-041, ADR-0054)
+//
+// A copy desta seção vem do Design Approval das duas superfícies, aprovado por ato humano
+// em 2026-08-28. Duas afirmações atravessam todas as frases, porque as duas são decisões
+// escritas do ADR e não detalhe de tela:
+//
+// - **O índice é construído pelo CLI, nunca aqui** (D4). O servidor lê e valida; a tela
+//   sobe o arquivo que já existe. Nada nesta seção pode sugerir um botão de construir.
+// - **Retirar não apaga** (mesma regra do acervo, com uma razão a mais): a shortlist já
+//   gravada cita o digest do índice que a produziu, e o objeto continua existindo.
+
+/** O que esta seção é, e o que ela deliberadamente não faz. */
+export const AVISO_INDICES =
+  "O índice de embeddings é o que faz a shortlist sair híbrida no recálculo. Publicar é " +
+  "ato de plataforma e vale para todos os tenants; cada publicação é imutável, endereçada " +
+  "pelo conteúdo.";
+
+/** De onde o arquivo vem — e por que ele não nasce nesta tela (ADR-0054 D4). */
+export const AVISO_INDICE_VEM_DO_CLI = {
+  antes: "O índice é construído pelo comando pago ",
+  comando: "index-catalog",
+  meio: " do CLI, sobre um catálogo já publicado no acervo. Esta tela publica o ",
+  arquivo: "catalog-embeddings.json",
+  depois: " resultante: o servidor lê e confere o índice, e nunca o constrói.",
+} as const;
+
+/** O que retirar faz — e o que ela não desfaz. */
+export const AVISO_RETIRADA_INDICE =
+  "Retirar não apaga: o arquivo continua existindo e a shortlist já calculada continua " +
+  "citando o digest do índice que a produziu. O que muda é a fonte deixar de ser " +
+  "resolvida — dali em diante ela entra só pelo braço léxico, que é estado normal.";
+
+/** Por que só a tabela é escolhida: todo o resto vem de dentro do documento. */
+export const DICA_CAMPOS_DO_INDICE =
+  "Receita de texto, provider, modelo, dimensões e contagem de códigos vêm de dentro do " +
+  "arquivo — não são digitados, para que o rótulo nunca discorde do conteúdo.";
+
+/** Para que serve a escolha da tabela; ela é conferida, não é por ela que se busca. */
+export const DICA_CATALOGO_DO_INDICE =
+  "a tabela sobre a qual o índice foi construído — o servidor confere o digest de dentro " +
+  "do arquivo contra ela e recusa se não bater";
+
+/** Estado da lista antes de qualquer resposta; nenhum índice é fabricado. */
+export const MENSAGEM_INDICES_SEM_LEITURA = "Os índices ainda não foram lidos.";
+
+/** Nenhum índice publicado é resultado, não falha — e a consequência é dita. */
+export const MENSAGEM_INDICES_VAZIO =
+  "Nenhum índice publicado ainda. Sem índice, o recálculo da shortlist sai léxico em " +
+  "todas as fontes, e isso é estado normal.";
+
+/** Conta sem `platform_operator`: lê o motivo, não uma tela em branco. */
+export const MENSAGEM_INDICES_SEM_PAPEL =
+  "Os índices são administrados por quem tem o papel de plataforma. Sua conta não o tem, " +
+  "então a lista não é carregada e nenhum índice pode ser publicado por aqui.";
+
+/** O que fazer a respeito. */
+export const DICA_INDICES_SEM_PAPEL =
+  "Peça o acesso a quem administra a plataforma.";
+
+/** O acervo ainda não foi lido, e sem tabela publicada não há índice a publicar. */
+export const MENSAGEM_SEM_CATALOGO_PARA_INDEXAR =
+  "Nenhuma tabela no acervo para indexar. Publique a tabela acima primeiro — o índice é " +
+  "construído sobre ela.";
+
+/**
+ * Estado de circulação por extenso. São duas palavras e não uma pastilha colorida: a
+ * publicação retirada continua na lista, e é a PALAVRA que diz qual das duas ela é.
+ */
+export function estadoDoIndice(indice: ReferenceCatalogIndex): string {
+  return indice.available ? "em circulação" : "fora de circulação";
+}
+
+/**
+ * Como o índice nomeia a tabela que ele indexa.
+ *
+ * O nome de exibição vem do acervo lido ao lado; quando ele não está disponível — acervo
+ * ainda não lido, ou entrada que saiu da lista — a frase cita o digest da FONTE, que o
+ * próprio índice carrega. Nome nenhum é adivinhado a partir do identificador.
+ */
+export function nomeDoCatalogoIndexado(
+  indice: ReferenceCatalogIndex,
+  catalogos: ReferenceCatalog[] | null,
+): string {
+  const catalogo = (catalogos ?? []).find(
+    (entrada) => entrada.reference_catalog_id === indice.reference_catalog_id,
+  );
+  return (
+    catalogo?.display_name ??
+    `tabela de origem sha256 ${digestCurto(indice.catalog_source_sha256)}`
+  );
+}
+
+/** Resumo da lista de índices; nenhuma destas frases fabrica publicação. */
+export function resumoDosIndices(
+  indices: ReferenceCatalogIndex[] | null,
+  carregando: boolean,
+): string {
+  if (indices === null) {
+    return carregando ? "Lendo os índices…" : MENSAGEM_INDICES_SEM_LEITURA;
+  }
+  if (indices.length === 0) {
+    return MENSAGEM_INDICES_VAZIO;
+  }
+  const emCirculacao = indices.filter((indice) => indice.available).length;
+  const fora = indices.length - emCirculacao;
+  const publicados = `${emCirculacao} índice${emCirculacao === 1 ? "" : "s"} em circulação`;
+  return fora === 0 ? `${publicados}.` : `${publicados} · ${fora} fora de circulação.`;
+}
+
+/**
+ * Bytes em MiB, só para dizer o teto que o servidor declarou. Divisão de apresentação,
+ * sobre um número que o servidor mandou — nada aqui é somado nem arredondado para valer.
+ */
+function emMiB(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024))} MiB`;
+}
+
+/**
+ * A recusa por tamanho. O teto vem do `details` que o SERVIDOR declarou (`max_bytes`), e
+ * não de um número copiado para cá: o dia em que ele mudar, a frase muda junto.
+ *
+ * A recusa é por INTEIRO, e a frase diz isso: documento truncado desserializaria como JSON
+ * inválido e a causa verdadeira — o tamanho — sumiria numa recusa de contrato.
+ */
+export function mensagemIndiceGrandeDemais(maxBytes: number | null): string {
+  const teto = maxBytes === null ? "" : ` (${emMiB(maxBytes)})`;
+  return (
+    `Este índice passa do limite de leitura da API${teto} e é recusado por inteiro — nada ` +
+    "é lido pela metade. Nada foi publicado."
+  );
+}
+
+/**
+ * Motivos de domínio que o servidor declara em `details.code` na recusa de leitura.
+ *
+ * Função, e não tabela `const`: `MENSAGENS_POR_CODIGO` monta a forma sem fato chamando
+ * `mensagemIndiceIlegivel(null)` na inicialização do módulo, e uma tabela declarada depois
+ * dela estaria na zona morta temporal — a chamada só passa hoje porque o `null` a
+ * curto-circuita, o que é exatamente o tipo de dependência que não deve existir.
+ */
+function motivoIndiceIlegivel(code: string | null): string | undefined {
+  if (code === "INDEX_PAYLOAD_INVALID") {
+    return (
+      "o documento não está no contrato do índice (campo faltando, tipo errado ou " +
+      "vetores que não batem com códigos vezes dimensões)"
+    );
+  }
+  if (code === "INDEX_OBJECT_UNREADABLE") {
+    return "o arquivo não chegou íntegro ao armazenamento, ou não está mais lá";
+  }
+  return undefined;
+}
+
+/**
+ * A recusa de leitura do documento.
+ *
+ * O código de domínio vem do `details` do servidor e escolhe o complemento; código que não
+ * está aqui não vira explicação inventada — a frase segue verdadeira sem ele.
+ */
+export function mensagemIndiceIlegivel(code: string | null): string {
+  const motivo = motivoIndiceIlegivel(code);
+  const porque = motivo === undefined ? "" : `: ${motivo}`;
+  return (
+    `O índice enviado não pôde ser lido pela API${porque}. Nada foi publicado — gere o ` +
+    "catalog-embeddings.json pelo comando index-catalog do CLI e publique o resultado."
+  );
+}
+
+/**
+ * A recusa do índice construído sobre outro catálogo.
+ *
+ * Os dois digests vêm do `details` do servidor: o de dentro do documento e o da tabela
+ * citada. Sem eles a frase continua verdadeira e não inventa digest nenhum.
+ */
+export function mensagemIndiceDeOutroCatalogo(
+  indexCatalogSha256: string | null,
+  catalogSourceSha256: string | null,
+): string {
+  const confronto =
+    indexCatalogSha256 === null || catalogSourceSha256 === null
+      ? ""
+      : ` (o arquivo indexa a fonte ${digestCurto(indexCatalogSha256)}; a tabela ` +
+        `escolhida é a ${digestCurto(catalogSourceSha256)})`;
+  return (
+    `Este índice foi construído sobre outro catálogo${confronto}, e ele devolveria códigos ` +
+    "que a tabela escolhida não tem. Nada foi publicado — escolha a tabela sobre a qual o " +
+    "índice foi construído, ou reconstrua o índice pelo CLI."
+  );
+}
+
+/** Retirar ou publicar citando um índice ou uma tabela que a lista lida já não tem. */
+export const MENSAGEM_INDICE_NAO_ENCONTRADO =
+  "O índice ou a tabela citada não está mais na plataforma — a lista que esta tela leu " +
+  "pode ter envelhecido. Recarregue e tente de novo; nada foi alterado.";
+
+/**
+ * Frase de uma recusa da administração de índices.
+ *
+ * Três códigos são compostos porque a frase precisa citar um fato que só existe fora do
+ * código — o teto declarado, o motivo de domínio e o par de digests —, e os três fatos vêm
+ * do `details` do SERVIDOR, nunca do que a tela achava que o arquivo tinha. `NOT_FOUND` é
+ * redirecionado de propósito: no mapa comum ele significa "tenant nunca autorizado", e
+ * deixar o mapa decidir mostraria a frase da seção errada.
+ */
+export function describeIndiceError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.code === "REFERENCE_CATALOG_INDEX_TOO_LARGE") {
+      const { max_bytes: maxBytes } = error.details;
+      return mensagemIndiceGrandeDemais(
+        typeof maxBytes === "number" ? maxBytes : null,
+      );
+    }
+    if (error.code === "REFERENCE_CATALOG_INDEX_UNREADABLE") {
+      const { code } = error.details;
+      return mensagemIndiceIlegivel(typeof code === "string" ? code : null);
+    }
+    if (error.code === "REFERENCE_CATALOG_INDEX_CATALOG_MISMATCH") {
+      const {
+        index_catalog_sha256: indexCatalog,
+        catalog_source_sha256: catalogSource,
+      } = error.details;
+      return mensagemIndiceDeOutroCatalogo(
+        typeof indexCatalog === "string" ? indexCatalog : null,
+        typeof catalogSource === "string" ? catalogSource : null,
+      );
+    }
+    if (error.code === "NOT_FOUND") {
+      return MENSAGEM_INDICE_NAO_ENCONTRADO;
     }
   }
   return describeError(error);
