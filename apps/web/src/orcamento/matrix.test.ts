@@ -10,10 +10,15 @@ import {
   CALC_MATRIX_SELF_DEPENDENCY,
   contributionFormError,
   contributionKey,
+  disassembleCalcMatrix,
+  emptyMatrixDraft,
+  hydrateMatrixDraft,
   matrixOrderError,
+  openMatrixDraft,
   topologicalOrder,
   type CalcContributionDraft,
   type CalcContributionForm,
+  type CalcMatrix,
 } from "./matrix";
 
 const ITEM_A = "ti_0000000000000001";
@@ -313,5 +318,225 @@ describe("buildContributionDraft", () => {
 describe("contributionKey", () => {
   it("compõe a chave estável do par (elemento, código)", () => {
     expect(contributionKey(ITEM_A, "SCO001")).toBe(`${ITEM_A}::SCO001`);
+  });
+});
+
+/**
+ * A volta da matriz gravada para o rascunho (F-042 T5), e o critério que importa: **montar
+ * sem tocar em nada, depois de hidratar, não pode perder contribuição nenhuma**.
+ *
+ * O defeito era a matriz ter dois donos — o `apply` do acervo grava no servidor, a tela
+ * mandava no build só o que a sessão viu — e o preço era montar o orçamento apagar do banco
+ * o que já estava lá.
+ */
+describe("disassembleCalcMatrix", () => {
+  /** Uma matriz gravada com as três formas que a volta precisa reconstruir. */
+  const GRAVADA: CalcMatrix = {
+    schema_version: CALC_MATRIX_SCHEMA_VERSION,
+    services: [
+      {
+        code: "SCO001",
+        contributions: [
+          {
+            source_item_id: ITEM_A,
+            label: "Piso em concreto",
+            basis: "derived",
+            recipe: "length_times_width",
+            operands: [
+              { name: "COMPRIMENTO", value: "20.906", unit: "m" },
+              { name: "LARGURA", value: "20" },
+            ],
+            deductions: [{ name: "CANTEIRO", value: "12.5", unit: "m2" }],
+            depends_on_code: null,
+            note: "recorte medido na prancha",
+          },
+          {
+            source_item_id: ITEM_B,
+            label: "Piso do passeio",
+            basis: "full",
+            recipe: "direct_quantity",
+            operands: [{ name: "QUANTIDADE", value: "170" }],
+            deductions: [],
+            depends_on_code: null,
+            note: null,
+          },
+        ],
+      },
+      {
+        code: "AC01100010",
+        contributions: [
+          {
+            source_item_id: null,
+            label: "Aluguel de banheiro químico",
+            basis: "standalone",
+            recipe: "declared_product",
+            operands: [
+              { name: "UNIDADES", value: "1", unit: "un" },
+              { name: "PRAZO", value: "2", unit: "mes" },
+            ],
+            deductions: [],
+            depends_on_code: null,
+            note: null,
+            kit_origin: { kit_version: 1, parcel_id: "p1" },
+          },
+          {
+            source_item_id: null,
+            label: "Entulho — caçamba extra",
+            basis: "standalone",
+            recipe: "declared_product",
+            operands: [{ name: "CAÇAMBAS", value: "3", unit: "un" }],
+            deductions: [],
+            depends_on_code: null,
+            note: null,
+          },
+        ],
+      },
+      {
+        code: "SCO009",
+        contributions: [
+          {
+            source_item_id: null,
+            label: "Transporte do entulho",
+            basis: "dependent",
+            recipe: "direct_quantity",
+            operands: [{ name: "VOLUME", value: "8.4", unit: "m3" }],
+            deductions: [],
+            depends_on_code: "SCO001",
+            note: null,
+          },
+        ],
+      },
+    ],
+  };
+
+  /**
+   * **O teste do defeito 2.** Abrir uma rodada com matriz gravada e montar sem tocar em
+   * nada produz a MESMA matriz: nem uma contribuição a menos, nem um campo mudado.
+   */
+  it("montar depois de hidratar devolve a matriz gravada, inteira", () => {
+    const remontada = assembleCalcMatrix(disassembleCalcMatrix(GRAVADA));
+
+    expect(remontada).toEqual(GRAVADA);
+  });
+
+  it("reconstrói as duas origens e o que o fio não carrega volta declarado ausente", () => {
+    const drafts = disassembleCalcMatrix(GRAVADA);
+
+    expect(drafts).toHaveLength(5);
+    // A contribuição de elemento mantém o vínculo com ele; a chave da tela é a de sempre.
+    const piso = drafts.find((entrada) => entrada.itemId === ITEM_A);
+    expect(piso?.code).toBe("SCO001");
+    expect(piso?.note).toBe("recorte medido na prancha");
+    expect(piso?.operands).toEqual([
+      { name: "COMPRIMENTO", value: "20.906", unit: "m" },
+      // Unidade ausente no fio vira `""`, que é como a tela a lê e a reescreve.
+      { name: "LARGURA", value: "20", unit: "" },
+    ]);
+    // A parcela de acervo é reconhecida pela proveniência, com a versão que a matriz diz.
+    const doAcervo = drafts.find((entrada) => entrada.kitOrigin !== undefined);
+    expect(doAcervo?.kitOrigin).toEqual({
+      kitId: "",
+      kitName: "",
+      kitVersion: 1,
+      parcelId: "p1",
+    });
+    // O teto da parcela PARCIAL não existe no fio: ele volta ausente, nunca fabricado.
+    expect(drafts.every((entrada) => entrada.itemQuantity === null)).toBe(true);
+  });
+
+  it("STANDALONE e DEPENDENT ganham chave de tela sem inventar elemento de origem", () => {
+    const drafts = disassembleCalcMatrix(GRAVADA);
+    const aMao = drafts.find((entrada) => entrada.label === "Entulho — caçamba extra");
+    const dependente = drafts.find((entrada) => entrada.basis === "dependent");
+
+    // Chaves distintas para duas parcelas do MESMO código, e nenhuma delas volta ao fio.
+    expect(aMao?.itemId).not.toBe("p1");
+    expect(dependente?.dependsOnCode).toBe("SCO001");
+    const remontada = assembleCalcMatrix(drafts);
+    const todas = remontada?.services.flatMap((service) => service.contributions) ?? [];
+    expect(
+      todas
+        .filter((c) => c.basis === "standalone" || c.basis === "dependent")
+        .every((c) => c.source_item_id === null),
+    ).toBe(true);
+  });
+
+  it("matriz gravada ausente é o regime legado: rascunho vazio", () => {
+    expect(disassembleCalcMatrix(null)).toEqual([]);
+    expect(assembleCalcMatrix(disassembleCalcMatrix(null))).toBeNull();
+  });
+});
+
+/**
+ * O rascunho é DA rodada. Sem isso, a hidratação deixa de ser conserto e vira corrupção:
+ * a matriz de uma praça pousando sobre outra, sem ninguém ler aquilo como erro.
+ */
+describe("o rascunho da rodada", () => {
+  const MATRIZ: CalcMatrix = {
+    schema_version: CALC_MATRIX_SCHEMA_VERSION,
+    services: [
+      {
+        code: "SCO001",
+        contributions: [
+          {
+            source_item_id: ITEM_A,
+            label: "Piso em concreto",
+            basis: "derived",
+            recipe: "length_times_width",
+            operands: [{ name: "COMPRIMENTO", value: "20.906", unit: "m" }],
+            deductions: [],
+            depends_on_code: null,
+            note: null,
+          },
+        ],
+      },
+    ],
+  };
+
+  it("trocar de rodada zera o rascunho, antes de qualquer hidratação", () => {
+    const daPrimeira = hydrateMatrixDraft(emptyMatrixDraft("round-1"), "round-1", MATRIZ);
+    expect(Object.keys(daPrimeira.drafts)).toHaveLength(1);
+
+    const daSegunda = openMatrixDraft(daPrimeira, "round-2");
+
+    expect(daSegunda.roundId).toBe("round-2");
+    expect(daSegunda.drafts).toEqual({});
+  });
+
+  it("reabrir a MESMA rodada não custa o que já foi autorado", () => {
+    const atual = hydrateMatrixDraft(emptyMatrixDraft("round-1"), "round-1", MATRIZ);
+
+    expect(openMatrixDraft(atual, "round-1")).toBe(atual);
+  });
+
+  /** A leitura é assíncrona: trocar de rodada com ela em voo não pode pousar na nova. */
+  it("descarta a matriz lida de OUTRA rodada", () => {
+    const atual = emptyMatrixDraft("round-2");
+
+    expect(hydrateMatrixDraft(atual, "round-1", MATRIZ)).toBe(atual);
+  });
+
+  /** O gravado é o ponto de partida, não uma correção do que a pessoa acabou de escrever. */
+  it("o que a sessão autorou vence o gravado na mesma chave", () => {
+    const daSessao: CalcContributionDraft = draft({
+      itemId: ITEM_A,
+      code: "SCO001",
+      label: "Piso em concreto — corrigido",
+    });
+    const atual = {
+      roundId: "round-1",
+      drafts: { [contributionKey(ITEM_A, "SCO001")]: daSessao },
+    };
+
+    const hidratado = hydrateMatrixDraft(atual, "round-1", MATRIZ);
+
+    expect(hidratado.drafts[contributionKey(ITEM_A, "SCO001")]).toBe(daSessao);
+  });
+
+  it("rodada sem matriz gravada fica com o rascunho vazio", () => {
+    const hidratado = hydrateMatrixDraft(emptyMatrixDraft("round-1"), "round-1", null);
+
+    expect(hidratado.drafts).toEqual({});
+    expect(hidratado.roundId).toBe("round-1");
   });
 });

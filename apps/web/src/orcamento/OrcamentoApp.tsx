@@ -6,6 +6,7 @@ import {
   associatePlate,
   createEstimate,
   createPlateExtraction,
+  getCalcMatrix,
   getCodes,
   getEstimate,
   getEstimateState,
@@ -172,10 +173,13 @@ import {
   RESUMO_MATRIZ_DICA,
   RESUMO_MATRIZ_VAZIO,
   contributionBasisHint,
+  ACAO_RELER_MATRIZ_GRAVADA,
   ACERVO_CARIMBO_DICA,
   ACERVO_CONTA_A_VISTA,
   ACERVO_E_RECEITA,
+  ACERVO_OPERANDO_NAO_DECLARADO,
   ACERVO_PARAMETRO_DECLARADO,
+  ACERVO_PARCELA_BLOQUEADA,
   ACERVO_PARCELA_NAO_NASCE,
   ACERVO_PASSO_ESCOLHER,
   ACERVO_PASSO_PARAMETROS,
@@ -184,24 +188,36 @@ import {
   ACERVO_REMOVIDA_VISIVEL,
   ACERVO_TEXTO_REMOVER,
   ACERVO_TEXTO_TRAZER_DE_VOLTA,
+  AVISO_MATRIZ_GRAVADA_NAO_LIDA,
+  LENDO_MATRIZ_GRAVADA,
   CANTEIRO_ACAO_APLICAR,
   CANTEIRO_ACAO_REAPLICAR,
   CANTEIRO_DICA,
+  CANTEIRO_GRAVADO_DICA,
   CANTEIRO_QUANTIDADE_NA_MONTAGEM,
   CANTEIRO_SEM_PARCELAS,
   CANTEIRO_TITULO,
+  fraseAcervoGravado,
+  fraseAplicarBloqueado,
+  motivoDaParcelaBloqueada,
   seloDeOrigemDaParcela,
 } from "./labels";
 import {
+  acervoGravado,
   alternarExclusao,
   avancarParaParametros,
+  codigosBloqueantes,
   contribuicoesDoAcervo,
   declararParametro,
   escolherAcervo,
   fluxoInicial,
+  parcelaBloqueada,
   parcelasAplicaveis,
+  parcelasBloqueadas,
   parcelasDeCanteiro,
+  parametrosBloqueantes,
   parametrosDoCorpo,
+  pedidoDaPrevia,
   podeAplicar,
   podeAvancarParaParametros,
   podePreVisualizar,
@@ -223,13 +239,17 @@ import {
   CONTRIBUTION_BASES,
   contributionKey,
   emptyContributionForm,
+  emptyMatrixDraft,
   emptyOperand,
   formFromDraft,
+  hydrateMatrixDraft,
   matrixOrderError,
+  openMatrixDraft,
   topologicalOrder,
   type CalcContributionDraft,
   type CalcContributionForm,
   type CalcMatrix,
+  type MatrixDraftState,
   type OperandDraft,
 } from "./matrix";
 import { overlayFreshness } from "./overlay";
@@ -1227,16 +1247,21 @@ export function ResumoDaMatriz({ matrix }: { matrix: CalcMatrix | null }) {
  * É formatação e nada mais: os valores são as strings decimais que o servidor mandou, e a
  * troca de pontuação é a de `formatDecimalText`. Nenhum produto é feito aqui — a
  * quantidade vem pronta do servidor, ao lado.
+ *
+ * Operando sem valor (`null`) é o que cita um parâmetro não declarado: ele aparece dito
+ * "não declarado", nunca como zero, traço ou espaço em branco.
  */
 export function contaDaParcela(
-  operands: readonly { name: string; value: string; unit?: string | null }[],
+  operands: readonly { name: string; value: string | null; unit?: string | null }[],
 ): string {
   return operands
     .map(
       (operand) =>
-        `${operand.name} ${formatDecimalText(operand.value)}${
-          operand.unit ? ` ${unitLabel(operand.unit)}` : ""
-        }`,
+        `${operand.name} ${
+          operand.value === null
+            ? ACERVO_OPERANDO_NAO_DECLARADO
+            : formatDecimalText(operand.value)
+        }${operand.unit ? ` ${unitLabel(operand.unit)}` : ""}`,
     )
     .join(" × ");
 }
@@ -1406,6 +1431,11 @@ export function CamposDeParametro({
  * A parcela removida continua na lista, riscada e com o motivo escrito: ela sai da conta,
  * não da tela (decisão 6). O rodapé conta quantas nascem e quantas saíram — a lista real é
  * inteira e rolável, e o contador é parte do desenho.
+ *
+ * A parcela BLOQUEADA (emenda de 2026-08-28) diz, no lugar da quantidade, o que falta —
+ * nomeando o parâmetro ou o código —, e continua removível: é remover as bloqueadas que
+ * destrava a aplicação das demais. A distinção não é só a veste da linha: o selo e a célula
+ * da quantidade a dizem por extenso.
  */
 export function PreviaDoAcervo({
   previa,
@@ -1419,7 +1449,10 @@ export function PreviaDoAcervo({
   submitting: boolean;
 }) {
   const removidas = previa.rows.filter((row) => excluidos.includes(row.parcel_id));
-  const aplicaveis = previa.rows.length - removidas.length;
+  const bloqueadas = previa.rows.filter(
+    (row) => !excluidos.includes(row.parcel_id) && parcelaBloqueada(previa, row),
+  );
+  const aplicaveis = previa.rows.length - removidas.length - bloqueadas.length;
   return (
     <div className="acervo-previa">
       <table className="acervo-tabela">
@@ -1435,16 +1468,27 @@ export function PreviaDoAcervo({
         <tbody>
           {previa.rows.map((row) => {
             const removida = excluidos.includes(row.parcel_id);
+            const bloqueada = !removida && parcelaBloqueada(previa, row);
             return (
               <tr
                 key={row.parcel_id}
-                className={removida ? "acervo-linha-removida" : undefined}
+                className={
+                  removida
+                    ? "acervo-linha-removida"
+                    : bloqueada
+                      ? "acervo-linha-bloqueada"
+                      : undefined
+                }
               >
                 <td>
                   {row.label}
-                  {/* Removida dita por extenso: o risco na fonte é redundância. */}
+                  {/* Removida e bloqueada ditas por extenso: a veste é redundância. */}
                   {removida ? (
                     <span className="selo selo-neutro">removida</span>
+                  ) : bloqueada ? (
+                    <span className="selo selo-atencao">
+                      {ACERVO_PARCELA_BLOQUEADA}
+                    </span>
                   ) : null}
                 </td>
                 <td>
@@ -1453,8 +1497,19 @@ export function PreviaDoAcervo({
                 <td className="acervo-conta">
                   {removida ? ACERVO_PARCELA_NAO_NASCE : contaDaParcela(row.operands)}
                 </td>
-                <td className="mono">
-                  {removida ? "—" : formatDecimalText(row.quantity)}
+                {/* No lugar da quantidade, a bloqueada diz O QUE FALTA, nomeando: é a
+                    informação que abre a saída, e um traço não abriria nada. */}
+                <td className={bloqueada ? undefined : "mono"}>
+                  {removida
+                    ? "—"
+                    : bloqueada
+                      ? motivoDaParcelaBloqueada(
+                          row.missing_parameters,
+                          row.code_absent,
+                        )
+                      : row.quantity === null
+                        ? "—"
+                        : formatDecimalText(row.quantity)}
                 </td>
                 <td>
                   <button
@@ -1479,6 +1534,11 @@ export function PreviaDoAcervo({
         {aplicaveis}{" "}
         {aplicaveis === 1 ? "será aplicada" : "serão aplicadas"} ·{" "}
         {removidas.length} {removidas.length === 1 ? "removida" : "removidas"}
+        {bloqueadas.length === 0
+          ? ""
+          : ` · ${bloqueadas.length} ${
+              bloqueadas.length === 1 ? "bloqueada" : "bloqueadas"
+            }`}
       </p>
       <p className="dica">{ACERVO_CONTA_A_VISTA}</p>
       <p className="dica">{ACERVO_REMOVIDA_VISIVEL}</p>
@@ -1553,6 +1613,10 @@ export function PainelParcelasDeCanteiro({
   onAplicarAcervo: (() => void) | null;
   submitting: boolean;
 }) {
+  // Sem aplicação NESTA sessão, o carimbo possível é o do que está gravado: a matriz diz a
+  // versão do acervo e a parcela, e não diz mais — nem o acervo de origem, nem os
+  // parâmetros que foram declarados. Nada disso é deduzido para preencher o carimbo.
+  const gravado = aplicacao === null ? acervoGravado(parcelas) : [];
   return (
     <section className="painel" aria-label={CANTEIRO_TITULO}>
       <div className="painel-cabecalho">
@@ -1591,6 +1655,13 @@ export function PainelParcelasDeCanteiro({
             </li>
           ))}
         </ul>
+      )}
+      {gravado.length === 0 ? null : (
+        <div className="acervo-carimbo">
+          <span>{fraseAcervoGravado(gravado)}</span>
+          <span className="campo-dica">{CANTEIRO_GRAVADO_DICA}</span>
+          <span className="campo-dica">{ACERVO_REAPLICAR_SUBSTITUI}</span>
+        </div>
       )}
       {aplicacao === null ? null : (
         <>
@@ -1658,6 +1729,16 @@ export function FormularioDoAcervo({
     (valor) => valor.trim().length > 0,
   ).length;
   const aplicaveis = parcelasAplicaveis(fluxo);
+  // O motivo de aplicar estar indisponível, ao lado do controle e nunca só o botão apagado.
+  const bloqueadas = parcelasBloqueadas(fluxo);
+  const motivoDoBloqueio =
+    bloqueadas.length === 0
+      ? null
+      : fraseAplicarBloqueado(
+          bloqueadas.length,
+          parametrosBloqueantes(fluxo),
+          codigosBloqueantes(fluxo),
+        );
   return (
     <section className="acervo-fluxo" aria-label={CANTEIRO_ACAO_APLICAR}>
       <PassosDoAcervo
@@ -1745,6 +1826,14 @@ export function FormularioDoAcervo({
             onAlternar={onAlternar}
             submitting={submitting}
           />
+          {/* Indisponível COM o motivo nomeado ao lado — parcela a parcela, como a prévia o
+              trouxe. A tela não assume a recusa do servidor: ele continua recusando fechado
+              se o ato chegar mesmo assim. */}
+          {motivoDoBloqueio === null ? null : (
+            <p className="campo-aviso" role="alert">
+              {motivoDoBloqueio}
+            </p>
+          )}
           <div className="acoes-linha">
             <button
               type="button"
@@ -3239,9 +3328,21 @@ export function OrcamentoApp({
   // Matriz de contribuições (F-038 "decisão 6", ADR-0053). O que a orçamentista autora por
   // par `(elemento, código)` mora AQUI, na tela, e só vira `calc_matrix` no build — o
   // servidor é o portão final. `contribuicoes` é indexado por `contributionKey`.
-  const [contribuicoes, setContribuicoes] = useState<
-    Record<string, CalcContributionDraft>
-  >({});
+  const [rascunho, setRascunho] = useState<MatrixDraftState>(() =>
+    emptyMatrixDraft(roundId),
+  );
+  const contribuicoes = rascunho.drafts;
+  /**
+   * A leitura da matriz GRAVADA, por rodada (F-042 T5). `null` é "ainda não lida nesta
+   * rodada"; `aviso` preenchido é leitura recusada.
+   *
+   * A rodada mora DENTRO do estado de propósito: é o que faz a leitura de uma rodada nunca
+   * valer por outra, sem depender da ordem em que os efeitos zeram as coisas.
+   */
+  const [matrizGravada, setMatrizGravada] = useState<{
+    roundId: string;
+    aviso: string | null;
+  } | null>(null);
   // O par cuja contribuição está sendo autorada agora, e o rascunho do editor. `null` é o
   // editor fechado. `autoriaForm` começa sem base nem grandeza (nada nasce pré-marcado).
   const [autoriaAlvo, setAutoriaAlvo] = useState<{
@@ -3465,6 +3566,55 @@ export function OrcamentoApp({
   }, [autenticado, carregarEstado, carregarLista, orcamento]);
 
   /**
+   * Troca de rodada zera o rascunho da matriz — inclusive a que vem de FORA, pela prop
+   * `roundId` da casca, que não passa por `abrirOrcamento`. `openMatrixDraft` devolve o
+   * mesmo estado quando a rodada não mudou, então isto não re-renderiza à toa.
+   */
+  useEffect(() => {
+    setRascunho((atual) => openMatrixDraft(atual, orcamento));
+  }, [orcamento]);
+
+  /**
+   * A matriz de contribuições GRAVADA da rodada, lida de volta (F-042 T5).
+   *
+   * Sem ela a matriz tem dois donos: o `apply` do acervo grava no servidor e a montagem
+   * manda a matriz inteira que a TELA montou — depois de um recarregamento, montar apagava
+   * do banco o que o acervo tinha aplicado. O que a sessão autorou vence o gravado na mesma
+   * chave (`hydrateMatrixDraft`), e leitura de outra rodada é descartada.
+   *
+   * Fora de `carregarEstado`, como as outras leituras puras: o estado é relido a cada
+   * mutação e a cada volta do poll da extração.
+   */
+  const carregarMatrizGravada = useCallback(async () => {
+    const token = tokenDaSessao();
+    if (token === null || orcamento === null) {
+      return;
+    }
+    const rodada = orcamento;
+    try {
+      const gravada = await getCalcMatrix(token, rodada);
+      setRascunho((atual) => hydrateMatrixDraft(atual, rodada, gravada.calc_matrix));
+      setMatrizGravada({ roundId: rodada, aviso: null });
+    } catch (error) {
+      // Falha aqui NÃO é silenciosa e não é ignorável: sem saber o que está gravado, montar
+      // o orçamento apagaria o resto. O motivo fica escrito e a montagem fica indisponível.
+      setMatrizGravada({ roundId: rodada, aviso: describeError(error) });
+    }
+  }, [orcamento, tokenDaSessao]);
+
+  useEffect(() => {
+    if (!autenticado || orcamento === null) {
+      return;
+    }
+    // Uma leitura por rodada: lida (mesmo vazia) ou recusada, ela não é repetida. Quem a
+    // repete é o ato de reler, oferecido ao lado da montagem indisponível.
+    if (matrizGravada?.roundId === orcamento) {
+      return;
+    }
+    void carregarMatrizGravada();
+  }, [autenticado, carregarMatrizGravada, matrizGravada, orcamento]);
+
+  /**
    * O acervo desta rodada: leitura pura, sem `Idempotency-Key` e sem gravar nada.
    *
    * Ela não entra em `carregarEstado` de propósito. O estado é relido a cada mutação e a
@@ -3627,6 +3777,18 @@ export function OrcamentoApp({
       setCanteiroFluxo(null);
       setCanteiroRecusa(null);
       setCanteiroAplicacao(null);
+      // O rascunho da matriz é DA rodada: levá-lo adiante aplicaria a uma praça as
+      // contribuições de outra, e com a hidratação isso deixaria de ser sujeira de tela
+      // para virar corrupção silenciosa. Zerar aqui acontece antes de qualquer leitura da
+      // matriz gravada, que é keyed pela rodada e só pousa na dela.
+      setRascunho(emptyMatrixDraft(next));
+      setMatrizGravada(null);
+      // O editor aberto aponta para um par `(elemento, código)` da rodada ANTERIOR: salvá-lo
+      // depois da troca gravaria na praça nova uma contribuição autorada sobre a velha.
+      setAutoriaAlvo(null);
+      setAutoriaForm(null);
+      setAutoriaErro(null);
+      setMatrizErro(null);
       setTabelaEscolhida("");
       setTabelaPropria(false);
       setAuditoriaReprovada(null);
@@ -4138,16 +4300,19 @@ export function OrcamentoApp({
       return;
     }
     const chave = contributionKey(autoriaAlvo.itemId, autoriaAlvo.code);
-    setContribuicoes((atual) => ({ ...atual, [chave]: resultado.draft }));
+    setRascunho((atual) => ({
+      ...atual,
+      drafts: { ...atual.drafts, [chave]: resultado.draft },
+    }));
     fecharAutoria();
   };
 
   const removerContribuicao = (itemId: string, code: string) => {
     const chave = contributionKey(itemId, code);
-    setContribuicoes((atual) => {
-      const proximo = { ...atual };
+    setRascunho((atual) => {
+      const proximo = { ...atual.drafts };
       delete proximo[chave];
-      return proximo;
+      return { ...atual, drafts: proximo };
     });
     if (autoriaAlvo?.itemId === itemId && autoriaAlvo?.code === code) {
       fecharAutoria();
@@ -4234,11 +4399,14 @@ export function OrcamentoApp({
     setSubmitting(true);
     setCanteiroRecusa(null);
     try {
-      const previa = await postSiteSetupPreview(token, orcamento, {
-        kitId: canteiroFluxo.kitId,
-        parameters: parametrosDoCorpo(canteiroFluxo),
-        excludedParcelIds: canteiroFluxo.excluidos,
-      });
+      // Sem exclusões, sempre (`pedidoDaPrevia`): a prévia não devolve linha para parcela
+      // excluída, e citá-las aqui as faria SUMIR da tela — a removida tem de continuar
+      // visível e riscada. A remoção é local e só viaja no `apply`.
+      const previa = await postSiteSetupPreview(
+        token,
+        orcamento,
+        pedidoDaPrevia(canteiroFluxo),
+      );
       setCanteiroFluxo((atual) => (atual === null ? atual : receberPrevia(atual, previa)));
       setAlertMessage(null);
     } catch (error) {
@@ -4283,15 +4451,32 @@ export function OrcamentoApp({
         baseVersion: version,
       });
       aplicarVersao(resposta.version);
-      // As que nasceram são as da resposta menos as que o SERVIDOR declarou excluídas: a
-      // lista dele é a autoritativa sobre o que foi materializado.
+      // As que nasceram são as da resposta menos as que o SERVIDOR declarou excluídas ou
+      // bloqueadas: a lista dele é a autoritativa sobre o que foi materializado. Bloqueada
+      // não deveria chegar aqui — a aplicação recusa fechado —, e é justamente por isso que
+      // ela é filtrada: uma parcela sem quantidade não pode virar linha da matriz.
       const nascidas = resposta.rows.filter(
-        (row) => !resposta.excluded_parcel_ids.includes(row.parcel_id),
+        (row) =>
+          !resposta.excluded_parcel_ids.includes(row.parcel_id) &&
+          !parcelaBloqueada(resposta, row),
       );
       const novas = contribuicoesDoAcervo(kit, resposta, nascidas);
-      setContribuicoes((atual) =>
-        substituirParcelasDoAcervo(atual, kit.kit_id, novas),
-      );
+      setRascunho((atual) => ({
+        ...atual,
+        drafts: substituirParcelasDoAcervo(
+          atual.drafts,
+          kit.kit_id,
+          novas,
+          // Todos os `parcel_id` que esta aplicação tocou: as que nasceram MAIS as que o
+          // servidor ecoou como excluídas — a resposta não traz linha para a excluída. É
+          // por eles que a reaplicação alcança a parcela HIDRATADA, cuja proveniência não
+          // diz de qual acervo ela veio.
+          [
+            ...resposta.rows.map((row) => row.parcel_id),
+            ...resposta.excluded_parcel_ids,
+          ],
+        ),
+      }));
       setCanteiroAplicacao(
         registrarAplicacao(
           kit,
@@ -4325,6 +4510,18 @@ export function OrcamentoApp({
     const erroBdi = bdiPercentError(bdiInput);
     if (erroBdi !== null) {
       setAlertMessage(erroBdi);
+      return;
+    }
+    // A montagem manda a matriz INTEIRA, e ela é o que fica gravado. Sem ter lido o que já
+    // está no banco, montar gravaria só o que esta sessão viu — que é exatamente o defeito
+    // que a hidratação corrige. Indisponível com o motivo à vista, nunca disponível e
+    // destrutivo.
+    if (matrizGravada === null || matrizGravada.roundId !== orcamento) {
+      setAlertMessage(LENDO_MATRIZ_GRAVADA);
+      return;
+    }
+    if (matrizGravada.aviso !== null) {
+      setAlertMessage(`${AVISO_MATRIZ_GRAVADA_NAO_LIDA} ${matrizGravada.aviso}`);
       return;
     }
     // A matriz é montada do que foi autorado. Sem contribuição nenhuma, `null`: o build vai
@@ -4609,6 +4806,13 @@ export function OrcamentoApp({
     () => assembleCalcMatrix(Object.values(contribuicoes)),
     [contribuicoes],
   );
+  // A leitura da matriz gravada, nos dois estados que mudam o que a montagem pode fazer:
+  // em voo (a montagem espera) e recusada (a montagem fica indisponível, com o motivo).
+  const matrizGravadaPendente =
+    orcamento !== null && matrizGravada?.roundId !== orcamento;
+  const matrizGravadaFalhou =
+    matrizGravada?.roundId === orcamento && matrizGravada.aviso !== null;
+
   // As parcelas de canteiro da rodada: toda contribuição `STANDALONE`, do acervo ou da mão.
   // As duas convivem na mesma lista, distintas pelo selo de origem escrito por extenso.
   const parcelasDoCanteiro = useMemo(
@@ -5608,6 +5812,25 @@ export function OrcamentoApp({
               />
             </section>
 
+            {/* A etapa de códigos é onde se AUTORA sobre o que já está gravado: se a
+                leitura da matriz falhou, dizer isso aqui evita autorar em cima de uma base
+                desconhecida e reencontrar o problema só na montagem. */}
+            {matrizGravadaFalhou ? (
+              <div className="campo-aviso" role="alert">
+                <p>
+                  {AVISO_MATRIZ_GRAVADA_NAO_LIDA} {matrizGravada?.aviso}
+                </p>
+                <button
+                  type="button"
+                  className="botao-secundario"
+                  onClick={() => void carregarMatrizGravada()}
+                  disabled={submitting}
+                >
+                  {ACAO_RELER_MATRIZ_GRAVADA}
+                </button>
+              </div>
+            ) : null}
+
             {/* O painel do canteiro é seção própria desta etapa, IRMÃ da lista de
                 elementos (F-042, decisão 1 do pacote aprovado). Ele só aparece quando há
                 acervo a aplicar — ou quando a lista não pôde ser lida, que precisa ser
@@ -5993,6 +6216,29 @@ export function OrcamentoApp({
                   )}
                   <p className="dica">{AVISO_BDI}</p>
                   <p className="dica">{DESCRICAO_MONTAGEM}</p>
+                  {/* A montagem grava a matriz INTEIRA. Enquanto a tela não souber o que
+                      já está gravado, montar apagaria o resto — indisponível COM o motivo
+                      ao lado e com a saída oferecida, nunca só o botão apagado. */}
+                  {matrizGravadaPendente ? (
+                    <p className="campo-dica" role="status">
+                      {LENDO_MATRIZ_GRAVADA}
+                    </p>
+                  ) : null}
+                  {matrizGravadaFalhou ? (
+                    <div className="campo-aviso" role="alert">
+                      <p>
+                        {AVISO_MATRIZ_GRAVADA_NAO_LIDA} {matrizGravada?.aviso}
+                      </p>
+                      <button
+                        type="button"
+                        className="botao-secundario"
+                        onClick={() => void carregarMatrizGravada()}
+                        disabled={submitting}
+                      >
+                        {ACAO_RELER_MATRIZ_GRAVADA}
+                      </button>
+                    </div>
+                  ) : null}
                   {/* Recusa de ORDEM da matriz (ciclo/auto-referência): por extenso, antes
                       da viagem, nunca escondida atrás do clique de montar. */}
                   {matrizErro === null ? null : (
@@ -6004,7 +6250,12 @@ export function OrcamentoApp({
                     <button
                       type="submit"
                       className="botao-primario"
-                      disabled={submitting || bdiPercentError(bdiInput) !== null}
+                      disabled={
+                        submitting ||
+                        bdiPercentError(bdiInput) !== null ||
+                        matrizGravadaPendente ||
+                        matrizGravadaFalhou
+                      }
                     >
                       {submitting ? "Montando…" : "Montar orçamento"}
                     </button>

@@ -4,6 +4,7 @@ import {
   associatePlate,
   createEstimate,
   createPlateExtraction,
+  getCalcMatrix,
   getCodes,
   getEstimate,
   getEstimateState,
@@ -764,6 +765,22 @@ describe("acervo de parcelas de canteiro", () => {
     // Decimal atravessa como TEXTO: nenhum parâmetro vira número de JSON no caminho.
     const parametros = corpoDaChamada().parameters as Record<string, unknown>;
     expect(typeof parametros["semiperímetro"]).toBe("string");
+  });
+
+  /**
+   * A leitura de volta da matriz gravada (F-042 T5). Ela existe porque a matriz tinha dois
+   * donos: sem ela, montar o orçamento depois de um recarregamento apagava do banco o que o
+   * acervo tinha aplicado.
+   */
+  it("a matriz gravada é leitura pura, sob a rodada e sem chave de idempotência", async () => {
+    await getCalcMatrix(TOKEN, ROUND);
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/estimate-rounds/${ROUND}/calc-matrix`,
+    );
+    expect(chamadas[0].init?.method ?? "GET").toBe("GET");
+    expect(headersDaChamada().Authorization).toBe(`Bearer ${TOKEN}`);
+    expect(headersDaChamada()).not.toHaveProperty("Idempotency-Key");
   });
 
   it("a recusa do parâmetro faltante chega com a lista de TODOS os que faltam", async () => {

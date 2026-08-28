@@ -1181,6 +1181,35 @@ export function postSiteSetupApply(
 }
 
 /**
+ * A matriz de contribuições GRAVADA da rodada. `calc_matrix: null` é a rodada que nunca
+ * teve matriz — o regime legado —, e não é o mesmo que uma matriz vazia.
+ */
+export type CalcMatrixResponse = {
+  round_id: string;
+  version: number;
+  calc_matrix: CalcMatrix | null;
+};
+
+/**
+ * Lê a matriz gravada da rodada. Leitura PURA: sem `Idempotency-Key`, sem `base_version` e
+ * sem gravar nada.
+ *
+ * Ela existe porque a matriz tinha dois donos: o `apply` do acervo (F-042) grava no
+ * servidor, e a tela mandava no build a matriz montada só do que a sessão viu. Depois de um
+ * recarregamento, montar o orçamento apagava do banco o que o acervo tinha aplicado. É por
+ * esta rota que o rascunho volta a partir do que está gravado.
+ */
+export function getCalcMatrix(
+  accessToken: string,
+  roundId: string,
+): Promise<CalcMatrixResponse> {
+  return apiJson<CalcMatrixResponse>(
+    roundPath(roundId, "/calc-matrix"),
+    accessToken,
+  );
+}
+
+/**
  * Monta o orçamento-base — e **só** monta (ADR-0046, decisão 2). Nenhuma planilha nasce
  * daqui desde a F-035: publicar é `postExportEstimate`, atrás do portão de aprovação.
  *

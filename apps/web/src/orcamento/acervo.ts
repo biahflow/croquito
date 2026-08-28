@@ -24,6 +24,14 @@
  *   nunca altera as demais;
  * - **reaplicar substitui as do mesmo acervo e nunca toca as autoradas à mão**
  *   (`substituirParcelasDoAcervo` filtra por `kitId`, não por base).
+ *
+ * Emenda de 2026-08-28 à decisão 5 do pacote, aprovada pelo dono: a recusa por parâmetro
+ * faltante continua sendo falha FECHADA — nada é materializado pela metade —, mas ela
+ * deixou de acontecer ANTES da prévia. A prévia MARCA a parcela que não pode nascer
+ * (`parcelaBloqueada`) e o portão do ato passa a exigir que nenhuma bloqueada continue na
+ * aplicação (`podeAplicar`). É o que abre a saída que a própria copy da recusa prometia —
+ * "remova na pré-visualização as parcelas que os citam" — e que não existia, porque a
+ * recusa vinha antes de haver pré-visualização onde remover.
  */
 
 import { parseDecimalInput } from "./format";
@@ -69,28 +77,57 @@ export type SiteSetupKitListResponse = {
   kits: SiteSetupKit[];
 };
 
-/** Operando impresso da parcela; `value` é decimal em texto, como o servidor o mandou. */
+/**
+ * Operando impresso da parcela; `value` é decimal em texto, como o servidor o mandou.
+ *
+ * `value: null` é o operando que NÃO pôde ser calculado — o parâmetro que ele cita não foi
+ * declarado —, e `parameter` diz de qual parâmetro de obra ele sai. Os dois juntos são o
+ * que permite a linha bloqueada dizer o que falta em vez de mostrar uma conta pela metade.
+ */
 export type SiteSetupOperand = {
   name: string;
-  value: string;
+  value: string | null;
   unit: string | null;
+  parameter: string | null;
 };
 
 /**
  * Uma parcela na pré-visualização, com a CONTA à vista: os operandos nomeados que vão sair
  * impressos na memória de cálculo, e a quantidade que o servidor computou deles.
+ *
+ * A prévia MARCA em vez de recusar: a parcela que não pode nascer volta com
+ * `missing_parameters` (e então sem quantidade, porque a conta não fecha) ou com
+ * `code_absent` (e então COM quantidade: a conta fecha, o que falta é o código no catálogo
+ * desta rodada). As outras continuam calculadas. Era a recusa antecipada que fechava a
+ * saída prometida pela própria copy — "remova na pré-visualização as parcelas que os
+ * citam" —, porque a prévia nem existia.
  */
 export type SiteSetupRow = {
   parcel_id: string;
   code: string;
   label: string;
   operands: SiteSetupOperand[];
-  quantity: string;
+  /** `null` é AUSÊNCIA de quantidade — a parcela não pôde ser calculada —, nunca zero. */
+  quantity: string | null;
+  /** Os parâmetros de obra que ESTA parcela cita e que não foram declarados. */
+  missing_parameters: string[];
+  /** `true` quando o código da parcela não existe no catálogo desta rodada. */
+  code_absent: boolean;
 };
 
 /**
  * A pré-visualização: não avança versão e não grava nada. É o controle do risco central da
  * feature — o ganho é não digitar, e o risco é aplicar sem olhar.
+ *
+ * `rows` traz linha só para as parcelas NÃO excluídas no pedido, e `excluded_parcel_ids`
+ * ecoa o que foi pedido. É por isso que a tela pede a prévia sem exclusão nenhuma
+ * (`pedidoDaPrevia`) e remove localmente: uma linha que sumisse da resposta não teria de
+ * onde voltar, e o desenho exige que a removida continue visível e riscada.
+ *
+ * `blocked_parcel_ids` é a lista do SERVIDOR sobre o que não pode nascer, e ela já ignora
+ * as excluídas. A tela não a substitui pelo que lê das linhas: as duas se somam, para que
+ * um bloqueio que o servidor conheça e a linha não nomeie continue bloqueando (falha
+ * fechada) em vez de virar uma parcela aplicada em silêncio.
  */
 export type SiteSetupPreviewResponse = {
   round_id: string;
@@ -99,6 +136,7 @@ export type SiteSetupPreviewResponse = {
   kit_version: number;
   rows: SiteSetupRow[];
   excluded_parcel_ids: string[];
+  blocked_parcel_ids: string[];
 };
 
 /**
@@ -195,19 +233,47 @@ export function voltarParaParametros(fluxo: FluxoDoAcervo): FluxoDoAcervo {
 }
 
 /**
- * Recebe a pré-visualização e entra no passo 3. A resposta traz as exclusões que o servidor
- * conhece; a tela adota a lista dele, que é a autoritativa sobre o que foi calculado.
+ * O pedido da pré-visualização a partir do fluxo — **sem exclusão nenhuma, sempre**.
+ *
+ * A prévia devolve linha só para as parcelas NÃO excluídas (contrato da rota, confirmado
+ * pela T4 em 2026-08-28): pedir a prévia citando as removidas as faria SUMIR da resposta, e
+ * o pacote de design exige que a parcela removida continue visível e riscada, com "Trazer
+ * de volta". Nenhuma rota devolve as parcelas cruas do acervo fora da prévia, então uma
+ * linha que sumisse não teria de onde voltar.
+ *
+ * A remoção é, portanto, LOCAL: ela marca o `parcel_id` no estado e só viaja no `apply`.
+ */
+export function pedidoDaPrevia(fluxo: FluxoDoAcervo): {
+  kitId: string;
+  parameters: Record<string, string>;
+  excludedParcelIds: readonly string[];
+} {
+  return {
+    kitId: fluxo.kitId,
+    parameters: parametrosDoCorpo(fluxo),
+    excludedParcelIds: [],
+  };
+}
+
+/**
+ * Recebe a pré-visualização e entra no passo 3.
+ *
+ * As marcações LOCAIS de remoção sobrevivem a uma prévia nova: a prévia é pedida sem
+ * exclusões (`pedidoDaPrevia`), então a lista que a resposta ecoa vem vazia — adotá-la
+ * apagaria o que a pessoa removeu ao trocar um parâmetro e pedir a conta de novo. O que o
+ * servidor declarar excluído entra por cima, porque sobre isso ele é a autoridade.
  */
 export function receberPrevia(
   fluxo: FluxoDoAcervo,
   previa: SiteSetupPreviewResponse,
 ): FluxoDoAcervo {
-  return {
-    ...fluxo,
-    passo: "previa",
-    previa,
-    excluidos: [...previa.excluded_parcel_ids],
-  };
+  const excluidos = [...fluxo.excluidos];
+  for (const parcelId of previa.excluded_parcel_ids) {
+    if (!excluidos.includes(parcelId)) {
+      excluidos.push(parcelId);
+    }
+  }
+  return { ...fluxo, passo: "previa", previa, excluidos };
 }
 
 /**
@@ -238,35 +304,107 @@ export function podeAvancarParaParametros(fluxo: FluxoDoAcervo): boolean {
 /**
  * Passo 2 → 3: pedir a prévia depende de haver acervo escolhido, e só disso.
  *
- * Campo vazio NÃO barra aqui de propósito. Quem recusa por parâmetro faltante é o servidor,
- * que nomeia TODOS os que faltam de uma vez (`SITE_SETUP_PARAMETER_MISSING`) — e ele é
- * quem sabe quais parcelas citam quais parâmetros, dado que o acervo só declara a contagem.
- * Barrar no cliente trocaria a recusa que nomeia por um botão apagado que não explica nada.
+ * Campo vazio NÃO barra aqui de propósito, e agora menos ainda: a prévia com parâmetro
+ * faltante é justamente onde se lê QUAIS parcelas o citam — o acervo só declara a contagem,
+ * e quem sabe é o servidor. Barrar no cliente esconderia essa leitura atrás de um botão
+ * apagado que não explica nada.
  */
 export function podePreVisualizar(fluxo: FluxoDoAcervo): boolean {
   return fluxo.kitId !== "";
 }
 
-/** As parcelas que vão nascer: as da prévia menos as removidas. */
+/**
+ * `true` quando a parcela NÃO pode nascer nesta rodada: falta parâmetro que ela cita, o
+ * código dela não está no catálogo, ou o servidor a declarou bloqueada.
+ *
+ * A união das três é falha FECHADA de propósito: um bloqueio que o servidor conheça e a
+ * linha não nomeie continua bloqueando — o modo de falha caro da feature é a planilha
+ * parcial com aparência de completa.
+ */
+export function parcelaBloqueada(
+  previa: SiteSetupPreviewResponse,
+  row: SiteSetupRow,
+): boolean {
+  return (
+    row.code_absent ||
+    row.missing_parameters.length > 0 ||
+    previa.blocked_parcel_ids.includes(row.parcel_id)
+  );
+}
+
+/**
+ * As parcelas bloqueadas que AINDA estão na aplicação — bloqueada e removida não bloqueia
+ * mais nada, e é exatamente essa a saída que a copy da recusa prometia e que não existia:
+ * remover as duas que não podem nascer deixa as outras vinte e duas aplicáveis.
+ */
+export function parcelasBloqueadas(fluxo: FluxoDoAcervo): SiteSetupRow[] {
+  if (fluxo.previa === null) {
+    return [];
+  }
+  const previa = fluxo.previa;
+  return previa.rows.filter(
+    (row) => !fluxo.excluidos.includes(row.parcel_id) && parcelaBloqueada(previa, row),
+  );
+}
+
+/** Os parâmetros que as parcelas bloqueadas citam, sem repetir e na ordem de aparição. */
+export function parametrosBloqueantes(fluxo: FluxoDoAcervo): string[] {
+  const nomes: string[] = [];
+  for (const row of parcelasBloqueadas(fluxo)) {
+    for (const nome of row.missing_parameters) {
+      if (!nomes.includes(nome)) {
+        nomes.push(nome);
+      }
+    }
+  }
+  return nomes;
+}
+
+/** Os códigos das parcelas bloqueadas por ausência no catálogo, na ordem de aparição. */
+export function codigosBloqueantes(fluxo: FluxoDoAcervo): string[] {
+  const codigos: string[] = [];
+  for (const row of parcelasBloqueadas(fluxo)) {
+    if (row.code_absent && !codigos.includes(row.code)) {
+      codigos.push(row.code);
+    }
+  }
+  return codigos;
+}
+
+/**
+ * As parcelas que vão nascer: as da prévia menos as removidas e menos as bloqueadas.
+ *
+ * A bloqueada sai da conta sem sair da tela, como a removida: contá-la faria o botão
+ * prometer vinte e quatro parcelas para materializar vinte e duas.
+ */
 export function parcelasAplicaveis(fluxo: FluxoDoAcervo): SiteSetupRow[] {
   if (fluxo.previa === null) {
     return [];
   }
-  return fluxo.previa.rows.filter((row) => !fluxo.excluidos.includes(row.parcel_id));
+  const previa = fluxo.previa;
+  return previa.rows.filter(
+    (row) => !fluxo.excluidos.includes(row.parcel_id) && !parcelaBloqueada(previa, row),
+  );
 }
 
 /**
  * O portão do ato: **não existe caminho que aplique sem passar pela pré-visualização**.
  *
- * Exige estar no passo 3, com uma prévia do acervo escolhido e ao menos uma parcela por
- * nascer. É a leitura em código do risco declarado na feature — "o ganho é justamente não
- * digitar, e o risco é a orçamentista aplicar sem olhar".
+ * Exige estar no passo 3, com uma prévia do acervo escolhido, ao menos uma parcela por
+ * nascer e NENHUMA parcela bloqueada ainda na aplicação. É a leitura em código do risco
+ * declarado na feature — "o ganho é justamente não digitar, e o risco é a orçamentista
+ * aplicar sem olhar" — mais a decisão 5 do pacote, que proíbe materializar "o que dá".
+ *
+ * A tela não assume a recusa do servidor: ele continua recusando fechado se o ato chegar
+ * mesmo assim. O que mudou é que agora a tela sabe, parcela a parcela, o que falta — e por
+ * isso pode dizer o motivo ao lado do controle em vez de só apagá-lo.
  */
 export function podeAplicar(fluxo: FluxoDoAcervo): boolean {
   return (
     fluxo.passo === "previa" &&
     fluxo.previa !== null &&
     fluxo.previa.kit_id === fluxo.kitId &&
+    parcelasBloqueadas(fluxo).length === 0 &&
     parcelasAplicaveis(fluxo).length > 0
   );
 }
@@ -364,14 +502,25 @@ export function contribuicoesDoAcervo(
       parcelId: row.parcel_id,
     },
     // A quantidade que o SERVIDOR computou, guardada para ser exibida — nunca recomputada,
-    // e nunca reenviada: o fio leva os operandos, e o subtotal é do servidor.
-    kitQuantity: row.quantity,
+    // e nunca reenviada: o fio leva os operandos, e o subtotal é do servidor. Parcela sem
+    // quantidade não chega aqui (bloqueada não nasce), e se chegasse a chave some em vez de
+    // a tela inventar um número.
+    ...(row.quantity === null ? {} : { kitQuantity: row.quantity }),
   }));
 }
 
-/** Operando do fio → linha do rascunho; unidade ausente vira `""`, que é como a tela a lê. */
+/**
+ * Operando do fio → linha do rascunho; unidade ausente vira `""`, que é como a tela a lê.
+ *
+ * Valor ausente vira `""` pela mesma razão: campo vazio é o que a tela sabe editar, e não
+ * há operando ausente entre as parcelas que NASCERAM — a bloqueada não é aplicada.
+ */
 function paraOperandDraft(operand: SiteSetupOperand): OperandDraft {
-  return { name: operand.name, value: operand.value, unit: operand.unit ?? "" };
+  return {
+    name: operand.name,
+    value: operand.value ?? "",
+    unit: operand.unit ?? "",
+  };
 }
 
 /**
@@ -380,15 +529,29 @@ function paraOperandDraft(operand: SiteSetupOperand): OperandDraft {
  * O filtro é por `kitId`, não por base: parcela `STANDALONE` autorada à mão tem a mesma
  * base e não pode ser varrida por uma reaplicação — ela é trabalho de gente sobre esta
  * praça. Parcelas de OUTRO acervo também ficam.
+ *
+ * `parcelasDoAcervo` são os `parcel_id` que a aplicação tocou: as linhas que nasceram mais
+ * as que a resposta ecoou como excluídas — a prévia e a aplicação não devolvem linha para
+ * parcela excluída, e sem o eco a removida ficaria de fora. Ele existe por causa da
+ * hidratação: a matriz
+ * gravada leva `{kit_version, parcel_id}` e NÃO leva a identidade do acervo, então a
+ * parcela reconstruída da leitura tem `kitId` vazio e o filtro por acervo não a alcança.
+ * Sem esta lista, reaplicar depois de recarregar deixaria de pé, em silêncio, a parcela que
+ * a nova aplicação removeu.
  */
 export function substituirParcelasDoAcervo(
   contribuicoes: Readonly<Record<string, CalcContributionDraft>>,
   kitId: string,
   novas: readonly CalcContributionDraft[],
+  parcelasDoAcervo: readonly string[] = [],
 ): Record<string, CalcContributionDraft> {
   const proximo: Record<string, CalcContributionDraft> = {};
   for (const [chave, draft] of Object.entries(contribuicoes)) {
-    if (draft.kitOrigin?.kitId !== kitId) {
+    const origem = draft.kitOrigin;
+    const doMesmoAcervo =
+      origem !== undefined &&
+      (origem.kitId === kitId || parcelasDoAcervo.includes(origem.parcelId));
+    if (!doMesmoAcervo) {
       proximo[chave] = draft;
     }
   }
@@ -407,4 +570,31 @@ export function parcelasDeCanteiro(
   contribuicoes: Readonly<Record<string, CalcContributionDraft>>,
 ): CalcContributionDraft[] {
   return Object.values(contribuicoes).filter((draft) => draft.basis === "standalone");
+}
+
+/** Quantas parcelas de acervo a rodada tem, por versão de acervo, na ordem de aparição. */
+export type AcervoGravado = { kitVersion: number; parcelas: number };
+
+/**
+ * O que a matriz GRAVADA diz sobre acervo: quantas parcelas, de qual versão. É o carimbo
+ * possível depois de um recarregamento — a matriz não guarda a identidade do acervo nem os
+ * parâmetros que foram declarados, e nada disso é deduzido aqui.
+ */
+export function acervoGravado(
+  parcelas: readonly CalcContributionDraft[],
+): AcervoGravado[] {
+  const porVersao: AcervoGravado[] = [];
+  for (const parcela of parcelas) {
+    const versao = parcela.kitOrigin?.kitVersion;
+    if (versao === undefined) {
+      continue;
+    }
+    const entrada = porVersao.find((atual) => atual.kitVersion === versao);
+    if (entrada === undefined) {
+      porVersao.push({ kitVersion: versao, parcelas: 1 });
+    } else {
+      entrada.parcelas += 1;
+    }
+  }
+  return porVersao;
 }
