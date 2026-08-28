@@ -30,6 +30,12 @@ planilha `.xlsx` de "memória de cálculo" — formato completamente diferente, 
 `item_id`/`CodeAssignment` nenhum. `scan_memoria_rows`/`worksite_precedents_from_memoria`,
 no fim deste arquivo, interpretam esse formato — ainda em domínio puro, sobre linhas já
 lidas por fora (`croquito_worker.valuation.memoria_reader` é quem abre o `.xlsx` real).
+
+A T2 acrescentou ao fim do arquivo o **contrato do pacote de semeadura**
+(`PrecedentSeedPacket`), que é a única coisa deste módulo que o índice de precedentes usa.
+Continua valendo que quem MEDE é este módulo e quem INDEXA é `croquito_api.precedents`: o
+pacote mora aqui porque as duas pontas dele — a extração local, no worker, e a ingestão, na
+API — precisam do mesmo contrato, e um contrato escrito duas vezes divergiria.
 """
 
 from __future__ import annotations
@@ -41,10 +47,23 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
+from pydantic import Field
+
 from croquito_valuation import catalog
 from croquito_valuation.errors import ValuationValidationError
+from croquito_valuation.models import WORKSITE_KEY_PATTERN, ValuationContractModel
 
 MIN_WORKSITES_FOR_MEASUREMENT: Final = 2
+
+PRICE_SOURCE_UNDECLARED: Final = ""
+"""Fonte de preço de uma confirmação que não citou catálogo.
+
+Uma rodada com um catálogo só (o normal da medição licitada) grava
+`CodeAssignment.catalog_sha256=None`; aqui essa ausência vira a string vazia, que é uma
+chave válida e estável — e continua sendo uma chave PRÓPRIA, que nunca casa com a de um
+catálogo citado. Mora neste módulo, e não em quem lê, porque a medição (`precedent_eval`)
+e o índice (`croquito_api.precedents`) precisam do MESMO valor: dois "undeclared"
+diferentes partiriam o índice em dois sem ninguém ver."""
 
 
 class NormalizationStrategy(StrEnum):
@@ -466,3 +485,60 @@ def worksite_precedents_from_memoria(
         labels_by_item[item_id] = block.label
         confirmed_codes.append((item_id, block.code, price_source))
     return build_worksite_precedents(worksite_key, labels_by_item, confirmed_codes)
+
+
+# --------------------------------------------------------------------------------------
+# Pacote de semeadura: o contrato que liga a extração local (CLI) à ingestão (API)
+# --------------------------------------------------------------------------------------
+#
+# Fonte B do índice de precedentes (F-044 T2). Mora aqui, no domínio puro, porque as duas
+# pontas precisam do MESMO contrato: quem produz é `croquito_worker.valuation.
+# precedent_extract` (lendo a planilha do cliente na máquina de quem roda) e quem consome é
+# `croquito_api.precedents` (a rota `POST /v1/precedents/seed`). A planilha do cliente
+# NUNCA sobe — sobe este pacote, que é rótulo, código e fonte, o mesmo dado que as revisões
+# já guardam.
+
+PRECEDENT_LABEL_MAX_LENGTH: Final = 200
+"""Mesmo teto de `TakeoffItem.label`: os dois lados do índice são o mesmo rótulo."""
+
+PRECEDENT_CODE_MAX_LENGTH: Final = 40
+PRECEDENT_PRICE_SOURCE_MAX_LENGTH: Final = 200
+
+
+class PrecedentSeedObservation(ValuationContractModel):
+    """Uma observação de precedente de uma praça passada: rótulo, código e fonte de preço.
+
+    `label_normalized` viaja junto do original **de propósito**, e não é decoração: a
+    ingestão recalcula a normalização com a estratégia declarada no pacote e RECUSA quando o
+    resultado difere. É como uma divergência entre a versão do extrator e a do servidor
+    aparece como recusa nomeada em vez de virar, em silêncio, uma chave de índice que nunca
+    reencontra nada.
+    """
+
+    label_original: str = Field(min_length=1, max_length=PRECEDENT_LABEL_MAX_LENGTH)
+    label_normalized: str = Field(min_length=1, max_length=PRECEDENT_LABEL_MAX_LENGTH)
+    code: str = Field(min_length=1, max_length=PRECEDENT_CODE_MAX_LENGTH)
+    price_source: str = Field(max_length=PRECEDENT_PRICE_SOURCE_MAX_LENGTH)
+    """Vazio é `PRICE_SOURCE_UNDECLARED`, uma chave própria — nunca um curinga."""
+
+
+class PrecedentSeedPacket(ValuationContractModel):
+    """O que uma praça passada contribui para o índice, sem que a planilha dela suba.
+
+    `worksite_key` segue `WORKSITE_KEY_PATTERN`, o mesmo espaço de chave das rodadas reais,
+    porque é justamente contra elas que a colisão é conferida na ingestão: uma praça semeada
+    com chave de outro formato jamais colidiria, e a contagem de praças — que é o argumento
+    de autoridade que a tela mostra — passaria a contar a mesma praça duas vezes.
+
+    Os quatro contadores de bloco não entram no índice e existem para o pacote poder ser
+    LIDO por gente: bloco item+código que terminou sem rótulo é contado e nomeado pela
+    linha, nunca descartado em silêncio (a mesma disciplina de `MemoriaSourceReport`).
+    """
+
+    worksite_key: str = Field(pattern=WORKSITE_KEY_PATTERN)
+    normalization_strategy: NormalizationStrategy
+    observations: tuple[PrecedentSeedObservation, ...] = ()
+    block_count: int = Field(default=0, ge=0)
+    labeled_block_count: int = Field(default=0, ge=0)
+    unlabeled_block_count: int = Field(default=0, ge=0)
+    unlabeled_block_rows: tuple[int, ...] = ()

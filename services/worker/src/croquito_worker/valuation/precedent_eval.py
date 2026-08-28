@@ -25,8 +25,9 @@ Escolhas de leitura que ficam registradas aqui, e só aqui:
   não da confirmação. Medir sobre o dado que a confirmação de fato grava evita inventar
   uma fonte que a leitura não sustenta. Rodada com um catálogo só (o normal da medição
   licitada — ver docstring de `CodeAssignment`) grava `catalog_sha256=None`; aqui essa
-  ausência vira a string vazia (`PRICE_SOURCE_UNDECLARED`), uma chave válida e estável
-  dentro da mesma execução.
+  ausência vira a string vazia (`PRICE_SOURCE_UNDECLARED`, importada de
+  `croquito_valuation.precedent` desde a T2, para que a medição e o índice de precedentes
+  usem o MESMO valor), uma chave válida e estável dentro da mesma execução.
 - **Fonte de preço da memória de cálculo** (entrada C): a aba não grava `catalog_sha256`
   nenhum — a lista de preços é a do CONTRATO, uma só por arquivo, nunca por linha
   (`MEMORIA_PRICE_SOURCE`, string legível, nunca um hash inventado). As praças lidas por
@@ -64,6 +65,7 @@ from pydantic import ValidationError
 from croquito_valuation.assignment import CodeAssignmentSet
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.precedent import (
+    PRICE_SOURCE_UNDECLARED,
     RepetitionReport,
     WorksitePrecedents,
     build_worksite_precedents,
@@ -74,8 +76,6 @@ from croquito_valuation.precedent import (
 from croquito_valuation.takeoff import TakeoffPacket
 from croquito_worker.io_utils import atomic_write_text
 from croquito_worker.valuation.memoria_reader import read_memoria_sheet
-
-PRICE_SOURCE_UNDECLARED: Final = ""
 
 MEMORIA_PRICE_SOURCE: Final = "memoria-xlsx:lista-de-precos-do-contrato"
 """Fonte de preço única para toda leitura `--memoria` de uma execução (ver docstring do

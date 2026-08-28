@@ -23,10 +23,23 @@
  * `.app-shell`, que já fixa `min-width: 1180px` na casca (a decisão mora lá, e uma
  * segunda declaração criaria duas fontes de verdade para o mesmo número).
  *
+ * **Uma cor nova, e só uma.** A afirmação "nenhuma cor nova" acima valeu até a F-044: o
+ * Design Approval Package do precedente de código (revisão 1, aprovada em 2026-08-28)
+ * introduz a família `--precedente*` em índigo, declarada como NOVA na tabela de
+ * proveniência dele. O índigo foi escolhido por não colidir com nenhum significado já em
+ * uso nesta jornada — verde = confirmado, âmbar = atenção, vermelho = recusa, cinza =
+ * observação da máquina. Ela vive no escopo desta jornada, e não na paleta da marca:
+ * quem a usa é um bloco só.
+ *
  * Regra que o CSS precisa respeitar: cor nunca é o único indicador. Todo estado —
  * etapa, item, origem do preço, posição na cascata — tem texto ao lado.
  */
 .jornada-orcamento {
+  /* Família do precedente (F-044). Ver o parágrafo acima: é a única cor nova da folha. */
+  --precedente: #4a4a9c;
+  --precedente-soft: #eeeef8;
+  --precedente-line: #c2c2e4;
+  --precedente-ink: #2f2f6b;
 
 button,
 a {
@@ -468,6 +481,13 @@ p {
   gap: 2px;
 }
 
+/* O selo do elemento (hoje, o precedente da F-044) fica do tamanho do texto que ele
+   carrega: numa coluna, o padrão esticaria a pastilha de ponta a ponta e ela deixaria de
+   parecer o que é. */
+.item-corpo .selo {
+  align-self: flex-start;
+}
+
 .item-rotulo {
   font-weight: 600;
 }
@@ -738,6 +758,130 @@ p {
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 8px;
+}
+
+/* Precedente de código (F-044) ---------------------------------------------
+ *
+ * O bloco vive ACIMA dos blocos por fonte e não os altera: a lista de códigos dentro dele
+ * é a mesma `.codigos`/`.codigo-card` da cascata, para que nada aqui vire um segundo jeito
+ * de desenhar um código. O que o distingue são TRÊS sinais, e só um deles é cor: o
+ * cabeçalho escrito com a contagem de praças, a borda esquerda e a tinta índigo.
+ */
+
+.bloco-precedente {
+  margin-bottom: 12px;
+  border: 1px solid var(--precedente-line);
+  border-left: 3px solid var(--precedente);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.bloco-precedente-cabeca {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 11px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--precedente-ink);
+  background: var(--precedente-soft);
+  border-bottom: 1px solid var(--precedente-line);
+}
+
+.bloco-precedente .codigos {
+  margin: 0;
+  padding: 10px 11px 0;
+}
+
+.bloco-precedente .acoes-linha {
+  padding: 0 11px 11px;
+  margin-top: 0;
+  align-items: center;
+}
+
+.selo-precedente {
+  border-color: var(--precedente-line);
+  color: var(--precedente);
+}
+
+/* O código que não veio em todas as praças do rótulo (decisão 8 do pacote, revisão 2). O
+   âmbar é o mesmo de `.aviso-precedente-fraco` — ATENÇÃO, e não a recusa vermelha do
+   `.selo-atencao`, que neste mesmo cartão já significa outra coisa (unidade diferente). A
+   fração vai escrita dentro do selo: a cor é redundância da palavra. */
+.selo-precedente-parcial {
+  border-color: #e2c79a;
+  background: #fdf5e8;
+  color: #7c5210;
+}
+
+/* O botão que põe o pacote À VISTA — ele não grava nada, e por isso não veste o verde do
+   ato: quem grava é o `.botao-primario` da confirmação. */
+.botao-precedente {
+  padding: 9px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--precedente-line);
+  color: var(--precedente-ink);
+  background: var(--surface);
+  font-weight: 600;
+}
+
+/* Nota do bloco, na mesma tinta: por que o código aparece duas vezes, e o que o clique
+   grava. Texto, não decoração. */
+.aviso-precedente {
+  margin: 8px 0 0;
+  padding: 9px 11px;
+  font-size: 0.8rem;
+  border: 1px solid var(--precedente-line);
+  border-radius: 6px;
+  background: var(--precedente-soft);
+  color: var(--precedente-ink);
+}
+
+/* Precedente de uma praça só, e pacote em que algum código veio de menos praças que o
+   rótulo. O âmbar é o mesmo de `.preview-cena-aviso` (`apps/web/src/styles.css`), citado
+   como procedência pelo pacote de design; a frase inteira vai escrita nos dois casos,
+   porque é ela que carrega o aviso. */
+.aviso-precedente-fraco,
+.aviso-precedente-parcial {
+  margin: 8px 0 0;
+  padding: 9px 11px;
+  font-size: 0.8rem;
+  border: 1px solid #e2c79a;
+  border-radius: 6px;
+  background: #fdf5e8;
+  color: #7c5210;
+}
+
+/* A lista do que vai ser gravado, antes de gravar. Tracejada de propósito: ela é uma
+   promessa do que o clique fará, e não um registro do que já existe. */
+.precedente-confirmacao {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--precedente-line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.precedente-confirmacao h4 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+}
+
+.precedente-confirmacao-lista {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.precedente-confirmacao-lista li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.82rem;
 }
 
 .selo {

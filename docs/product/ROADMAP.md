@@ -99,7 +99,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-041 | HIGH | READY_FOR_PLANNING | [O braço semântico roda no caminho hospedado](../features/F-041-braco-semantico-hospedado/feature.md) |
 | F-042 | HIGH | IN_PROGRESS | [O canteiro sai de um acervo parametrizado, não da digitação](../features/F-042-acervo-de-parcelas-de-canteiro/feature.md) |
 | F-043 | HIGH | IN_PROGRESS | [A planilha sai no gabarito da prefeitura, com memória de cálculo](../features/F-043-planilha-no-gabarito-da-prefeitura/feature.md) |
-| F-044 | MEDIUM | IN_PROGRESS | [A shortlist aprende com as decisões de código já tomadas](../features/F-044-precedente-de-codigo/feature.md) |
+| F-044 | HIGH | IN_PROGRESS | [A shortlist aprende com as decisões de código já tomadas](../features/F-044-precedente-de-codigo/feature.md) |
 | F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 | F-031 | MEDIUM | READY_FOR_HUMAN_REVIEW | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — branch isolada `feat/f-031-value-events`, não integra no MVP |
 

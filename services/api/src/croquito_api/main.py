@@ -38,7 +38,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from croquito_api import estimate_rounds, site_setup_kits
+from croquito_api import estimate_rounds, precedents, site_setup_kits
 from croquito_api.auth import (
     OidcAuthenticator,
     Principal,
@@ -220,6 +220,7 @@ from croquito_valuation.models import (
     PriceOrigin,
     Valuation,
 )
+from croquito_valuation.precedent import PrecedentSeedPacket
 from croquito_valuation.site_setup import (
     SiteSetupKit,
     apply_site_setup_kit,
@@ -562,6 +563,22 @@ class PublishSiteSetupKitRequest(ApiModel):
 
     name: str = Field(min_length=3, max_length=200)
     document: dict[str, Any]
+
+
+class PrecedentSeedResponse(ApiModel):
+    """O que a semeadura do índice de precedentes fez, em contagens.
+
+    Nenhum rótulo volta pelo fio: quem semeou tem o pacote em mãos, e devolvê-lo mastigado
+    só faria texto de cliente atravessar a fronteira mais uma vez sem necessidade.
+
+    `observations_skipped` é a metade que prova a idempotência: reingerir a mesma praça
+    devolve `observations_ingested: 0`, e a contagem de praças do índice não se move.
+    """
+
+    worksite_key: str
+    observations_ingested: int
+    observations_skipped: int
+    labels: int
 
 
 class SiteSetupKitResponse(ApiModel):
@@ -2156,12 +2173,28 @@ class EstimateCodeAssignmentDecisionRequest(ApiModel):
     ordem da cascata seria a máquina escolhendo quem precifica o item. A citação é
     obrigatória na confirmação e proibida na rejeição — rejeitar é recusar TODAS as fontes,
     não uma delas.
+
+    `codes` é o aceite do PACOTE (F-044): o precedente é do rótulo, e o rótulo dispara um
+    conjunto de códigos, então aceitá-lo é um ato só e vira **uma revisão só**. Ele é
+    mutuamente exclusivo com `code` — dois campos dizendo o que gravar deixariam o
+    significado do corpo depender de qual o servidor lê primeiro —, vale só na confirmação,
+    e todos os códigos citam a MESMA fonte, que é a que `catalog_sha256` declara.
+
+    Aceitar o pacote **não o fecha**: o fechamento continua sendo o ato separado de
+    `/closures` (ADR-0053, decisão 2; decisão 5 do pacote de design da F-044).
     """
 
     base_version: int = Field(ge=1)
     item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
     action: Literal["confirm", "reject"]
     code: str | None = Field(default=None, min_length=1, max_length=30)
+    #: 50 é teto de corpo, não regra de domínio: o maior pacote real observado tem seis
+    #: serviços por elemento, e um lote de dezenas já não é o aceite de um precedente.
+    #: Lista vazia NÃO é recusada aqui — quem recusa lote sem decisão nenhuma é o domínio
+    #: (`ASSIGNMENT_BATCH_EMPTY`), e reimplementar a regra na fronteira criaria duas.
+    codes: list[Annotated[str, Field(min_length=1, max_length=30)]] | None = Field(
+        default=None, max_length=50
+    )
     catalog_sha256: str | None = Field(default=None, pattern=SHA256_HEX_PATTERN)
     note: str | None = Field(default=None, min_length=1, max_length=500)
 
@@ -2172,6 +2205,12 @@ class EstimateCodeAssignmentDecisionRequest(ApiModel):
             raise ValueError("rejeição de código exige justificativa em `note`")
         if self.action == "confirm" and self.catalog_sha256 is None:
             raise ValueError("confirmação de código exige a fonte de preço em `catalog_sha256`")
+        if self.code is not None and self.codes is not None:
+            raise ValueError("informe `code` ou `codes`, nunca os dois")
+        if self.action == "confirm" and self.code is None and self.codes is None:
+            raise ValueError("confirmação de código exige `code` ou o pacote em `codes`")
+        if self.action == "reject" and self.codes is not None:
+            raise ValueError("rejeição não aceita pacote de códigos; ela recusa todas as fontes")
         return self
 
 
@@ -12739,8 +12778,18 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         suggestions: CodeSuggestionSet,
         computed: bool,
         notes: list[str],
+        precedent_blocks: list[dict[str, object]] | None = None,
     ) -> dict[str, Any]:
-        return {
+        """A shortlist como a tela a recebe, mais o precedente quando quem lê é o `GET`.
+
+        `precedent_blocks` é `None` no recompute e lista (possivelmente vazia) no `GET`, e a
+        chave `precedents` só existe quando ela é lista. A assimetria é deliberada: a
+        resposta do recompute é gravada VERBATIM no registro de idempotência e devolvida de
+        novo num replay, e congelar ali uma observação derivada faria uma releitura servir
+        precedente velho como se fosse o corrente. O `GET` é a leitura canônica da shortlist,
+        e é dele que a tela relê o bloco depois de qualquer ato.
+        """
+        payload: dict[str, Any] = {
             "round_id": record.id,
             "version": record.version,
             "suggestions": suggestions.model_dump(mode="json"),
@@ -12749,6 +12798,47 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             "matching": matching_of(suggestions),
             "semantic_notes": notes,
         }
+        if precedent_blocks is not None:
+            payload["precedents"] = precedent_blocks
+        return payload
+
+    def _estimate_precedents(
+        session: Session,
+        record: EstimateRoundRecord,
+        packet: TakeoffPacket,
+        *,
+        tenant_id: str,
+    ) -> list[dict[str, object]]:
+        """O precedente dos itens confirmados desta rodada, sob a fonte de preço DELA.
+
+        Leitura pura: um `SELECT` sobre o que o fechamento de pacote e a semeadura já
+        gravaram (F-044 T2). **Nenhuma chamada paga entra aqui** e nenhuma revisão nasce — o
+        `GET` da shortlist continua sem custo e sem avançar a versão da rodada (ADR-0054 D7).
+
+        A fonte de preço é a do catálogo **cabeça** da cascata, que é o mesmo digest que
+        amarra o conjunto de sugestões e o de decisões à rodada (`CodeSuggestionSet.
+        catalog_sha256`). É uma fonte só, e não a cascata inteira, por duas razões que se
+        somam: a contagem de praças de duas fontes não pode ser unida sem inflar o número que
+        a tela mostra como argumento de autoridade, e o aceite do pacote cita UM
+        `catalog_sha256` para os N códigos — oferecer códigos de duas tabelas produziria um
+        pacote que a decisão seguinte não teria como gravar. **Consequência declarada**: um
+        precedente confirmado citando a segunda fonte da cascata não é oferecido de volta.
+
+        Cascata vazia devolve lista vazia em vez de recusar: sem catálogo, todo código do
+        precedente seria omitido de qualquer forma, e é o mesmo resultado por um caminho que
+        não muda o que esta leitura já respondia antes do bloco existir.
+        """
+        if not estimate_rounds.cascade_entries(record):
+            return []
+        catalog = _estimate_cascade(record)[0]
+        items = packet.confirmed_items()
+        entries = precedents.precedents_for(
+            session,
+            tenant_id,
+            [item.label for item in items],
+            catalog.source_sha256,
+        )
+        return precedents.shortlist_precedents(entries, items, catalog)
 
     def _estimate_assignments_payload(
         record: EstimateRoundRecord,
@@ -13923,6 +14013,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         **Nenhuma chamada paga acontece aqui**, pelo mesmo motivo e com a mesma força da
         irmã da medição (ADR-0054 D7): o cálculo é chamado sem braço semântico (`arms=None`),
         nenhum índice é procurado e a shortlist gravada é léxica até o recálculo explícito.
+
+        Desde a F-044 a resposta traz também `precedents`: o pacote de códigos que cada
+        rótulo já disparou nas praças passadas deste tenant, com a contagem de praças. Ele
+        **não muda nada** do que já estava aqui — `suggestions` continua igual, na mesma
+        ordem e com os mesmos blocos por fonte —, e não acrescenta custo nenhum: é `SELECT`
+        sobre o que o fechamento de pacote e a semeadura já gravaram. Continua sendo
+        observação: nenhuma decisão nasce desta leitura.
         """
         _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
@@ -13937,12 +14034,33 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 suggestions = CodeSuggestionSet.model_validate(stored)
             except ValidationError as error:
                 raise _valuation_model_problem(error) from error
+            # `takeoff_packet_of`, e não `require_...`: a shortlist gravada implica pacote na
+            # cabeça da cadeia, e uma leitura que já respondia `200` não passa a recusar por
+            # causa de um bloco derivado.
+            stored_packet = estimate_rounds.takeoff_packet_of(revision)
             return _estimate_suggestions_payload(
-                record, document=stored, suggestions=suggestions, computed=False, notes=[]
+                record,
+                document=stored,
+                suggestions=suggestions,
+                computed=False,
+                notes=[],
+                precedent_blocks=(
+                    []
+                    if stored_packet is None
+                    else _estimate_precedents(
+                        session, record, stored_packet, tenant_id=principal.tenant_id
+                    )
+                ),
             )
 
         packet = estimate_rounds.require_takeoff_packet(revision)
         require_reviewed_packet(packet)
+        # O precedente é lido ANTES da revisão nova entrar na sessão: um `SELECT` com a
+        # inserção pendente dispararia o autoflush e a colisão de duas leituras simultâneas
+        # subiria aqui, fora do `try` que existe justamente para tratá-la.
+        precedent_blocks = _estimate_precedents(
+            session, record, packet, tenant_id=principal.tenant_id
+        )
         computed, notes, _telemetry = estimate_rounds.compute_round_suggestions(
             packet, _estimate_cascade(record)
         )
@@ -13955,7 +14073,12 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             advance_version=False,
         )
         response = _estimate_suggestions_payload(
-            record, document=document, suggestions=computed, computed=True, notes=notes
+            record,
+            document=document,
+            suggestions=computed,
+            computed=True,
+            notes=notes,
+            precedent_blocks=precedent_blocks,
         )
         try:
             session.commit()
@@ -13976,6 +14099,10 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 suggestions=CodeSuggestionSet.model_validate(stored),
                 computed=False,
                 notes=[],
+                # O bloco já foi lido antes da inserção que colidiu, e o precedente não
+                # depende da revisão que se perdeu: quem chegou antes gravou a MESMA
+                # shortlist, e o índice não mudou entre uma leitura e outra.
+                precedent_blocks=precedent_blocks,
             )
         return response
 
@@ -14137,12 +14264,22 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
         idempotency_key: Annotated[str, Depends(_require_idempotency)],
     ) -> dict[str, Any]:
-        """Confirma ou rejeita o código de UM item CITANDO a fonte, acumulando sobre o anterior.
+        """Confirma ou rejeita o código de um item CITANDO a fonte, acumulando sobre o anterior.
 
         A citação viaja na DECISÃO, e não só no relatório final: é ela que o orçamento usa,
         linha a linha, para dizer de qual tabela o preço veio. Código fora do catálogo
         citado, fonte fora da cascata, item já decidido e unidade incompatível sem nota
         continuam sendo recusa do domínio, que esta rota não reimplementa.
+
+        Com `codes`, o corpo carrega o PACOTE do elemento (F-044): os N códigos entram num
+        `CodeAssignmentBatch` só e viram **uma** revisão, com uma versão nova só. Não é
+        atalho de conveniência — é o que impede o aceite de um precedente de aparecer na
+        cadeia de revisões como N atos que ninguém praticou separadamente, e o que faz o
+        lote falhar fechado: um código inválido derruba o lote inteiro no domínio, antes de
+        qualquer escrita, em vez de gravar metade do pacote.
+
+        Aceitar o pacote **não o fecha**. Fechar continua sendo `/closures`, e é ele que
+        alimenta o índice de precedentes.
         """
         _require_valuation_reviewer(principal)
         operation = f"estimate-rounds.code-decisions:{round_id}"
@@ -14165,18 +14302,28 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         packet = estimate_rounds.require_takeoff_packet(revision)
         previous = estimate_rounds.assignments_of(revision)
         cascade = _estimate_cascade(record)
+        # UM instante para o lote inteiro: é um ato só do orçamentista, e carimbá-lo N vezes
+        # faria N decisões nascerem em momentos diferentes. O `decision_id` continua único
+        # por código, porque ele digere o código junto do instante.
+        decided_at = datetime.now(UTC)
+        chosen_codes: list[str | None] = (
+            [payload.code] if payload.codes is None else list(payload.codes)
+        )
         try:
-            decision = CodeAssignmentInput(
-                item_id=payload.item_id,
-                action=payload.action,
-                code=payload.code,
-                catalog_sha256=payload.catalog_sha256,
-                reviewer_id=principal.subject,
-                reviewer_role=VALUATION_REVIEWER_ROLE,
-                decided_at=datetime.now(UTC),
-                note=payload.note,
-            )
-            batch = CodeAssignmentBatch(assignments=[decision])
+            decisions = [
+                CodeAssignmentInput(
+                    item_id=payload.item_id,
+                    action=payload.action,
+                    code=code,
+                    catalog_sha256=payload.catalog_sha256,
+                    reviewer_id=principal.subject,
+                    reviewer_role=VALUATION_REVIEWER_ROLE,
+                    decided_at=decided_at,
+                    note=payload.note,
+                )
+                for code in chosen_codes
+            ]
+            batch = CodeAssignmentBatch(assignments=decisions)
         except ValidationError as error:
             # Invariante do domínio embrulhada pelo validador: o código estável sai, a
             # mensagem do Pydantic não — ela pode ecoar o valor recusado.
@@ -14246,7 +14393,14 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         A rota não confere quantos códigos o item tem: fechar é decisão de quem monta o
         pacote. Item sem código confirmado, pacote já fechado e item fora do takeoff
-        continuam sendo recusa do domínio."""
+        continuam sendo recusa do domínio.
+
+        Desde a F-044 o fechamento tem um **efeito a mais**, na mesma transação: as
+        confirmações daquele item viram observações no índice de precedentes, para que o
+        mesmo rótulo de legenda reencontre este pacote de códigos na praça seguinte. É
+        observação, nunca decisão — nada é aplicado sem clique numa praça futura. Só código
+        confirmado entra; rejeitado nunca. Refechar não duplica, e a contagem de praças do
+        índice não infla."""
         _require_valuation_reviewer(principal)
         operation = f"estimate-rounds.code-closures:{round_id}"
         request_hash = _request_hash(payload)
@@ -14291,6 +14445,18 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             created_by=principal.subject,
             changes={"code_assignments_json": document},
         )
+        # O precedente nasce AQUI, na mesma transação, porque fechar é o instante em que o
+        # pacote daquele elemento está completo — indexar na confirmação de cada código
+        # ensinaria pacote pela metade (F-044 T2, fonte A). Refechar não duplica.
+        precedents.record_closure_precedents(
+            session,
+            tenant_id=principal.tenant_id,
+            worksite_key=record.worksite_key,
+            packet=packet,
+            assignments=assignments,
+            item_id=payload.item_id,
+            created_by=principal.subject,
+        )
         record.updated_at = datetime.now(UTC)
         response = _estimate_assignments_payload(
             record, packet=packet, assignments=assignments, document=document
@@ -14319,6 +14485,94 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             record=record,
         )
         _commit_valuation_revision(session)
+        return response
+
+    @application.post(
+        "/v1/precedents/seed",
+        response_model=PrecedentSeedResponse,
+        tags=["estimate"],
+    )
+    async def seed_precedents(
+        payload: PrecedentSeedPacket,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> PrecedentSeedResponse:
+        """Semeia o índice de precedentes com uma praça JÁ FEITA (F-044, fonte B).
+
+        Sem ela o índice nasceria vazio — só uma rodada real existe no banco —, e o ganho
+        medido no primeiro Human Gate da feature (54 a 120 linhas de código por praça)
+        esperaria várias praças novas para começar a aparecer.
+
+        **A planilha do cliente não sobe.** O que entra é o pacote que
+        `croquito-valuation precedent-extract` produz na máquina de quem semeia: rótulo,
+        código e fonte de preço — o mesmo dado que `takeoff_packet_json` das revisões já
+        guarda, e por isso a semeadura não cria fronteira de retenção nova.
+
+        Não é rota de rodada: a praça semeada muitas vezes nunca foi lançada no sistema, e
+        pendurá-la numa rodada obrigaria a inventar uma. Por isso também não há
+        `base_version` — nenhuma revisão é gravada e nenhuma versão avança.
+
+        Três recusas, todas **antes** de qualquer escrita, de modo que um pacote recusado
+        não deixa metade de si no índice:
+
+        - `409 PRECEDENT_SEED_WORKSITE_CONFLICT` quando a `worksite_key` já é rodada real
+          deste tenant. Misturar as duas origens sob a mesma chave juntaria o histórico
+          importado de uma planilha com o que o sistema gravou dos atos da própria
+          orçamentista — dois dados de qualidade diferente, indistinguíveis depois;
+        - `422 PRECEDENT_SEED_STRATEGY_UNSUPPORTED` para pacote normalizado por outra
+          estratégia, que criaria duas chaves para o mesmo rótulo;
+        - `422 PRECEDENT_SEED_NORMALIZATION_MISMATCH`, nomeando as **posições** (nunca os
+          rótulos), quando o servidor recalcula a normalização e discorda do pacote.
+
+        Idempotente por `(tenant_id, worksite_key)`: reingerir a mesma praça devolve
+        `observations_ingested: 0` e a contagem de praças do índice não se move — é ela que a
+        tela mostra como argumento de autoridade, e um número inflado seria uma autoridade
+        falsa.
+        """
+        _require_valuation_reviewer(principal)
+        operation = "precedents.seed"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return PrecedentSeedResponse.model_validate(existing)
+
+        counts = precedents.ingest_seed_packet(
+            session,
+            tenant_id=principal.tenant_id,
+            packet=payload,
+            created_by=principal.subject,
+        )
+        response = PrecedentSeedResponse.model_validate(
+            precedents.seed_payload(payload.worksite_key, counts)
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="PRECEDENT_SEED_INGESTED",
+            resource_type="precedent_worksite",
+            # A chave da praça é identificador do tenant, não conteúdo de prancha: é o mesmo
+            # `worksite_key` que a rodada já carrega. Rótulo de legenda não entra aqui.
+            resource_id=payload.worksite_key,
+            request_id=request.state.request_id,
+            details={"observations_ingested": counts.ingested},
+        )
+        session.commit()
         return response
 
     @application.post(

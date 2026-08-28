@@ -151,6 +151,30 @@ Ressalva: esta verificação usou `bdi_percent = 0` com o preço do gabarito ent
 final, para isolar o layout do arredondamento do BDI. A conferência do BDI de 18% contra o
 documento real ainda não foi feita.
 
+## O preço do contrato tem BDI? — pergunta aberta para a orçamentista
+
+Ao decidir a forma do rodapé, comparei o `Custo Unitário` da aba `PLANILHA GERAL` (a lista de
+preços do contrato, que alimenta a planilha por `VLOOKUP`) com a `FGV06`, que é o catálogo
+SCO-Rio de Outubro/2023 embutido no mesmo arquivo:
+
+| Código | Contrato | SCO Out/2023 | Razão |
+|---|---|---|---|
+| `AD19050500(/)` banheiro químico | 1.497,77 | 1.500,00 | 0,9985 |
+| `AD39050218(A)` vigia | 16,86 | 16,89 | 0,9982 |
+| `SE04050100(/)` perfuração de solo | 30,91 | 30,96 | 0,9984 |
+
+O preço do contrato é cerca de **0,15% abaixo** da tabela — o que tem a cara de **desconto de
+licitação sobre o custo de tabela**, e **não** de preço com BDI, que seria `× 1,18`. A aba de
+origem se identifica como "SCO — Sistema de **Custos**".
+
+Se essa leitura estiver certa, o `TOTAL S/BDI` do documento real **divide por 1,18 um valor
+que já é sem BDI**, e o número resultante não é custo nem preço. Isso agravaria o problema
+descrito acima, em vez de ser só uma questão de forma.
+
+**Não decido isso.** É conhecimento de quem monta o orçamento, e a resposta é imediata para
+quem convive com o contrato: o preço contratado embute BDI ou não? A pergunta fica registrada
+porque ela muda o significado de duas células do documento entregue à prefeitura.
+
 ## Impacto no Design Approval Package
 
 A revisão 1 foi aprovada em 2026-08-28 com a estrutura **sintética**, declarando que os

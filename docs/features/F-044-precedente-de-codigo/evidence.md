@@ -79,7 +79,10 @@ praça** têm precedente com pacote exato ou contido.
 
 Isso a coloca acima da [F-042](../F-042-acervo-de-parcelas-de-canteiro/feature.md) (24
 linhas) em volume, e a estimativa original está subdimensionada por um fator de cerca de
-cinco. A prioridade merece revisão pelo dono.
+cinco. **A prioridade foi elevada para `HIGH` pelo dono em 2026-08-28**, e a semeadura de
+orçamentos passados entrou no escopo da feature na mesma decisão — sem ela o índice nasceria
+vazio, porque só uma rodada real existe no banco, e o ganho medido esperaria várias praças
+novas.
 
 ### Unknown 2 — como normalizar o rótulo
 
@@ -131,14 +134,119 @@ uma agressiva.
 Revisão 1 **aprovada em 2026-08-28** (Daniel Campos), condicionada a este gate 1 — que agora
 está cumprido. Ver [`mock/README.md`](mock/README.md).
 
+**Revisão 2 aprovada em 2026-08-28** (Daniel Campos): a contagem de praças **por código**
+(decisão 8, estado 6). As sete decisões da revisão 1 continuam válidas e nenhuma delas muda.
+
 ## Human Gate 3 — ADR-0059
 
 Cumprido em 2026-08-28.
+
+## T2 — o índice, com as duas fontes
+
+**Data**: 2026-08-28. Executada.
+
+O índice vive em `precedent_observations` (migração `0022`), uma linha por
+`(praça, rótulo normalizado, fonte de preço, código)`, com `tenant_id` **NOT NULL** e toda
+leitura filtrada por ele. A camada de aplicação é `croquito_api/precedents.py`; a normalização
+e o contrato do pacote de semeadura são reusados da T1 (`croquito_valuation.precedent`).
+
+Duas fontes, como o contrato da task pediu:
+
+- **a rodada** — efeito do fechamento de pacote
+  (`POST /v1/estimate-rounds/{id}/code-assignments/closures`), na mesma transação, só com
+  código confirmado;
+- **a semeadura** — `croquito-valuation precedent-extract` lê a memória de cálculo de uma
+  praça passada na máquina de quem semeia e escreve um pacote; `POST /v1/precedents/seed`
+  o ingere. A planilha do cliente não sobe.
+
+A consulta é `precedents_for(session, tenant_id, labels, price_source)`, que a T3 consome.
+
+### Decisões que ficaram registradas na execução
+
+1. **A fonte de preço da semeadura é declarada** (`--price-source`, com o rótulo legível do
+   contrato como padrão). Sem poder declará-la, todo precedente semeado nasceria sob uma fonte
+   que jamais casaria com o `catalog_sha256` de uma rodada real, e a semeadura seria um índice
+   paralelo que ninguém alcança. Inventar um hash seria pior.
+2. **A recusa de colisão de praça fica do lado da semeadura**, e não do fechamento. Semear é
+   importação deliberada, que pode esperar e ser refeita com outra chave; fechar o pacote é o
+   ato central da jornada, e travá-lo pela contabilidade de um índice seria a ferramenta
+   impedindo o trabalho. A consequência declarada: uma praça semeada ANTES de a rodada real
+   existir continua semeada, e a rodada acrescenta observações sob a mesma chave — a contagem
+   de praças não infla (ela conta chaves distintas), mas as duas origens convivem ali.
+3. **A estratégia de normalização é gravada com cada observação** e filtrada na consulta.
+   Reindexar sob outra estratégia deixa as linhas velhas de fora, em vez de misturar duas
+   chaves para o mesmo rótulo.
+
+### Limitação nova, medida na execução
+
+`folded` — a estratégia que a medição escolheu — **não colapsa espaço interno repetido**
+(`catalog._lexical_normalize` dobra caixa e acento, e só). "PISO EM CONCRETO" e
+"Piso em Concretô" caem na mesma chave; "PISO  EM  CONCRETO" (com espaço duplo) não. É perda
+de recall, não erro, e é da mesma família da que a medição já declarou (`PASSEIO` ×
+`CALÇADA DE ACESSO`). Não foi corrigida aqui de propósito: a T2 reusa a normalização da T1, e
+trocá-la exigiria refazer a medição que a sustenta.
+
+## T3c — a contagem por código, à vista
+
+**Data**: 2026-08-28. Executada.
+
+A T3a devolvia `worksite_count` em dois níveis e a tela escrevia só o do rótulo — o contrato
+dela registrou isso em uma linha (*"a tela mostra o do rótulo no cabeçalho"*). A consequência
+não era cosmética: um código de **1** praça dentro de um pacote de **4** entrava no aceite de
+um clique com a mesma autoridade dos outros, que é o risco de *propagar erro com autoridade*
+que a feature declara temer, e para o qual a contagem é o controle mínimo.
+
+Nenhum dado novo foi pedido: `codes[].worksite_count` já atravessava a fronteira desde a T3a.
+A mudança é de tela — quatro funções puras, duas frases, um selo e um aviso.
+
+A regra que ficou (decisão 8 do pacote, revisão 2):
+
+- **pacote não unânime** — algum código veio de menos praças que o rótulo: **todos** os
+  cartões escrevem a fração ("em 4 das 4 praças", "em 1 das 4 praças"), o minoritário leva
+  selo âmbar, e uma linha âmbar antes do botão diz quantos são e que eles entram junto;
+- **pacote unânime**: nenhum cartão repete a contagem — o cabeçalho já a disse;
+- a marca **se repete na lista de confirmação**, porque é ali que o clique grava;
+- o aceite continua sendo do pacote **inteiro**, num pedido só: nada foi desabilitado,
+  removido nem reordenado.
+
+Duas decisões de execução, ambas registradas no pacote:
+
+1. **Tudo-ou-nada dentro do bloco.** Marcar só o cartão divergente deixaria os outros sem
+   contagem, e ausência de rótulo é ambígua: o leitor não distingue "veio em todas" de "não
+   veio o dado". O contraste entre as frações é o que informa.
+2. **Nenhum limiar.** A marca é **relativa** ao rótulo (`código < rótulo`), e por isso não
+   toca o unknown 3, que continua aberto. Um pacote de rótulo com uma praça só é unânime por
+   construção, e ali só o aviso da revisão 1 aparece.
+
+O pacote que a governa é a **revisão 2, aprovada em 2026-08-28**.
+
+Um terceiro caso apareceu na revisão do próprio diff e não estava no pacote: a fração não
+cabe quando sobra **um** código só ("1 dos 1 códigos" conta certo e lê errado), nem quando
+**nenhum** código do que sobrou acompanhou o rótulo. Os dois nascem da mesma origem — a API
+omite código fora do catálogo vigente sem recalcular a contagem do rótulo (T3a) —, e as duas
+frases próprias foram escritas e testadas. A copy final continua sendo gate do dono.
+
+Validação: `npm --workspace @croquito/web run test -- src/orcamento/precedente.test.tsx`
+(29 testes, verdes; 7 novos), mais `make check` (exit 0) e `make test` (2821 pytest,
+1450 web, 261 campo).
 
 ## O que continua aberto
 
 - **Unknown 3 — quantas praças fazem um precedente confiável.** A medição não decide limiar.
   Com três praças, o caso de "uma praça só" é comum e é justamente o que o desenho marca com
-  aviso.
-- **A prioridade da feature**, à luz do volume medido.
-- A construção do índice, a mudança na shortlist e a tela — nenhuma iniciada.
+  aviso. A T2 não decide limiar: ela devolve a contagem, e quem a usa é a T3.
+- ~~**A prioridade da feature**~~ — **elevada para `HIGH` em 2026-08-28** (Daniel Campos),
+  junto com a decisão de trazer a semeadura para o escopo. A divergência que a T2 registrou
+  entre o contrato dela e o [`feature.md`](feature.md)/[roadmap](../../product/ROADMAP.md)
+  existia porque a worktree da T2 saiu antes desse commit; os três estão alinhados agora.
+- ~~**A mudança na shortlist e a tela**~~ — T3a, T3b e T3c entregues.
+- **Desfazer um par `(item, código)` confirmado — não existe hoje, e é candidato a fatia
+  própria.** As rotas de `code-assignments` são `GET`, `decisions` e `closures`; a decisão é
+  do par e a rota recusa item já decidido. Enquanto isso não existir, o único conserto de um
+  aceite errado é a rodada seguinte. Vale como fatia própria porque não é do precedente: é da
+  etapa de códigos inteira, e a F-038 a deixou de fora pelo mesmo motivo. Registrado aqui
+  porque foi a revisão 2 da F-044 que a expôs — o aceite em um clique aumenta o que se grava
+  por ato, e portanto o custo de não poder desfazer.
+- **Se o código minoritário deveria poder sair do pacote antes de confirmar.** A revisão 2
+  decide marcar, não decide desmarcar — retirar um código do aceite mudaria a decisão 4 e
+  precisa da evidência de que a marca sozinha não bastou.

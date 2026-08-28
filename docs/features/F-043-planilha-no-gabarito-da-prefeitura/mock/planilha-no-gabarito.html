@@ -583,12 +583,16 @@
                   <td class="total">10.411,18</td>
                 </tr>
                 <tr class="total-geral">
-                  <td colspan="6">TOTAL</td>
-                  <td>69.952,16</td>
+                  <td colspan="6">TOTAL SEM BDI</td>
+                  <td>59.281,49</td>
                 </tr>
                 <tr class="total-geral">
-                  <td colspan="6">TOTAL S/BDI</td>
-                  <td>59.281,49</td>
+                  <td colspan="6">BDI (18,00%)</td>
+                  <td>10.670,67</td>
+                </tr>
+                <tr class="total-geral">
+                  <td colspan="6">TOTAL GERAL</td>
+                  <td>69.952,16</td>
                 </tr>
               </tbody>
             </table>
@@ -609,14 +613,16 @@
           </div>
         </div>
         <p class="nota-implementador">
-          <strong>Divergência aberta, e é decisão de quem entrega.</strong> O documento real
-          não imprime linha de BDI: ele imprime <code>TOTAL</code> (com BDI, soma da coluna) e
-          <code>TOTAL S/BDI</code>, derivado por <code>TRUNC(TOTAL/1,18;2)</code> — o preço
-          unitário da coluna já vem com o BDI de 18% embutido. O
-          <a href="../../../adr/0038-bdi-como-conceito-de-pre-licitacao.md">ADR-0038</a> manda
-          imprimir o BDI como diferença entre os dois totais truncados. As duas formas dão o
-          mesmo dinheiro; o que muda é o que o documento mostra. Esta revisão desenha a forma do
-          cliente.
+          <strong>Aqui o arquivo publicado difere de propósito do documento do cliente</strong>,
+          e a diferença foi decidida pelo dono em 2026-08-28. O documento real imprime
+          <code>TOTAL</code> e <code>TOTAL S/BDI</code>, este último derivado por
+          <code>TRUNC(TOTAL/1,18;2)</code> — uma divisão sobre a soma. O
+          <a href="../../../adr/0038-bdi-como-conceito-de-pre-licitacao.md">ADR-0038</a> já
+          <strong>rejeitou essa forma por escrito</strong>: aplicar o percentual sobre a soma
+          "divergiria no centavo da soma das linhas truncadas; a planilha discordaria dela
+          mesma". Cada linha trunca antes de somar, então o total sem BDI é a
+          <strong>soma das linhas</strong>, e o BDI impresso é a <strong>diferença entre os
+          dois totais truncados</strong> — nunca um percentual aplicado ao total.
         </p>
       </section>
 

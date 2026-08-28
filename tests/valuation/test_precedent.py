@@ -9,6 +9,11 @@ diferentes, que NUNCA conta como repetição.
 A segunda metade (`scan_memoria_rows`/`worksite_precedents_from_memoria`) cobre o
 escopo ampliado da mesma T1 — a leitura de linhas de uma aba de memória de cálculo real
 (entrada C). Sintéticas de propósito: nenhum dado das planilhas reais entra em `tests/`.
+
+A terceira metade é da T2: o contrato do `PrecedentSeedPacket`, que atravessa a fronteira
+HTTP entre a extração local e a ingestão do índice de precedentes. Ele mora neste módulo
+porque as duas pontas precisam do MESMO contrato, e um contrato escrito duas vezes
+divergiria.
 """
 
 from __future__ import annotations
@@ -16,14 +21,17 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.precedent import (
     NORMALIZATION_STRATEGIES,
+    PRICE_SOURCE_UNDECLARED,
     LabelObservation,
     MemoriaBlock,
     NormalizationStrategy,
     PackageClassification,
+    PrecedentSeedPacket,
     WorksitePrecedents,
     build_worksite_precedents,
     measure_repetition,
@@ -404,3 +412,79 @@ def test_worksite_precedents_from_memoria_excludes_unlabeled_blocks() -> None:
     assert len(precedents.observations) == 1
     assert precedents.observations[0].label == "CAMPO"
     assert precedents.observations[0].codes == frozenset({"PJ14100500(/)"})
+
+
+# --------------------------------------------------------------------------------------
+# Contrato do pacote de semeadura (T2): o que liga a extração local à ingestão da API
+# --------------------------------------------------------------------------------------
+
+
+def _seed_observation(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "label_original": "PISO EM CONCRETO",
+        "label_normalized": "piso em concreto",
+        "code": "BP09100050(B)",
+        "price_source": "a" * 64,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _seed_packet(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "worksite_key": "praca-passada-sul",
+        "normalization_strategy": NormalizationStrategy.FOLDED.value,
+        "observations": [_seed_observation()],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_seed_packet_reads_back_what_the_extraction_wrote() -> None:
+    """Ida e volta pelo JSON: é assim que o pacote atravessa a fronteira HTTP."""
+    packet = PrecedentSeedPacket.model_validate(
+        json.loads(json.dumps(_seed_packet(unlabeled_block_rows=[7, 12])))
+    )
+
+    assert packet.worksite_key == "praca-passada-sul"
+    assert packet.normalization_strategy is NormalizationStrategy.FOLDED
+    assert packet.unlabeled_block_rows == (7, 12)
+    assert packet.observations[0].code == "BP09100050(B)"
+
+
+def test_seed_packet_requires_a_worksite_key_from_the_real_key_space() -> None:
+    """A chave da praça semeada é a mesma das rodadas reais — é por ela que a ingestão
+    detecta a colisão que faria a contagem de praças contar a mesma obra duas vezes."""
+    with pytest.raises(ValidationError):
+        PrecedentSeedPacket.model_validate(_seed_packet(worksite_key="Praça Passada"))
+
+
+def test_seed_packet_accepts_the_undeclared_price_source() -> None:
+    """Rodada de catálogo único grava `catalog_sha256=None`, e a ausência vira a string
+    vazia: uma chave PRÓPRIA e válida, nunca um curinga que case com toda fonte."""
+    packet = PrecedentSeedPacket.model_validate(
+        _seed_packet(observations=[_seed_observation(price_source=PRICE_SOURCE_UNDECLARED)])
+    )
+
+    assert packet.observations[0].price_source == PRICE_SOURCE_UNDECLARED
+
+
+def test_seed_packet_refuses_an_unknown_field() -> None:
+    """`extra="forbid"`: um campo que o servidor não conhece é engano de versão, e aceitá-lo
+    em silêncio faria o extrator achar que mandou algo que ninguém leu."""
+    with pytest.raises(ValidationError):
+        PrecedentSeedPacket.model_validate(_seed_packet(price_source="a" * 64))
+
+
+def test_seed_packet_may_carry_no_observation_and_still_count_the_blocks() -> None:
+    """Aba em que nenhum bloco tem rótulo é leitura legítima, não falha.
+
+    Recusar o pacote esconderia justamente o que quem semeia precisa saber: que a planilha
+    não deu nenhuma chave de índice, e por quê.
+    """
+    packet = PrecedentSeedPacket.model_validate(
+        _seed_packet(observations=[], block_count=4, unlabeled_block_count=4)
+    )
+
+    assert packet.observations == ()
+    assert packet.unlabeled_block_count == 4

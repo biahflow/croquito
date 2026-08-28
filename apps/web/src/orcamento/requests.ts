@@ -270,6 +270,9 @@ export function takeoffDecisionBody(
  * citada (`ESTIMATE_ASSIGNMENT_CATALOG_REQUIRED`). A rejeição leva nota e NÃO leva fonte:
  * rejeitar é recusar todas as fontes, não uma delas, e o servidor recusa a citação junto
  * da rejeição (`ASSIGNMENT_CATALOG_ON_REJECT`). A tela já manda só o que cabe em cada ato.
+ *
+ * O aceite do PRECEDENTE (F-044) é o terceiro ato desta mesma rota: `codes` com os N
+ * códigos do rótulo, numa revisão só, mutuamente exclusivo com o `code` singular.
  */
 /**
  * Corpo do `POST .../code-assignments/closures`.
@@ -295,13 +298,28 @@ export function codeClosureBody(
 
 export function codeDecisionBody(
   draft: CodeDecisionDraft,
-): Record<string, string | number> {
-  const body: Record<string, string | number> = {
+): Record<string, string | number | string[]> {
+  const body: Record<string, string | number | string[]> = {
     ...versionBody(draft.baseVersion),
     item_id: draft.itemId,
     action: draft.action,
   };
   if (draft.action === "confirm") {
+    // O aceite de PACOTE (F-044) e a confirmação de um código só são caminhos
+    // MUTUAMENTE EXCLUSIVOS no contrato da rota: `codes` presente manda os N códigos do
+    // rótulo numa revisão só, e o singular não vai junto. A precedência é do lote porque
+    // é ele que a tela oferece quando existe — e um corpo com os dois seria ambíguo sobre
+    // o que está sendo gravado.
+    const codes = (draft.codes ?? [])
+      .map((code) => code.trim())
+      .filter((code) => code.length > 0);
+    if (codes.length > 0) {
+      // Sem `note`: o corpo do aceite de pacote é o que o contrato da rota fixou —
+      // `base_version`, `item_id`, `action` e `codes` —, e a rota recusa o que ela não
+      // declara (`extra="forbid"`). A nota da decisão continua existindo no ato singular.
+      body.codes = codes;
+      return body;
+    }
     const code = draft.code?.trim();
     if (code) {
       body.code = code;

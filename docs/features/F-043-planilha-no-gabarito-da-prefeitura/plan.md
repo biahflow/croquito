@@ -47,7 +47,10 @@ a F-042 e a F-044, sem conflito.
 
 ## Human Gates que continuam abertos
 
-1. **Qual forma de rodapé vale**: o documento do cliente imprime `TOTAL` e `TOTAL S/BDI` e não
-   imprime linha de BDI, enquanto o [ADR-0038](../../adr/0038-bdi-como-conceito-de-pre-licitacao.md)
-   manda imprimir o BDI como diferença entre totais truncados. As duas dão o mesmo dinheiro.
+1. ~~**Qual forma de rodapé vale**~~ — **decidido em 2026-08-28** (Daniel Campos): vale a
+   forma do [ADR-0038](../../adr/0038-bdi-como-conceito-de-pre-licitacao.md), que já havia
+   rejeitado por escrito a forma do documento do cliente. O escritor já a implementava; o que
+   mudou foi a rendição do pacote, agora na **revisão 3**, que aguarda aprovação.
 2. **Aceite do arquivo gerado** contra o real, por quem entrega à prefeitura.
+3. **O preço do contrato embute BDI?** — pergunta para a orçamentista, registrada em
+   [`evidence.md`](evidence.md); ela muda o significado de duas células do documento.

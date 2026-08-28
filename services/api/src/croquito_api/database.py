@@ -404,6 +404,77 @@ class SiteSetupKitRecord(Base):
     )
 
 
+class PrecedentObservationRecord(Base):
+    """Uma decisão de código já tomada, guardada para reencontrar o rótulo na praça seguinte.
+
+    Índice de precedentes da F-044: uma linha por `(praça, rótulo, fonte de preço, código)`.
+    É **observação, nunca decisão** — nada aqui vira código confirmado sem clique, pela mesma
+    regra que já vale para a shortlist.
+
+    **A chave é `(label_normalized, price_source)`, nunca o rótulo sozinho** (decisão 4 do
+    escopo da feature). Precedente aprendido no contrato de uma praça não vale num programa
+    com outra tabela de preços: sugerir código que não existe na tabela vigente é pior que
+    não sugerir nada. `price_source` é o dado que a confirmação de fato grava
+    (`CodeAssignment.catalog_sha256`), com a string vazia
+    (`croquito_valuation.precedent.PRICE_SOURCE_UNDECLARED`) para a rodada de catálogo único
+    — e a string vazia é uma chave PRÓPRIA, nunca um curinga que case com tudo.
+
+    `tenant_id` é **NOT NULL e sempre filtrado**: diferente de `SiteSetupKitRecord`, aqui não
+    existe origem de plataforma. Precedente é o histórico de decisões de um escritório, e
+    mostrá-lo a outro seria vazar a forma de trabalhar de um cliente para um concorrente. A
+    cláusula está escrita uma vez em `croquito_api.precedents.visible_observations`, e é
+    verificada por teste com DOIS tenants.
+
+    `label_original` guarda o rótulo como foi escrito, para a tela poder mostrá-lo; a chave
+    continua sendo `label_normalized`. Guardar rótulo de cliente aqui **não cria fronteira de
+    retenção nova**: é o mesmo dado que `takeoff_packet_json` das revisões já guarda.
+
+    `normalization_strategy` viaja com a observação para que uma troca futura de
+    normalização seja DETECTÁVEL: a consulta filtra pela estratégia vigente, então uma linha
+    escrita sob outra estratégia deixa de ser devolvida em vez de se misturar com as novas —
+    reindexar não pode juntar chaves de duas normalizações. A unicidade **não** inclui a
+    estratégia (é a chave declarada no contrato da task): reindexar sob outra estratégia que
+    produza o mesmo texto normalizado reencontra a linha existente em vez de duplicá-la, e a
+    linha antiga fica órfã, legível e inofensiva.
+
+    `source` distingue a rodada do próprio sistema (`round`, efeito do fechamento de pacote)
+    da semeadura de orçamentos passados (`seed`). As duas alimentam o mesmo índice; o que a
+    origem governa é a recusa de colisão na ingestão, não a leitura.
+
+    A unicidade `(tenant_id, worksite_key, label_normalized, price_source, code)` é o que
+    torna **a contagem de praças confiável**: refechar o mesmo pacote e reingerir a mesma
+    praça não produzem linha nova, então o número que a tela mostra como argumento de
+    autoridade ("você já usou isto em N praças") não infla com repetição de ato.
+    """
+
+    __tablename__ = "precedent_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "worksite_key",
+            "label_normalized",
+            "price_source",
+            "code",
+            name="uq_precedent_observation_identity",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    worksite_key: Mapped[str] = mapped_column(String(64))
+    label_normalized: Mapped[str] = mapped_column(String(200), index=True)
+    label_original: Mapped[str] = mapped_column(String(200))
+    price_source: Mapped[str] = mapped_column(String(200))
+    code: Mapped[str] = mapped_column(String(40))
+    source: Mapped[str] = mapped_column(String(16))
+    """`round` (fechamento de pacote) ou `seed` (semeadura de orçamento passado)."""
+    normalization_strategy: Mapped[str] = mapped_column(String(16))
+    created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 class AiProcessingAuthorizationRecord(Base):
     """Immutable per-job snapshot of the contractual AI-processing authorization."""
 

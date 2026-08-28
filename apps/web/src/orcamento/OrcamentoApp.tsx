@@ -201,6 +201,23 @@ import {
   fraseAplicarBloqueado,
   motivoDaParcelaBloqueada,
   seloDeOrigemDaParcela,
+  fraseAceitarPacote,
+  fraseConfirmarPacote,
+  frasePacoteNaoUnanime,
+  frasePracasDoCodigo,
+  frasePrecedenteContagem,
+  frasePrecedenteGravado,
+  fraseSeloDePrecedente,
+  fraseUmaRevisaoSo,
+  PRECEDENTE_AVISO_UMA_PRACA,
+  PRECEDENTE_CANCELAR_CONFIRMACAO,
+  PRECEDENTE_CONFIRMACAO_TITULO,
+  PRECEDENTE_LINHA_CONFIRMAR,
+  PRECEDENTE_NADA_SEM_CLIQUE,
+  PRECEDENTE_OBSERVACAO,
+  PRECEDENTE_REPETIDO_NOS_DOIS,
+  PRECEDENTE_SELO_INEDITO,
+  PRECEDENTE_TITULO,
 } from "./labels";
 import {
   acervoGravado,
@@ -252,6 +269,24 @@ import {
   type MatrixDraftState,
   type OperandDraft,
 } from "./matrix";
+import {
+  abrirConfirmacao,
+  blocosDaShortlist,
+  codigoMinoritario,
+  confirmacaoDoItem,
+  contagemDeMinoritarios,
+  fonteDoPrecedente,
+  minoritarioNaConfirmacao,
+  pacoteUnanime,
+  pedidoDeConfirmacao,
+  podeConfirmar,
+  precedenteFraco,
+  precisaRelerPrecedentes,
+  selosDosItens,
+  type ConfirmacaoDoPrecedente,
+  type ItemPrecedent,
+  type SeloDeItem,
+} from "./precedente";
 import { overlayFreshness } from "./overlay";
 import {
   aplicarZoom,
@@ -736,6 +771,227 @@ export function SemPrecoNaCascata({ rotulos }: { rotulos: readonly string[] }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+/**
+ * O selo de precedente de um elemento na lista de pendências (F-044).
+ *
+ * `undefined` não renderiza NADA: numa rodada sem precedente nenhum, a lista de elementos
+ * é exatamente a de hoje. O selo de "rótulo inédito" só existe ao lado de irmãos que têm
+ * precedente — anunciar a ausência de uma memória que a rodada inteira não tem seria
+ * degradar a tela de quem nunca decidiu nada ainda.
+ */
+export function SeloDePrecedenteDoItem({
+  selo,
+}: {
+  selo: SeloDeItem | undefined;
+}) {
+  if (selo === undefined) {
+    return null;
+  }
+  return selo.kind === "inedito" ? (
+    <span className="selo selo-neutro">{PRECEDENTE_SELO_INEDITO}</span>
+  ) : (
+    <span className="selo selo-precedente">
+      {fraseSeloDePrecedente(selo.worksiteCount)}
+    </span>
+  );
+}
+
+/**
+ * O bloco de precedente, ACIMA dos blocos por fonte da cascata (F-044, pacote de design
+ * revisão 1).
+ *
+ * `precedente === null` devolve `null`: sem precedente, ou com precedente de outra fonte
+ * de preço, o bloco **não existe** — nem vazio, nem desabilitado. É a decisão 7 do pacote,
+ * e a razão de a checagem morar em `precedenteDoItem` e não numa renderização condicional
+ * espalhada.
+ *
+ * O bloco não confirma nada: o botão põe o pacote à vista, e quem grava é a confirmação.
+ * A distinção dele não é só cor — cabeçalho escrito com a contagem de praças, borda
+ * própria e as duas notas em texto.
+ */
+export function BlocoDePrecedente({
+  precedente,
+  fonte,
+  onAceitar,
+  submitting,
+}: {
+  precedente: ItemPrecedent | null;
+  fonte: CascadeEntry | null;
+  onAceitar: () => void;
+  submitting: boolean;
+}) {
+  if (precedente === null) {
+    return null;
+  }
+  /* Decisão 8 do pacote (revisão 2): a contagem por código só entra quando o pacote NÃO é
+     unânime — e aí entra em TODOS os cartões, porque é o contraste entre "em 4 das 4" e "em
+     1 das 4" que informa. Pacote unânime não repete o que o cabeçalho já disse. */
+  const unanime = pacoteUnanime(precedente);
+  return (
+    <section
+      className="bloco-precedente"
+      aria-label={`${PRECEDENTE_TITULO}: ${frasePrecedenteContagem(
+        precedente.worksite_count,
+      )}`}
+    >
+      <div className="bloco-precedente-cabeca">
+        <span>{frasePrecedenteContagem(precedente.worksite_count)}</span>
+        <span className="selo selo-precedente">{PRECEDENTE_TITULO}</span>
+        {/* De qual tabela estes códigos vieram, no mesmo selo que a cascata usa: o
+            precedente é chaveado pela fonte de preço, e ela vai escrita. */}
+        {fonte === null ? null : (
+          <SeloFonte
+            origin={fonte.origin}
+            referenceMonth={fonte.reference_month}
+            position={fonte.position}
+          />
+        )}
+      </div>
+      <ul className="codigos">
+        {precedente.codes.map((code) => (
+          <li key={code.code} className="codigo-card">
+            <div className="codigo-topo">
+              <span className="codigo-code">{code.code}</span>
+              <span className="mono">
+                {formatMoneyText(code.unit_price)} / {unitLabel(code.unit)}
+              </span>
+            </div>
+            <div className="codigo-selos">
+              {unanime ? null : (
+                <span
+                  className={`selo ${
+                    codigoMinoritario(precedente, code)
+                      ? "selo-precedente-parcial"
+                      : "selo-precedente"
+                  }`}
+                >
+                  {frasePracasDoCodigo(
+                    code.worksite_count,
+                    precedente.worksite_count,
+                  )}
+                </span>
+              )}
+              <span
+                className={`selo ${
+                  code.unit_compatible ? "selo-ok" : "selo-atencao"
+                }`}
+              >
+                {code.unit_compatible
+                  ? "unidade compatível"
+                  : "unidade diferente da do item"}
+              </span>
+            </div>
+            <p className="codigo-descricao">{code.description}</p>
+          </li>
+        ))}
+      </ul>
+      {/* Os dois avisos ficam ANTES do botão: eles são para ser lidos antes de aceitar,
+          não depois. O primeiro é sobre o pacote INTEIRO ser de uma praça só; o segundo,
+          sobre um código dele ter vindo de menos praças que o rótulo (decisão 8). Nunca
+          aparecem juntos: num rótulo de uma praça só, todo código tem essa mesma praça. */}
+      {precedenteFraco(precedente) ? (
+        <p className="aviso-precedente-fraco">{PRECEDENTE_AVISO_UMA_PRACA}</p>
+      ) : null}
+      {unanime ? null : (
+        <p className="aviso-precedente-parcial">
+          {frasePacoteNaoUnanime(
+            contagemDeMinoritarios(precedente),
+            precedente.codes.length,
+          )}
+        </p>
+      )}
+      <div className="acoes-linha">
+        <button
+          type="button"
+          className="botao-precedente"
+          onClick={onAceitar}
+          disabled={submitting}
+        >
+          {fraseAceitarPacote(precedente.codes.length)}
+        </button>
+        <span className="selo selo-precedente">{PRECEDENTE_OBSERVACAO}</span>
+      </div>
+      <p className="aviso-precedente">{PRECEDENTE_REPETIDO_NOS_DOIS}</p>
+    </section>
+  );
+}
+
+/**
+ * A lista do que vai ser gravado, antes de gravar (F-044, decisão 4 do pacote).
+ *
+ * Confirmar sem mostrar o que entra na revisão seria um clique cego — e o aceite é do
+ * pacote inteiro, o que torna o clique cego mais caro do que na confirmação de um código
+ * só. A frase ao pé diz, no mesmo fôlego, que o fechamento do pacote continua separado.
+ */
+export function ConfirmacaoDePrecedente({
+  confirmacao,
+  submitting,
+  onConfirmar,
+  onCancelar,
+}: {
+  confirmacao: ConfirmacaoDoPrecedente | null;
+  submitting: boolean;
+  onConfirmar: () => void;
+  onCancelar: () => void;
+}) {
+  if (confirmacao === null) {
+    return null;
+  }
+  const total = confirmacao.codes.length;
+  return (
+    <section
+      className="precedente-confirmacao"
+      aria-label={PRECEDENTE_CONFIRMACAO_TITULO}
+    >
+      <h4>{PRECEDENTE_CONFIRMACAO_TITULO}</h4>
+      <ul className="precedente-confirmacao-lista">
+        {confirmacao.codes.map((code) => (
+          <li key={code.code}>
+            <span className="selo selo-ok">{PRECEDENTE_LINHA_CONFIRMAR}</span>
+            <code>{code.code}</code>
+            {/* A marca do código minoritário se repete AQUI porque é aqui que o clique
+                grava: quem chegou até a lista precisa ver de novo o que entra junto. */}
+            {minoritarioNaConfirmacao(confirmacao, code) ? (
+              <span className="selo selo-precedente-parcial">
+                {frasePracasDoCodigo(
+                  code.worksite_count,
+                  confirmacao.worksiteCount,
+                )}
+              </span>
+            ) : null}
+            <span className="campo-dica">
+              {code.description} · {formatMoneyText(code.unit_price)} /{" "}
+              {unitLabel(code.unit)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="aviso-precedente">
+        {fraseUmaRevisaoSo(total, confirmacao.rotulo)}
+      </p>
+      <div className="acoes-linha">
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={onCancelar}
+          disabled={submitting}
+        >
+          {PRECEDENTE_CANCELAR_CONFIRMACAO}
+        </button>
+        <button
+          type="button"
+          className="botao-primario"
+          onClick={onConfirmar}
+          disabled={submitting || total === 0}
+        >
+          {fraseConfirmarPacote(total)}
+        </button>
+      </div>
+      <p className="dica">{PRECEDENTE_NADA_SEM_CLIQUE}</p>
+    </section>
   );
 }
 
@@ -3321,6 +3577,14 @@ export function OrcamentoApp({
   const [buscaAviso, setBuscaAviso] = useState<string | null>(null);
   const buscaAbortRef = useRef<AbortController | null>(null);
   const buscaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * O pacote do precedente posto À VISTA, ainda não gravado (F-044). `null` é o estado
+   * normal: o bloco de precedente é observação, e nada sai daqui sem o clique de confirmar.
+   * O elemento viaja dentro do estado para que trocar de item nunca deixe em pé uma lista
+   * que promete gravar códigos noutro lugar.
+   */
+  const [precedenteConfirmacao, setPrecedenteConfirmacao] =
+    useState<ConfirmacaoDoPrecedente | null>(null);
 
   // BDI e montagem.
   const [bdiInput, setBdiInput] = useState("");
@@ -4125,10 +4389,20 @@ export function OrcamentoApp({
     }
     setSubmitting(true);
     try {
-      const response =
+      let response =
         recompute && version !== null
           ? await postSuggestionsRecompute(token, orcamento, version)
           : await getSuggestions(token, orcamento);
+      if (precisaRelerPrecedentes(response)) {
+        // O recompute NÃO devolve `precedents`: a resposta dele é gravada no registro de
+        // idempotência, e congelar ali uma observação derivada faria um replay servir
+        // precedente velho como corrente. Sem esta releitura o bloco sumiria da tela até
+        // alguém recarregar a página — o precedente depende da fonte de preço, e é
+        // justamente o recompute que pode tê-la mudado, então preservar o anterior mentiria.
+        // O `GET` não paga nada e não avança versão (ADR-0054 D7).
+        const relido = await getSuggestions(token, orcamento);
+        response = { ...response, precedents: relido.precedents };
+      }
       setSuggestions(response);
       aplicarVersao(response.version);
       setAlertMessage(null);
@@ -4222,6 +4496,58 @@ export function OrcamentoApp({
       );
       await carregarEstado();
     } catch (error) {
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Grava o pacote inteiro do precedente (F-044): **um** pedido com os N códigos do
+   * rótulo, numa revisão só.
+   *
+   * Duas coisas que ele NÃO faz, e que são a decisão do pacote de design:
+   *
+   * - não fecha o pacote de serviços do elemento — o fechamento continua sendo ato
+   *   separado (F-038), e o item segue selecionado depois de confirmar;
+   * - não decide nada por conta própria: só chega aqui quem clicou em confirmar com a
+   *   lista do que seria gravado à vista.
+   */
+  const confirmarPrecedente = async () => {
+    const token = tokenDaSessao();
+    const confirmacao = confirmacaoDoItem(
+      precedenteConfirmacao,
+      selectedPendingId,
+    );
+    if (
+      token === null ||
+      orcamento === null ||
+      version === null ||
+      confirmacao === null ||
+      !podeConfirmar(confirmacao)
+    ) {
+      return;
+    }
+    const total = confirmacao.codes.length;
+    setSubmitting(true);
+    try {
+      const response = await postCodeDecision(
+        token,
+        orcamento,
+        pedidoDeConfirmacao(confirmacao, version),
+      );
+      aplicarVersao(response.version);
+      setCodes(response);
+      setPrecedenteConfirmacao(null);
+      setCodeChoice(null);
+      setCodeNote("");
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast(frasePrecedenteGravado(total));
+      await carregarEstado();
+    } catch (error) {
+      // Recusa preserva a lista à vista: o lote é atômico, nada foi gravado, e apagar a
+      // confirmação obrigaria a reabrir o pacote para tentar de novo.
       registrarRecusa(error);
     } finally {
       setSubmitting(false);
@@ -4793,10 +5119,38 @@ export function OrcamentoApp({
   );
   const itemPendente =
     pendingItems.find((item) => item.item_id === selectedPendingId) ?? null;
-  const candidatos: CodeSuggestionSet.CodeCandidate[] =
+  const candidatosDaCascata: CodeSuggestionSet.CodeCandidate[] =
     suggestions?.suggestions.suggestions.find(
       (suggestion) => suggestion.item_id === selectedPendingId,
     )?.candidates ?? [];
+  /**
+   * Os dois blocos da shortlist, na ordem em que a tela os desenha (F-044): o precedente
+   * ACIMA, e os candidatos da cascata **exatamente como vieram**. `candidatos` sai daqui
+   * com a mesma ordem e o mesmo conteúdo de antes desta feature — o precedente é bloco
+   * próprio, e não uma reordenação da cascata.
+   */
+  const blocos = blocosDaShortlist(
+    candidatosDaCascata,
+    suggestions?.precedents,
+    selectedPendingId,
+    cascade,
+  );
+  const candidatos = blocos.candidatos;
+  const precedenteDoItemAberto = blocos.precedente;
+  /**
+   * O selo de cada elemento pendente. `Map` vazio numa rodada sem precedente nenhum: ali a
+   * lista é a de hoje, sem selo em item nenhum.
+   */
+  const selosDePrecedente = selosDosItens(
+    suggestions?.precedents,
+    pendingItems.map((item) => item.item_id),
+    cascade,
+  );
+  /** A lista à vista só vale para o elemento aberto. */
+  const confirmacaoAberta = confirmacaoDoItem(
+    precedenteConfirmacao,
+    selectedPendingId,
+  );
   const semCandidato = (suggestions?.suggestions.unmatched_item_ids ?? []).filter(
     (itemId) => pendingItems.some((item) => item.item_id === itemId),
   );
@@ -5786,6 +6140,9 @@ export function OrcamentoApp({
                         setSelectedPendingId(item.item_id);
                         setCodeChoice(null);
                         setCodeNote("");
+                        // Trocar de elemento fecha a lista de confirmação do precedente:
+                        // ela promete gravar códigos num item só, e o item mudou.
+                        setPrecedenteConfirmacao(null);
                       }}
                       aria-pressed={item.item_id === selectedPendingId}
                     >
@@ -5794,6 +6151,11 @@ export function OrcamentoApp({
                         <span className="item-quantidade">
                           {formatQuantityText(item.quantity, unitLabel(item.unit))}
                         </span>
+                        {/* O selo do precedente (F-044): a contagem de praças por
+                            extenso, ao lado do rótulo que já foi decidido antes. */}
+                        <SeloDePrecedenteDoItem
+                          selo={selosDePrecedente.get(item.item_id)}
+                        />
                       </span>
                     </button>
                   </li>
@@ -5903,6 +6265,36 @@ export function OrcamentoApp({
                       {buscaAviso}
                     </p>
                   )}
+
+                  {/* O precedente vem ACIMA dos blocos por fonte e não os altera (F-044):
+                      a cascata abaixo continua na ordem instalada, com o mesmo conteúdo,
+                      inclusive quando um código aparece nos dois lugares. Sem precedente,
+                      ou com precedente de outra fonte de preço, nada é renderizado aqui. */}
+                  <BlocoDePrecedente
+                    precedente={precedenteDoItemAberto}
+                    fonte={
+                      precedenteDoItemAberto === null
+                        ? null
+                        : fonteDoPrecedente(precedenteDoItemAberto, cascade)
+                    }
+                    submitting={submitting}
+                    onAceitar={() =>
+                      precedenteDoItemAberto === null
+                        ? undefined
+                        : setPrecedenteConfirmacao(
+                            abrirConfirmacao(
+                              precedenteDoItemAberto,
+                              itemPendente.label,
+                            ),
+                          )
+                    }
+                  />
+                  <ConfirmacaoDePrecedente
+                    confirmacao={confirmacaoAberta}
+                    submitting={submitting}
+                    onConfirmar={() => void confirmarPrecedente()}
+                    onCancelar={() => setPrecedenteConfirmacao(null)}
+                  />
 
                   <ul className="codigos">
                     {candidatos.map((candidate) => {

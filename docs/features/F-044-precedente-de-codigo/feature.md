@@ -22,12 +22,16 @@ aceitar de uma vez.
 
 ## Priority
 
-`MEDIUM` — **a revisar pelo dono**. A prioridade foi atribuída antes da medição, sob a
-estimativa de "cerca de 12 linhas" e sob a hipótese não verificada. Com a medição de
-2026-08-28 ([`evidence.md`](evidence.md)), o ganho medido é de **54 a 120 linhas de código
-por praça** — acima das 24 da [F-042](../F-042-acervo-de-parcelas-de-canteiro/feature.md), e
-cerca de cinco vezes a estimativa original. A condição que rebaixava a prioridade
-(hipótese não provada) deixou de existir.
+`HIGH` — **elevada em 2026-08-28** (Daniel Campos), depois da medição. A prioridade `MEDIUM`
+original repousava em três razões, e duas caíram: a hipótese de repetição estava por provar
+(hoje provada, 80% de repetição e 96,1% de pacote estável) e o ganho era estimado em "cerca de
+12 linhas" (medido em **54 a 120 linhas de código por praça**, acima das 24 da
+[F-042](../F-042-acervo-de-parcelas-de-canteiro/feature.md)).
+
+A terceira razão — o ganho ser diferido, porque o índice nasce do que está gravado e só uma
+rodada real existe no banco — foi resolvida por decisão do dono na mesma data: **a semeadura a
+partir de orçamentos passados entra no escopo desta feature**. Com ela o índice nasce com as
+praças já feitas em vez de vazio, e o ganho deixa de esperar cinco praças novas.
 
 ## Problem
 
@@ -57,6 +61,19 @@ substituir a via léxica, que continua atendendo o rótulo inédito.
 1. **Índice de precedentes** por rótulo de legenda normalizado → conjunto de códigos
    confirmados, com contagem de praças. Construído do que já está gravado
    (`code_assignments_json`), sem chamada paga.
+
+   **Duas fontes, um índice só** (decisão do dono, 2026-08-28):
+
+   - **a rodada do próprio sistema**, quando o pacote de códigos de um item é fechado — o ato
+     humano que diz "acabou" para aquele elemento;
+   - **a semeadura a partir de orçamentos passados**, lendo o par (rótulo → códigos) das
+     planilhas que a orçamentista já entregou. Sem ela o índice nasce vazio e só ganha valor
+     depois de várias praças processadas pelo sistema; com ela, nasce com o que o escritório
+     já fez.
+
+   A planilha do cliente **não sobe**: a extração é local, no molde de
+   `make valuation-parity`, e o que entra no sistema é o pacote de observações (rótulo,
+   código, fonte de preço, praça) — os mesmos dados que as revisões já guardam.
 2. **Precedente no topo da shortlist**, rotulado ("você usou isto em N praças"), **sem
    substituir** os blocos por fonte da cascata, que continuam na ordem instalada.
 3. **Aceitar o pacote inteiro num clique** — o precedente é do rótulo e vale para todos os
@@ -154,6 +171,14 @@ exatamente o que o precedente não tem como resolver.
   ganho medido.
 - **Vazamento entre fontes de preço.** Sugerir código que não existe na tabela vigente é o
   pior resultado possível, e é o que a decisão 4 do escopo existe para impedir.
+- **O aceite do pacote é assimétrico, e o erro fácil é o que não tem volta.** Recusar o
+  precedente custa alguns cliques — os códigos continuam alcançáveis um a um pelo bloco da
+  fonte e pela busca da etapa, que casa por código (`catalog_search`), então quem desconfia
+  não fica preso. Aceitar com um código errado dentro, não: a identidade da decisão é o par
+  `(item, código)`, as rotas de `code-assignments` são `GET`, `decisions` e `closures`, e
+  **nenhuma delas remove um par confirmado**. É por isso que a marca da decisão 8 fica antes
+  do botão, e por isso um seletor por código dentro do pacote não é a resposta óbvia que
+  parece: ele barateia a composição sem tocar na assimetria.
 
 ## Human Gates
 
