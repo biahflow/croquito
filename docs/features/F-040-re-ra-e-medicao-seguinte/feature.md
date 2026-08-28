@@ -10,11 +10,20 @@
 > [issue #100](https://github.com/biahflow/croquito/issues/100) ocorreu em 2026-08-28. O
 > código já estava na `main` (PRs #109, #112 e #113).
 >
+> **Reaberta na prática pela T6, em 2026-08-28.** A captura da evidência de navegador expôs que
+> **três decisões do [pacote de design aprovado](mock/README.md)** não estavam no código — as
+> decisões 1, 4 e 6 — e que, por causa disso, **não havia como declarar uma RE-RA na medição
+> seguinte pela tela**, embora a API sempre a tenha aceitado. A
+> [T6](tasks/T6-a-porta-da-medicao-seguinte.md) fecha as três. O status `DONE` acima é o do
+> aceite de 2026-08-28 e **precisa de decisão humana** para permanecer: falta a recaptura dos
+> estados que a T6 acrescentou (`BROWSER_REQUIRED`), registrada em [evidence.md](evidence.md).
+>
 > **Dívida que fica escrita**: nenhuma medição real com contrato re-ratificado foi feita — o
 > aceite de 2026-08-28 é sobre o mecanismo, e a primeira rodada de obra com RE-RA declarada
-> segue sendo o teste de verdade. Ficam também os dois desvios declarados em
-> [evidence.md](evidence.md): o controle sem RE-RA não imprime contratado e vigente repetidos,
-> e a prévia antes de gravar não entrou nesta feature.
+> segue sendo o teste de verdade. Ficam também os desvios listados em
+> [evidence.md](evidence.md): a memória sem RE-RA não imprime contratado e vigente repetidos, e
+> a prévia antes de gravar existe na medição seguinte, mas não na abertura a partir do
+> orçamento assinado.
 >
 > Registrada em 2026-08-27, por seleção humana, a partir da
 > [issue #100](https://github.com/biahflow/croquito/issues/100). Três decisões de domínio

@@ -6,6 +6,7 @@ import type {
   BulletinResponse,
   IdentityLinkPreviewResponse,
   OverlayResponse,
+  RoundSummary,
   TakeoffItem,
   ValuationOrigin,
   WorksiteResponse,
@@ -19,6 +20,7 @@ import {
   DeclararIdentidade,
   FaixaDeFolhas,
   FolhaSemPacote,
+  HerancaDaRodadaAnterior,
   LerFolhasEmLote,
   MedicaoApp,
   OverlaySemRerender,
@@ -27,6 +29,7 @@ import {
   OrigemDoOrcamento,
   OverlayDoTakeoff,
   PainelSemAcesso,
+  PreviaDaReRa,
   ProgressoExportacao,
   RegimeDeConferencia,
   RegistroDaAprovacao,
@@ -34,6 +37,7 @@ import {
   ReRatificacaoFieldset,
   TelaAuditoriaReprovada,
 } from "./MedicaoApp";
+import type { LinhaDaPrevia, LinhaHerdada } from "./previa";
 import { AVISO_DOSSIE_GERADO, AVISO_DOSSIE_PREVIA } from "./labels";
 
 /**
@@ -1355,5 +1359,175 @@ describe("DeclararIdentidade", () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain("unidades diferentes");
     expect(html).not.toContain("Total hoje, sem o vínculo");
+  });
+});
+
+/**
+ * A herança e a prévia da medição seguinte (F-040 T6, decisões 4 e 6 do pacote aprovado).
+ *
+ * As duas são componentes exportados justamente para serem provadas aqui, fora do App: o que
+ * se mede é o que a orçamentista lê ANTES de gravar.
+ */
+const RODADA_ANTERIOR = {
+  round_id: "0197f2a0-0000-7000-8000-0000000000d1",
+  worksite_key: "praca-orcada-sintetica",
+  worksite_name: "PRACA ORCADA SINTETICA",
+  reference_label: "Medição 1 — agosto/2026",
+  period_number: 1,
+  version: 3,
+  status: "OPEN",
+  stage: "bulletin",
+  extraction_status: "idle",
+  created_at: "2026-08-01T00:00:00+00:00",
+  updated_at: "2026-08-01T00:00:00+00:00",
+  approved: true,
+  can_open_next: true,
+} as unknown as RoundSummary;
+
+const HERANCA: LinhaHerdada[] = [
+  {
+    code: "CE04100010(/)",
+    itemNumber: "1.1",
+    description: "ALAMBRADO GALVANIZADO",
+    unit: "m",
+    unitPrice: "50.00",
+    contratado: "12.00",
+    vigente: "12.00",
+    medidoNoPeriodo: "5.00",
+    acumulado: "5.00",
+    saldo: "7.00",
+    reRatificada: false,
+  },
+];
+
+describe("HerancaDaRodadaAnterior", () => {
+  it("mostra o que vem da rodada anterior código a código, antes de qualquer declaração", () => {
+    const html = renderToStaticMarkup(
+      <HerancaDaRodadaAnterior
+        round={RODADA_ANTERIOR}
+        heranca={HERANCA}
+        totalMedido="250.00"
+      />,
+    );
+
+    expect(html).toContain("O que vem da rodada anterior");
+    expect(html).toContain("CE04100010(/)");
+    expect(html).toContain("Contratado");
+    expect(html).toContain("Vigente");
+    expect(html).toContain("Período 1");
+    expect(html).toContain("Acumulado");
+    expect(html).toContain("Saldo");
+    // Contratado e vigente repetem o mesmo número DE PROPÓSITO (decisão 4 do pacote).
+    expect(html.match(/12,00/g)?.length).toBe(2);
+    expect(html).toContain("5,00");
+    expect(html).toContain("7,00");
+    expect(html).toContain("R$ 250,00");
+    expect(html).toContain("vigente é igual a contratado");
+  });
+
+  it("antes da resposta, não afirma herança nenhuma", () => {
+    const html = renderToStaticMarkup(
+      <HerancaDaRodadaAnterior round={RODADA_ANTERIOR} heranca={null} totalMedido={null} />,
+    );
+
+    expect(html).toContain("Lendo o que vem da rodada anterior");
+    expect(html).not.toContain("Contratado");
+  });
+
+  it("sem contratado legível, declara a ausência em vez de mostrar tabela vazia", () => {
+    const html = renderToStaticMarkup(
+      <HerancaDaRodadaAnterior round={RODADA_ANTERIOR} heranca={[]} totalMedido={null} />,
+    );
+
+    expect(html).toContain("não devolveu o contratado código a código");
+    expect(html).toContain('role="alert"');
+  });
+
+  it("número que o servidor mandou ilegível vira palavra, nunca um zero inventado", () => {
+    const html = renderToStaticMarkup(
+      <HerancaDaRodadaAnterior
+        round={RODADA_ANTERIOR}
+        heranca={[{ ...HERANCA[0], acumulado: null, saldo: null }]}
+        totalMedido={null}
+      />,
+    );
+
+    expect(html.match(/não legível/g)?.length).toBe(2);
+    expect(html).not.toContain(">0,00<");
+  });
+});
+
+describe("PreviaDaReRa", () => {
+  const linhas: LinhaDaPrevia[] = [
+    {
+      code: "CE04100010(/)",
+      description: "ALAMBRADO GALVANIZADO",
+      unit: "m",
+      unitPrice: "50.00",
+      itemNovo: false,
+      pendente: false,
+      contratado: "12.00",
+      vigenteHoje: "12.00",
+      efeito: "+3",
+      vigenteNovo: "15.00",
+      acumulado: "5.00",
+      saldoNovo: "10.00",
+    },
+    {
+      code: "CE04100020(/)",
+      description: "PORTAO SINTETICO GALVANIZADO",
+      unit: "un",
+      unitPrice: "30.00",
+      itemNovo: true,
+      pendente: false,
+      contratado: "0.00",
+      vigenteHoje: "0.00",
+      efeito: "+2",
+      vigenteNovo: "2.00",
+      acumulado: "0.00",
+      saldoNovo: "2.00",
+    },
+  ];
+
+  it("mostra contratado → efeito → vigente → saldo novo, e diz que é prévia", () => {
+    const html = renderToStaticMarkup(<PreviaDaReRa linhas={linhas} />);
+
+    expect(html).toContain("Prévia: o que a declaração faz, antes de gravar");
+    expect(html).toContain("Vigente novo");
+    expect(html).toContain("Saldo novo");
+    expect(html).toContain("+3");
+    expect(html).toContain("15,00");
+    expect(html).toContain("10,00");
+    // O vigente é resultado de uma conta visível, e a tela diz que não se digita (decisão 6).
+    expect(html).toContain("não é digitado");
+    // A autoridade continua sendo do servidor, e a tela declara isso.
+    expect(html).toContain("quem grava e confere o consolidado é o servidor");
+  });
+
+  it("marca o item novo por escrito e mostra o preço resolvido do catálogo", () => {
+    const html = renderToStaticMarkup(<PreviaDaReRa linhas={linhas} />);
+
+    expect(html).toContain("item novo");
+    expect(html).toContain("PORTAO SINTETICO GALVANIZADO");
+    expect(html).toContain("R$ 30,00");
+    expect(html).toContain("2,00");
+  });
+
+  it("item novo não resolvido é dito por extenso, com o aviso persistente", () => {
+    const html = renderToStaticMarkup(
+      <PreviaDaReRa
+        linhas={[
+          { ...linhas[1], pendente: true, description: "", unit: "", unitPrice: null },
+        ]}
+      />,
+    );
+
+    expect(html).toContain("não encontrado no catálogo contratual");
+    expect(html).toContain("o servidor recusará a abertura");
+    expect(html).toContain('role="alert"');
+  });
+
+  it("sem declaração, não há prévia na tela", () => {
+    expect(renderToStaticMarkup(<PreviaDaReRa linhas={[]} />)).toBe("");
   });
 });

@@ -1,8 +1,17 @@
 # F-040 — Evidência
 
 Feature: [RE-RA declarada e a medição seguinte](feature.md)  
-Estado: `DONE` — evidência de navegador capturada; nenhum critério de aceite em aberto  
-Data: 2026-08-27 (evidência de navegador em 2026-08-28)
+Estado: `IN_PROGRESS` — a T6 fechou três desvios do pacote de design que a captura expôs;
+pende a **recaptura** dos estados novos (`BROWSER_REQUIRED`)  
+Data: 2026-08-27 (evidência de navegador em 2026-08-28; correção do registro e T6 em 2026-08-28)
+
+> **Correção do registro.** Este documento afirmou, em 2026-08-28, que a feature estava
+> completa e que "nenhum critério de aceite" continuava em aberto. Era falso. A própria captura
+> de navegador que ele registra expôs que **três decisões do
+> [Design Approval Package](mock/README.md) aprovado** não estavam no código — as decisões 1, 4
+> e 6 —, e o documento chamou de "desvio declarado" apenas uma delas. A
+> [T6](tasks/T6-a-porta-da-medicao-seguinte.md) fecha as três. Pacote aprovado é contrato da
+> superfície: uma feature com decisão aprovada e não construída não está `DONE`.
 
 ## Gates humanos
 
@@ -10,7 +19,7 @@ Data: 2026-08-27 (evidência de navegador em 2026-08-28)
 | --- | --- |
 | `ARCHITECTURE_DECISION_REQUIRED` | ✅ [ADR-0056](../../adr/0056-re-ra-declarada-e-o-consolidado-da-medicao-seguinte.md) **aceito por ato humano em 2026-08-27** (Daniel Campos) |
 | `DESIGN_APPROVAL_REQUIRED` | ✅ **Aprovado por ato humano em 2026-08-27** (Daniel Campos), revisão 1 ([mock/README.md](mock/README.md)) |
-| `browser-runtime-validation` (`BROWSER_REQUIRED`) | ✅ **capturada em 2026-08-28** contra o stack local — ver "Evidência de navegador" abaixo |
+| `browser-runtime-validation` (`BROWSER_REQUIRED`) | ⚠️ **parcial** — quatro estados capturados em 2026-08-28 contra o stack local, mas a **recaptura dos estados que a T6 acrescentou** (a porta, a herança e a prévia) está pendente |
 
 Antes dos dois gates, três **decisões de domínio** foram tomadas por ato humano na abertura:
 a RE-RA aprovada (não o pedido com estado), o vigente derivado como o preço, e a abertura da
@@ -31,6 +40,16 @@ medição seguinte no escopo.
 | `apps/web/src/medicao/requests.ts`, `api.ts` | `amendmentBody`, a origem `previous_round_id`, e os tipos do read-model |
 | `apps/web/src/medicao/MedicaoApp.tsx` | `ReRatificacaoDeclarada` (a conta na memória), `ReRatificacaoFieldset` (a declaração na abertura) e a porta da medição seguinte na lista de rodadas |
 
+### T6 — o que a captura mostrou que faltava
+
+| Arquivo | O que é |
+| --- | --- |
+| `apps/web/src/medicao/previa.ts` (+ `previa.test.ts`) | Aritmética exata em texto (`BigInt`, semântica de `Decimal`), a herança da rodada anterior, a prévia da RE-RA e os códigos a resolver no catálogo |
+| `apps/web/src/medicao/MedicaoApp.tsx` | A origem da rodada vira escolha de **três** portas; “Abrir a medição n+1” leva à abertura em vez de criar a rodada; `HerancaDaRodadaAnterior` e `PreviaDaReRa`; a RE-RA declarável nas duas portas contratadas |
+| `apps/web/src/medicao/styles.css` | Sem cor nova: reaproveita a tabela e o selo petróleo da RE-RA |
+| `apps/web/src/medicao/requests.test.ts` | A RE-RA viajando junto de `previous_round_id` |
+| `tests/api/test_valuation_round_from_estimate.py` | `test_a_medicao_seguinte_nasce_re_ratificada`: fixa o comportamento **já existente** do servidor e serve de oráculo aos números da prévia |
+
 ## Critérios de aceite
 
 | # | Critério | Como foi verificado |
@@ -45,7 +64,8 @@ medição seguinte no escopo.
 | 8 | Medir acima do vigente novo recusa `BALANCE_EXCEEDED`; abaixo, exporta | `models.py` sobre o saldo derivado; suíte de export |
 | 9 | Nenhum digest assinado se move | `Estimate` inalterado; consolidado por parâmetro; snapshot OpenAPI aditivo |
 | 10 | `make check` e `make test` verdes | `make check` = 0 (ruff, mypy strict, check_docs, drift, build web; `infra-check` exige terraform ausente no ambiente); `make test` = 0 |
-| 11 | Evidência renderizada da tela real (`BROWSER_REQUIRED`) | ✅ quatro estados capturados da tela real contra o stack local em 2026-08-28 — ver abaixo |
+| 11 | Evidência renderizada da tela real (`BROWSER_REQUIRED`) | ⚠️ quatro estados capturados da tela real contra o stack local em 2026-08-28 — ver abaixo; a **recaptura** dos estados da T6 está pendente |
+| 12 | A medição seguinte passa pela abertura, com herança e prévia antes de gravar (T6) | `previa.test.ts` (19), `MedicaoApp.test.tsx` (`HerancaDaRodadaAnterior`, `PreviaDaReRa`), `requests.test.ts`; e `test_valuation_round_from_estimate.py::test_a_medicao_seguinte_nasce_re_ratificada`, que fixa os mesmos números do lado do servidor |
 
 ## Evidência de navegador
 
@@ -69,23 +89,52 @@ como medição do período 1 aprovada. Nenhum documento de cliente entrou no amb
 As imagens são frozen evidence da revisão sob revisão: elas mostram a `main` com os PRs #109,
 #112 e #113 já integrados.
 
-## Desvios declarados
+## Os três desvios do pacote aprovado, e como a T6 os fecha
 
-1. **O controle não imprime duas colunas iguais.** A decisão 4 do pacote de design pede que,
-   sem RE-RA, contratado e vigente repitam o mesmo número de propósito. O implementado espelha
-   `ReajusteDeclarado`: sem declaração, o bloco inteiro não aparece
-   (`apps/web/src/medicao/MedicaoApp.tsx`, `ReRatificacaoDeclarada`). A ausência de RE-RA já é
-   **declarada** na resposta da rodada (`amendments: []`), e repetir o mesmo número em duas
-   colunas numa tela onde não há diferença alguma a mostrar seria ruído. **É desvio de decisão
-   aprovada** e fica registrado como tal: se a coluna repetida for desejada, é mudança pequena
-   e o pacote vira revisão 2.
-2. **A prévia antes de gravar (estado 04 do pacote) não foi entregue nesta feature** e,
-   portanto, não é capturada aqui: a T5 entregou a declaração, a memória e a porta da medição
-   seguinte. O efeito código a código aparece **depois** de gravar, na memória (imagem 02).
-3. **A declaração é carimbada com o `sub` do principal**, não com um nome legível — é o que a
+A captura de navegador de 2026-08-28 expôs que **três decisões do
+[Design Approval Package](mock/README.md) revisão 1**, aprovado por ato humano em 2026-08-27,
+não estavam no código. O registro anterior nomeava só uma delas.
+
+| # | Decisão aprovada | O que a T5 deixou | O que a T6 entrega |
+| --- | --- | --- | --- |
+| 1 | Decisão 1 — a medição seguinte é uma das **duas portas da abertura**, não uma tela separada | um botão na lista de rodadas que criava a rodada **na hora**, com o formulário vazio | o botão leva à abertura com origem, período e `previous_round_id` resolvidos; nenhuma rodada é criada antes do submit |
+| 2 | Decisão 4 — a **herança é mostrada antes de qualquer declaração** | nada: não havia tela entre o clique e a rodada criada | `HerancaDaRodadaAnterior`: contratado, vigente, medido no período, acumulado e saldo, código a código — e, sem RE-RA, contratado e vigente repetindo o mesmo número de propósito |
+| 3 | Decisão 6 — a **prévia mostra o efeito código a código antes de gravar** | nada: o efeito só aparecia **depois** de gravar, na memória | `PreviaDaReRa`: contratado → vigente hoje → efeito → vigente novo → acumulado → saldo novo, antes do `POST` |
+
+O desvio 1 tinha uma **consequência funcional** que o registro anterior não viu: como o caminho
+da medição seguinte não passava pela abertura, não havia como declarar uma RE-RA na medição
+seguinte pela tela, embora a API sempre tenha aceitado `previous_round_id` junto de
+`amendment`. Re-ratificação é o que acontece **entre** medições — no período 1 não há o que
+re-ratificar (ADR-0056, contexto) —, então o caminho principal da feature estava inalcançável
+pela interface.
+
+Sobre a decisão 4 na MEMÓRIA (e não na herança): ali o implementado continua espelhando
+`ReajusteDeclarado` — sem declaração, o bloco inteiro não aparece. A ausência de RE-RA já é
+declarada na resposta (`amendments: []`), e a repetição de propósito passou a existir onde a
+decisão 4 a pede, que é a herança antes de declarar. Se a coluna repetida também for desejada
+na memória, é mudança pequena e o pacote vira revisão 2.
+
+## Desvios que permanecem
+
+1. **A declaração é carimbada com o `sub` do principal**, não com um nome legível — é o que a
    API grava em `declared_by` (identidade do servidor, nunca do corpo). Na imagem 02 isso
    aparece como o UUID do usuário sintético local. Copy e apresentação da autoria não estavam
    cobertas pela aprovação do pacote.
+2. **A prévia não existe na abertura a partir do orçamento assinado.** Ela precisa do
+   contratado código a código, e a lista de origens (`GET /v1/valuation-origins`) só entrega
+   contagem e total — só a rodada anterior entrega o consolidado ao cliente. Nessa porta o
+   efeito continua aparecendo depois de gravar, na memória. Fechá-la exigiria expor o
+   contratado do orçamento assinado na origem, que é mudança de contrato e não estava no
+   escopo da T6.
+3. **A prévia é calculada no cliente.** É exceção declarada à regra "a tela nunca soma" do
+   `apps/web/AGENTS.md`, com a fronteira descrita na
+   [T6](tasks/T6-a-porta-da-medicao-seguinte.md): projeção rotulada como prévia, aritmética
+   exata em texto sem `Number`, nenhuma conta de dinheiro, e os números fixados contra os da
+   API pelo par de testes `previa.test.ts` ↔ `test_a_medicao_seguinte_nasce_re_ratificada`. O
+   servidor continua sendo autoridade.
+4. **A evidência de navegador dos estados novos não foi recapturada.** As quatro imagens acima
+   são da revisão anterior e não mostram a porta nova, a herança nem a prévia. A recaptura é
+   tarefa própria e é condição para a feature voltar a `READY_FOR_HUMAN_REVIEW`.
 
 ## Riscos remanescentes
 
@@ -100,5 +149,8 @@ As imagens são frozen evidence da revisão sob revisão: elas mostram a `main` 
 ## Decisões humanas pendentes
 
 - Aceite numa medição real com contrato re-ratificado (o aceite de código da issue #100
-  ocorreu em 2026-08-28).
-- Decidir se o controle sem RE-RA deve imprimir contratado e vigente repetidos (desvio 1).
+  ocorreu em 2026-08-28, **antes** de os três desvios do pacote serem vistos).
+- Decidir se a MEMÓRIA sem RE-RA deve imprimir contratado e vigente repetidos — na herança da
+  medição seguinte a repetição de propósito já existe, desde a T6.
+- Decidir se a prévia deve alcançar também a abertura a partir do orçamento assinado, o que
+  exige expor o contratado código a código na lista de origens (mudança de contrato).

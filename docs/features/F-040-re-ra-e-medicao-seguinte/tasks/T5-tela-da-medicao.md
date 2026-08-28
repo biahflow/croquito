@@ -1,8 +1,10 @@
 # F-040 · T5 — A tela: declarar a RE-RA e abrir a medição seguinte
 
-Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue** — declaração, memória e porta da medição seguinte no ar; evidência de
-navegador capturada em 2026-08-28 ([evidence.md](../evidence.md)). Fica o desvio declarado do
-critério 3: a prévia antes de gravar não foi entregue.
+Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue com
+desvio** — declaração e memória no ar; evidência de navegador capturada em 2026-08-28
+([evidence.md](../evidence.md)). A captura expôs que **três decisões do pacote aprovado** não
+foram construídas aqui — os critérios 1 (as duas portas juntas), 3 (a prévia antes de gravar) e
+a herança da decisão 4. A [T6](T6-a-porta-da-medicao-seguinte.md) as fecha.
 
 ## Objetivo
 

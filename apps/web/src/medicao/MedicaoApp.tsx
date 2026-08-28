@@ -49,6 +49,7 @@ import {
   type ApprovalState,
   type BulletinResponse,
   type CatalogSearchResponse,
+  type CatalogSearchResult,
   type CodesResponse,
   type DossierResponse,
   type IdentityLinkPreviewResponse,
@@ -189,6 +190,16 @@ import {
   sceneOutcomeLabel,
   sceneReasonLabel,
 } from "./labels";
+import {
+  aberturaDaMedicaoSeguinte,
+  codigosParaResolver,
+  efeitoEmPtBr,
+  herancaDaRodadaAnterior,
+  medidoPorCodigo,
+  previaDaReRa,
+  type LinhaDaPrevia,
+  type LinhaHerdada,
+} from "./previa";
 import { DICA_NOME_DA_OBRA, codeSearchTerm, worksiteKeyError } from "./requests";
 import { DICA_FATOR, REAJUSTE_OPCOES, reajusteIssue } from "./reajuste";
 import { DICA_DELTA, reRaIssue } from "./reratificacao";
@@ -251,6 +262,15 @@ const EMPTY_ROUND_FORM = {
   address: "",
   contractLabel: "",
 };
+
+/**
+ * De onde vem o contratado desta rodada (F-040 T6, decisão 1 do pacote de design).
+ *
+ * As três aparecem juntas, como escolha única, porque a pergunta é uma só. A medição seguinte
+ * é UMA DAS PORTAS DA ABERTURA, e não uma tela separada: esconder a continuação da obra atrás
+ * de outro caminho faria dela exceção, e ela é o caso normal a partir do segundo mês.
+ */
+type OrigemDaRodada = "signed_estimate" | "previous_round" | "upload";
 
 /**
  * A escolha do orçamento assinado que vai originar a medição (F-036, ADR-0048).
@@ -592,6 +612,196 @@ export function ReRatificacaoFieldset({
         </div>
       )}
     </fieldset>
+  );
+}
+
+/**
+ * A herança da rodada anterior, antes de qualquer declaração (F-040 T6, decisão 4 do pacote).
+ *
+ * É o que a medição seguinte recebe: contratado, vigente, o que foi medido no período que
+ * fechou, o acumulado resultante e o saldo. Sem RE-RA, contratado e vigente repetem o mesmo
+ * número **de propósito** — é o que faz a diferença aparecer no dia em que ela existir.
+ *
+ * Os números são a projeção do consolidado que a rodada `n+1` vai nascer com, calculada do
+ * read-model da rodada anterior; ela é declarada como prévia na própria tela, e o que vale
+ * depois de gravar é a resposta da API.
+ */
+export function HerancaDaRodadaAnterior({
+  round,
+  heranca,
+  totalMedido,
+}: {
+  round: RoundSummary;
+  heranca: LinhaHerdada[] | null;
+  totalMedido: string | null;
+}) {
+  const periodoQueFechou = round.period_number;
+  if (heranca === null) {
+    return (
+      <p className="campo-dica">Lendo o que vem da rodada anterior…</p>
+    );
+  }
+  if (heranca.length === 0) {
+    return (
+      <p className="campo-aviso" role="alert">
+        A rodada anterior não devolveu o contratado código a código. A medição seguinte
+        continua podendo ser aberta — quem confere o consolidado é o servidor —, mas a herança
+        não pode ser mostrada aqui.
+      </p>
+    );
+  }
+  return (
+    <div className="heranca-da-anterior">
+      <h3>O que vem da rodada anterior</h3>
+      <table className="rera-tabela">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Código</th>
+            <th>Descrição</th>
+            <th>Un</th>
+            <th className="numero">Preço</th>
+            <th className="numero">Contratado</th>
+            <th className="numero">Vigente</th>
+            <th className="numero">Período {periodoQueFechou}</th>
+            <th className="numero">Acumulado</th>
+            <th className="numero">Saldo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {heranca.map((linha) => (
+            <tr key={linha.code}>
+              <td>{linha.itemNumber}</td>
+              <td className="mono">
+                {linha.code}
+                {linha.reRatificada ? (
+                  <>
+                    {" "}
+                    <span className="selo selo-rera">re-ratificada</span>
+                  </>
+                ) : null}
+              </td>
+              <td>{linha.description}</td>
+              <td>{linha.unit}</td>
+              <td className="numero">
+                {linha.unitPrice === null ? "—" : formatMoneyText(linha.unitPrice)}
+              </td>
+              <td className="numero">{formatDecimalText(linha.contratado)}</td>
+              <td className="numero">{formatDecimalText(linha.vigente)}</td>
+              <td className="numero">{formatDecimalText(linha.medidoNoPeriodo)}</td>
+              <td className="numero">
+                {linha.acumulado === null ? "não legível" : formatDecimalText(linha.acumulado)}
+              </td>
+              <td className="numero">
+                {linha.saldo === null ? "não legível" : formatDecimalText(linha.saldo)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {totalMedido === null ? null : (
+        <p className="dica">
+          Medido no período {periodoQueFechou}: {formatMoneyText(totalMedido)} — o total é o
+          que o boletim aprovado da rodada anterior declarou.
+        </p>
+      )}
+      <p className="dica">
+        Sem RE-RA declarada, <strong>vigente é igual a contratado</strong>: as duas colunas
+        repetem o mesmo número de propósito, para que a diferença apareça quando existir. Esta
+        é a prévia do consolidado que a rodada nova vai receber; o que vale depois de gravar é
+        o que o servidor devolver.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * A prévia do efeito da RE-RA, antes de gravar (F-040 T6, decisão 6 do pacote).
+ *
+ * O vigente aparece como resultado de uma conta visível — contratado, vigente hoje, o efeito
+ * declarado com sinal, o vigente novo e o saldo novo. **Não existe campo onde escrever o
+ * vigente**: existe o delta que o produz.
+ *
+ * A palavra "prévia" está na tela porque ela é isso: a autoridade sobre o número é do
+ * servidor, e a memória da rodada aberta mostra a resposta dele, não esta conta.
+ */
+export function PreviaDaReRa({ linhas }: { linhas: LinhaDaPrevia[] }) {
+  if (linhas.length === 0) {
+    return null;
+  }
+  return (
+    <div className="previa-da-rera">
+      <h3>Prévia: o que a declaração faz, antes de gravar</h3>
+      <table className="rera-tabela">
+        <thead>
+          <tr>
+            <th>Código</th>
+            <th>Descrição</th>
+            <th>Un</th>
+            <th className="numero">Preço</th>
+            <th className="numero">Contratado</th>
+            <th className="numero">Vigente hoje</th>
+            <th className="numero">RE-RA</th>
+            <th className="numero">Vigente novo</th>
+            <th className="numero">Acumulado</th>
+            <th className="numero">Saldo novo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {linhas.map((linha) => (
+            <tr key={linha.code}>
+              <td className="mono">
+                {linha.code}
+                {linha.itemNovo ? (
+                  <>
+                    {" "}
+                    <span className="selo selo-rera">item novo</span>
+                  </>
+                ) : null}
+              </td>
+              <td>
+                {linha.pendente ? (
+                  <span className="campo-aviso">
+                    não encontrado no catálogo contratual desta obra
+                  </span>
+                ) : (
+                  linha.description
+                )}
+              </td>
+              <td>{linha.unit}</td>
+              <td className="numero">
+                {linha.unitPrice === null ? "—" : formatMoneyText(linha.unitPrice)}
+              </td>
+              <td className="numero">{formatDecimalText(linha.contratado)}</td>
+              <td className="numero">{formatDecimalText(linha.vigenteHoje)}</td>
+              <td className="numero">{efeitoEmPtBr(linha.efeito)}</td>
+              <td className="numero">
+                {linha.vigenteNovo === null
+                  ? "não legível"
+                  : formatDecimalText(linha.vigenteNovo)}
+              </td>
+              <td className="numero">{formatDecimalText(linha.acumulado)}</td>
+              <td className="numero">
+                {linha.saldoNovo === null ? "não legível" : formatDecimalText(linha.saldoNovo)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="dica">
+        O vigente <strong>não é digitado</strong>: ele é o vigente de hoje mais o efeito
+        declarado, e o saldo novo é o vigente novo menos o acumulado, que não se move — período
+        já medido guarda a quantidade que valeu nele. Esta é a prévia; quem grava e confere o
+        consolidado é o servidor, e a memória da rodada mostrará a resposta dele.
+      </p>
+      {linhas.some((linha) => linha.pendente) ? (
+        <p className="campo-aviso" role="alert">
+          Um item novo ainda não foi encontrado no catálogo contratual desta obra. Sem
+          descrição, unidade e preço, a linha não tem de onde nascer e o servidor recusará a
+          abertura.
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -2976,7 +3186,23 @@ export function MedicaoApp({
   // orçamento quando existe pelo menos um ASSINADO para escolher. O padrão segue o dado, e
   // não o otimismo: sem orçamento assinado, oferecer essa origem como padrão esconderia o
   // único caminho que funciona.
-  const [origemDoOrcamento, setOrigemDoOrcamento] = useState(false);
+  const [origem, setOrigem] = useState<OrigemDaRodada>("upload");
+  const origemDoOrcamento = origem === "signed_estimate";
+  // As duas portas contratadas — orçamento assinado e rodada anterior — compartilham a regra
+  // de que obra, catálogo e contratado NÃO são digitados; só elas oferecem declarar RE-RA.
+  const origemContratada = origem !== "upload";
+  // A medição seguinte (F-040 T6): a rodada anterior escolhida, a herança que ela deixa e o
+  // total medido no período que fechou. Nada disso cria rodada — a criação continua sendo o
+  // submit do formulário, como nas outras duas portas.
+  const [rodadaAnterior, setRodadaAnterior] = useState<RoundSummary | null>(null);
+  const [heranca, setHeranca] = useState<LinhaHerdada[] | null>(null);
+  const [totalMedidoAnterior, setTotalMedidoAnterior] = useState<string | null>(null);
+  // Descrição, unidade e preço dos itens novos, resolvidos no catálogo contratual da rodada
+  // anterior (ADR-0056, decisão 7). `null` na chave = buscado e não encontrado; chave ausente
+  // = ainda não buscado. Nunca busca duas vezes o mesmo código.
+  const [catalogoItemNovo, setCatalogoItemNovo] = useState<
+    Record<string, CatalogSearchResult | null>
+  >({});
   // Reajuste declarado na abertura (F-039). `null` é "sem reajuste", e é o padrão: o ato
   // existe e não se impõe. Só aparece no caminho do orçamento assinado, porque sem
   // contratado não há preço contratual a reajustar.
@@ -3100,8 +3326,10 @@ export function MedicaoApp({
     try {
       const resposta = await listValuationOrigins(token);
       setOrigens(resposta.items);
-      if (resposta.items.some((origem) => origem.signature === "signed")) {
-        setOrigemDoOrcamento(true);
+      if (resposta.items.some((candidata) => candidata.signature === "signed")) {
+        // Só promove o padrão enquanto ninguém escolheu outra porta: a medição seguinte
+        // escolhida por gesto não pode ser trocada por uma resposta que chega depois.
+        setOrigem((atual) => (atual === "upload" ? "signed_estimate" : atual));
       }
     } catch {
       setOrigens([]);
@@ -3256,37 +3484,126 @@ export function MedicaoApp({
   };
 
   /**
-   * A medição seguinte (F-040): abre a rodada `n+1` a partir de uma rodada anterior aprovada.
+   * A herança da rodada anterior (F-040 T6): o contratado código a código e o que ela mediu.
    *
-   * O período NÃO é digitado — é o da rodada anterior mais um, calculado e enviado (decisão 2
-   * do pacote de design). Obra, catálogo e contratado vêm da rodada anterior; o corpo só cita
-   * `previous_round_id`. Reajuste e RE-RA da rodada seguinte podem ser declarados depois, na
-   * própria rodada nova.
+   * Observacional, como a lista de origens: falha aqui NÃO impede abrir a medição seguinte —
+   * quem confere o consolidado é o servidor. O que se perde é a prévia, e a tela diz isso em
+   * vez de fingir que leu.
    */
-  const abrirMedicaoSeguinte = async (round: RoundSummary) => {
-    if (submitting) {
+  const carregarHeranca = useCallback(
+    async (previousRoundId: string) => {
+      const token = tokenDaSessao();
+      if (token === null) {
+        return;
+      }
+      try {
+        const [estado, boletim] = await Promise.all([
+          getRoundState(token, previousRoundId),
+          getBulletin(token, previousRoundId).catch(() => null),
+        ]);
+        setHeranca(
+          herancaDaRodadaAnterior(
+            estado.contracted.quantities ?? [],
+            estado.contracted.prices ?? [],
+            medidoPorCodigo(boletim),
+          ),
+        );
+        setTotalMedidoAnterior(boletim?.total_amount ?? null);
+      } catch {
+        setHeranca([]);
+        setTotalMedidoAnterior(null);
+      }
+    },
+    [tokenDaSessao],
+  );
+
+  /**
+   * Item novo: descrição, unidade e preço resolvidos no catálogo contratual da rodada anterior
+   * (ADR-0056, decisão 7). Só a PRÉVIA usa este resultado — o corpo da RE-RA não leva preço, e
+   * quem materializa a linha no consolidado é o servidor.
+   *
+   * Duas guardas contra tráfego inútil, e nenhuma delas é cosmética: o campo do código é
+   * digitado caractere a caractere, e sem elas "CE04100010(/)" viraria uma dúzia de buscas por
+   * prefixos que não existem no catálogo.
+   *
+   * - o mesmo `BUSCA_DEBOUNCE_MS` da busca de códigos espera a pausa da digitação;
+   * - `itensNovosPedidos` guarda o que já foi perguntado, para não repetir. Um código não
+   *   encontrado fica gravado como `null`, que é resposta e não ausência de resposta.
+   */
+  const itensNovosPedidos = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const anterior = rodadaAnterior;
+    if (anterior === null || heranca === null || reRa === null) {
       return;
     }
     const token = tokenDaSessao();
     if (token === null) {
       return;
     }
-    setSubmitting(true);
-    setAlertMessage(null);
-    try {
-      const created = await createRound(token, {
-        ...EMPTY_ROUND_FORM,
-        previousRoundId: round.round_id,
-        referenceLabel: `Medição ${round.period_number + 1} — ${round.worksite_name}`,
-        periodNumber: String(round.period_number + 1),
-      });
-      setToast("Medição seguinte aberta a partir da rodada anterior aprovada.");
-      abrirRodada(created.round_id);
-    } catch (error) {
-      setAlertMessage(describeError(error));
-    } finally {
-      setSubmitting(false);
+    const pendentes = codigosParaResolver(reRa, heranca).filter(
+      (code) => !itensNovosPedidos.current.has(code),
+    );
+    if (pendentes.length === 0) {
+      return;
     }
+    const timer = setTimeout(() => {
+      for (const code of pendentes) {
+        itensNovosPedidos.current.add(code);
+        void searchCatalog(token, anterior.round_id, codeSearchTerm(code))
+          .then((resposta) => {
+            const encontrado = resposta.results.find((linha) => linha.code === code) ?? null;
+            setCatalogoItemNovo((atual) => ({ ...atual, [code]: encontrado }));
+          })
+          .catch(() => {
+            // Falha de rede não é "código inexistente": esquecer o pedido deixa a próxima
+            // digitação tentar de novo, e a prévia continua declarando a linha como pendente.
+            itensNovosPedidos.current.delete(code);
+          });
+      }
+    }, BUSCA_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [reRa, heranca, rodadaAnterior, tokenDaSessao]);
+
+  /**
+   * A prévia do efeito da RE-RA sobre a herança (decisão 6 do pacote de design).
+   *
+   * Vazia quando não há declaração ou não há herança lida: sem contratado código a código não
+   * há prévia a fazer, e a tela não inventa uma.
+   */
+  const previaDeclarada = useMemo(
+    () => previaDaReRa(heranca ?? [], reRa, catalogoItemNovo),
+    [heranca, reRa, catalogoItemNovo],
+  );
+
+  /**
+   * A porta da medição seguinte (F-040 T6, decisão 1 do pacote de design).
+   *
+   * Ela leva à ABERTURA com a origem já escolhida — não cria rodada nenhuma. Era esse o
+   * desvio que a captura de navegador da T5 expôs: criar na hora pulava a herança (decisão 4)
+   * e a prévia (decisão 6), e tornava a RE-RA da medição seguinte inalcançável pela tela,
+   * embora a API sempre a tenha aceitado.
+   *
+   * O período NÃO é digitado: é o da rodada anterior mais um (decisão 2). Obra, catálogo e
+   * contratado vêm da rodada anterior; o corpo só citará `previous_round_id`.
+   */
+  const escolherMedicaoSeguinte = (round: RoundSummary) => {
+    const abertura = aberturaDaMedicaoSeguinte(round);
+    setOrigem("previous_round");
+    setRodadaAnterior(round);
+    setOrigemEscolhida(null);
+    setReajuste(null);
+    setReRa(null);
+    setCatalogoItemNovo({});
+    itensNovosPedidos.current.clear();
+    setHeranca(null);
+    setTotalMedidoAnterior(null);
+    setAlertMessage(null);
+    setRoundForm({
+      ...EMPTY_ROUND_FORM,
+      periodNumber: abertura.periodNumber,
+      referenceLabel: abertura.referenceLabel,
+    });
+    void carregarHeranca(abertura.previousRoundId);
   };
 
   /**
@@ -3302,12 +3619,12 @@ export function MedicaoApp({
     setSubmitting(true);
     setAlertMessage(null);
     try {
-      if (origemDoOrcamento) {
-        if (origemEscolhida === null) {
+      if (origemContratada) {
+        if (origemDoOrcamento ? origemEscolhida === null : rodadaAnterior === null) {
           return;
         }
-        // Obra, catálogo e contratado vêm do conteúdo assinado; declará-los aqui é recusado
-        // pelo servidor, e é por isso que o corpo não os leva.
+        // Obra, catálogo e contratado vêm do conteúdo assinado ou da rodada anterior;
+        // declará-los aqui é recusado pelo servidor, e é por isso que o corpo não os leva.
         const problema = reajusteIssue(reajuste);
         if (problema !== null) {
           setAlertMessage(problema);
@@ -3320,20 +3637,28 @@ export function MedicaoApp({
         }
         const created = await createRound(token, {
           ...roundForm,
-          estimateRoundId: origemEscolhida,
+          estimateRoundId: origemDoOrcamento ? (origemEscolhida ?? undefined) : undefined,
+          previousRoundId: origemDoOrcamento ? undefined : rodadaAnterior?.round_id,
           priceAdjustment: reajuste ?? undefined,
           amendment: reRa ?? undefined,
         });
         setRoundForm(EMPTY_ROUND_FORM);
         setOrigemEscolhida(null);
+        setRodadaAnterior(null);
+        setHeranca(null);
+        setTotalMedidoAnterior(null);
+        setCatalogoItemNovo({});
+        itensNovosPedidos.current.clear();
         setReajuste(null);
         setReRa(null);
         setToast(
           reRa !== null
             ? "Rodada aberta com o contratado re-ratificado."
-            : reajuste === null
-              ? "Rodada aberta com o contratado do orçamento assinado."
-              : "Rodada aberta com o contratado reajustado.",
+            : origemDoOrcamento
+              ? reajuste === null
+                ? "Rodada aberta com o contratado do orçamento assinado."
+                : "Rodada aberta com o contratado reajustado."
+              : "Medição seguinte aberta a partir da rodada anterior aprovada.",
         );
         abrirRodada(created.round_id);
         return;
@@ -4856,8 +5181,7 @@ export function MedicaoApp({
                         <button
                           type="button"
                           className="botao-secundario"
-                          disabled={submitting}
-                          onClick={() => void abrirMedicaoSeguinte(round)}
+                          onClick={() => escolherMedicaoSeguinte(round)}
                         >
                           Abrir a medição {round.period_number + 1}
                         </button>
@@ -4894,33 +5218,79 @@ export function MedicaoApp({
                   <input
                     type="radio"
                     name="origem-da-rodada"
-                    checked={origemDoOrcamento}
+                    checked={origem === "signed_estimate"}
                     disabled={
                       origens !== null &&
-                      !origens.some((origem) => origem.signature === "signed")
+                      !origens.some((candidata) => candidata.signature === "signed")
                     }
-                    onChange={() => setOrigemDoOrcamento(true)}
+                    onChange={() => setOrigem("signed_estimate")}
                   />
-                  De um orçamento assinado
+                  Primeira medição da obra, de um orçamento assinado
                 </label>
                 <label>
                   <input
                     type="radio"
                     name="origem-da-rodada"
-                    checked={!origemDoOrcamento}
-                    onChange={() => setOrigemDoOrcamento(false)}
+                    checked={origem === "previous_round"}
+                    disabled={rodadaAnterior === null}
+                    onChange={() => setOrigem("previous_round")}
+                  />
+                  Medição seguinte, a partir da rodada anterior aprovada
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="origem-da-rodada"
+                    checked={origem === "upload"}
+                    onChange={() => setOrigem("upload")}
                   />
                   Do zero, com catálogo por upload
                 </label>
               </fieldset>
-              {origemDoOrcamento ? (
+              {origem === "signed_estimate" ? (
                 <OrigemDoOrcamento
                   origens={origens}
                   escolhida={origemEscolhida}
                   onEscolher={setOrigemEscolhida}
                 />
               ) : null}
-              {origemDoOrcamento ? null : (
+              {origem === "previous_round" ? (
+                rodadaAnterior === null ? (
+                  <p className="campo-dica">
+                    Escolha, na lista acima, a rodada aprovada que continua — o botão “Abrir a
+                    medição” de cada rodada traz a continuação para cá. Só rodada aprovada abre
+                    a seguinte: saldo apurado sobre período ainda aberto afirma como medido o
+                    que ainda pode mudar.
+                  </p>
+                ) : (
+                  <>
+                    <div className="campo">
+                      <span>Rodada anterior</span>
+                      <p className="origem-titulo">
+                        <strong>
+                          {rodadaAnterior.worksite_name} — {rodadaAnterior.reference_label}
+                        </strong>{" "}
+                        <span className="selo selo-ok">aprovada</span>
+                      </p>
+                      <p className="campo-dica">
+                        Obra, catálogo e contratado vêm da rodada anterior e não são digitados
+                        aqui. Reajuste e RE-RA já declarados nela seguem valendo.
+                      </p>
+                    </div>
+                    <p className="dica">
+                      O período desta rodada é o <strong>{roundForm.periodNumber}</strong>,
+                      calculado a partir da anterior. Ele não é digitado: período escolhido à
+                      mão abre espaço para pular um ou repetir um.
+                    </p>
+                    <HerancaDaRodadaAnterior
+                      round={rodadaAnterior}
+                      heranca={heranca}
+                      totalMedido={totalMedidoAnterior}
+                    />
+                  </>
+                )
+              ) : null}
+              {origemContratada ? null : (
                 <>
               <p>
                 O catálogo de preços é instalado na criação e é imutável na rodada: trocar
@@ -4974,21 +5344,25 @@ export function MedicaoApp({
               </label>
                 </>
               )}
-              <label className="campo">
-                Número da medição
-                <input
-                  type="number"
-                  min={1}
-                  value={roundForm.periodNumber}
-                  onChange={(event) =>
-                    setRoundForm((current) => ({
-                      ...current,
-                      periodNumber: event.target.value,
-                    }))
-                  }
-                  required
-                />
-              </label>
+              {/* Na medição seguinte o período NÃO é campo: ele é calculado da rodada
+                  anterior e mostrado acima (decisão 2 do pacote de design). */}
+              {origem === "previous_round" ? null : (
+                <label className="campo">
+                  Número da medição
+                  <input
+                    type="number"
+                    min={1}
+                    value={roundForm.periodNumber}
+                    onChange={(event) =>
+                      setRoundForm((current) => ({
+                        ...current,
+                        periodNumber: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </label>
+              )}
               <label className="campo">
                 Rótulo da medição
                 <span className="campo-dica">
@@ -5006,7 +5380,7 @@ export function MedicaoApp({
                   required
                 />
               </label>
-              {origemDoOrcamento ? null : (
+              {origemContratada ? null : (
                 <>
               <label className="campo">
                 Endereço (opcional)
@@ -5133,12 +5507,17 @@ export function MedicaoApp({
                   )}
                 </fieldset>
               ) : null}
-              {origemDoOrcamento ? (
+              {origemContratada ? (
                 <>
                   <ReRatificacaoFieldset value={reRa} onChange={setReRa} />
                   {reRaIssue(reRa) === null ? null : (
                     <p className="campo-aviso">{reRaIssue(reRa)}</p>
                   )}
+                  {/* A prévia é da medição seguinte: ela precisa do contratado código a
+                      código, e só a rodada anterior o entrega ao cliente. Na abertura a
+                      partir do orçamento assinado o efeito continua aparecendo depois de
+                      gravar, na memória da rodada. */}
+                  <PreviaDaReRa linhas={previaDeclarada} />
                 </>
               ) : null}
               <button
@@ -5147,9 +5526,11 @@ export function MedicaoApp({
                 disabled={
                   submitting ||
                   reajusteIssue(reajuste) !== null ||
-                  (origemDoOrcamento
+                  (origem === "signed_estimate"
                     ? origemEscolhida === null
-                    : catalogFile === null)
+                    : origem === "previous_round"
+                      ? rodadaAnterior === null
+                      : catalogFile === null)
                 }
               >
                 {submitting ? "Abrindo…" : "Abrir rodada"}

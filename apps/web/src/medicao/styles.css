@@ -1335,6 +1335,32 @@ p {
   align-items: center;
 }
 
+/* A herança da rodada anterior e a prévia antes de gravar (F-040 T6, decisões 4 e 6 do
+   pacote). Nenhuma cor nova: as duas reaproveitam a tabela e o selo petróleo da RE-RA. O que
+   as distingue é a PALAVRA no título — "o que vem da rodada anterior" e "prévia" —, porque
+   nada aqui é memória gravada, e a diferença não pode depender de cor. */
+.jornada-medicao .heranca-da-anterior,
+.jornada-medicao .previa-da-rera {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+.jornada-medicao .heranca-da-anterior h3,
+.jornada-medicao .previa-da-rera h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.jornada-medicao .previa-da-rera {
+  padding: 12px;
+  border: 1px solid #9cc9d1;
+  border-radius: 8px;
+  background: #f6fbfc;
+}
+
 .jornada-medicao .rera-item-novo {
   display: flex;
   flex-direction: row;

@@ -267,6 +267,43 @@ describe("createRoundBody", () => {
     });
   });
 
+  /**
+   * F-040 T6: re-ratificação é o que acontece ENTRE medições, e o corpo precisa levar as duas
+   * coisas juntas. A API sempre aceitou; até a T6 a tela não tinha por onde declará-la nesta
+   * porta, porque a medição seguinte era criada direto da lista de rodadas.
+   */
+  it("na medição seguinte, a RE-RA declarada viaja junto da rodada anterior", () => {
+    const body = createRoundBody({
+      worksiteKey: "",
+      worksiteName: "",
+      previousRoundId: "0197f2a0-0000-7000-8000-0000000000dd",
+      periodNumber: "2",
+      referenceLabel: "2ª MEDIÇÃO",
+      amendment: {
+        label: "2ª RE-RA",
+        referencePeriod: "Processo 123/2026",
+        lines: [
+          { code: "CE04100010(/)", quantityDelta: "3" },
+          { code: "CE04100020(/)", quantityDelta: "2", isNewItem: true },
+        ],
+      },
+    });
+
+    expect(body).toEqual({
+      previous_round_id: "0197f2a0-0000-7000-8000-0000000000dd",
+      period_number: 2,
+      reference_label: "2ª MEDIÇÃO",
+      amendment: {
+        label: "2ª RE-RA",
+        reference_period: "Processo 123/2026",
+        lines: [
+          { code: "CE04100010(/)", quantity_delta: "3" },
+          { code: "CE04100020(/)", quantity_delta: "2", is_new_item: true },
+        ],
+      },
+    });
+  });
+
   it("leva a RE-RA declarada, sem preço de item novo (o servidor materializa)", () => {
     const body = createRoundBody({
       worksiteKey: "",

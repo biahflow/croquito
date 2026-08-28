@@ -741,6 +741,7 @@ def _seed_previous_round(
     period_number: int = 1,
     approved: bool = True,
     tenant: str = _TENANT,
+    catalog_sha256: str = "c" * 64,
 ) -> str:
     """Uma rodada de medição anterior, aprovada, com consolidado gravado e um período medido.
 
@@ -780,7 +781,9 @@ def _seed_previous_round(
                 period_number=period_number,
                 address="RUA SINTETICA, 100",
                 catalog_object_key=_OBJECT_KEY,
-                catalog_source_sha256="c" * 64,
+                # O digest do catálogo instalado. Só quem materializa item novo precisa que
+                # ele bata com os bytes no armazenamento; os demais testes não leem o catálogo.
+                catalog_source_sha256=catalog_sha256,
                 catalog_summary_json={},
                 estimate_round_id=str(new_uuid7()),
                 estimate_digest=contract.source_sha256,
@@ -903,3 +906,59 @@ def test_a_lista_nao_marca_rodada_nao_aprovada_como_apta(tmp_path: Path) -> None
     item = resposta.json()["items"][0]
     assert item["approved"] is False
     assert item["can_open_next"] is False
+
+
+def test_a_medicao_seguinte_nasce_re_ratificada(tmp_path: Path) -> None:
+    """F-040 T6: declarar a RE-RA na abertura da MEDIÇÃO SEGUINTE, e não só na primeira.
+
+    A API sempre aceitou os dois campos juntos, mas a tela nunca ofereceu o caminho — e
+    re-ratificação é justamente o que acontece ENTRE medições. Este teste fixa o comportamento
+    do servidor e, com ele, os números que a prévia da tela precisa reproduzir ANTES de gravar
+    (`apps/web/src/medicao/previa.test.ts`, que cita este teste pelo nome): mudar um lado sem o
+    outro reprova aqui.
+
+    12,00 contratados, 5,00 medidos e aprovados no período 1, +3 de RE-RA e um item novo de +2
+    dão, na rodada 2: vigente 15,00 sobre acumulado 5,00 (saldo 10,00), e a linha nova com
+    contratado 0,00, vigente 2,00 e saldo 2,00.
+    """
+    client = _client(tmp_path)
+    # O item novo é materializado do catálogo CONTRATUAL instalado na rodada anterior; sem os
+    # bytes no armazenamento (e com o digest batendo) a abertura recusa com `CATALOG_REQUIRED`,
+    # que é o portão certo.
+    payload = _catalog_bytes()
+    _store(client).put_direct(object_key=_OBJECT_KEY, body=payload, content_type="application/json")
+    previous = _seed_previous_round(
+        client,
+        measured=Decimal("5.00"),
+        catalog_sha256=hashlib.sha256(payload).hexdigest(),
+    )
+
+    amendment = _re_ra(
+        label="2ª RE-RA",
+        lines=[
+            {"code": _CODE, "quantity_delta": "3"},
+            {"code": _CODE_NEW, "quantity_delta": "2", "is_new_item": True},
+        ],
+    )
+    response = _open_next(client, previous, amendment=amendment)
+
+    assert response.status_code == 201, response.text
+    leitura = client.get(
+        f"/v1/valuation-rounds/{response.json()['round_id']}",
+        headers=_headers(key="estado-seguinte-re-ratificada"),
+    )
+    assert leitura.status_code == 200, leitura.text
+    contracted = leitura.json()["contracted"]
+    assert [a["label"] for a in contracted["amendments"]] == ["2ª RE-RA"]
+
+    quantidades = {q["code"]: q for q in contracted["quantities"]}
+    herdada = quantidades[_CODE]
+    assert herdada["contracted_quantity"] == "12.00"
+    assert herdada["current_quantity"] == "15.00"
+    assert herdada["current_balance_quantity"] == "10.00"
+    assert herdada["re_ratified"] is True
+
+    nova = quantidades[_CODE_NEW]
+    assert nova["contracted_quantity"] == "0.00"
+    assert nova["current_quantity"] == "2.00"
+    assert nova["current_balance_quantity"] == "2.00"
