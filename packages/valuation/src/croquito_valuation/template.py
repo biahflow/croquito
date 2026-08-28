@@ -14,7 +14,13 @@ from typing import Final
 from pydantic import Field, model_validator
 
 from croquito_valuation.errors import ValuationValidationError
-from croquito_valuation.models import ValuationContractModel
+from croquito_valuation.models import (
+    MAX_DESCRIPTION_LENGTH,
+    NON_SCO_CODE_PATTERN,
+    ExactDecimal,
+    ValuationContractModel,
+)
+from croquito_valuation.sco import SCO_CODE_PATTERN
 
 COLUMN_LETTER_PATTERN: Final = r"^[A-Z]{1,2}$"
 WORKSITE_PLACEHOLDER: Final = "{worksite}"
@@ -499,6 +505,161 @@ class EstimateLayout(ValuationContractModel):
         return self
 
 
+class EstimateTemplateRow(ValuationContractModel):
+    """Uma linha do gabarito de ordem fixa da prefeitura, exatamente como ela a publica.
+
+    `group` e `item` são TEXTO e são preservados como escritos — zero à esquerda e a forma
+    `GG.N` fazem parte do documento. Nem o modelo nem o escritor recomputam ou renumeram
+    coisa alguma: a lacuna de grupo do documento real (5, 15 e 22 no gabarito do cliente)
+    existe porque o gabarito simplesmente não declara linha daqueles grupos, e não há
+    campo para "grupo ausente" — não há nada a declarar.
+
+    `unit_price` é o preço que o gabarito imprime quando o orçamento não tem a linha
+    daquele código. Quando tem, quem manda é o preço do orçamento; os dois nunca são
+    comparados (a regra vive na docstring do escritor).
+    """
+
+    group: str = Field(min_length=1, max_length=20)
+    item: str = Field(min_length=1, max_length=20)
+    code: str = Field(min_length=1, max_length=30)
+    description: str = Field(min_length=1, max_length=MAX_DESCRIPTION_LENGTH)
+    unit: str = Field(min_length=1, max_length=20)
+    unit_price: ExactDecimal | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_code(self) -> EstimateTemplateRow:
+        """Mesmo superset estrutural de `ServiceHaulage.validate_codes` (`haulage.py`).
+
+        O gabarito real mistura código SCO e código de outra origem, então exigir SCO puro
+        recusaria o documento do cliente; o que não pode passar é texto que não tem forma
+        de código de catálogo nenhum.
+        """
+        if (
+            re.fullmatch(SCO_CODE_PATTERN, self.code) is None
+            and re.fullmatch(NON_SCO_CODE_PATTERN, self.code) is None
+        ):
+            raise ValuationValidationError(
+                "TEMPLATE_ESTIMATE_GRID_CODE_INVALID",
+                "código do gabarito não tem formato de código de catálogo",
+                {"item": self.item, "code": self.code},
+            )
+        return self
+
+
+class EstimateTemplateColumns(ValuationContractModel):
+    """As oito colunas da planilha orçamentária do gabarito, na ordem impressa."""
+
+    group: SheetColumn
+    item: SheetColumn
+    code: SheetColumn
+    description: SheetColumn
+    unit: SheetColumn
+    quantity: SheetColumn
+    unit_price: SheetColumn
+    total: SheetColumn
+
+    @property
+    def ordered(self) -> tuple[SheetColumn, ...]:
+        """Colunas na ordem impressa."""
+        return (
+            self.group,
+            self.item,
+            self.code,
+            self.description,
+            self.unit,
+            self.quantity,
+            self.unit_price,
+            self.total,
+        )
+
+    @model_validator(mode="after")
+    def validate_distinct_letters(self) -> EstimateTemplateColumns:
+        letters = [column.letter for column in self.ordered]
+        if len(letters) != len(set(letters)):
+            raise ValuationValidationError(
+                "TEMPLATE_DUPLICATE_COLUMN",
+                "duas colunas do template apontam para a mesma letra",
+                {"letters": letters},
+            )
+        return self
+
+
+class EstimateTemplateLayout(ValuationContractModel):
+    """Gabarito de ordem fixa da prefeitura: a lista ordenada de linhas é o documento.
+
+    Seção ADITIVA do template (F-043): `EstimateLayout` continua servindo a rodada que não
+    declara gabarito, e o boletim da medição nunca lê nem escreve esta seção.
+
+    `revision_label` identifica a revisão do gabarito e é IMPRESSA no arquivo. É o controle
+    do risco declarado na feature: a prefeitura revisa o gabarito e um arquivo gerado na
+    revisão velha continua parecendo certo — só o arquivo dizer qual revisão usou desfaz
+    esse silêncio.
+
+    `rows` é a ordem impressa e nada além dela ordena a planilha: o índice código→linha
+    exige unicidade, porque um código repetido faria a quantidade cair numa das duas
+    linhas à sorte da iteração. Se o gabarito real trouxer duplicata legítima, isso é
+    decisão humana, não remendo do escritor.
+    """
+
+    sheet_name: str = Field(min_length=1, max_length=MAX_SHEET_NAME_LENGTH)
+    title: str = Field(min_length=1, max_length=120)
+    revision_label: str = Field(min_length=1, max_length=120)
+    memory_sheet_name: str = Field(min_length=1, max_length=MAX_SHEET_NAME_LENGTH)
+    header_row: int = Field(ge=2)
+    columns: EstimateTemplateColumns
+    rows: list[EstimateTemplateRow] = Field(min_length=1)
+    intervention_label: str = Field(default="INTERVENÇÃO", min_length=1, max_length=40)
+    address_label: str = Field(default="ENDEREÇO", min_length=1, max_length=40)
+    bdi_label: str = Field(default="BDI", min_length=1, max_length=40)
+    revision_row_label: str = Field(default="REVISÃO DO GABARITO", min_length=1, max_length=40)
+    total_without_bdi_label: str = Field(default="TOTAL SEM BDI", min_length=1, max_length=60)
+    total_label: str = Field(default="TOTAL GERAL", min_length=1, max_length=60)
+    unpriced_section_label: str = Field(
+        default="ITENS SEM PREÇO NA CASCATA", min_length=1, max_length=60
+    )
+    label_column: str = Field(default="A", pattern=COLUMN_LETTER_PATTERN)
+    value_column: str = Field(default="C", pattern=COLUMN_LETTER_PATTERN)
+    money_number_format: str = Field(default="#,##0.00", min_length=1, max_length=40)
+    quantity_number_format: str = Field(default="#,##0.00", min_length=1, max_length=40)
+
+    @property
+    def row_index_by_code(self) -> dict[str, int]:
+        """Código → posição na ordem do gabarito; unicidade garantida pelo validador."""
+        return {row.code: index for index, row in enumerate(self.rows)}
+
+    @model_validator(mode="after")
+    def validate_rows(self) -> EstimateTemplateLayout:
+        codes = [row.code for row in self.rows]
+        duplicated_codes = sorted({code for code in codes if codes.count(code) > 1})
+        if duplicated_codes:
+            raise ValuationValidationError(
+                "TEMPLATE_ESTIMATE_GRID_DUPLICATE_CODE",
+                "o gabarito declara o mesmo código em mais de uma linha",
+                {"sheet": self.sheet_name, "codes": duplicated_codes},
+            )
+        items = [row.item for row in self.rows]
+        duplicated_items = sorted({item for item in items if items.count(item) > 1})
+        if duplicated_items:
+            raise ValuationValidationError(
+                "TEMPLATE_ESTIMATE_GRID_DUPLICATE_ITEM",
+                "o gabarito declara a mesma numeração de item em mais de uma linha",
+                {"sheet": self.sheet_name, "items": duplicated_items},
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_sheet_names(self) -> EstimateTemplateLayout:
+        _validate_sheet_name(self.sheet_name)
+        _validate_sheet_name(self.memory_sheet_name)
+        if self.sheet_name == self.memory_sheet_name:
+            raise ValuationValidationError(
+                "TEMPLATE_SHEET_NAME_CONFLICT",
+                "gabarito e memória de cálculo do orçamento usam o mesmo nome de aba",
+                {"names": [self.sheet_name, self.memory_sheet_name]},
+            )
+        return self
+
+
 class WorkbookTemplate(ValuationContractModel):
     """Descrição completa do layout usado para ler o catálogo e escrever a medição.
 
@@ -513,6 +674,12 @@ class WorkbookTemplate(ValuationContractModel):
     `estimate` é a seção opcional do orçamento-base (ADR-0038): aditiva, nunca lida nem
     escrita pelo boletim da medição. Sem ela, o template continua servindo só o boletim,
     exatamente como antes do ADR.
+
+    `estimate_grid` é a seção opcional do GABARITO da prefeitura (F-043), também aditiva:
+    quem a declara publica o orçamento percorrendo a ordem fixa do documento do cliente e
+    a memória de cálculo ao lado; quem não a declara continua na rodada de hoje, que
+    imprime uma linha por `EstimateLine`. As duas seções podem coexistir no mesmo
+    template, desde que em abas de nomes diferentes.
     """
 
     label: str = Field(min_length=1, max_length=120)
@@ -524,6 +691,7 @@ class WorkbookTemplate(ValuationContractModel):
     general: GeneralLayout
     amendment: AmendmentLayout | None = None
     estimate: EstimateLayout | None = None
+    estimate_grid: EstimateTemplateLayout | None = None
     extra_code_patterns: list[str] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
@@ -563,6 +731,9 @@ class WorkbookTemplate(ValuationContractModel):
             names.append(self.amendment.sheet_name)
         if self.estimate is not None:
             names.append(self.estimate.sheet_name)
+        if self.estimate_grid is not None:
+            names.append(self.estimate_grid.sheet_name)
+            names.append(self.estimate_grid.memory_sheet_name)
         if len(names) != len(set(names)):
             raise ValuationValidationError(
                 "TEMPLATE_SHEET_NAME_CONFLICT",

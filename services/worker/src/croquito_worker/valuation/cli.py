@@ -42,6 +42,14 @@ decisão), `confirm-codes` registra a confirmação fail-closed do orçamentista
 `build-calc` sai **sem aprovação**: aprovar e exportar continuam sendo atos à parte
 (`export-valuation`).
 
+`export-estimate` é o irmão do `export-valuation` do lado da PRÉ-licitação: recebe um
+`estimate.json` já assinado e publica a planilha auditada. Quando o `--template` declara
+o gabarito da prefeitura (`estimate_grid`), o que sai é o documento do cliente — a ordem
+é a do gabarito, TODAS as linhas dele são impressas (inclusive as de quantidade zero) e a
+memória de cálculo vai na aba ao lado; código do orçamento que o gabarito não declara é
+recusa (`ESTIMATE_GRID_CODE_ABSENT`), nunca linha acrescentada no fim do arquivo. Sem
+gabarito declarado, sai a planilha de sempre.
+
 Dois caminhos são **pagos** e ficam atrás de gate explícito: `extract-legend-real` lê a
 prancha de cliente com um provider, e `suggest-codes --refine-arm` reordena a shortlist
 lexical com um provider. Os dois exigem braço `NOME=PROVIDER:MODELO` real (o provider
@@ -111,7 +119,9 @@ from croquito_valuation.errors import ValuationValidationError, valuation_errors
 from croquito_valuation.estimate import Estimate, build_worksite_estimate
 from croquito_valuation.estimate_workbook import (
     EstimateAuditReport,
+    audit_estimate_grid_workbook,
     audit_estimate_workbook,
+    write_estimate_grid_workbook,
     write_estimate_workbook,
 )
 from croquito_valuation.models import PriceCatalog, Valuation
@@ -1038,14 +1048,22 @@ def run_export_estimate_workbook(
     temporário. É o que faz o CLI obedecer à mesma regra que a API, em vez de haver duas
     verdades sobre o mesmo artefato. Ao contrário do irmão da medição, o portão daqui não
     recebe contrato: saldo e período não existem deste lado da fronteira.
+
+    Quando o template declara o GABARITO da prefeitura (`estimate_grid`, F-043), quem
+    grava e audita é o par do gabarito — mesma sequência, mesmo portão, duas abas. Sem
+    gabarito declarado nada muda para quem já usava este caminho.
     """
     estimate.ensure_exportable()
     output_dir.mkdir(parents=True, exist_ok=True)
     pending_path = output_dir / _PENDING_ESTIMATE_WORKBOOK_FILENAME
     workbook_path = output_dir / ESTIMATE_WORKBOOK_FILENAME
     try:
-        write_estimate_workbook(estimate, template, pending_path)
-        audit = audit_estimate_workbook(pending_path, estimate, template)
+        if template.estimate_grid is None:
+            write_estimate_workbook(estimate, template, pending_path)
+            audit = audit_estimate_workbook(pending_path, estimate, template)
+        else:
+            write_estimate_grid_workbook(estimate, template, pending_path)
+            audit = audit_estimate_grid_workbook(pending_path, estimate, template)
         if audit.status != "ok":
             return None, audit
         os.replace(pending_path, workbook_path)
@@ -2798,6 +2816,55 @@ def _command_build_estimate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_export_estimate(args: argparse.Namespace) -> int:
+    """Exporta a planilha de um `Estimate` já assinado, com o template informado.
+
+    Espelho de `_command_export_valuation` do outro lado da fronteira do ADR-0027: recusa
+    fechada sai com 2 e não publica, auditoria divergente sai com 1 e publica só o
+    relatório, e o `--template` é o que faz o gabarito real da prefeitura entrar como dado.
+    """
+    output_dir = Path(args.output)
+    try:
+        template = _load_template(args.template)
+        estimate = Estimate.model_validate_json(Path(args.estimate).read_text(encoding="utf-8"))
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+
+    try:
+        workbook_path, audit = run_export_estimate_workbook(estimate, template, output_dir)
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+
+    audit_path = output_dir / ESTIMATE_WORKBOOK_AUDIT_FILENAME
+    atomic_write_text(audit_path, _serialize(audit.model_dump(mode="json")))
+    if workbook_path is None:
+        _print(
+            {
+                **_estimate_audit_failure_payload(output_dir / ESTIMATE_WORKBOOK_FILENAME, audit),
+                "published": False,
+                "audit": str(audit_path),
+            }
+        )
+        return 1
+    _print(
+        {
+            "status": audit.status,
+            "workbook": str(workbook_path),
+            "workbook_sha256": audit.workbook_sha256,
+            "audit": str(audit_path),
+            "sheet": audit.sheet_name,
+            "memory_sheet": audit.memory_sheet_name,
+            "checked_cells": audit.checked_cells,
+            "formula_cells": audit.formula_cells,
+            "pinned_cells": len(audit.pinned_cells),
+            **_estimate_payload(estimate),
+        }
+    )
+    return 0
+
+
 def _command_estimate_demo(args: argparse.Namespace) -> int:
     try:
         result = run_estimate_demo(Path(args.output))
@@ -3341,6 +3408,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     build_estimate_command.add_argument("--output", type=Path, required=True)
 
+    export_estimate = subcommands.add_parser(
+        "export-estimate",
+        help="exporta a planilha do orçamento assinado; auditoria divergente não publica",
+        description=(
+            "Grava e AUDITA a planilha de um estimate.json já aprovado, e falha fechado: "
+            "orçamento sem assinatura válida não vira arquivo nenhum e auditoria "
+            "divergente não publica. Quando o --template declara o gabarito da prefeitura "
+            "(estimate_grid), a saída é o documento do cliente — todas as linhas do "
+            "gabarito, na ordem dele, inclusive as de quantidade zero, com a memória de "
+            "cálculo na aba ao lado; código do orçamento ausente do gabarito é recusa "
+            "(ESTIMATE_GRID_CODE_ABSENT). Sem gabarito declarado, sai a planilha de hoje."
+        ),
+    )
+    export_estimate.add_argument("--estimate", type=Path, required=True)
+    export_estimate.add_argument("--output", type=Path, required=True)
+    _add_template_option(export_estimate)
+
     estimate_demo = subcommands.add_parser(
         "estimate-demo",
         help="percorre a cadeia do orçamento-base sintético com as três origens de preço",
@@ -3496,6 +3580,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _command_build_calc(args)
     if args.command == "build-estimate":
         return _command_build_estimate(args)
+    if args.command == "export-estimate":
+        return _command_export_estimate(args)
     if args.command == "estimate-demo":
         return _command_estimate_demo(args)
     if args.command == "build-amendment-dossier":
