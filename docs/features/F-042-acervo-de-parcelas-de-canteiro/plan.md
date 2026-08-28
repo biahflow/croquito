@@ -29,7 +29,7 @@ execução expôs, e ambas foram autorizadas pelo dono antes de começarem.
 | T2 | [Persistência do acervo e as rotas da rodada](tasks/T2-persistencia-e-rotas.md) | **Entregue** |
 | T3 | [A tela: escolher, declarar, pré-visualizar, aplicar](tasks/T3-tela-do-acervo.md) | **Entregue** |
 | T4 | [A pré-visualização marca o bloqueado em vez de recusar](tasks/T4-previa-tolerante.md) | **Entregue** |
-| T5 | A tela mostra o bloqueado e recupera o que já está gravado (`tasks/T5-hidratacao-e-bloqueio.md`, chega com a T5) | Em execução |
+| T5 | [A tela mostra o bloqueado e recupera o que já está gravado](tasks/T5-hidratacao-e-bloqueio.md) | **Entregue** |
 | T6 | Autoria de acervo na tela (estado 09 do pacote) | Não iniciada |
 
 ## Os dois defeitos que a execução expôs

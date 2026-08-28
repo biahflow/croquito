@@ -1273,7 +1273,7 @@ export function contaDaParcela(
  * cor não ser o único indicador vale aqui como vale na revisão do croqui. A veste apenas
  * acompanha a palavra.
  */
-export function SeloDeOrigemDaParcela({ kitVersion }: { kitVersion: number | null }) {
+export function SeloDeOrigemDaParcela({ kitVersion }: { kitVersion: string | null }) {
   return (
     <span className={`selo ${kitVersion === null ? "selo-neutro" : "selo-acervo"}`}>
       {seloDeOrigemDaParcela(kitVersion)}

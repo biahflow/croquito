@@ -377,7 +377,7 @@ describe("disassembleCalcMatrix", () => {
             deductions: [],
             depends_on_code: null,
             note: null,
-            kit_origin: { kit_version: 1, parcel_id: "p1" },
+            kit_origin: { kit_version: "sco-site-setup-v1", parcel_id: "p1" },
           },
           {
             source_item_id: null,
@@ -437,7 +437,7 @@ describe("disassembleCalcMatrix", () => {
     expect(doAcervo?.kitOrigin).toEqual({
       kitId: "",
       kitName: "",
-      kitVersion: 1,
+      kitVersion: "sco-site-setup-v1",
       parcelId: "p1",
     });
     // O teto da parcela PARCIAL não existe no fio: ele volta ausente, nunca fabricado.

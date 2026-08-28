@@ -38,7 +38,7 @@ import { siteSetupApplyBody, siteSetupPreviewBody } from "./requests";
 const KIT: SiteSetupKit = {
   kit_id: "kit-canteiro-smh",
   name: "Canteiro — contrato SMH/Rio",
-  kit_version: 1,
+  kit_version: "sco-site-setup-v1",
   origin: "platform",
   source_label: "acervo da plataforma",
   parcel_count: 3,
@@ -54,7 +54,7 @@ const PREVIA: SiteSetupPreviewResponse = {
   round_id: "round-1",
   version: 7,
   kit_id: KIT.kit_id,
-  kit_version: 1,
+  kit_version: "sco-site-setup-v1",
   rows: [
     {
       parcel_id: "p1",
@@ -506,7 +506,7 @@ describe("da aplicação para a matriz", () => {
     expect(primeira.kitOrigin).toEqual({
       kitId: KIT.kit_id,
       kitName: KIT.name,
-      kitVersion: 1,
+      kitVersion: "sco-site-setup-v1",
       parcelId: "p1",
     });
   });
@@ -521,7 +521,7 @@ describe("da aplicação para a matriz", () => {
 
     expect(contribuicoes?.every((c) => c.source_item_id === null)).toBe(true);
     expect(contribuicoes?.[0]?.kit_origin).toEqual({
-      kit_version: 1,
+      kit_version: "sco-site-setup-v1",
       parcel_id: "p1",
     });
   });
@@ -632,13 +632,13 @@ describe("o que a matriz gravada diz de acervo", () => {
     const doAcervo = contribuicoesDoAcervo(KIT, PREVIA, PREVIA.rows);
     const deOutraVersao = contribuicoesDoAcervo(
       KIT,
-      { ...PREVIA, kit_version: 3 },
+      { ...PREVIA, kit_version: "sco-site-setup-v3" },
       [PREVIA.rows[0]],
     );
 
     expect(acervoGravado([...doAcervo, autoradaAMao(), ...deOutraVersao])).toEqual([
-      { kitVersion: 1, parcelas: 3 },
-      { kitVersion: 3, parcelas: 1 },
+      { kitVersion: "sco-site-setup-v1", parcelas: 3 },
+      { kitVersion: "sco-site-setup-v3", parcelas: 1 },
     ]);
   });
 
@@ -660,7 +660,7 @@ describe("carimbo da aplicação", () => {
     expect(carimbo).toEqual({
       kitId: KIT.kit_id,
       kitName: KIT.name,
-      kitVersion: 1,
+      kitVersion: "sco-site-setup-v1",
       parametros: { "prazo de obra": "2" },
       parcelas: 3,
       appliedAt: "2026-08-28T14:02:00Z",

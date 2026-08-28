@@ -63,7 +63,7 @@ export type SiteSetupParameter = {
 export type SiteSetupKit = {
   kit_id: string;
   name: string;
-  kit_version: number;
+  kit_version: string;
   origin: SiteSetupKitOrigin;
   source_label: string;
   parcel_count: number;
@@ -133,7 +133,7 @@ export type SiteSetupPreviewResponse = {
   round_id: string;
   version: number;
   kit_id: string;
-  kit_version: number;
+  kit_version: string;
   rows: SiteSetupRow[];
   excluded_parcel_ids: string[];
   blocked_parcel_ids: string[];
@@ -441,7 +441,7 @@ export function parametrosDoCorpo(fluxo: FluxoDoAcervo): Record<string, string> 
 export type AplicacaoDeAcervo = {
   kitId: string;
   kitName: string;
-  kitVersion: number;
+  kitVersion: string;
   parametros: Record<string, string>;
   parcelas: number;
   appliedAt: string;
@@ -573,7 +573,7 @@ export function parcelasDeCanteiro(
 }
 
 /** Quantas parcelas de acervo a rodada tem, por versão de acervo, na ordem de aparição. */
-export type AcervoGravado = { kitVersion: number; parcelas: number };
+export type AcervoGravado = { kitVersion: string; parcelas: number };
 
 /**
  * O que a matriz GRAVADA diz sobre acervo: quantas parcelas, de qual versão. É o carimbo

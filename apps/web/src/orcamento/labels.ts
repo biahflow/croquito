@@ -958,12 +958,12 @@ export function fraseAplicarBloqueado(
  * parcela, não o acervo de origem.
  */
 export function fraseAcervoGravado(
-  porVersao: readonly { kitVersion: number; parcelas: number }[],
+  porVersao: readonly { kitVersion: string; parcelas: number }[],
 ): string {
   const trechos = porVersao.map(
     (entrada) =>
       `${entrada.parcelas} ${entrada.parcelas === 1 ? "parcela" : "parcelas"} do ` +
-      `acervo v${entrada.kitVersion}`,
+      `acervo ${entrada.kitVersion}`,
   );
   return `Do que está gravado nesta rodada: ${listarPorExtenso(trechos)}.`;
 }
@@ -994,8 +994,10 @@ export const LENDO_MATRIZ_GRAVADA =
   "o que está gravado mais o que esta sessão autorou que vai ao servidor.";
 
 /** Origem da parcela, por EXTENSO: é o texto que distingue, nunca a cor (decisão 7). */
-export function seloDeOrigemDaParcela(kitVersion: number | null): string {
-  return kitVersion === null ? "autorada à mão" : `do acervo v${kitVersion}`;
+export function seloDeOrigemDaParcela(kitVersion: string | null): string {
+  // A versão do acervo é TEXTO e já se identifica ("sco-site-setup-v1"); prefixar com "v"
+  // produziria "do acervo vsco-site-setup-v1".
+  return kitVersion === null ? "autorada à mão" : `do acervo ${kitVersion}`;
 }
 
 /** "a" · "a e b" · "a, b e c" — a lista escrita como se fala, para caber na frase. */

@@ -78,7 +78,11 @@ export type CalcOperand = { name: string; value: string; unit?: string | null };
  * Espelha `CalcContribution.kit_origin` do domínio, que é OPCIONAL: parcela autorada à mão
  * não tem o campo, e a matriz dela continua saindo byte-idêntica à de antes da feature.
  */
-export type KitOrigin = { kit_version: number; parcel_id: string };
+export type KitOrigin = { kit_version: string; parcel_id: string };
+/* `kit_version` é TEXTO, e não número: o domínio o declara como `str` de 1 a 40
+   caracteres (`SiteSetupOrigin`, `models.py`), e um acervo se chama
+   "sco-site-setup-v1", não `1`. Mandá-lo como número faz `CalcMatrix.model_validate`
+   recusar a matriz inteira no build, com `string_type`. */
 
 /** A célula da matriz: a parcela que UM elemento acrescenta à quantidade de UM serviço. */
 export type CalcContribution = {
@@ -166,7 +170,7 @@ export type KitProvenance = {
   kitId: string;
   /** `""` na parcela hidratada, pela mesma razão. */
   kitName: string;
-  kitVersion: number;
+  kitVersion: string;
   parcelId: string;
 };
 

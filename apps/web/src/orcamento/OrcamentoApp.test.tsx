@@ -1819,7 +1819,7 @@ describe("EstadoDoBracoSemantico", () => {
 const KIT_DO_CANTEIRO: SiteSetupKit = {
   kit_id: "kit-canteiro-smh",
   name: "Canteiro — contrato SMH/Rio",
-  kit_version: 1,
+  kit_version: "sco-site-setup-v1",
   origin: "platform",
   source_label: "acervo da plataforma",
   parcel_count: 3,
@@ -1834,7 +1834,7 @@ const PREVIA_DO_CANTEIRO: SiteSetupPreviewResponse = {
   round_id: "round-1",
   version: 7,
   kit_id: KIT_DO_CANTEIRO.kit_id,
-  kit_version: 1,
+  kit_version: "sco-site-setup-v1",
   rows: [
     {
       parcel_id: "p1",
@@ -1961,7 +1961,7 @@ describe("FormularioDoAcervo", () => {
     const html = render(fluxoNoPasso("acervo"));
 
     expect(html).toContain("Canteiro — contrato SMH/Rio");
-    expect(html).toContain("versão 1");
+    expect(html).toContain("versão sco-site-setup-v1");
     // Escolhido dito por extenso, não só pela borda do cartão.
     expect(html).toContain("escolhido");
     expect(html).toContain(ACERVO_E_RECEITA);
@@ -2170,7 +2170,7 @@ describe("PainelParcelasDeCanteiro", () => {
       />,
     );
 
-    expect(html).toContain("do acervo v1");
+    expect(html).toContain("do acervo sco-site-setup-v1");
     expect(html).toContain("autorada à mão");
     // A quantidade exibida é a string que o servidor computou.
     expect(html).toContain("276,00");
@@ -2185,7 +2185,7 @@ describe("PainelParcelasDeCanteiro", () => {
         aplicacao={{
           kitId: KIT_DO_CANTEIRO.kit_id,
           kitName: KIT_DO_CANTEIRO.name,
-          kitVersion: 1,
+          kitVersion: "sco-site-setup-v1",
           parametros: { "prazo de obra": "2", "semiperímetro": "132.21" },
           parcelas: 2,
           appliedAt: "2026-08-28T14:02:00Z",
@@ -2223,11 +2223,13 @@ describe("PainelParcelasDeCanteiro", () => {
       />,
     );
 
-    expect(html).toContain("Do que está gravado nesta rodada: 2 parcelas do acervo v1");
+    expect(html).toContain(
+      "Do que está gravado nesta rodada: 2 parcelas do acervo sco-site-setup-v1",
+    );
     expect(html).toContain(CANTEIRO_GRAVADO_DICA);
     expect(html).toContain(ACERVO_REAPLICAR_SUBSTITUI);
     // O selo continua distinguindo por texto, com a versão que a matriz afirma.
-    expect(html).toContain("do acervo v1");
+    expect(html).toContain("do acervo sco-site-setup-v1");
     // Nenhum nome de acervo inventado, e nenhum parâmetro fabricado.
     expect(html).not.toContain("Canteiro — contrato SMH/Rio");
     expect(html).not.toContain("prazo de obra");
