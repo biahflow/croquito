@@ -353,6 +353,50 @@
         "title": "AppliedSpanOut",
         "type": "object"
       },
+      "ApplySiteSetupKitRequest": {
+        "additionalProperties": false,
+        "description": "Aplicação do acervo na matriz: ato humano, com guarda de concorrência.\n\nMesmo corpo da pré-visualização mais `base_version`, e a diferença é exatamente essa: aqui\na matriz muda, a revisão nova nasce e o contador da rodada anda.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "excluded_parcel_ids": {
+            "items": {
+              "maxLength": 40,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Excluded Parcel Ids",
+            "type": "array"
+          },
+          "kit_id": {
+            "format": "uuid",
+            "title": "Kit Id",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "maxLength": 40,
+              "minLength": 1,
+              "type": "string"
+            },
+            "propertyNames": {
+              "maxLength": 60,
+              "minLength": 1
+            },
+            "title": "Parameters",
+            "type": "object"
+          }
+        },
+        "required": [
+          "base_version",
+          "kit_id"
+        ],
+        "title": "ApplySiteSetupKitRequest",
+        "type": "object"
+      },
       "ApproveEstimateRequest": {
         "additionalProperties": false,
         "description": "Aprovação nominal do orçamento-base: o corpo é SÓ a guarda de concorrência (F-035).\n\nNenhum campo de identidade existe aqui, e a ausência é o desenho. `approver_id`,\n`approver_role`, `decided_at` e `decision_id` são carimbo do servidor — o nome que o\norçamento publica é o do subject do JWT, e um campo de \"nome do aprovador\" no corpo\nfaria do ato nominal um campo de texto, assinável em nome de outra pessoa. Quem recusa\nqualquer um deles com `422` é o `extra=\"forbid\"` do `ApiModel`, não uma lista negra.\n\nA observação (`note` do `EstimateApproverDecision`) também não entra, pelo mesmo motivo\ndo irmão da medição: o que ela significaria numa aprovação — ressalva? condição? — é\ndecisão de produto que ninguém tomou, e um campo livre gravado junto de um ato nominal\npareceria ter efeito jurídico sem tê-lo.",
@@ -720,6 +764,49 @@
           "safety_notes"
         ],
         "title": "AssociationSet",
+        "type": "object"
+      },
+      "AuthorSiteSetupKitRequest": {
+        "additionalProperties": false,
+        "description": "Autoria de acervo DO TENANT a partir das parcelas `STANDALONE` da rodada corrente.\n\n`parameter_bindings` mapeia `\"<índice da parcela standalone>.<nome do operando>\"` para o\nnome do parâmetro de obra, e é ele que diz QUAIS operandos viram parâmetro — todo operando\nnão citado vira constante. O sistema **não** infere: `1 x 2` pode ser \"uma unidade por dois\nmeses de obra\" ou \"duas placas de um metro\", e adivinhar produziria um acervo que nasce\nerrado e só é descoberto na praça seguinte.\n\nO índice é a posição da parcela na lista de contribuições `STANDALONE` da matriz da revisão\ncorrente, percorrida na ordem dos serviços e, dentro de cada serviço, na ordem gravada.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "kit_version": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Kit Version",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Name",
+            "type": "string"
+          },
+          "parameter_bindings": {
+            "additionalProperties": {
+              "maxLength": 60,
+              "minLength": 1,
+              "type": "string"
+            },
+            "propertyNames": {
+              "maxLength": 80,
+              "minLength": 3
+            },
+            "title": "Parameter Bindings",
+            "type": "object"
+          }
+        },
+        "required": [
+          "base_version",
+          "name",
+          "kit_version"
+        ],
+        "title": "AuthorSiteSetupKitRequest",
         "type": "object"
       },
       "AutomationMetricsResponse": {
@@ -3185,6 +3272,125 @@
           "updated_at"
         ],
         "title": "EstimateRoundSummary",
+        "type": "object"
+      },
+      "EstimateSiteSetupKitListResponse": {
+        "additionalProperties": false,
+        "description": "O que ESTA rodada pode aplicar: acervo de plataforma em circulação mais o do tenant.",
+        "properties": {
+          "kits": {
+            "items": {
+              "$ref": "#/components/schemas/EstimateSiteSetupKitOption"
+            },
+            "title": "Kits",
+            "type": "array"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "round_id",
+          "version",
+          "kits"
+        ],
+        "title": "EstimateSiteSetupKitListResponse",
+        "type": "object"
+      },
+      "EstimateSiteSetupKitOption": {
+        "additionalProperties": false,
+        "description": "Um acervo como a ESCOLHA da rodada o oferece (F-042, ADR-0060).\n\nMais pobre que `SiteSetupKitResponse` pelo mesmo motivo de `EstimateReferenceCatalogOption`:\n`created_by` de um acervo de plataforma é a identidade de um operador de outro tenant, e\nquem escolhe um acervo não tem por que saber quem o publicou.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "kit_id": {
+            "format": "uuid",
+            "title": "Kit Id",
+            "type": "string"
+          },
+          "kit_version": {
+            "title": "Kit Version",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "platform",
+              "tenant"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/EstimateSiteSetupKitParameter"
+            },
+            "title": "Parameters",
+            "type": "array"
+          },
+          "parcel_count": {
+            "title": "Parcel Count",
+            "type": "integer"
+          },
+          "source_label": {
+            "title": "Source Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kit_id",
+          "name",
+          "kit_version",
+          "origin",
+          "source_label",
+          "parcel_count",
+          "parameters",
+          "created_at"
+        ],
+        "title": "EstimateSiteSetupKitOption",
+        "type": "object"
+      },
+      "EstimateSiteSetupKitParameter": {
+        "additionalProperties": false,
+        "description": "Um parâmetro de obra que o acervo cita, como a tela pede o campo.\n\n`unit` é a unidade do PRIMEIRO operando que cita o parâmetro, e `null` quando os operandos\ndiscordam entre si — escolher um faria o campo ser rotulado com uma unidade que metade das\nparcelas desmente. `cited_by` é quantas PARCELAS citam o parâmetro, que é o que a tela\nmostra (\"citado por 6 parcelas\") para que declarar um número tenha consequência visível.",
+        "properties": {
+          "cited_by": {
+            "title": "Cited By",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "name",
+          "cited_by"
+        ],
+        "title": "EstimateSiteSetupKitParameter",
         "type": "object"
       },
       "EvidenceRegion": {
@@ -6272,6 +6478,29 @@
         "title": "PublishReferenceCatalogRequest",
         "type": "object"
       },
+      "PublishSiteSetupKitRequest": {
+        "additionalProperties": false,
+        "description": "Publica no acervo da PLATAFORMA um acervo de parcelas de canteiro (F-042, ADR-0060).\n\nO corpo tem dois campos, e é deliberado que não tenha mais: `version` e `source_label` são\nlidos de DENTRO do documento, nunca informados ao lado. Rótulo que se digita ao lado do\nconteúdo é rótulo que pode discordar dele — e um acervo publicado com a versão errada\npassaria a ser confundido, na matriz, com as parcelas de outra aplicação (o merge do apply\né por `kit_version`).\n\n`document` chega como objeto CRU, e não como `SiteSetupKit` tipado, pelo mesmo motivo de\n`BuildEstimateRequest.calc_matrix`: um modelo do domínio embutido faria o Pydantic recusar\ndurante o parsing do corpo, e a invariante sairia como erro de esquema do FastAPI em vez do\n`application/problem+json` com o código estável do domínio.",
+        "properties": {
+          "document": {
+            "additionalProperties": true,
+            "title": "Document",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "document"
+        ],
+        "title": "PublishSiteSetupKitRequest",
+        "type": "object"
+      },
       "ReadingConfidence": {
         "additionalProperties": false,
         "description": "\"Li certo?\" por leitura — observação, nunca decisão nem veto de exportação.",
@@ -7700,6 +7929,139 @@
           "y"
         ],
         "title": "ShapeCorrectionVertexRequest",
+        "type": "object"
+      },
+      "SiteSetupKitListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "kits": {
+            "items": {
+              "$ref": "#/components/schemas/SiteSetupKitResponse"
+            },
+            "title": "Kits",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kits"
+        ],
+        "title": "SiteSetupKitListResponse",
+        "type": "object"
+      },
+      "SiteSetupKitResponse": {
+        "additionalProperties": false,
+        "description": "Um acervo de parcelas de canteiro como a administração o lê.\n\nO documento inteiro NÃO sai daqui: são dezenas de parcelas com rótulo e operando por linha\nde listagem, e quem precisa delas é a pré-visualização, que as lê do banco. O que sai é o\nque distingue duas linhas — nome, versão, de onde foi autorado e quantas parcelas tem.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "document_sha256": {
+            "title": "Document Sha256",
+            "type": "string"
+          },
+          "kit_id": {
+            "format": "uuid",
+            "title": "Kit Id",
+            "type": "string"
+          },
+          "kit_version": {
+            "title": "Kit Version",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "platform",
+              "tenant"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "parcel_count": {
+            "title": "Parcel Count",
+            "type": "integer"
+          },
+          "source_label": {
+            "title": "Source Label",
+            "type": "string"
+          },
+          "withdrawn_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Withdrawn At"
+          }
+        },
+        "required": [
+          "kit_id",
+          "name",
+          "kit_version",
+          "origin",
+          "source_label",
+          "parcel_count",
+          "document_sha256",
+          "available",
+          "created_by",
+          "created_at"
+        ],
+        "title": "SiteSetupKitResponse",
+        "type": "object"
+      },
+      "SiteSetupPreviewRequest": {
+        "additionalProperties": false,
+        "description": "Pré-visualização da aplicação do acervo: leitura, e por isso sem guarda de escrita.\n\nNão tem `base_version` nem aceita `Idempotency-Key` de propósito — ela não grava nada e não\navança a versão da rodada, como o `GET` da shortlist (ADR-0054 D7). Pedir uma guarda de\nconcorrência a um ato que não escreve faria a tela ter de recarregar para conferir uma\nconta.",
+        "properties": {
+          "excluded_parcel_ids": {
+            "items": {
+              "maxLength": 40,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Excluded Parcel Ids",
+            "type": "array"
+          },
+          "kit_id": {
+            "format": "uuid",
+            "title": "Kit Id",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "maxLength": 40,
+              "minLength": 1,
+              "type": "string"
+            },
+            "propertyNames": {
+              "maxLength": 60,
+              "minLength": 1
+            },
+            "title": "Parameters",
+            "type": "object"
+          }
+        },
+        "required": [
+          "kit_id"
+        ],
+        "title": "SiteSetupPreviewRequest",
         "type": "object"
       },
       "SplineGeometry": {
@@ -11077,6 +11439,268 @@
         ]
       }
     },
+    "/v1/estimate-rounds/{round_id}/site-setup-kits": {
+      "get": {
+        "description": "Os acervos que ESTA rodada pode aplicar (F-042, ADR-0060).\n\nDois filtros, e só dois: **origem visível** — plataforma mais o acervo deste tenant,\nnunca o de outro — e **em circulação**, porque o que foi retirado deixa de ser\noferecido sem sumir do registro nem quebrar a rodada que já o aplicou.\n\nCada acervo sai com os parâmetros de obra que ele cita e quantas parcelas citam cada\num: é o que a tela precisa para pedir os campos antes da pré-visualização, e é o\nservidor quem o calcula porque a regra é do domínio (`SiteSetupKit.parameter_names`).\n\nA rodada continua sendo do tenant — rodada alheia é `404`, e o papel é exigido antes de\nqualquer lookup.",
+        "operationId": "list_estimate_site_setup_kits_v1_estimate_rounds__round_id__site_setup_kits_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EstimateSiteSetupKitListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Estimate Site Setup Kits",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/site-setup/apply": {
+      "post": {
+        "description": "Materializa as parcelas do acervo na `CalcMatrix` da rodada — ato humano.\n\n**A semântica de merge é o coração desta rota**, e ela é uma só: reaplicar substitui\napenas as parcelas DAQUELE acervo.\n\n- lê a `calc_matrix_json` da revisão corrente, que pode ser `NULL` (regime legado); aí\n  a matriz nasce só das contribuições geradas;\n- **remove** toda contribuição cuja `kit_origin.kit_version` seja igual à do acervo\n  aplicado — são as da aplicação anterior do mesmo acervo, e mantê-las duplicaria cada\n  parcela a cada reaplicação;\n- **preserva intactas** todas as demais: a autorada à mão (`kit_origin` nulo) e a de\n  OUTRO acervo. É isso que torna reaplicar idempotente sem apagar trabalho manual;\n- insere as novas e grava a `CalcMatrix` resultante **validada** — nenhuma invariante\n  de `calc_matrix.py` é contornada, inclusive a que proíbe parcela `STANDALONE` com\n  elemento de origem.\n\nA guarda de concorrência é a de sempre (`base_version`), a revisão é append-only e a\nversão da rodada avança, porque aqui houve decisão humana. A pré-visualização, que não\ndecidiu nada, não avança.",
+        "operationId": "apply_estimate_site_setup_v1_estimate_rounds__round_id__site_setup_apply_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplySiteSetupKitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Apply Estimate Site Setup V1 Estimate Rounds  Round Id  Site Setup Apply Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Apply Estimate Site Setup",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/site-setup/kits": {
+      "post": {
+        "description": "Grava um acervo DO TENANT a partir das parcelas `STANDALONE` da rodada corrente.\n\nÉ o Human Gate 4 da feature exercido pela API: o primeiro acervo é autorado por gente,\na partir de uma praça já feita — o sistema não o infere de planilha antiga.\n\nSó entra contribuição `STANDALONE`: a base é a definição de \"parcela de canteiro\" no\ndomínio, e uma parcela com origem em elemento da prancha viraria um acervo que só\nserviria àquela praça.\n\n`parameter_bindings` diz QUAIS operandos viram parâmetro; o resto vira constante. O\nsistema **não** adivinha, e binding que aponte para operando inexistente é recusa que\n**nomeia o binding** — ignorá-lo congelaria como constante um número que a orçamentista\nquis declarar, e o acervo nasceria errado sem ninguém ver.\n\n`base_version` é conferido porque o acervo é recortado da matriz que a orçamentista\nestava vendo; a rodada, porém, **não muda** — nenhuma revisão é gravada e o contador\ndela não avança, porque nada nela mudou. Avançar a versão faria as edições em voo da\nprópria orçamentista devolverem `409` por um ato que não tocou a rodada.",
+        "operationId": "author_estimate_site_setup_kit_v1_estimate_rounds__round_id__site_setup_kits_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorSiteSetupKitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteSetupKitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Author Estimate Site Setup Kit",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
+    "/v1/estimate-rounds/{round_id}/site-setup/preview": {
+      "post": {
+        "description": "O que vai nascer se o acervo for aplicado — **sem gravar nada**.\n\nÉ LEITURA, e o corpo diz isso: sem `base_version`, sem `Idempotency-Key`, sem revisão\nnova e sem avançar a versão da rodada, como o `GET` da shortlist (ADR-0054 D7). O\ncontrole que a feature exige contra \"aplicar sem olhar\" é justamente esta lista, com a\nconta de cada parcela à vista e a remoção individual antes do ato.\n\n`POST` e não `GET` porque o corpo carrega os parâmetros de obra e a lista de exclusões:\npô-los em query string publicaria valores da obra na URL, que é o que os logs de\ninfraestrutura registram.\n\nFalha fechada, e ela é do motor do domínio: parâmetro citado e não declarado recusa\nnomeando **todos** os que faltam, código fora do catálogo da cascata recusa nomeando o\ncódigo, e nenhuma linha nasce parcialmente. As duas chegam como\n`422 DOMAIN_VALIDATION_FAILED` com o código estável em `details.code`.\n\nDecimais saem como TEXTO, como no resto da jornada: a quantidade é `Decimal` no\ndomínio, e um número de JSON já teria passado por binário.",
+        "operationId": "preview_estimate_site_setup_v1_estimate_rounds__round_id__site_setup_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiteSetupPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Preview Estimate Site Setup V1 Estimate Rounds  Round Id  Site Setup Preview Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Preview Estimate Site Setup",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
     "/v1/estimate-rounds/{round_id}/takeoff": {
       "get": {
         "description": "Pacote de takeoff da rodada, com a âncora de evidência de cada item.",
@@ -14342,6 +14966,161 @@
           }
         ],
         "summary": "Withdraw Reference Catalog",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/site-setup-kits": {
+      "get": {
+        "description": "O acervo DE PLATAFORMA inteiro, inclusive o que está fora de circulação.\n\n`tenant_id IS NULL` é filtro, não otimização: o acervo que a orçamentista de um tenant\nautorou é dado dele, e listá-lo aqui daria a um operador de plataforma a lista dos\nacervos de todos os clientes. Quem lê acervo de tenant é a rodada daquele tenant.\n\nLeitura sem `Idempotency-Key` e sem auditoria, como as demais listagens de plataforma.\nO que foi retirado continua na lista, com `withdrawn_at` carimbado.\n\nOrdenação em Python, como em `list_reference_catalogs`: SQLite (testes) e PostgreSQL\n(hospedado) não ordenam texto do mesmo jeito, e a tela lê a ordem.",
+        "operationId": "list_site_setup_kits_v1_platform_site_setup_kits_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteSetupKitListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Site Setup Kits",
+        "tags": [
+          "platform"
+        ]
+      },
+      "post": {
+        "description": "Publica um acervo de parcelas de canteiro para TODOS os tenants (F-042, ADR-0060).\n\nO que entra é um `SiteSetupKit` cru, validado pelo domínio ANTES de virar linha:\noperando que é constante e referência ao mesmo tempo, código fora do formato de\ncatálogo e parcela com id repetido recusam com `422 DOMAIN_VALIDATION_FAILED` e o\ncódigo estável do domínio, nunca como erro de esquema do FastAPI.\n\nDuas recusas, as duas ANTES de qualquer escrita:\n\n- **papel**, antes de qualquer lookup: quem não é `platform_operator` recebe `403` e\n  não descobre o que existe no acervo;\n- **mesma `(name, kit_version)` já publicada**: `409 SITE_SETUP_KIT_ALREADY_PUBLISHED`.\n  Acervo é imutável — uma rodada que aplicou a versão `1.0.0` cita essa versão nas\n  parcelas que materializou, e reescrever o conteúdo por baixo mudaria em silêncio o\n  que aquelas parcelas dizem ter nascido de.\n\nNão há upload nem objeto no store: o acervo é receita curta, lida inteira em todo\npreview e em todo apply, e não há bytes de arquivo de terceiro a preservar.",
+        "operationId": "publish_site_setup_kit_v1_platform_site_setup_kits_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishSiteSetupKitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteSetupKitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Publish Site Setup Kit",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/site-setup-kits/{site_setup_kit_id}/withdraw": {
+      "post": {
+        "description": "Tira o acervo de circulação: ele deixa de ser oferecido e **não** é apagado.\n\nApagar quebraria a leitura de toda rodada que já o aplicou — as parcelas materializadas\ncitam a versão do acervo, e o registro é o que permite dizer de onde elas vieram. Por\nisso o ato carimba `withdrawn_at`, e nada mais.\n\nSem corpo: o ato é inteiramente identificado pela rota. Retirar o que já está fora de\ncirculação devolve o registro como está, sem recarimbar a data nem auditar de novo.",
+        "operationId": "withdraw_site_setup_kit_v1_platform_site_setup_kits__site_setup_kit_id__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "site_setup_kit_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Site Setup Kit Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteSetupKitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Withdraw Site Setup Kit",
         "tags": [
           "platform"
         ]

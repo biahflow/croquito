@@ -350,6 +350,66 @@ devolve o registro como está, sem recarimbar a data e sem auditar de novo. Índ
 inexistente é `404 NOT_FOUND`. Auditado como `REFERENCE_CATALOG_INDEX_WITHDRAWN`, no tenant
 do operador.
 
+## Acervo de parcelas de canteiro
+
+Conjuntos versionados de parcelas `STANDALONE` — banheiro químico, container, vigia, placa
+de obra, transporte de andaime — em que cada operando é **constante** ou **referência a um
+parâmetro de obra nomeado**
+([F-042](../features/F-042-acervo-de-parcelas-de-canteiro/feature.md), ADR-0060).
+
+O acervo tem **duas origens e um contrato de leitura só**: acervo de **plataforma**, sem
+tenant, publicado por `platform_operator` e válido para todos; e acervo do **tenant**,
+autorado pela orçamentista a partir de uma rodada dela. A tabela tem `tenant_id` **anulável**
+— nulo é plataforma, preenchido é tenant — e **toda** leitura filtra
+`tenant_id IS NULL OR tenant_id = <tenant do JWT>`: um acervo de um tenant nunca é visível a
+outro. Promover acervo de tenant para plataforma é ato humano e **não tem rota**.
+
+As três rotas desta seção administram apenas a metade de PLATAFORMA. A metade do tenant nasce
+em `POST /v1/estimate-rounds/{round_id}/site-setup/kits` e é lida pela rodada.
+
+### `POST /v1/platform/site-setup-kits`
+
+Requer `platform_operator` e `Idempotency-Key`. Entrada: `name` (3 a 200 caracteres) e
+`document`, que é o `SiteSetupKit` cru (`version`, `source_label` e `parcels`). `version` e
+`source_label` são lidos de **dentro** do documento e não podem ser informados ao lado —
+rótulo digitado ao lado do conteúdo pode discordar dele, e a `version` é a chave do merge da
+aplicação.
+
+Não há upload nem objeto no object store: o acervo é receita curta, lida inteira em todo
+preview e em todo apply, e não há bytes de arquivo de terceiro a preservar.
+
+Responde `201` com `kit_id`, `name`, `kit_version`, `origin` (`platform`), `source_label`,
+`parcel_count`, `document_sha256`, `available`, `created_by`, `created_at` e `withdrawn_at`.
+O documento inteiro **não** sai na resposta.
+
+Recusas, todas antes de qualquer escrita:
+
+- `403 FORBIDDEN` sem o papel, antes de qualquer lookup;
+- `422 DOMAIN_VALIDATION_FAILED` com o código do domínio em `details.code` para invariante do
+  acervo (`SITE_SETUP_OPERAND_AMBIGUOUS`, `SITE_SETUP_OPERAND_EMPTY`, `SITE_SETUP_CODE_INVALID`,
+  `SITE_SETUP_DUPLICATE_PARCEL`);
+- `409 SITE_SETUP_KIT_ALREADY_PUBLISHED` para `(name, kit_version)` já publicada, com
+  `details.name` e `details.kit_version`. Acervo é imutável: versão nova é **entrada nova**.
+
+Auditado como `SITE_SETUP_KIT_PUBLISHED`, no tenant do operador, com o identificador e a
+versão nos detalhes.
+
+### `GET /v1/platform/site-setup-kits`
+
+Requer `platform_operator`. Leitura sem `Idempotency-Key` e sem auditoria. Devolve o acervo
+**de plataforma** inteiro, inclusive o que saiu de circulação (com `available: false` e
+`withdrawn_at`), ordenado deterministicamente por `(name, kit_version, id)`. Acervo de tenant
+**não** aparece aqui: ele é dado do cliente, e listá-lo daria a um operador a lista dos
+acervos de todos os clientes.
+
+### `POST /v1/platform/site-setup-kits/{site_setup_kit_id}/withdraw`
+
+Requer `platform_operator` e `Idempotency-Key`; **sem corpo**. Marca o acervo como fora de
+circulação (`available: false` e `withdrawn_at`) e **não apaga**: as parcelas já
+materializadas numa rodada citam a versão do acervo. Repetir sobre um acervo já retirado
+devolve o registro como está, sem recarimbar a data e sem auditar de novo. Acervo inexistente
+— ou acervo de tenant — é `404 NOT_FOUND`. Auditado como `SITE_SETUP_KIT_WITHDRAWN`.
+
 ## Cena e revisão
 
 ### `GET /v1/jobs/{job_id}/scene`
@@ -1932,6 +1992,103 @@ a chave não aparece.
 
 Com teto declarado, ganha também `target`/`consumed`/`remaining`/`over` (ADR-0040), a
 mesma forma do estado da rodada.
+
+### `GET /v1/estimate-rounds/{round_id}/site-setup-kits`
+
+Requer `orcamentista` ou `aprovador`; rodada de outro tenant é `404`. Os acervos de parcelas
+de canteiro que **esta** rodada pode aplicar
+([F-042](../features/F-042-acervo-de-parcelas-de-canteiro/feature.md), ADR-0060): acervo de
+plataforma **mais** o do tenant do JWT, e nunca o de outro tenant; só o que está em
+circulação.
+
+Devolve `round_id`, `version` e `kits`, cada um com `kit_id`, `name`, `kit_version`, `origin`
+(`platform` ou `tenant`), `source_label`, `parcel_count`, `created_at` e `parameters`. Cada
+parâmetro traz `name`, `unit` e `cited_by` — quantas parcelas o citam, que é o que a tela
+mostra ("citado por 6 parcelas"). `unit` é a unidade do **primeiro** operando que cita o
+parâmetro, e `null` quando os operandos discordam entre si: escolher uma faria o campo ser
+rotulado com uma unidade que metade das parcelas desmente. Discordância **não** recusa o
+acervo. Ordem determinística por `(name, kit_version, id)`.
+
+### `POST /v1/estimate-rounds/{round_id}/site-setup/preview`
+
+Requer `orcamentista`. **Não grava nada e não avança a versão da rodada** — é leitura, como o
+`GET` da shortlist, e por isso **não** tem `base_version` e **não** aceita `Idempotency-Key`.
+É `POST`, e não `GET`, porque os parâmetros de obra e as exclusões viajam no corpo: pô-los em
+query string publicaria valores da obra na URL.
+
+Entrada: `kit_id`, `parameters` (mapa `nome -> valor`, sempre **texto**, como o BDI e a
+quantidade do takeoff) e `excluded_parcel_ids`. Saída: `round_id`, `version`, `kit_id`,
+`kit_version`, `rows` e `excluded_parcel_ids`. Cada linha traz `parcel_id`, `code`, `label`,
+`operands` (`name`, `value`, `unit`) e `quantity` — todo decimal como texto.
+
+Recusas, sempre **por extenso** e sem materializar nada parcialmente:
+
+- `404 NOT_FOUND` para acervo que este tenant não enxerga;
+- `409 SITE_SETUP_KIT_WITHDRAWN` para acervo fora de circulação;
+- `422 SITE_SETUP_PARAMETER_INVALID` com `details.parameters` para valor que não é decimal
+  exato, finito e não negativo — todos de uma vez, nunca o primeiro;
+- `422 DOMAIN_VALIDATION_FAILED` com `details.code = SITE_SETUP_PARAMETER_MISSING` e
+  `details.parameters` **nomeando todos** os parâmetros citados e não declarados;
+- `422 DOMAIN_VALIDATION_FAILED` com `details.code = SITE_SETUP_CODE_ABSENT` e
+  `details.codes` nomeando o código que o catálogo da cascata da rodada não tem — o risco do
+  acervo silenciosamente desatualizado é recusado aqui, e não depois de aplicar;
+- `422 DOMAIN_VALIDATION_FAILED` com `details.code = SITE_SETUP_UNKNOWN_PARCEL` para exclusão
+  que cita parcela que o acervo não tem.
+
+### `POST /v1/estimate-rounds/{round_id}/site-setup/apply`
+
+Requer `orcamentista`, `Idempotency-Key` e `base_version`. Ato humano: grava revisão nova
+append-only com a `CalcMatrix` resultante e **avança** a versão da rodada.
+
+Entrada: `base_version`, `kit_id`, `parameters` e `excluded_parcel_ids`. As mesmas recusas da
+pré-visualização valem aqui, mais `409 REVISION_CONFLICT`.
+
+**Semântica de merge**, que é o que torna reaplicar idempotente sem apagar trabalho manual:
+
+- a matriz da revisão corrente é lida (pode ser `NULL` — regime legado; aí ela nasce só das
+  contribuições geradas);
+- toda contribuição cuja `kit_origin.kit_version` seja igual à do acervo aplicado é
+  **removida** — são as da aplicação anterior **do mesmo acervo**;
+- todas as demais são **preservadas intactas**: as autoradas à mão (`kit_origin` nulo) e as de
+  **outros** acervos;
+- as novas entram no serviço que já existe quando o código já está na matriz, e abrem serviço
+  novo no fim quando não está;
+- a matriz resultante é gravada **validada** — nenhuma invariante de `calc_matrix.py` é
+  contornada.
+
+Saída: `round_id`, `version`, `revision_id`, `revision_version`, `kit_id`, `kit_version`,
+`applied_parcel_count`, `replaced_parcel_count`, `excluded_parcel_ids` e `calc_matrix`.
+Auditado como `ESTIMATE_SITE_SETUP_APPLIED`.
+
+### `POST /v1/estimate-rounds/{round_id}/site-setup/kits`
+
+Requer `orcamentista`, `Idempotency-Key` e `base_version`. Grava um acervo **do tenant** a
+partir das contribuições `STANDALONE` da revisão corrente — é o primeiro acervo sendo autorado
+por gente, a partir de uma praça já feita.
+
+Entrada: `base_version`, `name`, `kit_version` e `parameter_bindings`, que mapeia
+`"<índice da parcela standalone>.<nome do operando>"` para o nome do parâmetro de obra. O
+índice é a posição da parcela na lista de contribuições `STANDALONE` da matriz, percorrida na
+ordem dos serviços e, dentro de cada serviço, na ordem gravada. **Todo operando não citado
+vira constante**: o sistema não infere qual número é parâmetro, porque `1 x 2` pode ser "uma
+unidade por dois meses de obra" ou "duas placas de um metro".
+
+A rodada **não muda**: nenhuma revisão é gravada e o contador dela não avança. `base_version`
+é conferido porque o acervo é recortado da matriz que a orçamentista estava vendo.
+
+Responde `201` com a mesma forma de `SiteSetupKitResponse`, com `origin: "tenant"`. Recusas:
+
+- `409 ROUND_STAGE_NOT_READY` (`details.stage = estimate`) quando a rodada ainda não tem
+  matriz de cálculo;
+- `422 SITE_SETUP_KIT_EMPTY` quando a matriz não tem nenhuma parcela `STANDALONE`;
+- `422 SITE_SETUP_BINDING_INVALID` com `details.bindings` **nomeando** os bindings que apontam
+  para operando inexistente — nunca ignorados em silêncio, porque um binding ignorado
+  congelaria como constante um número que a orçamentista quis declarar;
+- `409 SITE_SETUP_KIT_ALREADY_PUBLISHED` para `(name, kit_version)` já existente **neste
+  tenant**;
+- `409 REVISION_CONFLICT`.
+
+Auditado como `ESTIMATE_SITE_SETUP_KIT_AUTHORED`.
 
 ## Levantamento de campo
 
