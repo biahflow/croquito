@@ -189,6 +189,13 @@ reencontrar o mesmo pacote de códigos na praça seguinte. O índice tem uma seg
 `POST /v1/precedents/seed`), porque sem ela ele nasceria vazio. Precedente é observação: quem
 o lê oferece, e o clique continua sendo da orçamentista.
 
+Quem o lê é a **shortlist**: `GET .../code-suggestions` devolve o bloco `precedents` ao lado
+dos blocos por fonte, sem reordenar a cascata e sem custo nenhum — código que não está no
+catálogo da rodada é omitido, e sem precedente utilizável o bloco não existe. Aceitá-lo é um
+ato só: os N códigos do rótulo entram em `/code-assignments/decisions` num lote (`codes`) e
+viram **uma revisão**. Aceitar **não fecha** o pacote; fechar continua sendo o ato separado —
+e é ele que devolve o pacote ao índice.
+
 O documento final é que difere, e é onde a fronteira licitada vale:
 
 - **Medição** → boletim + memória de cálculo, só `PriceOrigin.sco`.

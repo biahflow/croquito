@@ -45,13 +45,15 @@ from croquito_api.database import EstimateRoundRecord, PrecedentObservationRecor
 from croquito_api.valuation_rounds import RoundRefusal
 from croquito_core.ids import new_uuid7
 from croquito_valuation.assignment import CodeAssignmentSet
+from croquito_valuation.catalog import normalize_unit
+from croquito_valuation.models import PriceCatalog
 from croquito_valuation.precedent import (
     PRICE_SOURCE_UNDECLARED,
     NormalizationStrategy,
     PrecedentSeedPacket,
     normalize_label,
 )
-from croquito_valuation.takeoff import TakeoffPacket
+from croquito_valuation.takeoff import TakeoffItem, TakeoffPacket
 
 PRECEDENT_SEED_WORKSITE_CONFLICT: Final = "PRECEDENT_SEED_WORKSITE_CONFLICT"
 PRECEDENT_SEED_STRATEGY_UNSUPPORTED: Final = "PRECEDENT_SEED_STRATEGY_UNSUPPORTED"
@@ -199,6 +201,71 @@ def precedents_for(
             labels_seen=tuple(sorted(originals_by_label[label_normalized])),
         )
     return entries
+
+
+def shortlist_precedents(
+    entries: Mapping[str, PrecedentEntry],
+    items: Sequence[TakeoffItem],
+    catalog: PriceCatalog,
+) -> list[dict[str, object]]:
+    """O bloco `precedents` da shortlist: o precedente de cada item, resolvido no CATÁLOGO.
+
+    O índice guarda só o código; `description`, `unit`, `unit_price`, `unit_compatible` e
+    `catalog_sha256` saem daqui exatamente como um candidato da shortlist os traz, porque a
+    tela desenha o mesmo cartão para os dois. `unit_price` viaja como TEXTO, pela mesma
+    disciplina de todo dinheiro que atravessa a fronteira: é `Decimal` exato, e um número de
+    JSON já teria passado por binário.
+
+    Duas omissões, e as duas são a decisão 7 do pacote de design aprovado — *sugerir código
+    que não existe na tabela vigente é o pior resultado possível, pior que não sugerir nada*:
+
+    - **código fora do catálogo é omitido**, e a omissão não derruba o resto do bloco: um
+      pacote aprendido numa praça cuja tabela tinha seis serviços continua valendo pelos
+      cinco que a tabela desta rodada tem;
+    - **item cujos códigos saíram todos não aparece**. Bloco vazio não existe: o pacote é
+      explícito em que, sem precedente, o bloco não é desenhado — nem vazio, nem desabilitado.
+
+    `worksite_count` do rótulo é o que a consulta mediu e não é recalculado pela omissão: ele
+    responde "em quantas praças este rótulo apareceu", que continua verdadeiro mesmo quando
+    um dos códigos daquelas praças não está mais na tabela.
+
+    A ordem é a dos itens do pacote de takeoff, e dentro de cada item a que a consulta deu
+    (mais repetido primeiro, código como desempate): duas leituras do mesmo estado devolvem a
+    mesma lista, byte a byte.
+    """
+    payload: list[dict[str, object]] = []
+    for item in items:
+        entry = entries.get(index_key(item.label))
+        if entry is None:
+            continue
+        codes: list[dict[str, object]] = []
+        for precedent_code in entry.codes:
+            if not catalog.has_code(precedent_code.code):
+                continue
+            catalog_entry = catalog.entry_for(precedent_code.code)
+            codes.append(
+                {
+                    "code": catalog_entry.code,
+                    "worksite_count": precedent_code.worksite_count,
+                    "description": catalog_entry.description,
+                    "unit": catalog_entry.unit,
+                    "unit_price": str(catalog_entry.unit_price),
+                    "unit_compatible": normalize_unit(item.unit)
+                    == normalize_unit(catalog_entry.unit),
+                    "catalog_sha256": catalog.source_sha256,
+                }
+            )
+        if not codes:
+            continue
+        payload.append(
+            {
+                "item_id": item.id,
+                "normalized_label": entry.normalized_label,
+                "worksite_count": entry.worksite_count,
+                "codes": codes,
+            }
+        )
+    return payload
 
 
 # --- gravação (o que as duas fontes compartilham) ------------------------------------------

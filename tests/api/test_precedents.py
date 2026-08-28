@@ -880,3 +880,440 @@ def test_a_consulta_nao_grava_e_nao_avanca_a_versao_da_rodada(tmp_path: Path) ->
             == antes_revisoes
         )
     assert len(_observations(client)) == antes_observacoes
+
+
+# --- o precedente na shortlist e o aceite do pacote (T3a) -----------------------------------
+
+
+_CODIGO_FORA_DO_CATALOGO = "ZZ99999999(/)"
+"""Código que existe no ÍNDICE e não na tabela desta rodada.
+
+É o caso que a decisão 7 do pacote de design aprovado existe para impedir: sugerir código
+que não está na tabela vigente é o pior resultado possível — pior que não sugerir nada."""
+
+
+def _shortlist(client: TestClient, state: dict[str, Any], *, key: str = "shortlist") -> Any:
+    return client.get(
+        f"/v1/estimate-rounds/{state['round_id']}/code-suggestions",
+        headers=_headers(state["tenant"], key=key),
+    )
+
+
+def _decide_codes(
+    client: TestClient,
+    state: dict[str, Any],
+    *,
+    item_id: str = _ITEM_PISO,
+    key: str,
+    base_version: int | None = None,
+    **body_overrides: Any,
+) -> Any:
+    """O aceite do PACOTE: um corpo, N códigos, uma revisão só."""
+    body: dict[str, Any] = {
+        "base_version": state["version"] if base_version is None else base_version,
+        "item_id": item_id,
+        "action": "confirm",
+        "catalog_sha256": state["catalog_sha256"],
+        "codes": [_PISO_CODE, _TELA_CODE],
+    }
+    body.update(body_overrides)
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/code-assignments/decisions",
+        headers=_headers(state["tenant"], key=key),
+        json=body,
+    )
+    if response.status_code == 200:
+        state["version"] = response.json()["version"]
+    return response
+
+
+def _revisions_of(client: TestClient, round_id: str) -> list[EstimateRoundRevisionRecord]:
+    with _database(client).sessions() as session:
+        return list(
+            session.scalars(
+                select(EstimateRoundRevisionRecord)
+                .where(EstimateRoundRevisionRecord.round_id == round_id)
+                .order_by(EstimateRoundRevisionRecord.version)
+            )
+        )
+
+
+def _assignment_revisions(client: TestClient, round_id: str) -> list[EstimateRoundRevisionRecord]:
+    return [
+        revision
+        for revision in _revisions_of(client, round_id)
+        if revision.code_assignments_json is not None
+    ]
+
+
+def _round_version(client: TestClient, round_id: str) -> int:
+    with _database(client).sessions() as session:
+        record = session.get(EstimateRoundRecord, round_id)
+        assert record is not None
+        return record.version
+
+
+def test_a_shortlist_traz_o_precedente_sem_mudar_nada_do_que_ja_existia(tmp_path: Path) -> None:
+    """O bloco novo ENTRA; o que já estava no payload não se mexe.
+
+    A comparação é do payload inteiro menos a chave nova: `suggestions` continua igual, na
+    mesma ordem, com os mesmos blocos por fonte, o mesmo digest e a mesma versão. O
+    precedente antecede a shortlist — não a substitui, e não reordena a cascata (decisão 1
+    do pacote de design aprovado).
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+
+    # A primeira leitura CALCULA e grava a shortlist; a comparação é entre duas leituras do
+    # artefato já gravado, para que a única diferença possível seja o bloco novo.
+    assert _shortlist(client, state, key="shortlist-0").status_code == 200
+    antes = _shortlist(client, state, key="shortlist-1")
+    assert antes.status_code == 200, antes.text
+    assert antes.json()["precedents"] == []
+
+    assert (
+        _seed(
+            client,
+            _seed_body(worksite_key="praca-passada-sul", price_source=state["catalog_sha256"]),
+            key="semeadura-1",
+        ).status_code
+        == 200
+    )
+    depois = _shortlist(client, state, key="shortlist-2")
+
+    assert depois.status_code == 200, depois.text
+    sem_precedente = {
+        chave: valor for chave, valor in depois.json().items() if chave != "precedents"
+    }
+    assert sem_precedente == {
+        chave: valor for chave, valor in antes.json().items() if chave != "precedents"
+    }
+    assert depois.json()["precedents"] == [
+        {
+            "item_id": _ITEM_PISO,
+            "normalized_label": precedents.index_key(_PISO_LABEL),
+            "worksite_count": 1,
+            "codes": [
+                {
+                    "code": _PISO_CODE,
+                    "worksite_count": 1,
+                    "description": "PAVIMENTO RIGIDO",
+                    "unit": "m2",
+                    "unit_price": "50.00",
+                    "unit_compatible": True,
+                    "catalog_sha256": state["catalog_sha256"],
+                },
+                {
+                    "code": _TELA_CODE,
+                    "worksite_count": 1,
+                    "description": "TELA DE ACO SOLDADA",
+                    "unit": "m2",
+                    "unit_price": "50.00",
+                    "unit_compatible": True,
+                    "catalog_sha256": state["catalog_sha256"],
+                },
+            ],
+        }
+    ]
+
+
+def test_a_shortlist_conta_as_pracas_do_rotulo_e_de_cada_codigo(tmp_path: Path) -> None:
+    """ "Você já usou isto em N praças" é o argumento de autoridade, e ele vem medido.
+
+    Duas praças com o mesmo rótulo, a segunda com pacote CONTIDO na primeira — o caso
+    `subset` que a medição encontrou em 8 dos 76 rótulos repetidos. A contagem do RÓTULO é 2
+    e a do código que só apareceu uma vez é 1: é assim que escopo menor fica legível em vez
+    de virar média.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+    fonte = state["catalog_sha256"]
+    assert (
+        _seed(
+            client, _seed_body(worksite_key="praca-passada-sul", price_source=fonte), key="s1"
+        ).status_code
+        == 200
+    )
+    assert (
+        _seed(
+            client,
+            _seed_body(
+                worksite_key="praca-passada-leste",
+                price_source=fonte,
+                pairs=((_PISO_LABEL, _PISO_CODE),),
+            ),
+            key="s2",
+        ).status_code
+        == 200
+    )
+
+    bloco = _shortlist(client, state).json()["precedents"]
+
+    assert [entrada["worksite_count"] for entrada in bloco] == [2]
+    assert [(codigo["code"], codigo["worksite_count"]) for codigo in bloco[0]["codes"]] == [
+        (_PISO_CODE, 2),
+        (_TELA_CODE, 1),
+    ]
+
+
+def test_codigo_do_precedente_fora_do_catalogo_da_rodada_e_omitido(tmp_path: Path) -> None:
+    """A omissão não derruba o resto do bloco: o pacote vale pelos códigos que a tabela tem.
+
+    Um pacote aprendido numa praça cuja tabela tinha um serviço a mais continua servindo
+    para os que a tabela desta rodada tem — o que não pode acontecer é o código ausente
+    aparecer como oferta.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+    assert (
+        _seed(
+            client,
+            _seed_body(
+                worksite_key="praca-passada-sul",
+                price_source=state["catalog_sha256"],
+                pairs=((_PISO_LABEL, _PISO_CODE), (_PISO_LABEL, _CODIGO_FORA_DO_CATALOGO)),
+            ),
+            key="semeadura-1",
+        ).status_code
+        == 200
+    )
+
+    bloco = _shortlist(client, state).json()["precedents"]
+
+    assert [codigo["code"] for codigo in bloco[0]["codes"]] == [_PISO_CODE]
+    assert _CODIGO_FORA_DO_CATALOGO not in _shortlist(client, state, key="shortlist-2").text
+
+
+def test_item_cujos_codigos_sairam_todos_nao_aparece_no_bloco(tmp_path: Path) -> None:
+    """Bloco vazio não existe: sem precedente utilizável, o item não entra na lista.
+
+    O pacote de design aprovado é explícito — quando não há precedente, o bloco não é
+    desenhado, nem vazio nem desabilitado.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+    assert (
+        _seed(
+            client,
+            _seed_body(
+                worksite_key="praca-passada-sul",
+                price_source=state["catalog_sha256"],
+                pairs=((_PISO_LABEL, _CODIGO_FORA_DO_CATALOGO),),
+            ),
+            key="semeadura-1",
+        ).status_code
+        == 200
+    )
+
+    assert _shortlist(client, state).json()["precedents"] == []
+
+
+def test_precedente_de_outra_fonte_de_preco_nao_e_oferecido_na_shortlist(tmp_path: Path) -> None:
+    """Quando a fonte não bate, a shortlist é exatamente a de hoje (decisão 7 do pacote)."""
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+    assert (
+        _seed(
+            client,
+            _seed_body(worksite_key="praca-passada-sul", price_source="d" * 64),
+            key="semeadura-1",
+        ).status_code
+        == 200
+    )
+
+    assert _shortlist(client, state).json()["precedents"] == []
+
+
+def test_rotulo_inedito_nao_ganha_bloco_e_o_vizinho_com_precedente_ganha(tmp_path: Path) -> None:
+    """O item sem precedente simplesmente não entra na lista; o vizinho não é arrastado."""
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+    assert (
+        _seed(
+            client,
+            _seed_body(worksite_key="praca-passada-sul", price_source=state["catalog_sha256"]),
+            key="semeadura-1",
+        ).status_code
+        == 200
+    )
+
+    bloco = _shortlist(client, state).json()["precedents"]
+
+    assert [entrada["item_id"] for entrada in bloco] == [_ITEM_PISO]
+    assert _ITEM_ALAMBRADO not in {entrada["item_id"] for entrada in bloco}
+
+
+def test_a_leitura_da_shortlist_nao_avanca_a_versao_nem_cria_decisao_nenhuma(
+    tmp_path: Path,
+) -> None:
+    """Precedente NUNCA vira decisão sem o ato, e o `GET` continua sem custo (ADR-0054 D7).
+
+    Duas leituras seguidas, com precedente disponível: a versão da rodada não anda, nenhuma
+    revisão de decisão nasce, e o índice não ganha linha — a consulta é `SELECT` sobre o que
+    já estava gravado, e nenhuma chamada paga entra neste caminho.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+    assert (
+        _seed(
+            client,
+            _seed_body(worksite_key="praca-passada-sul", price_source=state["catalog_sha256"]),
+            key="semeadura-1",
+        ).status_code
+        == 200
+    )
+    antes_versao = _round_version(client, state["round_id"])
+    antes_observacoes = len(_observations(client))
+
+    primeira = _shortlist(client, state, key="shortlist-1")
+    segunda = _shortlist(client, state, key="shortlist-2")
+
+    assert primeira.status_code == 200, primeira.text
+    assert segunda.json()["precedents"] == primeira.json()["precedents"]
+    assert _round_version(client, state["round_id"]) == antes_versao
+    assert _assignment_revisions(client, state["round_id"]) == []
+    assert len(_observations(client)) == antes_observacoes
+    decisoes = client.get(
+        f"/v1/estimate-rounds/{state['round_id']}/code-assignments",
+        headers=_headers(key="decisoes"),
+    )
+    assert decisoes.json()["assignments"] is None
+    assert decisoes.json()["confirmed"] == 0
+
+
+def test_o_aceite_do_pacote_grava_os_n_codigos_em_uma_revisao_so(tmp_path: Path) -> None:
+    """O precedente é do RÓTULO, e o rótulo dispara um pacote: aceitá-lo é UM ato.
+
+    N chamadas produziriam N revisões e N versões para uma decisão só, e a cadeia de
+    revisões passaria a contar atos que ninguém praticou separadamente.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+    antes_versao = state["version"]
+
+    response = _decide_codes(client, state, key="aceite-do-pacote")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == antes_versao + 1
+    assert body["confirmed"] == 2
+    revisoes = _assignment_revisions(client, state["round_id"])
+    assert len(revisoes) == 1
+    gravado = cast(dict[str, Any], revisoes[0].code_assignments_json)
+    assert [
+        (assignment["item_id"], assignment["code"], assignment["status"])
+        for assignment in gravado["assignments"]
+    ] == [
+        (_ITEM_PISO, _PISO_CODE, "confirmed"),
+        (_ITEM_PISO, _TELA_CODE, "confirmed"),
+    ]
+    assert {assignment["catalog_sha256"] for assignment in gravado["assignments"]} == {
+        state["catalog_sha256"]
+    }
+
+
+def test_aceitar_o_pacote_nao_o_fecha_e_nao_alimenta_o_indice(tmp_path: Path) -> None:
+    """Decisão 5 do pacote de design: aceitar o precedente NÃO fecha o pacote.
+
+    Um atalho que fechasse junto tiraria da orçamentista a decisão de dizer "acabou" — e,
+    como é o fechamento que alimenta o índice, ele também gravaria precedente de um pacote
+    que ninguém declarou completo.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+
+    body = _decide_codes(client, state, key="aceite-do-pacote").json()
+
+    assert body["closed"] == 0
+    assert body["assignments"]["closures"] == []
+    assert _ITEM_PISO in {item["item_id"] for item in body["pending_items"]}
+    assert _observations(client) == []
+
+
+def test_o_pacote_aceito_e_depois_fechado_grava_o_precedente_normalmente(tmp_path: Path) -> None:
+    """O ato separado continua sendo o que ensina o índice — nada a fazer além de não atrapalhar."""
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+    assert _decide_codes(client, state, key="aceite-do-pacote").status_code == 200
+
+    fechado = _close_package(client, state, item_id=_ITEM_PISO, key="fecha-piso")
+
+    assert fechado.status_code == 200, fechado.text
+    assert [(row.label_normalized, row.code) for row in _observations(client)] == [
+        ("piso em concreto", _PISO_CODE),
+        ("piso em concreto", _TELA_CODE),
+    ]
+
+
+def test_o_lote_com_reject_e_com_code_junto_sao_recusa_de_fronteira(tmp_path: Path) -> None:
+    """Três recusas de contrato, antes de qualquer escrita.
+
+    `codes` com `reject` (rejeitar é recusar TODAS as fontes, não um pacote delas), `code` e
+    `codes` juntos (dois campos dizendo o que gravar deixariam o significado do corpo
+    depender de qual o servidor lê primeiro) e confirmação sem nenhum dos dois.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+
+    com_reject = _decide_codes(
+        client,
+        state,
+        key="reject-com-codes",
+        action="reject",
+        note="nenhum serviço precifica este elemento",
+        catalog_sha256=None,
+    )
+    com_os_dois = _decide_codes(client, state, key="code-e-codes", code=_PISO_CODE)
+    sem_nenhum = _decide_codes(client, state, key="sem-codigo", codes=None)
+
+    assert com_reject.status_code == 422, com_reject.text
+    assert com_os_dois.status_code == 422, com_os_dois.text
+    assert sem_nenhum.status_code == 422, sem_nenhum.text
+    assert _assignment_revisions(client, state["round_id"]) == []
+
+
+def test_lote_vazio_e_recusa_do_dominio_e_nao_grava(tmp_path: Path) -> None:
+    """Quem recusa lote sem decisão nenhuma é o domínio; a fronteira não reimplementa a regra."""
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+
+    response = _decide_codes(client, state, key="lote-vazio", codes=[])
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detail["details"]["code"] == "ASSIGNMENT_BATCH_EMPTY"
+    assert _assignment_revisions(client, state["round_id"]) == []
+
+
+def test_um_codigo_invalido_derruba_o_lote_inteiro_sem_gravar_metade(tmp_path: Path) -> None:
+    """Falha fechada: o pacote entra inteiro ou não entra.
+
+    Meio pacote gravado seria pior que a recusa — o elemento ficaria com parte dos serviços
+    e ninguém saberia que o resto foi recusado.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+
+    fora_do_catalogo = _decide_codes(
+        client, state, key="fora-do-catalogo", codes=[_PISO_CODE, _CODIGO_FORA_DO_CATALOGO]
+    )
+    repetido = _decide_codes(client, state, key="repetido", codes=[_PISO_CODE, _PISO_CODE])
+
+    assert fora_do_catalogo.status_code == 422, fora_do_catalogo.text
+    assert fora_do_catalogo.json()["detail"]["details"]["code"] == "ASSIGNMENT_CODE_NOT_IN_CATALOG"
+    assert repetido.status_code == 422, repetido.text
+    assert repetido.json()["detail"]["details"]["code"] == "ASSIGNMENT_DUPLICATE_PAIR"
+    assert _assignment_revisions(client, state["round_id"]) == []
+
+
+def test_lote_com_base_version_defasada_e_409_e_nao_grava(tmp_path: Path) -> None:
+    """O aceite do pacote é ato humano, e o token de concorrência vale para ele igual."""
+    client = _client(tmp_path)
+    state = _round_ready_for_codes(client)
+
+    response = _decide_codes(client, state, key="versao-velha", base_version=1)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "REVISION_CONFLICT"
+    assert _assignment_revisions(client, state["round_id"]) == []

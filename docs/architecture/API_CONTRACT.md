@@ -1825,6 +1825,36 @@ pode ser desempatada por similaridade de texto. É observação, nunca decisão.
 takeoff incompleta devolve `409 TAKEOFF_REVIEW_INCOMPLETE`; rodada sem cascata devolve
 `409 ROUND_STAGE_NOT_READY`.
 
+Desde a F-044 a resposta traz também **`precedents`**, o que cada rótulo já disparou nas
+praças passadas deste tenant. Ele **não altera** `suggestions`: mesma ordem, mesmos blocos
+por fonte, mesmo digest.
+
+```json
+{"precedents": [
+  {"item_id": "ti_...", "normalized_label": "piso em concreto", "worksite_count": 4,
+   "codes": [{"code": "BP09100050(B)", "worksite_count": 4, "description": "...",
+              "unit": "m2", "unit_price": "118.42", "unit_compatible": true,
+              "catalog_sha256": "..."}]}]}
+```
+
+- `description`, `unit`, `unit_price`, `unit_compatible` e `catalog_sha256` vêm do
+  **catálogo da cascata**, exatamente como os candidatos da shortlist os trazem — o índice
+  guarda só o código, e a tela desenha o mesmo cartão. `unit_price` viaja como texto.
+- `worksite_count` do rótulo é em quantas praças ele apareceu; o do código, em quantas
+  aquele código foi confirmado. O do rótulo **não** é a soma dos códigos.
+- A fonte de preço é a do catálogo **cabeça** da cascata, e precedente de outra fonte nunca
+  é devolvido. Consequência declarada: um precedente aprendido citando a segunda fonte da
+  cascata não é oferecido de volta.
+- **Código que não está no catálogo desta rodada é omitido**, e a omissão não derruba o
+  resto do bloco; item cujos códigos saíram todos **não aparece**, e rótulo inédito também
+  não. Bloco vazio não existe.
+- A leitura continua **gratuita e sem efeito**: é `SELECT` sobre o que já estava gravado,
+  nenhuma chamada paga entra aqui, nenhuma decisão nasce e a versão da rodada não anda.
+
+O bloco sai **no `GET`**; o recompute devolve a shortlist sem ele, porque a resposta do
+recompute é gravada verbatim no registro de idempotência e um replay serviria precedente
+velho como se fosse o corrente. A tela relê o `GET` depois de qualquer ato.
+
 ### `POST /v1/estimate-rounds/{round_id}/code-suggestions/recompute`
 
 Recalcula a shortlist sobre a cascata corrente; é o caminho declarado de reler o efeito de
@@ -1861,10 +1891,21 @@ ainda não está completo, com as mesmas contagens da medição (`confirmed`/`re
 
 ### `POST /v1/estimate-rounds/{round_id}/code-assignments/decisions`
 
-Entrada: `base_version`, `item_id`, `action`, `code`, `catalog_sha256` e `note`. A
-confirmação **cita a fonte**: com mais de uma tabela na rodada, resolver o código pela ordem
-da cascata seria a máquina escolhendo quem precifica o item. Rejeição exige justificativa e
-recusa tanto `code` quanto `catalog_sha256` — rejeitar é recusar todas as fontes.
+Entrada: `base_version`, `item_id`, `action`, `code` **ou** `codes`, `catalog_sha256` e
+`note`. A confirmação **cita a fonte**: com mais de uma tabela na rodada, resolver o código
+pela ordem da cascata seria a máquina escolhendo quem precifica o item. Rejeição exige
+justificativa e recusa tanto `code` quanto `catalog_sha256` — rejeitar é recusar todas as
+fontes.
+
+`codes` é o **aceite do pacote** (F-044): até 50 códigos do mesmo item, todos citando a
+mesma fonte, gravados em **uma revisão só** e avançando a versão uma vez só. Ele é
+mutuamente exclusivo com `code`, vale só em `confirm`, e as três violações são recusa de
+contrato (`422`): os dois campos juntos, nenhum dos dois numa confirmação, e `codes` com
+`reject`. Lista vazia, código repetido no lote e as demais recusas continuam sendo do
+domínio — um código inválido derruba o **lote inteiro**, antes de qualquer escrita, e nada
+é gravado pela metade.
+
+Aceitar o pacote **não o fecha**: o fechamento continua sendo `/closures`.
 
 Fonte fora da cascata, código fora do catálogo citado, item não confirmado no takeoff, item
 já decidido ou unidade incompatível sem nota devolvem `422 DOMAIN_VALIDATION_FAILED` com o

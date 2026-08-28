@@ -2975,7 +2975,7 @@
       },
       "EstimateCodeAssignmentDecisionRequest": {
         "additionalProperties": false,
-        "description": "Decisão de código do orçamento-base: a confirmação CITA a fonte de preço.\n\nÉ a única diferença de contrato para `CodeAssignmentDecisionRequest` da medição, e é a\nrazão de este modelo existir: com mais de uma tabela na rodada, resolver o código pela\nordem da cascata seria a máquina escolhendo quem precifica o item. A citação é\nobrigatória na confirmação e proibida na rejeição — rejeitar é recusar TODAS as fontes,\nnão uma delas.",
+        "description": "Decisão de código do orçamento-base: a confirmação CITA a fonte de preço.\n\nÉ a única diferença de contrato para `CodeAssignmentDecisionRequest` da medição, e é a\nrazão de este modelo existir: com mais de uma tabela na rodada, resolver o código pela\nordem da cascata seria a máquina escolhendo quem precifica o item. A citação é\nobrigatória na confirmação e proibida na rejeição — rejeitar é recusar TODAS as fontes,\nnão uma delas.\n\n`codes` é o aceite do PACOTE (F-044): o precedente é do rótulo, e o rótulo dispara um\nconjunto de códigos, então aceitá-lo é um ato só e vira **uma revisão só**. Ele é\nmutuamente exclusivo com `code` — dois campos dizendo o que gravar deixariam o\nsignificado do corpo depender de qual o servidor lê primeiro —, vale só na confirmação,\ne todos os códigos citam a MESMA fonte, que é a que `catalog_sha256` declara.\n\nAceitar o pacote **não o fecha**: o fechamento continua sendo o ato separado de\n`/closures` (ADR-0053, decisão 2; decisão 5 do pacote de design da F-044).",
         "properties": {
           "action": {
             "enum": [
@@ -3014,6 +3014,23 @@
               }
             ],
             "title": "Code"
+          },
+          "codes": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 30,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Codes"
           },
           "item_id": {
             "pattern": "^ti_[a-f0-9]{16}$",
@@ -10817,7 +10834,7 @@
     },
     "/v1/estimate-rounds/{round_id}/code-assignments/decisions": {
       "post": {
-        "description": "Confirma ou rejeita o código de UM item CITANDO a fonte, acumulando sobre o anterior.\n\nA citação viaja na DECISÃO, e não só no relatório final: é ela que o orçamento usa,\nlinha a linha, para dizer de qual tabela o preço veio. Código fora do catálogo\ncitado, fonte fora da cascata, item já decidido e unidade incompatível sem nota\ncontinuam sendo recusa do domínio, que esta rota não reimplementa.",
+        "description": "Confirma ou rejeita o código de um item CITANDO a fonte, acumulando sobre o anterior.\n\nA citação viaja na DECISÃO, e não só no relatório final: é ela que o orçamento usa,\nlinha a linha, para dizer de qual tabela o preço veio. Código fora do catálogo\ncitado, fonte fora da cascata, item já decidido e unidade incompatível sem nota\ncontinuam sendo recusa do domínio, que esta rota não reimplementa.\n\nCom `codes`, o corpo carrega o PACOTE do elemento (F-044): os N códigos entram num\n`CodeAssignmentBatch` só e viram **uma** revisão, com uma versão nova só. Não é\natalho de conveniência — é o que impede o aceite de um precedente de aparecer na\ncadeia de revisões como N atos que ninguém praticou separadamente, e o que faz o\nlote falhar fechado: um código inválido derruba o lote inteiro no domínio, antes de\nqualquer escrita, em vez de gravar metade do pacote.\n\nAceitar o pacote **não o fecha**. Fechar continua sendo `/closures`, e é ele que\nalimenta o índice de precedentes.",
         "operationId": "decide_estimate_item_code_v1_estimate_rounds__round_id__code_assignments_decisions_post",
         "parameters": [
           {
@@ -10894,7 +10911,7 @@
     },
     "/v1/estimate-rounds/{round_id}/code-suggestions": {
       "get": {
-        "description": "Shortlist de código sobre a CASCATA por item confirmado: observação, nunca decisão.\n\nOs candidatos saem na ordem da cascata — cada fonte é um bloco —, e a gravação entra\nna cadeia de revisões **sem avançar a versão da rodada**: a shortlist é artefato\nderivado, e se um `GET` movesse o token de concorrência, a próxima decisão do\norçamentista levaria `409` por algo que ele não fez.\n\n**Nenhuma chamada paga acontece aqui**, pelo mesmo motivo e com a mesma força da\nirmã da medição (ADR-0054 D7): o cálculo é chamado sem braço semântico (`arms=None`),\nnenhum índice é procurado e a shortlist gravada é léxica até o recálculo explícito.",
+        "description": "Shortlist de código sobre a CASCATA por item confirmado: observação, nunca decisão.\n\nOs candidatos saem na ordem da cascata — cada fonte é um bloco —, e a gravação entra\nna cadeia de revisões **sem avançar a versão da rodada**: a shortlist é artefato\nderivado, e se um `GET` movesse o token de concorrência, a próxima decisão do\norçamentista levaria `409` por algo que ele não fez.\n\n**Nenhuma chamada paga acontece aqui**, pelo mesmo motivo e com a mesma força da\nirmã da medição (ADR-0054 D7): o cálculo é chamado sem braço semântico (`arms=None`),\nnenhum índice é procurado e a shortlist gravada é léxica até o recálculo explícito.\n\nDesde a F-044 a resposta traz também `precedents`: o pacote de códigos que cada\nrótulo já disparou nas praças passadas deste tenant, com a contagem de praças. Ele\n**não muda nada** do que já estava aqui — `suggestions` continua igual, na mesma\nordem e com os mesmos blocos por fonte —, e não acrescenta custo nenhum: é `SELECT`\nsobre o que o fechamento de pacote e a semeadura já gravaram. Continua sendo\nobservação: nenhuma decisão nasce desta leitura.",
         "operationId": "get_estimate_code_suggestions_v1_estimate_rounds__round_id__code_suggestions_get",
         "parameters": [
           {
