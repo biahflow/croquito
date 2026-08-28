@@ -148,9 +148,12 @@ digitadas de novo a cada praça.
 
 ## Human Gates
 
-1. ~~**Design Approval Package**~~ — `INTERFACE_CHANGE`: a superfície de escolher acervo,
-   declarar parâmetros e pré-visualizar. Revisão 1 **aprovada em 2026-08-28** (Daniel
-   Campos): [`mock/README.md`](mock/README.md).
+1. **Design Approval Package** — `INTERFACE_CHANGE`: a superfície de escolher acervo,
+   declarar parâmetros e pré-visualizar. Revisão 1 **aprovada em 2026-08-28** (Daniel Campos).
+   A implementação da tela expôs um beco sem saída no próprio pacote — a recusa oferecia
+   "remova na pré-visualização" e acontecia antes de a pré-visualização existir —, e a emenda
+   aprovada no mesmo dia produziu a **revisão 2**, que aguarda aprovação:
+   [`mock/README.md`](mock/README.md).
 2. ~~Aceite do [ADR-0059](../../adr/0059-item-contratado-fora-da-tabela-sco.md)~~ —
    **cumprido em 2026-08-28** (Daniel Campos), alternativa A.
 3. ~~**Decisão do unknown 1** (onde o acervo vive)~~ — virou o

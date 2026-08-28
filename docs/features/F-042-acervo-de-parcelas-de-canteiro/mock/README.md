@@ -1,8 +1,8 @@
 # Design Approval Package — F-042, o acervo de parcelas de canteiro
 
 Classification: INTERFACE_CHANGE  
-Revision: 1  
-Status: **Approved (2026-08-28)**  
+Revision: **2**  
+Status: **Awaiting approval** (a revisão 1 foi aprovada em 2026-08-28)  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -16,14 +16,46 @@ Produced by: agente (Claude Code)
 > [ADR-0059](../../../adr/0059-item-contratado-fora-da-tabela-sco.md) já foi cumprido em
 > 2026-08-28.
 
+## Por que existe uma revisão 2
+
+A revisão 1 foi aprovada e construída. Ao implementar a tela, apareceu um **beco sem saída no
+próprio pacote**: a recusa de parâmetro faltante dizia *"Declare os dois, **ou remova na
+pré-visualização** as parcelas que os citam"* — mas a recusa acontecia **antes** da
+pré-visualização existir. Não havia lista de onde remover. Um acervo de 24 parcelas em que
+apenas 2 citam um parâmetro que a orçamentista não tem ficava **inteiramente** inaplicável.
+
+O mesmo beco valia para o código ausente do catálogo.
+
+**Emenda aprovada pelo dono em 2026-08-28**: a pré-visualização deixa de recusar e passa a
+**mostrar todas as parcelas, marcando as bloqueadas**. Pré-visualizar é ler, e ler não
+materializa nada; a falha fechada continua **inteira** no ato de aplicar.
+
+O que muda, em uma frase por item:
+
+- **Decisão 5 é emendada**: a recusa por parâmetro faltante sai da pré-visualização e fica só
+  no ato. Na lista, a parcela bloqueada diz o que falta no lugar da quantidade, e continua
+  removível — é assim que se aplicam as 22 sem ter o parâmetro que as outras 2 exigem.
+- **Decisão 9 é emendada** do mesmo jeito, para o código ausente do catálogo: ele marca a
+  linha, e a recusa fechada continua no ato.
+- **Decisão nova (10)**: aplicar fica indisponível enquanto houver parcela bloqueada não
+  removida, **com o motivo nomeado ao lado** — nunca um botão apagado sem explicação. A tela
+  só pode fazer isso porque a pré-visualização lhe deu a informação exata, parcela a parcela;
+  o servidor continua recusando fechado se o ato chegar mesmo assim.
+- **As oito outras decisões da revisão 1 ficam intactas**, incluindo a que mais importa: não
+  existe caminho que aplique sem passar pela pré-visualização.
+
+A captura `04-recusa-parametro.png` da revisão 1 foi substituída por
+[`04-bloqueadas-na-lista.png`](04-bloqueadas-na-lista.png), e `08-recusa-codigo.png` por
+[`08-codigo-ausente.png`](08-codigo-ausente.png).
+
 ## Registro de aprovação
 
 | Campo | Valor |
 | --- | --- |
-| O que se aprova | a composição visual da revisão 1 e as nove decisões listadas abaixo |
-| Aprovado por | Daniel Campos |
-| Data | 2026-08-28 |
-| Revisão | 1 |
+| O que se aprova | a composição visual da revisão 2, as duas decisões emendadas, a decisão 10 e as oito decisões da revisão 1 que ela preserva |
+| Aprovado por | — |
+| Data | — |
+| Revisão | 2 |
 | Explicitamente **não** coberto | a copy final; os códigos, nomes de parâmetro e números das capturas, que são sintéticos; **quais** são as 24 parcelas do Campo do Toca, que dependem da autoria humana do primeiro acervo; e a decisão do ADR-0060, que é gate próprio |
 
 Aprovar esta revisão não aprova a seguinte: pacote materialmente alterado é revisão nova e
@@ -38,11 +70,11 @@ precisa de registro próprio.
 | [`01-onde-vive.png`](01-onde-vive.png) | Onde a superfície vive: a etapa Códigos, hoje sem apoio nenhum para o canteiro |
 | [`02-escolher-acervo.png`](02-escolher-acervo.png) | Passo 1 — escolher o acervo, com a versão à vista |
 | [`03-declarar-parametros.png`](03-declarar-parametros.png) | Passo 2 — declarar os parâmetros de obra que o acervo cita |
-| [`04-recusa-parametro.png`](04-recusa-parametro.png) | A recusa do parâmetro faltante, nomeando todos os que faltam |
+| [`04-bloqueadas-na-lista.png`](04-bloqueadas-na-lista.png) | O que está bloqueado aparece na lista, com o que falta no lugar da quantidade |
 | [`05-previsualizacao.png`](05-previsualizacao.png) | Passo 3 — a pré-visualização obrigatória, com a conta à vista |
 | [`06-remover-parcela.png`](06-remover-parcela.png) | Remover uma parcela que não se aplica |
 | [`07-aplicado.png`](07-aplicado.png) | Aplicado: a parcela na matriz, com a proveniência e a reaplicação |
-| [`08-recusa-codigo.png`](08-recusa-codigo.png) | A recusa do código ausente do catálogo da rodada |
+| [`08-codigo-ausente.png`](08-codigo-ausente.png) | O código ausente do catálogo marca a linha; a recusa fechada fica no ato |
 | [`09-autoria.png`](09-autoria.png) | Guardar as parcelas da rodada como acervo novo ou versão nova |
 
 Os números são sintéticos, mas **aritmeticamente consistentes**: `1 × 2 = 2,00`;
@@ -62,8 +94,9 @@ banheiro químico, container, vigia, placa de obra e transporte de andaime.
 | Aplicar acervo | passo 2 — parâmetros | sim (03) |
 | Aplicar acervo | passo 3 — pré-visualização | sim (05) |
 | Aplicar acervo | pré-visualização com parcela removida | sim (06) |
-| Aplicar acervo | recusa — parâmetro faltante | sim (04) |
-| Aplicar acervo | recusa — código ausente do catálogo | sim (08) |
+| Aplicar acervo | pré-visualização com parcela bloqueada por parâmetro faltante | sim (04) |
+| Aplicar acervo | pré-visualização com parcela bloqueada por código ausente | sim (08) |
+| Aplicar acervo | recusa fechada do **ato**, nomeando todos os faltantes | sim (04, como aviso) |
 | Aplicar acervo | acervo vazio / nenhum acervo disponível | **não** — ver questões abertas |
 | Aplicar acervo | carregando | **não** — o cálculo é local e determinístico; a etapa não tem espera de rede própria além da que a jornada já tem |
 | Aplicar acervo | sem papel para aplicar | **não** — a etapa Códigos inteira já é gateada pelo papel da jornada, e este pacote não introduz permissão nova |
@@ -128,6 +161,10 @@ sugestão de parâmetro simplesmente não existe na tela.
    as parcelas que estariam completas. Aplicar "o que dá" produziria uma planilha parcial com
    aparência de completa, que é o modo de falha mais caro desta feature.
 
+   **Emendado na revisão 2**: essa recusa vale para o **ato de aplicar**, não para a
+   pré-visualização. Prever é ler; a lista mostra tudo e marca o que não pode nascer, porque
+   sem a lista não existia a saída que a própria recusa oferecia.
+
 6. **A remoção é por parcela, na prévia, e a parcela removida continua visível, riscada.** Ela
    sai da conta, não da tela: sumir por completo deixaria a lista curta sem dizer o que saiu.
    Remover é reversível até aplicar.
@@ -141,9 +178,18 @@ sugestão de parâmetro simplesmente não existe na tela.
    a leitura visual da idempotência que a feature exige. O carimbo mostra os parâmetros da
    última aplicação, para que "reaplicar" não seja um salto no escuro.
 
-9. **Código do acervo ausente do catálogo é recusa por extenso, nomeando o código — nunca
-   parcela pulada em silêncio.** É o risco de "acervo silenciosamente desatualizado" da
-   feature: um orçamento com uma linha a menos e nenhum sinal.
+9. **Código do acervo ausente do catálogo nunca é parcela pulada em silêncio.** É o risco de
+   "acervo silenciosamente desatualizado" da feature: um orçamento com uma linha a menos e
+   nenhum sinal.
+
+   **Emendado na revisão 2**, do mesmo jeito que a decisão 5: na pré-visualização ele marca a
+   linha nomeando o código, e no ato de aplicar a recusa continua fechada. Marcar não é pular
+   — é dizer, e deixar a decisão com quem orça.
+
+10. **Aplicar fica indisponível enquanto houver parcela bloqueada não removida, com o motivo
+    nomeado ao lado.** Um botão apagado sem explicação seria pior que a recusa que ele
+    substitui. A tela só pode nomear porque a pré-visualização lhe deu a informação parcela a
+    parcela; o servidor continua recusando fechado se o ato chegar assim mesmo.
 
 ## Questões abertas
 

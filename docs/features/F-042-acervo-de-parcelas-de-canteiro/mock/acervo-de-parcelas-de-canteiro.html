@@ -158,6 +158,13 @@
         font-variant-numeric: tabular-nums;
         color: var(--ink);
       }
+      tr.bloqueada td {
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      tr.bloqueada td.acao {
+        color: var(--ink);
+      }
       tr.removida td {
         background: var(--surface-sunken);
         color: var(--muted);
@@ -555,46 +562,88 @@
 
       <section class="estado">
         <h2>
-          4 — A recusa do parâmetro faltante
+          4 — O que está bloqueado aparece na lista, em vez de barrar a lista
           <small
-            >Falha fechada: nomeia todos os que faltam, e não materializa nenhuma parcela — nem
-            as que estariam completas.</small
+            >Pré-visualizar é ler, e ler não materializa nada. A falha fechada continua
+            inteira no ato de aplicar.</small
           >
         </h2>
         <div class="corpo">
-          <div class="linha-campos">
-            <label class="campo">
-              Prazo de obra
-              <input type="text" value="2" />
-              <span class="pedido">meses · citado por 6 parcelas</span>
-            </label>
-            <label class="campo">
-              Semiperímetro
-              <input class="faltante" type="text" value="" />
-              <span class="pedido">m · citado por 2 parcelas</span>
-            </label>
-            <label class="campo">
-              Altura do alambrado
-              <input class="faltante" type="text" value="" />
-              <span class="pedido">m · citado por 2 parcelas</span>
-            </label>
-            <label class="campo">
-              Dias de vigia (12 h)
-              <input type="text" value="23" />
-              <span class="pedido">dias · citado por 1 parcela</span>
-            </label>
+          <div class="aviso atencao">
+            <strong>2 das 24 parcelas não podem nascer:</strong> falta declarar
+            <strong>semiperímetro</strong> e <strong>altura do alambrado</strong>. Declare os
+            parâmetros, ou remova estas duas parcelas para aplicar as outras 22.
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Parcela</th>
+                <th>Código</th>
+                <th>Conta</th>
+                <th class="mono">Quantidade</th>
+                <th>&nbsp;</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Aluguel de banheiro químico</td>
+                <td>AC01100010(/)</td>
+                <td class="conta-celula">1 un × 2 meses</td>
+                <td class="mono">2,00 un·mês</td>
+                <td class="acao"><button>Remover</button></td>
+              </tr>
+              <tr>
+                <td>Vigia diurno</td>
+                <td>AC02200030(/)</td>
+                <td class="conta-celula">23 dias × 12 h</td>
+                <td class="mono">276,00 h</td>
+                <td class="acao"><button>Remover</button></td>
+              </tr>
+              <tr class="bloqueada">
+                <td>Transporte de andaime</td>
+                <td>AC03100050(/)</td>
+                <td class="conta-celula">SEMIPERÍMETRO × ALTURA DO ALAMBRADO</td>
+                <td class="mono">falta declarar semiperímetro</td>
+                <td class="acao"><button>Remover</button></td>
+              </tr>
+              <tr class="bloqueada">
+                <td>Montagem de alambrado provisório</td>
+                <td>AC03100080(/)</td>
+                <td class="conta-celula">SEMIPERÍMETRO × ALTURA DO ALAMBRADO</td>
+                <td class="mono">falta declarar altura do alambrado</td>
+                <td class="acao"><button>Remover</button></td>
+              </tr>
+              <tr class="total">
+                <td>22 parcelas podem nascer</td>
+                <td>&nbsp;</td>
+                <td class="conta-celula">2 bloqueadas</td>
+                <td class="mono">&nbsp;</td>
+                <td>&nbsp;</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="acoes">
+            <button>Voltar aos parâmetros</button>
+            <button class="primario empurra" disabled>Aplicar</button>
+          </div>
+          <div class="aviso">
+            O botão fica indisponível <strong>com o motivo escrito ao lado</strong>, nunca só
+            apagado. E a linha bloqueada continua removível — é assim que se aplica as 22 sem
+            ter o parâmetro que as outras 2 exigem.
           </div>
           <div class="aviso recusa">
-            <strong>Nada foi aplicado.</strong> O acervo “Canteiro — SMH/Rio, versão 1” cita dois
-            parâmetros que não foram declarados: <strong>semiperímetro</strong> e
-            <strong>altura do alambrado</strong>. Declare os dois, ou remova na pré-visualização
-            as parcelas que os citam.
+            <strong>No ato de aplicar, a recusa continua fechada.</strong> Se o pedido chegar ao
+            servidor com parcela bloqueada, ele recusa nomeando <strong>todos</strong> os
+            parâmetros faltantes e <strong>nada</strong> é materializado — nem as parcelas que
+            estariam completas. Prever não é aplicar.
           </div>
-          <p>
-            A recusa nomeia os parâmetros por extenso e diz as duas saídas. Aplicar “o que dá” e
-            deixar o resto para depois produziria uma planilha parcial que parece completa.
-          </p>
         </div>
+        <p class="nota-implementador">
+          Emenda da revisão 2. Na revisão 1 a recusa acontecia aqui, antes da lista existir — e
+          a própria mensagem oferecia "remova na pré-visualização", uma saída que não havia
+          como alcançar. O mesmo vale para o código ausente do catálogo (estado 8): ele agora
+          marca a linha, e a recusa fechada continua no ato.
+        </p>
       </section>
 
       <section class="estado">
@@ -810,15 +859,20 @@
           >
         </h2>
         <div class="corpo">
+          <div class="aviso atencao">
+            <strong>1 parcela não pode nascer:</strong> o acervo “Canteiro — SMH/Rio, versão 1”
+            cita o código <strong>AC03100050(/)</strong>, que não existe no catálogo desta
+            rodada (SCO-Rio, Fev/2026). Remova a parcela para aplicar as demais, escolha outro
+            acervo, ou publique uma versão dele que use um código do catálogo vigente.
+          </div>
           <div class="aviso recusa">
-            <strong>Nada foi aplicado.</strong> O acervo “Canteiro — SMH/Rio, versão 1” cita o
-            código <strong>AC03100050(/)</strong>, que não existe no catálogo desta rodada
-            (SCO-Rio, Fev/2026). Escolha outro acervo, publique uma versão nova dele, ou remova
-            a parcela na pré-visualização.
+            <strong>No ato de aplicar, a recusa continua fechada</strong> e nomeia o código.
+            Nada é materializado.
           </div>
           <p>
             Pular a parcela em silêncio produziria um orçamento com uma linha a menos e nenhum
-            sinal — o modo de falha mais caro que este pacote precisa impedir.
+            sinal — o modo de falha mais caro que este pacote precisa impedir. Marcá-la na lista
+            não é pular: é dizer, e deixar a decisão com quem orça.
           </p>
         </div>
       </section>
