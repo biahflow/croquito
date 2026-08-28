@@ -78,6 +78,49 @@ prefeitura foi esse mesmo. Se foi, houve serviço orçado e não cobrado.
 recomputa a soma em vez de confiar na célula. Um arquivo gerado por nós não pode ter
 `SUBTOTAL` dependente de estado de filtro.
 
+## Segundo achado: o que a memória calcula e a planilha não cobra
+
+A quantidade não viaja sozinha da memória para a planilha. A planilha lê
+`IFERROR(VLOOKUP(<item>,'<aba da memória>'!B:Q,16,FALSE),0)` — ou seja, ela busca o item na
+memória e pega a **coluna Q daquela linha**. A coluna Q é preenchida à parte: o bloco calcula
+o `TOTAL` numa linha própria (coluna J), e alguém **transporta** esse número para o Q do
+cabeçalho do bloco. Quando Q fica vazia, o `IFERROR` devolve **0** e a planilha imprime
+quantidade zero — sem aviso nenhum.
+
+Blocos com `TOTAL` calculado e coluna Q vazia:
+
+| Praça | Blocos com total calculado | Não transportados |
+|---|---|---|
+| Campo do Toca | 61 | **18** |
+| Dona Eli | 31 | **0** |
+| Todos os Santos | 43 | **9** |
+
+**Não é correto somar esses valores como perda**, e não os somamos aqui. A coluna Q vazia
+tem pelo menos duas causas diferentes, e elas se parecem no arquivo:
+
+1. **Alternativa estudada e descartada de propósito.** No Campo do Toca, o maior item nessa
+   condição é `17.13 GRAMA SINTÉTICA`, com 1.893,80 m² calculados. Uma praça que pavimenta em
+   saibro e grama natural muito provavelmente estudou a grama sintética e decidiu não usá-la.
+   A memória é o caderno de contas, e conter alternativa descartada é uso legítimo dela.
+
+2. **Esquecimento de transporte.** O caso que mais parece isso é
+   `01.30 VIGIA`, no Campo do Toca: a memória calcula **468 h** (23 dias × 12 h + 8 dias ×
+   24 h) e a coluna Q está vazia. Vigia não é alternativa de projeto — é canteiro, e as
+   outras quatro parcelas de canteiro da mesma praça (banheiro químico, container, placa e
+   transporte de andaime) **foram** transportadas. A 16,86/h, são R$ 7.890,48.
+
+Só quem montou o orçamento pode separar um caso do outro, item a item. O que o dado sustenta
+sem ambiguidade é o **mecanismo**: existe um passo manual de transporte entre a memória e a
+planilha, ele falha em silêncio, e quando falha o serviço sai com quantidade zero.
+
+O contraste entre as praças reforça isso: a Dona Eli tem **zero** blocos nessa condição, o
+que mostra que transportar tudo é o resultado normal quando nada se perde.
+
+Isto **não é escopo desta feature** — é observação levantada ao conferir o documento real, e
+vale como candidata a feature própria: o sistema tem a memória e a planilha no mesmo modelo,
+então "calculado e não cobrado" é uma conferência que ele pode fazer sozinho, ao contrário da
+planilha, onde os dois lados só se encontram por um `VLOOKUP` numa coluna preenchida à mão.
+
 ## O motor gerou o gabarito real, e o auditor aprovou
 
 **Data**: 2026-08-28. O gabarito de 433 linhas foi transcrito do documento real para um
