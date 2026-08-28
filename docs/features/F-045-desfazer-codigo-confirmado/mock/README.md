@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 2  
-Status: **Revisão 1 approved (2026-08-28); revisão 2 aguardando aprovação**  
+Status: **Approved — revisões 1 e 2 (2026-08-28)**  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -34,10 +34,10 @@ Este pacote decide a **forma** dessas decisões na tela. Se o ADR mudar, o pacot
 
 | Campo | Valor |
 | --- | --- |
-| O que se propõe | o estado 6: a superfície de desfazer na jornada de **medição**, que a revisão 1 registrou como questão aberta |
+| O que se aprova | o estado 6: a superfície de desfazer na jornada de **medição**, que a revisão 1 registrou como questão aberta |
 | Por que | a rota irmã existe e é testada desde a revisão 1, e ficou sem tela. Uma rota sem superfície é uma capacidade que só o time sabe que existe |
-| Aprovado por | **pendente** |
-| Data | — |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-28 |
 | Revisão | 2 |
 | O que **não** muda | os estados 1 a 5 e as seis decisões da revisão 1; o ato, a copy e o fluxo são os mesmos — o que muda é onde eles ficam, porque ali o pacote era uma frase e vira lista |
 | Explicitamente **não** coberto | a copy final; os rótulos, códigos e preços das capturas, que são sintéticos; **o que acontece quando o orçamento já foi aprovado** (unknown 1 da feature, decisão do dono); e o ato inverso, desfazer uma rejeição, que está fora de escopo |

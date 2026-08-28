@@ -22,7 +22,7 @@ O que se conferiu antes de afirmar isso, e vale como linha de base:
 | Gate | Estado |
 | --- | --- |
 | [ADR-0061](../../adr/0061-revogacao-de-codigo-confirmado.md) — semântica da revogação | **`Accepted`** em 2026-08-28 (Daniel Campos) |
-| [Design Approval Package](mock/README.md) revisão 1 | **Aprovado** em 2026-08-28 (Daniel Campos) |
+| [Design Approval Package](mock/README.md) revisões 1 e 2 | **Aprovadas** em 2026-08-28 (Daniel Campos) — a 2 é a superfície da medição |
 | Unknown 1 — revogar depois da aprovação do orçamento | **Aberto**; a implementação recusa provisoriamente (ADR-0061 D7, aceita junto com o ADR) |
 
 A implementação foi autorizada pelo dono na mesma conversa e correu **antes** dos dois
@@ -79,4 +79,4 @@ duas. Na **medição** (T4, revisão 2 do pacote) a frase do pacote virou lista,
   feature.
 - **Rollback de revisão** — outra feature, para outro problema.
 - ~~**A tela da medição**~~ — entregue na **T4** (2026-08-28), sob a revisão 2 do pacote de
-  design, que aguarda aprovação.
+  design, **aprovada na mesma data**.

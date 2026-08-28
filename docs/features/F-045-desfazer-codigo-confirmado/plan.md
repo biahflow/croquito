@@ -23,7 +23,7 @@ rodada, e a ordem entre elas é de leitura, não de entrega.
 | T1 | Domínio: `apply_code_revocation`, o registro em `revocations` e a reabertura do pacote | **Entregue** |
 | T2 | API: as duas rotas irmãs e a compensação do índice de precedentes | **Entregue** |
 | T3 | Tela: desfazer no cartão, o efeito à vista e a lista de desfeitos | **Entregue** |
-| T4 | [A mesma superfície na jornada de medição](tasks/T4-tela-da-medicao.md) | **Entregue** — sob a revisão 2 do pacote |
+| T4 | [A mesma superfície na jornada de medição](tasks/T4-tela-da-medicao.md) | **Entregue** — sob a revisão 2 do pacote, aprovada em 2026-08-28 |
 
 ## O que a execução decidiu, e o ADR não decidia
 
@@ -46,8 +46,8 @@ rodada, e a ordem entre elas é de leitura, não de entrega.
 
 A rota da medição nasceu junto com a do orçamento (T2) e ficou sem tela, registrada como
 questão aberta do pacote. O dono pediu o fechamento em 2026-08-28, e a **revisão 2** do pacote
-desenhou a forma: ali o pacote era uma frase com os códigos entre parênteses, sem onde
-pendurar um ato por código.
+desenhou a forma — **aprovada na mesma data**: ali o pacote era uma frase com os códigos
+entre parênteses, sem onde pendurar um ato por código.
 
 A T4 também **moveu o módulo puro** para `apps/web/src/codeRevocation.ts`. As duas jornadas
 não se importam entre si por decisão (ADR-0028 D9), e duplicar aquelas funções criaria duas
@@ -64,7 +64,8 @@ nada a converter.
 
 1. ~~**[ADR-0061](../../adr/0061-revogacao-de-codigo-confirmado.md)**~~ — **aceito em
    2026-08-28**.
-2. ~~**[Design Approval Package](mock/README.md) revisão 1**~~ — **aprovado em 2026-08-28**.
+2. ~~**[Design Approval Package](mock/README.md) revisões 1 e 2**~~ — **aprovadas em
+   2026-08-28**; a revisão 2 é a superfície da medição, que a T4 implementou.
 3. **Unknown 1 da feature** — o único que continua aberto: o que fazer quando o orçamento já
    foi aprovado. A execução
    **não** o decidiu: aplicou a recusa provisória do ADR-0061 D7

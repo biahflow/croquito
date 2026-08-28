@@ -17,7 +17,8 @@ que existe. A revisão 1 do pacote de design registrou isso como questão aberta
 
 ## O pacote de design é a especificação
 
-[`../mock/README.md`](../mock/README.md) revisão 2, decisão 7 e estado 6: na medição a frase
+[`../mock/README.md`](../mock/README.md) revisão 2 — **aprovada em 2026-08-28** —, decisão 7
+e estado 6: na medição a frase
 do pacote **vira lista**, e cada código recebe o mesmo ato — mesma caixa, mesma copy, mesmo
 aviso de reabertura.
 
