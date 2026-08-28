@@ -78,6 +78,36 @@ prefeitura foi esse mesmo. Se foi, houve serviço orçado e não cobrado.
 recomputa a soma em vez de confiar na célula. Um arquivo gerado por nós não pode ter
 `SUBTOTAL` dependente de estado de filtro.
 
+## O motor gerou o gabarito real, e o auditor aprovou
+
+**Data**: 2026-08-28. O gabarito de 433 linhas foi transcrito do documento real para um
+`EstimateTemplateLayout` declarado, e um orçamento com as 43 linhas preenchidas do Campo do
+Toca foi publicado pelo escritor novo (`write_estimate_grid_workbook`) e auditado
+(`audit_estimate_grid_workbook`).
+
+```
+ESCRITO: PLANILHA ORÇAMENTÁRIA + MEMÓRIA DE CÁLCULO
+  células 4009 | fórmulas 519 | fixadas 2
+AUDITORIA: 0 findings
+quantidades conferidas contra o arquivo real: 433 iguais, 0 divergentes
+linhas zeradas impressas: 390
+```
+
+Isso exercita os critérios de aceite 1, 2, 4 e 5 da feature contra o documento real, e não
+contra fixture. As duas células fixadas são as em que a fórmula viva do Excel divergiria do
+`Decimal` — o mecanismo `EstimatePinnedCell`, que já existia, disparou sozinho em dado real.
+
+As fórmulas emitidas são `=TRUNC(G14*F14,2)`, dentro da gramática fechada; nada em
+`canonical.py` precisou ser estendido.
+
+**E o total gerado é 648.956,63** — a soma correta das 43 linhas —, contra os 645.961,09 que
+o arquivo do cliente imprime. O arquivo que o sistema publica não reproduz o defeito descrito
+acima, porque não usa `SUBTOTAL` nem depende de estado de filtro.
+
+Ressalva: esta verificação usou `bdi_percent = 0` com o preço do gabarito entrando como preço
+final, para isolar o layout do arredondamento do BDI. A conferência do BDI de 18% contra o
+documento real ainda não foi feita.
+
 ## Impacto no Design Approval Package
 
 A revisão 1 foi aprovada em 2026-08-28 com a estrutura **sintética**, declarando que os
