@@ -1,8 +1,8 @@
 # Design Approval Package — F-043, a planilha no gabarito da prefeitura
 
 Classification: INTERFACE_CHANGE  
-Revision: **2**  
-Status: **Approved (2026-08-28)** — revisão 2; a revisão 1 foi aprovada na mesma data  
+Revision: **3**  
+Status: **Awaiting approval** (as revisões 1 e 2 foram aprovadas em 2026-08-28)  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -14,6 +14,30 @@ Produced by: agente (Claude Code)
 > muda no ponto em que ela promete esse arquivo. O aceite do
 > [ADR-0059](../../../adr/0059-item-contratado-fora-da-tabela-sco.md) já foi cumprido em
 > 2026-08-28.
+
+## Por que existe uma revisão 3
+
+A revisão 2 desenhou o rodapé **na forma do cliente** — `TOTAL` e `TOTAL S/BDI`, sem linha de
+BDI —, e a registrou como divergência a resolver por quem entrega. O dono decidiu em
+2026-08-28: **fazer o correto**, porque a forma do cliente é provavelmente um furo.
+
+E é: o [ADR-0038](../../../adr/0038-bdi-como-conceito-de-pre-licitacao.md) **já havia
+rejeitado essa forma por escrito**, na lista de alternativas — "BDI aplicado ao total geral
+(percentual sobre a soma) — rejeitada: divergiria no centavo da soma das linhas truncadas; a
+planilha discordaria dela mesma". O `TRUNC(TOTAL/1,18;2)` do documento real é exatamente essa
+alternativa, na forma inversa.
+
+A revisão 3 devolve o rodapé à forma do ADR: **TOTAL SEM BDI** (a soma das linhas, cada uma
+truncada antes de somar), **BDI** (a diferença entre os dois totais truncados) e **TOTAL
+GERAL**. O arquivo publicado passa a divergir de propósito do documento do cliente nesse ponto,
+e a divergência está escrita na própria rendição.
+
+Fica registrada uma **pergunta aberta para a orçamentista**, que a leitura dos arquivos
+levantou e que este pacote não decide: o preço do contrato (`Custo Unitário` da aba
+`PLANILHA GERAL`) é ~0,15% **abaixo** da tabela SCO de origem, não `× 1,18` — é desconto de
+licitação sobre custo, e a aba de origem se chama "Sistema de **Custos**". Se esse preço não
+embute BDI, o `TOTAL S/BDI` do documento real divide um valor que já é sem BDI. Ver
+[`../evidence.md`](../evidence.md).
 
 ## Por que existe uma revisão 2
 
@@ -42,10 +66,10 @@ dois achados sobre os arquivos do cliente que **não** são escopo desta feature
 
 | Campo | Valor |
 | --- | --- |
-| O que se aprova | a forma do arquivo publicado na revisão 2 e as sete decisões da revisão 1, que ela preserva |
-| Aprovado por | Daniel Campos |
-| Data | 2026-08-28 |
-| Revisão | 2 |
+| O que se aprova | a forma do arquivo publicado na revisão 3 — o rodapé do ADR-0038 — e tudo que as revisões 1 e 2 estabeleceram e ela preserva |
+| Aprovado por | — |
+| Data | — |
+| Revisão | 3 |
 | Explicitamente **não** coberto | a copy final; os códigos, descrições e preços das capturas, que continuam **sintéticos** (a *estrutura* deixou de ser); **qual das duas formas de rodapé vale** — a do cliente, desenhada aqui, ou a do ADR-0038 —, que é decisão de quem entrega; e o aceite do arquivo gerado contra o documento do cliente, que é gate próprio e posterior |
 
 Aprovar esta revisão não aprova a seguinte: pacote materialmente alterado é revisão nova e
@@ -72,8 +96,8 @@ capturas. Decidido por Daniel Campos em 2026-08-28.
 Os números são sintéticos, mas **aritmeticamente consistentes**, e as contas fecham na
 rendição: `396,63 × 12,40 = 4.918,21` (truncado), `418,12 × 118,42 = 49.513,77`,
 `418,12 × 24,90 = 10.411,18`, soma da coluna TOTAL `= 69.952,16` e
-`TRUNC(69.952,16 ÷ 1,18; 2) = 59.281,49` — a mesma derivação que o documento real usa. Na
-memória, `418,20 − 0,08 = 418,12`.
+total sem BDI `59.281,49`, BDI de 18% `= 10.670,67`, e `59.281,49 + 10.670,67 = 69.952,16`.
+Na memória, `418,20 − 0,08 = 418,12`.
 
 ## Superfícies e estados incluídos
 
@@ -158,10 +182,12 @@ Nada aqui é resolvido por um agente durante a implementação.
   rodapé deriva o total sem BDI dividindo o total por 1,18. É a mesma base que o escritor já
   usava para compor o total, e a revisão 2 imprime o rótulo real.
 
-- **Qual forma de rodapé vale.** O documento do cliente imprime `TOTAL` e `TOTAL S/BDI` e
-  **não** imprime linha de BDI; o [ADR-0038](../../../adr/0038-bdi-como-conceito-de-pre-licitacao.md)
-  manda imprimir o BDI como diferença entre totais truncados. As duas dão o mesmo dinheiro. A
-  revisão 2 desenha a forma do cliente, e a escolha é de quem entrega à prefeitura.
+- ~~**Qual forma de rodapé vale.**~~ **Decidido em 2026-08-28** (Daniel Campos): vale a forma
+  do ADR-0038, e o arquivo publicado diverge de propósito do documento do cliente nesse ponto.
+  Ver "Por que existe uma revisão 3".
+
+- **O preço do contrato embute BDI?** Pergunta para a orçamentista, levantada pela leitura dos
+  arquivos e não decidida aqui. Ver [`../evidence.md`](../evidence.md).
 - **Preço das linhas sem quantidade.** O pacote imprime o preço declarado no gabarito quando
   há um, e deixa a célula vazia quando não há. Se o documento real imprime preço em todas as
   390, o gabarito precisa trazê-los — e isso é dado, não código.
