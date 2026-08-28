@@ -6,7 +6,7 @@ Gates cumpridos em 2026-08-28, por ato humano (Daniel Campos):
 gabarito entregável é a aba `PLANILHA ORÇAMENTÁRIA` (433 códigos), e ele vive como **artefato
 de plataforma**, no molde do acervo de catálogos da
 [F-037](../F-037-acervo-de-catalogos/feature.md). A revisão 2 do pacote, produzida quando o
-documento real chegou, **aguarda aprovação**.
+documento real chegou, foi **aprovada na mesma data**.
 
 ## A ordem é ditada pelo que o auditor consegue provar
 
@@ -47,8 +47,7 @@ a F-042 e a F-044, sem conflito.
 
 ## Human Gates que continuam abertos
 
-1. **Revisão 2 do Design Approval Package.**
-2. **Qual forma de rodapé vale**: o documento do cliente imprime `TOTAL` e `TOTAL S/BDI` e não
+1. **Qual forma de rodapé vale**: o documento do cliente imprime `TOTAL` e `TOTAL S/BDI` e não
    imprime linha de BDI, enquanto o [ADR-0038](../../adr/0038-bdi-como-conceito-de-pre-licitacao.md)
    manda imprimir o BDI como diferença entre totais truncados. As duas dão o mesmo dinheiro.
-3. **Aceite do arquivo gerado** contra o real, por quem entrega à prefeitura.
+2. **Aceite do arquivo gerado** contra o real, por quem entrega à prefeitura.

@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: **2**  
-Status: **Awaiting approval** (a revisão 1 foi aprovada em 2026-08-28)  
+Status: **Approved (2026-08-28)** — revisão 2; a revisão 1 foi aprovada na mesma data  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -43,8 +43,8 @@ dois achados sobre os arquivos do cliente que **não** são escopo desta feature
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a forma do arquivo publicado na revisão 2 e as sete decisões da revisão 1, que ela preserva |
-| Aprovado por | — |
-| Data | — |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-28 |
 | Revisão | 2 |
 | Explicitamente **não** coberto | a copy final; os códigos, descrições e preços das capturas, que continuam **sintéticos** (a *estrutura* deixou de ser); **qual das duas formas de rodapé vale** — a do cliente, desenhada aqui, ou a do ADR-0038 —, que é decisão de quem entrega; e o aceite do arquivo gerado contra o documento do cliente, que é gate próprio e posterior |
 

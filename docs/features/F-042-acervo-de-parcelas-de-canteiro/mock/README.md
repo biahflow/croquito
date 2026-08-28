@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: **2**  
-Status: **Awaiting approval** (a revisão 1 foi aprovada em 2026-08-28)  
+Status: **Approved (2026-08-28)** — revisão 2; a revisão 1 foi aprovada na mesma data  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -53,8 +53,8 @@ A captura `04-recusa-parametro.png` da revisão 1 foi substituída por
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a composição visual da revisão 2, as duas decisões emendadas, a decisão 10 e as oito decisões da revisão 1 que ela preserva |
-| Aprovado por | — |
-| Data | — |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-28 |
 | Revisão | 2 |
 | Explicitamente **não** coberto | a copy final; os códigos, nomes de parâmetro e números das capturas, que são sintéticos; **quais** são as 24 parcelas do Campo do Toca, que dependem da autoria humana do primeiro acervo; e a decisão do ADR-0060, que é gate próprio |
 

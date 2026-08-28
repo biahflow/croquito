@@ -145,8 +145,9 @@ fail-closed que já protege a medição.
 1. **Design Approval Package** — `INTERFACE_CHANGE`: o arquivo publicado muda de forma.
    Revisão 1 **aprovada em 2026-08-28** (Daniel Campos). Com o documento real em mãos no mesmo
    dia, quatro pontos de forma da rendição se mostraram diferentes do documento e produziram a
-   **revisão 2**, que aguarda aprovação — ela preserva as sete decisões da revisão 1 e corrige
-   só a fidelidade: [`mock/README.md`](mock/README.md).
+   **revisão 2**, ~~também **aprovada em 2026-08-28**~~ (Daniel Campos) — ela preserva as sete
+   decisões da revisão 1 e corrige só a fidelidade: [`mock/README.md`](mock/README.md).
+   **Gate cumprido.**
 
    Na mesma data o dono decidiu **onde o gabarito vive**: artefato de plataforma, no molde do
    acervo de catálogos da [F-037](../F-037-acervo-de-catalogos/feature.md) — publicado uma

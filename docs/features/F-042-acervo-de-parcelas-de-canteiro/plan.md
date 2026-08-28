@@ -4,7 +4,7 @@ Gates cumpridos em 2026-08-28, por ato humano (Daniel Campos):
 [ADR-0059](../../adr/0059-item-contratado-fora-da-tabela-sco.md) aceito,
 [ADR-0060](../../adr/0060-onde-vive-o-acervo-de-parcelas-de-canteiro.md) **aceito** (onde o
 acervo vive — unknown 1), e o [Design Approval Package](mock/README.md) revisão 1 **aprovado**.
-A revisão 2 do pacote, produzida durante a execução, **aguarda aprovação**.
+A revisão 2 do pacote, produzida durante a execução, foi **aprovada na mesma data**.
 
 ## A ordem é ditada pelo que pode ser provado sozinho
 
@@ -66,5 +66,5 @@ reunida, não só por worktree.
 
 ## Human Gates que continuam abertos
 
-1. **Revisão 2 do Design Approval Package.**
-2. **Autoria do primeiro acervo**, que é ato da orçamentista.
+1. **Autoria do primeiro acervo**, que é ato da orçamentista. As cinco parcelas que o
+   documento real sustenta estão em [`evidence.md`](evidence.md).
