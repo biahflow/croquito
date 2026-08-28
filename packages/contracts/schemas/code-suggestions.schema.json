@@ -166,8 +166,21 @@
     },
     "SuggestionSemantics": {
       "additionalProperties": false,
-      "description": "Lineage do braço semântico que participou da fusão.\n\nEmbedding não tem prompt: o que identifica a ordem produzida é o modelo, a dimensão do\nespaço e o digest do índice do catálogo usado (`catalog-embeddings.json`). O digest do\npróprio catálogo já viaja em `CodeSuggestionSet.catalog_sha256`, e é o índice que fica\namarrado a ele — trocar de índice sem trocar de catálogo aparece aqui.\n\n`provider` é string simples pelo mesmo motivo de `SuggestionRefinement.provider`: o\n`ADR-0016` proíbe este pacote de importar o enum de provider do worker.",
+      "description": "Lineage do braço semântico de UMA fonte que participou da fusão.\n\nEmbedding não tem prompt: o que identifica a ordem produzida é o modelo, a dimensão do\nespaço e o digest do índice do catálogo usado (`catalog-embeddings.json`). O digest do\npróprio catálogo já viaja em `CodeSuggestionSet.catalog_sha256`, e é o índice que fica\namarrado a ele — trocar de índice sem trocar de catálogo aparece aqui.\n\n`catalog_sha256` diz de QUAL fonte é este lineage, e existe porque desde o ADR-0054 D5 o\nconjunto pode carregar N destes blocos, um por catálogo da cascata com índice publicado.\nCom um bloco só ele é redundante com o cabeçalho, e é por isso que ele é opcional:\nausente significa \"a fonte do cabeçalho\", que é exatamente o que um artefato gravado\nantes deste campo afirmava. Deduzir a fonte pela POSIÇÃO na lista seria amarrar a\nauditoria à ordem da cascata do dia em que o conjunto foi gravado.\n\n`provider` é string simples pelo mesmo motivo de `SuggestionRefinement.provider`: o\n`ADR-0016` proíbe este pacote de importar o enum de provider do worker.",
       "properties": {
+        "catalog_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catalog Sha256"
+        },
         "dims": {
           "maximum": 8192,
           "minimum": 1,
@@ -202,9 +215,9 @@
       "type": "object"
     }
   },
-  "$id": "https://schemas.croquito.local/valuation/code-suggestions/1.2.0.json",
+  "$id": "https://schemas.croquito.local/valuation/code-suggestions/1.3.0.json",
   "additionalProperties": false,
-  "description": "Pacote de sugestões de uma prancha: observação, nunca decisão.\n\n`suggester_version` conta a origem da ordem publicada, em duas dimensões independentes:\nquem MONTOU a shortlist (lexical determinístico ou fusão híbrida) e se ela foi\n**reordenada** depois por provider pago (sufixo `+llm-rerank-v1`). Os dois blocos de\nlineage seguem a mesma regra de existir se e somente se o estágio aconteceu:\n`refinement` para a chamada de refino, `semantic` para o braço de embeddings. É o que\nimpede o artefato de dizer \"refinado\" ou \"híbrido\" sem lineage — ou de carregar lineage\nde uma chamada que não aconteceu.\n\nO `Literal` de `suggester_version` aceita `hybrid-sco-suggester-v1` E\n`hybrid-sco-suggester-v2` (mais as formas `+llm-rerank-v1` de ambas): um artefato\ngravado antes do bump para `v2` (rodada 2.2, amortecimento de ruído de legenda)\ncontinua válido ao ser relido, e `validate_semantic_lineage` reconhece as duas versões\ncomo híbridas pelo prefixo de família `SCO_HYBRID_SUGGESTER_FAMILY`, não pela versão\ncorrente — só a produção NOVA escreve `v2`.\n\n`lexical-idf-sco-suggester-v1` é a fusão SEM a perna semântica (nenhum embedding\nparticipou, `semantic` ausente) e é o que a degradação publica desde 2026-08-21;\n`lexical-sco-suggester-v1` continua no `Literal` porque artefato de rodada anterior\n— e a via Dice, que segue viva na cascata do orçamento-base — carrega essa versão.\n\nCom `lexical-cascade-sco-suggester-v1` (orçamento-base, `suggest_codes_over_cascade`) o\nconjunto abrange mais de um catálogo: `catalog_sha256` do cabeçalho é o do catálogo\n**cabeça** da cascata e a proveniência autoritativa passa a ser a de cada candidato\n(`CodeCandidate.catalog_origin`/`catalog_sha256`). O cabeçalho continua existindo\nporque ele amarra o conjunto à rodada; ele não afirma que todo candidato veio dali.",
+  "description": "Pacote de sugestões de uma prancha: observação, nunca decisão.\n\n`suggester_version` conta a origem da ordem publicada, em duas dimensões independentes:\nquem MONTOU a shortlist (lexical determinístico ou fusão híbrida) e se ela foi\n**reordenada** depois por provider pago (sufixo `+llm-rerank-v1`). Os dois blocos de\nlineage seguem a mesma regra de existir se e somente se o estágio aconteceu:\n`refinement` para a chamada de refino, `semantic` para o braço de embeddings. É o que\nimpede o artefato de dizer \"refinado\" ou \"híbrido\" sem lineage — ou de carregar lineage\nde uma chamada que não aconteceu.\n\nO `Literal` de `suggester_version` aceita `hybrid-sco-suggester-v1` E\n`hybrid-sco-suggester-v2` (mais as formas `+llm-rerank-v1` de ambas): um artefato\ngravado antes do bump para `v2` (rodada 2.2, amortecimento de ruído de legenda)\ncontinua válido ao ser relido, e `validate_semantic_lineage` reconhece as duas versões\ncomo híbridas pelo prefixo de família `SCO_HYBRID_SUGGESTER_FAMILY`, não pela versão\ncorrente — só a produção NOVA escreve `v2`.\n\n`lexical-idf-sco-suggester-v1` é a fusão SEM a perna semântica (nenhum embedding\nparticipou, `semantic` ausente) e é o que a degradação publica desde 2026-08-21;\n`lexical-sco-suggester-v1` continua no `Literal` porque artefato de rodada anterior\n— e a via Dice, que segue viva na cascata do orçamento-base — carrega essa versão.\n\nCom `lexical-cascade-sco-suggester-v1` (orçamento-base, `suggest_codes_over_cascade`) o\nconjunto abrange mais de um catálogo: `catalog_sha256` do cabeçalho é o do catálogo\n**cabeça** da cascata e a proveniência autoritativa passa a ser a de cada candidato\n(`CodeCandidate.catalog_origin`/`catalog_sha256`). O cabeçalho continua existindo\nporque ele amarra o conjunto à rodada; ele não afirma que todo candidato veio dali.\n\n`semantic` é a LISTA dos braços semânticos que participaram (ADR-0054, aceite humano\nitem 3): uma entrada por fonte que tinha índice publicado, e nenhuma para as que\nentraram só com o braço léxico. Continua valendo \"existe se e somente se o estágio\naconteceu\" — `None` quando nenhum embedding participou, e nunca lista vazia, que seria\num terceiro estado dizendo a mesma coisa que `None`. A forma SINGULAR gravada até\n`1.2.0` é convertida na carga, porque uma shortlist que deixasse de validar seria tratada\ncomo ausente por `suggestions_of` e levaria junto o refino pago que ela carrega.",
   "properties": {
     "catalog_sha256": {
       "pattern": "^[a-f0-9]{64}$",
@@ -260,21 +273,29 @@
       "type": "array"
     },
     "schema_version": {
-      "const": "1.2.0",
-      "default": "1.2.0",
+      "default": "1.3.0",
+      "enum": [
+        "1.2.0",
+        "1.3.0"
+      ],
       "title": "Schema Version",
       "type": "string"
     },
     "semantic": {
       "anyOf": [
         {
-          "$ref": "#/$defs/SuggestionSemantics"
+          "items": {
+            "$ref": "#/$defs/SuggestionSemantics"
+          },
+          "minItems": 1,
+          "type": "array"
         },
         {
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "title": "Semantic"
     },
     "suggester_version": {
       "default": "lexical-sco-suggester-v1",
@@ -287,7 +308,9 @@
         "hybrid-sco-suggester-v1",
         "hybrid-sco-suggester-v1+llm-rerank-v1",
         "hybrid-sco-suggester-v2",
-        "hybrid-sco-suggester-v2+llm-rerank-v1"
+        "hybrid-sco-suggester-v2+llm-rerank-v1",
+        "hybrid-sco-suggester-cascade-v1",
+        "hybrid-sco-suggester-cascade-v1+llm-rerank-v1"
       ],
       "title": "Suggester Version",
       "type": "string"

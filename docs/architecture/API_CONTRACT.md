@@ -271,6 +271,85 @@ Não retorna payloads de modelos.
 
 Revoga downloads e inicia exclusão idempotente. Retorna `202 DELETING`.
 
+## Índice de embeddings do catálogo de referência
+
+Índice de vetores de um catálogo do acervo, publicado **uma vez para todos os tenants**
+([ADR-0054](../adr/0054-indice-de-embeddings-publicado-e-braco-semantico-hospedado.md)).
+Segunda classe de objeto do acervo, com tabela e rotas próprias: as linhas do acervo são
+imutáveis e o índice é publicado num ato separado, possivelmente meses depois, e um mesmo
+catálogo pode ter índices sucessivos quando a receita de texto ou o modelo mudam.
+
+O registro não tem tenant, pela mesma razão do catálogo — índice de tabela pública não tem
+dono, e nada nele deriva de conteúdo de cliente. O objeto vive sob prefixo próprio, **fora**
+de `tenants/`, e **nenhuma rota devolve URL assinada dele**: o servidor lê o índice, o
+cliente nunca o baixa.
+
+**O servidor lê o índice; nunca o constrói.** A construção continua no comando pago
+`index-catalog` do CLI, onde um humano aperta o botão; o que a API faz é desserializar e
+validar o documento por Pydantic. Isso honra a razão da decisão 9 do
+[ADR-0047](../adr/0047-acervo-de-catalogos-da-plataforma.md) — derivação pesada e paga fora
+do request path —, e não apenas a sua letra, que proíbe parser de planilha.
+
+### `POST /v1/platform/reference-catalog-indexes/presign`
+
+Requer `platform_operator` e `Idempotency-Key`. Entrada: `filename`, `size_bytes` e
+`sha256` — **sem `content_type`**, fixo em `application/json`. Idêntica em forma e razão ao
+presign do acervo, inclusive quanto ao objeto ficar sob `tenants/{tenant_id}/uploads/` do
+**operador**: o arquivo só vira objeto da plataforma depois que a publicação o lê e o
+confere. Auditada como `UPLOAD_PRESIGNED`.
+
+### `POST /v1/platform/reference-catalog-indexes`
+
+Requer `platform_operator` e `Idempotency-Key`. Entrada: `upload_id` (o
+`catalog-embeddings.json` construído pelo CLI) e `reference_catalog_id` (a entrada do acervo
+que o índice indexa). `text_recipe`, `provider`, `model_id`, `dims`, a contagem de códigos e
+o digest do catálogo indexado são lidos de **dentro** do documento e não podem ser
+informados no corpo — campo desconhecido é recusado no contrato (`422`).
+
+`reference_catalog_id` existe para ser **conferido**, não para ser a chave de busca: a
+resolução do índice é por digest da fonte (`catalog_source_sha256` + `text_recipe` +
+disponível), o que faz um mesmo índice servir qualquer entrada cujos bytes de origem sejam
+os mesmos.
+
+Responde `201` com `reference_catalog_index_id`, `reference_catalog_id`,
+`catalog_source_sha256`, `text_recipe`, `provider`, `model_id`, `dims`, `code_count`,
+`object_sha256`, `available`, `published_by`, `published_at` e `withdrawn_at`. A chave do
+objeto **não** sai na resposta, e nenhum vetor sai em resposta alguma.
+
+Recusas, todas antes de qualquer escrita:
+
+- `422 REFERENCE_CATALOG_INDEX_TOO_LARGE` quando o objeto passa do teto de leitura próprio
+  (64 MiB), com `details.max_bytes` e `details.size_bytes`. O teto é maior que o do catálogo
+  (32 MiB) porque o índice real medido tem 40,7 MB e **não passaria** por aquele; a recusa é
+  por inteiro, nunca truncando o documento;
+- `422 REFERENCE_CATALOG_INDEX_UNREADABLE` quando o documento não valida, com o código de
+  invariante em `details.code` e nada do conteúdo do arquivo;
+- `422 REFERENCE_CATALOG_INDEX_CATALOG_MISMATCH` quando o `catalog_sha256` de dentro do
+  documento não bate com o `source_sha256` da entrada citada;
+- `409 REFERENCE_CATALOG_INDEX_ALREADY_PUBLISHED` quando o digest do arquivo já está
+  publicado, com `details.reference_catalog_index_id`. Índice reconstruído com receita ou
+  modelo novos tem digest novo, logo **entrada nova**;
+- `404 NOT_FOUND` quando a entrada do acervo citada não existe.
+
+O ato é auditado (`REFERENCE_CATALOG_INDEX_PUBLISHED`) com o `tenant_id` **do operador**,
+com o identificador, o catálogo, a receita e o modelo nos detalhes.
+
+### `GET /v1/platform/reference-catalog-indexes`
+
+Requer `platform_operator`. Leitura sem `Idempotency-Key` e sem auditoria. Devolve **todos**
+os índices, inclusive os que saíram de circulação (com `available: false` e `withdrawn_at`),
+ordenados deterministicamente por `(catalog_source_sha256, text_recipe, id)`.
+
+### `POST /v1/platform/reference-catalog-indexes/{reference_catalog_index_id}/withdraw`
+
+Requer `platform_operator` e `Idempotency-Key`; **sem corpo**. Marca o índice como fora de
+circulação (`available: false` e `withdrawn_at`) e **não apaga** linha nem objeto: uma
+shortlist já gravada cita o digest do índice que a produziu. A fonte volta a contribuir só
+com o braço léxico, que é estado normal e não erro. Repetir sobre um índice já retirado
+devolve o registro como está, sem recarimbar a data e sem auditar de novo. Índice
+inexistente é `404 NOT_FOUND`. Auditado como `REFERENCE_CATALOG_INDEX_WITHDRAWN`, no tenant
+do operador.
+
 ## Cena e revisão
 
 ### `GET /v1/jobs/{job_id}/scene`
@@ -1267,11 +1346,32 @@ Shortlist determinística de código SCO por item confirmado
 takeoff incompleta devolve `409 TAKEOFF_REVIEW_INCOMPLETE`; rodada sem catálogo devolve
 `409 CATALOG_REQUIRED`.
 
+**Nenhuma chamada paga acontece nesta leitura**
+([ADR-0054](../adr/0054-indice-de-embeddings-publicado-e-braco-semantico-hospedado.md), decisão 7):
+a shortlist que a primeira leitura grava é **léxica**, e a híbrida exige o recálculo
+explícito. O motivo viaja em `semantic_notes`.
+
 ### `POST /v1/valuation-rounds/{round_id}/code-suggestions/recompute`
 
 Recalcula a shortlist. Exige `Idempotency-Key` e `base_version`. Shortlist já refinada por
 modelo pago não é recalculada por caminho determinístico:
 `409 SUGGESTIONS_ALREADY_REFINED`.
+
+É **aqui** que o braço semântico roda. Com índice de embeddings publicado para o catálogo
+da rodada (achado pelo digest da fonte, ADR-0054 D3), autorização contratual ativa e via de
+embeddings no processo, os rótulos dos itens confirmados são embutidos numa chamada paga
+pequena e a shortlist sai híbrida — com `semantic` preenchido e `suggester_version` da
+família híbrida.
+
+Faltando qualquer uma das três condições — ou com o índice recusado na amarração — a
+resposta continua `200` com a shortlist **léxica e o motivo declarado** em `semantic_notes`
+(ADR-0054 D6/D8). Ausência de autorização contratual **não** devolve `403` neste ato: perder
+o recompute inteiro por falta de um braço que é acréscimo tiraria também o léxico, que não
+chama provider nenhum.
+
+Os vetores de consulta **não são persistidos**: cada recompute embute os rótulos daquela
+rodada e descarta o cache ao terminar (ADR-0054, emenda de 2026-08-28). Recompute repetido
+repaga.
 
 ### `GET /v1/valuation-rounds/{round_id}/catalog/search`
 
@@ -1281,9 +1381,10 @@ devolve `422 CATALOG_QUERY_EMPTY`; rodada sem catálogo, `409 CATALOG_REQUIRED`.
 `arm=lexical` é o padrão. `arm=hybrid` é braço PAGO e passa pelo mesmo portão da extração:
 sem autorização contratual do tenant, `403 AI_PROCESSING_NOT_AUTHORIZED`
 ([ADR-0012](../adr/0012-contractual-ai-processing-entitlements.md)). Com entitlement, a
-resposta ainda é `503 PROVIDER_UNAVAILABLE` — o braço semântico depende de índice de
-embeddings publicado na rodada e nenhuma rota de `/v1` publica esse índice hoje. Isso é
-estado honesto, não falha: a busca nunca degrada em silêncio para o léxico fingindo ser
+resposta ainda é `503 PROVIDER_UNAVAILABLE`, e desde a F-041 o motivo é outro: o índice
+**existe** e é publicado pela plataforma, mas resolver o vetor da consulta é chamada paga, e
+nenhuma acontece dentro de um `GET` (ADR-0054 D7). Ligar o braço aqui é fatia própria. Isso
+é estado honesto, não falha: a busca nunca degrada em silêncio para o léxico fingindo ser
 híbrida.
 
 ### `GET /v1/valuation-rounds/{round_id}/code-assignments`
@@ -1670,6 +1771,16 @@ Recalcula a shortlist sobre a cascata corrente; é o caminho declarado de reler 
 uma reordenação. Exige `Idempotency-Key` e `base_version`. Shortlist já refinada por modelo
 pago não é recalculada por caminho determinístico: `409 SUGGESTIONS_ALREADY_REFINED`.
 
+É também onde o braço semântico roda, **por fonte** (ADR-0054 D5): cada catálogo da cascata
+é fundido com o índice dele, e os blocos continuam concatenados na ordem instalada — não há
+fusão entre fontes, porque similaridade de texto não pode desempatar a precedência das
+tabelas. Fonte sem índice publicado contribui só com o braço léxico e `semantic_notes` diz
+**qual** ficou de fora; cobertura parcial é estado normal, não falha (D6). O bloco `semantic`
+do artefato passa a ser uma **lista**, com uma entrada por fonte que de fato teve índice.
+
+As mesmas regras de degradação da medição valem aqui, e pelas mesmas razões: nada disso
+devolve `403`, e nenhum vetor de consulta é persistido.
+
 ### `GET /v1/estimate-rounds/{round_id}/catalog/search`
 
 Busca léxica na cascata inteira. Parâmetros: `q`, `limit`. Cada resultado carrega
@@ -1677,10 +1788,10 @@ Busca léxica na cascata inteira. Parâmetros: `q`, `limit`. Cada resultado carr
 da busca. O corte de `limit` vale por fonte, para que uma tabela não seja espremida para
 fora da página por outra que ficou na frente da cascata.
 
-Não há parâmetro `arm`: o braço híbrido depende de índice de embeddings publicado na
-rodada, e nenhuma rota de `/v1` publica esse índice. O motivo viaja em `semantic_notes` — a
-busca nunca degrada em silêncio. Consulta sem termo utilizável devolve
-`422 CATALOG_QUERY_EMPTY`.
+Não há parâmetro `arm`: a busca é `GET`, e nenhuma chamada paga acontece num `GET`
+(ADR-0054 D7) — resolver o vetor da consulta é chamada paga, ainda que o índice da fonte
+esteja publicado. O motivo viaja em `semantic_notes` — a busca nunca degrada em silêncio.
+Consulta sem termo utilizável devolve `422 CATALOG_QUERY_EMPTY`.
 
 ### `GET /v1/estimate-rounds/{round_id}/code-assignments`
 

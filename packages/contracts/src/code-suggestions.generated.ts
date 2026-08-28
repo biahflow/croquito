@@ -13,7 +13,9 @@ export type Provider = string;
  * @minItems 3
  */
 export type SafetyNotes = [string, string, string, ...string[]];
-export type SchemaVersion = "1.2.0";
+export type SchemaVersion = "1.2.0" | "1.3.0";
+export type Semantic = [SuggestionSemantics, ...SuggestionSemantics[]] | null;
+export type CatalogSha2561 = string | null;
 export type Dims = number;
 export type IndexSha256 = string;
 export type ModelId1 = string;
@@ -27,7 +29,9 @@ export type SuggesterVersion =
   | "hybrid-sco-suggester-v1"
   | "hybrid-sco-suggester-v1+llm-rerank-v1"
   | "hybrid-sco-suggester-v2"
-  | "hybrid-sco-suggester-v2+llm-rerank-v1";
+  | "hybrid-sco-suggester-v2+llm-rerank-v1"
+  | "hybrid-sco-suggester-cascade-v1"
+  | "hybrid-sco-suggester-cascade-v1+llm-rerank-v1";
 /**
  * @minItems 1
  */
@@ -47,7 +51,7 @@ export type Candidates = [CodeCandidate, ...CodeCandidate[]];
  * dado do layout do importador dela, não deste enum.
  */
 export type PriceOrigin = "sco" | "emop" | "composition" | "sinapi" | "sicro";
-export type CatalogSha2561 = string | null;
+export type CatalogSha2562 = string | null;
 export type Code = string;
 export type Description = string;
 export type InContract = boolean;
@@ -89,6 +93,14 @@ export type UnmatchedItemIds = string[];
  * **cabeça** da cascata e a proveniência autoritativa passa a ser a de cada candidato
  * (`CodeCandidate.catalog_origin`/`catalog_sha256`). O cabeçalho continua existindo
  * porque ele amarra o conjunto à rodada; ele não afirma que todo candidato veio dali.
+ *
+ * `semantic` é a LISTA dos braços semânticos que participaram (ADR-0054, aceite humano
+ * item 3): uma entrada por fonte que tinha índice publicado, e nenhuma para as que
+ * entraram só com o braço léxico. Continua valendo "existe se e somente se o estágio
+ * aconteceu" — `None` quando nenhum embedding participou, e nunca lista vazia, que seria
+ * um terceiro estado dizendo a mesma coisa que `None`. A forma SINGULAR gravada até
+ * `1.2.0` é convertida na carga, porque uma shortlist que deixasse de validar seria tratada
+ * como ausente por `suggestions_of` e levaria junto o refino pago que ela carrega.
  */
 export interface CroquitoCodeSuggestionSet {
   catalog_sha256: CatalogSha256;
@@ -99,7 +111,7 @@ export interface CroquitoCodeSuggestionSet {
   refinement?: SuggestionRefinement | null;
   safety_notes: SafetyNotes;
   schema_version?: SchemaVersion;
-  semantic?: SuggestionSemantics | null;
+  semantic?: Semantic;
   suggester_version?: SuggesterVersion;
   suggestions: Suggestions;
   unmatched_item_ids: UnmatchedItemIds;
@@ -120,17 +132,25 @@ export interface SuggestionRefinement {
   provider: Provider;
 }
 /**
- * Lineage do braço semântico que participou da fusão.
+ * Lineage do braço semântico de UMA fonte que participou da fusão.
  *
  * Embedding não tem prompt: o que identifica a ordem produzida é o modelo, a dimensão do
  * espaço e o digest do índice do catálogo usado (`catalog-embeddings.json`). O digest do
  * próprio catálogo já viaja em `CodeSuggestionSet.catalog_sha256`, e é o índice que fica
  * amarrado a ele — trocar de índice sem trocar de catálogo aparece aqui.
  *
+ * `catalog_sha256` diz de QUAL fonte é este lineage, e existe porque desde o ADR-0054 D5 o
+ * conjunto pode carregar N destes blocos, um por catálogo da cascata com índice publicado.
+ * Com um bloco só ele é redundante com o cabeçalho, e é por isso que ele é opcional:
+ * ausente significa "a fonte do cabeçalho", que é exatamente o que um artefato gravado
+ * antes deste campo afirmava. Deduzir a fonte pela POSIÇÃO na lista seria amarrar a
+ * auditoria à ordem da cascata do dia em que o conjunto foi gravado.
+ *
  * `provider` é string simples pelo mesmo motivo de `SuggestionRefinement.provider`: o
  * `ADR-0016` proíbe este pacote de importar o enum de provider do worker.
  */
 export interface SuggestionSemantics {
+  catalog_sha256?: CatalogSha2561;
   dims: Dims;
   index_sha256: IndexSha256;
   model_id: ModelId1;
@@ -162,7 +182,7 @@ export interface CodeSuggestion {
  */
 export interface CodeCandidate {
   catalog_origin?: PriceOrigin;
-  catalog_sha256?: CatalogSha2561;
+  catalog_sha256?: CatalogSha2562;
   code: Code;
   description: Description;
   in_contract: InContract;

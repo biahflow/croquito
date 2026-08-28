@@ -8,6 +8,7 @@ import {
   AutoriaDeContribuicao,
   BannerOrcamentoMudou,
   BlocoConsumoDoTeto,
+  EstadoDoBracoSemantico,
   FaixaTetoEstourado,
   LinhaTetoDaRodada,
   MemoriaDeCalculo,
@@ -17,7 +18,9 @@ import {
   PainelRegimeDaRodada,
   PainelAutoAprovacaoRecusada,
   PainelSemAcesso,
+  PainelDoLote,
   PranchaComAncoras,
+  ItemDaLegenda,
   PainelSemPapelDeAprovador,
   PainelSemPapelDeOrcamentista,
   PainelTetoDaVerba,
@@ -34,9 +37,12 @@ import {
 } from "./OrcamentoApp";
 import {
   AVISO_ACERVO_FILTRADO,
+  AVISO_AMBIGUO_FORA_DO_LOTE,
+  AVISO_ITEM_JA_REVISADO,
   AVISO_MEMORIA,
   AVISO_ORCAMENTO,
   AVISO_ORCAMENTO_SEM_RODADA,
+  DICA_LOTE_VAZIO,
   DICA_REGIME,
   RESUMO_MATRIZ_VAZIO,
   origensAceitasNaCascata,
@@ -1561,5 +1567,222 @@ describe("itemJaRevisado", () => {
 
   it("sem item selecionado não há o que anotar, e nada é bloqueado por engano", () => {
     expect(itemJaRevisado(null)).toBe(false);
+  });
+});
+
+/** Item da legenda, no mínimo que a linha lê. */
+const itemDaLegenda = (
+  id: string,
+  status: string,
+  quantity: string | null = "418.12",
+): Parameters<typeof ItemDaLegenda>[0]["item"] =>
+  ({
+    id,
+    label: "PISO EM CONCRETO",
+    quantity,
+    unit: "m2",
+    status,
+    anchor: "registered",
+  }) as unknown as Parameters<typeof ItemDaLegenda>[0]["item"];
+
+const linha = (
+  item: Parameters<typeof ItemDaLegenda>[0]["item"],
+  marcado = false,
+): string =>
+  renderToStaticMarkup(
+    <ItemDaLegenda
+      item={item}
+      numero={1}
+      selecionado={false}
+      anotado={false}
+      marcado={marcado}
+      onSelecionar={() => {}}
+      onAlternarMarcado={() => {}}
+    />,
+  );
+
+/**
+ * Marcar é ato por item: nada nasce marcado, e "confirmar tudo" não existe. Quem não pode
+ * entrar na marcação em massa diz POR QUÊ, em texto — caixa cinzenta sem explicação é a
+ * tela recusando em silêncio.
+ */
+describe("ItemDaLegenda", () => {
+  it("a caixa de seleção nasce desmarcada", () => {
+    const html = linha(itemDaLegenda("i1", "proposed"));
+
+    expect(html).toContain('type="checkbox"');
+    expect(html).not.toContain("checked");
+    expect(html).not.toContain("disabled");
+  });
+
+  it("a caixa diz o que marca, para quem navega por leitor de tela", () => {
+    expect(linha(itemDaLegenda("i1", "proposed"))).toContain(
+      'aria-label="Marcar PISO EM CONCRETO para confirmar em lote"',
+    );
+  });
+
+  it("marcado só quando a tela manda; o componente não decide por conta própria", () => {
+    expect(linha(itemDaLegenda("i1", "proposed"), true)).toContain("checked");
+  });
+
+  it("item já revisado tem a caixa desabilitada E o motivo em texto", () => {
+    const html = linha(itemDaLegenda("i2", "confirmed"));
+
+    expect(html).toContain("disabled");
+    expect(html).toContain(AVISO_ITEM_JA_REVISADO);
+  });
+
+  it("item ambíguo fica fora do lote em massa, com a razão própria dele", () => {
+    const html = linha(itemDaLegenda("i3", "ambiguous", null));
+
+    expect(html).toContain("disabled");
+    expect(html).toContain(AVISO_AMBIGUO_FORA_DO_LOTE);
+  });
+
+  /** A caixa fora do botão é o que impede marcar de arrastar o desenho junto. */
+  it("a caixa de seleção não mora dentro do botão que seleciona o item", () => {
+    const html = linha(itemDaLegenda("i1", "proposed"));
+    const caixa = html.indexOf('type="checkbox"');
+    const botao = html.indexOf('class="item-botao"');
+
+    expect(caixa).toBeGreaterThan(-1);
+    expect(botao).toBeGreaterThan(caixa);
+  });
+});
+
+/**
+ * "Marcado", "anotado" e "gravado" são três estados do mundo. O painel do lote é onde a
+ * tela os distingue — por isso ele existe mesmo vazio, e por isso vazio ele não oferece
+ * gravar: não há o que gravar.
+ */
+describe("PainelDoLote", () => {
+  const anotacao = (itemId: string) =>
+    ({ itemId, action: "confirm" }) as Parameters<typeof PainelDoLote>[0]["lote"][number];
+
+  it("aparece com zero anotações e explica que anotar não é gravar", () => {
+    const html = renderToStaticMarkup(
+      <PainelDoLote
+        lote={[]}
+        itens={[]}
+        submitting={false}
+        onRemover={() => {}}
+        onGravar={() => {}}
+        onDescartar={() => {}}
+      />,
+    );
+
+    expect(html).toContain("Nenhuma decisão anotada ainda");
+    expect(html).toContain(DICA_LOTE_VAZIO);
+    // Sem anotação não há ato a gravar nem a descartar, e botão que não faz nada convida
+    // a achar que fez.
+    expect(html).not.toContain("Gravar");
+    expect(html).not.toContain("Descartar");
+  });
+
+  it("com anotações, conta quantas são e oferece o ato atômico", () => {
+    const html = renderToStaticMarkup(
+      <PainelDoLote
+        lote={[anotacao("i1"), anotacao("i2"), anotacao("i3")]}
+        itens={[itemDaLegenda("i1", "proposed")]}
+        submitting={false}
+        onRemover={() => {}}
+        onGravar={() => {}}
+        onDescartar={() => {}}
+      />,
+    );
+
+    expect(html).toContain("3 decisões anotadas");
+    expect(html).toContain("Gravar 3 decisões");
+    expect(html).toContain("Descartar anotações");
+    // O rótulo do item vem do pacote; o que não está na lista aparece pelo id, nunca
+    // fabricado.
+    expect(html).toContain("PISO EM CONCRETO");
+    expect(html).toContain("i2");
+  });
+
+  it("uma anotação fala no singular", () => {
+    const html = renderToStaticMarkup(
+      <PainelDoLote
+        lote={[anotacao("i1")]}
+        itens={[]}
+        submitting={false}
+        onRemover={() => {}}
+        onGravar={() => {}}
+        onDescartar={() => {}}
+      />,
+    );
+
+    expect(html).toContain("1 decisão anotada");
+    expect(html).toContain("Gravar 1 decisão");
+  });
+});
+
+/**
+ * O bloco da aba "Códigos" que diz o que a shortlist custa e qual delas está na tela
+ * (F-041, ADR-0054). Render puro: nada aqui chama a API, e o `matching` vem sempre da
+ * resposta do servidor — a tela nunca o deduz.
+ */
+describe("EstadoDoBracoSemantico", () => {
+  it("mostra os DOIS custos, e não afirma mais que nenhum provider é chamado", () => {
+    const html = renderToStaticMarkup(
+      <EstadoDoBracoSemantico matching={null} notas={[]} />,
+    );
+
+    expect(html).not.toContain("Nenhum provider é chamado");
+    expect(html).toContain("Ler a shortlist não chama provider nenhum");
+    expect(html).toContain("Recalcular é ato à parte e pode ser chamada paga");
+  });
+
+  /** Sem shortlist lida não há braço a nomear: a tela não inventa um estado. */
+  it("não nomeia braço nenhum antes da primeira leitura", () => {
+    const html = renderToStaticMarkup(
+      <EstadoDoBracoSemantico matching={null} notas={[]} />,
+    );
+
+    expect(html).not.toContain("Esta shortlist é");
+  });
+
+  /** Criterio 2: dá para ver, em texto, qual das duas está diante da pessoa. */
+  it("declara em palavra se a shortlist na tela é léxica ou híbrida", () => {
+    const lexical = renderToStaticMarkup(
+      <EstadoDoBracoSemantico matching="lexical" notas={[]} />,
+    );
+    const hibrida = renderToStaticMarkup(
+      <EstadoDoBracoSemantico matching="hybrid" notas={[]} />,
+    );
+
+    expect(lexical).toContain("Esta shortlist é léxica");
+    expect(hibrida).toContain("Esta shortlist é híbrida");
+    expect(hibrida).toContain("ao menos uma fonte");
+  });
+
+  /**
+   * As notas chegam prontas do servidor, nomeando a fonte que ficou sem índice. A tela as
+   * exibe COMO VIERAM — reescrevê-las aqui faria a tela discordar de quem calculou.
+   */
+  it("mostra as notas do servidor como vieram, com um título por cima", () => {
+    const html = renderToStaticMarkup(
+      <EstadoDoBracoSemantico
+        matching="hybrid"
+        notas={[
+          "braço semântico indisponível: fonte 2 (emop) sem índice de embeddings publicado",
+        ]}
+      />,
+    );
+
+    expect(html).toContain("Onde o braço semântico não entrou");
+    expect(html).toContain(
+      "braço semântico indisponível: fonte 2 (emop) sem índice de embeddings publicado",
+    );
+  });
+
+  /** Sem nota, não há título de lista vazia ocupando espaço. */
+  it("não põe título quando o servidor não mandou nota nenhuma", () => {
+    const html = renderToStaticMarkup(
+      <EstadoDoBracoSemantico matching="hybrid" notas={[]} />,
+    );
+
+    expect(html).not.toContain("Onde o braço semântico não entrou");
+    expect(html).not.toContain("<ul");
   });
 });

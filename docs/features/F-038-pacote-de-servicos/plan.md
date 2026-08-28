@@ -4,8 +4,8 @@ Gates cumpridos: [ADR-0053](../../adr/0053-cardinalidade-n-n-elemento-servico.md
 2026-08-25 e [Design Approval Package](mock/README.md) revisão 1 aprovado em 2026-08-26.
 
 O trabalho está fatiado em doze tarefas, publicadas como issues em `biahflow/croquito`
-(#73 a #84). Cinco estão entregues: quatro na branch `feat/f-038-digest-estavel` e a T5 em
-`feat/f-038-t5-pacote-de-servicos`.
+(#73 a #84). **As doze foram entregues e mergeadas na `main`**, mais o desdobramento da
+decisão 6 (#96); o epic (#71) fechou em 2026-08-26.
 
 ## A ordem é ditada por um risco, não por conveniência
 
@@ -31,10 +31,10 @@ dos builders, e o layout impresso isolado numa tarefa própria.
 | T5 | [#77](https://github.com/biahflow/croquito/issues/77) | Vínculo `(item_id, code)` e fechamento de pacote | **Entregue** |
 | T6 | [#78](https://github.com/biahflow/croquito/issues/78) | Builders passam a iterar serviços | **Entregue** |
 | T7 | [#79](https://github.com/biahflow/croquito/issues/79) | Memória comporta quatro operandos | **Entregue** |
-| T8 | [#80](https://github.com/biahflow/croquito/issues/80) | CLI, rotas `/v1` e migração da matriz | Pendente |
-| T9 | [#81](https://github.com/biahflow/croquito/issues/81) | Tela: montar o pacote e ver a memória | Pendente |
-| T10 | [#82](https://github.com/biahflow/croquito/issues/82) | Gabarito de pacotes como oráculo do golden | Pendente |
-| T12 | [#84](https://github.com/biahflow/croquito/issues/84) | Corrigir a premissa refutada no ROADMAP | Pendente |
+| T8 | [#80](https://github.com/biahflow/croquito/issues/80) | CLI, rotas `/v1` e migração da matriz | **Entregue** |
+| T9 | [#81](https://github.com/biahflow/croquito/issues/81) | Tela: montar o pacote e ver a memória | **Entregue** |
+| T10 | [#82](https://github.com/biahflow/croquito/issues/82) | Gabarito de pacotes como oráculo do golden | **Entregue** |
+| T12 | [#84](https://github.com/biahflow/croquito/issues/84) | Corrigir a premissa refutada no ROADMAP | **Entregue** |
 
 ## O que a execução decidiu diferente do plano
 

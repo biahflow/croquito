@@ -19,11 +19,13 @@ Duas regras atravessam o cálculo:
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from croquito_valuation.assignment import CodeSuggestionSet
+from croquito_valuation.assignment import CodeSuggestionSet, suggest_codes_over_cascade
 from croquito_valuation.catalog import DomainSynonyms, default_legend_noise
 from croquito_valuation.contract import ContractWorkbook
 from croquito_valuation.errors import ValuationValidationError
@@ -36,7 +38,9 @@ from croquito_worker.valuation.catalog_search import (
 )
 from croquito_worker.valuation.sco_matching import (
     SEMANTIC_DEGRADABLE_CODES,
+    CascadeSemanticSource,
     build_hybrid_code_suggestions,
+    build_hybrid_code_suggestions_over_cascade,
     resolve_query_vectors,
 )
 
@@ -101,6 +105,44 @@ class SemanticArmTelemetry:
                 else str(usage.estimated_cost_usd)
             ),
             sources_with_index=1,
+            sources_total=sources_total,
+        )
+
+    @classmethod
+    def from_executions(
+        cls,
+        *,
+        model_id: str,
+        executions: Sequence[EmbeddingsExecution],
+        sources_with_index: int,
+        sources_total: int,
+        reason: str | None = None,
+    ) -> SemanticArmTelemetry:
+        """A mesma telemetria de N fontes da cascata: um gasto por fonte, somado.
+
+        Tokens e custo são SOMA porque a grandeza que se quer observar é o que o ato inteiro
+        custou — o recompute é um clique só, ainda que a cascata tenha três tabelas. Cada
+        fonte pode ter respondido pelo cache (nenhuma execução) ou ter pago, e por isso a
+        soma ignora as ausentes em vez de zerar tudo: `None` continua significando "nada foi
+        pago", e não "custou zero".
+
+        `reason` acompanha um braço que RODOU com cobertura parcial (ADR-0054 D6): ele diz
+        por que alguma fonte ficou de fora, e `sources_with_index < sources_total` diz
+        quantas. Sem ele, o evento de uma cascata meio indexada seria indistinguível do de
+        uma cascata inteiramente indexada.
+        """
+        usages = [execution.usage for execution in executions]
+        tokens = [usage.input_tokens for usage in usages if usage.input_tokens is not None]
+        costs = [
+            usage.estimated_cost_usd for usage in usages if usage.estimated_cost_usd is not None
+        ]
+        return cls(
+            arm_ran=True,
+            reason=reason,
+            model_id=model_id,
+            input_tokens=sum(tokens) if tokens else None,
+            estimated_cost_usd=str(sum(costs)) if costs else None,
+            sources_with_index=sources_with_index,
             sources_total=sources_total,
         )
 
@@ -208,4 +250,125 @@ def compute_suggestions(
         )
     else:
         telemetry = SemanticArmTelemetry.lexical_only(notes[-1] if notes else semantic.message)
+    return computed, notes, telemetry
+
+
+def query_cache_path_for_model(directory: Path, model_id: str) -> Path:
+    """Onde os vetores de consulta de UM modelo ficam dentro do diretório do ato.
+
+    Um arquivo por modelo, e não um por fonte: duas fontes da cascata indexadas pelo MESMO
+    modelo compartilham o espaço vetorial e devem compartilhar o cache — resolver os mesmos
+    rótulos duas vezes pagaria duas vezes pelo mesmo vetor. Modelos diferentes ficam
+    separados porque `load_query_cache` recusa (com razão) um cache gravado por outro
+    modelo, e um arquivo único faria a segunda fonte derrubar o braço da primeira.
+
+    O nome é o digest do `model_id`, e não o `model_id`: ele vem do documento publicado e
+    seria caminho de arquivo montado a partir de texto que ninguém conferiu.
+    """
+    digest = hashlib.sha256(model_id.encode("utf-8")).hexdigest()[:16]
+    return directory / f"query-embeddings-{digest}.json"
+
+
+def compute_cascade_suggestions(
+    packet: TakeoffPacket,
+    cascade: Sequence[PriceCatalog],
+    synonyms: DomainSynonyms,
+    *,
+    arms: Sequence[SemanticArm],
+    query_cache_dir: Path,
+) -> tuple[CodeSuggestionSet, list[str], SemanticArmTelemetry]:
+    """A irmã de `compute_suggestions` para a CASCATA: um braço semântico por fonte.
+
+    Mesma disciplina do caminho de um catálogo só, aplicada fonte a fonte (ADR-0054 D5/D6):
+    a fonte com índice e adapter tem os rótulos embutidos e entra na fusão pelos dois braços;
+    a fonte sem índice — ou cuja resolução de vetores recusou — entra com o braço léxico e o
+    motivo vai para as notas, nomeando **qual** fonte ficou sem. Nenhum desses casos é erro:
+    cobertura parcial é estado normal, e a shortlist sai igual em forma, com uma perna a
+    menos naquele bloco.
+
+    A falha de UMA fonte não contamina as demais de propósito. Degradar a cascata inteira
+    porque o índice da EMOP foi recusado tiraria do orçamentista a vizinhança semântica do
+    SCO, que estava disponível e já foi paga.
+
+    Com NENHUMA fonte respondendo pelo braço semântico, a shortlist é a lexical de sempre
+    (`suggest_codes_over_cascade`) — **o algoritmo não muda por causa de uma perna que não
+    existe**. É a diferença entre acrescentar um braço e trocar de via: enquanto nenhum
+    índice estiver publicado, o recálculo devolve exatamente a shortlist que o `GET` já
+    devolvia, e a única coisa nova são as notas dizendo por quê. Trocar para a via de
+    cobertura ponderada nesse caso seria uma mudança de comportamento medida noutro contexto
+    (um catálogo só, `SCO_LEXICAL_IDF_SUGGESTER_VERSION`) e nunca medida na cascata.
+
+    `query_cache_dir` é o diretório do ATO, e a chamada é a única coisa cara aqui: quem o
+    cria e o descarta é o chamador (ver o recompute da API), porque a decisão de não
+    persistir vetor de consulta é de fronteira de dado, não deste cálculo.
+    """
+    require_reviewed_takeoff(packet)
+    if len(arms) != len(cascade):
+        raise ValuationValidationError(
+            "SEMANTIC_CASCADE_SOURCES_MISMATCH",
+            "cada fonte da cascata precisa de exatamente um braço semântico declarado",
+            {"cascade": len(cascade), "arms": len(arms)},
+        )
+    labels = [item.label for item in packet.confirmed_items()]
+    notes: list[str] = []
+    executions: list[EmbeddingsExecution] = []
+    sources: list[CascadeSemanticSource] = []
+    model_ids: list[str] = []
+    for arm in arms:
+        if arm.index is None:
+            notes.append(arm.message)
+            sources.append(CascadeSemanticSource(None))
+            continue
+        try:
+            resolved = resolve_query_vectors(
+                labels,
+                index=arm.index,
+                cache_path=query_cache_path_for_model(query_cache_dir, arm.index.model_id),
+                adapter=arm.adapter,
+            )
+        except ValuationValidationError as error:
+            if error.code not in SEMANTIC_DEGRADABLE_CODES:
+                raise
+            notes.append(f"{SEMANTIC_UNAVAILABLE_MESSAGE}: {error.code}")
+            sources.append(CascadeSemanticSource(None))
+            continue
+        except ProviderExecutionError as error:
+            notes.append(f"{SEMANTIC_UNAVAILABLE_MESSAGE}: provider {error.code.value}")
+            sources.append(CascadeSemanticSource(None))
+            continue
+        if resolved.execution is not None:
+            executions.append(resolved.execution)
+        model_ids.append(arm.index.model_id)
+        sources.append(CascadeSemanticSource(arm.index, resolved.by_query))
+    # Notas repetidas viram uma: quando o que faltou é do ATO (entitlement, ambiente,
+    # credencial), todas as fontes carregam a MESMA frase, e repeti-la uma vez por tabela
+    # daria à tela três avisos idênticos sobre um problema só.
+    notes = list(dict.fromkeys(notes))
+    if not model_ids:
+        return (
+            suggest_codes_over_cascade(packet, cascade, synonyms=synonyms),
+            notes,
+            SemanticArmTelemetry.lexical_only(
+                notes[0] if notes else SEMANTIC_UNAVAILABLE_MESSAGE, sources_total=len(cascade)
+            ),
+        )
+    computed = build_hybrid_code_suggestions_over_cascade(
+        packet,
+        cascade,
+        sources,
+        synonyms=synonyms,
+        noise=default_legend_noise(),
+    )
+    telemetry = SemanticArmTelemetry.from_executions(
+        # O modelo da PRIMEIRA fonte que rodou, e não uma lista: o campo é singular no
+        # contrato da telemetria e a cascata usa o mesmo modelo em todas as fontes na
+        # prática (o índice de todas é publicado pela mesma via). Cascata com modelos
+        # diferentes continua declarando as contagens certas; qual fonte usou qual modelo é
+        # o que o `semantic` do próprio artefato guarda, com o digest do índice.
+        model_id=model_ids[0],
+        executions=executions,
+        sources_with_index=len(model_ids),
+        sources_total=len(cascade),
+        reason=notes[0] if notes else None,
+    )
     return computed, notes, telemetry

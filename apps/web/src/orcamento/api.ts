@@ -1015,6 +1015,11 @@ export function getSuggestions(
  * Recompute explícito da shortlist: é o caminho declarado de reler o efeito de uma
  * reordenação da cascata. Ao contrário do `GET`, é ato humano, cita `base_version` e
  * avança a rodada.
+ *
+ * É também o ÚNICO ponto em que o braço semântico pode custar (F-041, ADR-0054 D7): cada
+ * fonte com índice de embeddings publicado embute os rótulos da rodada e entra na fusão.
+ * Fonte sem índice, tenant sem autorização contratual ou ambiente sem provider **não**
+ * derrubam o ato — a shortlist sai léxica e o motivo vem em `semantic_notes`.
  */
 export function postSuggestionsRecompute(
   accessToken: string,
@@ -1031,10 +1036,12 @@ export function postSuggestionsRecompute(
 /**
  * Busca léxica na cascata inteira, um bloco por fonte, na ordem instalada.
  *
- * Sem `arm`, ao contrário da medição: a rota do orçamento não expõe o parâmetro, porque o
- * braço híbrido depende de índice de embeddings que nenhuma rota de `/v1` publica. O
- * motivo continua viajando em `semantic_notes` e a tela o exibe — a busca não degrada em
- * silêncio.
+ * Sem `arm`, ao contrário da medição: a rota do orçamento não expõe o parâmetro, e a busca
+ * segue léxica mesmo depois de o índice de embeddings virar artefato publicado da
+ * plataforma (F-041, ADR-0054). O braço semântico roda no RECOMPUTE, que é ato humano com
+ * `base_version`, e não numa busca que dispara a cada tecla — pagar por tecla seria o
+ * oposto da decisão D7. O motivo continua viajando em `semantic_notes` e a tela o exibe: a
+ * busca não degrada em silêncio.
  */
 export function searchCascade(
   accessToken: string,

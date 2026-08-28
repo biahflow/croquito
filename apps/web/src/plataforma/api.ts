@@ -386,27 +386,49 @@ export async function uploadReferenceCatalog(
   accessToken: string,
   file: File,
 ): Promise<ReferenceCatalogUpload> {
+  return uploadPeloPresignDaPlataforma(
+    accessToken,
+    file,
+    `${ACERVO_PATH}/presign`,
+    referenceCatalogPresignBody,
+  );
+}
+
+/**
+ * O envio direto de um artefato de plataforma: presign da própria rota, `PUT` no store.
+ *
+ * Compartilhado entre o acervo e o índice de embeddings porque é o MESMO ato — os dois
+ * sobem um `.json` pelo presign de plataforma, com o digest calculado aqui, e nenhum dos
+ * dois pode depender de `/v1/uploads/presign`. O que muda entre eles é a rota do presign
+ * e o construtor do corpo; o resto seria duas cópias livres para divergir num cabeçalho.
+ */
+async function uploadPeloPresignDaPlataforma(
+  accessToken: string,
+  file: File,
+  presignPath: string,
+  presignBody: (upload: {
+    filename: string;
+    sizeBytes: number;
+    sha256: string;
+  }) => Record<string, unknown>,
+): Promise<ReferenceCatalogUpload> {
   const digest = toHex(
     await crypto.subtle.digest("SHA-256", await file.arrayBuffer()),
   );
-  const presigned = await apiJson<PresignedUpload>(
-    `${ACERVO_PATH}/presign`,
-    accessToken,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
-      },
-      body: JSON.stringify(
-        referenceCatalogPresignBody({
-          filename: file.name,
-          sizeBytes: file.size,
-          sha256: digest,
-        }),
-      ),
+  const presigned = await apiJson<PresignedUpload>(presignPath, accessToken, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
     },
-  );
+    body: JSON.stringify(
+      presignBody({
+        filename: file.name,
+        sizeBytes: file.size,
+        sha256: digest,
+      }),
+    ),
+  });
   const upload = await fetch(presigned.url, {
     method: "PUT",
     headers: presigned.headers,
@@ -454,4 +476,166 @@ export function withdrawReferenceCatalog(
     method: "POST",
     headers: { "Idempotency-Key": crypto.randomUUID() },
   });
+}
+
+// --------------------------------------------------------------------------------------
+// Índice de embeddings publicado (F-041, ADR-0054)
+//
+// Irmão do acervo, e pelo mesmo desenho: artefato público, sem tenant, endereçado por
+// digest. Duas diferenças moram aqui e nenhuma delas é detalhe:
+//
+// - **A tela nunca baixa o índice.** Nenhuma rota o assina, `object_key` não vem na
+//   resposta e o servidor é quem o lê. Por isso não existe função de download neste
+//   módulo — e a ausência é a decisão, não um esquecimento.
+// - **A tela nunca constrói o índice.** Ele sai do comando pago `index-catalog` do CLI
+//   (ADR-0054 D4); daqui só sobe o `catalog-embeddings.json` que já existe.
+
+/**
+ * Uma publicação de índice, como `GET /v1/platform/reference-catalog-indexes` a devolve.
+ *
+ * Tudo que descreve o índice vem de DENTRO do documento publicado (`text_recipe`,
+ * `provider`, `model_id`, `dims`, `code_count`, `catalog_source_sha256`): nada é digitado
+ * na publicação, e por isso nada aqui pode discordar do conteúdo que o servidor lê.
+ *
+ * `available: false` com `withdrawn_at` preenchido é o índice fora de circulação, que
+ * CONTINUA na lista: retirar não apaga, e a shortlist já gravada cita o digest do índice
+ * que a produziu.
+ */
+export type ReferenceCatalogIndex = {
+  reference_catalog_index_id: string;
+  reference_catalog_id: string;
+  catalog_source_sha256: string;
+  text_recipe: string;
+  provider: string;
+  model_id: string;
+  dims: number;
+  code_count: number;
+  object_sha256: string;
+  available: boolean;
+  published_by: string;
+  published_at: string;
+  withdrawn_at: string | null;
+};
+
+type ReferenceCatalogIndexList = {
+  indexes: ReferenceCatalogIndex[];
+};
+
+/** O gesto de publicar um índice, antes de virar corpo de requisição. */
+export type PublishIndexDraft = {
+  uploadId: string;
+  referenceCatalogId: string;
+};
+
+const INDICES_PATH = "/v1/platform/reference-catalog-indexes";
+
+/**
+ * Corpo do presign do índice, puro e testável.
+ *
+ * Mesma forma do presign do acervo e pela mesma razão: `content_type` NÃO entra — o tipo é
+ * `application/json` por definição da rota, e `extra="forbid"` do lado do servidor recusa o
+ * campo com `422`. Construtor próprio, e não o do acervo reaproveitado, porque são dois
+ * contratos do servidor: se um deles ganhar um campo, o outro não deve ganhá-lo junto.
+ */
+export function referenceCatalogIndexPresignBody(upload: {
+  filename: string;
+  sizeBytes: number;
+  sha256: string;
+}): Record<string, unknown> {
+  return {
+    filename: upload.filename,
+    size_bytes: upload.sizeBytes,
+    sha256: upload.sha256,
+  };
+}
+
+/**
+ * Corpo da publicação do índice. DOIS campos, e é deliberado que não haja mais: receita de
+ * texto, provider, modelo, dimensões, contagem de códigos e o digest do catálogo indexado
+ * são lidos de dentro do documento, e o servidor recusa qualquer um deles no corpo.
+ *
+ * `reference_catalog_id` existe para ser CONFERIDO, não para localizar: a busca do índice
+ * é por digest da fonte (ADR-0054 D3), e este campo é o que faz o servidor recusar com
+ * `REFERENCE_CATALOG_INDEX_CATALOG_MISMATCH` um índice construído sobre outro catálogo.
+ */
+export function publishIndexBody(
+  draft: PublishIndexDraft,
+): Record<string, unknown> {
+  return {
+    upload_id: draft.uploadId,
+    reference_catalog_id: draft.referenceCatalogId,
+  };
+}
+
+function withdrawIndexPath(referenceCatalogIndexId: string): string {
+  return `${INDICES_PATH}/${encodeURIComponent(referenceCatalogIndexId)}/withdraw`;
+}
+
+/**
+ * Todos os índices, inclusive os que saíram de circulação.
+ *
+ * A ordem é a do servidor (`catalog_source_sha256`, `text_recipe`, `id`) e a tela não a
+ * reordena: dois índices do mesmo catálogo e da mesma receita saem na ordem em que foram
+ * publicados, que é a ordem em que a resolução os prefere.
+ */
+export async function listReferenceCatalogIndexes(
+  accessToken: string,
+): Promise<ReferenceCatalogIndex[]> {
+  const resposta = await apiJson<ReferenceCatalogIndexList>(
+    INDICES_PATH,
+    accessToken,
+  );
+  return resposta.indexes;
+}
+
+/**
+ * Sobe o `catalog-embeddings.json` pelo presign PRÓPRIO da rota do índice.
+ *
+ * A rota é `/v1/platform/reference-catalog-indexes/presign`, e não `/v1/uploads/presign`,
+ * pelo mesmo motivo do acervo: o presign do croqui está sob o portão de disponibilidade de
+ * jornada, e num ambiente com o croqui desligado o operador ficaria sem como publicar.
+ */
+export async function uploadReferenceCatalogIndex(
+  accessToken: string,
+  file: File,
+): Promise<ReferenceCatalogUpload> {
+  return uploadPeloPresignDaPlataforma(
+    accessToken,
+    file,
+    `${INDICES_PATH}/presign`,
+    referenceCatalogIndexPresignBody,
+  );
+}
+
+/** Publica o índice já subido; ele passa a valer para todos os tenants. */
+export function publishReferenceCatalogIndex(
+  accessToken: string,
+  draft: PublishIndexDraft,
+): Promise<ReferenceCatalogIndex> {
+  return apiJson<ReferenceCatalogIndex>(INDICES_PATH, accessToken, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify(publishIndexBody(draft)),
+  });
+}
+
+/**
+ * Tira o índice de circulação. **Sem corpo**: o ato é inteiramente identificado pela rota.
+ * Repetir sobre um índice já retirado devolve o registro como está, sem recarimbar a data.
+ */
+export function withdrawReferenceCatalogIndex(
+  accessToken: string,
+  referenceCatalogIndexId: string,
+): Promise<ReferenceCatalogIndex> {
+  return apiJson<ReferenceCatalogIndex>(
+    withdrawIndexPath(referenceCatalogIndexId),
+    accessToken,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    },
+  );
 }

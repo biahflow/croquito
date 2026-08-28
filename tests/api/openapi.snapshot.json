@@ -5523,6 +5523,36 @@
         "title": "PresignJobFieldPhotoResponse",
         "type": "object"
       },
+      "PresignReferenceCatalogIndexRequest": {
+        "additionalProperties": false,
+        "description": "Presign do `catalog-embeddings.json` que vai ao acervo de índices.\n\nIdêntico em forma ao presign do catálogo, e pela mesma razão: o tipo é fixo em\n`application/json` porque o que se publica aqui é o documento do índice e nada mais, e\npublicar não pode depender da jornada do croqui (o portão de disponibilidade da F-034 é\ndependência do router, e `/v1/uploads` é do croqui).\n\n`size_bytes` continua com o teto do presign — 100 MB —, e não com\n`CATALOG_INDEX_MAX_BYTES`: são coisas diferentes. O presign diz quanto o storage aceita\nreceber; o teto de leitura diz quanto a API aceita carregar na memória do processo, e é\nele que recusa a publicação, por extenso e com a causa nomeada. Conferir o tamanho duas\nvezes em lugares que significam coisas diferentes esconderia qual dos dois recusou.",
+        "properties": {
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[a-fA-F0-9]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000000.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "filename",
+          "size_bytes",
+          "sha256"
+        ],
+        "title": "PresignReferenceCatalogIndexRequest",
+        "type": "object"
+      },
       "PresignReferenceCatalogRequest": {
         "additionalProperties": false,
         "description": "Presign do `catalog.json` que vai ao acervo — sem `content_type`, e é deliberado.\n\nA rota existe porque publicar não pode depender da jornada do croqui (F-037 escopo 7):\n`POST /v1/uploads/presign` cai no prefixo `/v1/uploads`, que é do croqui, e num ambiente\ncom essa jornada desligada o operador da plataforma receberia `403 JOURNEY_UNAVAILABLE`\ne o acervo ficaria sem como ser alimentado.\n\nO tipo não entra no corpo porque o acervo publica catálogo normalizado e nada mais:\nrecebê-lo seria oferecer uma escolha que a rota recusaria em seguida. `ApiModel` recusa\ncampo desconhecido, então um corpo que tente declarar `content_type` — de PDF ou até de\nJSON — é recusado no contrato. A extensão de `filename` continua sendo conferida contra\no tipo por `_safe_filename`, que devolve `422 INVALID_UPLOAD` para nome que não seja\n`.json`.",
@@ -6197,6 +6227,28 @@
         "title": "ProviderLineage",
         "type": "object"
       },
+      "PublishReferenceCatalogIndexRequest": {
+        "additionalProperties": false,
+        "description": "Publica o índice de embeddings de UM catálogo já publicado no acervo.\n\nDois campos, e é deliberado que não tenha mais: `provider`, `model_id`, `dims`,\n`text_recipe`, a contagem de códigos e o digest do catálogo indexado são lidos de dentro\ndo documento, nunca informados aqui. Rótulo que se digita ao lado do conteúdo é rótulo\nque pode discordar dele — e um índice publicado com a receita errada degradaria a busca\nem silêncio para todo tenant que o usasse.\n\n`reference_catalog_id` é o único vínculo declarado, e ele existe para ser CONFERIDO: o\n`catalog_sha256` de dentro do documento tem de bater com o `source_sha256` daquela\nentrada do acervo. Não é por ele que o índice será encontrado depois — a busca é por\ndigest da fonte (ADR-0054 D3) —, é por ele que a publicação prova que sabe o que está\npublicando.",
+        "properties": {
+          "reference_catalog_id": {
+            "format": "uuid",
+            "title": "Reference Catalog Id",
+            "type": "string"
+          },
+          "upload_id": {
+            "format": "uuid",
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "reference_catalog_id"
+        ],
+        "title": "PublishReferenceCatalogIndexRequest",
+        "type": "object"
+      },
       "PublishReferenceCatalogRequest": {
         "additionalProperties": false,
         "description": "Publica no acervo o `catalog.json` JÁ NORMALIZADO que subiu pelo presign.\n\nO corpo tem DOIS campos, e é deliberado que não tenha mais: `origin`,\n`reference_month`, `source_sha256` e a contagem de entradas são lidos de dentro do\narquivo, nunca informados aqui. Rótulo que se digita ao lado do conteúdo é rótulo que\npode discordar dele — e um catálogo publicado com a data-base errada mudaria o preço de\ntodos os tenants que o escolhessem. `ApiModel` recusa campo desconhecido, então um corpo\nque tente declará-los é recusado no contrato, antes de qualquer leitura.\n\nO que se escreve é só o nome de exibição: é ele que distingue, na escolha, duas linhas\nque sem ele seriam ambas \"SCO\".",
@@ -6426,6 +6478,108 @@
           "rectifications"
         ],
         "title": "RectifyReviewDecisionsRequest",
+        "type": "object"
+      },
+      "ReferenceCatalogIndexListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "indexes": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceCatalogIndexResponse"
+            },
+            "title": "Indexes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "indexes"
+        ],
+        "title": "ReferenceCatalogIndexListResponse",
+        "type": "object"
+      },
+      "ReferenceCatalogIndexResponse": {
+        "additionalProperties": false,
+        "description": "Uma publicação de índice como a administração da plataforma a lê.\n\n`object_key` NÃO sai daqui, pelo mesmo motivo do acervo — e aqui a razão é mais forte\nainda: o objeto fica fora de `tenants/`, nenhuma rota o assina e ele nunca é baixado\npelo cliente. Os vetores também não saem, obviamente: o que a tela precisa é da\nidentidade do índice (quem, com qual modelo, sobre qual catálogo, com qual receita).",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "catalog_source_sha256": {
+            "title": "Catalog Source Sha256",
+            "type": "string"
+          },
+          "code_count": {
+            "title": "Code Count",
+            "type": "integer"
+          },
+          "dims": {
+            "title": "Dims",
+            "type": "integer"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "object_sha256": {
+            "title": "Object Sha256",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "published_at": {
+            "format": "date-time",
+            "title": "Published At",
+            "type": "string"
+          },
+          "published_by": {
+            "title": "Published By",
+            "type": "string"
+          },
+          "reference_catalog_id": {
+            "format": "uuid",
+            "title": "Reference Catalog Id",
+            "type": "string"
+          },
+          "reference_catalog_index_id": {
+            "format": "uuid",
+            "title": "Reference Catalog Index Id",
+            "type": "string"
+          },
+          "text_recipe": {
+            "title": "Text Recipe",
+            "type": "string"
+          },
+          "withdrawn_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Withdrawn At"
+          }
+        },
+        "required": [
+          "reference_catalog_index_id",
+          "reference_catalog_id",
+          "catalog_source_sha256",
+          "text_recipe",
+          "provider",
+          "model_id",
+          "dims",
+          "code_count",
+          "object_sha256",
+          "available",
+          "published_by",
+          "published_at"
+        ],
+        "title": "ReferenceCatalogIndexResponse",
         "type": "object"
       },
       "ReferenceCatalogListResponse": {
@@ -9690,7 +9844,7 @@
     },
     "/v1/estimate-rounds/{round_id}/catalog/search": {
       "get": {
-        "description": "Busca léxica na cascata inteira; cada resultado diz de qual fonte e posição veio.\n\nSem `arm`: o braço híbrido da medição depende de índice de embeddings publicado na\nrodada, e nenhuma rota de `/v1` publica esse índice. Expor o parâmetro aqui só para\ndevolver `503` acrescentaria superfície que não existe — o motivo do braço ausente\ncontinua viajando em `semantic_notes`, e a busca nunca degrada em silêncio.",
+        "description": "Busca léxica na cascata inteira; cada resultado diz de qual fonte e posição veio.\n\nSem `arm`, e a razão MUDOU com a F-041: o índice de embeddings agora é publicado\n(`/v1/platform/reference-catalog-indexes`), então o que impede o braço híbrido aqui\nnão é mais a falta do artefato — é o verbo. Resolver o vetor da consulta é chamada\npaga, e esta rota é um `GET` que dispara a cada tecla; pagar por tecla é o oposto\nexato da decisão 7 do ADR-0054, que concentrou o gasto no recompute explícito.\nExpor o parâmetro só para devolver `503` acrescentaria superfície que não existe —\no motivo do braço ausente continua viajando em `semantic_notes`, e a busca nunca\ndegrada em silêncio.",
         "operationId": "search_estimate_cascade_v1_estimate_rounds__round_id__catalog_search_get",
         "parameters": [
           {
@@ -10194,7 +10348,7 @@
     },
     "/v1/estimate-rounds/{round_id}/code-suggestions": {
       "get": {
-        "description": "Shortlist de código sobre a CASCATA por item confirmado: observação, nunca decisão.\n\nOs candidatos saem na ordem da cascata — cada fonte é um bloco —, e a gravação entra\nna cadeia de revisões **sem avançar a versão da rodada**: a shortlist é artefato\nderivado, e se um `GET` movesse o token de concorrência, a próxima decisão do\norçamentista levaria `409` por algo que ele não fez.",
+        "description": "Shortlist de código sobre a CASCATA por item confirmado: observação, nunca decisão.\n\nOs candidatos saem na ordem da cascata — cada fonte é um bloco —, e a gravação entra\nna cadeia de revisões **sem avançar a versão da rodada**: a shortlist é artefato\nderivado, e se um `GET` movesse o token de concorrência, a próxima decisão do\norçamentista levaria `409` por algo que ele não fez.\n\n**Nenhuma chamada paga acontece aqui**, pelo mesmo motivo e com a mesma força da\nirmã da medição (ADR-0054 D7): o cálculo é chamado sem braço semântico (`arms=None`),\nnenhum índice é procurado e a shortlist gravada é léxica até o recálculo explícito.",
         "operationId": "get_estimate_code_suggestions_v1_estimate_rounds__round_id__code_suggestions_get",
         "parameters": [
           {
@@ -10245,7 +10399,7 @@
     },
     "/v1/estimate-rounds/{round_id}/code-suggestions/recompute": {
       "post": {
-        "description": "Recalcula a shortlist sobre a cascata CORRENTE e avança a rodada.\n\nÉ o caminho declarado de reler o efeito de uma reordenação da cascata: ao contrário\ndo `GET`, este é ato humano, exige `base_version` e move o token de concorrência.",
+        "description": "Recalcula a shortlist sobre a cascata CORRENTE e avança a rodada.\n\nÉ o caminho declarado de reler o efeito de uma reordenação da cascata: ao contrário\ndo `GET`, este é ato humano, exige `base_version` e move o token de concorrência.\n\nÉ também onde o braço semântico roda, **por fonte** (ADR-0054 D5): cada catálogo da\ncascata é fundido com o índice dele, e os blocos continuam concatenados na ordem\ninstalada — não há RRF entre fontes, porque similaridade de texto não desempata a\nprecedência das tabelas. Fonte sem índice publicado entra só com o braço léxico e a\nnota diz **qual** ficou de fora (D6); cobertura parcial é estado normal, não falha.",
         "operationId": "recompute_estimate_code_suggestions_v1_estimate_rounds__round_id__code_suggestions_recompute_post",
         "parameters": [
           {
@@ -13753,6 +13907,226 @@
         ]
       }
     },
+    "/v1/platform/reference-catalog-indexes": {
+      "get": {
+        "description": "Todos os índices, inclusive os que saíram de circulação.\n\nLeitura sem `Idempotency-Key` e sem auditoria, como as demais listagens de\nplataforma. O que foi retirado continua na lista, com `withdrawn_at` carimbado.\n\nOrdenação em Python, como no acervo: SQLite (testes) e PostgreSQL (hospedado) não\nordenam texto do mesmo jeito, e a tela lê a ordem. O `id` fecha o critério porque é\nUUIDv7 — dois índices do mesmo catálogo e da mesma receita saem na ordem em que\nforam publicados, que é a ordem em que a busca os prefere.",
+        "operationId": "list_reference_catalog_indexes_v1_platform_reference_catalog_indexes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceCatalogIndexListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Reference Catalog Indexes",
+        "tags": [
+          "platform"
+        ]
+      },
+      "post": {
+        "description": "Publica o índice de embeddings de um catálogo do acervo (F-041, ADR-0054).\n\nO que sobe é o `catalog-embeddings.json` construído pelo comando pago\n`index-catalog` do CLI. **O servidor lê o índice; nunca o constrói** (ADR-0054 D4):\na construção continua onde um humano aperta o botão e paga a chamada, e aqui só\nentra desserialização validada por Pydantic. Isso honra a RAZÃO da decisão 9 do\nADR-0047 — derivação pesada e paga fora do request path —, e não apenas a sua letra,\nque proíbe parser de planilha; um JSON de vetores de contrato fechado não é um.\n\nCinco recusas, todas ANTES de qualquer escrita — no store ou no banco:\n\n- **papel**, antes de qualquer lookup: quem não é `platform_operator` recebe `403` e\n  não descobre o que existe;\n- **tamanho**, antes de desserializar: `422 REFERENCE_CATALOG_INDEX_TOO_LARGE`, por\n  extenso e com a causa nomeada — documento truncado desserializaria como JSON\n  inválido e a causa verdadeira sumiria numa recusa de contrato;\n- **documento ilegível**: `422 REFERENCE_CATALOG_INDEX_UNREADABLE`, com o código de\n  domínio nos detalhes e nada do conteúdo do arquivo;\n- **índice de outro catálogo**: `422 REFERENCE_CATALOG_INDEX_CATALOG_MISMATCH`. O\n  `catalog_sha256` de dentro do documento tem de bater com o `source_sha256` da\n  entrada do acervo citada — publicar índice de outro catálogo devolveria códigos\n  que aquele catálogo nem tem;\n- **conteúdo já publicado**: `409 REFERENCE_CATALOG_INDEX_ALREADY_PUBLISHED`.\n  Publicação é imutável e endereçada por digest — receita ou modelo novos têm digest\n  novo, logo entrada nova, e a anterior continua existindo.\n\nO objeto é gravado ANTES do `commit`, pela mesma razão do acervo: linha apontando\npara objeto inexistente degradaria a busca com um índice que falha na leitura,\nenquanto objeto sem linha é um arquivo endereçado por conteúdo que ninguém\nreferencia — o mesmo que a próxima publicação do mesmo digest reescreveria byte a\nbyte.",
+        "operationId": "publish_reference_catalog_index_v1_platform_reference_catalog_indexes_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishReferenceCatalogIndexRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceCatalogIndexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Publish Reference Catalog Index",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/reference-catalog-indexes/presign": {
+      "post": {
+        "description": "Presign do índice, irmão do presign do acervo e pelo mesmo motivo.\n\nPublicar índice não pode depender da jornada do croqui: `/v1/uploads` é do croqui e\ncai no portão de disponibilidade da F-034, então num ambiente com essa jornada\n`disabled` o operador da plataforma não teria como alimentar nem o acervo nem os\níndices dele. `/v1/platform` está declarado fora de jornada.\n\nÉ `presign_upload` na íntegra — mesma idempotência, mesmo `UploadRecord` sob\n`tenants/{tenant_id}/uploads/` do OPERADOR, mesmo checksum, mesmo header por perfil\nde storage e mesma auditoria (`UPLOAD_PRESIGNED`; publicar é ato auditado à parte).\nO objeto só sai do prefixo do operador quando a publicação o lê e o confere: assinar\ndireto para dentro do prefixo do índice poria lá um arquivo que ninguém validou.",
+        "operationId": "presign_reference_catalog_index_v1_platform_reference_catalog_indexes_presign_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignReferenceCatalogIndexRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignUploadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Presign Reference Catalog Index",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
+    "/v1/platform/reference-catalog-indexes/{reference_catalog_index_id}/withdraw": {
+      "post": {
+        "description": "Tira o índice de circulação: ele deixa de ser resolvido e **não** é apagado.\n\nApagar seria perder a trilha de qual índice serviu uma shortlist já gravada — e a\nshortlist cita o digest do índice que a produziu. Por isso o ato carimba `status` e\n`withdrawn_at`, e nada mais: a linha continua na listagem, o objeto continua no\nstore, e o que muda é a resolução deixar de encontrá-lo. A fonte volta a contribuir\nsó com o braço léxico, que é estado normal e não erro (ADR-0054 D6).\n\nSem corpo: o ato é inteiramente identificado pela rota. Retirar o que já está fora\nde circulação devolve o registro como está, sem recarimbar a data nem auditar de\nnovo — a data verdadeira é a da retirada, não a da última repetição do pedido.",
+        "operationId": "withdraw_reference_catalog_index_v1_platform_reference_catalog_indexes__reference_catalog_index_id__withdraw_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reference_catalog_index_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Reference Catalog Index Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceCatalogIndexResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Withdraw Reference Catalog Index",
+        "tags": [
+          "platform"
+        ]
+      }
+    },
     "/v1/platform/reference-catalogs": {
       "get": {
         "description": "O acervo INTEIRO, inclusive o que está fora de circulação.\n\nLeitura sem `Idempotency-Key` e sem auditoria, como as demais listagens de\nplataforma. O que foi retirado continua na lista, com `withdrawn_at` carimbado:\nsumir com a linha apagaria a trilha do que houve — e a rodada que o referencia\ncontinua funcionando, então o registro precisa continuar legível.\n\nOrdenação em Python, como em `_all_known_tenant_ids`: SQLite (testes) e PostgreSQL\n(hospedado) não ordenam texto do mesmo jeito, e a tela lê a ordem. O `id` fecha o\ncritério porque é UUIDv7 — duas publicações da mesma origem e data-base saem na\nordem em que foram publicadas.",
@@ -15345,7 +15719,7 @@
     },
     "/v1/valuation-rounds/{round_id}/catalog/search": {
       "get": {
-        "description": "Busca no catálogo instalado, léxica por padrão (decisão humana de 2026-08-17).\n\n`arm=hybrid` é braço PAGO e passa pelo mesmo portão da extração: sem autorização\ncontratual do tenant, `403 AI_PROCESSING_NOT_AUTHORIZED` (ADR-0012). Com ela, a\nresposta ainda é `503 PROVIDER_UNAVAILABLE` — o braço semântico depende de índice de\nembeddings publicado na rodada e nenhuma rota de `/v1` publica esse índice hoje.\nIsso é estado honesto, não falha: cair no léxico fingindo ser híbrido esconderia do\norçamentista que a vizinhança semântica não participou do que ele está lendo. E\nnenhuma chamada de embedding acontece dentro de um `GET`, com ou sem índice.",
+        "description": "Busca no catálogo instalado, léxica por padrão (decisão humana de 2026-08-17).\n\n`arm=hybrid` é braço PAGO e passa pelo mesmo portão da extração: sem autorização\ncontratual do tenant, `403 AI_PROCESSING_NOT_AUTHORIZED` (ADR-0012). Com ela, a\nresposta ainda é `503 PROVIDER_UNAVAILABLE`, e a razão MUDOU com a F-041: o índice\nde embeddings agora É publicado (`/v1/platform/reference-catalog-indexes`), então o\nque falta não é o artefato — é que resolver o vetor da CONSULTA é chamada paga, e\nesta rota é um `GET` que dispara a cada tecla. A última frase deste docstring sempre\nfoi a regra real, e agora é a única: nenhuma chamada de embedding acontece dentro de\num `GET`, com ou sem índice (ADR-0054 D7 concentrou o gasto no recompute).\nIsso é estado honesto, não falha: cair no léxico fingindo ser híbrido esconderia do\norçamentista que a vizinhança semântica não participou do que ele está lendo.",
         "operationId": "search_valuation_catalog_v1_valuation_rounds__round_id__catalog_search_get",
         "parameters": [
           {
@@ -15638,7 +16012,7 @@
     },
     "/v1/valuation-rounds/{round_id}/code-suggestions": {
       "get": {
-        "description": "Shortlist de código por item confirmado: observação, nunca decisão (ADR-0021).\n\nCalculada UMA vez e persistida; leitura seguinte serve o que está gravado\n(`computed: false`). A gravação entra na cadeia de revisões **sem avançar a versão da\nrodada** (decisão humana de 2026-08-17): a shortlist é artefato derivado, e se um\n`GET` movesse o token de concorrência, a próxima decisão do orçamentista levaria\n`409` por algo que ele não fez.\n\nNenhuma chamada paga acontece aqui: o braço semântico depende de índice publicado na\nrodada, que nenhuma rota publica, e o motivo viaja em `semantic_notes`.",
+        "description": "Shortlist de código por item confirmado: observação, nunca decisão (ADR-0021).\n\nCalculada UMA vez e persistida; leitura seguinte serve o que está gravado\n(`computed: false`). A gravação entra na cadeia de revisões **sem avançar a versão da\nrodada** (decisão humana de 2026-08-17): a shortlist é artefato derivado, e se um\n`GET` movesse o token de concorrência, a próxima decisão do orçamentista levaria\n`409` por algo que ele não fez.\n\n**Nenhuma chamada paga acontece aqui**, e isso é invariante, não circunstância\n(ADR-0054 D7). O cálculo é chamado sem braço semântico (`semantic=None`), então\nnenhum índice é procurado e nenhum rótulo é embutido: a shortlist que a primeira\nleitura grava é léxica, e a híbrida exige o recompute, que é ato humano com\n`Idempotency-Key` e `base_version`. O motivo viaja em `semantic_notes`.\n\nMover a chamada paga para cá quebraria mais do que o custo: um `GET` que gasta é um\n`GET` que a tela dispara em polling. `tests/api/test_estimate_semantic_arm.py`\nguarda a invariante com um adapter que falha se for tocado.",
         "operationId": "get_valuation_code_suggestions_v1_valuation_rounds__round_id__code_suggestions_get",
         "parameters": [
           {
@@ -15689,7 +16063,7 @@
     },
     "/v1/valuation-rounds/{round_id}/code-suggestions/recompute": {
       "post": {
-        "description": "Recalcula a shortlist do zero pelo algoritmo corrente e avança a rodada.\n\nAo contrário do `GET`, este é ato humano: ele descarta a shortlist anterior, então\nexige `base_version` e move o token de concorrência da rodada.\n\nShortlist que já carrega refino pago recusa com `409 SUGGESTIONS_ALREADY_REFINED` —\nrecalcular descartaria o lineage da chamada paga. Artefato gravado que não valida\ncomo `CodeSuggestionSet` **não** cai nessa guarda: o recompute é exatamente a cura\ndele.",
+        "description": "Recalcula a shortlist do zero pelo algoritmo corrente e avança a rodada.\n\nAo contrário do `GET`, este é ato humano: ele descarta a shortlist anterior, então\nexige `base_version` e move o token de concorrência da rodada.\n\nÉ aqui, e só aqui, que o braço semântico roda (ADR-0054 D7): com índice publicado\npara o catálogo da rodada, entitlement ativo e via de embeddings no processo, os\nrótulos dos itens confirmados são embutidos numa chamada paga pequena e a shortlist\nsai híbrida. Faltando qualquer um dos três — ou com o índice recusado na amarração —\na shortlist sai léxica **com o motivo declarado**, e o ato se completa: nada disso\ndevolve `403`, porque perder o recompute inteiro por falta de um braço que é enfeite\nseria pior do que não ter o braço (D8).\n\nShortlist que já carrega refino pago recusa com `409 SUGGESTIONS_ALREADY_REFINED` —\nrecalcular descartaria o lineage da chamada paga. Artefato gravado que não valida\ncomo `CodeSuggestionSet` **não** cai nessa guarda: o recompute é exatamente a cura\ndele.",
         "operationId": "recompute_valuation_code_suggestions_v1_valuation_rounds__round_id__code_suggestions_recompute_post",
         "parameters": [
           {

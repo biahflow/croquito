@@ -168,6 +168,34 @@ da deliberação, porque é ele que explica o que foi aceito.
   declarado — `bind_index_to_catalog` recusa receita divergente —, não quebrar.
 - A tela ganha um estado novo para explicar: shortlist gravada é léxica até o recálculo.
 
+## Emenda de 2026-08-28: onde mora o cache de vetores de consulta
+
+Este documento decidiu que a chamada paga acontece no recompute (decisão 7), mas **não
+disse onde o cache de vetores de consulta passa a morar** no ambiente hospedado. O ponto
+não é acessório: `resolve_query_vectors` (`sco_matching.py:718`) **escreve** no
+`cache_path` por escrita atômica sempre que uma consulta nova entra, e esse é um caminho de
+escrita em disco desenhado para o CLI. `_NO_QUERY_CACHE = Path(os.devnull)` era o
+marcador de que a pergunta seguia aberta.
+
+**Decidido por ato humano em 2026-08-28** (Daniel Campos, dono do produto): **cache em
+memória do processo, descartado ao fim do recompute.**
+
+O que isso significa na prática: cada recompute embute os rótulos da legenda daquela rodada
+(~15 a 20 textos curtos) e descarta os vetores ao terminar. Recompute repetido repaga.
+
+A razão é a fronteira de dado, não o custo. Um vetor de rótulo é derivado de conteúdo de
+cliente; persisti-lo — seja como objeto sob `tenants/`, seja como coluna na revisão —
+criaria uma classe nova de dado privado para governar, com retenção, isolamento e ciclo de
+vida próprios, em troca de economizar centésimos de centavo num ato humano explícito e
+raro. A assimetria decide: o índice do catálogo é dado **público** da plataforma e por isso
+é publicado e cacheado; o vetor do rótulo é dado **do cliente** e por isso não sobrevive ao
+request que o produziu.
+
+Consequência aceita: o custo do recompute é proporcional ao número de rótulos, toda vez.
+Se algum dia o recompute virar frequente — automático, ou em lote sobre muitas rodadas —
+esta decisão precisa ser relida, porque a premissa que a sustenta ("ato humano explícito e
+raro") terá deixado de valer.
+
 ## Emendas
 
 - **[ADR-0021](0021-hybrid-sco-code-retrieval.md)** — escrito sob a premissa local-first. O

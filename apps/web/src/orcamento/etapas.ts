@@ -192,6 +192,28 @@ function motivoSemTakeoff(
   }
 }
 
+/**
+ * A tela deve buscar a shortlist de códigos agora?
+ *
+ * Existe porque essa lista NÃO tem botão: ela é carregada sozinha, e a decisão de quando
+ * pedi-la é regra de jornada, não detalhe de um `useEffect`.
+ *
+ * Duas condições, e as duas importam. Já existir shortlist gravada é motivo óbvio. Não
+ * existir só autoriza o pedido quando a revisão do takeoff está **completa**: é a mesma
+ * condição que a rota exige (`require_reviewed_packet`), e pedir antes dela é recusa
+ * garantida (`TAKEOFF_REVIEW_INCOMPLETE`) — repetida a cada volta do poll do estado.
+ *
+ * Pedir é seguro como efeito de abrir a tela: o `GET` roda sem braço semântico, então não
+ * gasta, e grava sem avançar a versão, então não provoca `409` na decisão seguinte
+ * (ADR-0054 D7). O recálculo, esse sim pago e versionado, continua sendo ato humano.
+ */
+export function deveCarregarSugestoes(state: EstimateState | null): boolean {
+  if (state === null) {
+    return false;
+  }
+  return state.codes.suggestions_present || state.takeoff.review_status === "complete";
+}
+
 export function derivarEtapas(state: EstimateState | null): Jornada {
   if (state === null) {
     return semEstado("aguarda a leitura do estado do orçamento");

@@ -271,6 +271,72 @@ class ReferenceCatalogRecord(Base):
     withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ReferenceCatalogEmbeddingRecord(Base):
+    """Índice de embeddings publicado para um catálogo do acervo — **sem `tenant_id`**.
+
+    A ausência é a decisão 1 do ADR-0047 aplicada ao artefato irmão, e o ADR-0054 a estende
+    explicitamente: se a tabela pública de preços não tem dono, o índice dos vetores DELA
+    tampouco. São as duas únicas tabelas do schema sem coluna de tenant, e as duas se
+    sustentam na mesma condição escrita: **nenhuma coluna aqui deriva de conteúdo de
+    cliente**. Tudo o que entra vem de dentro do `catalog-embeddings.json` que o operador
+    publicou — `catalog_source_sha256`, `text_recipe`, `provider`, `model_id`, `dims` e
+    `code_count` são lidos do documento, e nem sequer há campo digitado. Nada aqui é
+    derivado de prancha, levantamento, orçamento ou rodada de cliente algum. O teste que
+    verifica a condição é parte da feature (`tests/api/test_reference_catalog_indexes.py`);
+    acrescentar coluna que a viole é decisão de arquitetura, e exige ADR próprio.
+
+    A assimetria que decide isso está escrita na emenda de 2026-08-28 do ADR-0054: o índice
+    do catálogo é dado **público** da plataforma e por isso é publicado e cacheado; o vetor
+    do rótulo da legenda é dado **do cliente** e por isso não sobrevive ao request que o
+    produziu — não há tabela para ele, e não deve haver.
+
+    Tabela separada de `reference_catalogs`, e não colunas nova nela (ADR-0054 D2): as
+    linhas do acervo são imutáveis (ADR-0047 D3), o índice é publicado num ato à parte
+    possivelmente meses depois, e um mesmo catálogo pode ter índices sucessivos quando a
+    receita de texto ou o modelo de embeddings mudam.
+
+    `catalog_source_sha256` é repetido aqui em vez de lido por join porque é por ele que o
+    índice é ENCONTRADO (ADR-0054 D3): a busca é por digest da fonte, não por proveniência,
+    e assim o índice serve qualquer entrada do acervo cujos bytes de origem sejam os mesmos.
+    A FK para `reference_catalogs` fica ao lado dele para que a publicação cite a entrada
+    concreta que o originou — trilha, não caminho de leitura.
+
+    Retirar de circulação carimba `status` e `withdrawn_at`; a linha e o objeto continuam
+    existindo, pela mesma razão do acervo.
+    """
+
+    __tablename__ = "reference_catalog_embeddings"
+    __table_args__ = (UniqueConstraint("object_sha256", name="uq_reference_catalog_index_object"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    reference_catalog_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("reference_catalogs.id")
+    )
+    catalog_source_sha256: Mapped[str] = mapped_column(String(64))
+    """Digest do arquivo de ORIGEM do catálogo indexado, lido de dentro do documento do
+    índice (`catalog_sha256`) e conferido contra o do catálogo citado no ato de publicar.
+    É a chave de busca, com `text_recipe`."""
+    text_recipe: Mapped[str] = mapped_column(String(40))
+    """Qual texto de cada item foi embutido (`code-description-unit-v1` |
+    `description-unit-v2`). Parte da identidade do índice: receita diferente são vetores
+    diferentes, e `bind_index_to_catalog` recusa a divergência."""
+    provider: Mapped[str] = mapped_column(String(40))
+    model_id: Mapped[str] = mapped_column(String(160))
+    dims: Mapped[int] = mapped_column(Integer)
+    code_count: Mapped[int] = mapped_column(Integer)
+    object_key: Mapped[str] = mapped_column(String(512))
+    """Chave do objeto sob o prefixo do índice, FORA de `tenants/`. Nenhuma rota assina URL
+    dela: o servidor lê o índice, o cliente nunca o baixa."""
+    object_sha256: Mapped[str] = mapped_column(String(64))
+    """Digest dos BYTES do `catalog-embeddings.json` publicado; endereça o objeto e é único
+    — republicar o mesmo conteúdo é recusado."""
+    status: Mapped[str] = mapped_column(String(16), default="AVAILABLE")
+    """``AVAILABLE`` | ``WITHDRAWN``. Retirar não apaga."""
+    published_by: Mapped[str] = mapped_column(String(128))
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AiProcessingAuthorizationRecord(Base):
     """Immutable per-job snapshot of the contractual AI-processing authorization."""
 

@@ -5,13 +5,17 @@ import {
   ApiError,
   getEntitlement,
   listJourneys,
+  listReferenceCatalogIndexes,
   listReferenceCatalogs,
   listTenants,
   publishReferenceCatalog,
+  publishReferenceCatalogIndex,
   setEntitlement,
   setJourneyEntitlement,
   uploadReferenceCatalog,
+  uploadReferenceCatalogIndex,
   withdrawReferenceCatalog,
+  withdrawReferenceCatalogIndex,
   type EntitlementDraft,
   type Journey,
   type JourneyAvailability,
@@ -20,29 +24,38 @@ import {
   type PlatformJourneys,
   type PlatformTenant,
   type ReferenceCatalog,
+  type ReferenceCatalogIndex,
 } from "./api";
 import {
   AVISO_ACERVO,
   AVISO_DISPONIBILIDADE,
   AVISO_ESTADO_NAO_EDITAVEL,
+  AVISO_INDICE_VEM_DO_CLI,
+  AVISO_INDICES,
   AVISO_PLATAFORMA,
   AVISO_PUBLICAR,
   AVISO_RETIRADA,
+  AVISO_RETIRADA_INDICE,
   AVISO_REVOGACAO,
   AVISO_TENANT_NOVO,
   DICA_ACERVO_SEM_PAPEL,
   DICA_APOS_RECUSA,
   DICA_AUTORIZAR_PILOTO,
   DICA_CAMPOS_DO_ARQUIVO,
+  DICA_CAMPOS_DO_INDICE,
+  DICA_CATALOGO_DO_INDICE,
+  DICA_INDICES_SEM_PAPEL,
   DICA_JORNADAS_CARREGANDO,
   DICA_JORNADAS_SEM_PAPEL,
   DICA_NOME_EXIBICAO,
   DICA_REFERENCIA,
   describeAcervoError,
   describeError,
+  describeIndiceError,
   describeJourneyError,
   digestCurto,
   estadoDaAutorizacao,
+  estadoDoIndice,
   estadoLabel,
   ESTADO_JORNADA_CLASSE,
   ESTADO_JORNADA_LABEL,
@@ -52,15 +65,19 @@ import {
   formatarInstante,
   JORNADA_LABEL,
   MENSAGEM_ACERVO_SEM_PAPEL,
+  MENSAGEM_INDICES_SEM_PAPEL,
   MENSAGEM_JORNADAS_CARREGANDO,
   MENSAGEM_JORNADAS_SEM_PAPEL,
   MENSAGEM_LISTA_VAZIA,
+  MENSAGEM_SEM_CATALOGO_PARA_INDEXAR,
   MENSAGEM_SEM_LEITURA,
   MENSAGEM_SEM_SESSAO,
   mensagemSemAutorizacao,
+  nomeDoCatalogoIndexado,
   NOME_EXIBICAO_MINIMO,
   resumoDoAcervo,
   resumoDoAmbiente,
+  resumoDosIndices,
   SELO_FORA_DE_CIRCULACAO,
 } from "./labels";
 
@@ -448,6 +465,11 @@ export function PlatformApp({ session }: { session: User | null }) {
           `<section>` própria. O conteúdo aprovado entra inteiro; o que fica de fora é a
           fita, que o mock inventou. */}
       <AcervoDeCatalogos session={session} />
+
+      {/* Quarta seção empilhada, logo abaixo do acervo (Design Approval das duas
+          superfícies, aprovado em 2026-08-28): o índice é irmão do catálogo e só existe
+          sobre uma tabela já publicada, então ele vem DEPOIS dela e não antes. */}
+      <IndicesDeEmbeddings session={session} />
 
       {sucesso ? (
         <p className="app-toast" role="status">
@@ -1165,6 +1187,354 @@ export function AcervoDeCatalogos({ session }: { session: User | null }) {
                 acontece. Sem lista não há ato a explicar: o estado do acervo vazio já
                 está escrito na coluna ao lado. */}
             <p className="field-hint">{AVISO_RETIRADA}</p>
+          </>
+        ) : null}
+      </section>
+    </>
+  );
+}
+
+/**
+ * Índices de embeddings publicados (F-041, ADR-0054).
+ *
+ * Espelho próximo do acervo, porque a pergunta é a mesma — onde mora um artefato público,
+ * sem dono, endereçado por digest —, com três diferenças que são decisões escritas:
+ *
+ * - **O índice é construído pelo CLI, nunca aqui** (D4). O `catalog-embeddings.json` sai do
+ *   comando pago `index-catalog`; esta tela sobe o arquivo e o servidor o lê e confere.
+ *   Não há botão de construir, e a frase acima do campo diz isso por escrito.
+ * - **A tela nunca baixa o índice.** Nenhuma rota o assina e `object_key` não vem na
+ *   resposta: o que se lê aqui é a identidade da publicação (sobre qual tabela, com qual
+ *   receita, provider, modelo e dimensões), nunca um único vetor.
+ * - **Retirar não apaga, e a razão é mais forte que a do acervo**: a shortlist já gravada
+ *   cita o digest do índice que a produziu. A linha continua na lista, o objeto continua
+ *   no armazenamento, e a fonte volta a entrar só pelo braço léxico — estado normal (D6).
+ *
+ * O acervo é lido aqui de novo, e não recebido do componente vizinho, pela mesma autonomia
+ * das outras seções: cada uma carrega o que mostra e tem o próprio botão de recarregar. O
+ * custo é um `GET` a mais; a alternativa seria acoplar duas seções que hoje não se
+ * conhecem, para economizar uma leitura de lista.
+ */
+
+/** Uma publicação de índice na lista, com o estado escrito por extenso. */
+export function LinhaIndice({
+  indice,
+  catalogos,
+  enviando,
+  onRetirar,
+}: {
+  indice: ReferenceCatalogIndex;
+  catalogos: ReferenceCatalog[] | null;
+  enviando: boolean;
+  onRetirar: () => void;
+}) {
+  const foraDeCirculacao = !indice.available;
+  return (
+    <li>
+      <div>
+        <strong>{nomeDoCatalogoIndexado(indice, catalogos)}</strong>
+        {/* Cor nunca é o único indicador: o estado é a PRIMEIRA coisa escrita na linha,
+            antes de qualquer marca visual. */}
+        <span>
+          {estadoDoIndice(indice)} · receita {indice.text_recipe} · {indice.provider}{" "}
+          {indice.model_id} · {indice.dims} dimensões ·{" "}
+          {formatarContagem(indice.code_count)} códigos
+        </span>
+        <span>
+          {/* Digest truncado na tela, valor inteiro no `title`: padrão do produto para
+              conferência visual de conteúdo. */}
+          <code title={indice.object_sha256}>
+            sha256 {digestCurto(indice.object_sha256)}
+          </code>{" "}
+          · publicado por {indice.published_by} em {formatarDia(indice.published_at)}
+          {foraDeCirculacao
+            ? ` · retirado de circulação em ${formatarDia(indice.withdrawn_at)}`
+            : ""}
+        </span>
+      </div>
+      {foraDeCirculacao ? (
+        <span className="neutral">{SELO_FORA_DE_CIRCULACAO}</span>
+      ) : (
+        <button
+          className="button project-action"
+          type="button"
+          disabled={enviando}
+          onClick={onRetirar}
+        >
+          Retirar de circulação
+        </button>
+      )}
+    </li>
+  );
+}
+
+/**
+ * A coluna da direita: publicar um índice.
+ *
+ * Dois campos, e nenhum deles descreve o índice: o arquivo e a tabela sobre a qual ele foi
+ * construído. Receita, provider, modelo, dimensões e contagem vêm de dentro do documento —
+ * digitá-los ao lado do conteúdo seria deixar o rótulo discordar dele.
+ *
+ * O seletor oferece TODAS as tabelas do acervo, inclusive as fora de circulação: o índice é
+ * resolvido pelo digest da fonte (ADR-0054 D3), então ele continua servindo qualquer
+ * catálogo com os mesmos bytes de origem. A palavra ao lado do nome diz qual é qual.
+ */
+export function FormularioDePublicacaoDeIndice({
+  catalogos,
+  catalogoId,
+  arquivoEscolhido,
+  enviando,
+  campoArquivoKey,
+  onArquivo,
+  onCatalogo,
+  onPublicar,
+}: {
+  catalogos: ReferenceCatalog[] | null;
+  catalogoId: string;
+  arquivoEscolhido: boolean;
+  enviando: boolean;
+  campoArquivoKey: number;
+  onArquivo: (arquivo: File | null) => void;
+  onCatalogo: (valor: string) => void;
+  onPublicar: () => void;
+}) {
+  const semCatalogo = catalogos !== null && catalogos.length === 0;
+  return (
+    <div>
+      <span className="eyebrow">PUBLICAR ÍNDICE</span>
+      {/* Por escrito, para ninguém procurar aqui um botão de construir índice. */}
+      <p className="field-hint">
+        {AVISO_INDICE_VEM_DO_CLI.antes}
+        <code>{AVISO_INDICE_VEM_DO_CLI.comando}</code>
+        {AVISO_INDICE_VEM_DO_CLI.meio}
+        <code>{AVISO_INDICE_VEM_DO_CLI.arquivo}</code>
+        {AVISO_INDICE_VEM_DO_CLI.depois}
+      </p>
+      {semCatalogo ? (
+        <p className="field-hint">{MENSAGEM_SEM_CATALOGO_PARA_INDEXAR}</p>
+      ) : null}
+      <form
+        className="upload-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onPublicar();
+        }}
+      >
+        <label>
+          Índice de embeddings (JSON)
+          {/* Campo de arquivo é não controlado por natureza; a `key` muda depois de uma
+              publicação e é o que o esvazia sem tocar no DOM por fora do React. */}
+          <input
+            key={campoArquivoKey}
+            type="file"
+            accept="application/json,.json"
+            disabled={enviando}
+            onChange={(event) => onArquivo(event.target.files?.[0] ?? null)}
+          />
+        </label>
+        <label>
+          Tabela indexada
+          <select
+            value={catalogoId}
+            onChange={(event) => onCatalogo(event.target.value)}
+            disabled={enviando || catalogos === null || semCatalogo}
+          >
+            {catalogos === null || semCatalogo ? (
+              <option value="">—</option>
+            ) : (
+              catalogos.map((catalogo) => (
+                <option
+                  key={catalogo.reference_catalog_id}
+                  value={catalogo.reference_catalog_id}
+                >
+                  {catalogo.display_name} ·{" "}
+                  {formatarDataBase(catalogo.reference_month)}
+                  {catalogo.available ? "" : " (fora de circulação)"}
+                </option>
+              ))
+            )}
+          </select>
+          <small className="field-hint">{DICA_CATALOGO_DO_INDICE}</small>
+        </label>
+        <button
+          className="button button-primary"
+          type="submit"
+          disabled={enviando || !arquivoEscolhido || catalogoId === ""}
+        >
+          Publicar índice
+        </button>
+      </form>
+      <span className="field-hint">{DICA_CAMPOS_DO_INDICE}</span>
+    </div>
+  );
+}
+
+export function IndicesDeEmbeddings({ session }: { session: User | null }) {
+  const [indices, setIndices] = useState<ReferenceCatalogIndex[] | null>(null);
+  const [catalogos, setCatalogos] = useState<ReferenceCatalog[] | null>(null);
+  const [carregando, setCarregando] = useState(false);
+  const [semPapel, setSemPapel] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [catalogoId, setCatalogoId] = useState("");
+  const [campoArquivoKey, setCampoArquivoKey] = useState(0);
+
+  const accessToken = session?.access_token ?? null;
+
+  const carregar = useCallback(async () => {
+    if (accessToken === null) {
+      return;
+    }
+    setCarregando(true);
+    try {
+      // As duas leituras juntas porque a linha do índice nomeia a TABELA que ele indexa, e
+      // o formulário escolhe entre elas: uma lista sem a outra mostraria índice sem nome.
+      const [publicados, acervo] = await Promise.all([
+        listReferenceCatalogIndexes(accessToken),
+        listReferenceCatalogs(accessToken),
+      ]);
+      setIndices(publicados);
+      setCatalogos(acervo);
+      // A tabela escolhida só é reposicionada quando ainda não há escolha: sobrescrever
+      // depois de cada ato jogaria fora a seleção de quem está no meio do trabalho.
+      setCatalogoId(
+        (atual) => atual || (acervo[0]?.reference_catalog_id ?? ""),
+      );
+      setSemPapel(false);
+      setErro(null);
+    } catch (error) {
+      // `403` aqui não é falha: é a conta sem o papel de plataforma, e ela lê o motivo em
+      // vez de encarar uma seção em branco. Quem autoriza continua sendo o servidor.
+      if (error instanceof ApiError && error.status === 403) {
+        setSemPapel(true);
+        setErro(null);
+        return;
+      }
+      setErro(describeIndiceError(error));
+    } finally {
+      setCarregando(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    void carregar();
+  }, [carregar]);
+
+  // Sem toast de sucesso, pelo mesmo motivo do acervo: `.app-toast` é `position: fixed` no
+  // mesmo canto, e seções empilhadas com toast próprio sobreporiam as faixas no mesmo
+  // pixel. A confirmação é a releitura — a linha nova aparece publicada.
+  const publicar = useCallback(async () => {
+    if (accessToken === null || arquivo === null || catalogoId === "") {
+      return;
+    }
+    setEnviando(true);
+    try {
+      const upload = await uploadReferenceCatalogIndex(accessToken, arquivo);
+      await publishReferenceCatalogIndex(accessToken, {
+        uploadId: upload.uploadId,
+        referenceCatalogId: catalogoId,
+      });
+      setErro(null);
+      setArquivo(null);
+      setCampoArquivoKey((valor) => valor + 1);
+      await carregar();
+    } catch (error) {
+      setErro(describeIndiceError(error));
+    } finally {
+      setEnviando(false);
+    }
+  }, [accessToken, arquivo, carregar, catalogoId]);
+
+  const retirar = useCallback(
+    async (indice: ReferenceCatalogIndex) => {
+      if (accessToken === null) {
+        return;
+      }
+      setEnviando(true);
+      try {
+        await withdrawReferenceCatalogIndex(
+          accessToken,
+          indice.reference_catalog_index_id,
+        );
+        setErro(null);
+        // A linha reaparecendo marcada como fora de circulação é a confirmação do ato.
+        await carregar();
+      } catch (error) {
+        setErro(describeIndiceError(error));
+      } finally {
+        setEnviando(false);
+      }
+    },
+    [accessToken, carregar],
+  );
+
+  if (session === null) {
+    return null;
+  }
+
+  if (semPapel) {
+    return (
+      <section className="authenticated-workspace">
+        <div>
+          <span className="eyebrow">ÍNDICES DE EMBEDDINGS</span>
+          <h2>Índices publicados</h2>
+          <p>{MENSAGEM_INDICES_SEM_PAPEL}</p>
+          <span className="field-hint">{DICA_INDICES_SEM_PAPEL}</span>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <>
+      {erro ? <AlertaPersistente mensagem={erro} /> : null}
+
+      <section className="authenticated-workspace">
+        <div>
+          <span className="eyebrow">ÍNDICES DE EMBEDDINGS</span>
+          <h2>Índices publicados</h2>
+          <p>{AVISO_INDICES}</p>
+          <span className="field-hint">
+            {resumoDosIndices(indices, carregando)}
+          </span>
+          <button
+            className="button project-action"
+            type="button"
+            onClick={() => void carregar()}
+            disabled={carregando}
+          >
+            Recarregar índices
+          </button>
+        </div>
+
+        <FormularioDePublicacaoDeIndice
+          catalogos={catalogos}
+          catalogoId={catalogoId}
+          arquivoEscolhido={arquivo !== null}
+          enviando={enviando}
+          campoArquivoKey={campoArquivoKey}
+          onArquivo={setArquivo}
+          onCatalogo={setCatalogoId}
+          onPublicar={() => void publicar()}
+        />
+
+        {indices !== null && indices.length > 0 ? (
+          <>
+            <ul className="project-list journey-entitlements">
+              {indices.map((indice) => (
+                <LinhaIndice
+                  key={indice.reference_catalog_index_id}
+                  indice={indice}
+                  catalogos={catalogos}
+                  enviando={enviando}
+                  onRetirar={() => void retirar(indice)}
+                />
+              ))}
+            </ul>
+            {/* A consequência de retirar, por escrito, logo abaixo da lista onde o ato
+                acontece. Sem lista não há ato a explicar. */}
+            <p className="field-hint">{AVISO_RETIRADA_INDICE}</p>
           </>
         ) : null}
       </section>

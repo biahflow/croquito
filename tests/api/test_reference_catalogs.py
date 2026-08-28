@@ -202,8 +202,14 @@ def test_nenhuma_coluna_do_acervo_deriva_de_conteudo_de_cliente() -> None:
     """A guarda escrita da decisão 1 do ADR-0047, verificada em vez de confiada à memória.
 
     Duas afirmações, e as duas precisam continuar verdadeiras: o acervo não tem `tenant_id`
-    e cada coluna dele vem do operador ou do arquivo público que ele publicou; e nenhuma
-    OUTRA tabela do schema perdeu o `tenant_id` — a exceção continua sendo uma só.
+    e cada coluna dele vem do operador ou do arquivo público que ele publicou; e a lista das
+    tabelas sem `tenant_id` continua sendo exatamente a das exceções DECIDIDAS.
+
+    Hoje são duas, e a segunda é do mesmo objeto: `reference_catalog_embeddings` é o índice
+    de embeddings do catálogo público (ADR-0054 D2), que herda a decisão 1 do ADR-0047 pela
+    mesma razão e sob a mesma condição — se a tabela de preços não tem dono, o índice dos
+    vetores dela tampouco. A condição de cada uma é guardada no teste da sua própria suíte;
+    o que este bloco garante é que não apareça uma terceira sem que alguém decida.
     """
     colunas = {coluna.name for coluna in ReferenceCatalogRecord.__table__.columns}
 
@@ -213,7 +219,7 @@ def test_nenhuma_coluna_do_acervo_deriva_de_conteudo_de_cliente() -> None:
     sem_tenant = {
         tabela.name for tabela in Base.metadata.sorted_tables if "tenant_id" not in tabela.columns
     }
-    assert sem_tenant == {"reference_catalogs"}
+    assert sem_tenant == {"reference_catalogs", "reference_catalog_embeddings"}
 
 
 def test_a_chave_do_acervo_fica_fora_do_prefixo_do_tenant_e_nao_e_assinavel(

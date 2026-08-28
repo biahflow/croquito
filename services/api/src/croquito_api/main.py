@@ -66,6 +66,7 @@ from croquito_api.database import (
     JobSurveyLinkRecord,
     ProjectRecord,
     ProposalDecisionRecord,
+    ReferenceCatalogEmbeddingRecord,
     ReferenceCatalogRecord,
     ReviewDecisionRecord,
     ReviewRevisionRecord,
@@ -98,11 +99,23 @@ from croquito_api.metrics import (
     parse_period_bound,
 )
 from croquito_api.pubsub_queue import PubSubProcessingQueue, QueuePublishError
+from croquito_api.reference_catalog_indexes import (
+    CATALOG_INDEX_MAX_BYTES,
+    SemanticIndexCache,
+    parse_index_document,
+    read_index_document,
+    reference_catalog_index_key,
+)
 from croquito_api.reference_catalogs import (
     PUBLISHABLE_ORIGINS,
     STATUS_AVAILABLE,
     STATUS_WITHDRAWN,
     reference_catalog_key,
+)
+from croquito_api.semantic_arm import (
+    ENTITLEMENT_INACTIVE_REASON,
+    PROVIDERS_DISABLED_REASON,
+    resolve_cascade_arms,
 )
 from croquito_api.storage import ArtifactStore
 from croquito_api.valuation_rounds import (
@@ -274,6 +287,7 @@ from croquito_worker.tracing import (
 from croquito_worker.valuation.catalog_search import (
     CATALOG_SEARCH_DEFAULT_LIMIT,
     CATALOG_SEARCH_MAX_LIMIT,
+    SemanticArm,
 )
 from croquito_worker.valuation.round_extraction import (
     PLATE_IMAGE_REF,
@@ -296,6 +310,7 @@ from croquito_worker.valuation.round_view import (
     review_status,
     takeoff_counts,
 )
+from croquito_worker.valuation.sco_matching import embeddings_adapter_or_reason
 from croquito_worker.valuation.suggestions import SemanticArmTelemetry
 from croquito_worker.vision import (
     PixelGeometryValue,
@@ -506,6 +521,74 @@ class ReferenceCatalogResponse(ApiModel):
 
 class ReferenceCatalogListResponse(ApiModel):
     catalogs: list[ReferenceCatalogResponse]
+
+
+class PresignReferenceCatalogIndexRequest(ApiModel):
+    """Presign do `catalog-embeddings.json` que vai ao acervo de índices.
+
+    Idêntico em forma ao presign do catálogo, e pela mesma razão: o tipo é fixo em
+    `application/json` porque o que se publica aqui é o documento do índice e nada mais, e
+    publicar não pode depender da jornada do croqui (o portão de disponibilidade da F-034 é
+    dependência do router, e `/v1/uploads` é do croqui).
+
+    `size_bytes` continua com o teto do presign — 100 MB —, e não com
+    `CATALOG_INDEX_MAX_BYTES`: são coisas diferentes. O presign diz quanto o storage aceita
+    receber; o teto de leitura diz quanto a API aceita carregar na memória do processo, e é
+    ele que recusa a publicação, por extenso e com a causa nomeada. Conferir o tamanho duas
+    vezes em lugares que significam coisas diferentes esconderia qual dos dois recusou.
+    """
+
+    filename: str = Field(min_length=1, max_length=255)
+    size_bytes: int = Field(gt=0, le=100_000_000)
+    sha256: str = Field(pattern=r"^[a-fA-F0-9]{64}$")
+
+
+class PublishReferenceCatalogIndexRequest(ApiModel):
+    """Publica o índice de embeddings de UM catálogo já publicado no acervo.
+
+    Dois campos, e é deliberado que não tenha mais: `provider`, `model_id`, `dims`,
+    `text_recipe`, a contagem de códigos e o digest do catálogo indexado são lidos de dentro
+    do documento, nunca informados aqui. Rótulo que se digita ao lado do conteúdo é rótulo
+    que pode discordar dele — e um índice publicado com a receita errada degradaria a busca
+    em silêncio para todo tenant que o usasse.
+
+    `reference_catalog_id` é o único vínculo declarado, e ele existe para ser CONFERIDO: o
+    `catalog_sha256` de dentro do documento tem de bater com o `source_sha256` daquela
+    entrada do acervo. Não é por ele que o índice será encontrado depois — a busca é por
+    digest da fonte (ADR-0054 D3) —, é por ele que a publicação prova que sabe o que está
+    publicando.
+    """
+
+    upload_id: UUID
+    reference_catalog_id: UUID
+
+
+class ReferenceCatalogIndexResponse(ApiModel):
+    """Uma publicação de índice como a administração da plataforma a lê.
+
+    `object_key` NÃO sai daqui, pelo mesmo motivo do acervo — e aqui a razão é mais forte
+    ainda: o objeto fica fora de `tenants/`, nenhuma rota o assina e ele nunca é baixado
+    pelo cliente. Os vetores também não saem, obviamente: o que a tela precisa é da
+    identidade do índice (quem, com qual modelo, sobre qual catálogo, com qual receita).
+    """
+
+    reference_catalog_index_id: UUID
+    reference_catalog_id: UUID
+    catalog_source_sha256: str
+    text_recipe: str
+    provider: str
+    model_id: str
+    dims: int
+    code_count: int
+    object_sha256: str
+    available: bool
+    published_by: str
+    published_at: datetime
+    withdrawn_at: datetime | None = None
+
+
+class ReferenceCatalogIndexListResponse(ApiModel):
+    indexes: list[ReferenceCatalogIndexResponse]
 
 
 class JobResponse(ApiModel):
@@ -3011,6 +3094,36 @@ def _require_active_ai_entitlement(
     return entitlement
 
 
+def _ai_entitlement_reason(
+    session: Session, principal: Principal, *, real_providers_enabled: bool
+) -> str | None:
+    """O irmão de `_require_active_ai_entitlement` que DEVOLVE o motivo em vez de levantar.
+
+    Mesma pergunta, desfecho oposto, e é essa a decisão 8 do ADR-0054: um `403` no recompute
+    faria o tenant sem autorização contratual perder o ato inteiro — inclusive o braço
+    léxico, que não chama provider nenhum e não custa nada. Aqui a falta vira nota, a
+    shortlist sai léxica e o recompute acontece.
+
+    Os dois convivem de propósito, e não são um o substituto do outro: onde a rota EXISTE
+    para praticar a chamada paga (busca híbrida, chat, extração), recusar é o comportamento
+    certo — devolver `200` com meio resultado esconderia que o pedido não foi atendido. Onde
+    a chamada paga é um ENFEITE de um ato que se completa sem ela, recusar é que seria o
+    erro. `_require_active_ai_entitlement` continua sendo o portão dos primeiros.
+
+    Ambiente com providers desligados nem chega a consultar o banco: não há chamada externa
+    possível, e o motivo é do operador da plataforma, não do contrato do tenant.
+    """
+    if not real_providers_enabled:
+        return PROVIDERS_DISABLED_REASON
+    entitlement = session.scalar(
+        select(TenantAiProcessingEntitlementRecord).where(
+            TenantAiProcessingEntitlementRecord.tenant_id == principal.tenant_id,
+            TenantAiProcessingEntitlementRecord.status == "ACTIVE",
+        )
+    )
+    return None if entitlement is not None else ENTITLEMENT_INACTIVE_REASON
+
+
 def _require_job_ai_authorization(
     session: Session, *, job: JobRecord, real_providers_enabled: bool
 ) -> None:
@@ -4612,6 +4725,27 @@ def _reference_catalog_response(record: ReferenceCatalogRecord) -> ReferenceCata
     )
 
 
+def _reference_catalog_index_response(
+    record: ReferenceCatalogEmbeddingRecord,
+) -> ReferenceCatalogIndexResponse:
+    """Só o que descreve a publicação; nem a chave do objeto, nem um único vetor."""
+    return ReferenceCatalogIndexResponse(
+        reference_catalog_index_id=UUID(record.id),
+        reference_catalog_id=UUID(record.reference_catalog_id),
+        catalog_source_sha256=record.catalog_source_sha256,
+        text_recipe=record.text_recipe,
+        provider=record.provider,
+        model_id=record.model_id,
+        dims=record.dims,
+        code_count=record.code_count,
+        object_sha256=record.object_sha256,
+        available=record.status == STATUS_AVAILABLE,
+        published_by=record.published_by,
+        published_at=record.published_at,
+        withdrawn_at=record.withdrawn_at,
+    )
+
+
 def _latest_review(
     session: Session, *, job_id: UUID, tenant_id: str
 ) -> ReviewRevisionRecord | None:
@@ -5611,6 +5745,30 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
     # mais usada da tela a mais cara. Preso à aplicação, e não ao módulo, para que duas
     # aplicações do mesmo processo (a suíte inteira) não compartilhem catálogo decodificado.
     application.state.catalog_cache = CatalogCache()
+    # Índice de embeddings decodificado por (digest do índice, digest do catálogo), também
+    # com a vida da aplicação e pelo mesmo motivo — só que a conta é outra: ~40 MB de matriz
+    # por entrada, não alguns MB de JSON. Preso à aplicação, e não ao módulo, para que duas
+    # aplicações do mesmo processo (a suíte inteira) não compartilhem índice decodificado.
+    application.state.semantic_index_cache = SemanticIndexCache()
+    # A via de embeddings vive na APLICAÇÃO, e não é construída a cada recompute (ADR-0054,
+    # aceite humano item 2). `build_embeddings_adapter()` cria um `CostBudget` novo a cada
+    # chamada (`providers.py`), o que num CLI é certo — um comando, um teto — e num serviço
+    # hospedado seria teto nenhum: cada requisição começaria o orçamento do zero e o limite
+    # do processo nunca seria alcançado. Preso aqui, o `BudgetedEmbeddingsAdapter` acumula
+    # de verdade.
+    #
+    # Construir só com providers reais LIGADOS não é otimização: com o ambiente desligado
+    # não existe chamada externa possível, e ler credencial para guardar um objeto que
+    # ninguém pode usar seria o contrário do que `CROQUITO_REAL_PROVIDERS_ENABLED=false`
+    # promete. O motivo da ausência é guardado ao lado do adapter porque é ele que vira a
+    # nota de degradação — nunca uma exceção.
+    adapter, adapter_reason = (
+        embeddings_adapter_or_reason()
+        if runtime_settings.real_providers_enabled
+        else (None, PROVIDERS_DISABLED_REASON)
+    )
+    application.state.embeddings_adapter = adapter
+    application.state.embeddings_unavailable_reason = adapter_reason
 
     @application.middleware("http")
     async def request_correlation(request: Request, call_next: Any) -> Any:
@@ -6343,6 +6501,352 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     "reference_catalog_id": record.id,
                     "origin": record.origin,
                     "reference_month": record.reference_month,
+                },
+            )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/platform/reference-catalog-indexes/presign",
+        response_model=PresignUploadResponse,
+        tags=["platform"],
+    )
+    async def presign_reference_catalog_index(
+        payload: PresignReferenceCatalogIndexRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> PresignUploadResponse:
+        """Presign do índice, irmão do presign do acervo e pelo mesmo motivo.
+
+        Publicar índice não pode depender da jornada do croqui: `/v1/uploads` é do croqui e
+        cai no portão de disponibilidade da F-034, então num ambiente com essa jornada
+        `disabled` o operador da plataforma não teria como alimentar nem o acervo nem os
+        índices dele. `/v1/platform` está declarado fora de jornada.
+
+        É `presign_upload` na íntegra — mesma idempotência, mesmo `UploadRecord` sob
+        `tenants/{tenant_id}/uploads/` do OPERADOR, mesmo checksum, mesmo header por perfil
+        de storage e mesma auditoria (`UPLOAD_PRESIGNED`; publicar é ato auditado à parte).
+        O objeto só sai do prefixo do operador quando a publicação o lê e o confere: assinar
+        direto para dentro do prefixo do índice poria lá um arquivo que ninguém validou.
+        """
+        _require_platform_operator(principal)
+        operation = "platform.reference-catalog-indexes.presign"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return PresignUploadResponse.model_validate(existing)
+        record, response = _presign_tenant_upload(
+            application,
+            principal=principal,
+            filename=payload.filename,
+            content_type=CATALOG_CONTENT_TYPE,
+            size_bytes=payload.size_bytes,
+            sha256=payload.sha256,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        session.add(record)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="UPLOAD_PRESIGNED",
+            resource_type="upload",
+            resource_id=str(response.upload_id),
+            request_id=request.state.request_id,
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/platform/reference-catalog-indexes",
+        response_model=ReferenceCatalogIndexResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["platform"],
+    )
+    async def publish_reference_catalog_index(
+        payload: PublishReferenceCatalogIndexRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReferenceCatalogIndexResponse:
+        """Publica o índice de embeddings de um catálogo do acervo (F-041, ADR-0054).
+
+        O que sobe é o `catalog-embeddings.json` construído pelo comando pago
+        `index-catalog` do CLI. **O servidor lê o índice; nunca o constrói** (ADR-0054 D4):
+        a construção continua onde um humano aperta o botão e paga a chamada, e aqui só
+        entra desserialização validada por Pydantic. Isso honra a RAZÃO da decisão 9 do
+        ADR-0047 — derivação pesada e paga fora do request path —, e não apenas a sua letra,
+        que proíbe parser de planilha; um JSON de vetores de contrato fechado não é um.
+
+        Cinco recusas, todas ANTES de qualquer escrita — no store ou no banco:
+
+        - **papel**, antes de qualquer lookup: quem não é `platform_operator` recebe `403` e
+          não descobre o que existe;
+        - **tamanho**, antes de desserializar: `422 REFERENCE_CATALOG_INDEX_TOO_LARGE`, por
+          extenso e com a causa nomeada — documento truncado desserializaria como JSON
+          inválido e a causa verdadeira sumiria numa recusa de contrato;
+        - **documento ilegível**: `422 REFERENCE_CATALOG_INDEX_UNREADABLE`, com o código de
+          domínio nos detalhes e nada do conteúdo do arquivo;
+        - **índice de outro catálogo**: `422 REFERENCE_CATALOG_INDEX_CATALOG_MISMATCH`. O
+          `catalog_sha256` de dentro do documento tem de bater com o `source_sha256` da
+          entrada do acervo citada — publicar índice de outro catálogo devolveria códigos
+          que aquele catálogo nem tem;
+        - **conteúdo já publicado**: `409 REFERENCE_CATALOG_INDEX_ALREADY_PUBLISHED`.
+          Publicação é imutável e endereçada por digest — receita ou modelo novos têm digest
+          novo, logo entrada nova, e a anterior continua existindo.
+
+        O objeto é gravado ANTES do `commit`, pela mesma razão do acervo: linha apontando
+        para objeto inexistente degradaria a busca com um índice que falha na leitura,
+        enquanto objeto sem linha é um arquivo endereçado por conteúdo que ninguém
+        referencia — o mesmo que a próxima publicação do mesmo digest reescreveria byte a
+        byte.
+        """
+        _require_platform_operator(principal)
+        operation = "platform.reference-catalog-indexes"
+        request_hash = _request_hash(payload)
+        existing_response = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing_response is not None:
+            return ReferenceCatalogIndexResponse.model_validate(existing_response)
+
+        upload = _require_valuation_upload(
+            session,
+            application,
+            upload_id=payload.upload_id,
+            principal=principal,
+            content_type=CATALOG_CONTENT_TYPE,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        # O teto ANTES de desserializar, e sobre o tamanho DECLARADO — que
+        # `_require_valuation_upload` acabou de conferir contra o objeto realmente gravado.
+        # Ler primeiro para medir depois carregaria no processo justamente o excesso que o
+        # teto existe para manter fora dele.
+        if upload.size_bytes > CATALOG_INDEX_MAX_BYTES:
+            raise _problem(
+                "REFERENCE_CATALOG_INDEX_TOO_LARGE",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "O índice excede o limite de leitura da API e é recusado por inteiro.",
+                {"max_bytes": CATALOG_INDEX_MAX_BYTES, "size_bytes": upload.size_bytes},
+            )
+        store: ArtifactStore = application.state.artifact_store
+        try:
+            body = read_index_document(store, object_key=upload.object_key)
+            index = parse_index_document(body)
+        except ValuationValidationError as error:
+            # Só o código de domínio sai: a mensagem do pydantic pode carregar valores do
+            # arquivo, e resposta de erro não é lugar de conteúdo de artefato.
+            raise _problem(
+                "REFERENCE_CATALOG_INDEX_UNREADABLE",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "O índice enviado não pôde ser lido.",
+                {"code": error.code},
+            ) from error
+        if hashlib.sha256(body).hexdigest() != upload.sha256.lower():
+            raise _problem(
+                "INVALID_UPLOAD",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Índice com integridade divergente do digest registrado.",
+            )
+
+        catalog_record = session.get(ReferenceCatalogRecord, str(payload.reference_catalog_id))
+        if catalog_record is None:
+            raise _problem(
+                "NOT_FOUND", status.HTTP_404_NOT_FOUND, "Catálogo do acervo não encontrado."
+            )
+        if index.catalog_sha256 != catalog_record.source_sha256:
+            raise _problem(
+                "REFERENCE_CATALOG_INDEX_CATALOG_MISMATCH",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "O índice foi construído sobre outro catálogo; ele não serve o que foi citado.",
+                {
+                    "reference_catalog_id": catalog_record.id,
+                    "index_catalog_sha256": index.catalog_sha256,
+                    "catalog_source_sha256": catalog_record.source_sha256,
+                },
+            )
+        object_sha256 = upload.sha256.lower()
+        published = session.scalar(
+            select(ReferenceCatalogEmbeddingRecord).where(
+                ReferenceCatalogEmbeddingRecord.object_sha256 == object_sha256
+            )
+        )
+        if published is not None:
+            raise _problem(
+                "REFERENCE_CATALOG_INDEX_ALREADY_PUBLISHED",
+                status.HTTP_409_CONFLICT,
+                "Este índice já está publicado; publicação é imutável e um índice "
+                "reconstruído é entrada nova.",
+                {"reference_catalog_index_id": published.id},
+            )
+
+        object_key = reference_catalog_index_key(object_sha256=object_sha256)
+        store.write_object(object_key=object_key, body=body, content_type=CATALOG_CONTENT_TYPE)
+        record = ReferenceCatalogEmbeddingRecord(
+            id=str(new_uuid7()),
+            reference_catalog_id=catalog_record.id,
+            # Tudo abaixo vem de DENTRO do documento: nada é digitado, e por isso nada pode
+            # discordar do conteúdo que a leitura vai encontrar.
+            catalog_source_sha256=index.catalog_sha256,
+            text_recipe=index.text_recipe,
+            provider=index.provider,
+            model_id=index.model_id,
+            dims=index.dims,
+            code_count=len(index.codes),
+            object_key=object_key,
+            object_sha256=object_sha256,
+            status=STATUS_AVAILABLE,
+            published_by=principal.subject,
+            published_at=datetime.now(UTC),
+            withdrawn_at=None,
+        )
+        session.add(record)
+        upload.status = "VERIFIED"
+        response = _reference_catalog_index_response(record)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="REFERENCE_CATALOG_INDEX_PUBLISHED",
+            resource_type="reference_catalog_index",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+            # Sem tenant alvo: o ato vale para todos, e o `tenant_id` gravado é o do
+            # OPERADOR. Os detalhes dizem QUAL índice passou a valer, com a receita e o
+            # modelo — que é o que decide se ele será aceito na amarração.
+            details={
+                "reference_catalog_index_id": record.id,
+                "reference_catalog_id": record.reference_catalog_id,
+                "text_recipe": record.text_recipe,
+                "model_id": record.model_id,
+            },
+        )
+        session.commit()
+        return response
+
+    @application.get(
+        "/v1/platform/reference-catalog-indexes",
+        response_model=ReferenceCatalogIndexListResponse,
+        tags=["platform"],
+    )
+    async def list_reference_catalog_indexes(
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ReferenceCatalogIndexListResponse:
+        """Todos os índices, inclusive os que saíram de circulação.
+
+        Leitura sem `Idempotency-Key` e sem auditoria, como as demais listagens de
+        plataforma. O que foi retirado continua na lista, com `withdrawn_at` carimbado.
+
+        Ordenação em Python, como no acervo: SQLite (testes) e PostgreSQL (hospedado) não
+        ordenam texto do mesmo jeito, e a tela lê a ordem. O `id` fecha o critério porque é
+        UUIDv7 — dois índices do mesmo catálogo e da mesma receita saem na ordem em que
+        foram publicados, que é a ordem em que a busca os prefere.
+        """
+        _require_platform_operator(principal)
+        records = session.scalars(select(ReferenceCatalogEmbeddingRecord)).all()
+        ordered = sorted(
+            records,
+            key=lambda record: (record.catalog_source_sha256, record.text_recipe, record.id),
+        )
+        return ReferenceCatalogIndexListResponse(
+            indexes=[_reference_catalog_index_response(record) for record in ordered]
+        )
+
+    @application.post(
+        "/v1/platform/reference-catalog-indexes/{reference_catalog_index_id}/withdraw",
+        response_model=ReferenceCatalogIndexResponse,
+        tags=["platform"],
+    )
+    async def withdraw_reference_catalog_index(
+        reference_catalog_index_id: UUID,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ReferenceCatalogIndexResponse:
+        """Tira o índice de circulação: ele deixa de ser resolvido e **não** é apagado.
+
+        Apagar seria perder a trilha de qual índice serviu uma shortlist já gravada — e a
+        shortlist cita o digest do índice que a produziu. Por isso o ato carimba `status` e
+        `withdrawn_at`, e nada mais: a linha continua na listagem, o objeto continua no
+        store, e o que muda é a resolução deixar de encontrá-lo. A fonte volta a contribuir
+        só com o braço léxico, que é estado normal e não erro (ADR-0054 D6).
+
+        Sem corpo: o ato é inteiramente identificado pela rota. Retirar o que já está fora
+        de circulação devolve o registro como está, sem recarimbar a data nem auditar de
+        novo — a data verdadeira é a da retirada, não a da última repetição do pedido.
+        """
+        _require_platform_operator(principal)
+        operation = f"platform.reference-catalog-indexes.withdraw:{reference_catalog_index_id}"
+        request_hash = _request_hash(_PARAMETERLESS_COMMAND)
+        existing_response = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing_response is not None:
+            return ReferenceCatalogIndexResponse.model_validate(existing_response)
+
+        record = session.get(ReferenceCatalogEmbeddingRecord, str(reference_catalog_index_id))
+        if record is None:
+            raise _problem(
+                "NOT_FOUND", status.HTTP_404_NOT_FOUND, "Índice publicado não encontrado."
+            )
+        already_withdrawn = record.status == STATUS_WITHDRAWN
+        if not already_withdrawn:
+            record.status = STATUS_WITHDRAWN
+            record.withdrawn_at = datetime.now(UTC)
+        response = _reference_catalog_index_response(record)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        if not already_withdrawn:
+            _record_audit(
+                session,
+                principal=principal,
+                action="REFERENCE_CATALOG_INDEX_WITHDRAWN",
+                resource_type="reference_catalog_index",
+                resource_id=record.id,
+                request_id=request.state.request_id,
+                details={
+                    "reference_catalog_index_id": record.id,
+                    "reference_catalog_id": record.reference_catalog_id,
+                    "text_recipe": record.text_recipe,
                 },
             )
         session.commit()
@@ -9924,6 +10428,38 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             application.state.artifact_store, record, cache=application.state.catalog_cache
         )
 
+    def _semantic_arms(
+        session: Session, principal: Principal, cascade: Sequence[PriceCatalog]
+    ) -> list[SemanticArm]:
+        """Os braços semânticos do RECOMPUTE, um por fonte, com o motivo de cada ausência.
+
+        Chamado **só** pelos dois recomputes (ADR-0054 D7). O `GET` da shortlist não passa
+        por aqui, e é isso que preserva a invariante de que ler não paga: quem não monta
+        braço não embute rótulo nenhum.
+
+        A ordem das perguntas é a do custo crescente. Primeiro o que não sai do processo — o
+        contrato do tenant e a existência da via de embeddings —, e só depois o banco e o
+        object store, que é onde o índice publicado é procurado. Sem via de embeddings não
+        adianta achar índice: o braço não conseguiria embutir os rótulos, e a consulta teria
+        sido gasta para produzir a mesma nota.
+
+        Nenhum desfecho daqui recusa o ato: todos viram nota, inclusive o entitlement
+        ausente (D8).
+        """
+        reason = _ai_entitlement_reason(
+            session,
+            principal,
+            real_providers_enabled=runtime_settings.real_providers_enabled,
+        ) or cast(str | None, application.state.embeddings_unavailable_reason)
+        return resolve_cascade_arms(
+            session,
+            application.state.artifact_store,
+            cascade=cascade,
+            cache=application.state.semantic_index_cache,
+            adapter=application.state.embeddings_adapter,
+            unavailable_reason=reason,
+        )
+
     def _suggestions_payload(
         record: ValuationRoundRecord,
         *,
@@ -10750,8 +11286,15 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         `GET` movesse o token de concorrência, a próxima decisão do orçamentista levaria
         `409` por algo que ele não fez.
 
-        Nenhuma chamada paga acontece aqui: o braço semântico depende de índice publicado na
-        rodada, que nenhuma rota publica, e o motivo viaja em `semantic_notes`.
+        **Nenhuma chamada paga acontece aqui**, e isso é invariante, não circunstância
+        (ADR-0054 D7). O cálculo é chamado sem braço semântico (`semantic=None`), então
+        nenhum índice é procurado e nenhum rótulo é embutido: a shortlist que a primeira
+        leitura grava é léxica, e a híbrida exige o recompute, que é ato humano com
+        `Idempotency-Key` e `base_version`. O motivo viaja em `semantic_notes`.
+
+        Mover a chamada paga para cá quebraria mais do que o custo: um `GET` que gasta é um
+        `GET` que a tela dispara em polling. `tests/api/test_estimate_semantic_arm.py`
+        guarda a invariante com um adapter que falha se for tocado.
         """
         _require_valuation_reviewer(principal)
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
@@ -10824,6 +11367,14 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         Ao contrário do `GET`, este é ato humano: ele descarta a shortlist anterior, então
         exige `base_version` e move o token de concorrência da rodada.
 
+        É aqui, e só aqui, que o braço semântico roda (ADR-0054 D7): com índice publicado
+        para o catálogo da rodada, entitlement ativo e via de embeddings no processo, os
+        rótulos dos itens confirmados são embutidos numa chamada paga pequena e a shortlist
+        sai híbrida. Faltando qualquer um dos três — ou com o índice recusado na amarração —
+        a shortlist sai léxica **com o motivo declarado**, e o ato se completa: nada disso
+        devolve `403`, porque perder o recompute inteiro por falta de um braço que é enfeite
+        seria pior do que não ter o braço (D8).
+
         Shortlist que já carrega refino pago recusa com `409 SUGGESTIONS_ALREADY_REFINED` —
         recalcular descartaria o lineage da chamada paga. Artefato gravado que não valida
         como `CodeSuggestionSet` **não** cai nessa guarda: o recompute é exatamente a cura
@@ -10848,7 +11399,12 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         packet = require_takeoff_packet(revision)
         require_reviewed_packet(packet)
         require_unrefined_suggestions(suggestions_of(revision))
-        computed, notes, telemetry = compute_round_suggestions(packet, _round_catalog(record))
+        catalog = _round_catalog(record)
+        computed, notes, telemetry = compute_round_suggestions(
+            packet,
+            catalog,
+            semantic=_semantic_arms(session, principal, [catalog])[0],
+        )
         document = computed.model_dump(mode="json")
         append_revision(
             session,
@@ -10907,11 +11463,14 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         `arm=hybrid` é braço PAGO e passa pelo mesmo portão da extração: sem autorização
         contratual do tenant, `403 AI_PROCESSING_NOT_AUTHORIZED` (ADR-0012). Com ela, a
-        resposta ainda é `503 PROVIDER_UNAVAILABLE` — o braço semântico depende de índice de
-        embeddings publicado na rodada e nenhuma rota de `/v1` publica esse índice hoje.
+        resposta ainda é `503 PROVIDER_UNAVAILABLE`, e a razão MUDOU com a F-041: o índice
+        de embeddings agora É publicado (`/v1/platform/reference-catalog-indexes`), então o
+        que falta não é o artefato — é que resolver o vetor da CONSULTA é chamada paga, e
+        esta rota é um `GET` que dispara a cada tecla. A última frase deste docstring sempre
+        foi a regra real, e agora é a única: nenhuma chamada de embedding acontece dentro de
+        um `GET`, com ou sem índice (ADR-0054 D7 concentrou o gasto no recompute).
         Isso é estado honesto, não falha: cair no léxico fingindo ser híbrido esconderia do
-        orçamentista que a vizinhança semântica não participou do que ele está lendo. E
-        nenhuma chamada de embedding acontece dentro de um `GET`, com ou sem índice.
+        orçamentista que a vizinhança semântica não participou do que ele está lendo.
         """
         _require_valuation_reviewer(principal)
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
@@ -12966,6 +13525,10 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         na cadeia de revisões **sem avançar a versão da rodada**: a shortlist é artefato
         derivado, e se um `GET` movesse o token de concorrência, a próxima decisão do
         orçamentista levaria `409` por algo que ele não fez.
+
+        **Nenhuma chamada paga acontece aqui**, pelo mesmo motivo e com a mesma força da
+        irmã da medição (ADR-0054 D7): o cálculo é chamado sem braço semântico (`arms=None`),
+        nenhum índice é procurado e a shortlist gravada é léxica até o recálculo explícito.
         """
         _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
@@ -13039,6 +13602,12 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         É o caminho declarado de reler o efeito de uma reordenação da cascata: ao contrário
         do `GET`, este é ato humano, exige `base_version` e move o token de concorrência.
+
+        É também onde o braço semântico roda, **por fonte** (ADR-0054 D5): cada catálogo da
+        cascata é fundido com o índice dele, e os blocos continuam concatenados na ordem
+        instalada — não há RRF entre fontes, porque similaridade de texto não desempata a
+        precedência das tabelas. Fonte sem índice publicado entra só com o braço léxico e a
+        nota diz **qual** ficou de fora (D6); cobertura parcial é estado normal, não falha.
         """
         _require_valuation_reviewer(principal)
         operation = f"estimate-rounds.suggestions-recompute:{round_id}"
@@ -13061,8 +13630,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         packet = estimate_rounds.require_takeoff_packet(revision)
         require_reviewed_packet(packet)
         require_unrefined_suggestions(estimate_rounds.suggestions_of(revision))
+        cascade = _estimate_cascade(record)
         computed, notes, telemetry = estimate_rounds.compute_round_suggestions(
-            packet, _estimate_cascade(record)
+            packet, cascade, arms=_semantic_arms(session, principal, cascade)
         )
         document = computed.model_dump(mode="json")
         estimate_rounds.append_revision(
@@ -13119,10 +13689,14 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
     ) -> dict[str, Any]:
         """Busca léxica na cascata inteira; cada resultado diz de qual fonte e posição veio.
 
-        Sem `arm`: o braço híbrido da medição depende de índice de embeddings publicado na
-        rodada, e nenhuma rota de `/v1` publica esse índice. Expor o parâmetro aqui só para
-        devolver `503` acrescentaria superfície que não existe — o motivo do braço ausente
-        continua viajando em `semantic_notes`, e a busca nunca degrada em silêncio.
+        Sem `arm`, e a razão MUDOU com a F-041: o índice de embeddings agora é publicado
+        (`/v1/platform/reference-catalog-indexes`), então o que impede o braço híbrido aqui
+        não é mais a falta do artefato — é o verbo. Resolver o vetor da consulta é chamada
+        paga, e esta rota é um `GET` que dispara a cada tecla; pagar por tecla é o oposto
+        exato da decisão 7 do ADR-0054, que concentrou o gasto no recompute explícito.
+        Expor o parâmetro só para devolver `503` acrescentaria superfície que não existe —
+        o motivo do braço ausente continua viajando em `semantic_notes`, e a busca nunca
+        degrada em silêncio.
         """
         _require_estimate_reader(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)

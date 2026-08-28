@@ -41,6 +41,20 @@ referência de contrato, quem autorizou e quando. Autorizar um cliente numa jorn
 não está em piloto é recusado pelo servidor, com a frase por extenso, e nada é gravado.
 Revogar não apaga: a linha permanece na lista com a data da revogação.
 
+A tela de Plataforma administra também o **índice de embeddings** de cada tabela do acervo
+([F-041](../features/F-041-braco-semantico-hospedado/feature.md),
+[ADR-0054](../adr/0054-indice-de-embeddings-publicado-e-braco-semantico-hospedado.md)) — é
+ele que faz a shortlist sair híbrida no recálculo. O operador lista os índices publicados
+(com a tabela indexada, a receita de texto, o provider, o modelo, as dimensões, a contagem
+de códigos, quem publicou e quando, e o estado escrito por extenso), publica o
+`catalog-embeddings.json` e retira um índice de circulação. O índice é **construído pelo
+comando pago `index-catalog` do CLI, nunca pela tela**: o servidor lê e confere o
+documento, e a tela diz isso por escrito para ninguém procurar um botão que não existe.
+Retirar não apaga — o arquivo continua existindo, a shortlist já calculada continua citando
+o digest do índice que a produziu, e a fonte volta a entrar só pelo braço léxico. As quatro
+recusas da publicação (acima do teto de leitura, documento ilegível, índice de outro
+catálogo e conteúdo já publicado) aparecem em português, nunca como código cru.
+
 Erros de MIME, limite ou PDF corrompido são apresentados antes de iniciar o job.
 
 ### 3. Processamento
@@ -502,6 +516,20 @@ prancha só é desenhada quando o registro contra a tinta a confirmou
 (`anchor: registered`); sem confirmação, a tela declara "localização não confirmada —
 decida pela lista" em vez de apontar um lugar possivelmente errado.
 
+Conferir quantidade contra desenho pede área e pede ritmo. Na revisão do takeoff a prancha
+ocupa a coluna larga e abre em tela cheia por gesto ("Ampliar", e `Esc` reduz), **sem
+perder a aproximação corrente**: quem chegou até um item continua nele, maior. Cada âncora
+leva o mesmo emblema numerado da lista ao lado, desenhado sempre **fora** do próprio
+recorte para não cobrir a linha da legenda que ele marca, e o retângulo tracejado continua
+distinguindo a âncora bruta da registrada. A decisão ganhou um caminho de lote sem virar
+"confirmar tudo": a orçamentista marca, item a item, as linhas que conferiu certas e anota
+as marcadas como confirmadas de uma vez, **sem tocar em quantidade nem unidade** — o que
+ela afirma é que a legenda leu certo. Nada nasce marcado; item já decidido e item de
+quantidade ambígua ficam fora da marcação em massa, com o motivo escrito ao lado da caixa,
+nunca só no cinza de um controle desabilitado. Marcar não é anotar e anotar não é gravar: o
+painel do lote está sempre visível, inclusive vazio, e a rodada só muda de versão quando o
+lote inteiro é gravado — uma revisão para todas as decisões, ou nenhuma.
+
 A busca de código tem dois gestos com custos diferentes, e a tela diz qual é qual. Ao
 digitar (a partir de três caracteres, com espera curta entre teclas), a consulta sai pelo
 **braço lexical fixado**: nenhuma chamada paga de embedding, nenhum cache de consulta
@@ -521,6 +549,21 @@ digest-base lido — rodada que andou vira o conflito de sempre, com recarregar 
 novo — e nunca descarta refino pago: shortlist com lineage de chamada paga é recusada pelo
 servidor em vez de sobrescrita. É o caminho de cura para a shortlist gravada por uma
 versão anterior do matcher, que antes obrigava a apagar o arquivo pela mão.
+
+**A primeira leitura grava a shortlist léxica; a híbrida exige o recálculo**
+([F-041](../features/F-041-braco-semantico-hospedado/feature.md),
+[ADR-0054](../adr/0054-indice-de-embeddings-publicado-e-braco-semantico-hospedado.md)). O
+índice de embeddings passou a ser artefato publicado pela plataforma, e ler a shortlist
+continua não custando nada — é o recálculo, que é gesto explícito, que embute os rótulos e
+traz a vizinhança semântica. No orçamento-base isso vale **por tabela**: cada fonte da
+cascata é fundida com o índice dela, os blocos continuam saindo na ordem que a orçamentista
+instalou, e a tabela sem índice entra só pelo braço léxico — com a nota dizendo **qual**
+ficou de fora, em vez de uma frase única sobre o braço estar indisponível.
+
+Nada disso recusa o recálculo. Contrato de IA inativo, ambiente sem provider, índice
+ausente ou índice recusado: em todos, a shortlist sai léxica com o motivo escrito e o ato se
+completa. Tirar o recálculo inteiro por falta de um braço que é acréscimo levaria junto o
+léxico, que não custa nada e é o que a orçamentista usa todo dia.
 
 ## O orçamento é assinado antes de sair
 

@@ -601,10 +601,14 @@ def test_the_hybrid_shortlist_declares_its_semantic_lineage(
     )
 
     assert suggestions.suggester_version == SCO_HYBRID_SUGGESTER_VERSION
+    # `semantic` é lista desde o ADR-0054 (aceite humano item 3): a cascata roda um braço
+    # por fonte. Com um catálogo só ela tem exatamente um elemento, e ele carimba a fonte.
     assert suggestions.semantic is not None
-    assert suggestions.semantic.model_id == FIXTURE_EMBEDDINGS_MODEL
-    assert suggestions.semantic.dims == FIXTURE_EMBEDDINGS_DIMS
-    assert suggestions.semantic.index_sha256 == index.index_sha256
+    assert len(suggestions.semantic) == 1
+    assert suggestions.semantic[0].model_id == FIXTURE_EMBEDDINGS_MODEL
+    assert suggestions.semantic[0].dims == FIXTURE_EMBEDDINGS_DIMS
+    assert suggestions.semantic[0].index_sha256 == index.index_sha256
+    assert suggestions.semantic[0].catalog_sha256 == catalog.source_sha256
     assert suggestions.refinement is None
     # A dominância do domínio continua valendo: unidade compatível manda sobre relevância.
     for suggestion in suggestions.suggestions:
@@ -810,7 +814,7 @@ def test_the_same_call_with_an_index_still_publishes_the_hybrid_lineage(
 
     assert hybrid.suggester_version == SCO_HYBRID_SUGGESTER_VERSION
     assert hybrid.semantic is not None
-    assert hybrid.semantic.index_sha256 == index.index_sha256
+    assert [lineage.index_sha256 for lineage in hybrid.semantic] == [index.index_sha256]
     assert lexical.semantic is None
     # As duas vias respondem sobre os mesmos itens; o que muda é quem entra e em que ordem.
     assert [suggestion.item_id for suggestion in hybrid.suggestions] == [
