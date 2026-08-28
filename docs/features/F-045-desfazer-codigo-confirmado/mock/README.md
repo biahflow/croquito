@@ -1,8 +1,8 @@
 # Design Approval Package — F-045, desfazer um código confirmado
 
 Classification: INTERFACE_CHANGE  
-Revision: 1  
-Status: **Approved (2026-08-28)**  
+Revision: 2  
+Status: **Revisão 1 approved (2026-08-28); revisão 2 aguardando aprovação**  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -29,6 +29,17 @@ Este pacote decide a **forma** dessas decisões na tela. Se o ADR mudar, o pacot
 | Aprovado por | Daniel Campos |
 | Data | 2026-08-28 |
 | Revisão | 1 |
+
+### Revisão 2 — o mesmo ato na medição (2026-08-28)
+
+| Campo | Valor |
+| --- | --- |
+| O que se propõe | o estado 6: a superfície de desfazer na jornada de **medição**, que a revisão 1 registrou como questão aberta |
+| Por que | a rota irmã existe e é testada desde a revisão 1, e ficou sem tela. Uma rota sem superfície é uma capacidade que só o time sabe que existe |
+| Aprovado por | **pendente** |
+| Data | — |
+| Revisão | 2 |
+| O que **não** muda | os estados 1 a 5 e as seis decisões da revisão 1; o ato, a copy e o fluxo são os mesmos — o que muda é onde eles ficam, porque ali o pacote era uma frase e vira lista |
 | Explicitamente **não** coberto | a copy final; os rótulos, códigos e preços das capturas, que são sintéticos; **o que acontece quando o orçamento já foi aprovado** (unknown 1 da feature, decisão do dono); e o ato inverso, desfazer uma rejeição, que está fora de escopo |
 
 ## Artefato
@@ -42,6 +53,7 @@ Este pacote decide a **forma** dessas decisões na tela. Se o ADR mudar, o pacot
 | [`03.png`](03.png) | Pacote fechado: desfazer reabre, e isso vai escrito antes do clique |
 | [`04.png`](04.png) | Depois: o que foi desfeito continua à vista |
 | [`05.png`](05.png) | As quatro recusas, em português |
+| [`06-na-medicao.png`](06-na-medicao.png) | **Revisão 2** — o mesmo ato na jornada de medição |
 
 ## Superfícies e estados incluídos
 
@@ -53,6 +65,7 @@ Este pacote decide a **forma** dessas decisões na tela. Se o ADR mudar, o pacot
 | Caixa de desfazer | motivo em branco | sim (05) — recusa nomeada |
 | Caixa de desfazer | conflito de versão e par já desfeito | sim (05) |
 | Rodada no regime antigo (um código por elemento) | sim (05) — o ato não se aplica |
+| Pacote do elemento na **medição** | a frase do pacote vira lista, com um ato por código | sim (06) |
 | Pacote do elemento | carregando | **não** — a etapa já tem o seu, e a revogação não introduz espera nova |
 
 ## Proveniência dos valores visuais
@@ -94,6 +107,14 @@ Nenhuma cor nova é introduzida por este pacote, e isso é decisão (nº 2 abaix
    "decidido e desfeito" não podem parecer a mesma coisa. A lista mostra o código riscado, o
    motivo, quem e quando — do conjunto corrente, sem obrigar ninguém a comparar revisões.
 
+7. **Na medição, a frase do pacote vira lista** *(revisão 2)*. Ali o pacote era uma linha de
+   texto com os códigos entre parênteses, e não havia onde pendurar um ato por código. Vira
+   lista, e cada código recebe o mesmo ato do orçamento — mesma caixa, mesma copy, mesmo
+   aviso de reabertura. Duas coisas **não** atravessam, e as duas são do domínio: a linha
+   "apaga o precedente…", porque o índice é do orçamento-base e seria falsa ali, e a recusa
+   depois da aprovação, porque a aprovação nominal é do orçamento. Fora isso, forma única de
+   propósito: duas formas para o mesmo ato criariam dois vocabulários para a mesma coisa.
+
 ## Questões abertas
 
 - **A copy final** de todos os textos, inclusive as quatro recusas.
@@ -102,8 +123,9 @@ Nenhuma cor nova é introduzida por este pacote, e isso é decisão (nº 2 abaix
   mais. A proposta do ADR é recusar; a decisão é do dono.
 - **Se a lista de desfeitos deve aparecer quando está vazia** — o pacote a desenha só quando
   há o que mostrar, pela mesma regra de "nenhum controle inerte" que a F-044 seguiu.
-- **Se o mesmo ato deve existir na jornada de medição com a mesma forma.** O domínio é
-  compartilhado e a rota será irmã; a tela da medição não está desenhada aqui.
+- ~~**Se o mesmo ato deve existir na jornada de medição com a mesma forma.**~~ — resolvido
+  pela **revisão 2**: existe, com a mesma forma, menos as duas linhas que só valem no
+  orçamento-base.
 
 ## Notas para quem implementar
 

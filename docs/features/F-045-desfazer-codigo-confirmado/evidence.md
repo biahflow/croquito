@@ -42,9 +42,12 @@ orçamento, **um efeito a mais na mesma transação**: `precedents.revoke_closur
 apaga a observação que o fechamento desta praça gravou para aquele par — só desta praça, só
 de origem `round`.
 
-**Tela** (`apps/web/src/orcamento`): `revogacao.ts` (módulo puro), `CaixaDeDesfazerCodigo` e
-`ListaDeDesfeitos`, com o motivo obrigatório, as três linhas de efeito, o botão que muda de
-nome quando o pacote está fechado, e a lista do que continua desfeito. Nenhuma cor nova.
+**Tela**: `apps/web/src/codeRevocation.ts` (módulo puro, na raiz porque o ato é o mesmo nas
+duas jornadas) e, em cada uma, `CaixaDeDesfazerCodigo` + `ListaDeDesfeitos` com a copy
+própria — motivo obrigatório, efeito escrito antes do clique, botão que muda de nome quando o
+pacote está fechado, e a lista do que continua desfeito. Nenhuma cor nova em nenhuma das
+duas. Na **medição** (T4, revisão 2 do pacote) a frase do pacote virou lista, e a copy tem
+**duas** linhas de efeito em vez de três: não há precedente a apagar ali.
 
 ## Três coisas que a execução descobriu
 
@@ -65,7 +68,7 @@ nome quando o pacote está fechado, e a lista do que continua desfeito. Nenhuma 
 | --- | --- |
 | `make check` | exit 0 |
 | `make test` | 2843 pytest · 1462 web · 261 campo, todos verdes |
-| Testes novos | 12 no domínio (`tests/valuation/test_assignment.py`), 9 na API (`tests/api/test_precedents.py`, `test_valuation_round_routes.py`, `test_estimate_round_routes.py`), 11 na tela (`apps/web/src/orcamento/revogacao.test.tsx`) |
+| Testes novos | 12 no domínio (`tests/valuation/test_assignment.py`), 9 na API (`tests/api/test_precedents.py`, `test_valuation_round_routes.py`, `test_estimate_round_routes.py`), 11 no módulo puro (`apps/web/src/codeRevocation.test.tsx`) e 6 na tela da medição (`apps/web/src/medicao/revogacao.test.tsx`) |
 | Contrato | `docs/architecture/API_CONTRACT.md` e `tests/api/openapi.snapshot.json` atualizados; o drift guard das rotas de `estimate-rounds` e a lista fechada da medição incluem as duas rotas novas |
 | Rendido | os dois componentes renderizados com a folha real do app, conferidos em imagem (caixa com pacote fechado e lista de desfeitos) |
 
@@ -75,5 +78,5 @@ nome quando o pacote está fechado, e a lista do que continua desfeito. Nenhuma 
 - **Desfazer a rejeição de um item** — o ato inverso do outro lado, fora do escopo desta
   feature.
 - **Rollback de revisão** — outra feature, para outro problema.
-- **A tela da medição**: a rota irmã existe e é testada, mas a jornada de medição não recebeu
-  a superfície; o pacote de design cobre só o orçamento.
+- ~~**A tela da medição**~~ — entregue na **T4** (2026-08-28), sob a revisão 2 do pacote de
+  design, que aguarda aprovação.

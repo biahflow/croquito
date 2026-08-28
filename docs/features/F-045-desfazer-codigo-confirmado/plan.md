@@ -23,6 +23,7 @@ rodada, e a ordem entre elas é de leitura, não de entrega.
 | T1 | Domínio: `apply_code_revocation`, o registro em `revocations` e a reabertura do pacote | **Entregue** |
 | T2 | API: as duas rotas irmãs e a compensação do índice de precedentes | **Entregue** |
 | T3 | Tela: desfazer no cartão, o efeito à vista e a lista de desfeitos | **Entregue** |
+| T4 | [A mesma superfície na jornada de medição](tasks/T4-tela-da-medicao.md) | **Entregue** — sob a revisão 2 do pacote |
 
 ## O que a execução decidiu, e o ADR não decidia
 
@@ -40,6 +41,18 @@ rodada, e a ordem entre elas é de leitura, não de entrega.
    por baixo dele sem que o portão de exportação notasse. Virou a D7 do ADR-0061.
 5. **`_ensure_same_plate` foi extraída** de `_ensure_batch_decidable` para valer também na
    revogação. A checagem não podia continuar existindo só no caminho que a descobriu primeiro.
+
+## A T4 veio depois, e por quê
+
+A rota da medição nasceu junto com a do orçamento (T2) e ficou sem tela, registrada como
+questão aberta do pacote. O dono pediu o fechamento em 2026-08-28, e a **revisão 2** do pacote
+desenhou a forma: ali o pacote era uma frase com os códigos entre parênteses, sem onde
+pendurar um ato por código.
+
+A T4 também **moveu o módulo puro** para `apps/web/src/codeRevocation.ts`. As duas jornadas
+não se importam entre si por decisão (ADR-0028 D9), e duplicar aquelas funções criaria duas
+verdades para regras que precisam ser uma só — em especial a de que um par reconfirmado sai
+da lista de desfeitos. O que continua de cada jornada é a copy, o transporte e os componentes.
 
 ## Integração
 

@@ -646,18 +646,12 @@ export type CodeClosureDraft = {
 };
 
 /**
- * Desfazer um par `(elemento, código)` já confirmado (F-045).
- *
- * `note` não é opcional: desfazer é o ato que alguém vai auditar depois, e a frase escrita é
- * o que separa o conserto do descuido. O tipo carrega essa obrigação para que a tela não
- * consiga montar o pedido sem ela.
+ * Desfazer um par `(elemento, código)` já confirmado (F-045). O tipo mora na raiz porque o
+ * ato é o mesmo nas duas jornadas; aqui ele é reexportado para quem já o importava daqui.
  */
-export type CodeRevocationDraft = {
-  itemId: string;
-  code: string;
-  baseVersion: number;
-  note: string;
-};
+import type { CodeRevocationDraft } from "../codeRevocation";
+
+export type { CodeRevocationDraft };
 
 export type CodeDecisionDraft = {
   itemId: string;
