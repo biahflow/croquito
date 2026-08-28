@@ -8,6 +8,8 @@ import {
   AutoriaDeContribuicao,
   BannerOrcamentoMudou,
   BlocoConsumoDoTeto,
+  FormularioDoAcervo,
+  PainelParcelasDeCanteiro,
   EstadoDoBracoSemantico,
   FaixaTetoEstourado,
   LinhaTetoDaRodada,
@@ -36,18 +38,35 @@ import {
   itemJaRevisado,
 } from "./OrcamentoApp";
 import {
+  ACERVO_E_RECEITA,
+  ACERVO_PARCELA_NAO_NASCE,
+  ACERVO_REAPLICAR_SUBSTITUI,
+  ACERVO_TEXTO_TRAZER_DE_VOLTA,
   AVISO_ACERVO_FILTRADO,
   AVISO_AMBIGUO_FORA_DO_LOTE,
   AVISO_ITEM_JA_REVISADO,
   AVISO_MEMORIA,
   AVISO_ORCAMENTO,
   AVISO_ORCAMENTO_SEM_RODADA,
+  CANTEIRO_QUANTIDADE_NA_MONTAGEM,
   DICA_LOTE_VAZIO,
   DICA_REGIME,
+  fraseCodigosAusentes,
+  fraseParametrosFaltantes,
   RESUMO_MATRIZ_VAZIO,
   origensAceitasNaCascata,
 } from "./labels";
 import type { ReferenceCatalogOption } from "./api";
+import {
+  avancarParaParametros,
+  contribuicoesDoAcervo,
+  escolherAcervo,
+  fluxoInicial,
+  receberPrevia,
+  type FluxoDoAcervo,
+  type SiteSetupKit,
+  type SiteSetupPreviewResponse,
+} from "./acervo";
 import {
   assembleCalcMatrix,
   emptyContributionForm,
@@ -1784,5 +1803,308 @@ describe("EstadoDoBracoSemantico", () => {
 
     expect(html).not.toContain("Onde o braço semântico não entrou");
     expect(html).not.toContain("<ul");
+  });
+});
+
+/**
+ * O acervo de parcelas de canteiro (F-042, pacote de design revisão 1 aprovado em
+ * 2026-08-28). Das 43 linhas do documento real, 24 não têm origem nenhuma na prancha; o
+ * que estes testes guardam são as decisões que impedem essa aceleração de virar planilha
+ * que ninguém revisou.
+ */
+const KIT_DO_CANTEIRO: SiteSetupKit = {
+  kit_id: "kit-canteiro-smh",
+  name: "Canteiro — contrato SMH/Rio",
+  kit_version: 1,
+  origin: "platform",
+  source_label: "acervo da plataforma",
+  parcel_count: 3,
+  parameters: [
+    { name: "prazo de obra", unit: "mes", cited_by: 6 },
+    { name: "semiperímetro", unit: "m", cited_by: 2 },
+  ],
+  created_at: "2026-08-12T10:00:00Z",
+};
+
+const PREVIA_DO_CANTEIRO: SiteSetupPreviewResponse = {
+  round_id: "round-1",
+  version: 7,
+  kit_id: KIT_DO_CANTEIRO.kit_id,
+  kit_version: 1,
+  rows: [
+    {
+      parcel_id: "p1",
+      code: "AC01100010",
+      label: "Aluguel de banheiro químico",
+      operands: [
+        { name: "UNIDADES", value: "1", unit: "un" },
+        { name: "PRAZO", value: "2", unit: "mes" },
+      ],
+      quantity: "2.00",
+    },
+    {
+      parcel_id: "p2",
+      code: "AC02200030",
+      label: "Vigia diurno",
+      operands: [
+        { name: "DIAS", value: "23", unit: null },
+        { name: "HORAS", value: "12", unit: "h" },
+      ],
+      quantity: "276.00",
+    },
+  ],
+  excluded_parcel_ids: [],
+};
+
+function fluxoNoPasso(passo: "acervo" | "parametros" | "previa"): FluxoDoAcervo {
+  const escolhido = escolherAcervo(fluxoInicial(), KIT_DO_CANTEIRO.kit_id);
+  if (passo === "acervo") {
+    return escolhido;
+  }
+  const comCampos = avancarParaParametros(escolhido, KIT_DO_CANTEIRO);
+  if (passo === "parametros") {
+    return comCampos;
+  }
+  return receberPrevia(comCampos, PREVIA_DO_CANTEIRO);
+}
+
+describe("FormularioDoAcervo", () => {
+  const noop = () => undefined;
+
+  function render(
+    fluxo: FluxoDoAcervo,
+    over: Partial<Parameters<typeof FormularioDoAcervo>[0]> = {},
+  ): string {
+    return renderToStaticMarkup(
+      <FormularioDoAcervo
+        kits={[KIT_DO_CANTEIRO]}
+        fluxo={fluxo}
+        recusa={null}
+        submitting={false}
+        onEscolher={noop}
+        onAvancar={noop}
+        onParametro={noop}
+        onPreVisualizar={noop}
+        onVoltar={noop}
+        onAlternar={noop}
+        onAplicar={noop}
+        onCancelar={noop}
+        {...over}
+      />,
+    );
+  }
+
+  /**
+   * O ponto inegociável: um "aplicar tudo" ao lado da escolha destruiria o controle do
+   * risco declarado na feature, e por isso ele não existe em passo nenhum antes da prévia.
+   */
+  it("não oferece aplicar no passo 1 nem no passo 2", () => {
+    const passo1 = render(fluxoNoPasso("acervo"));
+    expect(passo1).toContain("Continuar");
+    expect(passo1).not.toContain("Aplicar 2");
+    expect(passo1).not.toContain("Aplicar as");
+
+    const passo2 = render(fluxoNoPasso("parametros"));
+    expect(passo2).toContain("Pré-visualizar as parcelas");
+    expect(passo2).not.toContain("Aplicar 2");
+  });
+
+  it("no passo 1 mostra a versão do acervo, que é parte da identidade dele", () => {
+    const html = render(fluxoNoPasso("acervo"));
+
+    expect(html).toContain("Canteiro — contrato SMH/Rio");
+    expect(html).toContain("versão 1");
+    // Escolhido dito por extenso, não só pela borda do cartão.
+    expect(html).toContain("escolhido");
+    expect(html).toContain(ACERVO_E_RECEITA);
+  });
+
+  /** Decisão 4: campo nasce vazio, com a unidade e o peso do que está sendo declarado. */
+  it("no passo 2 os campos nascem vazios, com unidade e quantas parcelas citam", () => {
+    const html = render(fluxoNoPasso("parametros"));
+
+    expect(html).toContain("prazo de obra");
+    expect(html).toContain("citado por 6 parcelas");
+    expect(html).toContain("semiperímetro");
+    expect(html).toContain("citado por 2 parcelas");
+    // Nenhum valor pré-preenchido: todo campo do passo 2 está vazio.
+    expect(html).toContain('value=""');
+    expect(html).not.toContain('value="2"');
+    expect(html).toContain("não preenche nenhum sozinho");
+  });
+
+  /** Decisão 3: a prévia mostra a CONTA — os operandos nomeados —, não só a quantidade. */
+  it("no passo 3 mostra os operandos nomeados de cada parcela, não só a quantidade", () => {
+    const html = render(fluxoNoPasso("previa"));
+
+    expect(html).toContain("UNIDADES 1 un × PRAZO 2 mes");
+    expect(html).toContain("DIAS 23 × HORAS 12 h");
+    expect(html).toContain("276,00");
+    expect(html).toContain("Aplicar 2 parcelas");
+  });
+
+  it("a recusa que nomeia os faltantes marca os campos e não aplica nada", () => {
+    const html = render(fluxoNoPasso("parametros"), {
+      recusa: {
+        parametros: ["prazo de obra", "semiperímetro"],
+        codigos: [],
+        mensagem: fraseParametrosFaltantes(["prazo de obra", "semiperímetro"]),
+      },
+    });
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("Nada foi aplicado");
+    expect(html).toContain("prazo de obra e semiperímetro");
+    // Os dois campos marcados, e a falta dita ao lado — não só pela borda.
+    expect(html).toContain('aria-invalid="true"');
+    expect(html).toContain("falta declarar");
+  });
+
+  it("a recusa do código ausente nomeia o código", () => {
+    const html = render(fluxoNoPasso("parametros"), {
+      recusa: {
+        parametros: [],
+        codigos: ["AC03100050"],
+        mensagem: fraseCodigosAusentes(["AC03100050"]),
+      },
+    });
+
+    expect(html).toContain("AC03100050");
+    expect(html).toContain("Nada foi aplicado");
+  });
+
+  /** Decisão 6: a removida sai da conta, não da tela — e volta com um clique. */
+  it("a parcela removida continua visível, dita removida, e as demais não mudam", () => {
+    const html = render({
+      ...fluxoNoPasso("previa"),
+      excluidos: ["p1"],
+    });
+
+    expect(html).toContain("Aluguel de banheiro químico");
+    expect(html).toContain("acervo-linha-removida");
+    // "Removida" por extenso, além do risco na fonte.
+    expect(html).toContain("removida");
+    expect(html).toContain(ACERVO_PARCELA_NAO_NASCE);
+    expect(html).toContain(ACERVO_TEXTO_TRAZER_DE_VOLTA);
+    // A que ficou continua com a conta e a quantidade intactas.
+    expect(html).toContain("DIAS 23 × HORAS 12 h");
+    expect(html).toContain("276,00");
+    expect(html).toContain("1 será aplicada");
+    expect(html).toContain("1 removida");
+    expect(html).toContain("Aplicar 1 parcela");
+  });
+
+  it("com todas removidas o ato fica indisponível — não há o que aplicar", () => {
+    const html = render({
+      ...fluxoNoPasso("previa"),
+      excluidos: ["p1", "p2"],
+    });
+
+    expect(html).toContain("Aplicar 0 parcelas");
+    // A asserção é sobre O BOTÃO de aplicar: `toContain("disabled")` na marcação inteira
+    // passaria por causa de qualquer outro controle desabilitado da prévia.
+    const aplicar = html.match(/<button[^>]*>Aplicar 0 parcelas</)?.[0] ?? "";
+    expect(aplicar).not.toBe("");
+    expect(aplicar).toContain("disabled");
+  });
+});
+
+describe("PainelParcelasDeCanteiro", () => {
+  const doAcervo = contribuicoesDoAcervo(
+    KIT_DO_CANTEIRO,
+    PREVIA_DO_CANTEIRO,
+    PREVIA_DO_CANTEIRO.rows,
+  );
+  const aMao: CalcContributionDraft = {
+    itemId: "entulho-extra",
+    code: "AC09900001",
+    itemQuantity: null,
+    label: "Entulho — caçamba extra",
+    basis: "standalone",
+    recipe: "declared_product",
+    operands: [{ name: "CAÇAMBAS", value: "3", unit: "un" }],
+    deductions: [],
+    dependsOnCode: "",
+    note: "",
+  };
+
+  it("declara o estado vazio sem inventar parcela nenhuma", () => {
+    const html = renderToStaticMarkup(
+      <PainelParcelasDeCanteiro
+        parcelas={[]}
+        aplicacao={null}
+        aviso={null}
+        onAplicarAcervo={() => undefined}
+        submitting={false}
+      />,
+    );
+
+    expect(html).toContain("nenhuma parcela nesta rodada");
+    expect(html).toContain("Aplicar um acervo");
+    expect(html).not.toContain("276,00");
+  });
+
+  /** Decisão 7: o que distingue a origem é o TEXTO do selo, nunca a cor. */
+  it("distingue a parcela do acervo da autorada à mão por texto", () => {
+    const html = renderToStaticMarkup(
+      <PainelParcelasDeCanteiro
+        parcelas={[...doAcervo, aMao]}
+        aplicacao={null}
+        aviso={null}
+        onAplicarAcervo={() => undefined}
+        submitting={false}
+      />,
+    );
+
+    expect(html).toContain("do acervo v1");
+    expect(html).toContain("autorada à mão");
+    // A quantidade exibida é a string que o servidor computou.
+    expect(html).toContain("276,00");
+    // A autorada à mão não ganha quantidade fabricada: quem a computa é o servidor.
+    expect(html).toContain(CANTEIRO_QUANTIDADE_NA_MONTAGEM);
+  });
+
+  it("o carimbo mostra os parâmetros da última aplicação e diz que não pré-preenche", () => {
+    const html = renderToStaticMarkup(
+      <PainelParcelasDeCanteiro
+        parcelas={doAcervo}
+        aplicacao={{
+          kitId: KIT_DO_CANTEIRO.kit_id,
+          kitName: KIT_DO_CANTEIRO.name,
+          kitVersion: 1,
+          parametros: { "prazo de obra": "2", "semiperímetro": "132.21" },
+          parcelas: 2,
+          appliedAt: "2026-08-28T14:02:00Z",
+        }}
+        aviso={null}
+        onAplicarAcervo={() => undefined}
+        submitting={false}
+      />,
+    );
+
+    expect(html).toContain("prazo de obra 2");
+    expect(html).toContain("semiperímetro 132,21");
+    expect(html).toContain("começa com os campos vazios");
+    expect(html).toContain(ACERVO_REAPLICAR_SUBSTITUI);
+    // Com acervo já aplicado, o ato oferecido é reaplicar.
+    expect(html).toContain("Reaplicar um acervo");
+  });
+
+  /** Falha de leitura não some em silêncio, e não esconde o resto da etapa. */
+  it("declara a falha de leitura do acervo em vez de ficar calado", () => {
+    const html = renderToStaticMarkup(
+      <PainelParcelasDeCanteiro
+        parcelas={[]}
+        aplicacao={null}
+        aviso="A lista não pôde ser lida."
+        onAplicarAcervo={null}
+        submitting={false}
+      />,
+    );
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("A lista não pôde ser lida.");
+    // Sem acervo a aplicar, nenhum botão inerte é desenhado.
+    expect(html).not.toContain("Aplicar um acervo");
   });
 });
