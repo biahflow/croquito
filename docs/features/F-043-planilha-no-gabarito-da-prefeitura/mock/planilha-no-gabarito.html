@@ -1,0 +1,726 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-043 — A planilha sai no gabarito da prefeitura</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css (identidade "Grafite técnico"). O que é novo está
+         marcado como NOVO na tabela de proveniência do README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --recusa: #a33d32;
+        --atencao: #7c5210;
+        /* NOVO — família do gabarito. Terracota fria, escolhida por não colidir com nenhum
+           significado já em uso: verde = aprovado, âmbar = atenção, vermelho = recusa. */
+        --gabarito: #8a5a2b;
+        --gabarito-soft: #f7f0e7;
+        --gabarito-line: #ddc4a3;
+        --gabarito-ink: #5c3c1c;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0 0 6px;
+        max-width: 78ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .duas {
+        display: grid;
+        grid-template-columns: 1fr 330px;
+        gap: 16px;
+        align-items: start;
+      }
+      .painel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+        background: var(--surface);
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+      /* A rendição da planilha imita a grade do Excel de propósito: é o artefato que o
+         cliente recebe, e a aprovação é sobre a forma dele. */
+      .grade {
+        border: 1px solid #c9c9c4;
+        border-radius: 4px;
+        overflow: hidden;
+        background: #ffffff;
+      }
+      .grade table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: "Segoe UI", Inter, system-ui, sans-serif;
+        font-size: 12px;
+      }
+      .grade th,
+      .grade td {
+        border: 1px solid #d8d8d3;
+        padding: 4px 7px;
+        text-align: right;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      .grade th:nth-child(1),
+      .grade td:nth-child(1),
+      .grade th:nth-child(2),
+      .grade td:nth-child(2),
+      .grade th:nth-child(3),
+      .grade td:nth-child(3),
+      .grade th:nth-child(4),
+      .grade td:nth-child(4) {
+        text-align: left;
+      }
+      .grade thead th {
+        background: #efefe9;
+        font-size: 11px;
+        font-weight: 600;
+        color: #3b3f45;
+      }
+      .grade tr.grupo td {
+        background: #e4e9ef;
+        font-weight: 700;
+        color: #23303f;
+        text-align: left;
+      }
+      .grade tr.zerada td {
+        color: #8b9099;
+      }
+      .grade tr.preenchida td.qtd,
+      .grade tr.preenchida td.total {
+        background: #eef7f2;
+        color: #0e1116;
+        font-weight: 600;
+      }
+      .grade tr.total-geral td {
+        background: #efefe9;
+        font-weight: 700;
+        color: #14181d;
+      }
+      .grade caption {
+        caption-side: top;
+        text-align: left;
+        padding: 6px 8px;
+        font-size: 11px;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid #d8d8d3;
+      }
+      .abas {
+        display: flex;
+        gap: 3px;
+        padding: 5px 6px 0;
+        background: var(--surface-subtle);
+        border: 1px solid #c9c9c4;
+        border-bottom: 0;
+        border-radius: 4px 4px 0 0;
+      }
+      .abas span {
+        font-size: 11.5px;
+        padding: 5px 11px;
+        border: 1px solid #c9c9c4;
+        border-bottom: 0;
+        border-radius: 4px 4px 0 0;
+        background: #e7e7e1;
+        color: var(--ink-secondary);
+      }
+      .abas span.ativa {
+        background: #ffffff;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .memoria {
+        font-family: "Segoe UI", Inter, system-ui, sans-serif;
+        font-size: 12px;
+      }
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+      }
+      .selo.gabarito {
+        border-color: var(--gabarito-line);
+        background: #ffffff;
+        color: var(--gabarito);
+      }
+      .selo.aprovado {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      label.campo {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      label.campo select,
+      label.campo input {
+        font: inherit;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.primario {
+        background: var(--accent);
+        border-color: var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      button[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .acoes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .acoes .empurra {
+        margin-left: auto;
+      }
+      .aviso {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.gabarito {
+        border-color: var(--gabarito-line);
+        background: var(--gabarito-soft);
+        color: var(--gabarito-ink);
+      }
+      .aviso.recusa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      .aviso.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .aviso strong {
+        color: inherit;
+      }
+      .carimbo {
+        border: 1px solid var(--gabarito-line);
+        border-left: 3px solid var(--gabarito);
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: #ffffff;
+        display: grid;
+        gap: 3px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .nota-implementador {
+        font-size: 12px;
+        color: var(--muted);
+        padding: 0 16px 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-043 — A planilha sai no gabarito da prefeitura, com memória de cálculo</h1>
+      <p>
+        Design Approval Package, revisão 1. A superfície que muda aqui é <strong>o arquivo que a
+        rodada publica</strong>: ele deixa de ser uma aba criada do zero com uma linha por item
+        precificado e passa a ser o gabarito de ordem fixa que a prefeitura recebe, com a
+        memória de cálculo ao lado.
+      </p>
+      <p>
+        Gabarito entregável decidido pelo dono em 28/08/2026: a aba
+        <strong>PLANILHA ORÇAMENTÁRIA (433 códigos)</strong>, não a PLANILHA PADRÃO ORDENADA
+        (518). Os códigos, descrições e valores abaixo são <strong>sintéticos</strong>; a
+        estrutura — grupos, numeração <code>GG.N</code>, lacuna de grupo, linhas zeradas — é o
+        que está sendo aprovado.
+      </p>
+    </header>
+
+    <main>
+      <section class="estado">
+        <h2>
+          1 — O que a rodada publica hoje, e o que passa a publicar
+          <small>Mesma etapa de aprovação; o que muda é a forma do arquivo.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Hoje — aba “ORÇAMENTO”, criada do zero</h3>
+              <div class="grade">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ITEM</th>
+                      <th>CÓDIGO</th>
+                      <th>DESCRIÇÃO</th>
+                      <th>UN</th>
+                      <th>QUANT.</th>
+                      <th>TOTAL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="preenchida">
+                      <td>1</td>
+                      <td>BP09100050(B)</td>
+                      <td>Pavimento rígido</td>
+                      <td>m²</td>
+                      <td class="qtd">418,12</td>
+                      <td class="total">49.513,77</td>
+                    </tr>
+                    <tr class="preenchida">
+                      <td>2</td>
+                      <td>ET39050109(/)</td>
+                      <td>Tela de aço soldada</td>
+                      <td>m²</td>
+                      <td class="qtd">418,12</td>
+                      <td class="total">10.411,18</td>
+                    </tr>
+                    <tr class="preenchida">
+                      <td>3</td>
+                      <td>AC01100010(/)</td>
+                      <td>Banheiro químico</td>
+                      <td>un·mês</td>
+                      <td class="qtd">2,00</td>
+                      <td class="total">1.104,00</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p>
+                Uma linha por item precificado, em cursor sequencial. Não é o documento que o
+                cliente recebe — a orçamentista redigita tudo na planilha dela.
+              </p>
+            </div>
+            <div class="painel">
+              <h3>Passa a publicar</h3>
+              <ul>
+                <li>a aba <strong>PLANILHA ORÇAMENTÁRIA</strong> no gabarito de ordem fixa;</li>
+                <li>todas as linhas do gabarito, inclusive as de quantidade zero;</li>
+                <li>a aba <strong>MEMÓRIA DE CÁLCULO</strong> ao lado;</li>
+                <li>a revisão do gabarito carimbada no próprio arquivo.</li>
+              </ul>
+              <div class="aviso gabarito">
+                A aba de hoje <strong>não morre</strong>: a rodada que não declara gabarito
+                continua publicando exatamente o que publica agora.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          2 — Publicar: escolher o gabarito e a revisão
+          <small
+            >A prefeitura revisa o gabarito. Um arquivo gerado na revisão velha parece
+            certo.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Publicar a planilha</h3>
+              <label class="campo">
+                Gabarito
+                <select>
+                  <option>PLANILHA ORÇAMENTÁRIA — SMH/Rio · rev. 2023-10 · 433 linhas</option>
+                  <option>Sem gabarito — aba ORÇAMENTO como hoje</option>
+                </select>
+              </label>
+              <div class="aviso atencao">
+                O gabarito escolhido é de <strong>outubro de 2023</strong>. Confirme com quem
+                entrega à prefeitura que esta ainda é a revisão aceita.
+              </div>
+              <div class="acoes">
+                <button>Cancelar</button>
+                <button class="primario empurra">Gerar e auditar</button>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>O que vai no arquivo</h3>
+              <div class="carimbo">
+                <span><strong>Gabarito</strong> PLANILHA ORÇAMENTÁRIA — SMH/Rio</span>
+                <span><strong>Revisão</strong> 2023-10</span>
+                <span><strong>Linhas</strong> 433 · 43 com quantidade · 390 zeradas</span>
+                <span><strong>Abas</strong> PLANILHA ORÇAMENTÁRIA · MEMÓRIA DE CÁLCULO</span>
+              </div>
+              <p>
+                O mesmo carimbo é impresso <em>dentro</em> do arquivo, para que ele diga sozinho
+                qual revisão usou quando estiver fora do sistema.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          3 — A aba PLANILHA ORÇAMENTÁRIA
+          <small
+            >Ordem do gabarito, numeração GG.N preservada, lacuna de grupo preservada, 390 linhas
+            zeradas presentes.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="abas">
+            <span class="ativa">PLANILHA ORÇAMENTÁRIA</span>
+            <span>MEMÓRIA DE CÁLCULO</span>
+          </div>
+          <div class="grade">
+            <table>
+              <caption>
+                ORÇAMENTO PRELIMINAR — PRAÇA SINTÉTICA NORTE · gabarito SMH/Rio rev. 2023-10
+              </caption>
+              <thead>
+                <tr>
+                  <th>ITEM</th>
+                  <th>CÓDIGO</th>
+                  <th>DESCRIÇÃO</th>
+                  <th>UN</th>
+                  <th>V. UNIT C/ BDI</th>
+                  <th>QUANT.</th>
+                  <th>TOTAL</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="grupo">
+                  <td colspan="7">01 — SERVIÇOS PRELIMINARES E CANTEIRO DE OBRAS</td>
+                </tr>
+                <tr class="preenchida">
+                  <td>01.5</td>
+                  <td>AC03100050(/)</td>
+                  <td>Transporte de andaime</td>
+                  <td>m²</td>
+                  <td>12,40</td>
+                  <td class="qtd">396,63</td>
+                  <td class="total">4.918,21</td>
+                </tr>
+                <tr class="zerada">
+                  <td>01.6</td>
+                  <td>AC03100060(/)</td>
+                  <td>Locação de andaime tubular</td>
+                  <td>m²·mês</td>
+                  <td>8,15</td>
+                  <td class="qtd">0,00</td>
+                  <td class="total">0,00</td>
+                </tr>
+                <tr class="preenchida">
+                  <td>01.10</td>
+                  <td>AC01100010(/)</td>
+                  <td>Aluguel de banheiro químico</td>
+                  <td>un·mês</td>
+                  <td>552,00</td>
+                  <td class="qtd">2,00</td>
+                  <td class="total">1.104,00</td>
+                </tr>
+                <tr class="preenchida">
+                  <td>01.11</td>
+                  <td>AC01100020(/)</td>
+                  <td>Aluguel de container</td>
+                  <td>un·mês</td>
+                  <td>1.320,00</td>
+                  <td class="qtd">2,00</td>
+                  <td class="total">2.640,00</td>
+                </tr>
+                <tr class="zerada">
+                  <td>01.12</td>
+                  <td>AC01100030(/)</td>
+                  <td>Aluguel de barracão de madeira</td>
+                  <td>m²·mês</td>
+                  <td>74,80</td>
+                  <td class="qtd">0,00</td>
+                  <td class="total">0,00</td>
+                </tr>
+                <tr class="preenchida">
+                  <td>01.15</td>
+                  <td>AC01300150(B)</td>
+                  <td>Placa de obra</td>
+                  <td>m²</td>
+                  <td>487,50</td>
+                  <td class="qtd">2,80</td>
+                  <td class="total">1.365,00</td>
+                </tr>
+                <tr class="grupo">
+                  <td colspan="7">02 — MOVIMENTO DE TERRA</td>
+                </tr>
+                <tr class="zerada">
+                  <td>02.1</td>
+                  <td>TE01050010(/)</td>
+                  <td>Escavação manual em solo</td>
+                  <td>m³</td>
+                  <td>96,30</td>
+                  <td class="qtd">0,00</td>
+                  <td class="total">0,00</td>
+                </tr>
+                <tr class="grupo">
+                  <td colspan="7">04 — PAVIMENTAÇÃO</td>
+                </tr>
+                <tr class="preenchida">
+                  <td>04.2</td>
+                  <td>BP09100050(B)</td>
+                  <td>Pavimento rígido em concreto, e=10cm</td>
+                  <td>m²</td>
+                  <td>118,42</td>
+                  <td class="qtd">418,12</td>
+                  <td class="total">49.513,77</td>
+                </tr>
+                <tr class="preenchida">
+                  <td>04.3</td>
+                  <td>ET39050109(/)</td>
+                  <td>Tela de aço soldada para armadura de piso</td>
+                  <td>m²</td>
+                  <td>24,90</td>
+                  <td class="qtd">418,12</td>
+                  <td class="total">10.411,18</td>
+                </tr>
+                <tr class="total-geral">
+                  <td colspan="6">TOTAL SEM BDI</td>
+                  <td>56.186,48</td>
+                </tr>
+                <tr class="total-geral">
+                  <td colspan="6">BDI (24,50%)</td>
+                  <td>13.765,68</td>
+                </tr>
+                <tr class="total-geral">
+                  <td colspan="6">TOTAL GERAL</td>
+                  <td>69.952,16</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="aviso gabarito">
+            O grupo <strong>03 não existe</strong> nesta rendição, e isso é intencional: as
+            lacunas de grupo são convenção do próprio documento e são preservadas como
+            declaradas, nunca renumeradas. A numeração <code>GG.N</code> também vem do gabarito —
+            repare que <code>01.5</code> vem antes de <code>01.10</code>, como texto e não como
+            número.
+          </div>
+          <div class="aviso">
+            As linhas zeradas ficam em cinza mais claro, mas a distinção real é o
+            <strong>número</strong>: quantidade 0,00 e total 0,00 impressos. Cor não é o único
+            indicador, e nenhuma linha do gabarito é omitida.
+          </div>
+        </div>
+        <p class="nota-implementador">
+          O BDI impresso é a <strong>diferença entre os dois totais truncados</strong>
+          (ADR-0038), não o percentual aplicado ao total. O percentual aparece no rótulo porque o
+          documento real o mostra ali.
+        </p>
+      </section>
+
+      <section class="estado">
+        <h2>
+          4 — A aba MEMÓRIA DE CÁLCULO
+          <small
+            >Um bloco por código, com parcelas nomeadas — o mesmo render que a medição já
+            usa.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="abas">
+            <span>PLANILHA ORÇAMENTÁRIA</span>
+            <span class="ativa">MEMÓRIA DE CÁLCULO</span>
+          </div>
+          <div class="grade memoria">
+            <table>
+              <tbody>
+                <tr class="grupo">
+                  <td colspan="4">04.2 — BP09100050(B) · Pavimento rígido em concreto, e=10cm</td>
+                </tr>
+                <tr>
+                  <td>PISO EM CONCRETO</td>
+                  <td>COMPRIMENTO 24,60</td>
+                  <td>LARGURA 17,00</td>
+                  <td>418,20</td>
+                </tr>
+                <tr>
+                  <td>(-) CANTEIRO CENTRAL</td>
+                  <td></td>
+                  <td></td>
+                  <td>0,08</td>
+                </tr>
+                <tr class="total-geral">
+                  <td colspan="3">SUBTOTAL</td>
+                  <td>418,12</td>
+                </tr>
+                <tr class="grupo">
+                  <td colspan="4">01.15 — AC01300150(B) · Placa de obra</td>
+                </tr>
+                <tr>
+                  <td>PLACA DE OBRA</td>
+                  <td>BASE 2,00</td>
+                  <td>ALTURA 1,40</td>
+                  <td>2,80</td>
+                </tr>
+                <tr class="total-geral">
+                  <td colspan="3">SUBTOTAL</td>
+                  <td>2,80</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="aviso gabarito">
+            Só os códigos <strong>com quantidade</strong> têm bloco de memória. Imprimir 390
+            blocos vazios seria ruído, e a planilha já diz que a quantidade é zero.
+          </div>
+          <p>
+            Os operandos saem <strong>nomeados</strong> — “COMPRIMENTO 24,60”, “LARGURA 17,00” —,
+            que é como a memória do cliente é escrita, e é o que permite conferir a conta sem o
+            sistema.
+          </p>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          5 — As duas recusas
+          <small>Erro do auditor não publica. Código fora do gabarito não vira linha nova.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Código ausente do gabarito</h3>
+              <div class="aviso recusa">
+                <strong>Nada foi publicado.</strong> O orçamento tem o código
+                <strong>MD12080030(/)</strong> (Deck em madeira de lei, régua 10cm), que não
+                existe no gabarito PLANILHA ORÇAMENTÁRIA rev. 2023-10. Um código fora do gabarito
+                não pode ser entregue à prefeitura como linha acrescentada ao fim do arquivo.
+              </div>
+              <p>
+                As saídas são humanas: usar o gabarito da revisão que contém o código, trocar o
+                código no orçamento, ou tratar o item como fora do gabarito por decisão de quem
+                entrega.
+              </p>
+            </div>
+            <div class="painel">
+              <h3>Auditoria divergente</h3>
+              <div class="aviso recusa">
+                <strong>Nada foi publicado.</strong> O auditor reabriu o arquivo e recomputou as
+                fórmulas: a célula <strong>G118</strong> tem 49.513,77 gravado e 49.513,78
+                recomputado.
+              </div>
+              <p>
+                É o portão que já protege a medição, aplicado ao orçamento: o arquivo é reaberto,
+                cada fórmula é recomputada em <code>Decimal</code>, e divergência não publica.
+              </p>
+              <div class="aviso">
+                Com 433 linhas e 390 zeros, um erro de mapeamento código→linha coloca a
+                quantidade na linha errada e o arquivo continua <em>parecendo</em> válido. Por
+                isso a conferência é célula a célula, não de totais.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

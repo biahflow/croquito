@@ -150,10 +150,14 @@ digitadas de novo a cada praça.
 
 1. **Design Approval Package** — `INTERFACE_CHANGE`: a superfície de escolher acervo,
    declarar parâmetros e pré-visualizar. Precede o planejamento.
+   **Revisão 1 produzida em 2026-08-28**, aguardando aprovação:
+   [`mock/README.md`](mock/README.md).
 2. ~~Aceite do [ADR-0059](../../adr/0059-item-contratado-fora-da-tabela-sco.md)~~ —
    **cumprido em 2026-08-28** (Daniel Campos), alternativa A.
-3. **Decisão do unknown 1** (onde o acervo vive) — pode exigir ADR próprio se o acervo virar
-   artefato de plataforma.
+3. **Decisão do unknown 1** (onde o acervo vive) — virou o
+   [ADR-0060](../../adr/0060-onde-vive-o-acervo-de-parcelas-de-canteiro.md), `Proposed` em
+   2026-08-28: plataforma e tenant como duas origens de um contrato de leitura só. Aguarda
+   aceite humano antes da persistência e das rotas.
 4. **Autoria do primeiro acervo** — ato da orçamentista, a partir de uma praça já feita.
 
 ## References

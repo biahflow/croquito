@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-044 — A shortlist aprende com as decisões já tomadas</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css (identidade "Grafite técnico"). O que é novo está
+         marcado como NOVO na tabela de proveniência do README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --recusa: #a33d32;
+        --atencao: #7c5210;
+        /* NOVO — família do precedente. Índigo, escolhido por não colidir com nenhum
+           significado já em uso: verde = confirmado, âmbar = atenção, vermelho = recusa,
+           cinza = observação da máquina. */
+        --precedente: #4a4a9c;
+        --precedente-soft: #eeeef8;
+        --precedente-line: #c2c2e4;
+        --precedente-ink: #2f2f6b;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0 0 6px;
+        max-width: 78ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .duas {
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 16px;
+        align-items: start;
+      }
+      .painel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+        background: var(--surface);
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+      }
+      .selo.precedente {
+        border-color: var(--precedente-line);
+        background: #ffffff;
+        color: var(--precedente);
+      }
+      .selo.confirmado {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      .selo.fonte {
+        font-variant-numeric: tabular-nums;
+      }
+      .bloco-fonte {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .bloco-fonte > .cabeca {
+        padding: 7px 11px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .bloco-fonte.precedente > .cabeca {
+        background: var(--precedente-soft);
+        color: var(--precedente-ink);
+        border-bottom-color: var(--precedente-line);
+        font-weight: 600;
+      }
+      .bloco-fonte.precedente {
+        border-color: var(--precedente-line);
+        border-left: 3px solid var(--precedente);
+      }
+      .codigos {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+      }
+      .codigos li {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        display: grid;
+        gap: 5px;
+      }
+      .codigos li:last-child {
+        border-bottom: 0;
+      }
+      .codigos .topo {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .codigos .codigo {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .codigos .preco {
+        margin-left: auto;
+        font-size: 12.5px;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .codigos .descricao {
+        font-size: 12.5px;
+        color: var(--ink-secondary);
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.primario {
+        background: var(--accent);
+        border-color: var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      button.pacote {
+        background: #ffffff;
+        border-color: var(--precedente-line);
+        color: var(--precedente-ink);
+        font-weight: 600;
+      }
+      button.miudo {
+        font-size: 12px;
+        padding: 5px 9px;
+      }
+      .acoes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .acoes .empurra {
+        margin-left: auto;
+      }
+      .aviso {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.precedente {
+        border-color: var(--precedente-line);
+        background: var(--precedente-soft);
+        color: var(--precedente-ink);
+      }
+      .aviso.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .aviso strong {
+        color: inherit;
+      }
+      .item-legenda {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        display: grid;
+        gap: 4px;
+        background: var(--surface);
+      }
+      .item-legenda.selecionado {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+      }
+      .item-legenda .rotulo {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .pacote-lista {
+        display: grid;
+        gap: 6px;
+        padding: 10px 12px;
+        border: 1px dashed var(--precedente-line);
+        border-radius: 6px;
+        background: #ffffff;
+      }
+      .pacote-lista .linha {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-size: 12.5px;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .pacote-lista .linha .desc {
+        color: var(--ink-secondary);
+        font-variant-numeric: normal;
+      }
+      .nota-implementador {
+        font-size: 12px;
+        color: var(--muted);
+        padding: 0 16px 14px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 7px 9px;
+        border-bottom: 1px solid var(--line);
+      }
+      thead th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-044 — A shortlist aprende com as decisões de código já tomadas</h1>
+      <p>
+        Design Approval Package, revisão 1. Superfície na etapa <strong>Códigos</strong>: um
+        bloco de precedente no topo da shortlist, com a contagem de praças, e o aceite do pacote
+        inteiro de códigos de um rótulo em um clique.
+      </p>
+      <p>
+        <strong>Este pacote está atrás de um gate anterior.</strong> A hipótese de repetição de
+        rótulo entre praças ainda não foi medida; se a medição der repetição baixa, a feature é
+        cancelada e este desenho não vale. Aprovar este pacote decide a
+        <em>forma</em> caso a feature siga — não decide que ela segue.
+      </p>
+      <p>Números, rótulos e códigos são <strong>sintéticos</strong>.</p>
+    </header>
+
+    <main>
+      <section class="estado">
+        <h2>
+          1 — A shortlist hoje: blocos por fonte de preço, sem memória nenhuma
+          <small
+            >O rótulo volta a ser casado por letra contra centenas de códigos, como se fosse a
+            primeira vez.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Elementos pendentes</h3>
+              <div class="item-legenda selecionado">
+                <span class="rotulo">PISO EM CONCRETO</span>
+                <p>418,12 m² · da legenda da prancha</p>
+              </div>
+              <div class="item-legenda">
+                <span class="rotulo">ALAMBRADO h=3,00m</span>
+                <p>783,86 m²</p>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Candidatos de código</h3>
+              <div class="bloco-fonte">
+                <div class="cabeca">SCO-Rio · Out/2023 · 1ª da cascata</div>
+                <ul class="codigos">
+                  <li>
+                    <div class="topo">
+                      <span class="codigo">BP09100050(B)</span>
+                      <span class="selo">unidade compatível</span>
+                      <span class="preco">R$ 118,42/m²</span>
+                    </div>
+                    <span class="descricao"
+                      >Pavimento rígido em concreto, e=10cm, com juntas</span
+                    >
+                    <div class="acoes"><button class="miudo">Escolher este código</button></div>
+                  </li>
+                  <li>
+                    <div class="topo">
+                      <span class="codigo">BP09100060(B)</span>
+                      <span class="selo">unidade compatível</span>
+                      <span class="preco">R$ 131,07/m²</span>
+                    </div>
+                    <span class="descricao">Pavimento rígido em concreto, e=12cm</span>
+                    <div class="acoes"><button class="miudo">Escolher este código</button></div>
+                  </li>
+                </ul>
+              </div>
+              <p>
+                A tela de hoje. A tela de amanhã acrescenta um bloco <em>acima</em> deste, sem
+                mexer na ordem instalada.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          2 — O precedente no topo, com a contagem de praças
+          <small
+            >Bloco próprio, acima dos blocos por fonte. A cascata continua exatamente como
+            está.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Elementos pendentes</h3>
+              <div class="item-legenda selecionado">
+                <span class="rotulo">PISO EM CONCRETO</span>
+                <p>418,12 m²</p>
+                <span class="selo precedente">precedente em 4 praças</span>
+              </div>
+              <div class="item-legenda">
+                <span class="rotulo">ALAMBRADO h=3,00m</span>
+                <p>783,86 m²</p>
+                <span class="selo precedente">precedente em 3 praças</span>
+              </div>
+              <div class="item-legenda">
+                <span class="rotulo">DECK DE MADEIRA CUMARU</span>
+                <p>36,50 m²</p>
+                <span class="selo">rótulo inédito</span>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Candidatos de código</h3>
+              <div class="bloco-fonte precedente">
+                <div class="cabeca">
+                  Você já usou isto em 4 praças
+                  <span class="selo precedente">SCO-Rio</span>
+                </div>
+                <ul class="codigos">
+                  <li>
+                    <div class="topo">
+                      <span class="codigo">BP09100050(B)</span>
+                      <span class="selo">unidade compatível</span>
+                      <span class="preco">R$ 118,42/m²</span>
+                    </div>
+                    <span class="descricao"
+                      >Pavimento rígido em concreto, e=10cm, com juntas</span
+                    >
+                  </li>
+                  <li>
+                    <div class="topo">
+                      <span class="codigo">ET39050109(/)</span>
+                      <span class="selo">unidade compatível</span>
+                      <span class="preco">R$ 24,90/m²</span>
+                    </div>
+                    <span class="descricao">Tela de aço soldada para armadura de piso</span>
+                  </li>
+                  <li>
+                    <div class="acoes">
+                      <button class="pacote">Aceitar os 2 códigos deste rótulo</button>
+                      <span class="selo precedente">observação, não decisão</span>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+              <div class="bloco-fonte">
+                <div class="cabeca">SCO-Rio · Out/2023 · 1ª da cascata</div>
+                <ul class="codigos">
+                  <li>
+                    <div class="topo">
+                      <span class="codigo">BP09100050(B)</span>
+                      <span class="selo">unidade compatível</span>
+                      <span class="preco">R$ 118,42/m²</span>
+                    </div>
+                    <span class="descricao">Pavimento rígido em concreto, e=10cm, com juntas</span>
+                    <div class="acoes"><button class="miudo">Escolher este código</button></div>
+                  </li>
+                  <li>
+                    <div class="topo">
+                      <span class="codigo">BP09100060(B)</span>
+                      <span class="selo">unidade compatível</span>
+                      <span class="preco">R$ 131,07/m²</span>
+                    </div>
+                    <span class="descricao">Pavimento rígido em concreto, e=12cm</span>
+                    <div class="acoes"><button class="miudo">Escolher este código</button></div>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <div class="aviso precedente">
+            O código que já era candidato aparece <strong>duas vezes</strong>: no precedente e no
+            bloco da fonte. Isso é intencional — esconder a repetição faria o bloco da cascata
+            parecer incompleto e mudaria a ordem instalada, que não é escopo desta feature.
+          </div>
+        </div>
+        <p class="nota-implementador">
+          O selo do precedente diz a contagem de praças por extenso. Cor nunca é o único
+          indicador: o bloco tem cabeçalho escrito, borda esquerda e texto próprio.
+        </p>
+      </section>
+
+      <section class="estado">
+        <h2>
+          3 — Aceitar o pacote inteiro em um clique
+          <small
+            >O precedente é do rótulo e vale para todos os códigos que ele dispara — que é como a
+            decisão foi tomada da primeira vez.</small
+          >
+        </h2>
+        <div class="corpo">
+          <p>Antes de confirmar, a tela mostra exatamente o que vai ser gravado:</p>
+          <div class="pacote-lista">
+            <div class="linha">
+              <span class="selo confirmado">confirmar</span> BP09100050(B)
+              <span class="desc">Pavimento rígido em concreto, e=10cm · R$ 118,42/m²</span>
+            </div>
+            <div class="linha">
+              <span class="selo confirmado">confirmar</span> ET39050109(/)
+              <span class="desc">Tela de aço soldada para armadura de piso · R$ 24,90/m²</span>
+            </div>
+          </div>
+          <div class="aviso precedente">
+            Os dois códigos entram numa <strong>revisão só</strong>, como pacote do elemento
+            “PISO EM CONCRETO”. O fechamento do pacote continua sendo ato separado — aceitar o
+            precedente não fecha o pacote sozinho.
+          </div>
+          <div class="acoes">
+            <button>Cancelar</button>
+            <button class="primario empurra">Confirmar os 2 códigos</button>
+          </div>
+          <p>
+            Nada é aplicado sem este clique. O precedente é observação, nunca decisão — a mesma
+            regra que já vale para toda a shortlist.
+          </p>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          4 — Precedente fraco, e precedente que não existe
+          <small
+            >Uma decisão única pode ter sido um erro; exibi-la com autoridade propaga o
+            erro.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Uma praça só</h3>
+              <div class="bloco-fonte precedente">
+                <div class="cabeca">Você usou isto em 1 praça</div>
+                <ul class="codigos">
+                  <li>
+                    <div class="topo">
+                      <span class="codigo">BP09100060(B)</span>
+                      <span class="preco">R$ 131,07/m²</span>
+                    </div>
+                    <span class="descricao">Pavimento rígido em concreto, e=12cm</span>
+                  </li>
+                  <li>
+                    <div class="acoes">
+                      <button class="pacote">Aceitar o código deste rótulo</button>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+              <div class="aviso atencao">
+                Decisão de <strong>uma praça só</strong>. Confira antes de aceitar: se aquela vez
+                foi um engano, aceitar aqui repete o engano com cara de acerto.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Rótulo inédito — a via léxica intacta</h3>
+              <div class="bloco-fonte">
+                <div class="cabeca">SCO-Rio · Out/2023 · 1ª da cascata</div>
+                <ul class="codigos">
+                  <li>
+                    <div class="topo">
+                      <span class="codigo">MD12080030(/)</span>
+                      <span class="preco">R$ 402,15/m²</span>
+                    </div>
+                    <span class="descricao">Deck em madeira de lei, régua 10cm</span>
+                    <div class="acoes"><button class="miudo">Escolher este código</button></div>
+                  </li>
+                </ul>
+              </div>
+              <p>
+                “DECK DE MADEIRA CUMARU” nunca foi decidido antes. Sem bloco de precedente, sem
+                espaço vazio reservado, sem aviso: a tela é a de hoje, sem degradação nenhuma.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          5 — O precedente de outra fonte de preço não é oferecido
+          <small
+            >Sugerir código que não existe na tabela vigente é pior que não sugerir nada.</small
+          >
+        </h2>
+        <div class="corpo">
+          <table>
+            <thead>
+              <tr>
+                <th>Rótulo</th>
+                <th>Onde foi decidido antes</th>
+                <th>Fonte desta rodada</th>
+                <th>Oferecido?</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>PISO EM CONCRETO</td>
+                <td>4 praças · SCO-Rio</td>
+                <td>SCO-Rio</td>
+                <td><span class="selo precedente">sim, no topo</span></td>
+              </tr>
+              <tr>
+                <td>ALAMBRADO h=3,00m</td>
+                <td>3 praças · SCO-Rio</td>
+                <td>EMOP</td>
+                <td><span class="selo">não — fonte diferente</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="aviso">
+            Quando a fonte não bate, o bloco de precedente <strong>não aparece</strong> — não
+            aparece vazio, nem desabilitado, nem com aviso. O elemento simplesmente não existe
+            naquela rodada, e a shortlist é a de hoje.
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

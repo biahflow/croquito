@@ -150,9 +150,12 @@ exatamente o que o precedente não tem como resolver.
 ## Human Gates
 
 1. **Medir a hipótese de repetição** e decidir se a feature continua — precede o
-   planejamento e pode cancelá-la.
+   planejamento e pode cancelá-la. O instrumento da medição está sendo construído
+   (`precedent-eval`, T1); o dado de uma segunda praça foi prometido pelo dono em
+   2026-08-28. **A medição ainda não foi feita.**
 2. **Design Approval Package** — `INTERFACE_CHANGE`: como o precedente aparece na shortlist
-   e como é o aceite de pacote em um clique.
+   e como é o aceite de pacote em um clique. **Revisão 1 produzida em 2026-08-28**,
+   aguardando aprovação e **condicionada ao gate 1**: [`mock/README.md`](mock/README.md).
 3. ~~Aceite do [ADR-0059](../../adr/0059-item-contratado-fora-da-tabela-sco.md)~~ —
    **cumprido em 2026-08-28** (Daniel Campos), alternativa A.
 

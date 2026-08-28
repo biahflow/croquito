@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-042 — O canteiro sai de um acervo parametrizado</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css (identidade "Grafite técnico"). O que é novo está
+         marcado como NOVO na tabela de proveniência do README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --recusa: #a33d32;
+        --atencao: #7c5210;
+        /* NOVO — família do acervo. Azul-ardósia, escolhido por não colidir com nenhum
+           significado já em uso no orçamento: verde = confirmado/contratado, roxo = reajuste,
+           petróleo = RE-RA, âmbar = atenção, vermelho = recusa. */
+        --acervo: #3a5f8f;
+        --acervo-soft: #eef3fa;
+        --acervo-line: #b9cde6;
+        --acervo-ink: #24405f;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0 0 6px;
+        max-width: 78ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .duas {
+        display: grid;
+        grid-template-columns: 1fr 330px;
+        gap: 16px;
+        align-items: start;
+      }
+      .painel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+        background: var(--surface);
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: right;
+        padding: 7px 9px;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th:first-child,
+      td:first-child,
+      th:nth-child(2),
+      td:nth-child(2) {
+        text-align: left;
+      }
+      thead th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+      }
+      td.mono,
+      th.mono {
+        font-variant-numeric: tabular-nums;
+      }
+      td.conta-celula {
+        text-align: left;
+        white-space: normal;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+      }
+      tr.removida td {
+        background: var(--surface-sunken);
+        color: var(--muted);
+        text-decoration: line-through;
+      }
+      tr.removida td.acao {
+        text-decoration: none;
+      }
+      tr.total td {
+        font-weight: 600;
+        color: var(--ink);
+        background: var(--surface-subtle);
+      }
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+      }
+      .selo.acervo {
+        border-color: var(--acervo-line);
+        background: #ffffff;
+        color: var(--acervo);
+      }
+      .selo.autorada {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      .selo.vazio {
+        border-style: dashed;
+        color: var(--muted);
+      }
+      label.campo {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      label.campo input,
+      label.campo select {
+        font: inherit;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      label.campo input.faltante {
+        border-color: #d8a49c;
+        border-width: 2px;
+        background: #fdf6f5;
+      }
+      label.campo .pedido {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .linha-campos {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+      }
+      .linha-campos.duasc {
+        grid-template-columns: 1fr 1fr;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.primario {
+        background: var(--accent);
+        border-color: var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      button.perigo {
+        color: var(--recusa);
+        border-color: #e0b7b1;
+      }
+      button[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .acoes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .acoes .empurra {
+        margin-left: auto;
+      }
+      .aviso {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.acervo {
+        border-color: var(--acervo-line);
+        background: var(--acervo-soft);
+        color: var(--acervo-ink);
+      }
+      .aviso.recusa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      .aviso.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .aviso strong {
+        color: inherit;
+      }
+      .conta {
+        font-variant-numeric: tabular-nums;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 9px 11px;
+        border: 1px dashed var(--acervo-line);
+        border-radius: 6px;
+        background: #ffffff;
+      }
+      .carimbo {
+        border: 1px solid var(--acervo-line);
+        border-left: 3px solid var(--acervo);
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: #ffffff;
+        display: grid;
+        gap: 3px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .passos {
+        display: flex;
+        gap: 0;
+        align-items: stretch;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--surface-subtle);
+      }
+      .passos div {
+        flex: 1;
+        padding: 8px 12px;
+        font-size: 12px;
+        color: var(--muted);
+        border-right: 1px solid var(--line);
+      }
+      .passos div:last-child {
+        border-right: 0;
+      }
+      .passos div.feito {
+        color: var(--accent-text);
+        background: var(--accent-soft);
+      }
+      .passos div.agora {
+        color: var(--acervo-ink);
+        background: #ffffff;
+        font-weight: 600;
+      }
+      .passos div b {
+        display: block;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        font-weight: 600;
+      }
+      .lista-acervos {
+        display: grid;
+        gap: 8px;
+      }
+      .cartao-acervo {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        display: grid;
+        gap: 4px;
+        background: var(--surface);
+      }
+      .cartao-acervo.escolhido {
+        border-color: var(--acervo-line);
+        border-left: 3px solid var(--acervo);
+        background: var(--acervo-soft);
+      }
+      .cartao-acervo .titulo {
+        font-size: 13px;
+        color: var(--ink);
+        font-weight: 600;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .nota-implementador {
+        font-size: 12px;
+        color: var(--muted);
+        padding: 0 16px 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-042 — O canteiro sai de um acervo parametrizado, não da digitação</h1>
+      <p>
+        Design Approval Package, revisão 1. Superfície nova na etapa <strong>Códigos</strong> da
+        jornada do orçamento: escolher um acervo, declarar os parâmetros de obra que ele cita,
+        pré-visualizar as parcelas que vão nascer com as quantidades já calculadas e remover as
+        que não se aplicam antes de aplicar.
+      </p>
+      <p>
+        Números, nomes e códigos são <strong>sintéticos</strong> e servem só para mostrar a
+        forma. As contas mostradas são aritmeticamente consistentes de propósito.
+      </p>
+    </header>
+
+    <main>
+      <section class="estado">
+        <h2>
+          1 — Onde isto vive: a etapa Códigos, hoje sem apoio nenhum para o canteiro
+          <small
+            >Estado vazio. As 24 parcelas de canteiro do documento real não têm origem na
+            prancha, e hoje são digitadas uma a uma.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Elementos da legenda</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Elemento</th>
+                    <th>Códigos</th>
+                    <th class="mono">Quantidade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>PISO EM CONCRETO</td>
+                    <td>2 confirmados</td>
+                    <td class="mono">418,12 m²</td>
+                  </tr>
+                  <tr>
+                    <td>ALAMBRADO h=3,00m</td>
+                    <td>2 confirmados</td>
+                    <td class="mono">783,86 m²</td>
+                  </tr>
+                  <tr>
+                    <td>BANCO DE CONCRETO</td>
+                    <td>1 confirmado</td>
+                    <td class="mono">12,00 un</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p>
+                Estes vêm da prancha e já têm caminho. O que não tem caminho nenhum é o bloco
+                abaixo.
+              </p>
+            </div>
+            <div class="painel">
+              <h3>Parcelas de canteiro</h3>
+              <span class="selo vazio">nenhuma parcela nesta rodada</span>
+              <p>
+                Canteiro, mão de obra, andaime, transporte e entulho não têm origem na prancha.
+                Saem de um punhado de parâmetros da obra que se repetem em toda praça.
+              </p>
+              <div class="acoes">
+                <button class="primario">Aplicar um acervo</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="nota-implementador">
+          O painel é uma seção própria da etapa Códigos, irmã da lista de elementos — não uma
+          aba nem uma tela separada. Parcela de canteiro não tem elemento de origem, então ela
+          não pode aparecer pendurada em nenhum item da legenda.
+        </p>
+      </section>
+
+      <section class="estado">
+        <h2>
+          2 — Passo 1 de 3: escolher o acervo
+          <small
+            >Cada acervo é um conjunto versionado de parcelas. A versão é parte da identidade e
+            fica visível.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="passos">
+            <div class="agora"><b>Passo 1</b>Escolher o acervo</div>
+            <div><b>Passo 2</b>Declarar os parâmetros</div>
+            <div><b>Passo 3</b>Revisar e aplicar</div>
+          </div>
+          <div class="lista-acervos">
+            <div class="cartao-acervo escolhido">
+              <div class="titulo">
+                Canteiro — contrato SMH/Rio (Out/2023)
+                <span class="selo acervo">versão 1</span>
+              </div>
+              <p>
+                24 parcelas · cita 4 parâmetros de obra · autorado a partir do Campo do Toca em
+                12/08/2026
+              </p>
+            </div>
+            <div class="cartao-acervo">
+              <div class="titulo">
+                Canteiro reduzido — praça sem alambrado
+                <span class="selo acervo">versão 2</span>
+              </div>
+              <p>11 parcelas · cita 2 parâmetros de obra · autorado em 21/08/2026</p>
+            </div>
+          </div>
+          <div class="aviso acervo">
+            O acervo é <strong>receita</strong>, não medida: ele diz como a parcela se calcula, e
+            nunca traz quantidade pronta. Os números saem dos parâmetros que você declara no
+            passo seguinte.
+          </div>
+          <div class="acoes">
+            <button>Cancelar</button>
+            <button class="primario empurra">Continuar</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          3 — Passo 2 de 3: declarar os parâmetros de obra
+          <small
+            >O sistema nunca infere um parâmetro. Os campos nascem vazios, e o acervo diz de
+            quem ele precisa.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="passos">
+            <div class="feito"><b>Passo 1</b>Canteiro — SMH/Rio, versão 1</div>
+            <div class="agora"><b>Passo 2</b>Declarar os parâmetros</div>
+            <div><b>Passo 3</b>Revisar e aplicar</div>
+          </div>
+          <p>
+            Este acervo cita <strong>4 parâmetros</strong>. Cada um é declarado por você, uma vez
+            por rodada, e vale para todas as parcelas que o citarem.
+          </p>
+          <div class="linha-campos">
+            <label class="campo">
+              Prazo de obra
+              <input type="text" value="2" />
+              <span class="pedido">meses · citado por 6 parcelas</span>
+            </label>
+            <label class="campo">
+              Semiperímetro
+              <input type="text" value="132,21" />
+              <span class="pedido">m · citado por 2 parcelas</span>
+            </label>
+            <label class="campo">
+              Altura do alambrado
+              <input type="text" value="3,00" />
+              <span class="pedido">m · citado por 2 parcelas</span>
+            </label>
+            <label class="campo">
+              Dias de vigia (12 h)
+              <input type="text" value="23" />
+              <span class="pedido">dias · citado por 1 parcela</span>
+            </label>
+          </div>
+          <div class="aviso acervo">
+            A prancha imprime “ÁREA DE INTERVENÇÃO = 5.537,46 m²”, e capturar esse número na
+            extração é tentador. Enquanto não estiver verificado que ele alimenta alguma destas
+            parcelas, o parâmetro continua <strong>declarado por você</strong> — o sistema não o
+            preenche sozinho nem o sugere.
+          </div>
+          <div class="acoes">
+            <button>Voltar</button>
+            <button class="primario empurra">Pré-visualizar as parcelas</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          4 — A recusa do parâmetro faltante
+          <small
+            >Falha fechada: nomeia todos os que faltam, e não materializa nenhuma parcela — nem
+            as que estariam completas.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="linha-campos">
+            <label class="campo">
+              Prazo de obra
+              <input type="text" value="2" />
+              <span class="pedido">meses · citado por 6 parcelas</span>
+            </label>
+            <label class="campo">
+              Semiperímetro
+              <input class="faltante" type="text" value="" />
+              <span class="pedido">m · citado por 2 parcelas</span>
+            </label>
+            <label class="campo">
+              Altura do alambrado
+              <input class="faltante" type="text" value="" />
+              <span class="pedido">m · citado por 2 parcelas</span>
+            </label>
+            <label class="campo">
+              Dias de vigia (12 h)
+              <input type="text" value="23" />
+              <span class="pedido">dias · citado por 1 parcela</span>
+            </label>
+          </div>
+          <div class="aviso recusa">
+            <strong>Nada foi aplicado.</strong> O acervo “Canteiro — SMH/Rio, versão 1” cita dois
+            parâmetros que não foram declarados: <strong>semiperímetro</strong> e
+            <strong>altura do alambrado</strong>. Declare os dois, ou remova na pré-visualização
+            as parcelas que os citam.
+          </div>
+          <p>
+            A recusa nomeia os parâmetros por extenso e diz as duas saídas. Aplicar “o que dá” e
+            deixar o resto para depois produziria uma planilha parcial que parece completa.
+          </p>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          5 — Passo 3 de 3: a pré-visualização, com a conta à vista
+          <small
+            >Obrigatória. Não existe caminho que aplique o acervo sem passar por esta
+            lista.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="passos">
+            <div class="feito"><b>Passo 1</b>Canteiro — SMH/Rio, versão 1</div>
+            <div class="feito"><b>Passo 2</b>4 parâmetros declarados</div>
+            <div class="agora"><b>Passo 3</b>Revisar e aplicar</div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Parcela</th>
+                <th>Código</th>
+                <th>Conta</th>
+                <th class="mono">Quantidade</th>
+                <th>&nbsp;</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Aluguel de banheiro químico</td>
+                <td>AC01100010(/)</td>
+                <td class="conta-celula">1 un × 2 meses</td>
+                <td class="mono">2,00 un·mês</td>
+                <td class="acao"><button>Remover</button></td>
+              </tr>
+              <tr>
+                <td>Aluguel de container</td>
+                <td>AC01100020(/)</td>
+                <td class="conta-celula">1 un × 2 meses</td>
+                <td class="mono">2,00 un·mês</td>
+                <td class="acao"><button>Remover</button></td>
+              </tr>
+              <tr>
+                <td>Vigia diurno</td>
+                <td>AC02200030(/)</td>
+                <td class="conta-celula">23 dias × 12 h</td>
+                <td class="mono">276,00 h</td>
+                <td class="acao"><button>Remover</button></td>
+              </tr>
+              <tr>
+                <td>Placa de obra</td>
+                <td>AC01300150(B)</td>
+                <td class="conta-celula">2,00 m × 1,40 m</td>
+                <td class="mono">2,80 m²</td>
+                <td class="acao"><button>Remover</button></td>
+              </tr>
+              <tr>
+                <td>Transporte de andaime</td>
+                <td>AC03100050(/)</td>
+                <td class="conta-celula">132,21 m × 3,00 m</td>
+                <td class="mono">396,63 m²</td>
+                <td class="acao"><button>Remover</button></td>
+              </tr>
+              <tr class="total">
+                <td>24 parcelas</td>
+                <td>&nbsp;</td>
+                <td class="conta-celula">as 19 restantes seguem na lista</td>
+                <td class="mono">&nbsp;</td>
+                <td>&nbsp;</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="aviso acervo">
+            A coluna <strong>Conta</strong> mostra os operandos nomeados, não só o resultado. É
+            exatamente o que vai sair impresso na memória de cálculo, e é o que permite conferir
+            sem abrir a planilha.
+          </div>
+          <div class="acoes">
+            <button>Voltar aos parâmetros</button>
+            <button class="primario empurra">Aplicar as 24 parcelas</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          6 — Remover uma parcela que não se aplica
+          <small>A remoção é por parcela, é reversível antes de aplicar e não toca as demais.</small>
+        </h2>
+        <div class="corpo">
+          <table>
+            <thead>
+              <tr>
+                <th>Parcela</th>
+                <th>Código</th>
+                <th>Conta</th>
+                <th class="mono">Quantidade</th>
+                <th>&nbsp;</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Aluguel de banheiro químico</td>
+                <td>AC01100010(/)</td>
+                <td class="conta-celula">1 un × 2 meses</td>
+                <td class="mono">2,00 un·mês</td>
+                <td class="acao"><button>Remover</button></td>
+              </tr>
+              <tr class="removida">
+                <td>Aluguel de container</td>
+                <td>AC01100020(/)</td>
+                <td class="conta-celula">não nasce nesta rodada</td>
+                <td class="mono">—</td>
+                <td class="acao"><button>Trazer de volta</button></td>
+              </tr>
+              <tr>
+                <td>Vigia diurno</td>
+                <td>AC02200030(/)</td>
+                <td class="conta-celula">23 dias × 12 h</td>
+                <td class="mono">276,00 h</td>
+                <td class="acao"><button>Remover</button></td>
+              </tr>
+              <tr class="total">
+                <td>23 parcelas serão aplicadas</td>
+                <td>&nbsp;</td>
+                <td class="conta-celula">1 removida</td>
+                <td class="mono">&nbsp;</td>
+                <td>&nbsp;</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="aviso">
+            A parcela removida continua visível, riscada e com o motivo à vista — some da conta,
+            não da tela. Sumir por completo deixaria a lista curta sem dizer o que saiu.
+          </div>
+          <p>
+            Se todas as parcelas que citam um parâmetro forem removidas, o parâmetro deixa de ser
+            exigido: a recusa do estado 4 não dispara.
+          </p>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          7 — Aplicado: a parcela na matriz, com a proveniência à vista
+          <small
+            >As parcelas nascem na mesma matriz de cálculo das demais contribuições, e continuam
+            editáveis.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Parcelas de canteiro</h3>
+              <span class="selo acervo">Canteiro — SMH/Rio, versão 1 · 23 parcelas</span>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Parcela</th>
+                    <th>Origem</th>
+                    <th class="mono">Quantidade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Aluguel de banheiro químico</td>
+                    <td><span class="selo acervo">do acervo v1</span></td>
+                    <td class="mono">2,00 un·mês</td>
+                  </tr>
+                  <tr>
+                    <td>Vigia diurno</td>
+                    <td><span class="selo acervo">do acervo v1</span></td>
+                    <td class="mono">276,00 h</td>
+                  </tr>
+                  <tr>
+                    <td>Entulho — caçamba extra</td>
+                    <td><span class="selo autorada">autorada à mão</span></td>
+                    <td class="mono">3,00 un</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p>
+                Parcela do acervo e parcela autorada à mão convivem na mesma lista, distintas por
+                <strong>texto</strong> no selo de origem — não só por cor.
+              </p>
+            </div>
+            <div class="painel">
+              <h3>Reaplicar o acervo</h3>
+              <div class="carimbo">
+                <span><strong>Acervo</strong> Canteiro — SMH/Rio</span>
+                <span><strong>Versão</strong> 1</span>
+                <span><strong>Aplicado em</strong> 28/08/2026, 14:02</span>
+                <span><strong>Parâmetros</strong> prazo 2 meses · semiperímetro 132,21 m · altura 3,00 m · vigia 23 dias</span>
+              </div>
+              <div class="aviso acervo">
+                Reaplicar o <strong>mesmo</strong> acervo com os mesmos parâmetros substitui as
+                parcelas dele — não duplica. As parcelas autoradas à mão nunca são tocadas.
+              </div>
+              <div class="acoes">
+                <button>Reaplicar</button>
+                <button class="perigo">Remover as do acervo</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          8 — A recusa do código ausente do catálogo
+          <small
+            >Catálogo novo pode ter retirado um código que o acervo cita. A aplicação recusa por
+            extenso em vez de pular a parcela.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="aviso recusa">
+            <strong>Nada foi aplicado.</strong> O acervo “Canteiro — SMH/Rio, versão 1” cita o
+            código <strong>AC03100050(/)</strong>, que não existe no catálogo desta rodada
+            (SCO-Rio, Fev/2026). Escolha outro acervo, publique uma versão nova dele, ou remova
+            a parcela na pré-visualização.
+          </div>
+          <p>
+            Pular a parcela em silêncio produziria um orçamento com uma linha a menos e nenhum
+            sinal — o modo de falha mais caro que este pacote precisa impedir.
+          </p>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          9 — Autoria: guardar as parcelas desta rodada como acervo
+          <small
+            >O primeiro acervo é autorado por gente, a partir de uma praça já feita. O sistema
+            não infere acervo.</small
+          >
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Salvar como acervo</h3>
+              <div class="linha-campos duasc">
+                <label class="campo">
+                  Nome do acervo
+                  <input type="text" value="Canteiro — contrato SMH/Rio" />
+                </label>
+                <label class="campo">
+                  O que salvar
+                  <select>
+                    <option>Versão nova do acervo existente (versão 2)</option>
+                    <option>Acervo novo</option>
+                  </select>
+                </label>
+              </div>
+              <p>
+                Entram as <strong>26 parcelas de canteiro</strong> desta rodada — as 23 do acervo
+                e as 3 autoradas à mão. As parcelas com origem na prancha não entram: acervo é só
+                do que não tem origem geométrica.
+              </p>
+              <div class="aviso atencao">
+                Os números viram <strong>parâmetros citados</strong>, não constantes: “23 dias ×
+                12 h” é guardado como “dias de vigia (12 h) × 12 h”, e o 23 fica para a próxima
+                praça declarar. Confira abaixo o que virou parâmetro.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Parâmetros que a versão 2 vai citar</h3>
+              <ul>
+                <li>prazo de obra — meses</li>
+                <li>semiperímetro — m</li>
+                <li>altura do alambrado — m</li>
+                <li>dias de vigia (12 h) — dias</li>
+                <li>caçambas de entulho — un <span class="selo acervo">novo</span></li>
+              </ul>
+              <div class="acoes">
+                <button>Cancelar</button>
+                <button class="primario">Salvar versão 2</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
