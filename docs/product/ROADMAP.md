@@ -2,7 +2,12 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-28 (**F-045 registrada e entregue** — `READY_FOR_REVIEW`/`HIGH`, com
+Última revisão: 2026-08-28 (**F-007, F-022, F-029, F-031 e F-032 `DONE`** — as cinco
+estavam `READY_FOR_HUMAN_REVIEW` e o dono do produto exerceu o ato humano de aceite na mesma
+data. O **ADR-0037 passou a `Accepted`** no mesmo ato. Os residuais que dependem de dinheiro,
+credencial ou infraestrutura externa **não** foram exercidos e continuam declarados nos
+respectivos `feature.md` e no [STATUS](../STATUS.md). Registrado antes: **F-045 registrada e
+entregue** — `READY_FOR_REVIEW`/`HIGH`, com
 **ADR-0061 aceito** e pacote de design revisão 1 **aprovado** no mesmo dia. O que a originou: a etapa de códigos não tem como desfazer um par `(item, código)` confirmado, e o único
 conserto hoje é refazer a rodada inteira. A lacuna é da F-038, que fez do par a identidade da
 decisão; a revisão 2 do pacote da F-044 apenas aumentou o preço dela, ao criar um ato que
@@ -68,7 +73,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-004 | HIGH | DONE | [Runner de migrations revisadas](../features/F-004-migrations-runner/feature.md) |
 | F-005 | HIGH | DONE | [Gate de contrato da API: snapshot de OpenAPI e paridade](../features/F-005-openapi-contract-test/feature.md) |
 | F-006 | HIGH | DONE | [Conserto e verificação da homologação em GCP](../features/F-006-hml-conserto/feature.md) |
-| F-007 | HIGH | READY_FOR_HUMAN_REVIEW | [Porta de entrada: tela de login com marca](../features/F-007-tela-de-login/feature.md) |
+| F-007 | HIGH | DONE | [Porta de entrada: tela de login com marca](../features/F-007-tela-de-login/feature.md) — aceita por ato humano em 2026-08-28; pendem o deploy da imagem nova do Keycloak em homologação e o texto final da tela |
 | F-008 | HIGH | BLOCKED | [Ciclo de vida de conta: convite, recuperação de senha e Google](../features/F-008-ciclo-de-vida-de-conta/feature.md) |
 | F-009 | HIGH | DONE | [Suite hospedada de providers: OpenAI + Anthropic direto, sem AWS](../features/F-009-suite-hospedada-sem-aws/feature.md) |
 | F-010 | HIGH | DONE | [Revisão assistida em lote — fatia 1: anotações sugeridas](../features/F-010-revisao-assistida-lote/feature.md) |
@@ -83,14 +88,14 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-019 | HIGH | DONE | [Ver a cena resolvida antes de exportar](../features/F-019-preview-da-cena-resolvida/feature.md) |
 | F-020 | HIGH | DONE | [Jornada web do orçamento-base](../features/F-020-orcamento-base-web/feature.md) |
 | F-021 | HIGH | DONE | [Nota pré-classificada na decisão da leitura](../features/F-021-nota-pre-classificada/feature.md) |
-| F-022 | HIGH | READY_FOR_HUMAN_REVIEW | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) |
+| F-022 | HIGH | DONE | [Document AI como braço de OCR](../features/F-022-document-ai-braco-ocr/feature.md) — aceita por ato humano em 2026-08-28, com o ADR-0037 `Accepted`; pendem provisionamento GCP/env em HML e o eval comparativo pago |
 | F-025 | HIGH | DONE | [Consultor do traçado](../features/F-025-consultor-do-tracado/feature.md) |
 | F-024 | HIGH | DONE | [Leitura com valor não morre por falta de target_hint](../features/F-024-leitura-sem-target-hint/feature.md) |
 | F-023 | HIGH | DONE | [Survey Quality Score](../features/F-023-survey-quality-score/feature.md) |
 | F-028 | HIGH | DONE | [Aprovação nominal e boletim da medição pela web](../features/F-028-boletim-medicao-web/feature.md) |
 | F-026 | HIGH | DONE | [Importadores SINAPI e SICRO na cascata do orçamento-base](../features/F-026-importadores-sinapi-sicro/feature.md) |
 | F-027 | HIGH | DONE | [Modo teto: orçamento invertido por verba declarada](../features/F-027-modo-teto-orcamento-invertido/feature.md) |
-| F-029 | HIGH | READY_FOR_HUMAN_REVIEW | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) |
+| F-029 | HIGH | DONE | [Auto-associação de cotas por confiança calibrada (experimento local)](../features/F-029-auto-associacao-confianca/feature.md) — aceita por ato humano em 2026-08-28; pendem a rodada local com a flag ligada, a calibração com os 7 PDFs reais e a escolha do threshold operacional |
 | F-030 | HIGH | READY_FOR_BUILD | [O levantamento de campo na jornada de revisão: a foto e a medida](../features/F-030-levantamento-de-campo-na-revisao/feature.md) |
 | F-033 | HIGH | DONE | [Demanda sob contrato licitado: cascata restrita à tabela contratual](../features/F-033-demanda-sob-contrato-licitado/feature.md) |
 | F-034 | HIGH | DONE | [Disponibilidade de jornada por ambiente e por tenant](../features/F-034-disponibilidade-de-jornada/feature.md) |
@@ -105,8 +110,8 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-043 | HIGH | IN_PROGRESS | [A planilha sai no gabarito da prefeitura, com memória de cálculo](../features/F-043-planilha-no-gabarito-da-prefeitura/feature.md) |
 | F-044 | HIGH | IN_PROGRESS | [A shortlist aprende com as decisões de código já tomadas](../features/F-044-precedente-de-codigo/feature.md) |
 | F-045 | HIGH | READY_FOR_REVIEW | [Desfazer um código confirmado](../features/F-045-desfazer-codigo-confirmado/feature.md) |
-| F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
-| F-031 | MEDIUM | READY_FOR_HUMAN_REVIEW | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — branch isolada `feat/f-031-value-events`, não integra no MVP |
+| F-032 | HIGH | DONE | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) — aceita por ato humano em 2026-08-28; pendem chave/conta Groq + clipes + eval paga de transcrição, o papel `field_technician` no realm e a decisão de consentimento por levantamento |
+| F-031 | MEDIUM | DONE | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — já integrada à main; aceita por ato humano em 2026-08-28; pendem o provisionamento do tópico Pub/Sub e as migrações no ambiente hospedado |
 
 Origem da seleção: decisão humana de 2026-08-17, registrada na
 [seção 10 do evidence de F-001](../features/F-001-roadmap-clarification/evidence.md). F-002

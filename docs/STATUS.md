@@ -2,7 +2,10 @@
 
 Status: Active  
 Responsável: Product / Engineering  
-Última revisão: 2026-08-27 (**F-018 e F-019 `DONE`** — correção humana de forma e preview da
+Última revisão: 2026-08-28 (**F-007, F-022, F-029, F-031 e F-032 `DONE`** — o dono do
+produto exerceu o ato humano de aceite das cinco, que estavam `READY_FOR_HUMAN_REVIEW`, na
+mesma data; o ADR-0037 passou a `Accepted` no mesmo ato. Ver "Aceite de 2026-08-28" abaixo
+para o que ficou como dívida declarada. Antes, 2026-08-27: **F-018 e F-019 `DONE`** — correção humana de forma e preview da
 cena resolvida, integradas pelo PR #105 e aceitas por ato humano; o `deploy-hml` da revisão
 aplicou a migração `0019`. Antes, 2026-08-26: F-038 — o item de legenda é um pacote de
 serviços — em código:
@@ -19,6 +22,34 @@ ADR-0033 aceitos)
 > Esta é uma vista derivada de estado, riscos, evidências e atos humanos pendentes. O
 > trabalho planejado tem fonte canônica no [Roadmap](product/ROADMAP.md); a convenção de
 > lifecycle e evidências está no [Project Context](engineering/PROJECT_CONTEXT.md).
+
+## Aceite de 2026-08-28: cinco features `DONE`
+
+O dono do produto exerceu o ato humano de aceite de cinco features que estavam
+`READY_FOR_HUMAN_REVIEW`, todas com pacote de revisão publicado antes desta data. As cinco
+passam a `DONE` no [Roadmap](product/ROADMAP.md) e no próprio `feature.md`. O ADR-0037
+passou a `Accepted` no mesmo ato.
+
+- **[F-007](features/F-007-tela-de-login/feature.md)** — porta de entrada com marca.
+  Dívida: deploy da imagem nova do Keycloak em homologação; texto final da tela.
+- **[F-022](features/F-022-document-ai-braco-ocr/feature.md)** — Document AI como braço de
+  OCR, atrás de `CROQUITO_DOCAI_PROCESSOR`. Dívida: provisionamento GCP e definição do env
+  em HML; eval comparativo pago antes de promover o braço.
+- **[F-029](features/F-029-auto-associacao-confianca/feature.md)** — auto-associação de
+  cotas por confiança calibrada, experimento local atrás de flag. Dívida: rodada local com
+  a flag ligada, calibração com os sete PDFs reais (`make association-calibration`) e a
+  escolha do threshold operacional.
+- **[F-031](features/F-031-value-events/feature.md)** — eventos de valor; já integrada à
+  `main` (migrações `0011`/`0012`, `croquito-demo publish-events`). Dívida: provisionamento
+  do tópico Pub/Sub e aplicação das migrações no ambiente hospedado.
+- **[F-032](features/F-032-app-levantamento-campo/feature.md)** — app de campo PWA
+  offline-first; já integrada à `main` (`ca18f99`). Dívida: chave/conta Groq, clipes
+  licenciados e a rodada paga da eval de transcrição; papel `field_technician` no realm
+  Keycloak; decisão sobre consentimento por levantamento.
+
+Nenhum dos itens de dívida acima foi exercido nesta rodada — todos dependem de dinheiro,
+credencial ou infraestrutura fora do repositório, e continuam registrados como tal nos
+respectivos `feature.md`.
 
 ## A geometria da revisão: F-018 e F-019 no ar
 
@@ -906,7 +937,8 @@ orçamentista, com a planilha como oráculo do golden.
   `CROQUITO_DOCAI_PROCESSOR`, escalada nomeada em
   [ADR-0037](adr/0037-document-ai-como-braco-de-ocr.md), que revisa D3 do
   [ADR-0035](adr/0035-suite-hospedada-openai-anthropic-direto.md) (`Accepted`; o ADR-0037
-  permanece `Proposed`).
+  também é `Accepted`, por ato humano em 2026-08-28 — provisionamento e eval comparativo
+  seguem pendentes).
 - Step Functions e Fargate no lugar de Celery/Redis.
 - Scene graph canônico entre extração e DXF.
 - DXF R2018 em metros; DWG fora do MVP.

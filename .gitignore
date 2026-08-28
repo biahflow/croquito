@@ -27,3 +27,6 @@ output/
 *.tfstate
 *.tfstate.*
 .terraform/
+
+# worktrees de agentes (efêmeras)
+.claude/worktrees/

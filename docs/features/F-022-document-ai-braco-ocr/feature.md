@@ -2,16 +2,20 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
+
+> **Aceite humano em 2026-08-28.** O [ADR-0037](../../adr/0037-document-ai-como-braco-de-ocr.md)
+> passou a `Accepted` na mesma data, por ato humano. Dívida declarada, não exercida:
+> provisionamento GCP e definição do env em HML; eval comparativo pago antes de promover o
+> braço em HML.
 
 > Selecionada por decisão humana de 2026-08-20, na mesma sessão da F-021: a segunda
 > revisão real do Guaxindiba chegou com 10 leituras onde a folha escreve ~16 números.
 > O usuário exerceu a escalada que o ADR-0035 já registrava nominalmente
-> ([ADR-0037](../../adr/0037-document-ai-como-braco-de-ocr.md), Proposed).
+> ([ADR-0037](../../adr/0037-document-ai-como-braco-de-ocr.md), Accepted).
 
 > Executada em 2026-08-20 (T1 adapter + T2 docs, builds completos, revisão do
-> orquestrador, portões integrados verdes). Pendem os atos humanos: commit,
-> aceite do ADR-0037, provisionamento GCP e eval comparativo pago.
+> orquestrador, portões integrados verdes).
 
 ## Classification
 
@@ -91,12 +95,12 @@ real.
 
 ## Dependencies
 
-- [ADR-0037](../../adr/0037-document-ai-como-braco-de-ocr.md) — Proposed nesta data;
-  aceite é ato humano.
+- ~~[ADR-0037](../../adr/0037-document-ai-como-braco-de-ocr.md) — Proposed nesta data;
+  aceite é ato humano.~~ — **`Accepted` por ato humano em 2026-08-28.**
 - Processador Document AI provisionado (ato externo; não bloqueia o código).
 
 ## Human Gates
 
-- Aceite do ADR-0037.
+- ~~Aceite do ADR-0037.~~ — **satisfeito em 2026-08-28.**
 - Provisionamento GCP e definição do env em HML (deploy é ato humano).
 - Eval comparativo pago antes de promover o braço em HML.
