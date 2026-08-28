@@ -418,12 +418,22 @@ def _plan_bulletin(
     )
 
 
-def _plan_block(
+def plan_calc_block(
     block: CalcBlock,
     template: WorkbookTemplate,
     label_row: int,
 ) -> tuple[list[PlannedCell], int]:
-    """Planeja rótulo, cabeçalho de operandos e valores de um bloco de cálculo."""
+    """Planeja rótulo, cabeçalho de operandos e valores de um bloco de cálculo.
+
+    Público (F-043) porque é o ÚNICO render de bloco de memória do repositório: ele
+    consome `CalcBlock` e `template.memory` e não sabe nada de `Valuation` nem de
+    `WorksiteBulletin`, então a memória do orçamento-base o reusa em vez de nascer com um
+    segundo render que divergiria no primeiro ajuste. Devolve as células do bloco e a
+    linha dos valores, para quem empilha blocos saber onde continuar.
+
+    `_plan_memory` (a memória da MEDIÇÃO) continua privada e específica: ela exige
+    `Valuation`/`WorksiteBulletin` e generalizá-la seria outra coisa.
+    """
     layout = template.memory
     slots = list(layout.operand_columns)
     if len(block.deductions) > 1:
@@ -581,7 +591,7 @@ def _plan_memory(
         row = summary_row + 1
         subtotal_rows: list[int] = []
         for block in sheet.blocks:
-            block_cells, value_row = _plan_block(block, template, row)
+            block_cells, value_row = plan_calc_block(block, template, row)
             cells.extend(block_cells)
             subtotal_rows.append(value_row)
             row = value_row + 1

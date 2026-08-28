@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 
 import pytest
@@ -12,7 +13,11 @@ from croquito_valuation.template import (
     AmendmentColumns,
     AmendmentLayout,
     CatalogLayout,
+    EstimateTemplateColumns,
+    EstimateTemplateLayout,
+    EstimateTemplateRow,
     GeneralLayout,
+    SheetColumn,
     WorkbookTemplate,
     default_template,
 )
@@ -306,3 +311,121 @@ def test_template_refuses_two_sheets_with_the_same_name() -> None:
         )
 
     assert valuation_error_codes(raised.value) == ["TEMPLATE_SHEET_NAME_CONFLICT"]
+
+
+def _grid_rows(
+    *, codes: Sequence[str] = ("SIN.A.001", "SIN.B.001"), items: Sequence[str] = ("01.1", "01.2")
+) -> list[EstimateTemplateRow]:
+    return [
+        EstimateTemplateRow(
+            group=item.split(".")[0],
+            item=item,
+            code=code,
+            description=f"LINHA SINTETICA {item}",
+            unit="m2",
+        )
+        for code, item in zip(codes, items, strict=True)
+    ]
+
+
+def _grid_layout(**overrides: object) -> EstimateTemplateLayout:
+    payload: dict[str, object] = {
+        "sheet_name": "PLANILHA ORÇAMENTÁRIA",
+        "title": "PLANILHA ORÇAMENTÁRIA",
+        "revision_label": "REV. 0",
+        "memory_sheet_name": "MEMÓRIA ORÇAMENTO",
+        "header_row": 7,
+        "columns": EstimateTemplateColumns(
+            group=SheetColumn(letter="A", label="GRUPO"),
+            item=SheetColumn(letter="B", label="ITEM"),
+            code=SheetColumn(letter="C", label="CÓDIGO"),
+            description=SheetColumn(letter="D", label="ESPECIFICAÇÃO"),
+            unit=SheetColumn(letter="E", label="UN"),
+            quantity=SheetColumn(letter="F", label="QUANT"),
+            unit_price=SheetColumn(letter="G", label="VALOR UNIT"),
+            total=SheetColumn(letter="H", label="TOTAL"),
+        ),
+        "rows": _grid_rows(),
+    }
+    payload.update(overrides)
+    return EstimateTemplateLayout.model_validate(payload)
+
+
+def test_estimate_grid_keeps_group_and_item_as_written_text() -> None:
+    """Zero à esquerda e a forma `GG.N` são o documento; o modelo não os recomputa."""
+    layout = _grid_layout(rows=_grid_rows(items=("01.1", "04.10")))
+
+    assert [row.item for row in layout.rows] == ["01.1", "04.10"]
+    assert [row.group for row in layout.rows] == ["01", "04"]
+    assert layout.row_index_by_code == {"SIN.A.001": 0, "SIN.B.001": 1}
+
+
+def test_estimate_grid_refuses_a_code_that_is_not_a_catalog_code() -> None:
+    with pytest.raises(ValidationError) as raised:
+        EstimateTemplateRow(
+            group="01",
+            item="01.1",
+            code="codigo com espaco",
+            description="LINHA INVALIDA",
+            unit="m",
+        )
+
+    assert valuation_error_codes(raised.value) == ["TEMPLATE_ESTIMATE_GRID_CODE_INVALID"]
+
+
+def test_estimate_grid_refuses_the_same_code_on_two_rows() -> None:
+    """O índice código→linha exige unicidade: repetido, a quantidade cairia à sorte."""
+    with pytest.raises(ValidationError) as raised:
+        _grid_layout(rows=_grid_rows(codes=("SIN.A.001", "SIN.A.001")))
+
+    assert valuation_error_codes(raised.value) == ["TEMPLATE_ESTIMATE_GRID_DUPLICATE_CODE"]
+
+
+def test_estimate_grid_refuses_the_same_item_number_on_two_rows() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _grid_layout(rows=_grid_rows(items=("01.1", "01.1")))
+
+    assert valuation_error_codes(raised.value) == ["TEMPLATE_ESTIMATE_GRID_DUPLICATE_ITEM"]
+
+
+def test_estimate_grid_refuses_the_memory_sheet_with_the_name_of_the_grid() -> None:
+    with pytest.raises(ValidationError) as raised:
+        _grid_layout(memory_sheet_name="PLANILHA ORÇAMENTÁRIA")
+
+    assert valuation_error_codes(raised.value) == ["TEMPLATE_SHEET_NAME_CONFLICT"]
+
+
+def test_estimate_grid_refuses_two_columns_on_the_same_letter() -> None:
+    with pytest.raises(ValidationError) as raised:
+        EstimateTemplateColumns(
+            group=SheetColumn(letter="A", label="GRUPO"),
+            item=SheetColumn(letter="A", label="ITEM"),
+            code=SheetColumn(letter="C", label="CÓDIGO"),
+            description=SheetColumn(letter="D", label="ESPECIFICAÇÃO"),
+            unit=SheetColumn(letter="E", label="UN"),
+            quantity=SheetColumn(letter="F", label="QUANT"),
+            unit_price=SheetColumn(letter="G", label="VALOR UNIT"),
+            total=SheetColumn(letter="H", label="TOTAL"),
+        )
+
+    assert valuation_error_codes(raised.value) == ["TEMPLATE_DUPLICATE_COLUMN"]
+
+
+def test_template_refuses_a_grid_sheet_that_collides_with_another_declared_sheet() -> None:
+    """A aba do gabarito entra no mesmo cheque de conflito das demais abas do template."""
+    template = default_template()
+
+    with pytest.raises(ValidationError) as raised:
+        WorkbookTemplate.model_validate(
+            {
+                **template.model_dump(),
+                "estimate_grid": _grid_layout(sheet_name=template.general.sheet_name).model_dump(),
+            }
+        )
+
+    assert valuation_error_codes(raised.value) == ["TEMPLATE_SHEET_NAME_CONFLICT"]
+
+
+def test_the_default_template_declares_no_grid() -> None:
+    """Sem gabarito declarado nada muda: é o que mantém a rodada de hoje intacta."""
+    assert default_template().estimate_grid is None

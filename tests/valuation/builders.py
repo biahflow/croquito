@@ -40,7 +40,11 @@ from croquito_valuation.sco import is_sco_code, parse_sco_code
 from croquito_valuation.template import (
     AmendmentLayout,
     CatalogLayout,
+    EstimateTemplateColumns,
+    EstimateTemplateLayout,
+    EstimateTemplateRow,
     GeneralLayout,
+    SheetColumn,
     WorkbookTemplate,
     default_template,
 )
@@ -1335,3 +1339,144 @@ def write_catalog_workbook(
     path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(path)
     return path
+
+
+ESTIMATE_GRID_SHEET_NAME = "PLANILHA ORÇAMENTÁRIA"
+ESTIMATE_GRID_MEMORY_SHEET_NAME = "MEMÓRIA ORÇAMENTO"
+ESTIMATE_GRID_REVISION_LABEL = "GABARITO SINTÉTICO REV. 0"
+"""Identificação da revisão do gabarito sintético; o arquivo publicado a imprime."""
+
+
+def estimate_grid_rows() -> tuple[EstimateTemplateRow, ...]:
+    """Gabarito sintético com as três propriedades que importam no documento real.
+
+    1. **Mais de um grupo** e **lacuna de grupo**: 01, 02 e 04 — não existe grupo 03, do
+       mesmo jeito que o gabarito do cliente não tem os grupos 5, 15 e 22.
+    2. **Numeração `GG.N` dentro do grupo**, preservada como texto (o escritor nunca a
+       recomputa).
+    3. **Mais linhas do que o orçamento preenche**: cinco linhas casam com os cinco códigos
+       da demo sintética e as outras cinco saem zeradas — três com preço declarado no
+       gabarito e duas sem preço nenhum.
+
+    A ordem NÃO é a de `estimate.lines`: os códigos da demo aparecem espalhados, para que
+    um escritor que voltasse ao cursor sequencial reprovasse na primeira asserção.
+    """
+    return (
+        EstimateTemplateRow(
+            group="01",
+            item="01.1",
+            code="SIN.PLACA.001",
+            description="PLACA DE OBRA SINTETICA",
+            unit="m2",
+            unit_price=Decimal("612.50"),
+        ),
+        EstimateTemplateRow(
+            group="01",
+            item="01.2",
+            code="EMOP.AD.001",
+            description="PAVIMENTACAO SINTETICA EMOP TIPO 1",
+            unit="M2",
+        ),
+        EstimateTemplateRow(
+            group="01",
+            item="01.3",
+            code="SIN.TAPUME.001",
+            description="TAPUME SINTETICO DE CANTEIRO",
+            unit="m",
+        ),
+        EstimateTemplateRow(
+            group="02",
+            item="02.1",
+            code="CE02100010(/)",
+            description="ALAMBRADO SINTETICO TELA GALVANIZADA",
+            unit="m2",
+        ),
+        EstimateTemplateRow(
+            group="02",
+            item="02.2",
+            code="SIN.BANCO.001",
+            description="BANCO SINTETICO DE CONCRETO",
+            unit="UN",
+            unit_price=Decimal("880.00"),
+        ),
+        EstimateTemplateRow(
+            group="02",
+            item="02.3",
+            code="AD04050060(/)",
+            description="PISO INTERTRAVADO SINTETICO 10CM",
+            unit="m2",
+        ),
+        EstimateTemplateRow(
+            group="04",
+            item="04.1",
+            code="COMP.GRAMADO.001",
+            description="EXECUCAO DE GRAMADO SINTETICO EM PLACAS",
+            unit="m2",
+        ),
+        EstimateTemplateRow(
+            group="04",
+            item="04.2",
+            code="SIN.MUDA.001",
+            description="MUDA SINTETICA DE ARVORE",
+            unit="UN",
+        ),
+        EstimateTemplateRow(
+            group="04",
+            item="04.3",
+            code="EMOP.CE.001",
+            description="MOBILIARIO SINTETICO EMOP",
+            unit="UN",
+        ),
+        EstimateTemplateRow(
+            group="04",
+            item="04.4",
+            code="SIN.LIXEIRA.001",
+            description="LIXEIRA SINTETICA DUPLA",
+            unit="UN",
+            unit_price=Decimal("445.30"),
+        ),
+    )
+
+
+def estimate_grid_layout(
+    *,
+    rows: Sequence[EstimateTemplateRow] | None = None,
+    revision_label: str = ESTIMATE_GRID_REVISION_LABEL,
+) -> EstimateTemplateLayout:
+    """Layout do gabarito sintético: oito colunas e o bloco de identificação acima delas.
+
+    `header_row=7` porque o bloco tem quatro pares (INTERVENÇÃO, ENDEREÇO, BDI e a revisão
+    do gabarito) e o escritor exige folga para eles.
+    """
+    return EstimateTemplateLayout(
+        sheet_name=ESTIMATE_GRID_SHEET_NAME,
+        title="PLANILHA ORÇAMENTÁRIA SINTÉTICA",
+        revision_label=revision_label,
+        memory_sheet_name=ESTIMATE_GRID_MEMORY_SHEET_NAME,
+        header_row=7,
+        columns=EstimateTemplateColumns(
+            group=SheetColumn(letter="A", label="GRUPO", width=8),
+            item=SheetColumn(letter="B", label="ITEM", width=8),
+            code=SheetColumn(letter="C", label="CÓDIGO", width=18),
+            description=SheetColumn(letter="D", label="ESPECIFICAÇÃO", width=56),
+            unit=SheetColumn(letter="E", label="UN", width=8),
+            quantity=SheetColumn(letter="F", label="QUANT", width=12),
+            unit_price=SheetColumn(letter="G", label="VALOR UNIT", width=14),
+            total=SheetColumn(letter="H", label="TOTAL", width=16),
+        ),
+        rows=list(estimate_grid_rows() if rows is None else rows),
+    )
+
+
+def estimate_grid_template(
+    *,
+    rows: Sequence[EstimateTemplateRow] | None = None,
+    revision_label: str = ESTIMATE_GRID_REVISION_LABEL,
+) -> WorkbookTemplate:
+    """Template padrão acrescido do gabarito sintético; o resto do layout não muda."""
+    template = default_template()
+    payload = template.model_dump()
+    payload["estimate_grid"] = estimate_grid_layout(
+        rows=rows, revision_label=revision_label
+    ).model_dump()
+    return WorkbookTemplate.model_validate(payload)
