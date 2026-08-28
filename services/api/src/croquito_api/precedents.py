@@ -423,6 +423,58 @@ def record_closure_precedents(
     )
 
 
+def revoke_closure_precedent(
+    session: Session,
+    *,
+    tenant_id: str,
+    worksite_key: str,
+    packet: TakeoffPacket,
+    item_id: str,
+    code: str,
+    price_source: str,
+) -> int:
+    """Apaga a observação que o fechamento desta praça gravou para um par desfeito (F-045).
+
+    É a compensação do ADR-0061 D4, e roda na MESMA transação da revogação: se ela ficasse
+    para depois, o índice continuaria ensinando à praça seguinte um código que esta praça
+    desfez — com a autoridade de "você já fez assim", que é o argumento mais forte que a
+    shortlist tem.
+
+    Duas restrições, e as duas são deliberadas:
+
+    - **só a observação desta praça**, porque a contagem do índice é por praça e o engano de
+      uma não desmente as outras;
+    - **só a de origem `round`**. Observação semeada de orçamento passado (fonte B) registra
+      o que outra praça fez, num arquivo que já existia antes desta rodada; um ato daqui não
+      tem autoridade sobre ela. A consequência declarada: se a mesma praça tivesse as duas
+      origens — o que a recusa de colisão da semeadura impede —, a semeada sobreviveria.
+
+    Devolve quantas linhas saíram: `0` é resposta legítima e comum, porque o pacote pode
+    nunca ter sido fechado, e nesse caso nada foi indexado.
+
+    Sem rótulo não há chave de índice, e um item fora do takeoff não tem rótulo: o retorno é
+    `0`, pelo mesmo motivo que `observations_from_closure` não produz nada nesse caso.
+    """
+    labels = {item.id: item.label for item in packet.items}
+    label = labels.get(item_id)
+    if label is None:
+        return 0
+    normalized = index_key(label)
+    rows = session.scalars(
+        select(PrecedentObservationRecord).where(
+            visible_observations(tenant_id),
+            PrecedentObservationRecord.worksite_key == worksite_key,
+            PrecedentObservationRecord.label_normalized == normalized,
+            PrecedentObservationRecord.price_source == price_source,
+            PrecedentObservationRecord.code == code,
+            PrecedentObservationRecord.source == SOURCE_ROUND,
+        )
+    ).all()
+    for row in rows:
+        session.delete(row)
+    return len(rows)
+
+
 # --- fonte B: semeadura de orçamentos passados ---------------------------------------------
 
 

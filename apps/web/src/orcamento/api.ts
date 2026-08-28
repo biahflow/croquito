@@ -47,6 +47,7 @@ import {
   cascadeOrderBody,
   cascadeRemoveBody,
   codeClosureBody,
+  codeRevocationBody,
   codeDecisionBody,
   createEstimateBody,
   installCatalogBody,
@@ -644,6 +645,20 @@ export type CodeClosureDraft = {
   note?: string;
 };
 
+/**
+ * Desfazer um par `(elemento, código)` já confirmado (F-045).
+ *
+ * `note` não é opcional: desfazer é o ato que alguém vai auditar depois, e a frase escrita é
+ * o que separa o conserto do descuido. O tipo carrega essa obrigação para que a tela não
+ * consiga montar o pedido sem ela.
+ */
+export type CodeRevocationDraft = {
+  itemId: string;
+  code: string;
+  baseVersion: number;
+  note: string;
+};
+
 export type CodeDecisionDraft = {
   itemId: string;
   action: "confirm" | "reject";
@@ -1141,6 +1156,25 @@ export function postCodeClosure(
     roundPath(roundId, "/code-assignments/closures"),
     accessToken,
     codeClosureBody(draft),
+  );
+}
+
+/**
+ * Desfaz um código confirmado por engano (F-045) — e, no orçamento, apaga o precedente que
+ * ele tinha deixado para as próximas praças.
+ *
+ * A resposta é o conjunto NOVO, como nas outras mutações da etapa: a tela redesenha a partir
+ * dela em vez de tirar a linha por conta própria.
+ */
+export function postCodeRevocation(
+  accessToken: string,
+  roundId: string,
+  draft: CodeRevocationDraft,
+): Promise<CodesResponse> {
+  return post<CodesResponse>(
+    roundPath(roundId, "/code-assignments/revocations"),
+    accessToken,
+    codeRevocationBody(draft),
   );
 }
 

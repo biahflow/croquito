@@ -1430,6 +1430,42 @@
         "title": "CodeAssignmentDecisionRequest",
         "type": "object"
       },
+      "CodeAssignmentRevocationRequest": {
+        "additionalProperties": false,
+        "description": "Retirada de um par `(elemento, código)` já confirmado (F-045).\n\nServe às duas jornadas: desfazer não cita fonte de preço — a fonte é a que o par\nconfirmado já carrega, e pedi-la de novo deixaria o cliente afirmar algo que o servidor\nsabe melhor.\n\nA `note` é **obrigatória**, ao contrário da do fechamento. Fechar é o curso normal do\ntrabalho; desfazer é o ato que alguém vai auditar depois, e a frase escrita é o que\nsepara o conserto do descuido.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "code": {
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "item_id": {
+            "pattern": "^ti_[a-f0-9]{16}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "note": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "item_id",
+          "code",
+          "note"
+        ],
+        "title": "CodeAssignmentRevocationRequest",
+        "type": "object"
+      },
       "CompleteSurveyRequest": {
         "additionalProperties": false,
         "description": "Conclusão do levantamento sob a mesma guarda otimista das revisões de leitura.",
@@ -10909,6 +10945,83 @@
         ]
       }
     },
+    "/v1/estimate-rounds/{round_id}/code-assignments/revocations": {
+      "post": {
+        "description": "Desfaz um código confirmado por engano — e apaga o precedente que ele deixou.\n\nIrmã de `revoke_valuation_item_code`, com **um efeito a mais**, na mesma transação: a\nobservação que o fechamento desta praça gravou no índice de precedentes para este par\né removida (F-044 fonte A, ADR-0061 D4). Sem isso o índice seguiria ensinando à praça\nseguinte o código que esta praça desfez, com a autoridade de \"você já fez assim\" —\nque é o argumento mais forte que a shortlist tem.\n\nA compensação é cirúrgica: só a observação **desta praça** e só a de origem `round`.\nA contagem de praças do índice cai, e um precedente pode desaparecer da shortlist da\npróxima praça — que é exatamente o que se quer, porque ele deixou de ser verdade.\n\nObservação **semeada** de orçamento passado não é tocada: ela registra o que outra\npraça fez, e um ato desta rodada não tem autoridade sobre aquele arquivo.",
+        "operationId": "revoke_estimate_item_code_v1_estimate_rounds__round_id__code_assignments_revocations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodeAssignmentRevocationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Revoke Estimate Item Code V1 Estimate Rounds  Round Id  Code Assignments Revocations Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revoke Estimate Item Code",
+        "tags": [
+          "estimate"
+        ]
+      }
+    },
     "/v1/estimate-rounds/{round_id}/code-suggestions": {
       "get": {
         "description": "Shortlist de código sobre a CASCATA por item confirmado: observação, nunca decisão.\n\nOs candidatos saem na ordem da cascata — cada fonte é um bloco —, e a gravação entra\nna cadeia de revisões **sem avançar a versão da rodada**: a shortlist é artefato\nderivado, e se um `GET` movesse o token de concorrência, a próxima decisão do\norçamentista levaria `409` por algo que ele não fez.\n\n**Nenhuma chamada paga acontece aqui**, pelo mesmo motivo e com a mesma força da\nirmã da medição (ADR-0054 D7): o cálculo é chamado sem braço semântico (`arms=None`),\nnenhum índice é procurado e a shortlist gravada é léxica até o recálculo explícito.\n\nDesde a F-044 a resposta traz também `precedents`: o pacote de códigos que cada\nrótulo já disparou nas praças passadas deste tenant, com a contagem de praças. Ele\n**não muda nada** do que já estava aqui — `suggestions` continua igual, na mesma\nordem e com os mesmos blocos por fonte —, e não acrescenta custo nenhum: é `SELECT`\nsobre o que o fechamento de pacote e a semeadura já gravaram. Continua sendo\nobservação: nenhuma decisão nasce desta leitura.",
@@ -17050,6 +17163,83 @@
           }
         ],
         "summary": "Decide Valuation Item Code",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/code-assignments/revocations": {
+      "post": {
+        "description": "Desfaz um código confirmado por engano, sem refazer a rodada (F-045, ADR-0061).\n\nAté esta rota, a etapa só sabia avançar: a identidade da decisão é o par\n`(item, código)`, re-decidir um par é recusado, e não há rollback de revisão em lugar\nnenhum da `/v1`. Um código confirmado errado custava a praça inteira.\n\nRevogar é **decisão nova**, e não edição do passado: a revisão anterior continua\ngravada com o par confirmado lá dentro, e o conjunto novo registra em `revocations`\nquem desfez, quando e por quê — para que quem lê o conjunto corrente distinga \"nunca\ndecidido\" de \"decidido e desfeito\" sem comparar revisões.\n\n**Desfazer reabre o pacote** do elemento, quando ele estava fechado: a completude foi\nafirmada sobre um pacote que acabou de mudar. O efeito adiante é o desejado — o\nboletim volta a recusar aquele elemento até alguém fechar de novo.\n\nPar que não está confirmado, item fora do takeoff e rodada do regime antigo continuam\nsendo recusa do domínio, que esta rota não reimplementa.",
+        "operationId": "revoke_valuation_item_code_v1_valuation_rounds__round_id__code_assignments_revocations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodeAssignmentRevocationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Revoke Valuation Item Code V1 Valuation Rounds  Round Id  Code Assignments Revocations Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revoke Valuation Item Code",
         "tags": [
           "valuation"
         ]

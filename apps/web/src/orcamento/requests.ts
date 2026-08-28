@@ -24,6 +24,7 @@ import type {
   CascadeOrderDraft,
   CascadeRemoveDraft,
   CodeClosureDraft,
+  CodeRevocationDraft,
   CodeDecisionDraft,
   CreateEstimateDraft,
   SiteSetupApplyDraft,
@@ -282,6 +283,24 @@ export function takeoffDecisionBody(
  * rejeição: fechar é o curso normal do trabalho, e nota obrigatória em ato rotineiro vira
  * ruído que ninguém lê.
  */
+/**
+ * O corpo de desfazer um código confirmado (F-045).
+ *
+ * A nota é OBRIGATÓRIA aqui — ao contrário do fechamento, onde ela é opcional —, e por isso
+ * ela entra sem o `if` que o fechamento tem: um corpo sem motivo é recusado pelo servidor, e
+ * omiti-lo aqui esconderia a recusa em vez de provocá-la cedo.
+ */
+export function codeRevocationBody(
+  draft: CodeRevocationDraft,
+): Record<string, string | number> {
+  return {
+    ...versionBody(draft.baseVersion),
+    item_id: draft.itemId,
+    code: draft.code,
+    note: draft.note.trim(),
+  };
+}
+
 export function codeClosureBody(
   draft: CodeClosureDraft,
 ): Record<string, string | number> {

@@ -22,6 +22,7 @@ import {
   postApproveEstimate,
   postBuildEstimate,
   postCodeClosure,
+  postCodeRevocation,
   postCodeDecision,
   postExportEstimate,
   postSiteSetupApply,
@@ -203,6 +204,17 @@ import {
   seloDeOrigemDaParcela,
   fraseAceitarPacote,
   fraseConfirmarPacote,
+  DESFAZER_AVISO_PACOTE_FECHADO,
+  DESFAZER_BOTAO,
+  DESFAZER_CANCELAR,
+  DESFAZER_MOTIVO_LABEL,
+  DESFAZER_NAO_BANE,
+  DESFEITOS_TITULO,
+  DESFEITO_SELO,
+  fraseDesfazerConfirmar,
+  fraseDesfazerTitulo,
+  fraseDesfeitoGravado,
+  frasesEfeitoDesfazer,
   frasePacoteNaoUnanime,
   frasePracasDoCodigo,
   frasePrecedenteContagem,
@@ -287,6 +299,16 @@ import {
   type ItemPrecedent,
   type SeloDeItem,
 } from "./precedente";
+import {
+  abrirDesfazer,
+  desfazerDoItem,
+  type CodigoDesfeito,
+  desfeitosDoItem,
+  pacoteFechado,
+  pedidoDeDesfazer,
+  podeDesfazer,
+  type CaixaDeDesfazer,
+} from "./revogacao";
 import { overlayFreshness } from "./overlay";
 import {
   aplicarZoom,
@@ -915,6 +937,117 @@ export function BlocoDePrecedente({
         <span className="selo selo-precedente">{PRECEDENTE_OBSERVACAO}</span>
       </div>
       <p className="aviso-precedente">{PRECEDENTE_REPETIDO_NOS_DOIS}</p>
+    </section>
+  );
+}
+
+/**
+ * A caixa de desfazer um código confirmado (F-045, pacote de design revisão 1).
+ *
+ * `caixa === null` devolve `null`: sem clique não há caixa, e uma caixa vazia permanente
+ * convidaria a desfazer por engano o ato de desfazer.
+ *
+ * Três decisões do pacote moram aqui: o **motivo obrigatório** (campo, não caixa de "tem
+ * certeza?", porque um "sim" não deixa rastro nenhum), o **efeito escrito antes do clique**
+ * — inclusive o precedente que some, que ninguém adivinharia sozinho — e o **botão que muda
+ * de nome** quando o pacote está fechado, porque reabrir em silêncio faria a exportação
+ * recusar o elemento sem ninguém saber por quê.
+ */
+export function CaixaDeDesfazerCodigo({
+  caixa,
+  pacoteFechado: fechado,
+  submitting,
+  onChange,
+  onDesfazer,
+  onCancelar,
+}: {
+  caixa: CaixaDeDesfazer | null;
+  pacoteFechado: boolean;
+  submitting: boolean;
+  onChange: (caixa: CaixaDeDesfazer) => void;
+  onDesfazer: () => void;
+  onCancelar: () => void;
+}) {
+  if (caixa === null) {
+    return null;
+  }
+  return (
+    <section className="desfazer-caixa" aria-label={fraseDesfazerTitulo(caixa.code)}>
+      <h4>{fraseDesfazerTitulo(caixa.code)}</h4>
+      <div className="campo">
+        <label htmlFor="desfazer-motivo">{DESFAZER_MOTIVO_LABEL}</label>
+        <textarea
+          id="desfazer-motivo"
+          value={caixa.motivo}
+          onChange={(event) =>
+            onChange({ ...caixa, motivo: event.target.value })
+          }
+          maxLength={500}
+          rows={3}
+        />
+      </div>
+      {fechado ? (
+        <p className="aviso-precedente-fraco">{DESFAZER_AVISO_PACOTE_FECHADO}</p>
+      ) : null}
+      <p className="dica">O que este clique faz:</p>
+      <ul className="lista-simples">
+        {frasesEfeitoDesfazer(caixa.code).map((frase) => (
+          <li key={frase}>{frase}</li>
+        ))}
+      </ul>
+      <div className="acoes-linha">
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={onCancelar}
+          disabled={submitting}
+        >
+          {DESFAZER_CANCELAR}
+        </button>
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={onDesfazer}
+          disabled={submitting || !podeDesfazer(caixa)}
+        >
+          {fraseDesfazerConfirmar(fechado)}
+        </button>
+      </div>
+      <p className="dica">{DESFAZER_NAO_BANE}</p>
+    </section>
+  );
+}
+
+/**
+ * O que foi desfeito e continua desfeito, no próprio elemento (F-045, decisão 6).
+ *
+ * Lista vazia não desenha nada — nenhum controle inerte, a mesma regra da F-044. Ela existe
+ * porque "nunca decidido" e "decidido e desfeito" produzem a mesma ausência de código, e
+ * quem revisa o elemento precisa distinguir os dois sem comparar revisões.
+ */
+export function ListaDeDesfeitos({
+  desfeitos,
+}: {
+  desfeitos: readonly CodigoDesfeito[];
+}) {
+  if (desfeitos.length === 0) {
+    return null;
+  }
+  return (
+    <section className="desfeitos" aria-label={DESFEITOS_TITULO}>
+      <h4>{DESFEITOS_TITULO}</h4>
+      <ul className="lista-simples">
+        {desfeitos.map((desfeito) => (
+          <li key={desfeito.revocation_id}>
+            <code className="codigo-desfeito">{desfeito.code}</code>{" "}
+            <span className="selo selo-neutro">{DESFEITO_SELO}</span>{" "}
+            <span className="campo-dica">
+              “{desfeito.note}” · {desfeito.reviewer_id} ·{" "}
+              {formatTimestamp(desfeito.revoked_at)}
+            </span>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -3586,6 +3719,13 @@ export function OrcamentoApp({
   const [precedenteConfirmacao, setPrecedenteConfirmacao] =
     useState<ConfirmacaoDoPrecedente | null>(null);
 
+  /**
+   * A caixa de desfazer um código confirmado (F-045). `null` é o estado normal: desfazer é
+   * ato deliberado, e a caixa só existe depois do clique que a abre — com o motivo, que é
+   * obrigatório, ainda por escrever.
+   */
+  const [desfazerCaixa, setDesfazerCaixa] = useState<CaixaDeDesfazer | null>(null);
+
   // BDI e montagem.
   const [bdiInput, setBdiInput] = useState("");
 
@@ -4548,6 +4688,51 @@ export function OrcamentoApp({
     } catch (error) {
       // Recusa preserva a lista à vista: o lote é atômico, nada foi gravado, e apagar a
       // confirmação obrigaria a reabrir o pacote para tentar de novo.
+      registrarRecusa(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Desfaz um par `(elemento, código)` confirmado (F-045).
+   *
+   * O ato é do par e leva o motivo escrito. Depois dele a tela redesenha a partir do conjunto
+   * que o servidor devolveu — nada é removido da lista por conta própria, porque o efeito
+   * real inclui coisas que a tela não sabe: o pacote que reabre e o precedente que sai do
+   * índice.
+   */
+  const desfazerCodigo = async () => {
+    const token = tokenDaSessao();
+    const caixa = desfazerDoItem(desfazerCaixa, selectedPendingId);
+    if (
+      token === null ||
+      orcamento === null ||
+      version === null ||
+      caixa === null ||
+      !podeDesfazer(caixa)
+    ) {
+      return;
+    }
+    const reabriu = pacoteFechado(codes?.assignments ?? null, caixa.itemId);
+    const code = caixa.code;
+    setSubmitting(true);
+    try {
+      const response = await postCodeRevocation(
+        token,
+        orcamento,
+        pedidoDeDesfazer(caixa, version),
+      );
+      aplicarVersao(response.version);
+      setCodes(response);
+      setDesfazerCaixa(null);
+      setAlertMessage(null);
+      setRevisionConflict(false);
+      setToast(fraseDesfeitoGravado(code, reabriu));
+      await carregarEstado();
+    } catch (error) {
+      // Recusa preserva a caixa e o motivo digitado: nada foi gravado, e apagar o texto
+      // obrigaria a reescrever a justificativa para tentar de novo.
       registrarRecusa(error);
     } finally {
       setSubmitting(false);
@@ -6480,6 +6665,22 @@ export function OrcamentoApp({
                                   {autorada
                                     ? "Editar contribuição"
                                     : "Autorar contribuição"}
+                                </button>{" "}
+                                {/* Desfazer mora AQUI, no cartão do código, porque é onde a
+                                    pessoa está olhando quando descobre o engano — e é o
+                                    único lugar em que o par (elemento, código), que é a
+                                    identidade da decisão, está inteiro à vista (F-045). */}
+                                <button
+                                  type="button"
+                                  className="botao-secundario"
+                                  onClick={() =>
+                                    setDesfazerCaixa(
+                                      abrirDesfazer(selectedPendingId, codigo),
+                                    )
+                                  }
+                                  disabled={submitting}
+                                >
+                                  {DESFAZER_BOTAO}
                                 </button>
                               </li>
                             );
@@ -6487,6 +6688,23 @@ export function OrcamentoApp({
                         </ul>
                       </>
                     )}
+                    <CaixaDeDesfazerCodigo
+                      caixa={desfazerDoItem(desfazerCaixa, selectedPendingId)}
+                      pacoteFechado={pacoteFechado(
+                        codes?.assignments ?? null,
+                        selectedPendingId,
+                      )}
+                      submitting={submitting}
+                      onChange={setDesfazerCaixa}
+                      onDesfazer={() => void desfazerCodigo()}
+                      onCancelar={() => setDesfazerCaixa(null)}
+                    />
+                    <ListaDeDesfeitos
+                      desfeitos={desfeitosDoItem(
+                        codes?.assignments ?? null,
+                        selectedPendingId,
+                      )}
+                    />
                   </section>
 
                   {/* Editor da contribuição do par selecionado (F-038 "decisão 6"). */}

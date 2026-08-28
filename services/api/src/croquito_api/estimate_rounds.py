@@ -1365,6 +1365,52 @@ def estimate_built_by(revision: EstimateRoundRevisionRecord | None) -> str | Non
     return author if isinstance(author, str) and author else None
 
 
+def estimate_is_approved(revision: EstimateRoundRevisionRecord | None) -> bool:
+    """`True` quando a cabeça já tem orçamento **aprovado** (F-045, sobre o ADR-0046).
+
+    A aprovação é nominal e amarrada por digest ao conteúdo do orçamento — e é justamente por
+    isso que a revogação de um código precisa perguntar por ela: revogar não remonta o
+    orçamento, então o digest continuaria conferindo enquanto o conjunto de códigos por baixo
+    dele mudou. O portão de exportação, que lê a divergência como `APPROVAL_CONTENT_MISMATCH`,
+    não veria nada.
+
+    Uma aprovação com decisão de recusa não conta: ela é o registro de que o orçamento **não**
+    foi aprovado.
+    """
+    if revision is None:
+        return False
+    document = revision.estimate_json
+    if not isinstance(document, Mapping):
+        return False
+    approval = document.get("approval")
+    if not isinstance(approval, Mapping):
+        return False
+    decision = approval.get("decision")
+    if not isinstance(decision, Mapping):
+        return False
+    return decision.get("action") == "confirm"
+
+
+def revocation_after_approval() -> RoundRefusal:
+    """Desfazer código com o orçamento já aprovado: recusa **provisória** e fail-closed.
+
+    O unknown 1 da F-045 é do dono do produto, e esta recusa não o decide — ela escolhe o lado
+    seguro enquanto ele não decide. Permitir seria deixar uma assinatura nominal apontando
+    para um conjunto de códigos que mudou depois dela, sem nada no sistema notando: a
+    aprovação amarra o digest do orçamento, e a revogação não toca no orçamento.
+
+    Reverter é apagar esta checagem; o caminho contrário — descobrir depois que um orçamento
+    assinado não corresponde aos códigos — não tem volta.
+    """
+    return RoundRefusal(
+        422,
+        "ASSIGNMENT_REVOCATION_AFTER_APPROVAL",
+        "o orçamento desta rodada já foi aprovado; desfazer um código agora deixaria a "
+        "aprovação apontando para um conjunto que mudou",
+        {},
+    )
+
+
 def self_approval_forbidden() -> RoundRefusal:
     """Quem montou o orçamento não o assina (ADR-0046, decisão 6).
 

@@ -24,6 +24,7 @@ from croquito_valuation.assignment import (
     CodeAssignment,
     CodeAssignmentBatch,
     CodeAssignmentInput,
+    CodeAssignmentRevocationInput,
     CodeAssignmentSet,
     CodeCandidate,
     CodeSuggestionSet,
@@ -34,6 +35,7 @@ from croquito_valuation.assignment import (
     SuggestionSemantics,
     apply_code_assignments,
     apply_code_assignments_over_cascade,
+    apply_code_revocation,
     apply_refinement,
     ensure_price_cascade,
     suggest_codes,
@@ -2153,3 +2155,198 @@ def test_the_cascade_rejection_carries_no_source_at_all() -> None:
 
     assert result.assignments[0].status == "rejected"
     assert result.assignments[0].catalog_sha256 is None
+
+
+# --------------------------------------------------------------------------------------
+# revogação de código confirmado (F-045 / ADR-0061)
+# --------------------------------------------------------------------------------------
+
+
+def _revocation_input(
+    *,
+    item_id: str = _ITEM_1,
+    code: str = _CODE_ALAMBRADO,
+    note: str = "entrou junto no aceite do precedente e não é desta praça",
+    revoked_at: datetime = _DECIDED_AT,
+) -> CodeAssignmentRevocationInput:
+    return CodeAssignmentRevocationInput(
+        item_id=item_id,
+        code=code,
+        reviewer_id=_REVIEWER,
+        reviewer_role="orcamentista",
+        revoked_at=revoked_at,
+        note=note,
+    )
+
+
+def _package_of_two(*, closed: bool = False) -> tuple[TakeoffPacket, CodeAssignmentSet]:
+    """Um elemento com DOIS códigos confirmados, opcionalmente com o pacote fechado."""
+    packet = _packet([_confirmed_item(unit="m")])
+    batch = CodeAssignmentBatch(
+        assignments=[
+            _assignment_input(code=_CODE_ALAMBRADO),
+            _assignment_input(code=_CODE_TELA),
+        ],
+        closures=[_closure_input()] if closed else [],
+    )
+    return packet, apply_code_assignments(packet, batch, _package_catalog())
+
+
+def test_revoking_takes_the_pair_out_and_records_who_undid_it() -> None:
+    """O par sai de `assignments` — não vira status novo — e o ato fica escrito."""
+    packet, previous = _package_of_two()
+
+    result = apply_code_revocation(packet, _revocation_input(), previous)
+
+    assert [assignment.code for assignment in result.assignments] == [_CODE_TELA]
+    assert result.confirmed_codes_by_item() == {_ITEM_1: (_CODE_TELA,)}
+    assert len(result.revocations) == 1
+    revocation = result.revocations[0]
+    assert (revocation.item_id, revocation.code) == (_ITEM_1, _CODE_ALAMBRADO)
+    assert revocation.reviewer_id == _REVIEWER
+    assert revocation.note == "entrou junto no aceite do precedente e não é desta praça"
+    assert revocation.revocation_id.startswith("vr_")
+    # A revisão anterior continua intacta: desfazer acrescenta um ato, não reescreve o
+    # passado (ADR-0061 D1).
+    assert [assignment.code for assignment in previous.assignments] == [
+        _CODE_ALAMBRADO,
+        _CODE_TELA,
+    ]
+
+
+def test_revoking_reopens_the_package() -> None:
+    """A completude foi afirmada sobre um pacote que mudou; ela precisa ser refeita."""
+    packet, previous = _package_of_two(closed=True)
+    assert previous.closed_item_ids() == frozenset({_ITEM_1})
+
+    result = apply_code_revocation(packet, _revocation_input(), previous)
+
+    assert result.closures == []
+    assert result.closed_item_ids() == frozenset()
+    assert result.open_package_item_ids() == frozenset({_ITEM_1})
+
+
+def test_the_same_pair_can_be_confirmed_again_after_being_revoked() -> None:
+    """Desfazer é conserto, não punição: o código volta a ser decidível (D5)."""
+    packet, previous = _package_of_two()
+    revoked = apply_code_revocation(packet, _revocation_input(), previous)
+
+    again = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(
+            assignments=[
+                _assignment_input(
+                    code=_CODE_ALAMBRADO,
+                    decided_at=datetime(2026, 2, 1, 13, 0, tzinfo=UTC),
+                )
+            ]
+        ),
+        _package_catalog(),
+        previous=revoked,
+    )
+
+    assert sorted(again.confirmed_codes_by_item()[_ITEM_1]) == [_CODE_ALAMBRADO, _CODE_TELA]
+    # E o ato de ter desfeito continua registrado: reconfirmar não apaga quem desfez.
+    assert [item.code for item in again.revocations] == [_CODE_ALAMBRADO]
+
+
+def test_a_later_decision_carries_the_revocations_forward() -> None:
+    """Confirmar outro código não pode apagar o registro do que foi desfeito."""
+    packet, previous = _package_of_two()
+    revoked = apply_code_revocation(packet, _revocation_input(code=_CODE_TELA), previous)
+
+    later = apply_code_assignments(
+        packet,
+        CodeAssignmentBatch(closures=[_closure_input()]),
+        _package_catalog(),
+        previous=revoked,
+    )
+
+    assert [item.code for item in later.revocations] == [_CODE_TELA]
+
+
+def test_revoking_a_pair_that_is_not_confirmed_is_refused() -> None:
+    packet, previous = _package_of_two()
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_revocation(packet, _revocation_input(code="CE04100099(/)"), previous)
+
+    assert raised.value.code == "ASSIGNMENT_REVOCATION_PAIR_UNKNOWN"
+
+
+def test_revoking_twice_is_refused_by_the_second_call() -> None:
+    """Idempotência não é silêncio: o segundo ato não tem o que desfazer, e diz isso."""
+    packet, previous = _package_of_two()
+    revoked = apply_code_revocation(packet, _revocation_input(), previous)
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_revocation(packet, _revocation_input(), revoked)
+
+    assert raised.value.code == "ASSIGNMENT_REVOCATION_PAIR_UNKNOWN"
+
+
+def test_revoking_an_unknown_item_is_refused() -> None:
+    packet, previous = _package_of_two()
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_revocation(packet, _revocation_input(item_id="ti_ffffffffffffffff"), previous)
+
+    assert raised.value.code == "ASSIGNMENT_UNKNOWN_ITEM"
+
+
+def test_a_legacy_set_refuses_revocation() -> None:
+    """Em `1.0.0` a confirmação ERA o pacote; desfazer ali significaria outra coisa (D6)."""
+    packet = _packet([_confirmed_item(unit="m")])
+    legacy = _legacy_set([_code_assignment()])
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_revocation(packet, _revocation_input(), legacy)
+
+    assert raised.value.code == "ASSIGNMENT_REVOCATION_NOT_SUPPORTED"
+
+
+def test_revocation_requires_a_written_reason() -> None:
+    """A nota é obrigatória aqui e opcional nas outras notas da etapa, de propósito."""
+    with pytest.raises(ValidationError):
+        CodeAssignmentRevocationInput(
+            item_id=_ITEM_1,
+            code=_CODE_ALAMBRADO,
+            reviewer_id=_REVIEWER,
+            reviewer_role="orcamentista",
+            revoked_at=_DECIDED_AT,
+            note="",
+        )
+
+
+def test_the_revocation_id_is_deterministic_and_lives_in_its_own_space() -> None:
+    packet, previous = _package_of_two()
+
+    result = apply_code_revocation(packet, _revocation_input(), previous)
+
+    canonical = json.dumps(
+        {
+            "kind": "assignment_revocation",
+            "item_id": _ITEM_1,
+            "code": _CODE_ALAMBRADO,
+            "reviewer_id": _REVIEWER,
+            "reviewer_role": "orcamentista",
+            "revoked_at": _DECIDED_AT.isoformat(),
+            "note": "entrou junto no aceite do precedente e não é desta praça",
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    assert result.revocations[0].revocation_id == (
+        f"vr_{hashlib.sha256(canonical.encode()).hexdigest()[:16]}"
+    )
+
+
+def test_revoking_over_a_packet_of_another_plate_is_refused() -> None:
+    _, previous = _package_of_two()
+    other = _packet([_confirmed_item(unit="m")]).model_copy(update={"plate_id": "PR-OUTRA"})
+
+    with pytest.raises(ValuationValidationError) as raised:
+        apply_code_revocation(other, _revocation_input(), previous)
+
+    assert raised.value.code == "ASSIGNMENT_PACKET_MISMATCH"

@@ -19,6 +19,14 @@ export type ContractSha256 = string | null;
 export type ImageSha256 = string;
 export type PageNumber = number;
 export type PlateId = string;
+export type Code1 = string;
+export type ItemId2 = string;
+export type Note1 = string;
+export type ReviewerId1 = string;
+export type ReviewerRole1 = "orcamentista";
+export type RevocationId = string;
+export type RevokedAt = string;
+export type Revocations = CodeAssignmentRevocation[];
 /**
  * @minItems 2
  */
@@ -47,6 +55,7 @@ export interface CroquitoCodeAssignmentSet {
   image_sha256: ImageSha256;
   page_number: PageNumber;
   plate_id: PlateId;
+  revocations?: Revocations;
   safety_notes: SafetyNotes;
   schema_version?: SchemaVersion;
 }
@@ -93,4 +102,25 @@ export interface ReviewerDecision {
 export interface ItemPackageClosure {
   decision: ReviewerDecision;
   item_id: ItemId1;
+}
+/**
+ * O registro do que foi desfeito, no conjunto CORRENTE.
+ *
+ * A prova de que o par existiu está na revisão anterior, que continua gravada — mas quem lê
+ * o conjunto corrente precisa distinguir "nunca foi decidido" de "foi decidido e desfeito"
+ * sem ter de comparar revisões. É essa distinção que uma auditoria procura, e é por isso
+ * que o registro fica aqui em vez de só no histórico (ADR-0061 D2).
+ *
+ * Um par revogado pode ser confirmado outra vez (D5). Quando isso acontece, ele aparece nos
+ * dois lugares — em `assignments`, corrente, e aqui, como o que já foi desfeito uma vez —, e
+ * é a leitura que decide o que mostrar. Apagar o registro na reconfirmação perderia o ato.
+ */
+export interface CodeAssignmentRevocation {
+  code: Code1;
+  item_id: ItemId2;
+  note: Note1;
+  reviewer_id: ReviewerId1;
+  reviewer_role: ReviewerRole1;
+  revocation_id: RevocationId;
+  revoked_at: RevokedAt;
 }
