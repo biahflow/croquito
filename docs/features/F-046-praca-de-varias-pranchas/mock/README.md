@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Pendente de aprovação humana**  
+Status: **Approved (2026-08-28)**  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -12,17 +12,17 @@ Produced by: agente (Claude Code)
 >
 > O outro gate desta feature, o aceite do
 > [ADR-0057](../../../adr/0057-multiplas-pranchas-por-praca-na-extracao-de-legenda.md), já
-> **foi satisfeito em 2026-08-28** (Daniel Campos). Este pacote é o gate que falta: enquanto ele
-> não for aprovado, a F-046 não sai de `READY_FOR_PLANNING` e **nada da superfície é
-> implementado**.
+> **foi satisfeito em 2026-08-28** (Daniel Campos). Este pacote **foi aprovado por ato humano em
+> 2026-08-28** (Daniel Campos), inclusive a decisão 9 — "a parcela que fica" —, que nasceu ao
+> desenhar e não estava no ADR. Com os dois gates passados, a F-046 entra em planejamento.
 
 ## Registro de aprovação
 
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a composição visual da revisão 1 e as treze decisões listadas em "Decisões que este pacote carrega" |
-| Aprovado por | _aguardando ato humano_ |
-| Data | _aguardando ato humano_ |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-28 |
 | Revisão | 1 |
 | Explicitamente **não** coberto | ver "O que a aprovação não cobre", abaixo |
 

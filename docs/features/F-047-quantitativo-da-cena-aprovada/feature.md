@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_BUILD`
 
 > Registrada em 2026-08-28, por seleção humana, a partir da
 > [issue #102](https://github.com/biahflow/croquito/issues/102). O
@@ -11,8 +11,10 @@
 > a medição — `approximate` não entra, nem sob aceite explícito. A tolerância da divergência
 > ficou nomeada no mesmo ato: o maior entre 1% do valor da legenda e 0,01 na unidade do item.
 >
-> Falta o `DESIGN_APPROVAL_REQUIRED` antes do plano — atribuir identidade de elemento é ato
-> humano novo na revisão, e a divergência é tela nova na medição. O
+> O [Design Approval Package](mock/README.md) revisão 1 foi **aprovado por ato humano em
+> 2026-08-28**, com duas confirmações no mesmo ato: a borda exata da tolerância **não** abre
+> issue (`>`, nunca `>=`), e a **proposta assistida de agrupamento entra nesta feature**. Com os
+> dois gates passados, o [plano](plan.md) e os oito Task Contracts estão escritos. O
 > [pacote de design, revisão 1](mock/README.md), foi produzido em 2026-08-28 e aguarda o ato
 > humano.
 
@@ -100,8 +102,10 @@ os dois números discordam, o sistema mostra os dois e abre uma issue — nunca 
    constante nomeada, não número solto.
 8. **A quantidade automática só existe a partir da cena aprovada** (decisão 7), herdando o
    portão de exportação que já existe — sem caminho novo que o contorne.
-9. **Tela**: a atribuição de identidade na revisão do croqui, e na medição as duas quantidades
-   com a origem de cada uma quando divergirem.
+9. **Proposta assistida de agrupamento** (decisão humana de 2026-08-28): o sistema propõe, a
+   proposta nasce `unresolved`, e só a confirmação humana a transforma em identidade.
+10. **Tela**: a atribuição de identidade na revisão do croqui, e na medição as duas quantidades
+    com a origem de cada uma quando divergirem.
 
 ## Out of Scope
 
@@ -128,7 +132,8 @@ os dois números discordam, o sistema mostra os dois e abre uma issue — nunca 
    aceite de aproximação registrado na cena.
 6. `TakeoffItem` com `source = scene_graph` carrega a precisão de origem e o `element_ref`, e o
    contrato de takeoff sobe de versão aceitando as anteriores.
-7. Divergência dentro da tolerância não abre issue; fora dela abre, com os dois números, as duas
+7. Divergência **igual** à tolerância não abre issue (`>`, nunca `>=`, confirmado no aceite);
+   fora dela abre, com os dois números, as duas
    origens e a diferença. O item não fecha com a issue aberta, e resolvê-la é decisão humana
    registrada.
 8. A tolerância é constante nomeada e testada nas bordas: exatamente 1%, exatamente 0,01 e o
@@ -161,8 +166,8 @@ os dois números discordam, o sistema mostra os dois e abre uma issue — nunca 
 
 - Que forma tem `element_ref` (string declarada pelo humano? id opaco cunhado no ato? escopo da
   unicidade — cena, job ou praça?) — decisão do plano, dentro da forma já escolhida no aceite.
-- Se a proposta de agrupamento entra nesta feature ou numa fatia posterior — a feature funciona
-  sem ela, e ela é o que torna o ato barato.
+- ~~Se a proposta de agrupamento entra nesta feature~~ — **entra**, por decisão humana de
+  2026-08-28 (T6 do plano): sem ela o ato de identidade fica caro e ninguém o usa.
 - Como o `quantitativos.csv` agrupa quando um elemento tem várias entidades (soma de áreas? uma
   linha por elemento com as parcelas?) — decisão do plano, com o
   [DXF_OUTPUT_SPEC](../../architecture/DXF_OUTPUT_SPEC.md) atualizado junto.

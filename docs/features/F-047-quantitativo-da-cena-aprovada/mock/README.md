@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Pendente de aprovação humana**  
+Status: **Approved (2026-08-28)**  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -13,17 +13,19 @@ Produced by: agente (Claude Code)
 > O outro gate desta feature — o aceite do
 > [ADR-0058](../../../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md) —
 > **já foi satisfeito por ato humano em 2026-08-28** (Daniel Campos), com a emenda da decisão 4
-> (só `exact` e `derived` alimentam a medição) e a tolerância da decisão 6 nomeada. Este pacote
-> é o gate que falta antes do planejamento: enquanto ele estiver pendente, a F-047 não sai de
-> `READY_FOR_PLANNING`.
+> (só `exact` e `derived` alimentam a medição) e a tolerância da decisão 6 nomeada. Este pacote **foi aprovado por ato
+> humano em 2026-08-28** (Daniel Campos), com duas decisões confirmadas no mesmo ato: a borda
+> exata da tolerância **não** abre issue (leitura de "passa da tolerância" como estritamente
+> maior), e a **proposta assistida de agrupamento entra nesta feature**, não numa fatia
+> seguinte. Com os dois gates passados, a F-047 entra em planejamento.
 
 ## Registro de aprovação
 
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a composição visual da revisão 1 e as doze decisões listadas em "Decisões que este pacote carrega" |
-| Aprovado por | _aguardando ato humano_ |
-| Data | _aguardando_ |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-28 |
 | Revisão | 1 |
 | Explicitamente **não** coberto | a copy final; os números, nomes e datas das capturas, que são sintéticos; a forma e o escopo de unicidade do `element_ref`; o agrupamento do `quantitativos.csv` quando um elemento tem várias entidades; e as decisões do ADR-0058, que são gate próprio e já aceito |
 

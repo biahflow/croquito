@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_BUILD`
 
 > Registrada em 2026-08-28, por seleção humana, a partir da
 > [issue #101](https://github.com/biahflow/croquito/issues/101). O
@@ -12,8 +12,10 @@
 > itens até declaração humana; a identidade que atravessa a praça é `(plate_id, item_id)`; e o
 > consolidado falha fechado com qualquer folha pendente.
 >
-> Falta o `DESIGN_APPROVAL_REQUIRED` antes do plano — a praça de várias folhas é jornada nova
-> na tela.
+> O [Design Approval Package](mock/README.md) revisão 1 foi **aprovado por ato humano em
+> 2026-08-28**, inclusive a decisão 9 — "a parcela que fica" —, que nasceu ao desenhar e não
+> estava no ADR. Com os dois gates passados, o [plano](plan.md) e os seis Task Contracts estão
+> escritos e a feature está pronta para construção.
 
 ## Classification
 
@@ -166,8 +168,8 @@ conta duas vezes até que a orçamentista declare que é o mesmo elemento.
 
 ## Unknowns
 
-- Se a praça de várias folhas deve reaproveitar `worksite_key` como chave da praça ou se o
-  consolidado precisa de id próprio — a decidir no plano, sem criar entidade nova de obra.
+- ~~`worksite_key` ou id próprio para a praça~~ — resolvido no [plano](plan.md): a praça continua
+  sendo `worksite_key` na rodada (ADR-0028 D8), e o consolidado é artefato gravado na revisão.
 - Como a tela apresenta N folhas sem virar um explorador de arquivos: decisão do Design
   Approval Package.
 - Se a extração de páginas 2..N de um mesmo PDF deve ser um ato por página ou um ato em lote com
