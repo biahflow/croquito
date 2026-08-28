@@ -173,6 +173,7 @@ from croquito_worker.valuation.legend_registration import (
 )
 from croquito_worker.valuation.parity import check_parity
 from croquito_worker.valuation.plate import PlateArtifacts, render_synthetic_plate
+from croquito_worker.valuation.precedent_eval import run_precedent_eval, summary_text
 from croquito_worker.valuation.sco_matching import (
     CATALOG_INDEX_FILENAME,
     INDEX_TEXT_RECIPE,
@@ -2984,6 +2985,23 @@ def _command_takeoff_eval(args: argparse.Namespace) -> int:
     return 0 if report.passed else 1
 
 
+def _command_precedent_eval(args: argparse.Namespace) -> int:
+    try:
+        report, report_path = run_precedent_eval(
+            rounds_path=args.rounds,
+            revisions_path=args.revisions,
+            revision_dir=args.revision_dir,
+            memoria=args.memoria,
+            output_dir=Path(args.output),
+        )
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    print(summary_text(report))
+    print(f"report: {report_path}")
+    return 0
+
+
 def _bdi_percent_type(raw: str) -> Decimal:
     """`Decimal` do `--bdi`; texto ilegível recusa com mensagem amigável de argparse.
 
@@ -3537,6 +3555,54 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NOME=PROVIDER:MODELO",
         help="braço real a comparar; sem nenhum, roda o braço fixture offline",
     )
+
+    precedent_eval_command = subcommands.add_parser(
+        "precedent-eval",
+        help="mede a repetição de rótulo de legenda entre praças (F-044 T1); não decide nada",
+        description=(
+            "Instrumento de medição da F-044, primeiro Human Gate da feature: mede se um "
+            "rótulo de legenda que reaparece numa praça nova reencontra o mesmo pacote de "
+            "códigos confirmados, sob cinco estratégias de normalização. Não constrói "
+            "índice de precedentes, não recomenda limiar e não decide se a hipótese está "
+            "provada — só mede. Offline, sem chamada paga. Três entradas mutuamente "
+            "exclusivas — informe exatamente uma: --rounds + --revisions (A, export das "
+            "tabelas estimate_rounds/estimate_round_revisions), --revision-dir (B, um JSON "
+            "por praça, para quando o dado chega fora do banco), ou --memoria (C, "
+            "repetível, uma vez por praça — planilha .xlsx de memória de cálculo real, "
+            "para a praça que ainda não foi lançada no sistema; ferramenta LOCAL, fora do "
+            "CI, arquivo de cliente nunca versionado). Menos de duas praças com "
+            "precedente, depois de pular o que não deu para ler, é recusa fechada."
+        ),
+    )
+    precedent_eval_command.add_argument(
+        "--rounds",
+        type=Path,
+        default=None,
+        help="estimate_rounds.csv (entrada A); exige --revisions junto",
+    )
+    precedent_eval_command.add_argument(
+        "--revisions",
+        type=Path,
+        default=None,
+        help="estimate_round_revisions.csv (entrada A); exige --rounds junto",
+    )
+    precedent_eval_command.add_argument(
+        "--revision-dir",
+        type=Path,
+        default=None,
+        help="diretório com um JSON por praça (entrada B), alternativa ao par CSV",
+    )
+    precedent_eval_command.add_argument(
+        "--memoria",
+        action="append",
+        default=[],
+        metavar="ARQUIVO.xlsx:ABA",
+        help=(
+            "praça real como memória de cálculo (entrada C); repetível, uma vez por "
+            "praça — separador é o ÚLTIMO ':' do valor"
+        ),
+    )
+    precedent_eval_command.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -3594,4 +3660,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _command_takeoff_eval(args)
     if args.command == "extraction-eval":
         return _command_extraction_eval(args)
+    if args.command == "precedent-eval":
+        return _command_precedent_eval(args)
     return 2
