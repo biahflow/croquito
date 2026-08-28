@@ -173,7 +173,13 @@ from croquito_worker.valuation.legend_registration import (
 )
 from croquito_worker.valuation.parity import check_parity
 from croquito_worker.valuation.plate import PlateArtifacts, render_synthetic_plate
-from croquito_worker.valuation.precedent_eval import run_precedent_eval, summary_text
+from croquito_worker.valuation.precedent_eval import (
+    MEMORIA_PRICE_SOURCE,
+    run_precedent_eval,
+    summary_text,
+)
+from croquito_worker.valuation.precedent_extract import run_precedent_extract
+from croquito_worker.valuation.precedent_extract import summary_text as seed_summary_text
 from croquito_worker.valuation.sco_matching import (
     CATALOG_INDEX_FILENAME,
     INDEX_TEXT_RECIPE,
@@ -3002,6 +3008,22 @@ def _command_precedent_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_precedent_extract(args: argparse.Namespace) -> int:
+    try:
+        packet = run_precedent_extract(
+            memoria=args.memoria,
+            worksite_key=args.worksite,
+            output_path=Path(args.output),
+            price_source=args.price_source,
+        )
+    except (ValuationValidationError, ValidationError) as error:
+        _print(_refused_payload(error))
+        return 2
+    print(seed_summary_text(packet))
+    print(f"pacote: {args.output}")
+    return 0
+
+
 def _bdi_percent_type(raw: str) -> Decimal:
     """`Decimal` do `--bdi`; texto ilegível recusa com mensagem amigável de argparse.
 
@@ -3603,6 +3625,47 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     precedent_eval_command.add_argument("--output", type=Path, required=True)
+
+    precedent_extract_command = subcommands.add_parser(
+        "precedent-extract",
+        help="extrai o pacote de semeadura do índice de precedentes de uma praça passada",
+        description=(
+            "Fonte B do índice de precedentes (F-044 T2): lê a memória de cálculo de uma "
+            "praça JÁ FEITA e escreve o pacote que a rota POST /v1/precedents/seed "
+            "ingere. Sem a semeadura o índice nasce vazio — só uma rodada real existe no "
+            "banco. Ferramenta LOCAL, offline, sem chamada paga: a planilha do cliente "
+            "NUNCA sobe e nunca é versionada; o que sobe é o pacote, com rótulo, código e "
+            "fonte de preço, o mesmo dado que as revisões já guardam. Bloco item+código "
+            "que termina sem rótulo é contado e tem a linha nomeada no pacote, nunca "
+            "descartado em silêncio."
+        ),
+    )
+    precedent_extract_command.add_argument(
+        "--memoria",
+        required=True,
+        metavar="ARQUIVO.xlsx:ABA",
+        help="a praça passada como memória de cálculo — separador é o ÚLTIMO ':' do valor",
+    )
+    precedent_extract_command.add_argument(
+        "--worksite",
+        required=True,
+        metavar="CHAVE",
+        help=(
+            "chave da praça, no MESMO espaço das rodadas reais (minúsculas, dígitos e "
+            "hífen): é por ela que a ingestão detecta colisão com rodada real"
+        ),
+    )
+    precedent_extract_command.add_argument(
+        "--price-source",
+        default=MEMORIA_PRICE_SOURCE,
+        metavar="FONTE",
+        help=(
+            "fonte de preço destas observações; use o catalog_sha256 do catálogo vigente "
+            "para que o precedente semeado case com as rodadas reais daquela tabela "
+            f"(padrão: {MEMORIA_PRICE_SOURCE})"
+        ),
+    )
+    precedent_extract_command.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -3662,4 +3725,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _command_extraction_eval(args)
     if args.command == "precedent-eval":
         return _command_precedent_eval(args)
+    if args.command == "precedent-extract":
+        return _command_precedent_extract(args)
     return 2

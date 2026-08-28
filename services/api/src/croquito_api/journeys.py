@@ -75,6 +75,10 @@ JOURNEY_ROUTE_PREFIXES: Final[Mapping[str, Journey]] = {
     # `enabled` levar `403` numa tela de medição (F-036).
     "/v1/valuation-origins": "medicao",
     "/v1/estimate-rounds": "orcamento",
+    # O índice de precedentes (F-044) serve a etapa de códigos do ORÇAMENTO, e por isso é
+    # dele. Não fica sob `/v1/estimate-rounds` porque a semeadura não pertence a rodada
+    # nenhuma: ela carrega uma praça PASSADA, que muitas vezes nunca foi lançada no sistema.
+    "/v1/precedents": "orcamento",
 }
 
 #: Prefixos que não pertencem a jornada nenhuma, declarados explicitamente. Não é a mesma

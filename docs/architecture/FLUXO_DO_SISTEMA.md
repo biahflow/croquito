@@ -181,6 +181,14 @@ seis códigos). A identidade da confirmação é o par `(item_id, code)`, e como
 um código deixou de responder "este item acabou?", quem responde é um ato humano próprio —
 o `ItemPackageClosure`. Enquanto ele não vem, o item aparece como **pendente**.
 
+Desde a F-044, **fechar o pacote tem um efeito a mais**: as confirmações daquele elemento
+viram observações no índice de precedentes (`precedent_observations`), chaveadas por (rótulo
+normalizado, fonte de preço) e isoladas por tenant. É o que faz um rótulo já decidido
+reencontrar o mesmo pacote de códigos na praça seguinte. O índice tem uma segunda fonte, a
+**semeadura** de orçamentos passados (`croquito-valuation precedent-extract` local, e
+`POST /v1/precedents/seed`), porque sem ela ele nasceria vazio. Precedente é observação: quem
+o lê oferece, e o clique continua sendo da orçamentista.
+
 O documento final é que difere, e é onde a fronteira licitada vale:
 
 - **Medição** → boletim + memória de cálculo, só `PriceOrigin.sco`.
@@ -204,6 +212,7 @@ não defeito.
 | `CALC_PACKAGE_NOT_SUPPORTED` / `ESTIMATE_PACKAGE_NOT_SUPPORTED` | `valuation/calc.py`, `valuation/estimate.py` | item com mais de um código **sem `CalcMatrix`**: no regime legado o builder indexa um vínculo por item e descartaria os outros em silêncio, escolhendo uma linha ao acaso. É a **fronteira do regime legado**, não medida provisória — com matriz, é ela quem funde o pacote em serviços e o portão não se aplica |
 | `CALC_CONTRIBUTION_*` | `valuation/models.py` | a base declarada da parcela não bate com o que ela implica: canteiro com elemento de origem, parcela derivada sem dizer de qual serviço vem, código de origem fora de parcela derivada, parcela de elemento sem nomear o elemento, ou código de origem sem forma de código de catálogo |
 | `SITE_SETUP_PARAMETER_MISSING` / `SITE_SETUP_CODE_ABSENT` | `valuation/site_setup.py`, **só na aplicação** do acervo de canteiro | o acervo cita parâmetro de obra que a rodada não declarou (a recusa **nomeia todos**), ou código que o catálogo da cascata não tem (nomeia o código). Falha fechada: nenhuma parcela nasce parcialmente. A **pré-visualização não recusa** por nenhum dos dois desde 2026-08-28 (F-042 T4): ela devolve todas as parcelas e marca as bloqueadas (`missing_parameters`, `code_absent`, `blocked_parcel_ids`), porque recusar a lista de onde a saída mandava remover parcelas era beco sem saída. Prever não é aplicar: a leitura que marca não grava nada |
+| `PRECEDENT_SEED_*` | `croquito_api/precedents.py`, na **semeadura** do índice de precedentes (F-044) | a praça semeada já é rodada real do tenant (`WORKSITE_CONFLICT` — misturar as duas origens sob a mesma chave juntaria o histórico importado de uma planilha com o que o sistema gravou dos atos da orçamentista), o pacote foi normalizado por outra estratégia (`STRATEGY_UNSUPPORTED` — duas chaves para o mesmo rótulo, e a metade errada nunca reencontraria nada) ou a normalização declarada não bate com a que o servidor calcula (`NORMALIZATION_MISMATCH`, nomeando as **posições**, nunca os rótulos). A recusa fica do lado da semeadura, e **não** do fechamento de pacote: semear é importação deliberada, que pode ser refeita; fechar o pacote é o ato central da jornada, e travá-lo pela contabilidade de um índice seria a ferramenta impedindo o trabalho |
 | `VALUATION_EXPORT_BLOCKED` | `valuation/models.py` | medição não aprovada, aprovação que não casa com o conteúdo, período fora de sequência, código fora do contrato, preço/unidade divergentes do contrato ou saldo estourado |
 | Auditoria da planilha | `valuation/canonical.py` | reabre o `.xlsx`, recanonicaliza e compara célula a célula; divergência não publica |
 | Entitlement de IA | rotas de extração | tenant sem autorização contratual — recusa **antes** de enfileirar |
