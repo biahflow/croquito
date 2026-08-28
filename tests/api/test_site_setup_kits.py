@@ -11,9 +11,17 @@ Quatro invariantes atravessam a suíte, e são elas que a T2 existe para garanti
 - **merge por `kit_origin.kit_version`**: reaplicar substitui só as parcelas daquele acervo;
   contribuição autorada à mão e de OUTRO acervo sobrevivem intactas. É o coração da task, e os
   três casos são testados;
-- **falha fechada por extenso**: parâmetro citado e não declarado nomeia **todos** os que
-  faltam, e código fora do catálogo da cascata nomeia o código — as duas em `problem+json`,
-  com o código estável do domínio em `details.code`, e nenhuma linha materializada.
+- **falha fechada por extenso NO APPLY**: parâmetro citado e não declarado nomeia **todos**
+  os que faltam, e código fora do catálogo da cascata nomeia o código — as duas em
+  `problem+json`, com o código estável do domínio em `details.code`, e nenhuma linha
+  materializada.
+
+A quinta entrou com a T4, e é uma **assimetria deliberada**: a pré-visualização deixou de
+recusar por parâmetro faltante e por código ausente, e passou a MARCAR (`missing_parameters`,
+`code_absent`, `blocked_parcel_ids`). Recusar ali era beco sem saída — a saída oferecida pela
+recusa era remover as parcelas na pré-visualização que a própria recusa impedia de existir.
+Os testes das duas metades ficam lado a lado, no mesmo estado, para que afrouxar o apply
+apareça como teste vermelho.
 
 Nenhuma rota desta suíte chama provider: o acervo é determinístico e nada aqui paga.
 """
@@ -668,9 +676,10 @@ def test_a_previsualizacao_mostra_a_conta_e_nao_grava_nada(tmp_path: Path) -> No
         (_PLACA_PARCEL_ID, "2.80"),
     ]
     assert body["rows"][0]["operands"] == [
-        {"name": "QTD", "value": "1", "unit": None},
-        {"name": "MESES", "value": "2", "unit": "meses"},
+        {"name": "QTD", "value": "1", "unit": None, "parameter": None},
+        {"name": "MESES", "value": "2", "unit": "meses", "parameter": "prazo_meses"},
     ]
+    assert body["blocked_parcel_ids"] == []
     assert _round_version(client, round_id) == versao_antes
     assert len(_revisions(client, round_id)) == revisoes_antes
 
@@ -697,10 +706,15 @@ def test_a_parcela_removida_na_previsualizacao_nao_aparece_e_nao_altera_as_demai
     ]
 
 
-def test_parametro_faltante_recusa_nomeando_todos_e_nao_materializa_nada(
-    tmp_path: Path,
-) -> None:
-    """Falha fechada por extenso, na pré-visualização E na aplicação, com os DOIS nomes."""
+def test_parametro_faltante_a_previa_marca_e_a_aplicacao_recusa(tmp_path: Path) -> None:
+    """A assimetria da T4, lado a lado no MESMO estado: a prévia mostra, o apply recusa.
+
+    A prévia devolve **todas** as parcelas — as duas que só usam constante trazem quantidade
+    calculada, e a que cita `area_intervencao` sai com `quantity: null` e o parâmetro
+    nomeado. É essa lista que existe para a orçamentista poder remover a parcela que ela não
+    tem como declarar. O apply, no mesmo estado, continua recusando por extenso com os DOIS
+    nomes e sem gravar nada.
+    """
     client = _client(tmp_path)
     round_id = _round_with_cascade(client)
     kit_id = _publish_platform_kit(client, document=_kit_with_two_parameters()).json()["kit_id"]
@@ -709,18 +723,103 @@ def test_parametro_faltante_recusa_nomeando_todos_e_nao_materializa_nada(
     previa = _preview(client, round_id, kit_id=kit_id, parameters={})
     aplicacao = _apply(client, round_id, kit_id=kit_id, base_version=versao, parameters={})
 
-    for resposta in (previa, aplicacao):
-        assert resposta.status_code == 422, resposta.text
-        detalhe = resposta.json()["detail"]
-        assert detalhe["code"] == "DOMAIN_VALIDATION_FAILED"
-        assert detalhe["details"]["code"] == "SITE_SETUP_PARAMETER_MISSING"
-        assert detalhe["details"]["parameters"] == ["prazo_meses", "area_intervencao"]
+    assert previa.status_code == 200, previa.text
+    corpo = previa.json()
+    assert [(linha["parcel_id"], linha["quantity"]) for linha in corpo["rows"]] == [
+        (_WC_PARCEL_ID, None),
+        (_PLACA_PARCEL_ID, "2.80"),
+        (_AREA_PARCEL_ID, None),
+    ]
+    assert [linha["missing_parameters"] for linha in corpo["rows"]] == [
+        ["prazo_meses"],
+        [],
+        ["area_intervencao"],
+    ]
+    assert all(linha["code_absent"] is False for linha in corpo["rows"])
+    assert corpo["blocked_parcel_ids"] == [_WC_PARCEL_ID, _AREA_PARCEL_ID]
+    # Ausência é `null`, nunca `"0"`: zero é um valor, e o operando não resolvido não tem um.
+    assert corpo["rows"][0]["operands"][1] == {
+        "name": "MESES",
+        "value": None,
+        "unit": "meses",
+        "parameter": "prazo_meses",
+    }
+
+    assert aplicacao.status_code == 422, aplicacao.text
+    detalhe = aplicacao.json()["detail"]
+    assert detalhe["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detalhe["details"]["code"] == "SITE_SETUP_PARAMETER_MISSING"
+    assert detalhe["details"]["parameters"] == ["prazo_meses", "area_intervencao"]
     assert _round_version(client, round_id) == versao
     assert _head_matrix(client, round_id) is None
 
 
-def test_codigo_fora_do_catalogo_da_cascata_recusa_nomeando_o_codigo(tmp_path: Path) -> None:
-    """O risco do acervo silenciosamente desatualizado, recusado ANTES de aplicar."""
+def test_a_previa_aplicavel_depois_de_remover_a_parcela_que_bloqueava(tmp_path: Path) -> None:
+    """A saída que a recusa prometia e não existia: remover na prévia e aplicar o resto.
+
+    É o beco sem saída que a T4 corrige — antes dela, a recusa acontecia ANTES de haver
+    lista de onde remover, e as parcelas que a rodada tinha como declarar não tinham caminho
+    nenhum até a matriz.
+    """
+    client = _client(tmp_path)
+    round_id = _round_with_cascade(client)
+    kit_id = _publish_platform_kit(client, document=_kit_with_two_parameters()).json()["kit_id"]
+    versao = _round_version(client, round_id)
+
+    previa = _preview(
+        client,
+        round_id,
+        kit_id=kit_id,
+        parameters={"prazo_meses": "2"},
+        excluded=[_AREA_PARCEL_ID],
+    )
+    aplicacao = _apply(
+        client,
+        round_id,
+        kit_id=kit_id,
+        base_version=versao,
+        parameters={"prazo_meses": "2"},
+        excluded=[_AREA_PARCEL_ID],
+    )
+
+    assert previa.status_code == 200, previa.text
+    assert previa.json()["blocked_parcel_ids"] == []
+    assert aplicacao.status_code == 200, aplicacao.text
+    lida = CalcMatrix.model_validate(_head_matrix(client, round_id))
+    assert [parcela.label for parcela in lida.services[0].contributions] == [
+        "WC QUIMICO",
+        "PLACA DE OBRA",
+    ]
+
+
+def test_parcela_excluida_e_bloqueada_nao_entra_em_blocked_parcel_ids(tmp_path: Path) -> None:
+    """Ela não vai nascer de qualquer jeito: marcá-la pediria um campo que ninguém precisa."""
+    client = _client(tmp_path)
+    round_id = _round_with_cascade(client)
+    kit_id = _publish_platform_kit(client, document=_kit_with_two_parameters()).json()["kit_id"]
+
+    resposta = _preview(
+        client,
+        round_id,
+        kit_id=kit_id,
+        parameters={},
+        excluded=[_AREA_PARCEL_ID],
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    corpo = resposta.json()
+    assert corpo["excluded_parcel_ids"] == [_AREA_PARCEL_ID]
+    assert _AREA_PARCEL_ID not in [linha["parcel_id"] for linha in corpo["rows"]]
+    assert corpo["blocked_parcel_ids"] == [_WC_PARCEL_ID]
+
+
+def test_codigo_fora_do_catalogo_a_previa_marca_e_a_aplicacao_recusa(tmp_path: Path) -> None:
+    """O risco do acervo silenciosamente desatualizado: à vista na prévia, recusado no apply.
+
+    A conta da parcela FECHA (ela só usa constante), e por isso a quantidade sai preenchida:
+    o que falta não é o número, é o código no catálogo da rodada. Nascer, ela não nasce — o
+    apply continua recusando nomeando o código, e nada é gravado.
+    """
     client = _client(tmp_path)
     round_id = _round_with_cascade(client)
     kit_id = _publish_platform_kit(client, document=_kit_citing_absent_code()).json()["kit_id"]
@@ -729,13 +828,42 @@ def test_codigo_fora_do_catalogo_da_cascata_recusa_nomeando_o_codigo(tmp_path: P
     previa = _preview(client, round_id, kit_id=kit_id, parameters={})
     aplicacao = _apply(client, round_id, kit_id=kit_id, base_version=versao, parameters={})
 
-    for resposta in (previa, aplicacao):
-        assert resposta.status_code == 422, resposta.text
-        detalhe = resposta.json()["detail"]
-        assert detalhe["code"] == "DOMAIN_VALIDATION_FAILED"
-        assert detalhe["details"]["code"] == "SITE_SETUP_CODE_ABSENT"
-        assert detalhe["details"]["codes"] == [_ABSENT_CODE]
+    assert previa.status_code == 200, previa.text
+    (linha,) = previa.json()["rows"]
+    assert linha["code"] == _ABSENT_CODE
+    assert linha["code_absent"] is True
+    assert linha["missing_parameters"] == []
+    assert linha["quantity"] == "1.00"
+    assert previa.json()["blocked_parcel_ids"] == [_WC_PARCEL_ID]
+
+    assert aplicacao.status_code == 422, aplicacao.text
+    detalhe = aplicacao.json()["detail"]
+    assert detalhe["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detalhe["details"]["code"] == "SITE_SETUP_CODE_ABSENT"
+    assert detalhe["details"]["codes"] == [_ABSENT_CODE]
     assert _head_matrix(client, round_id) is None
+
+
+def test_exclusao_que_cita_parcela_inexistente_continua_recusando_na_previa(
+    tmp_path: Path,
+) -> None:
+    """Erro de quem CHAMA, não estado do trabalho: parcela que não existe não tem o que marcar."""
+    client = _client(tmp_path)
+    round_id = _round_with_cascade(client)
+    kit_id = _publish_platform_kit(client).json()["kit_id"]
+
+    resposta = _preview(
+        client,
+        round_id,
+        kit_id=kit_id,
+        parameters={"prazo_meses": "2"},
+        excluded=["ss_ffffffffffffffff"],
+    )
+
+    assert resposta.status_code == 422, resposta.text
+    detalhe = resposta.json()["detail"]
+    assert detalhe["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detalhe["details"]["code"] == "SITE_SETUP_UNKNOWN_PARCEL"
 
 
 def test_parametro_ilegivel_recusa_nomeando_todos_os_ruins(tmp_path: Path) -> None:
@@ -940,6 +1068,70 @@ def test_reaplicar_com_parcela_removida_tira_so_aquela_parcela(tmp_path: Path) -
     assert [contribution.label for contribution in lida.services[0].contributions] == [
         "PLACA DE OBRA"
     ]
+
+
+# --- a matriz gravada, para a tela poder hidratar (T4) -------------------------------------
+
+
+def _calc_matrix(
+    client: TestClient, round_id: str, *, tenant: str = _TENANT, key: str = "matriz"
+) -> Any:
+    return client.get(
+        f"/v1/estimate-rounds/{round_id}/calc-matrix", headers=_headers(tenant, key=key)
+    )
+
+
+def test_a_matriz_gravada_sai_na_leitura_sem_avancar_a_versao(tmp_path: Path) -> None:
+    """Sem esta rota a matriz não saía em resposta nenhuma, e recarregar a tela perdia o que
+    o acervo tinha aplicado. Leitura pura: nem revisão nova, nem contador andando."""
+    client = _client(tmp_path)
+    round_id = _round_with_cascade(client)
+    kit_id = _publish_platform_kit(client).json()["kit_id"]
+    aplicacao = _apply(
+        client,
+        round_id,
+        kit_id=kit_id,
+        base_version=_round_version(client, round_id),
+        parameters={"prazo_meses": "2"},
+    )
+    assert aplicacao.status_code == 200, aplicacao.text
+    versao = _round_version(client, round_id)
+    revisoes = len(_revisions(client, round_id))
+
+    resposta = _calc_matrix(client, round_id)
+
+    assert resposta.status_code == 200, resposta.text
+    corpo = resposta.json()
+    assert corpo["round_id"] == round_id
+    assert corpo["version"] == versao
+    # O documento sai COMO ESTÁ GRAVADO, e é o mesmo que o apply devolveu.
+    assert corpo["calc_matrix"] == _head_matrix(client, round_id)
+    assert corpo["calc_matrix"] == aplicacao.json()["calc_matrix"]
+    assert _round_version(client, round_id) == versao
+    assert len(_revisions(client, round_id)) == revisoes
+
+
+def test_a_matriz_e_null_no_regime_legado_e_nao_recusa(tmp_path: Path) -> None:
+    """Rodada sem matriz é estado normal, não etapa fora de ordem: `null`, e não `409`."""
+    client = _client(tmp_path)
+    round_id = _round_with_cascade(client)
+
+    resposta = _calc_matrix(client, round_id)
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["calc_matrix"] is None
+
+
+def test_a_matriz_de_outro_tenant_e_indistinguivel_de_inexistente(tmp_path: Path) -> None:
+    """A fronteira da rodada vale na leitura nova como vale em todas as outras."""
+    client = _client(tmp_path)
+    round_id = _round_with_cascade(client)
+    _write_matrix(client, round_id, _mixed_matrix(), tenant=_TENANT)
+
+    resposta = _calc_matrix(client, round_id, tenant=_OTHER_TENANT, key="matriz-vizinho")
+
+    assert resposta.status_code == 404, resposta.text
+    assert resposta.json()["detail"]["code"] == "NOT_FOUND"
 
 
 # --- autoria pela orçamentista ------------------------------------------------------------

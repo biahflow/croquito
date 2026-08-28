@@ -14841,13 +14841,21 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         pô-los em query string publicaria valores da obra na URL, que é o que os logs de
         infraestrutura registram.
 
-        Falha fechada, e ela é do motor do domínio: parâmetro citado e não declarado recusa
-        nomeando **todos** os que faltam, código fora do catálogo da cascata recusa nomeando o
-        código, e nenhuma linha nasce parcialmente. As duas chegam como
-        `422 DOMAIN_VALIDATION_FAILED` com o código estável em `details.code`.
+        **Ela MARCA o que não pode nascer; quem RECUSA é o apply.** Parâmetro citado e não
+        declarado sai em `missing_parameters` da linha, com `quantity: null`; código fora do
+        catálogo da cascata sai em `code_absent`; e `blocked_parcel_ids` reúne as parcelas não
+        excluídas que estão num dos dois estados. Recusar aqui era um beco sem saída: a saída
+        oferecida pela recusa — remover na pré-visualização as parcelas que citam o parâmetro
+        faltante — exigia a pré-visualização que a recusa impedia de existir.
+
+        O que continua recusando: acervo invisível (`404`), acervo fora de circulação (`409`),
+        parâmetro ilegível (`422 SITE_SETUP_PARAMETER_INVALID`) e exclusão que cita parcela
+        que o acervo não tem (`422` com `SITE_SETUP_UNKNOWN_PARCEL`) — as três últimas são erro
+        de quem chama, não estado do trabalho.
 
         Decimais saem como TEXTO, como no resto da jornada: a quantidade é `Decimal` no
-        domínio, e um número de JSON já teria passado por binário.
+        domínio, e um número de JSON já teria passado por binário. Quantidade que não pôde ser
+        calculada sai `null`, nunca `"0"`.
         """
         _require_valuation_reviewer(principal)
         record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
@@ -14869,6 +14877,49 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             "kit_version": kit.version,
             "rows": [site_setup_kits.preview_row_payload(row) for row in rows],
             "excluded_parcel_ids": list(payload.excluded_parcel_ids),
+            "blocked_parcel_ids": site_setup_kits.blocked_parcel_ids(rows),
+        }
+
+    @application.get(
+        "/v1/estimate-rounds/{round_id}/calc-matrix",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def get_estimate_calc_matrix(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """A `CalcMatrix` gravada na revisão corrente, revalidada na leitura — leitura pura.
+
+        Não grava, não avança a versão da rodada e não tem `base_version`, como a leitura da
+        etapa de códigos, cujo papel ela também usa (`_require_estimate_reader`): quem assina
+        o orçamento precisa ler o que assina.
+
+        Existe porque a matriz não saía em resposta nenhuma: a tela montava o rascunho, mandava
+        no build e, depois de um recarregamento, não tinha como saber o que já estava gravado —
+        o que fazia montar o orçamento apagar do banco o que o acervo tinha aplicado.
+
+        `calc_matrix` é `null` no regime legado (revisão sem matriz, ou rodada ainda sem
+        revisão), e não `409`: não ter matriz é estado normal da rodada, não etapa fora de
+        ordem. O documento sai **como está gravado**, depois de passar de novo pelo validador
+        do domínio (`matrix_of`, espelho de `load_kit`) — servir o que não valida faria a tela
+        renderizar número que ninguém conferiu.
+        """
+        _require_estimate_reader(principal)
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        document = None if revision is None else revision.calc_matrix_json
+        try:
+            matrix = estimate_rounds.matrix_of(revision)
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            "calc_matrix": None if matrix is None else document,
         }
 
     @application.post(

@@ -554,7 +554,7 @@ def test_a_rodada_nasce_sem_cascata_e_com_versao_um(tmp_path: Path) -> None:
 
 
 def _read_paths(round_id: str) -> list[str]:
-    """As 11 LEITURAS de `/v1/estimate-rounds`, com rodada existente e inexistente.
+    """As 14 LEITURAS de `/v1/estimate-rounds`, com rodada existente e inexistente.
 
     Fonte única dos dois testes de papel: uma lista por teste deixaria o teste do papel novo
     cobrir menos rotas que o antigo sem ninguém perceber, que é exatamente como uma rota
@@ -575,6 +575,7 @@ def _read_paths(round_id: str) -> list[str]:
         f"/v1/estimate-rounds/{round_id}/code-assignments",
         f"/v1/estimate-rounds/{round_id}/estimate",
         f"/v1/estimate-rounds/{round_id}/site-setup-kits",
+        f"/v1/estimate-rounds/{round_id}/calc-matrix",
     ]
 
 
