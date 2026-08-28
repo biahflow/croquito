@@ -171,6 +171,14 @@ exatamente o que o precedente não tem como resolver.
   ganho medido.
 - **Vazamento entre fontes de preço.** Sugerir código que não existe na tabela vigente é o
   pior resultado possível, e é o que a decisão 4 do escopo existe para impedir.
+- **O aceite do pacote é assimétrico, e o erro fácil é o que não tem volta.** Recusar o
+  precedente custa alguns cliques — os códigos continuam alcançáveis um a um pelo bloco da
+  fonte e pela busca da etapa, que casa por código (`catalog_search`), então quem desconfia
+  não fica preso. Aceitar com um código errado dentro, não: a identidade da decisão é o par
+  `(item, código)`, as rotas de `code-assignments` são `GET`, `decisions` e `closures`, e
+  **nenhuma delas remove um par confirmado**. É por isso que a marca da decisão 8 fica antes
+  do botão, e por isso um seletor por código dentro do pacote não é a resposta óbvia que
+  parece: ele barateia a composição sem tocar na assimetria.
 
 ## Human Gates
 

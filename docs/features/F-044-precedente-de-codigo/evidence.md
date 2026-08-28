@@ -240,6 +240,13 @@ Validação: `npm --workspace @croquito/web run test -- src/orcamento/precedente
   entre o contrato dela e o [`feature.md`](feature.md)/[roadmap](../../product/ROADMAP.md)
   existia porque a worktree da T2 saiu antes desse commit; os três estão alinhados agora.
 - ~~**A mudança na shortlist e a tela**~~ — T3a, T3b e T3c entregues.
+- **Desfazer um par `(item, código)` confirmado — não existe hoje, e é candidato a fatia
+  própria.** As rotas de `code-assignments` são `GET`, `decisions` e `closures`; a decisão é
+  do par e a rota recusa item já decidido. Enquanto isso não existir, o único conserto de um
+  aceite errado é a rodada seguinte. Vale como fatia própria porque não é do precedente: é da
+  etapa de códigos inteira, e a F-038 a deixou de fora pelo mesmo motivo. Registrado aqui
+  porque foi a revisão 2 da F-044 que a expôs — o aceite em um clique aumenta o que se grava
+  por ato, e portanto o custo de não poder desfazer.
 - **Se o código minoritário deveria poder sair do pacote antes de confirmar.** A revisão 2
   decide marcar, não decide desmarcar — retirar um código do aceite mudaria a decisão 4 e
   precisa da evidência de que a marca sozinha não bastou.
