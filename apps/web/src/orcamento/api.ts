@@ -41,6 +41,7 @@ import type {
   SiteSetupPreviewResponse,
 } from "./acervo";
 import type { CalcMatrix } from "./matrix";
+import type { ItemPrecedent } from "./precedente";
 import {
   buildEstimateBody,
   cascadeOrderBody,
@@ -476,6 +477,20 @@ export type SuggestionsResponse = {
   matching: "lexical" | "hybrid";
   /** Motivo declarado do braço semântico; a busca nunca degrada em silêncio. */
   semantic_notes: string[];
+  /**
+   * O que o rótulo de cada elemento já disparou em praças anteriores (F-044), com a
+   * contagem de praças. Envelope da rota, e não do documento da shortlist: o precedente é
+   * junção de LEITURA sobre o índice, e o artefato gravado não ganha campo nenhum.
+   *
+   * **Opcional de propósito.** Item sem precedente não aparece na lista, e resposta sem a
+   * chave é a shortlist de hoje — nos dois casos o bloco de precedente simplesmente não
+   * existe na tela. Nada aqui degrada a via léxica, que continua atendendo o rótulo
+   * inédito.
+   *
+   * O `GET` continua sem pagar nada e sem avançar a versão da rodada (ADR-0054 D7): o
+   * índice sai do que já está gravado no banco.
+   */
+  precedents?: ItemPrecedent[];
 };
 
 /**
@@ -636,6 +651,15 @@ export type CodeDecisionDraft = {
   code?: string;
   /** A fonte citada na confirmação; sem ela o servidor recusa o ato. */
   catalogSha256?: string;
+  /**
+   * Os N códigos do aceite de PACOTE (F-044): o precedente é do rótulo, e o rótulo dispara
+   * um pacote inteiro, que entra numa revisão só.
+   *
+   * Mutuamente exclusivo com `code`/`catalogSha256` — a rota aceita um ou o outro, e cada
+   * código do precedente já carrega a fonte de onde veio. `codeDecisionBody` é quem
+   * garante que os dois nunca saem no mesmo corpo.
+   */
+  codes?: readonly string[];
   note?: string;
 };
 

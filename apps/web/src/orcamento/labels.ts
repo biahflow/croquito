@@ -1049,6 +1049,106 @@ export function fraseCodigosAusentes(codigos: readonly string[]): string {
   return `${RECUSA_CODIGO_AUSENTE} O catálogo não tem ${rotulo}: ${listarPorExtenso(codigos)}.`;
 }
 
+/* Precedente de código (F-044) ------------------------------------------------
+ *
+ * A copy do pacote de design aprovado (revisão 1, 2026-08-28), que a registrou
+ * explicitamente como gate humano ainda ABERTO — o texto final é do dono do produto.
+ *
+ * A regra que atravessa todas estas frases: a contagem de praças vai ESCRITA. O
+ * precedente diz "você já fez assim", que é um argumento forte, e quem lê precisa saber
+ * quão forte — a cor do bloco é redundância da palavra, nunca o sinal sozinho.
+ */
+
+export const PRECEDENTE_TITULO = "Precedente";
+
+/**
+ * O cabeçalho do bloco, com a contagem por extenso. Uma praça só ganha frase própria
+ * porque o plural mentiria sobre o peso da evidência.
+ */
+export function frasePrecedenteContagem(pracas: number): string {
+  return pracas === 1
+    ? "Você usou isto em 1 praça"
+    : `Você já usou isto em ${pracas} praças`;
+}
+
+/** O selo do elemento na lista de pendências: a mesma contagem, em uma linha. */
+export function fraseSeloDePrecedente(pracas: number): string {
+  return pracas === 1 ? "precedente em 1 praça" : `precedente em ${pracas} praças`;
+}
+
+/**
+ * O elemento sem precedente, ao lado de irmãos que têm. Ele não é aviso e não é
+ * degradação: a via léxica atende o rótulo inédito exatamente como atende hoje.
+ */
+export const PRECEDENTE_SELO_INEDITO = "rótulo inédito";
+
+/** O bloco é observação; o selo diz isso ao lado do botão que abre a confirmação. */
+export const PRECEDENTE_OBSERVACAO = "observação, não decisão";
+
+/**
+ * O aviso do precedente de uma praça só (decisão 6 do pacote). Âmbar E por extenso: uma
+ * decisão única pode ter sido um engano, e aceitá-la aqui repetiria o engano com cara de
+ * acerto.
+ */
+export const PRECEDENTE_AVISO_UMA_PRACA =
+  "Decisão de uma praça só. Confira antes de aceitar: se aquela vez foi um engano, " +
+  "aceitar aqui repete o engano com cara de acerto.";
+
+/** Por que o mesmo código aparece no precedente e no bloco da fonte (decisão 3). */
+export const PRECEDENTE_REPETIDO_NOS_DOIS =
+  "O código que já era candidato aparece duas vezes: no precedente e no bloco da fonte. " +
+  "Isso é intencional — esconder a repetição faria o bloco da cascata parecer incompleto " +
+  "e mudaria a ordem instalada.";
+
+/** O botão que põe o pacote à vista. Ele não grava nada. */
+export function fraseAceitarPacote(codigos: number): string {
+  return codigos === 1
+    ? "Aceitar o código deste rótulo"
+    : `Aceitar os ${codigos} códigos deste rótulo`;
+}
+
+/** O título da lista de confirmação: o que vai ser gravado, antes de gravar. */
+export const PRECEDENTE_CONFIRMACAO_TITULO =
+  "Antes de confirmar, o que vai ser gravado:";
+
+/** O rótulo de cada linha da lista de confirmação. */
+export const PRECEDENTE_LINHA_CONFIRMAR = "confirmar";
+
+/**
+ * O que o clique faz — e, no mesmo fôlego, o que ele NÃO faz. As duas metades andam
+ * juntas de propósito (decisão 5): o fechamento do pacote continua sendo ato separado.
+ */
+export function fraseUmaRevisaoSo(codigos: number, rotulo: string): string {
+  const sujeito =
+    codigos === 1 ? "O código entra" : `Os ${codigos} códigos entram`;
+  return (
+    `${sujeito} numa revisão só, como pacote do elemento “${rotulo}”. O fechamento do ` +
+    "pacote continua sendo ato separado — aceitar o precedente não fecha o pacote sozinho."
+  );
+}
+
+/** O botão que grava. É o único ponto em que o precedente vira decisão. */
+export function fraseConfirmarPacote(codigos: number): string {
+  return codigos === 1 ? "Confirmar o código" : `Confirmar os ${codigos} códigos`;
+}
+
+export const PRECEDENTE_CANCELAR_CONFIRMACAO = "Cancelar";
+
+/** A regra da jornada, dita onde ela é exercida. */
+export const PRECEDENTE_NADA_SEM_CLIQUE =
+  "Nada é aplicado sem este clique. O precedente é observação, nunca decisão — a mesma " +
+  "regra que já vale para toda a shortlist.";
+
+/** O aviso do sucesso: confirmou o pacote, e o elemento continua em aberto. */
+export function frasePrecedenteGravado(codigos: number): string {
+  const sujeito =
+    codigos === 1 ? "1 código confirmado" : `${codigos} códigos confirmados`;
+  return (
+    `${sujeito} pelo precedente, numa revisão só. O pacote deste elemento continua em ` +
+    "aberto: feche-o quando não houver mais serviços."
+  );
+}
+
 /**
  * Frase curta que explica cada base na hora de escolher — não é o rótulo do resultado
  * (`contributionBasisLabel`), é a ajuda da autoria. `null` quando a base não é conhecida.
