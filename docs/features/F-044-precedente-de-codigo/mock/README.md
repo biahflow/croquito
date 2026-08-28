@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Awaiting approval — e atrás de um gate anterior**  
+Status: **Approved (2026-08-28) — e ainda atrás de um gate anterior**  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -28,8 +28,8 @@ medição derrubar a hipótese, este pacote é arquivado junto com a feature.
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a composição visual da revisão 1 e as sete decisões listadas abaixo, condicionadas ao gate de medição |
-| Aprovado por | — |
-| Data | — |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-28 |
 | Revisão | 1 |
 | Explicitamente **não** coberto | a copy final; os rótulos, códigos, preços e contagens de praça das capturas, que são sintéticos; **o limiar de quantas praças fazem um precedente confiável** (unknown 3 da feature); e a estratégia de normalização do rótulo (unknown 2), que sai da medição |
 

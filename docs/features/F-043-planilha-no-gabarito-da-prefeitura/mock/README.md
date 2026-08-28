@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Awaiting approval**  
+Status: **Approved (2026-08-28)**  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -20,8 +20,8 @@ Produced by: agente (Claude Code)
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a forma do arquivo publicado na revisão 1 e as sete decisões listadas abaixo |
-| Aprovado por | — |
-| Data | — |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-28 |
 | Revisão | 1 |
 | Explicitamente **não** coberto | a copy final; os códigos, descrições, preços e a estrutura de grupos das capturas, que são **sintéticos**; o gabarito real de 433 linhas, que é dado a fornecer; e o aceite do arquivo gerado contra o documento do cliente, que é gate próprio e posterior |
 

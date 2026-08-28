@@ -22,8 +22,12 @@ aceitar de uma vez.
 
 ## Priority
 
-`MEDIUM` — o ganho é real e composto, mas menor que o das outras duas e condicionado à
-verificação da hipótese de repetição.
+`MEDIUM` — **a revisar pelo dono**. A prioridade foi atribuída antes da medição, sob a
+estimativa de "cerca de 12 linhas" e sob a hipótese não verificada. Com a medição de
+2026-08-28 ([`evidence.md`](evidence.md)), o ganho medido é de **54 a 120 linhas de código
+por praça** — acima das 24 da [F-042](../F-042-acervo-de-parcelas-de-canteiro/feature.md), e
+cerca de cinco vezes a estimativa original. A condição que rebaixava a prioridade
+(hipótese não provada) deixou de existir.
 
 ## Problem
 
@@ -117,8 +121,10 @@ exatamente o que o precedente não tem como resolver.
 
 ## Unknowns
 
-1. **A hipótese de repetição entre praças não está provada.** É o fundamento desta feature e
-   precisa ser medido antes de construir o índice.
+1. ~~**A hipótese de repetição entre praças não está provada.**~~ **Medida e confirmada em
+   2026-08-28** sobre três orçamentos reais — ver [`evidence.md`](evidence.md). Fica a
+   limitação declarada ali: o corpus é de um escritório só, então a repetição está provada
+   **dentro de um escritório**, que é o caso de uso, e não entre projetistas diferentes.
    > **Registro de uma medição retirada:** tentei prová-la medindo a sobreposição de códigos
    > entre os "grupos" da aba `PLANILHA GERAL` e achei 98%. A medição **não vale**: aqueles
    > grupos são os três **lotes do contrato** (GRUPO 1 implantação, GRUPO 2 manutenção,
@@ -129,7 +135,9 @@ exatamente o que o precedente não tem como resolver.
    rótulos de legenda reaparecem, e com que estabilidade de pacote de códigos. Se a
    repetição for baixa, a feature perde a razão de existir e deve ser cancelada em vez de
    construída.
-2. **Como normalizar o rótulo.** "ALAMBRADO DO CAMPO EXISTENTE À SER RECUPERAR" e
+2. **Como normalizar o rótulo.** Parcialmente respondido em 2026-08-28: `exact` e `folded`
+   deram resultado **idêntico** nos três arquivos reais, então normalização leve basta neste
+   corpus. Não encerra o unknown, pelo mesmo motivo do item 1. "ALAMBRADO DO CAMPO EXISTENTE À SER RECUPERAR" e
    "ALAMBRADO PARQUE INFANTIL E CENTRO COMUNITÁRIO h=1.00m" são rótulos diferentes para o
    mesmo par de códigos. Normalização agressiva demais funde o que é distinto; tímida demais
    não reencontra nada.
@@ -149,13 +157,15 @@ exatamente o que o precedente não tem como resolver.
 
 ## Human Gates
 
-1. **Medir a hipótese de repetição** e decidir se a feature continua — precede o
-   planejamento e pode cancelá-la. O instrumento da medição está sendo construído
-   (`precedent-eval`, T1); o dado de uma segunda praça foi prometido pelo dono em
-   2026-08-28. **A medição ainda não foi feita.**
-2. **Design Approval Package** — `INTERFACE_CHANGE`: como o precedente aparece na shortlist
-   e como é o aceite de pacote em um clique. **Revisão 1 produzida em 2026-08-28**,
-   aguardando aprovação e **condicionada ao gate 1**: [`mock/README.md`](mock/README.md).
+1. ~~**Medir a hipótese de repetição** e decidir se a feature continua~~ — **cumprido em
+   2026-08-28**: o dono forneceu três orçamentos reais e a medição **confirmou a
+   hipótese**. 80% dos rótulos reaparecem entre praças e, dos repetidos, 98,7% têm pacote
+   de códigos idêntico ou contido. Números, método e limitações em
+   [`evidence.md`](evidence.md). **A feature continua.**
+2. ~~**Design Approval Package**~~ — `INTERFACE_CHANGE`: como o precedente aparece na
+   shortlist e como é o aceite de pacote em um clique. Revisão 1 **aprovada em 2026-08-28**
+   (Daniel Campos), e **continua condicionada ao gate 1**: aprovar a forma não decide que a
+   feature segue. [`mock/README.md`](mock/README.md).
 3. ~~Aceite do [ADR-0059](../../adr/0059-item-contratado-fora-da-tabela-sco.md)~~ —
    **cumprido em 2026-08-28** (Daniel Campos), alternativa A.
 

@@ -140,9 +140,16 @@ fail-closed que já protege a medição.
 
 ## Human Gates
 
-1. **Design Approval Package** — `INTERFACE_CHANGE`: o arquivo publicado muda de forma.
-   Precede o planejamento. **Revisão 1 produzida em 2026-08-28**, aguardando aprovação:
-   [`mock/README.md`](mock/README.md).
+1. ~~**Design Approval Package**~~ — `INTERFACE_CHANGE`: o arquivo publicado muda de forma.
+   Revisão 1 **aprovada em 2026-08-28** (Daniel Campos): [`mock/README.md`](mock/README.md).
+
+   Na mesma data o dono decidiu **onde o gabarito vive**: artefato de plataforma, no molde do
+   acervo de catálogos da [F-037](../F-037-acervo-de-catalogos/feature.md) — publicado uma
+   vez, versionado e imutável, escolhido por cada rodada de uma lista. É aplicação do molde
+   já aceito no [ADR-0047](../../adr/0047-acervo-de-catalogos-da-plataforma.md) e reafirmado
+   no [ADR-0060](../../adr/0060-onde-vive-o-acervo-de-parcelas-de-canteiro.md), e por isso
+   não abre ADR próprio. O gabarito da prefeitura é um só para todas as praças, então ele
+   não tem a metade "de tenant" que o acervo de canteiro tem.
 2. ~~Aceite do [ADR-0059](../../adr/0059-item-contratado-fora-da-tabela-sco.md)~~ —
    **cumprido em 2026-08-28** (Daniel Campos), alternativa A.
 3. **Fornecer o gabarito real** e dizer qual revisão vale (unknown 3) — ato do dono, porque

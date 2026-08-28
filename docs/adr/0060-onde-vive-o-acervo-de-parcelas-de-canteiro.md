@@ -1,7 +1,7 @@
 # ADR-0060: O acervo de parcelas de canteiro é receita publicada na plataforma, com autoria de tenant sobre ela
 
-Status: Proposed  
-Data: 2026-08-28  
+Status: Accepted  
+Data: 2026-08-28 (aceito por ato humano em 2026-08-28, Daniel Campos)  
 Responsável: Product / Engineering
 
 ## Contexto
@@ -104,8 +104,9 @@ que ninguém mediu.
 
 ## Gate humano
 
-Este ADR está `Proposed`. Ele é o terceiro Human Gate da
-[F-042](../features/F-042-acervo-de-parcelas-de-canteiro/feature.md) e precisa de aceite por
-ato humano antes que a persistência e as rotas do acervo sejam construídas. O motor de
+~~Este ADR está `Proposed`~~ — **aceito por ato humano em 2026-08-28** (Daniel Campos),
+cumprindo o terceiro Human Gate da
+[F-042](../features/F-042-acervo-de-parcelas-de-canteiro/feature.md). A persistência e as
+rotas do acervo podem ser construídas. O motor de
 domínio (modelo, aplicação, pré-visualização) não depende dele: `apply_site_setup_kit` é puro
 e não sabe onde o acervo mora.

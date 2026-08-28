@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Awaiting approval**  
+Status: **Approved (2026-08-28)**  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -21,8 +21,8 @@ Produced by: agente (Claude Code)
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a composição visual da revisão 1 e as nove decisões listadas abaixo |
-| Aprovado por | — |
-| Data | — |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-28 |
 | Revisão | 1 |
 | Explicitamente **não** coberto | a copy final; os códigos, nomes de parâmetro e números das capturas, que são sintéticos; **quais** são as 24 parcelas do Campo do Toca, que dependem da autoria humana do primeiro acervo; e a decisão do ADR-0060, que é gate próprio |
 
