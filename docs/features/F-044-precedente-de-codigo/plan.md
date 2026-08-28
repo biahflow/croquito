@@ -24,7 +24,8 @@ pacote de códigos idêntico ou contido.
 |---|---|---|
 | T1 | [Medir a repetição de rótulo entre praças](tasks/T1-medir-a-repeticao.md) | **Entregue** |
 | T2 | [O índice de precedentes, com as duas fontes](tasks/T2-indice-e-semeadura.md) | **Entregue** |
-| T3 | Precedente no topo da shortlist e aceite de pacote em um clique | Não iniciada |
+| T3a | [Precedente no payload da shortlist e o aceite do pacote (API)](tasks/T3a-precedente-na-shortlist-api.md) | **Entregue** |
+| T3b | [Precedente no topo da shortlist (tela)](tasks/T3b-precedente-na-shortlist-tela.md) | **Entregue** |
 
 ## A semeadura entrou no escopo, e é ela que tira o ganho da espera
 
