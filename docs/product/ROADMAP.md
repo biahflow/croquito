@@ -2,7 +2,18 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-28 (**F-042, F-043 e F-044 registradas** `READY_FOR_PLANNING`, de
+Última revisão: 2026-08-28 (**F-042, F-043 e F-044 `IN_PROGRESS`** — os gates humanos das
+três foram exercidos no mesmo dia em que foram registradas: Design Approval Packages
+aprovados, **ADR-0060** aceito (o acervo de canteiro tem duas origens, plataforma e tenant,
+com um contrato de leitura só), e o gate que podia **cancelar a F-044** foi cumprido — o dono
+forneceu três orçamentos reais e a hipótese de repetição se confirmou, com 80% dos rótulos
+reaparecendo entre praças e 96,1% dos repetidos com pacote de códigos idêntico ou contido. O
+ganho medido, de 54 a 120 linhas por praça, é cerca de cinco vezes a estimativa que originou
+a prioridade `MEDIUM` dela, que **fica marcada para revisão do dono**. Os pacotes de design da
+F-042 e da F-043 ganharam **revisão 2** depois que o documento real e a implementação
+refutaram premissas do desenho, e as duas aguardam aprovação. Registrado antes:
+
+> **F-042, F-043 e F-044 registradas** `READY_FOR_PLANNING`, de
 uma pergunta de ROI do dono do produto medida contra a planilha orçamentária real do Campo do
 Toca: das 43 linhas preenchidas, 24 não têm origem na prancha, e a saída atual não é o
 documento que a prefeitura recebe. O **ADR-0059** foi **aceito por ato humano na mesma data** (alternativa A) e é precondição das três —
@@ -86,9 +97,9 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-039 | HIGH | READY_FOR_REVIEW | [Reajuste de preços entre medições](../features/F-039-reajuste-entre-medicoes/feature.md) |
 | F-040 | HIGH | IN_PROGRESS | [RE-RA declarada e a medição seguinte](../features/F-040-re-ra-e-medicao-seguinte/feature.md) |
 | F-041 | HIGH | READY_FOR_PLANNING | [O braço semântico roda no caminho hospedado](../features/F-041-braco-semantico-hospedado/feature.md) |
-| F-042 | HIGH | READY_FOR_PLANNING | [O canteiro sai de um acervo parametrizado, não da digitação](../features/F-042-acervo-de-parcelas-de-canteiro/feature.md) |
-| F-043 | HIGH | READY_FOR_PLANNING | [A planilha sai no gabarito da prefeitura, com memória de cálculo](../features/F-043-planilha-no-gabarito-da-prefeitura/feature.md) |
-| F-044 | MEDIUM | READY_FOR_PLANNING | [A shortlist aprende com as decisões de código já tomadas](../features/F-044-precedente-de-codigo/feature.md) |
+| F-042 | HIGH | IN_PROGRESS | [O canteiro sai de um acervo parametrizado, não da digitação](../features/F-042-acervo-de-parcelas-de-canteiro/feature.md) |
+| F-043 | HIGH | IN_PROGRESS | [A planilha sai no gabarito da prefeitura, com memória de cálculo](../features/F-043-planilha-no-gabarito-da-prefeitura/feature.md) |
+| F-044 | MEDIUM | IN_PROGRESS | [A shortlist aprende com as decisões de código já tomadas](../features/F-044-precedente-de-codigo/feature.md) |
 | F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 | F-031 | MEDIUM | READY_FOR_HUMAN_REVIEW | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — branch isolada `feat/f-031-value-events`, não integra no MVP |
 

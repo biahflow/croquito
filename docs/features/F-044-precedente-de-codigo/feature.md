@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`IN_PROGRESS`
 
 > Nasce em 2026-08-28, da mesma medição de ROI que originou a
 > [F-042](../F-042-acervo-de-parcelas-de-canteiro/feature.md) e a

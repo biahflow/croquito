@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`IN_PROGRESS`
 
 > Nasce em 2026-08-28, de uma pergunta de ROI do dono do produto: *"o que a gente pode fazer
 > no sistema para acelerar a entrega desse documento pelo orçamentista?"*, feita sobre a
