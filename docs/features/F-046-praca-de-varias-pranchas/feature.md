@@ -186,13 +186,17 @@ conta duas vezes até que a orçamentista declare que é o mesmo elemento.
 ## Human Gates
 
 - ~~Aceite do ADR-0057~~ — **satisfeito em 2026-08-28** (Daniel Campos).
-- `DESIGN_APPROVAL_REQUIRED`: pacote de design da praça de várias folhas, **pendente**. Nada da
-  superfície é implementado antes da aprovação.
+- `DESIGN_APPROVAL_REQUIRED`: [Design Approval Package, revisão 1](mock/README.md) —
+  **produzido em 2026-08-28, pendente de aprovação humana**. Nada da superfície é implementado
+  antes da aprovação. O pacote resolve dois dos três `Unknowns` acima (como a tela apresenta N
+  folhas e se a promoção de páginas é ato por página ou em lote) e deixa o terceiro
+  explicitamente para o plano.
 - Merge do PR e o aceite que fecha a [issue #101](https://github.com/biahflow/croquito/issues/101),
   numa praça real de mais de uma prancha.
 
 ## References
 
 - [ADR-0057](../../adr/0057-multiplas-pranchas-por-praca-na-extracao-de-legenda.md)
+- [Design Approval Package, revisão 1](mock/README.md) — pendente de aprovação humana
 - [Issue #101](https://github.com/biahflow/croquito/issues/101)
 - [ROADMAP](../../product/ROADMAP.md), "Próximo — medição além do v1"

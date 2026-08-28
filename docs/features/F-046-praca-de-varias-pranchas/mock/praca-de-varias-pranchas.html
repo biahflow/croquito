@@ -1,0 +1,1687 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-046 — A praça de várias pranchas</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css (identidade "Grafite técnico") e das cores de
+         estado já em uso na jornada de medição (apps/web/src/medicao/styles.css). O que é
+         novo está marcado como NOVO na tabela de proveniência do README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        /* Estados do item da legenda, exatamente como na medição de hoje. */
+        --proposto: #b47512;
+        --proposto-soft: #fbe6c2;
+        --proposto-ink: #6b3a06;
+        --ambiguo: #a02323;
+        --ambiguo-soft: #f7d9d9;
+        --ambiguo-ink: #7a1212;
+        --rejeitado: #5a625c;
+        --recusa: #a33d32;
+        --atencao: #7c5210;
+        /* NOVO — família da PRAÇA. Índigo, para o consolidado de várias folhas e para o
+           vínculo de identidade que só existe nele. Escolhido por ser o matiz livre na
+           medição: verde = contratado/confirmado, âmbar = proposto/aviso, vermelho =
+           ambíguo/recusa, cinza = rejeitado, roxo = reajustado (F-039), petróleo =
+           re-ratificado (F-040). */
+        --praca: #3b4a94;
+        --praca-soft: #eef0fa;
+        --praca-line: #c3c8e8;
+        --praca-ink: #242c66;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0 0 6px;
+        max-width: 82ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .duas {
+        display: grid;
+        grid-template-columns: 1fr 340px;
+        gap: 16px;
+        align-items: start;
+      }
+      .duas.larga {
+        grid-template-columns: 1fr 420px;
+      }
+      .painel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+        background: var(--surface);
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+      .painel h4 {
+        margin: 4px 0 0;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+      b {
+        color: var(--ink);
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Faixa de etapas — o mesmo `nav.etapas` da tela de hoje. */
+      .etapas {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface-sunken);
+      }
+      .etapa-tab {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 11px;
+        font-size: 12px;
+        background: var(--surface);
+        color: var(--ink-secondary);
+      }
+      .etapa-tab.ativa {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+        font-weight: 600;
+      }
+      .etapa-tab.bloqueada {
+        opacity: 0.55;
+      }
+
+      /* Faixa de folhas da praça — a decisão 1 deste pacote. */
+      .folhas {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .folha-chip {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 11px;
+        background: var(--surface);
+        display: grid;
+        gap: 3px;
+        min-width: 232px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .folha-chip b {
+        font-size: 13px;
+      }
+      .folha-chip .chave {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .folha-chip .estado-folha {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 1px 8px;
+        font-size: 11px;
+        background: var(--surface-subtle);
+      }
+      .folha-chip.revisada .estado-folha {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      .folha-chip.pendente .estado-folha {
+        border-color: var(--proposto);
+        background: var(--proposto-soft);
+        color: var(--proposto-ink);
+      }
+      .folha-chip.extraindo .estado-folha {
+        border-color: var(--muted);
+        background: var(--surface-subtle);
+        color: var(--rejeitado);
+      }
+      .folha-chip.foco {
+        border-color: var(--praca);
+        border-left: 4px solid var(--praca);
+        background: var(--praca-soft);
+      }
+      .foco-marca {
+        color: var(--praca-ink);
+        font-weight: 600;
+        font-size: 11px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: right;
+        padding: 7px 9px;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th:first-child,
+      td:first-child,
+      th:nth-child(2),
+      td:nth-child(2) {
+        text-align: left;
+      }
+      thead th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+      }
+      td.num,
+      th.num {
+        font-variant-numeric: tabular-nums;
+      }
+      tr.dupla td {
+        background: var(--proposto-soft);
+      }
+      tr.fundida td {
+        background: var(--praca-soft);
+      }
+      tr.total td,
+      tr.total th {
+        font-weight: 600;
+        color: var(--ink);
+        background: var(--surface-subtle);
+      }
+
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+      }
+      .selo.praca {
+        border-color: var(--praca-line);
+        background: #ffffff;
+        color: var(--praca);
+      }
+      .selo.confirmado {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      .selo.proposto {
+        border-color: var(--proposto);
+        background: var(--proposto-soft);
+        color: var(--proposto-ink);
+      }
+      .selo.ambiguo {
+        border-color: var(--ambiguo);
+        background: var(--ambiguo-soft);
+        color: var(--ambiguo-ink);
+      }
+      .selo.dupla {
+        border-color: var(--proposto);
+        background: var(--proposto-soft);
+        color: var(--proposto-ink);
+      }
+
+      label.campo {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      label.campo input,
+      label.campo select,
+      label.campo textarea {
+        font: inherit;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.primario {
+        background: var(--accent);
+        border-color: var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      button[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .acoes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .aviso {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.praca {
+        border-color: var(--praca-line);
+        background: var(--praca-soft);
+        color: var(--praca-ink);
+      }
+      .aviso.recusa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      .aviso.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .conta {
+        font-variant-numeric: tabular-nums;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 9px 11px;
+        border: 1px dashed var(--praca-line);
+        border-radius: 6px;
+        background: #ffffff;
+      }
+      .carimbo {
+        border: 1px solid var(--praca-line);
+        border-left: 3px solid var(--praca);
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: #ffffff;
+        display: grid;
+        gap: 3px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .carimbo b {
+        color: var(--ink);
+        font-size: 12.5px;
+      }
+      .reservado {
+        border: 1px dashed var(--muted);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+        background: repeating-linear-gradient(
+          135deg,
+          rgba(154, 160, 168, 0.08) 0 8px,
+          transparent 8px 16px
+        );
+      }
+      .rodape {
+        border-top: 1px solid var(--line);
+        background: var(--surface-subtle);
+        padding: 10px 16px;
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+
+      /* Seleção de páginas do PDF — estado 02. */
+      .paginas {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+      .pagina {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 12.5px;
+        color: var(--ink);
+      }
+      .pagina.marcada {
+        border-color: var(--praca-line);
+        background: var(--praca-soft);
+      }
+      .pagina small {
+        display: block;
+        color: var(--ink-secondary);
+        font-size: 11.5px;
+      }
+
+      /* Lista de itens da folha — espelha `.itens` da tela de hoje. */
+      .itens {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 6px;
+      }
+      .itens li {
+        display: grid;
+        grid-template-columns: 26px 1fr;
+        gap: 8px;
+        border: 1px solid var(--line);
+        border-left: 4px solid var(--muted);
+        border-radius: 6px;
+        padding: 8px 10px;
+      }
+      .itens li.confirmado {
+        border-left-color: var(--accent-text);
+      }
+      .itens li.proposto {
+        border-left-color: var(--proposto);
+      }
+      .itens li.ambiguo {
+        border-left-color: var(--ambiguo);
+      }
+      .itens li.selecionado {
+        background: var(--surface-subtle);
+      }
+      .item-numero {
+        display: grid;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+      }
+      .item-corpo {
+        display: grid;
+        gap: 2px;
+        font-size: 12.5px;
+        color: var(--ink-secondary);
+      }
+      .item-corpo .rotulo {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .item-corpo .chave {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      /* Prancha desenhada, estado 03. */
+      .prancha {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-sunken);
+        padding: 10px;
+      }
+      .prancha svg {
+        display: block;
+        width: 100%;
+        height: auto;
+        background: #fdfdfb;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+      }
+      .barra-prancha {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      .barra-prancha .titulo-folha {
+        font-size: 13px;
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      /* Par a declarar — estado 06. */
+      .par {
+        display: grid;
+        grid-template-columns: 1fr 34px 1fr;
+        gap: 8px;
+        align-items: center;
+      }
+      .par-lado {
+        border: 1px solid var(--praca-line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        background: #ffffff;
+        display: grid;
+        gap: 3px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .par-lado b {
+        font-size: 12.5px;
+      }
+      .par-sinal {
+        display: grid;
+        place-items: center;
+        font-size: 18px;
+        color: var(--praca);
+        font-weight: 700;
+      }
+      .escolha-fica {
+        display: grid;
+        gap: 6px;
+      }
+      .escolha-fica label {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 12.5px;
+        color: var(--ink);
+      }
+      .escolha-fica label.ativa {
+        border-color: var(--praca-line);
+        background: var(--praca-soft);
+      }
+      .escolha-fica small {
+        display: block;
+        color: var(--ink-secondary);
+        font-size: 11.5px;
+      }
+      .memoria {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 8px;
+      }
+      .memoria > li {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12.5px;
+        color: var(--ink-secondary);
+      }
+      .memoria > li.fundida {
+        border-color: var(--praca-line);
+        border-left: 3px solid var(--praca);
+        background: #ffffff;
+      }
+      .memoria > li.dupla {
+        border-color: var(--proposto);
+        border-left: 3px solid var(--proposto);
+        background: #ffffff;
+      }
+      .memoria .parcela {
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-046 — A praça de várias pranchas</h1>
+      <p>
+        Design Approval Package, <b>revisão 1</b>. Rendição autocontida: abre no navegador sem
+        build, sem rede e sem servidor. Governado pelo <b>ADR-0057</b> — a prancha continua a
+        unidade de evidência, a praça é o consolidado que referencia as folhas, e item repetido
+        entre folhas são dois itens até uma declaração humana.
+      </p>
+      <p>
+        Obra sintética: <b>Praça Nova Aurora</b> (<span class="mono">PR-NOVA-AURORA</span>), três
+        folhas. Os estados <b>01</b>, <b>02</b>, <b>03</b> e <b>08</b> mostram a rodada
+        <b>em andamento</b> (folha 2 pendente, folha 3 em extração); os estados <b>04</b> a
+        <b>07</b> mostram a mesma praça <b>depois de as três folhas estarem revisadas</b>. O
+        estado <b>09</b> é o controle: praça de uma folha só.
+      </p>
+      <p>
+        Os números são sintéticos e <b>aritmeticamente consistentes</b> — cada soma do documento
+        fecha com as parcelas mostradas ao lado dela.
+      </p>
+    </header>
+    <main>
+      <!-- 01 -->
+      <section class="estado" id="e01">
+        <h2>
+          01 · A praça e suas folhas
+          <small>
+            Quais folhas compõem a praça, qual está em foco e em que estado está cada uma.
+          </small>
+        </h2>
+        <nav class="etapas" aria-label="Etapas da medição">
+          <span class="etapa-tab">Rodada</span>
+          <span class="etapa-tab">Pranchas · concluída</span>
+          <span class="etapa-tab ativa">Revisão do takeoff · em aberto</span>
+          <span class="etapa-tab bloqueada">Códigos · bloqueada</span>
+          <span class="etapa-tab bloqueada">Praça · bloqueada</span>
+          <span class="etapa-tab bloqueada">Boletim · bloqueada</span>
+          <span class="etapa-tab bloqueada">Aprovação e exportação · bloqueada</span>
+        </nav>
+        <div class="corpo">
+          <p>
+            A etapa <b>Prancha</b> passa a se chamar <b>Pranchas</b> e a etapa <b>Praça</b> nasce
+            entre <b>Códigos</b> e <b>Boletim</b>. As duas só aparecem a partir da
+            <b>segunda</b> folha: com uma folha só, a tela é a de hoje (estado 09).
+          </p>
+          <div class="folhas">
+            <div class="folha-chip foco revisada">
+              <span class="foco-marca">▸ em foco</span>
+              <b>Folha 1 · Planta geral</b>
+              <span class="chave mono">nova-aurora-planta-geral</span>
+              <span class="estado-folha">✓ extraída e revisada</span>
+              <span>4 itens · 4 decididos · pacote sha256 <span class="mono">4f2ab7…c9e1</span></span>
+            </div>
+            <div class="folha-chip pendente">
+              <b>Folha 2 · Detalhe do playground</b>
+              <span class="chave mono">nova-aurora-detalhe-playground</span>
+              <span class="estado-folha">▲ pendente de revisão</span>
+              <span>3 itens · 1 decidido · 1 proposto, 1 ambíguo</span>
+            </div>
+            <div class="folha-chip extraindo">
+              <b>Folha 3 · Corte e muro de arrimo</b>
+              <span class="chave mono">nova-aurora-corte-muro</span>
+              <span class="estado-folha">◐ em extração</span>
+              <span>enviada às 09:12 · leitura da legenda em curso</span>
+            </div>
+          </div>
+          <div class="aviso praca">
+            A faixa é uma <b>lista de folhas</b>, não um explorador de arquivos: cada folha é um
+            cartão com nome, <span class="mono">plate_id</span>, estado por extenso e contagem de
+            itens. A folha em foco tem a marca <b>▸ em foco</b> e a barra à esquerda — a cor
+            sozinha nunca diz qual é.
+          </div>
+          <div class="aviso">
+            Estado por extenso, e não só por cor: <b>✓ extraída e revisada</b>,
+            <b>▲ pendente de revisão</b>, <b>◐ em extração</b>. Cada um tem símbolo próprio e
+            continua legível em preto e branco.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0057, decisão 2 — a praça referencia pacotes de prancha, não os absorve.</span>
+          <span>Decisão 8 — praça de uma folha responde como hoje.</span>
+        </div>
+      </section>
+
+      <!-- 02 -->
+      <section class="estado" id="e02">
+        <h2>
+          02 · Acrescentar uma folha à praça
+          <small>Ato humano explícito. Nenhuma página vira prancha sozinha.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas larga">
+            <div class="painel">
+              <h3>De onde vem a folha</h3>
+              <label class="campo">
+                Arquivo já enviado nesta rodada
+                <select>
+                  <option>projeto-praca-nova-aurora.pdf — 6 páginas</option>
+                </select>
+              </label>
+              <h4>Escolha as páginas que viram prancha</h4>
+              <div class="paginas">
+                <label class="pagina marcada">
+                  <input type="checkbox" checked />
+                  <span>
+                    <b>Página 1</b>
+                    <small>Planta geral</small>
+                  </span>
+                </label>
+                <label class="pagina">
+                  <input type="checkbox" />
+                  <span>
+                    <b>Página 2</b>
+                    <small>Quadro de áreas</small>
+                  </span>
+                </label>
+                <label class="pagina marcada">
+                  <input type="checkbox" checked />
+                  <span>
+                    <b>Página 3</b>
+                    <small>Detalhe do playground</small>
+                  </span>
+                </label>
+                <label class="pagina">
+                  <input type="checkbox" />
+                  <span>
+                    <b>Página 4</b>
+                    <small>Lista de materiais</small>
+                  </span>
+                </label>
+                <label class="pagina marcada">
+                  <input type="checkbox" checked />
+                  <span>
+                    <b>Página 5</b>
+                    <small>Corte e muro de arrimo</small>
+                  </span>
+                </label>
+                <label class="pagina">
+                  <input type="checkbox" />
+                  <span>
+                    <b>Página 6</b>
+                    <small>Carimbo e notas</small>
+                  </span>
+                </label>
+              </div>
+              <div class="aviso atencao">
+                O PDF tem <b>6 páginas</b> e <b>nenhuma vem marcada por padrão</b>; as três acima
+                foram marcadas à mão. Página não é prancha: quadro de
+                áreas, lista de materiais e carimbo não são legenda quantificada, e promover tudo
+                encheria a praça de folhas que ninguém vai revisar.
+              </div>
+              <div class="acoes">
+                <button class="primario">Acrescentar 3 folhas à praça</button>
+                <button>Cancelar</button>
+              </div>
+              <div class="aviso praca">
+                <b>3 páginas selecionadas · 3 extrações pagas.</b> A seleção é em lote e a
+                confirmação é uma só, mas o número de extrações que ela dispara fica escrito no
+                próprio botão — o custo por folha não pode aparecer só na fatura.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Outra origem</h3>
+              <label class="campo">
+                Enviar outro PDF para esta praça
+                <input type="file" />
+              </label>
+              <p>
+                A praça <b>não</b> é um arquivo: é o conjunto de folhas que a orçamentista
+                declarou. Detalhe que veio em PDF separado entra pela mesma porta e vira mais uma
+                folha da mesma praça.
+              </p>
+              <div class="aviso">
+                Cada folha acrescentada nasce como <b>pacote de takeoff próprio</b>, com sua
+                imagem, seu digest e sua evidência. Nada é mesclado na ingestão.
+              </div>
+              <div class="reservado">
+                Reservado: reordenar as folhas e renomeá-las. Vira real quando a praça passar de
+                meia dúzia de folhas; até lá a ordem é a de acréscimo.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>Feature Contract, escopo 2 — quais páginas viram prancha é ato humano explícito.</span>
+          <span>Risco "custo de extração multiplicar por folha" — o número vai no botão.</span>
+        </div>
+      </section>
+
+      <!-- 03 -->
+      <section class="estado" id="e03">
+        <h2>
+          03 · A folha em revisão
+          <small>O overlay é da folha, nunca da praça. O cabeçalho diz qual folha de quantas.</small>
+        </h2>
+        <div class="corpo">
+          <div class="folhas">
+            <div class="folha-chip revisada">
+              <b>Folha 1 · Planta geral</b>
+              <span class="chave mono">nova-aurora-planta-geral</span>
+              <span class="estado-folha">✓ extraída e revisada</span>
+            </div>
+            <div class="folha-chip foco pendente">
+              <span class="foco-marca">▸ em foco</span>
+              <b>Folha 2 · Detalhe do playground</b>
+              <span class="chave mono">nova-aurora-detalhe-playground</span>
+              <span class="estado-folha">▲ pendente de revisão</span>
+            </div>
+            <div class="folha-chip extraindo">
+              <b>Folha 3 · Corte e muro de arrimo</b>
+              <span class="chave mono">nova-aurora-corte-muro</span>
+              <span class="estado-folha">◐ em extração</span>
+            </div>
+          </div>
+          <div class="duas">
+            <div class="painel">
+              <div class="barra-prancha">
+                <span class="titulo-folha">
+                  Prancha e legenda — <b>folha 2 de 3</b> · Detalhe do playground
+                </span>
+                <span class="acoes">
+                  <button aria-pressed="true">Ocultar marcações</button>
+                  <button aria-label="Afastar o zoom">−</button>
+                  <span class="mono" style="font-size: 12px">1,00×</span>
+                  <button aria-label="Aproximar o zoom">+</button>
+                </span>
+              </div>
+              <div class="prancha">
+                <svg viewBox="0 0 880 520" role="img"
+                     aria-label="Prancha da folha 2, detalhe do playground, com a legenda quantificada e as marcações dos três itens">
+                  <defs>
+                    <pattern id="hachura" width="10" height="10" patternUnits="userSpaceOnUse"
+                             patternTransform="rotate(45)">
+                      <line x1="0" y1="0" x2="0" y2="10" stroke="#d7d7d0" stroke-width="2" />
+                    </pattern>
+                  </defs>
+                  <rect x="10" y="10" width="860" height="500" fill="#fdfdfb" stroke="#c9c9c2" />
+                  <rect x="24" y="24" width="832" height="472" fill="none" stroke="#dedeD6" />
+
+                  <!-- desenho esquemático -->
+                  <rect x="70" y="110" width="330" height="220" fill="url(#hachura)"
+                        stroke="#9aa0a8" stroke-width="1.5" />
+                  <text x="82" y="132" font-family="Inter, sans-serif" font-size="13"
+                        fill="#5b6169">PLAYGROUND</text>
+                  <rect x="48" y="88" width="374" height="264" fill="none" stroke="#5b6169"
+                        stroke-width="1.5" stroke-dasharray="7 5" />
+                  <text x="48" y="80" font-family="Inter, sans-serif" font-size="12"
+                        fill="#5b6169">ALAMBRADO H=3,00 m</text>
+                  <rect x="96" y="372" width="70" height="16" fill="#efefeb" stroke="#9aa0a8" />
+                  <rect x="196" y="372" width="70" height="16" fill="#efefeb" stroke="#9aa0a8" />
+                  <rect x="296" y="372" width="70" height="16" fill="#efefeb" stroke="#9aa0a8" />
+                  <text x="96" y="406" font-family="Inter, sans-serif" font-size="12"
+                        fill="#5b6169">BANCOS PRÉ-MOLDADOS</text>
+
+                  <!-- legenda -->
+                  <rect x="470" y="70" width="378" height="176" fill="#ffffff" stroke="#9aa0a8" />
+                  <text x="484" y="94" font-family="Inter, sans-serif" font-size="13"
+                        font-weight="700" fill="#14181d">LEGENDA</text>
+                  <line x1="470" y1="104" x2="848" y2="104" stroke="#dedeD6" />
+                  <text x="484" y="132" font-family="ui-monospace, monospace" font-size="12.5"
+                        fill="#14181d">PISO EM CONCRETO DESEMP. ....... 64,50 m²</text>
+                  <text x="484" y="170" font-family="ui-monospace, monospace" font-size="12.5"
+                        fill="#14181d">ALAMBRADO H=3,00 m ........... 186,00 m²</text>
+                  <text x="484" y="208" font-family="ui-monospace, monospace" font-size="12.5"
+                        fill="#14181d">BANCO PRÉ-MOLDADO ................ (3)</text>
+
+                  <!-- marcações: uma por item, nas cores de estado já em uso -->
+                  <rect x="478" y="118" width="352" height="20" fill="none" stroke="#00744a"
+                        stroke-width="2" />
+                  <circle cx="852" cy="128" r="11" fill="#00744a" />
+                  <text x="852" y="132" text-anchor="middle" font-family="Inter, sans-serif"
+                        font-size="12" fill="#ffffff">1</text>
+
+                  <rect x="478" y="156" width="352" height="20" fill="none" stroke="#b47512"
+                        stroke-width="2" />
+                  <circle cx="852" cy="166" r="11" fill="#b47512" />
+                  <text x="852" y="170" text-anchor="middle" font-family="Inter, sans-serif"
+                        font-size="12" fill="#ffffff">2</text>
+
+                  <rect x="478" y="194" width="352" height="20" fill="none" stroke="#a02323"
+                        stroke-width="2" />
+                  <circle cx="852" cy="204" r="11" fill="#a02323" />
+                  <text x="852" y="208" text-anchor="middle" font-family="Inter, sans-serif"
+                        font-size="12" fill="#ffffff">3</text>
+
+                  <!-- carimbo -->
+                  <rect x="560" y="400" width="288" height="80" fill="#ffffff" stroke="#9aa0a8" />
+                  <text x="572" y="424" font-family="Inter, sans-serif" font-size="12"
+                        fill="#14181d">PRAÇA NOVA AURORA</text>
+                  <text x="572" y="444" font-family="Inter, sans-serif" font-size="12"
+                        fill="#5b6169">DETALHE DO PLAYGROUND</text>
+                  <text x="572" y="466" font-family="ui-monospace, monospace" font-size="12"
+                        fill="#5b6169">FL. 2/3 · ESC. 1:50</text>
+                </svg>
+              </div>
+              <div class="aviso praca">
+                <b>Não existe overlay da praça.</b> Cada retângulo está em pixels da imagem
+                <b>desta</b> folha, conferida pelo digest dela. O consolidado endereça os
+                overlays das suas folhas; ele não desenha nada.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Itens da legenda — folha 2 de 3</h3>
+              <p>
+                3 itens da prancha <span class="mono">nova-aurora-detalhe-playground</span>.
+                Pacote sha256 <span class="mono">a7c30e…41bd</span>.
+              </p>
+              <ul class="itens">
+                <li class="confirmado">
+                  <span class="item-numero">1</span>
+                  <span class="item-corpo">
+                    <span class="rotulo">PISO EM CONCRETO DESEMP.</span>
+                    <span>confirmado · 64,50 m²</span>
+                    <span class="chave mono">nova-aurora-detalhe-playground · ti_7e04ab13c65f9d28</span>
+                  </span>
+                </li>
+                <li class="proposto selecionado">
+                  <span class="item-numero">2</span>
+                  <span class="item-corpo">
+                    <span class="rotulo">ALAMBRADO H=3,00 m</span>
+                    <span>proposto · 186,00 m²</span>
+                    <span class="chave mono">nova-aurora-detalhe-playground · ti_5d2f83b60e4a1c97</span>
+                  </span>
+                </li>
+                <li class="ambiguo">
+                  <span class="item-numero">3</span>
+                  <span class="item-corpo">
+                    <span class="rotulo">BANCO PRÉ-MOLDADO</span>
+                    <span>ambíguo · quantidade obrigatória</span>
+                    <span class="chave mono">nova-aurora-detalhe-playground · ti_a802e4f1d3675b0c</span>
+                  </span>
+                </li>
+              </ul>
+              <div class="aviso">
+                Todo item mostra a chave inteira <b>(plate_id, item_id)</b>, não só o número da
+                lista. O número é da ordem na tela e muda; a chave é o que atravessa a praça.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0057, decisão 3 — âncora e overlay por imagem; o consolidado não renderiza.</span>
+          <span>Decisão 5 — a identidade que atravessa a praça é (plate_id, item_id).</span>
+        </div>
+      </section>
+
+      <!-- 04 -->
+      <section class="estado" id="e04">
+        <h2>
+          04 · O consolidado da praça
+          <small>Total por código, com as parcelas por folha na memória. Três folhas revisadas.</small>
+        </h2>
+        <nav class="etapas" aria-label="Etapas da medição">
+          <span class="etapa-tab">Rodada</span>
+          <span class="etapa-tab">Pranchas · concluída</span>
+          <span class="etapa-tab">Revisão do takeoff · concluída</span>
+          <span class="etapa-tab">Códigos · concluída</span>
+          <span class="etapa-tab ativa">Praça · em aberto</span>
+          <span class="etapa-tab bloqueada">Boletim · bloqueada</span>
+          <span class="etapa-tab bloqueada">Aprovação e exportação · bloqueada</span>
+        </nav>
+        <div class="corpo">
+          <p>
+            <b>Praça Nova Aurora</b> (<span class="mono">PR-NOVA-AURORA</span>) · 3 folhas ·
+            9 itens confirmados · consolidado sha256 <span class="mono">b91d64…07fa</span>.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Descrição</th>
+                <th class="num">Un</th>
+                <th class="num">Preço</th>
+                <th class="num">Parcelas</th>
+                <th class="num">Quant. da praça</th>
+                <th class="num">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="mono">PJ05100100(/)</td>
+                <td>Piso em concreto desempenado</td>
+                <td class="num">m²</td>
+                <td class="num">48,90</td>
+                <td class="num">3 folhas</td>
+                <td class="num">411,90</td>
+                <td class="num">20.141,91</td>
+              </tr>
+              <tr class="dupla">
+                <td class="mono">PJ14100500(/)</td>
+                <td>
+                  Tela em alambrado — fornecimento e colocação
+                  <span class="selo dupla">▲ 2 leituras do mesmo serviço</span>
+                </td>
+                <td class="num">m²</td>
+                <td class="num">62,40</td>
+                <td class="num">2 folhas</td>
+                <td class="num">372,00</td>
+                <td class="num">23.212,80</td>
+              </tr>
+              <tr>
+                <td class="mono">PJ25400100(B)</td>
+                <td>Portão em tubo galvanizado</td>
+                <td class="num">m²</td>
+                <td class="num">96,00</td>
+                <td class="num">2 folhas</td>
+                <td class="num">18,90</td>
+                <td class="num">1.814,40</td>
+              </tr>
+              <tr>
+                <td class="mono">PJ11200300(A)</td>
+                <td>Banco de concreto pré-moldado</td>
+                <td class="num">un</td>
+                <td class="num">385,00</td>
+                <td class="num">2 folhas</td>
+                <td class="num">11</td>
+                <td class="num">4.235,00</td>
+              </tr>
+              <tr class="total">
+                <th colspan="6" style="text-align: left">Total da praça</th>
+                <td class="num">R$ 49.404,11</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h4 style="margin: 0; font-size: 12px; text-transform: uppercase; color: #5b6169">
+            Memória de cálculo da praça
+          </h4>
+          <ul class="memoria">
+            <li>
+              <b>PJ05100100(/)</b> — piso em concreto desempenado · total
+              <span class="parcela">411,90 m²</span>
+              <ul>
+                <li>
+                  folha 1, planta geral · <span class="mono">ti_4a91c07e5b2d8f36</span> —
+                  <span class="parcela">320,00 m²</span>
+                </li>
+                <li>
+                  folha 2, detalhe do playground · <span class="mono">ti_7e04ab13c65f9d28</span> —
+                  <span class="parcela">64,50 m²</span>
+                </li>
+                <li>
+                  folha 3, corte e muro · <span class="mono">ti_c619d5a83f207e4b</span> —
+                  <span class="parcela">27,40 m²</span>
+                </li>
+                <li>320,00 + 64,50 + 27,40 = <b>411,90</b> · × 48,90 = <b>20.141,91</b></li>
+              </ul>
+            </li>
+            <li class="dupla">
+              <b>PJ14100500(/)</b> — tela em alambrado · total
+              <span class="parcela">372,00 m²</span> ·
+              <span class="selo dupla">▲ 2 leituras, 2 folhas</span>
+              <ul>
+                <li>
+                  folha 1, planta geral · <span class="mono">ti_b3d5e820a7c14f69</span> —
+                  <span class="parcela">186,00 m²</span>
+                </li>
+                <li>
+                  folha 2, detalhe do playground · <span class="mono">ti_5d2f83b60e4a1c97</span> —
+                  <span class="parcela">186,00 m²</span>
+                </li>
+                <li>186,00 + 186,00 = <b>372,00</b> · × 62,40 = <b>23.212,80</b></li>
+              </ul>
+            </li>
+            <li>
+              <b>PJ25400100(B)</b> — portão em tubo galvanizado · total
+              <span class="parcela">18,90 m²</span>
+              <ul>
+                <li>
+                  folha 1, planta geral · <span class="mono">ti_1f8c62a4d09b3e57</span> —
+                  <span class="parcela">12,60 m²</span>
+                </li>
+                <li>
+                  folha 3, corte e muro · <span class="mono">ti_08b7f2c491a5e63d</span> —
+                  <span class="parcela">6,30 m²</span>
+                </li>
+                <li>12,60 + 6,30 = <b>18,90</b> · × 96,00 = <b>1.814,40</b></li>
+              </ul>
+            </li>
+            <li>
+              <b>PJ11200300(A)</b> — banco de concreto pré-moldado · total
+              <span class="parcela">11 un</span>
+              <ul>
+                <li>
+                  folha 1, planta geral · <span class="mono">ti_7e04ab13c65f9d28</span> —
+                  <span class="parcela">8 un</span>
+                </li>
+                <li>
+                  folha 2, detalhe do playground · <span class="mono">ti_a802e4f1d3675b0c</span> —
+                  <span class="parcela">3 un</span>
+                </li>
+                <li>8 + 3 = <b>11</b> · × 385,00 = <b>4.235,00</b></li>
+              </ul>
+            </li>
+          </ul>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Boletim por folha</th>
+                <th>Prancha</th>
+                <th class="num">Itens</th>
+                <th class="num">Total da folha</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Folha 1 · Planta geral</td>
+                <td class="mono">nova-aurora-planta-geral</td>
+                <td class="num">4</td>
+                <td class="num">31.544,00</td>
+              </tr>
+              <tr>
+                <td>Folha 2 · Detalhe do playground</td>
+                <td class="mono">nova-aurora-detalhe-playground</td>
+                <td class="num">3</td>
+                <td class="num">15.915,45</td>
+              </tr>
+              <tr>
+                <td>Folha 3 · Corte e muro de arrimo</td>
+                <td class="mono">nova-aurora-corte-muro</td>
+                <td class="num">2</td>
+                <td class="num">1.944,66</td>
+              </tr>
+              <tr class="total">
+                <th colspan="3" style="text-align: left">Total da praça</th>
+                <td class="num">R$ 49.404,11</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="conta">
+            31.544,00 + 15.915,45 + 1.944,66 = <b>49.404,11</b> &nbsp;·&nbsp; a soma por folha e a
+            soma por código dão o mesmo total, e as duas ficam na tela.
+          </div>
+          <div class="aviso praca">
+            O consolidado <b>não contém itens</b>: contém referências aos pacotes de cada folha,
+            por <span class="mono">plate_id</span> e digest. Cada parcela da memória aponta para o
+            item na folha de onde foi lida — o total é explicável por composição, nunca por
+            reextração.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0057, decisão 2 — o consolidado referencia pacotes autocontidos.</span>
+          <span>Decisão 6 — o boletim da praça consome a união dos conjuntos de código.</span>
+        </div>
+      </section>
+
+      <!-- 05 -->
+      <section class="estado" id="e05">
+        <h2>
+          05 · Item repetido entre folhas conta duas vezes
+          <small>O erro é para somar demais, e visível. Só a declaração humana funde.</small>
+        </h2>
+        <div class="corpo">
+          <div class="aviso atencao">
+            <b>PJ14100500(/) recebe duas parcelas de 186,00 m², uma de cada folha.</b> São
+            <b>duas leituras, de duas folhas</b> — o mesmo alambrado desenhado na planta geral e
+            repetido no detalhe. O sistema não funde por rótulo, unidade nem proximidade: enquanto
+            não houver declaração humana de identidade, as duas contam.
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Parcela</th>
+                <th>Folha</th>
+                <th>Item</th>
+                <th class="num">Quant.</th>
+                <th class="num">Preço</th>
+                <th class="num">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="dupla">
+                <td>1ª leitura</td>
+                <td>Folha 1 · Planta geral</td>
+                <td class="mono">ti_b3d5e820a7c14f69</td>
+                <td class="num">186,00 m²</td>
+                <td class="num">62,40</td>
+                <td class="num">11.606,40</td>
+              </tr>
+              <tr class="dupla">
+                <td>2ª leitura</td>
+                <td>Folha 2 · Detalhe do playground</td>
+                <td class="mono">ti_5d2f83b60e4a1c97</td>
+                <td class="num">186,00 m²</td>
+                <td class="num">62,40</td>
+                <td class="num">11.606,40</td>
+              </tr>
+              <tr class="total">
+                <th colspan="3" style="text-align: left">No consolidado, hoje</th>
+                <td class="num">372,00 m²</td>
+                <td class="num"></td>
+                <td class="num">R$ 23.212,80</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="conta">
+            186,00 + 186,00 = <b>372,00</b> &nbsp;·&nbsp; 372,00 × 62,40 = <b>23.212,80</b>
+            &nbsp;·&nbsp; total da praça <b>R$ 49.404,11</b>
+          </div>
+          <div class="duas">
+            <div class="painel">
+              <h3>Por que não fundir sozinho</h3>
+              <p>
+                Rótulo é texto livre e proximidade é pixel. Dois trechos de alambrado
+                <b>diferentes</b> podem ter o mesmo rótulo em folhas diferentes, e fundi-los
+                apagaria metros que existem. A recusa da fusão automática é nominal no aceite do
+                ADR-0057.
+              </p>
+              <div class="aviso">
+                Contar duas vezes é um erro que <b>aparece</b> e que um humano corrige com uma
+                declaração. Contar de menos é um erro que ninguém vê.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Bancos: duas parcelas que estão certas</h3>
+              <p>
+                <b>PJ11200300(A)</b> também recebe parcelas de duas folhas — 8 un na planta geral
+                e 3 un no detalhe —, e aqui as duas <b>devem</b> somar: são bancos diferentes.
+                O aviso de dupla leitura não aparece nesta linha, porque nada nela é repetição:
+                ele é uma anotação da orçamentista, não uma dedução do sistema.
+              </p>
+              <div class="aviso atencao">
+                <b>Colisão de <span class="mono">item_id</span> não é identidade.</b> O piso da
+                folha 2 e os bancos da folha 1 cunharam o mesmo
+                <span class="mono">ti_7e04ab13c65f9d28</span> em pacotes diferentes. Não são o
+                mesmo item, e a tela nunca os confunde porque endereça sempre pelo par
+                <b>(plate_id, item_id)</b>.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0057, decisão 4 — dois itens até declaração; nunca se funde por rótulo.</span>
+          <span>Decisão 5 — (plate_id, item_id) resolve a colisão de id entre pacotes.</span>
+        </div>
+      </section>
+
+      <!-- 06 -->
+      <section class="estado" id="e06">
+        <h2>
+          06 · Declarar a identidade
+          <small>Par a par, com nota, e a prévia do efeito no total antes de gravar.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas larga">
+            <div class="painel">
+              <h3>Vínculo de identidade</h3>
+              <div class="par">
+                <div class="par-lado">
+                  <b>Folha 1 · Planta geral</b>
+                  <span class="mono">ti_b3d5e820a7c14f69</span>
+                  <span>ALAMBRADO H=3,00 m · 186,00 m² · PJ14100500(/)</span>
+                </div>
+                <div class="par-sinal" aria-label="é o mesmo elemento que">≡</div>
+                <div class="par-lado">
+                  <b>Folha 2 · Detalhe do playground</b>
+                  <span class="mono">ti_5d2f83b60e4a1c97</span>
+                  <span>ALAMBRADO H=3,00 m · 186,00 m² · PJ14100500(/)</span>
+                </div>
+              </div>
+              <div class="aviso">
+                O par é escolhido <b>explicitamente</b>, um item de cada folha. A lista do lado
+                direito só oferece itens de <b>outras</b> folhas, nada vem pré-selecionado e
+                nenhuma sugestão é feita por rótulo, unidade ou posição.
+              </div>
+              <h4>A parcela que fica</h4>
+              <div class="escolha-fica">
+                <label class="ativa">
+                  <input type="radio" name="fica" checked />
+                  <span>
+                    <b>Folha 1 · Planta geral</b> — 186,00 m²
+                    <small>
+                      É a leitura que governa a quantidade e a folha que a memória vai citar.
+                    </small>
+                  </span>
+                </label>
+                <label>
+                  <input type="radio" name="fica" />
+                  <span>
+                    <b>Folha 2 · Detalhe do playground</b> — 186,00 m²
+                    <small>A outra leitura fica registrada como fundida, sem contribuir.</small>
+                  </span>
+                </label>
+              </div>
+              <div class="aviso praca">
+                As duas leituras têm a <b>mesma</b> quantidade aqui. Quando divergirem, a leitura
+                escolhida governa o número e a descartada continua visível na memória, com sua
+                quantidade — a divergência é informação, não ruído a esconder.
+              </div>
+              <label class="campo">
+                Nota (obrigatória)
+                <input
+                  value="Mesmo trecho de alambrado do perímetro; o detalhe repete o total da planta geral."
+                />
+              </label>
+              <div class="acoes">
+                <button class="primario">Declarar identidade</button>
+                <button>Cancelar</button>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Prévia, antes de gravar</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th class="num">Hoje</th>
+                    <th class="num">Depois</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="fundida">
+                    <td class="mono">PJ14100500(/)</td>
+                    <td class="num">372,00 m²</td>
+                    <td class="num">186,00 m²</td>
+                  </tr>
+                  <tr class="fundida">
+                    <td>Total do código</td>
+                    <td class="num">23.212,80</td>
+                    <td class="num">11.606,40</td>
+                  </tr>
+                  <tr class="total">
+                    <th style="text-align: left">Total da praça</th>
+                    <td class="num">49.404,11</td>
+                    <td class="num">37.797,71</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="conta">
+                49.404,11 − 11.606,40 = <b>37.797,71</b>
+              </div>
+              <div class="aviso praca">
+                A declaração <b>muda o total</b>, e o total novo aparece antes de gravar. Nenhum
+                outro código se move: piso, portão e bancos continuam onde estavam.
+              </div>
+              <h4>Quem declara</h4>
+              <div class="carimbo">
+                <b>Ana Beatriz Rangel</b>
+                <span>14/04/2026, 09:41 (BRT)</span>
+                <span>autor e instante carimbados pelo sistema; a nota é digitada</span>
+              </div>
+              <div class="reservado">
+                Reservado: desfazer um vínculo já declarado. Vira real quando o desfazer da F-045
+                for estendido ao consolidado da praça.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0057, decisão 4 — vínculo tipado, par a par, com autor, instante e nota.</span>
+          <span>Mesma disciplina da prévia da F-040: o total novo é visto antes de gravado.</span>
+        </div>
+      </section>
+
+      <!-- 07 -->
+      <section class="estado" id="e07">
+        <h2>
+          07 · Depois da declaração
+          <small>A fusão na memória, carimbada com autor e instante.</small>
+        </h2>
+        <div class="corpo">
+          <table>
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Descrição</th>
+                <th class="num">Un</th>
+                <th class="num">Preço</th>
+                <th class="num">Parcelas</th>
+                <th class="num">Quant. da praça</th>
+                <th class="num">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="mono">PJ05100100(/)</td>
+                <td>Piso em concreto desempenado</td>
+                <td class="num">m²</td>
+                <td class="num">48,90</td>
+                <td class="num">3 folhas</td>
+                <td class="num">411,90</td>
+                <td class="num">20.141,91</td>
+              </tr>
+              <tr class="fundida">
+                <td class="mono">PJ14100500(/)</td>
+                <td>
+                  Tela em alambrado — fornecimento e colocação
+                  <span class="selo praca">≡ identidade declarada</span>
+                </td>
+                <td class="num">m²</td>
+                <td class="num">62,40</td>
+                <td class="num">1 parcela</td>
+                <td class="num">186,00</td>
+                <td class="num">11.606,40</td>
+              </tr>
+              <tr>
+                <td class="mono">PJ25400100(B)</td>
+                <td>Portão em tubo galvanizado</td>
+                <td class="num">m²</td>
+                <td class="num">96,00</td>
+                <td class="num">2 folhas</td>
+                <td class="num">18,90</td>
+                <td class="num">1.814,40</td>
+              </tr>
+              <tr>
+                <td class="mono">PJ11200300(A)</td>
+                <td>Banco de concreto pré-moldado</td>
+                <td class="num">un</td>
+                <td class="num">385,00</td>
+                <td class="num">2 folhas</td>
+                <td class="num">11</td>
+                <td class="num">4.235,00</td>
+              </tr>
+              <tr class="total">
+                <th colspan="6" style="text-align: left">Total da praça</th>
+                <td class="num">R$ 37.797,71</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="duas">
+            <div class="painel">
+              <h3>A memória do código fundido</h3>
+              <ul class="memoria">
+                <li class="fundida">
+                  <b>PJ14100500(/)</b> — tela em alambrado · total
+                  <span class="parcela">186,00 m²</span> ·
+                  <span class="selo praca">≡ identidade declarada</span>
+                  <ul>
+                    <li>
+                      folha 1, planta geral · <span class="mono">ti_b3d5e820a7c14f69</span> —
+                      <span class="parcela">186,00 m²</span> · <b>parcela que fica</b>
+                    </li>
+                    <li>
+                      folha 2, detalhe do playground ·
+                      <span class="mono">ti_5d2f83b60e4a1c97</span> —
+                      <span class="parcela">186,00 m²</span> · <b>fundida, não contribui</b>
+                    </li>
+                    <li>
+                      1 parcela de 186,00 · × 62,40 = <b>11.606,40</b> — a leitura fundida
+                      continua escrita, com sua folha, para quem audita entender por que ela não
+                      está no total.
+                    </li>
+                  </ul>
+                </li>
+              </ul>
+              <div class="conta">
+                Total da praça: 20.141,91 + 11.606,40 + 1.814,40 + 4.235,00 = <b>37.797,71</b>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>A declaração</h3>
+              <div class="carimbo">
+                <b>Vínculo de identidade — 1 par</b>
+                <span>Ana Beatriz Rangel · 14/04/2026, 09:41 (BRT)</span>
+                <span class="mono">
+                  nova-aurora-planta-geral · ti_b3d5e820a7c14f69
+                </span>
+                <span class="mono">
+                  ≡ nova-aurora-detalhe-playground · ti_5d2f83b60e4a1c97
+                </span>
+                <span>
+                  Nota: mesmo trecho de alambrado do perímetro; o detalhe repete o total da planta
+                  geral.
+                </span>
+              </div>
+              <p>
+                A declaração fica <b>ao lado do número que ela produziu</b>. Quem audita não
+                precisa procurar em outro lugar por que 372,00 virou 186,00.
+              </p>
+              <div class="aviso praca">
+                O selo diz <b>"identidade declarada"</b> por escrito, e a linha traz o sinal
+                <b>≡</b>. A cor nunca é o único indicador: a tabela continua legível em preto e
+                branco.
+              </div>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Boletim por folha</th>
+                <th>Prancha</th>
+                <th class="num">Total antes</th>
+                <th class="num">Total depois</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Folha 1 · Planta geral</td>
+                <td class="mono">nova-aurora-planta-geral</td>
+                <td class="num">31.544,00</td>
+                <td class="num">31.544,00</td>
+              </tr>
+              <tr class="fundida">
+                <td>Folha 2 · Detalhe do playground</td>
+                <td class="mono">nova-aurora-detalhe-playground</td>
+                <td class="num">15.915,45</td>
+                <td class="num">4.309,05</td>
+              </tr>
+              <tr>
+                <td>Folha 3 · Corte e muro de arrimo</td>
+                <td class="mono">nova-aurora-corte-muro</td>
+                <td class="num">1.944,66</td>
+                <td class="num">1.944,66</td>
+              </tr>
+              <tr class="total">
+                <th style="text-align: left" colspan="2">Total da praça</th>
+                <td class="num">49.404,11</td>
+                <td class="num">37.797,71</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="conta">
+            31.544,00 + 4.309,05 + 1.944,66 = <b>37.797,71</b> &nbsp;·&nbsp; só a folha 2 muda,
+            porque foi dela a parcela fundida.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0057, decisão 6 — item fundido contribui uma parcela, não duas.</span>
+          <span>Decisão 4 — é a declaração que muda o total, e é ela que fica auditável.</span>
+        </div>
+      </section>
+
+      <!-- 08 -->
+      <section class="estado" id="e08">
+        <h2>
+          08 · As recusas
+          <small>Três recusas e um aviso — cada um diz qual folha, qual item e o que fazer.</small>
+        </h2>
+        <div class="corpo">
+          <div class="aviso recusa">
+            <b>A praça não fecha com folha pendente.</b> A <b>folha 2 de 3 — Detalhe do
+            playground</b> (<span class="mono">nova-aurora-detalhe-playground</span>) tem
+            <b>2 itens sem decisão</b>: 1 proposto e 1 ambíguo. A <b>folha 3 de 3 — Corte e muro
+            de arrimo</b> (<span class="mono">nova-aurora-corte-muro</span>) ainda está
+            <b>em extração</b>. Meia praça somada parece uma praça inteira; termine a revisão das
+            duas folhas para montar o boletim.
+          </div>
+          <div class="aviso recusa">
+            <b>Os dois itens são da mesma folha.</b>
+            <span class="mono">nova-aurora-planta-geral · ti_b3d5e820a7c14f69</span> e
+            <span class="mono">nova-aurora-planta-geral · ti_1f8c62a4d09b3e57</span> estão na
+            <b>folha 1</b>. O vínculo de identidade existe para o mesmo elemento lido em
+            <b>folhas diferentes</b>; duas leituras da mesma folha são dois itens da legenda, e
+            item repetido dentro de uma folha se resolve rejeitando um deles na revisão.
+          </div>
+          <div class="aviso recusa">
+            <b>O vínculo precisa de nota.</b> Autor e instante são carimbados pelo sistema, mas o
+            <b>motivo</b> é de quem declara: sem ele, quem audita meses depois vê um número menor
+            sem saber por quê. Escreva o que faz das duas leituras o mesmo elemento.
+          </div>
+          <div class="aviso atencao">
+            <b>PJ11200300(A) também recebe parcelas de duas folhas.</b> 8 un na planta geral e
+            3 un no detalhe. Se forem os mesmos bancos, declare a identidade; se forem bancos
+            diferentes, não faça nada — as duas parcelas estão certas. O sistema
+            <b>não decide isso</b>.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0057, decisão 7 — folha pendente bloqueia o boletim da praça.</span>
+          <span>
+            Nomes de erro <b>propostos</b>, a confirmar no plano: WORKSITE_TAKEOFF_PLATE_PENDING,
+            WORKSITE_LINK_SAME_PLATE, WORKSITE_LINK_INCOMPLETE.
+          </span>
+        </div>
+      </section>
+
+      <!-- 09 -->
+      <section class="estado" id="e09">
+        <h2>
+          09 · O controle: praça de uma folha só
+          <small>Idêntica ao que existe hoje. Nada da praça aparece.</small>
+        </h2>
+        <nav class="etapas" aria-label="Etapas da medição">
+          <span class="etapa-tab">Rodada</span>
+          <span class="etapa-tab">Prancha · concluída</span>
+          <span class="etapa-tab ativa">Revisão do takeoff · em aberto</span>
+          <span class="etapa-tab bloqueada">Códigos · bloqueada</span>
+          <span class="etapa-tab bloqueada">Boletim · bloqueada</span>
+          <span class="etapa-tab bloqueada">Aprovação e exportação · bloqueada</span>
+        </nav>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <div class="barra-prancha">
+                <span class="titulo-folha">Prancha e legenda</span>
+                <span class="acoes">
+                  <button aria-pressed="false">Mostrar marcações</button>
+                  <button aria-label="Afastar o zoom">−</button>
+                  <span class="mono" style="font-size: 12px">1,00×</span>
+                  <button aria-label="Aproximar o zoom">+</button>
+                </span>
+              </div>
+              <p>
+                Sem faixa de folhas, sem "folha 1 de 1" no cabeçalho, sem etapa <b>Praça</b>, sem
+                coluna de parcelas na memória e sem o ato de declarar identidade — não há segunda
+                folha com que declarar coisa alguma.
+              </p>
+              <div class="aviso">
+                A etapa continua se chamando <b>Prancha</b>, no singular. O plural e a faixa
+                nascem no momento em que a segunda folha é acrescentada, e não antes.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Itens da legenda</h3>
+              <p>
+                4 itens da prancha <span class="mono">nova-aurora-planta-geral</span>. Pacote
+                sha256 <span class="mono">4f2ab7…c9e1</span>.
+              </p>
+              <ul class="itens">
+                <li class="confirmado">
+                  <span class="item-numero">1</span>
+                  <span class="item-corpo">
+                    <span class="rotulo">PISO EM CONCRETO DESEMP.</span>
+                    <span>confirmado · 320,00 m²</span>
+                  </span>
+                </li>
+                <li class="confirmado">
+                  <span class="item-numero">2</span>
+                  <span class="item-corpo">
+                    <span class="rotulo">ALAMBRADO H=3,00 m</span>
+                    <span>confirmado · 186,00 m²</span>
+                  </span>
+                </li>
+                <li class="confirmado">
+                  <span class="item-numero">3</span>
+                  <span class="item-corpo">
+                    <span class="rotulo">PORTÃO EM TUBO GALVANIZADO</span>
+                    <span>confirmado · 12,60 m²</span>
+                  </span>
+                </li>
+                <li class="confirmado">
+                  <span class="item-numero">4</span>
+                  <span class="item-corpo">
+                    <span class="rotulo">BANCO PRÉ-MOLDADO</span>
+                    <span>confirmado · 8 un</span>
+                  </span>
+                </li>
+              </ul>
+              <div class="aviso">
+                A chave <b>(plate_id, item_id)</b> não aparece na lista quando há uma folha só:
+                com um <span class="mono">plate_id</span> apenas, ela seria ruído. Ela continua
+                sendo a chave por baixo — apenas não há ambiguidade a desfazer na tela.
+              </div>
+            </div>
+          </div>
+          <div class="aviso praca">
+            Praça de uma folha <b>é</b> um consolidado de um pacote. O que este estado prova é que
+            o consolidado não cobra nada de quem tem uma folha: mesma tela, mesmo caminho, mesmos
+            números.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0057, decisão 8 — a rodada de uma prancha continua byte-idêntica.</span>
+          <span>Feature Contract, AC 3 — não-regressão sobre fixture existente.</span>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
