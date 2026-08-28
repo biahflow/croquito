@@ -37,14 +37,29 @@ Estabilidade do pacote de códigos, entre as praças em que o rótulo reaparece:
 | Classe | Quantos | % dos repetidos |
 |---|---|---|
 | `identical` — mesmo conjunto de códigos | 65 | 85,5% |
-| `subset` — um pacote contido no outro | 10 | 13,2% |
-| `overlapping` — interseção sem contenção | 0 | 0,0% |
-| `disjoint` — nenhum código em comum | **1** | 1,3% |
+| `subset` — **todos** os pares aninhados por inclusão | 8 | 10,5% |
+| `overlapping` — algum par só se cruza, sem conter | 2 | 2,6% |
+| `disjoint` — algum par sem código em comum | **1** | 1,3% |
 
-**98,7% dos rótulos repetidos têm pacote idêntico ou contido.** O único caso `disjoint` em
+**96,1% dos rótulos repetidos têm pacote idêntico ou contido.** O único caso `disjoint` em
 76 é `PONTOS DE SOLDA`: `SC19050600(/)` no Campo do Toca contra `SC14050400(/)` na Dona Eli.
 
-Os dez `subset` não são erro — são escopo menor. `CAMADA DE BRITA` dispara um código no
+> **Correção de método.** A primeira apuração, feita por script de análise, classificava como
+> `subset` qualquer rótulo com **algum** par aninhado, o que dava 10 `subset` e 0
+> `overlapping` — e a leitura otimista de "98,7% idêntico ou contido". A ferramenta
+> `precedent-eval` usa a regra **estrita**: `subset` só quando **todos** os pares são
+> aninhados; um único par que apenas se cruza derruba o rótulo para `overlapping`. A regra
+> estrita é a correta para o que se quer saber, porque um par incompatível dentro do grupo é
+> exatamente o que não pode ficar escondido atrás de uma média.
+>
+> Os dois rótulos que mudam de classe são `ALAMBRADO` e `QUADRA POLIESPORTIVA`, ambos em três
+> praças. Em `ALAMBRADO`, o Campo do Toca traz `ET04600200(/)` e `PJ14150203(A)` que as
+> outras não têm, enquanto as outras trazem `AD14100200(/)` que ele não tem: não é contenção,
+> é divergência real, e chamar isso de `subset` esconderia o fato.
+>
+> A conclusão do gate não muda — a hipótese continua confirmada, e por larga margem.
+
+Os oito `subset` não são erro — são escopo menor. `CAMADA DE BRITA` dispara um código no
 Campo do Toca e quatro em Todos os Santos, porque ali há drenagem; `GUARDA CORPO` perde o
 código de instalação na praça que não o tem.
 
@@ -94,9 +109,22 @@ uma agressiva.
    normalização razoável funde os dois, e nenhuma deveria. É perda de recall, não erro — e é
    parte de por que a cobertura fica em 90% e não em 100%.
 
-4. **A medição foi feita por script de análise**, fora do repositório, e reproduzida em
-   seguida pela ferramenta `precedent-eval`. A ferramenta é o artefato reproduzível; o
-   script foi o instrumento da primeira leitura.
+4. **A medição foi feita primeiro por script de análise**, fora do repositório, e depois
+   reproduzida pela ferramenta `precedent-eval` (`--memoria <arquivo>:<aba>`, no molde local
+   do `parity`). A ferramenta bateu todos os números — 129/133/71 blocos, 125/130/67
+   rotulados, 95 rótulos, 76 repetidos, 65 `identical`, 1 `disjoint` — e **corrigiu** a
+   fronteira `subset`/`overlapping` do script, como registrado acima. A ferramenta é o
+   artefato reproduzível; o script foi só o instrumento da primeira leitura.
+
+   Os blocos sem rótulo são contados e nomeados pela ferramenta, nunca descartados em
+   silêncio: 4 no Campo do Toca, 3 na Dona Eli, 4 em Todos os Santos.
+
+5. **Uma fonte de preço para toda a leitura `--memoria`.** A aba de memória não grava
+   identificador de tabela de preços, então a ferramenta trata os três arquivos como a mesma
+   fonte — o que é verdade aqui (um contrato só) e é o que torna a comparação possível.
+   Derivar a fonte do nome do arquivo tornaria qualquer repetição entre praças indetectável
+   por construção. A consequência declarada: hoje `--memoria` **não** separa praças de
+   contratos diferentes numa mesma leitura, e usá-lo assim invalidaria a medição.
 
 ## Human Gate 2 — Design Approval Package
 
