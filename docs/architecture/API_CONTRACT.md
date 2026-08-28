@@ -2117,6 +2117,58 @@ Responde `201` com a mesma forma de `SiteSetupKitResponse`, com `origin: "tenant
 
 Auditado como `ESTIMATE_SITE_SETUP_KIT_AUTHORED`.
 
+## Índice de precedentes de código
+
+Precedente é o que a orçamentista **já decidiu antes**: um rótulo de legenda que reaparece
+numa praça nova traz de volta o pacote de códigos que ele disparou, com a contagem de quantas
+praças o usaram (F-044). É **observação, nunca decisão** — nada é aplicado sem clique, pela
+mesma regra que já vale para a shortlist.
+
+O índice se chaveia por **(rótulo normalizado, fonte de preço)**, nunca pelo rótulo sozinho:
+precedente aprendido no contrato de uma praça não vale num programa com outra tabela, e
+sugerir código que não existe na tabela vigente é pior que não sugerir nada. Precedente
+**nunca atravessa tenant**: é o histórico de decisões de um escritório, e não tem a origem de
+plataforma que o acervo de canteiro tem.
+
+Ele tem duas fontes:
+
+- **a rodada do próprio sistema**, como efeito de
+  `POST /v1/estimate-rounds/{round_id}/code-assignments/closures`, na mesma transação. Só
+  código confirmado entra; rejeitado nunca. Não há rota para isso — fechar o pacote é o ato,
+  e o índice é consequência dele;
+- **a semeadura de orçamentos passados**, pela rota abaixo.
+
+### `POST /v1/precedents/seed`
+
+Requer `orcamentista` e `Idempotency-Key`. Semeia o índice com uma praça **já feita**, para
+que ele não nasça vazio.
+
+Entrada: o pacote que `croquito-valuation precedent-extract` produz na máquina de quem semeia
+— `worksite_key` (no mesmo espaço de chave das rodadas), `normalization_strategy`,
+`observations` (`label_original`, `label_normalized`, `code`, `price_source`) e as contagens
+de bloco da leitura. **A planilha do cliente não sobe**: o que atravessa a fronteira é rótulo,
+código e fonte de preço, o mesmo dado que `takeoff_packet_json` das revisões já guarda.
+
+Não é rota de rodada e **não tem `base_version`**: a praça semeada muitas vezes nunca foi
+lançada no sistema. Nenhuma revisão é gravada e nenhuma versão avança.
+
+Responde `200` com `worksite_key`, `observations_ingested`, `observations_skipped` e `labels`.
+Nenhum rótulo volta pelo fio. Idempotente por `(tenant_id, worksite_key)`: reingerir a mesma
+praça devolve `observations_ingested: 0`, e a contagem de praças do índice **não infla** — é
+ela que a tela mostra como argumento de autoridade.
+
+Recusas, todas **antes** de qualquer escrita:
+
+- `409 PRECEDENT_SEED_WORKSITE_CONFLICT` com `details.worksite_key` quando a praça já é rodada
+  real deste tenant. Misturar as duas origens sob a mesma chave juntaria o histórico importado
+  de uma planilha com o que o sistema gravou dos atos da própria orçamentista;
+- `422 PRECEDENT_SEED_STRATEGY_UNSUPPORTED` com `details.declared`/`details.expected` para
+  pacote normalizado por outra estratégia, que criaria duas chaves para o mesmo rótulo;
+- `422 PRECEDENT_SEED_NORMALIZATION_MISMATCH` com `details.observations` nomeando as
+  **posições** (nunca os rótulos) em que o servidor recalcula a normalização e discorda.
+
+Auditado como `PRECEDENT_SEED_INGESTED`.
+
 ## Levantamento de campo
 
 Superfície de sincronização da PWA offline-first do técnico

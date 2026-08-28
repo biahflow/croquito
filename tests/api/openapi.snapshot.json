@@ -5293,6 +5293,18 @@
         "title": "MutateJobSurveyLinkRequest",
         "type": "object"
       },
+      "NormalizationStrategy": {
+        "description": "As cinco estratégias de normalização de rótulo que a medição compara lado a lado.\n\nDo texto cru (`EXACT`) à normalização mais agressiva (`STEMS`, que junta singular e\nplural e as derivações mais comuns do domínio). A T1 não escolhe uma vencedora — o\nunknown 2 da feature (\"como normalizar o rótulo\") é decisão humana sobre o relatório\nque `measure_repetition` produz para cada uma.",
+        "enum": [
+          "exact",
+          "casefold",
+          "folded",
+          "tokens",
+          "stems"
+        ],
+        "title": "NormalizationStrategy",
+        "type": "string"
+      },
       "ObservationNote": {
         "additionalProperties": false,
         "description": "Espelho de `ObservationNote`. Desde a T12 (prancha 7a da DAP rev.2, aprovada) a\nnota pode ser texto, voz (`audio_media_ref`) ou os dois; o que continua inválido é a\nnota VAZIA — sem texto e sem áudio ela não registra nada, mesma regra `EMPTY_TEXT`\ndo domínio do app (`apps/field/src/domain/commands.ts`).",
@@ -5628,6 +5640,127 @@
           "points"
         ],
         "title": "PolylineGeometry",
+        "type": "object"
+      },
+      "PrecedentSeedObservation": {
+        "additionalProperties": false,
+        "description": "Uma observação de precedente de uma praça passada: rótulo, código e fonte de preço.\n\n`label_normalized` viaja junto do original **de propósito**, e não é decoração: a\ningestão recalcula a normalização com a estratégia declarada no pacote e RECUSA quando o\nresultado difere. É como uma divergência entre a versão do extrator e a do servidor\naparece como recusa nomeada em vez de virar, em silêncio, uma chave de índice que nunca\nreencontra nada.",
+        "properties": {
+          "code": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "label_normalized": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label Normalized",
+            "type": "string"
+          },
+          "label_original": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label Original",
+            "type": "string"
+          },
+          "price_source": {
+            "maxLength": 200,
+            "title": "Price Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label_original",
+          "label_normalized",
+          "code",
+          "price_source"
+        ],
+        "title": "PrecedentSeedObservation",
+        "type": "object"
+      },
+      "PrecedentSeedPacket": {
+        "additionalProperties": false,
+        "description": "O que uma praça passada contribui para o índice, sem que a planilha dela suba.\n\n`worksite_key` segue `WORKSITE_KEY_PATTERN`, o mesmo espaço de chave das rodadas reais,\nporque é justamente contra elas que a colisão é conferida na ingestão: uma praça semeada\ncom chave de outro formato jamais colidiria, e a contagem de praças — que é o argumento\nde autoridade que a tela mostra — passaria a contar a mesma praça duas vezes.\n\nOs quatro contadores de bloco não entram no índice e existem para o pacote poder ser\nLIDO por gente: bloco item+código que terminou sem rótulo é contado e nomeado pela\nlinha, nunca descartado em silêncio (a mesma disciplina de `MemoriaSourceReport`).",
+        "properties": {
+          "block_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Block Count",
+            "type": "integer"
+          },
+          "labeled_block_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Labeled Block Count",
+            "type": "integer"
+          },
+          "normalization_strategy": {
+            "$ref": "#/components/schemas/NormalizationStrategy"
+          },
+          "observations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PrecedentSeedObservation"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "unlabeled_block_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Unlabeled Block Count",
+            "type": "integer"
+          },
+          "unlabeled_block_rows": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Unlabeled Block Rows",
+            "type": "array"
+          },
+          "worksite_key": {
+            "pattern": "^[a-z0-9][a-z0-9-]{2,63}$",
+            "title": "Worksite Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worksite_key",
+          "normalization_strategy"
+        ],
+        "title": "PrecedentSeedPacket",
+        "type": "object"
+      },
+      "PrecedentSeedResponse": {
+        "additionalProperties": false,
+        "description": "O que a semeadura do índice de precedentes fez, em contagens.\n\nNenhum rótulo volta pelo fio: quem semeou tem o pacote em mãos, e devolvê-lo mastigado\nsó faria texto de cliente atravessar a fronteira mais uma vez sem necessidade.\n\n`observations_skipped` é a metade que prova a idempotência: reingerir a mesma praça\ndevolve `observations_ingested: 0`, e a contagem de praças do índice não se move.",
+        "properties": {
+          "labels": {
+            "title": "Labels",
+            "type": "integer"
+          },
+          "observations_ingested": {
+            "title": "Observations Ingested",
+            "type": "integer"
+          },
+          "observations_skipped": {
+            "title": "Observations Skipped",
+            "type": "integer"
+          },
+          "worksite_key": {
+            "title": "Worksite Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worksite_key",
+          "observations_ingested",
+          "observations_skipped",
+          "labels"
+        ],
+        "title": "PrecedentSeedResponse",
         "type": "object"
       },
       "Precision": {
@@ -10607,7 +10740,7 @@
     },
     "/v1/estimate-rounds/{round_id}/code-assignments/closures": {
       "post": {
-        "description": "Declara COMPLETO o pacote de serviços de um item — o ato que a confirmação não faz.\n\nExiste porque a presença de um código deixou de significar que o elemento acabou.\nSem esta rota, um item com um de seis códigos ficaria indistinguível de um item\nresolvido, e o boletim sairia pela metade sem ninguém ser avisado.\n\nÉ rota própria, e não uma bandeira em `/decisions`, porque `/decisions` carrega UMA\ndecisão: um pacote de seis códigos nasce em seis chamadas, e a orçamentista não sabe\nde antemão qual será a última. Quem fecha afirma outra coisa, e afirmação separada\nmerece endpoint separado — inclusive para a auditoria poder distingui-las.\n\nA rota não confere quantos códigos o item tem: fechar é decisão de quem monta o\npacote. Item sem código confirmado, pacote já fechado e item fora do takeoff\ncontinuam sendo recusa do domínio.",
+        "description": "Declara COMPLETO o pacote de serviços de um item — o ato que a confirmação não faz.\n\nExiste porque a presença de um código deixou de significar que o elemento acabou.\nSem esta rota, um item com um de seis códigos ficaria indistinguível de um item\nresolvido, e o boletim sairia pela metade sem ninguém ser avisado.\n\nÉ rota própria, e não uma bandeira em `/decisions`, porque `/decisions` carrega UMA\ndecisão: um pacote de seis códigos nasce em seis chamadas, e a orçamentista não sabe\nde antemão qual será a última. Quem fecha afirma outra coisa, e afirmação separada\nmerece endpoint separado — inclusive para a auditoria poder distingui-las.\n\nA rota não confere quantos códigos o item tem: fechar é decisão de quem monta o\npacote. Item sem código confirmado, pacote já fechado e item fora do takeoff\ncontinuam sendo recusa do domínio.\n\nDesde a F-044 o fechamento tem um **efeito a mais**, na mesma transação: as\nconfirmações daquele item viram observações no índice de precedentes, para que o\nmesmo rótulo de legenda reencontre este pacote de códigos na praça seguinte. É\nobservação, nunca decisão — nada é aplicado sem clique numa praça futura. Só código\nconfirmado entra; rejeitado nunca. Refechar não duplica, e a contagem de praças do\níndice não infla.",
         "operationId": "close_estimate_item_package_v1_estimate_rounds__round_id__code_assignments_closures_post",
         "parameters": [
           {
@@ -15406,6 +15539,71 @@
         "summary": "Set Journey Entitlement",
         "tags": [
           "platform"
+        ]
+      }
+    },
+    "/v1/precedents/seed": {
+      "post": {
+        "description": "Semeia o índice de precedentes com uma praça JÁ FEITA (F-044, fonte B).\n\nSem ela o índice nasceria vazio — só uma rodada real existe no banco —, e o ganho\nmedido no primeiro Human Gate da feature (54 a 120 linhas de código por praça)\nesperaria várias praças novas para começar a aparecer.\n\n**A planilha do cliente não sobe.** O que entra é o pacote que\n`croquito-valuation precedent-extract` produz na máquina de quem semeia: rótulo,\ncódigo e fonte de preço — o mesmo dado que `takeoff_packet_json` das revisões já\nguarda, e por isso a semeadura não cria fronteira de retenção nova.\n\nNão é rota de rodada: a praça semeada muitas vezes nunca foi lançada no sistema, e\npendurá-la numa rodada obrigaria a inventar uma. Por isso também não há\n`base_version` — nenhuma revisão é gravada e nenhuma versão avança.\n\nTrês recusas, todas **antes** de qualquer escrita, de modo que um pacote recusado\nnão deixa metade de si no índice:\n\n- `409 PRECEDENT_SEED_WORKSITE_CONFLICT` quando a `worksite_key` já é rodada real\n  deste tenant. Misturar as duas origens sob a mesma chave juntaria o histórico\n  importado de uma planilha com o que o sistema gravou dos atos da própria\n  orçamentista — dois dados de qualidade diferente, indistinguíveis depois;\n- `422 PRECEDENT_SEED_STRATEGY_UNSUPPORTED` para pacote normalizado por outra\n  estratégia, que criaria duas chaves para o mesmo rótulo;\n- `422 PRECEDENT_SEED_NORMALIZATION_MISMATCH`, nomeando as **posições** (nunca os\n  rótulos), quando o servidor recalcula a normalização e discorda do pacote.\n\nIdempotente por `(tenant_id, worksite_key)`: reingerir a mesma praça devolve\n`observations_ingested: 0` e a contagem de praças do índice não se move — é ela que a\ntela mostra como argumento de autoridade, e um número inflado seria uma autoridade\nfalsa.",
+        "operationId": "seed_precedents_v1_precedents_seed_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrecedentSeedPacket"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrecedentSeedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Seed Precedents",
+        "tags": [
+          "estimate"
         ]
       }
     },

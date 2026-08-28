@@ -38,7 +38,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from croquito_api import estimate_rounds, site_setup_kits
+from croquito_api import estimate_rounds, precedents, site_setup_kits
 from croquito_api.auth import (
     OidcAuthenticator,
     Principal,
@@ -220,6 +220,7 @@ from croquito_valuation.models import (
     PriceOrigin,
     Valuation,
 )
+from croquito_valuation.precedent import PrecedentSeedPacket
 from croquito_valuation.site_setup import (
     SiteSetupKit,
     apply_site_setup_kit,
@@ -562,6 +563,22 @@ class PublishSiteSetupKitRequest(ApiModel):
 
     name: str = Field(min_length=3, max_length=200)
     document: dict[str, Any]
+
+
+class PrecedentSeedResponse(ApiModel):
+    """O que a semeadura do índice de precedentes fez, em contagens.
+
+    Nenhum rótulo volta pelo fio: quem semeou tem o pacote em mãos, e devolvê-lo mastigado
+    só faria texto de cliente atravessar a fronteira mais uma vez sem necessidade.
+
+    `observations_skipped` é a metade que prova a idempotência: reingerir a mesma praça
+    devolve `observations_ingested: 0`, e a contagem de praças do índice não se move.
+    """
+
+    worksite_key: str
+    observations_ingested: int
+    observations_skipped: int
+    labels: int
 
 
 class SiteSetupKitResponse(ApiModel):
@@ -14246,7 +14263,14 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         A rota não confere quantos códigos o item tem: fechar é decisão de quem monta o
         pacote. Item sem código confirmado, pacote já fechado e item fora do takeoff
-        continuam sendo recusa do domínio."""
+        continuam sendo recusa do domínio.
+
+        Desde a F-044 o fechamento tem um **efeito a mais**, na mesma transação: as
+        confirmações daquele item viram observações no índice de precedentes, para que o
+        mesmo rótulo de legenda reencontre este pacote de códigos na praça seguinte. É
+        observação, nunca decisão — nada é aplicado sem clique numa praça futura. Só código
+        confirmado entra; rejeitado nunca. Refechar não duplica, e a contagem de praças do
+        índice não infla."""
         _require_valuation_reviewer(principal)
         operation = f"estimate-rounds.code-closures:{round_id}"
         request_hash = _request_hash(payload)
@@ -14291,6 +14315,18 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             created_by=principal.subject,
             changes={"code_assignments_json": document},
         )
+        # O precedente nasce AQUI, na mesma transação, porque fechar é o instante em que o
+        # pacote daquele elemento está completo — indexar na confirmação de cada código
+        # ensinaria pacote pela metade (F-044 T2, fonte A). Refechar não duplica.
+        precedents.record_closure_precedents(
+            session,
+            tenant_id=principal.tenant_id,
+            worksite_key=record.worksite_key,
+            packet=packet,
+            assignments=assignments,
+            item_id=payload.item_id,
+            created_by=principal.subject,
+        )
         record.updated_at = datetime.now(UTC)
         response = _estimate_assignments_payload(
             record, packet=packet, assignments=assignments, document=document
@@ -14319,6 +14355,94 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             record=record,
         )
         _commit_valuation_revision(session)
+        return response
+
+    @application.post(
+        "/v1/precedents/seed",
+        response_model=PrecedentSeedResponse,
+        tags=["estimate"],
+    )
+    async def seed_precedents(
+        payload: PrecedentSeedPacket,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> PrecedentSeedResponse:
+        """Semeia o índice de precedentes com uma praça JÁ FEITA (F-044, fonte B).
+
+        Sem ela o índice nasceria vazio — só uma rodada real existe no banco —, e o ganho
+        medido no primeiro Human Gate da feature (54 a 120 linhas de código por praça)
+        esperaria várias praças novas para começar a aparecer.
+
+        **A planilha do cliente não sobe.** O que entra é o pacote que
+        `croquito-valuation precedent-extract` produz na máquina de quem semeia: rótulo,
+        código e fonte de preço — o mesmo dado que `takeoff_packet_json` das revisões já
+        guarda, e por isso a semeadura não cria fronteira de retenção nova.
+
+        Não é rota de rodada: a praça semeada muitas vezes nunca foi lançada no sistema, e
+        pendurá-la numa rodada obrigaria a inventar uma. Por isso também não há
+        `base_version` — nenhuma revisão é gravada e nenhuma versão avança.
+
+        Três recusas, todas **antes** de qualquer escrita, de modo que um pacote recusado
+        não deixa metade de si no índice:
+
+        - `409 PRECEDENT_SEED_WORKSITE_CONFLICT` quando a `worksite_key` já é rodada real
+          deste tenant. Misturar as duas origens sob a mesma chave juntaria o histórico
+          importado de uma planilha com o que o sistema gravou dos atos da própria
+          orçamentista — dois dados de qualidade diferente, indistinguíveis depois;
+        - `422 PRECEDENT_SEED_STRATEGY_UNSUPPORTED` para pacote normalizado por outra
+          estratégia, que criaria duas chaves para o mesmo rótulo;
+        - `422 PRECEDENT_SEED_NORMALIZATION_MISMATCH`, nomeando as **posições** (nunca os
+          rótulos), quando o servidor recalcula a normalização e discorda do pacote.
+
+        Idempotente por `(tenant_id, worksite_key)`: reingerir a mesma praça devolve
+        `observations_ingested: 0` e a contagem de praças do índice não se move — é ela que a
+        tela mostra como argumento de autoridade, e um número inflado seria uma autoridade
+        falsa.
+        """
+        _require_valuation_reviewer(principal)
+        operation = "precedents.seed"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return PrecedentSeedResponse.model_validate(existing)
+
+        counts = precedents.ingest_seed_packet(
+            session,
+            tenant_id=principal.tenant_id,
+            packet=payload,
+            created_by=principal.subject,
+        )
+        response = PrecedentSeedResponse.model_validate(
+            precedents.seed_payload(payload.worksite_key, counts)
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="PRECEDENT_SEED_INGESTED",
+            resource_type="precedent_worksite",
+            # A chave da praça é identificador do tenant, não conteúdo de prancha: é o mesmo
+            # `worksite_key` que a rodada já carrega. Rótulo de legenda não entra aqui.
+            resource_id=payload.worksite_key,
+            request_id=request.state.request_id,
+            details={"observations_ingested": counts.ingested},
+        )
+        session.commit()
         return response
 
     @application.post(

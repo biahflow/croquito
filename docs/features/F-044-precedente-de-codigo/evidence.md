@@ -135,10 +135,58 @@ está cumprido. Ver [`mock/README.md`](mock/README.md).
 
 Cumprido em 2026-08-28.
 
+## T2 — o índice, com as duas fontes
+
+**Data**: 2026-08-28. Executada.
+
+O índice vive em `precedent_observations` (migração `0022`), uma linha por
+`(praça, rótulo normalizado, fonte de preço, código)`, com `tenant_id` **NOT NULL** e toda
+leitura filtrada por ele. A camada de aplicação é `croquito_api/precedents.py`; a normalização
+e o contrato do pacote de semeadura são reusados da T1 (`croquito_valuation.precedent`).
+
+Duas fontes, como o contrato da task pediu:
+
+- **a rodada** — efeito do fechamento de pacote
+  (`POST /v1/estimate-rounds/{id}/code-assignments/closures`), na mesma transação, só com
+  código confirmado;
+- **a semeadura** — `croquito-valuation precedent-extract` lê a memória de cálculo de uma
+  praça passada na máquina de quem semeia e escreve um pacote; `POST /v1/precedents/seed`
+  o ingere. A planilha do cliente não sobe.
+
+A consulta é `precedents_for(session, tenant_id, labels, price_source)`, que a T3 consome.
+
+### Decisões que ficaram registradas na execução
+
+1. **A fonte de preço da semeadura é declarada** (`--price-source`, com o rótulo legível do
+   contrato como padrão). Sem poder declará-la, todo precedente semeado nasceria sob uma fonte
+   que jamais casaria com o `catalog_sha256` de uma rodada real, e a semeadura seria um índice
+   paralelo que ninguém alcança. Inventar um hash seria pior.
+2. **A recusa de colisão de praça fica do lado da semeadura**, e não do fechamento. Semear é
+   importação deliberada, que pode esperar e ser refeita com outra chave; fechar o pacote é o
+   ato central da jornada, e travá-lo pela contabilidade de um índice seria a ferramenta
+   impedindo o trabalho. A consequência declarada: uma praça semeada ANTES de a rodada real
+   existir continua semeada, e a rodada acrescenta observações sob a mesma chave — a contagem
+   de praças não infla (ela conta chaves distintas), mas as duas origens convivem ali.
+3. **A estratégia de normalização é gravada com cada observação** e filtrada na consulta.
+   Reindexar sob outra estratégia deixa as linhas velhas de fora, em vez de misturar duas
+   chaves para o mesmo rótulo.
+
+### Limitação nova, medida na execução
+
+`folded` — a estratégia que a medição escolheu — **não colapsa espaço interno repetido**
+(`catalog._lexical_normalize` dobra caixa e acento, e só). "PISO EM CONCRETO" e
+"Piso em Concretô" caem na mesma chave; "PISO  EM  CONCRETO" (com espaço duplo) não. É perda
+de recall, não erro, e é da mesma família da que a medição já declarou (`PASSEIO` ×
+`CALÇADA DE ACESSO`). Não foi corrigida aqui de propósito: a T2 reusa a normalização da T1, e
+trocá-la exigiria refazer a medição que a sustenta.
+
 ## O que continua aberto
 
 - **Unknown 3 — quantas praças fazem um precedente confiável.** A medição não decide limiar.
   Com três praças, o caso de "uma praça só" é comum e é justamente o que o desenho marca com
-  aviso.
-- **A prioridade da feature**, à luz do volume medido.
-- A construção do índice, a mudança na shortlist e a tela — nenhuma iniciada.
+  aviso. A T2 não decide limiar: ela devolve a contagem, e quem a usa é a T3.
+- **A prioridade da feature**, à luz do volume medido. O contrato da T2 registra que ela subiu
+  para `HIGH`, mas nem [`feature.md`](feature.md) nem o
+  [roadmap](../../product/ROADMAP.md) registram essa decisão — os dois ainda dizem `MEDIUM`,
+  a revisar pelo dono. A divergência é anterior a esta execução e continua aberta.
+- **A mudança na shortlist e a tela** — é a T3, e o pacote de design já aprovado a governa.
