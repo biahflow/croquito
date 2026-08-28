@@ -1,12 +1,12 @@
 # F-045 — Plano de implementação
 
-Gates **abertos** no momento da execução, e é preciso lê-los antes do diff:
-[ADR-0061](../../adr/0061-revogacao-de-codigo-confirmado.md) está `Proposed` e o
-[Design Approval Package](mock/README.md) revisão 1 aguarda aprovação. A implementação foi
-autorizada pelo dono em 2026-08-28 ("registra como F-045 no roadmap e codar ela") e segue
-exatamente o que os dois artefatos propõem; se algum deles mudar no aceite, o código muda com
-ele. Nada aqui é irreversível: a rota é nova, o campo do conjunto nasce vazio e nenhuma
-migração foi criada.
+Gates cumpridos em 2026-08-28, por ato humano (Daniel Campos):
+[ADR-0061](../../adr/0061-revogacao-de-codigo-confirmado.md) **aceito** e
+[Design Approval Package](mock/README.md) revisão 1 **aprovado** — os dois no mesmo dia da
+execução, e depois dela: a implementação foi autorizada primeiro ("registra como F-045 no
+roadmap e codar ela"), correu sobre o que os dois artefatos propunham, e o aceite veio sobre
+o que estava escrito neles. Nada aqui era irreversível: rota nova, campo do conjunto com
+default vazio, nenhuma migração.
 
 ## Por que a fatia é única
 
@@ -47,11 +47,13 @@ Branch `feat/f-042-f-043-f-044-integracao`, a mesma da rodada. Nenhuma migraçã
 do conjunto vive no JSON da revisão, com default vazio, e conjunto gravado antes relê sem
 nada a converter.
 
-## Human Gates que continuam abertos
+## Human Gates
 
-1. **[ADR-0061](../../adr/0061-revogacao-de-codigo-confirmado.md)** — aceite da semântica.
-2. **[Design Approval Package](mock/README.md) revisão 1** — aprovação da forma.
-3. **Unknown 1 da feature** — o que fazer quando o orçamento já foi aprovado. A execução
+1. ~~**[ADR-0061](../../adr/0061-revogacao-de-codigo-confirmado.md)**~~ — **aceito em
+   2026-08-28**.
+2. ~~**[Design Approval Package](mock/README.md) revisão 1**~~ — **aprovado em 2026-08-28**.
+3. **Unknown 1 da feature** — o único que continua aberto: o que fazer quando o orçamento já
+   foi aprovado. A execução
    **não** o decidiu: aplicou a recusa provisória do ADR-0061 D7
    (`ASSIGNMENT_REVOCATION_AFTER_APPROVAL`), que é o lado reversível. Liberar é apagar uma
    checagem; o contrário — assinatura apontando para um conjunto que mudou — não tem volta.

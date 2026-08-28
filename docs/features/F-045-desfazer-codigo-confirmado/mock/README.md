@@ -2,7 +2,7 @@
 
 Classification: INTERFACE_CHANGE  
 Revision: 1  
-Status: **Awaiting approval** — e atrás do gate do ADR-0061  
+Status: **Approved (2026-08-28)**  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -13,7 +13,8 @@ Produced by: agente (Claude Code)
 ## O gate que vem antes deste
 
 A **semântica** da revogação está no
-[ADR-0061](../../../adr/0061-revogacao-de-codigo-confirmado.md), ainda `Proposed`: revogar é
+[ADR-0061](../../../adr/0061-revogacao-de-codigo-confirmado.md), **aceito em 2026-08-28**:
+revogar é
 decisão nova, o par sai do conjunto corrente e fica em `revocations`, o pacote do elemento
 **reabre** e a observação de precedente que aquele fechamento gravou é **removida** na mesma
 transação.
@@ -25,8 +26,8 @@ Este pacote decide a **forma** dessas decisões na tela. Se o ADR mudar, o pacot
 | Campo | Valor |
 | --- | --- |
 | O que se aprova | a composição dos cinco estados e as seis decisões abaixo |
-| Aprovado por | **pendente** |
-| Data | — |
+| Aprovado por | Daniel Campos |
+| Data | 2026-08-28 |
 | Revisão | 1 |
 | Explicitamente **não** coberto | a copy final; os rótulos, códigos e preços das capturas, que são sintéticos; **o que acontece quando o orçamento já foi aprovado** (unknown 1 da feature, decisão do dono); e o ato inverso, desfazer uma rejeição, que está fora de escopo |
 

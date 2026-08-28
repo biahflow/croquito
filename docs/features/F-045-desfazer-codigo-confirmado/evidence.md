@@ -21,11 +21,12 @@ O que se conferiu antes de afirmar isso, e vale como linha de base:
 
 | Gate | Estado |
 | --- | --- |
-| [ADR-0061](../../adr/0061-revogacao-de-codigo-confirmado.md) — semântica da revogação | **`Proposed`**, aguardando aceite |
-| [Design Approval Package](mock/README.md) revisão 1 | **Aguardando aprovação** |
-| Unknown 1 — revogar depois da aprovação do orçamento | **Aberto**; a implementação recusa provisoriamente (ADR-0061 D7) |
+| [ADR-0061](../../adr/0061-revogacao-de-codigo-confirmado.md) — semântica da revogação | **`Accepted`** em 2026-08-28 (Daniel Campos) |
+| [Design Approval Package](mock/README.md) revisão 1 | **Aprovado** em 2026-08-28 (Daniel Campos) |
+| Unknown 1 — revogar depois da aprovação do orçamento | **Aberto**; a implementação recusa provisoriamente (ADR-0061 D7, aceita junto com o ADR) |
 
-A implementação foi autorizada pelo dono na mesma conversa. Nada nela é irreversível: rota
+A implementação foi autorizada pelo dono na mesma conversa e correu **antes** dos dois
+aceites, que vieram sobre o que os artefatos descreviam. Nada nela era irreversível: rota
 nova, campo do conjunto com default vazio, nenhuma migração.
 
 ## O que foi entregue
@@ -70,7 +71,7 @@ nome quando o pacote está fechado, e a lista do que continua desfeito. Nenhuma 
 
 ## O que continua aberto
 
-- Os **três gates** da tabela acima.
+- **Unknown 1** — o único gate da tabela que continua aberto.
 - **Desfazer a rejeição de um item** — o ato inverso do outro lado, fora do escopo desta
   feature.
 - **Rollback de revisão** — outra feature, para outro problema.

@@ -1,7 +1,7 @@
 # ADR-0061: Desfazer um código confirmado é decisão nova, que reabre o pacote e compensa o índice
 
-Status: Proposed  
-Data: 2026-08-28  
+Status: Accepted  
+Data: 2026-08-28 (aceito por ato humano em 2026-08-28, Daniel Campos)  
 Responsável: Product / Engineering
 
 ## Contexto
@@ -101,7 +101,7 @@ assinatura aponta para um conjunto que mudou — não tem volta.
 
 ## Gate humano
 
-Esta decisão precisa de **aceite explícito** antes de a implementação da F-045 valer.
+Esta decisão foi **aceita em 2026-08-28** (Daniel Campos), com as sete decisões acima.
 
 O **unknown 1 da F-045** — o que acontece com uma revogação depois de o orçamento ter sido
 aprovado — continua sendo do dono. A implementação não o decidiu: aplicou a D7, que **recusa**

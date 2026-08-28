@@ -2,7 +2,10 @@
 
 ## Status
 
-`READY_FOR_PLANNING`
+`READY_FOR_REVIEW`
+
+> Implementada em 2026-08-28, com os dois gates de decisão cumpridos no mesmo dia: ADR-0061
+> aceito e pacote de design revisão 1 aprovado (Daniel Campos).
 
 > Nasce em 2026-08-28, da revisão 2 do pacote de design da
 > [F-044](../F-044-precedente-de-codigo/feature.md). Ao decidir marcar o código que veio de
@@ -135,9 +138,12 @@ aconteceu: ela fica no histórico, revogada por um ato tão rastreável quanto o
 
 ## Human Gates
 
-1. **ADR da semântica da revogação** — aceite antes de a implementação valer.
-2. **Design Approval Package** — `INTERFACE_CHANGE`.
-3. **Unknown 1** (revogar depois da aprovação do orçamento) — decisão do dono.
+1. ~~**ADR da semântica da revogação**~~ — [ADR-0061](../../adr/0061-revogacao-de-codigo-confirmado.md)
+   **aceito em 2026-08-28** (Daniel Campos), com as sete decisões.
+2. ~~**Design Approval Package**~~ — revisão 1 **aprovada em 2026-08-28** (Daniel Campos).
+3. **Unknown 1** (revogar depois da aprovação do orçamento) — **continua aberto**. O aceite
+   do ADR incluiu a D7, que **recusa** enquanto a decisão não vem; liberar depois é apagar
+   uma checagem.
 
 ## References
 
