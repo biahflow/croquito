@@ -1,10 +1,17 @@
 """Persistência transacional tenant-scoped para o primeiro fluxo SaaS.
 
 Toda tabela de DADO DE CLIENTE tem `tenant_id`, e o isolamento é conferido no mesmo `where`
-do `id`. A única exceção é `ReferenceCatalogRecord`, o acervo de catálogos públicos da
-plataforma: ela não guarda dado de cliente, e a razão está escrita na docstring dela
-(ADR-0047, decisão 1). Tabela global nova exige ADR próprio — a ausência de `tenant_id`
-nunca é detalhe de implementação.
+do `id`. As exceções são o acervo de catálogos públicos da plataforma
+(`ReferenceCatalogRecord`) e o índice de embeddings dele (`ReferenceCatalogEmbeddingRecord`):
+nenhuma das duas guarda dado de cliente, e a razão está escrita na docstring de cada uma
+(ADR-0047 decisão 1, estendida pelo ADR-0054). Tabela global nova exige ADR próprio — a
+ausência de `tenant_id` nunca é detalhe de implementação.
+
+`SiteSetupKitRecord` é o terceiro caso e é DIFERENTE dos dois: a coluna existe e é
+ANULÁVEL, porque o acervo de parcelas de canteiro tem duas origens (ADR-0060) — nulo é
+acervo de plataforma, preenchido é acervo do tenant. Ela não é tabela global: toda leitura
+filtra `tenant_id IS NULL OR tenant_id = :tenant`, e é isso que mantém o acervo de um tenant
+invisível para outro.
 """
 
 from __future__ import annotations
@@ -335,6 +342,66 @@ class ReferenceCatalogEmbeddingRecord(Base):
     published_by: Mapped[str] = mapped_column(String(128))
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SiteSetupKitRecord(Base):
+    """Acervo de parcelas de canteiro (F-042) — `tenant_id` **anulável**, e isso é a decisão.
+
+    O ADR-0060 (`Accepted` em 2026-08-28) decidiu que o acervo tem **duas origens e um
+    contrato de leitura só**: acervo de PLATAFORMA, publicado por `platform_operator` e
+    válido para todos (`tenant_id IS NULL`, no molde da F-037), e acervo DO TENANT, autorado
+    pela orçamentista a partir de uma rodada dela (`tenant_id` preenchido). A coluna anulável
+    é a codificação dessa decisão, e não uma tabela global disfarçada: quem tem dono continua
+    tendo dono na mesma coluna que todo o resto do schema usa.
+
+    A consequência operacional é uma só, e vale para TODA consulta de leitura desta tabela:
+    **`tenant_id IS NULL OR tenant_id = :tenant`**. Nunca `tenant_id IS NULL` sozinho (o
+    tenant perderia o próprio acervo), nunca sem cláusula nenhuma (o acervo de um tenant
+    apareceria para outro, que é exatamente a fronteira que o ADR-0060 preserva). Uma consulta
+    nova que não escreva essa cláusula é defeito de isolamento, não detalhe de implementação.
+
+    Diferente de `ReferenceCatalogRecord`, o documento mora no BANCO e não no object store:
+    um acervo é receita curta (dezenas de parcelas), lida inteira em todo preview e em todo
+    apply, e um objeto por acervo acrescentaria um round-trip de rede a cada leitura sem
+    nenhum ganho — não há bytes de arquivo de terceiro para preservar, só o `SiteSetupKit`
+    que a própria API validou antes de gravar.
+
+    `document_sha256` é o digest canônico do documento gravado, no molde de
+    `document_digest`: é ele que deixa conferível, depois, que o acervo aplicado numa rodada
+    é byte a byte o que está aqui.
+
+    Publicação é IMUTÁVEL: `(tenant_id, name, kit_version)` é único, e republicar a mesma
+    versão é recusa, nunca sobrescrita — versão nova é linha nova, como no acervo de
+    catálogos (ADR-0047 D3). A unicidade do banco NÃO cobre sozinha o acervo de plataforma,
+    porque `NULL` não colide com `NULL` em PostgreSQL nem em SQLite; por isso a recusa é
+    conferida na rota, com código estável, e a constraint é a rede embaixo dela para o acervo
+    do tenant.
+
+    Retirar de circulação carimba `withdrawn_at` e não apaga, pela mesma razão do acervo de
+    catálogos: uma rodada que já aplicou o acervo continua citando a versão dele.
+    """
+
+    __tablename__ = "site_setup_kits"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", "kit_version", name="uq_site_setup_kit_identity"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    """`NULL` é acervo de plataforma; preenchido é acervo do tenant (ADR-0060)."""
+    name: Mapped[str] = mapped_column(String(200))
+    kit_version: Mapped[str] = mapped_column(String(40))
+    """Espelho de `SiteSetupKit.version`, lido de dentro do documento — é ele que a
+    proveniência de cada parcela materializada cita (`SiteSetupOrigin.kit_version`)."""
+    source_label: Mapped[str] = mapped_column(String(200))
+    document_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    """O `SiteSetupKit` serializado, já validado pelo domínio antes de virar linha."""
+    document_sha256: Mapped[str] = mapped_column(String(64))
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
 
 class AiProcessingAuthorizationRecord(Base):
