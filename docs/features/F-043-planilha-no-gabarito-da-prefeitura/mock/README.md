@@ -1,8 +1,8 @@
 # Design Approval Package — F-043, a planilha no gabarito da prefeitura
 
 Classification: INTERFACE_CHANGE  
-Revision: 1  
-Status: **Approved (2026-08-28)**  
+Revision: **2**  
+Status: **Awaiting approval** (a revisão 1 foi aprovada em 2026-08-28)  
 Date: 2026-08-28  
 Produced by: agente (Claude Code)
 
@@ -15,15 +15,38 @@ Produced by: agente (Claude Code)
 > [ADR-0059](../../../adr/0059-item-contratado-fora-da-tabela-sco.md) já foi cumprido em
 > 2026-08-28.
 
+## Por que existe uma revisão 2
+
+A revisão 1 foi desenhada **antes** de o documento real estar disponível, e dizia por escrito
+que a estrutura das capturas era sintética e não era especificação. Com os três orçamentos
+reais em mãos (2026-08-28), quatro pontos de **forma** do documento se mostraram diferentes do
+que a rendição mostrava. A revisão 2 corrige a rendição para o que o documento realmente é.
+
+| Revisão 1 | Documento real, agora na revisão 2 |
+| --- | --- |
+| linha de grupo com título (`01 — SERVIÇOS PRELIMINARES…`) | linha de grupo com **apenas o número** (`1`) |
+| rodapé de três linhas: TOTAL SEM BDI, BDI, TOTAL GERAL | **duas** linhas: `TOTAL` (com BDI) e `TOTAL S/BDI`, nessa ordem, **sem linha de BDI** |
+| coluna rotulada `V. UNIT C/ BDI` | rotulada **`VALOR UNIT (OUT/23)`** — o valor é o mesmo, com BDI embutido |
+| BDI de 24,50% | **18%** |
+
+**Nenhuma das sete decisões aprovadas na revisão 1 muda.** Ordem fixa do gabarito, linhas
+zeradas impressas, numeração como texto, lacuna de grupo preservada, carimbo de revisão,
+recusa de código ausente e memória só para código com quantidade continuam valendo palavra por
+palavra. A revisão 2 é de fidelidade ao documento, não de desenho — mas é revisão nova e
+precisa de registro próprio, porque o que se aprova é a rendição.
+
+A verificação que produziu esta revisão está em [`../evidence.md`](../evidence.md), junto com
+dois achados sobre os arquivos do cliente que **não** são escopo desta feature.
+
 ## Registro de aprovação
 
 | Campo | Valor |
 | --- | --- |
-| O que se aprova | a forma do arquivo publicado na revisão 1 e as sete decisões listadas abaixo |
-| Aprovado por | Daniel Campos |
-| Data | 2026-08-28 |
-| Revisão | 1 |
-| Explicitamente **não** coberto | a copy final; os códigos, descrições, preços e a estrutura de grupos das capturas, que são **sintéticos**; o gabarito real de 433 linhas, que é dado a fornecer; e o aceite do arquivo gerado contra o documento do cliente, que é gate próprio e posterior |
+| O que se aprova | a forma do arquivo publicado na revisão 2 e as sete decisões da revisão 1, que ela preserva |
+| Aprovado por | — |
+| Data | — |
+| Revisão | 2 |
+| Explicitamente **não** coberto | a copy final; os códigos, descrições e preços das capturas, que continuam **sintéticos** (a *estrutura* deixou de ser); **qual das duas formas de rodapé vale** — a do cliente, desenhada aqui, ou a do ADR-0038 —, que é decisão de quem entrega; e o aceite do arquivo gerado contra o documento do cliente, que é gate próprio e posterior |
 
 Aprovar esta revisão não aprova a seguinte: pacote materialmente alterado é revisão nova e
 precisa de registro próprio.
@@ -48,9 +71,9 @@ capturas. Decidido por Daniel Campos em 2026-08-28.
 
 Os números são sintéticos, mas **aritmeticamente consistentes**, e as contas fecham na
 rendição: `396,63 × 12,40 = 4.918,21` (truncado), `418,12 × 118,42 = 49.513,77`,
-`418,12 × 24,90 = 10.411,18`, soma da coluna TOTAL `= 69.952,16`; total sem BDI `56.186,48`,
-BDI de 24,50% `= 13.765,68`, e `56.186,48 + 13.765,68 = 69.952,16`. Na memória,
-`418,20 − 0,08 = 418,12`.
+`418,12 × 24,90 = 10.411,18`, soma da coluna TOTAL `= 69.952,16` e
+`TRUNC(69.952,16 ÷ 1,18; 2) = 59.281,49` — a mesma derivação que o documento real usa. Na
+memória, `418,20 − 0,08 = 418,12`.
 
 ## Superfícies e estados incluídos
 
@@ -130,11 +153,15 @@ essa exceção.
 
 Nada aqui é resolvido por um agente durante a implementação.
 
-- **De onde sai o preço impresso** (unknown 2 da feature). O documento real imprime
-  `VALOR UNIT (OUT/23)` na planilha orçamentária e `COM BDI` no gabarito padrão — duas bases
-  distintas no mesmo arquivo. O pacote desenha **`V. UNIT C/ BDI`**, que é a base que o
-  escritor de hoje já usa para compor o total. Confirmar contra o arquivo real; se for a
-  outra, muda a coluna e é revisão nova.
+- ~~**De onde sai o preço impresso** (unknown 2 da feature)~~ — **resolvido em 2026-08-28**
+  contra o arquivo real: a coluna `VALOR UNIT (OUT/23)` traz o preço **com BDI**, porque o
+  rodapé deriva o total sem BDI dividindo o total por 1,18. É a mesma base que o escritor já
+  usava para compor o total, e a revisão 2 imprime o rótulo real.
+
+- **Qual forma de rodapé vale.** O documento do cliente imprime `TOTAL` e `TOTAL S/BDI` e
+  **não** imprime linha de BDI; o [ADR-0038](../../../adr/0038-bdi-como-conceito-de-pre-licitacao.md)
+  manda imprimir o BDI como diferença entre totais truncados. As duas dão o mesmo dinheiro. A
+  revisão 2 desenha a forma do cliente, e a escolha é de quem entrega à prefeitura.
 - **Preço das linhas sem quantidade.** O pacote imprime o preço declarado no gabarito quando
   há um, e deixa a célula vazia quando não há. Se o documento real imprime preço em todas as
   390, o gabarito precisa trazê-los — e isso é dado, não código.

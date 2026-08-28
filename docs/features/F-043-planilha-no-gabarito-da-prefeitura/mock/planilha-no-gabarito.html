@@ -449,7 +449,7 @@
               <h3>O que vai no arquivo</h3>
               <div class="carimbo">
                 <span><strong>Gabarito</strong> PLANILHA ORÇAMENTÁRIA — SMH/Rio</span>
-                <span><strong>Revisão</strong> 2023-10</span>
+                <span><strong>Revisão</strong> 2023-10 · BDI 18%</span>
                 <span><strong>Linhas</strong> 433 · 43 com quantidade · 390 zeradas</span>
                 <span><strong>Abas</strong> PLANILHA ORÇAMENTÁRIA · MEMÓRIA DE CÁLCULO</span>
               </div>
@@ -486,14 +486,14 @@
                   <th>CÓDIGO</th>
                   <th>DESCRIÇÃO</th>
                   <th>UN</th>
-                  <th>V. UNIT C/ BDI</th>
+                  <th>VALOR UNIT (OUT/23)</th>
                   <th>QUANT.</th>
                   <th>TOTAL</th>
                 </tr>
               </thead>
               <tbody>
                 <tr class="grupo">
-                  <td colspan="7">01 — SERVIÇOS PRELIMINARES E CANTEIRO DE OBRAS</td>
+                  <td colspan="7">1</td>
                 </tr>
                 <tr class="preenchida">
                   <td>01.5</td>
@@ -550,7 +550,7 @@
                   <td class="total">1.365,00</td>
                 </tr>
                 <tr class="grupo">
-                  <td colspan="7">02 — MOVIMENTO DE TERRA</td>
+                  <td colspan="7">2</td>
                 </tr>
                 <tr class="zerada">
                   <td>02.1</td>
@@ -562,7 +562,7 @@
                   <td class="total">0,00</td>
                 </tr>
                 <tr class="grupo">
-                  <td colspan="7">04 — PAVIMENTAÇÃO</td>
+                  <td colspan="7">4</td>
                 </tr>
                 <tr class="preenchida">
                   <td>04.2</td>
@@ -583,26 +583,24 @@
                   <td class="total">10.411,18</td>
                 </tr>
                 <tr class="total-geral">
-                  <td colspan="6">TOTAL SEM BDI</td>
-                  <td>56.186,48</td>
-                </tr>
-                <tr class="total-geral">
-                  <td colspan="6">BDI (24,50%)</td>
-                  <td>13.765,68</td>
-                </tr>
-                <tr class="total-geral">
-                  <td colspan="6">TOTAL GERAL</td>
+                  <td colspan="6">TOTAL</td>
                   <td>69.952,16</td>
+                </tr>
+                <tr class="total-geral">
+                  <td colspan="6">TOTAL S/BDI</td>
+                  <td>59.281,49</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <div class="aviso gabarito">
-            O grupo <strong>03 não existe</strong> nesta rendição, e isso é intencional: as
-            lacunas de grupo são convenção do próprio documento e são preservadas como
-            declaradas, nunca renumeradas. A numeração <code>GG.N</code> também vem do gabarito —
-            repare que <code>01.5</code> vem antes de <code>01.10</code>, como texto e não como
-            número.
+            A linha de grupo traz <strong>apenas o número</strong>, sem título — é assim no
+            documento real, e fidelidade ao documento vale mais que a legibilidade que um
+            título daria. O grupo <strong>3 não existe</strong> nesta rendição, e isso também é
+            intencional: as lacunas (5, 15 e 22 no gabarito real) são convenção do próprio
+            documento e são preservadas como declaradas, nunca renumeradas. A numeração
+            <code>GG.N</code> também vem do gabarito — repare que <code>01.5</code> vem antes de
+            <code>01.10</code>, como texto e não como número.
           </div>
           <div class="aviso">
             As linhas zeradas ficam em cinza mais claro, mas a distinção real é o
@@ -611,9 +609,14 @@
           </div>
         </div>
         <p class="nota-implementador">
-          O BDI impresso é a <strong>diferença entre os dois totais truncados</strong>
-          (ADR-0038), não o percentual aplicado ao total. O percentual aparece no rótulo porque o
-          documento real o mostra ali.
+          <strong>Divergência aberta, e é decisão de quem entrega.</strong> O documento real
+          não imprime linha de BDI: ele imprime <code>TOTAL</code> (com BDI, soma da coluna) e
+          <code>TOTAL S/BDI</code>, derivado por <code>TRUNC(TOTAL/1,18;2)</code> — o preço
+          unitário da coluna já vem com o BDI de 18% embutido. O
+          <a href="../../../adr/0038-bdi-como-conceito-de-pre-licitacao.md">ADR-0038</a> manda
+          imprimir o BDI como diferença entre os dois totais truncados. As duas formas dão o
+          mesmo dinheiro; o que muda é o que o documento mostra. Esta revisão desenha a forma do
+          cliente.
         </p>
       </section>
 
@@ -705,7 +708,7 @@
               <h3>Auditoria divergente</h3>
               <div class="aviso recusa">
                 <strong>Nada foi publicado.</strong> O auditor reabriu o arquivo e recomputou as
-                fórmulas: a célula <strong>G118</strong> tem 49.513,77 gravado e 49.513,78
+                fórmulas: a célula <strong>H118</strong> tem 49.513,77 gravado e 49.513,78
                 recomputado.
               </div>
               <p>

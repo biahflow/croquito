@@ -119,11 +119,13 @@ fail-closed que já protege a medição.
 1. **O gabarito é por lote do contrato ou único para todas as praças?** Os três lotes têm
    listas diferentes (328/383/112 códigos). Se for por lote, a rodada precisa declarar em
    qual lote a praça entra, e isso muda o modelo.
-2. **De onde sai o preço impresso.** O documento real imprime `VALOR UNIT (OUT/23)` na
-   planilha orçamentária e `COM BDI` no gabarito padrão — duas bases distintas no mesmo
-   arquivo. Confirmar qual coluna a entrega exige.
-3. **O gabarito real é o da aba `PLANILHA PADRÃO ORDENADA`** (518 códigos) **ou o da
-   `PLANILHA ORÇAMENTÁRIA`** (433)? Os dois divergem em conteúdo e numeração — na padrão,
+2. ~~**De onde sai o preço impresso.**~~ **Resolvido em 2026-08-28** contra o arquivo real: a
+   coluna `VALOR UNIT (OUT/23)` traz o preço **com BDI**, porque o rodapé deriva o total sem
+   BDI dividindo o total por 1,18 (BDI de 18%). Ver [`evidence.md`](evidence.md).
+3. ~~**O gabarito real é o da aba `PLANILHA PADRÃO ORDENADA`** (518 códigos) **ou o da
+   `PLANILHA ORÇAMENTÁRIA`** (433)?~~ **Decidido em 2026-08-28** (Daniel Campos): a
+   `PLANILHA ORÇAMENTÁRIA`, de 433 códigos, conferida linha a linha em
+   [`evidence.md`](evidence.md). Texto original: Os dois divergem em conteúdo e numeração — na padrão,
    `01.8` é "Caminhoneta de serviço"; na orçamentária, "Veículo de serviço". Isso indica
    revisões diferentes do mesmo gabarito, e a entrega precisa dizer qual vale.
 
@@ -140,8 +142,11 @@ fail-closed que já protege a medição.
 
 ## Human Gates
 
-1. ~~**Design Approval Package**~~ — `INTERFACE_CHANGE`: o arquivo publicado muda de forma.
-   Revisão 1 **aprovada em 2026-08-28** (Daniel Campos): [`mock/README.md`](mock/README.md).
+1. **Design Approval Package** — `INTERFACE_CHANGE`: o arquivo publicado muda de forma.
+   Revisão 1 **aprovada em 2026-08-28** (Daniel Campos). Com o documento real em mãos no mesmo
+   dia, quatro pontos de forma da rendição se mostraram diferentes do documento e produziram a
+   **revisão 2**, que aguarda aprovação — ela preserva as sete decisões da revisão 1 e corrige
+   só a fidelidade: [`mock/README.md`](mock/README.md).
 
    Na mesma data o dono decidiu **onde o gabarito vive**: artefato de plataforma, no molde do
    acervo de catálogos da [F-037](../F-037-acervo-de-catalogos/feature.md) — publicado uma
