@@ -1077,6 +1077,58 @@ export function fraseSeloDePrecedente(pracas: number): string {
 }
 
 /**
+ * A contagem de praças de UM código do pacote, escrita como fração da contagem do rótulo
+ * (decisão 8 do pacote de design, revisão 2).
+ *
+ * Ela só aparece quando o pacote NÃO é unânime, e então aparece em todos os cartões dele:
+ * "em 4 das 4 praças" ao lado de "em 1 das 4 praças" é o contraste que informa. A fração vai
+ * escrita porque o selo âmbar do minoritário é redundância da palavra, nunca o sinal sozinho.
+ */
+export function frasePracasDoCodigo(
+  pracasDoCodigo: number,
+  pracasDoRotulo: number,
+): string {
+  return `em ${pracasDoCodigo} das ${pracasDoRotulo} praças`;
+}
+
+/**
+ * Quantos códigos do pacote não vieram de todas as praças do rótulo — dito antes do botão,
+ * porque o aceite é do pacote INTEIRO e leva o minoritário junto.
+ *
+ * A frase não pede nada e não bloqueia nada: quem decide continua sendo quem lê, e retirar o
+ * código do aceite mudaria a decisão 4 do pacote (revisão nova, não esta).
+ */
+export function frasePacoteNaoUnanime(
+  minoritarios: number,
+  total: number,
+): string {
+  const consequencia =
+    minoritarios === 1
+      ? "Ele entra junto se você aceitar o pacote inteiro."
+      : "Eles entram juntos se você aceitar o pacote inteiro.";
+  // O pacote de um código só, e o pacote em que NENHUM código acompanhou o rótulo, não
+  // cabem na fração: "1 dos 1 códigos" e "3 dos 3 códigos" contam certo e leem errado. O
+  // segundo caso é real — a API omite código fora do catálogo vigente sem recalcular a
+  // contagem do rótulo, e o que sobra pode ser todo minoritário.
+  if (total === 1) {
+    return (
+      "O código deste pacote não veio em todas as praças do rótulo. " + consequencia
+    );
+  }
+  if (minoritarios === total) {
+    return (
+      `Nenhum dos ${total} códigos deste pacote veio em todas as praças do rótulo. ` +
+      consequencia
+    );
+  }
+  return minoritarios === 1
+    ? `1 dos ${total} códigos deste pacote não veio em todas as praças do rótulo. ` +
+        consequencia
+    : `${minoritarios} dos ${total} códigos deste pacote não vieram em todas as praças ` +
+        `do rótulo. ${consequencia}`;
+}
+
+/**
  * O elemento sem precedente, ao lado de irmãos que têm. Ele não é aviso e não é
  * degradação: a via léxica atende o rótulo inédito exatamente como atende hoje.
  */

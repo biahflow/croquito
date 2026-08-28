@@ -805,6 +805,16 @@ p {
   color: var(--precedente);
 }
 
+/* O código que não veio em todas as praças do rótulo (decisão 8 do pacote, revisão 2). O
+   âmbar é o mesmo de `.aviso-precedente-fraco` — ATENÇÃO, e não a recusa vermelha do
+   `.selo-atencao`, que neste mesmo cartão já significa outra coisa (unidade diferente). A
+   fração vai escrita dentro do selo: a cor é redundância da palavra. */
+.selo-precedente-parcial {
+  border-color: #e2c79a;
+  background: #fdf5e8;
+  color: #7c5210;
+}
+
 /* O botão que põe o pacote À VISTA — ele não grava nada, e por isso não veste o verde do
    ato: quem grava é o `.botao-primario` da confirmação. */
 .botao-precedente {
@@ -828,10 +838,12 @@ p {
   color: var(--precedente-ink);
 }
 
-/* Precedente de uma praça só. O âmbar é o mesmo de `.preview-cena-aviso`
-   (`apps/web/src/styles.css`), citado como procedência pelo pacote de design; a frase
-   inteira vai escrita, porque é ela que carrega o aviso. */
-.aviso-precedente-fraco {
+/* Precedente de uma praça só, e pacote em que algum código veio de menos praças que o
+   rótulo. O âmbar é o mesmo de `.preview-cena-aviso` (`apps/web/src/styles.css`), citado
+   como procedência pelo pacote de design; a frase inteira vai escrita nos dois casos,
+   porque é ela que carrega o aviso. */
+.aviso-precedente-fraco,
+.aviso-precedente-parcial {
   margin: 8px 0 0;
   padding: 9px 11px;
   font-size: 0.8rem;

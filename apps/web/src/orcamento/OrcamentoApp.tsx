@@ -203,6 +203,8 @@ import {
   seloDeOrigemDaParcela,
   fraseAceitarPacote,
   fraseConfirmarPacote,
+  frasePacoteNaoUnanime,
+  frasePracasDoCodigo,
   frasePrecedenteContagem,
   frasePrecedenteGravado,
   fraseSeloDePrecedente,
@@ -270,8 +272,12 @@ import {
 import {
   abrirConfirmacao,
   blocosDaShortlist,
+  codigoMinoritario,
   confirmacaoDoItem,
+  contagemDeMinoritarios,
   fonteDoPrecedente,
+  minoritarioNaConfirmacao,
+  pacoteUnanime,
   pedidoDeConfirmacao,
   podeConfirmar,
   precedenteFraco,
@@ -820,6 +826,10 @@ export function BlocoDePrecedente({
   if (precedente === null) {
     return null;
   }
+  /* Decisão 8 do pacote (revisão 2): a contagem por código só entra quando o pacote NÃO é
+     unânime — e aí entra em TODOS os cartões, porque é o contraste entre "em 4 das 4" e "em
+     1 das 4" que informa. Pacote unânime não repete o que o cabeçalho já disse. */
+  const unanime = pacoteUnanime(precedente);
   return (
     <section
       className="bloco-precedente"
@@ -850,6 +860,20 @@ export function BlocoDePrecedente({
               </span>
             </div>
             <div className="codigo-selos">
+              {unanime ? null : (
+                <span
+                  className={`selo ${
+                    codigoMinoritario(precedente, code)
+                      ? "selo-precedente-parcial"
+                      : "selo-precedente"
+                  }`}
+                >
+                  {frasePracasDoCodigo(
+                    code.worksite_count,
+                    precedente.worksite_count,
+                  )}
+                </span>
+              )}
               <span
                 className={`selo ${
                   code.unit_compatible ? "selo-ok" : "selo-atencao"
@@ -864,11 +888,21 @@ export function BlocoDePrecedente({
           </li>
         ))}
       </ul>
-      {/* O aviso do caso fraco fica ANTES do botão: ele é para ser lido antes de aceitar,
-          não depois. */}
+      {/* Os dois avisos ficam ANTES do botão: eles são para ser lidos antes de aceitar,
+          não depois. O primeiro é sobre o pacote INTEIRO ser de uma praça só; o segundo,
+          sobre um código dele ter vindo de menos praças que o rótulo (decisão 8). Nunca
+          aparecem juntos: num rótulo de uma praça só, todo código tem essa mesma praça. */}
       {precedenteFraco(precedente) ? (
         <p className="aviso-precedente-fraco">{PRECEDENTE_AVISO_UMA_PRACA}</p>
       ) : null}
+      {unanime ? null : (
+        <p className="aviso-precedente-parcial">
+          {frasePacoteNaoUnanime(
+            contagemDeMinoritarios(precedente),
+            precedente.codes.length,
+          )}
+        </p>
+      )}
       <div className="acoes-linha">
         <button
           type="button"
@@ -918,6 +952,16 @@ export function ConfirmacaoDePrecedente({
           <li key={code.code}>
             <span className="selo selo-ok">{PRECEDENTE_LINHA_CONFIRMAR}</span>
             <code>{code.code}</code>
+            {/* A marca do código minoritário se repete AQUI porque é aqui que o clique
+                grava: quem chegou até a lista precisa ver de novo o que entra junto. */}
+            {minoritarioNaConfirmacao(confirmacao, code) ? (
+              <span className="selo selo-precedente-parcial">
+                {frasePracasDoCodigo(
+                  code.worksite_count,
+                  confirmacao.worksiteCount,
+                )}
+              </span>
+            ) : null}
             <span className="campo-dica">
               {code.description} · {formatMoneyText(code.unit_price)} /{" "}
               {unitLabel(code.unit)}

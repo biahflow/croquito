@@ -26,6 +26,7 @@ pacote de códigos idêntico ou contido.
 | T2 | [O índice de precedentes, com as duas fontes](tasks/T2-indice-e-semeadura.md) | **Entregue** |
 | T3a | [Precedente no payload da shortlist e o aceite do pacote (API)](tasks/T3a-precedente-na-shortlist-api.md) | **Entregue** |
 | T3b | [Precedente no topo da shortlist (tela)](tasks/T3b-precedente-na-shortlist-tela.md) | **Entregue** |
+| T3c | [A contagem de praças por código, à vista (tela)](tasks/T3c-contagem-por-codigo.md) | **Entregue** — sob a revisão 2 do pacote de design, aprovada em 2026-08-28 |
 
 ## A semeadura entrou no escopo, e é ela que tira o ganho da espera
 
@@ -63,3 +64,5 @@ arquivos de cliente é local, no molde de `make valuation-parity`.
 
 1. **A prioridade da feature**, à luz do volume medido.
 2. **Unknown 3 — quantas praças fazem um precedente confiável.** A medição não decide limiar.
+3. ~~**A revisão 2 do [Design Approval Package](mock/README.md)**~~ — a contagem por código
+   (decisão 8), **aprovada em 2026-08-28** (Daniel Campos). A revisão 1 continua intacta.

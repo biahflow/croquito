@@ -99,6 +99,11 @@
         gap: 16px;
         align-items: start;
       }
+      /* Duas colunas de peso igual: o estado 6 põe lado a lado o bloco e a confirmação, e
+         nenhum dos dois é coluna auxiliar. */
+      .duas.iguais {
+        grid-template-columns: 1fr 1fr;
+      }
       .painel {
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -139,6 +144,13 @@
         border-color: var(--precedente-line);
         background: #ffffff;
         color: var(--precedente);
+      }
+      /* O código que não veio em todas as praças do rótulo. Âmbar, o mesmo de
+         `.aviso.atencao` — atenção, não recusa —, e a contagem vai ESCRITA dentro. */
+      .selo.parcial {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
       }
       .selo.confirmado {
         border-color: var(--accent-line);
@@ -334,7 +346,7 @@
     <header class="folha">
       <h1>F-044 — A shortlist aprende com as decisões de código já tomadas</h1>
       <p>
-        Design Approval Package, revisão 1. Superfície na etapa <strong>Códigos</strong>: um
+        Design Approval Package, revisão 2. Superfície na etapa <strong>Códigos</strong>: um
         bloco de precedente no topo da shortlist, com a contagem de praças, e o aceite do pacote
         inteiro de códigos de um rótulo em um clique.
       </p>
@@ -345,6 +357,12 @@
         <em>forma</em> caso a feature siga — não decide que ela segue.
       </p>
       <p>Números, rótulos e códigos são <strong>sintéticos</strong>.</p>
+      <p>
+        <strong>O que a revisão 2 acrescenta:</strong> o estado 6. A contagem de praças existe
+        por rótulo <em>e por código</em>, e até aqui a tela só escrevia a do rótulo — um código
+        de uma praça dentro de um pacote de quatro entrava no aceite com a mesma autoridade dos
+        outros. Os estados 1 a 5 não mudam.
+      </p>
     </header>
 
     <main>
@@ -500,7 +518,10 @@
         </div>
         <p class="nota-implementador">
           O selo do precedente diz a contagem de praças por extenso. Cor nunca é o único
-          indicador: o bloco tem cabeçalho escrito, borda esquerda e texto próprio.
+          indicador: o bloco tem cabeçalho escrito, borda esquerda e texto próprio. Este pacote é
+          <strong>unânime</strong> — os dois códigos vieram das mesmas 4 praças do rótulo —, e por
+          isso nenhum cartão repete a contagem: quem já a disse foi o cabeçalho. O pacote que não
+          é unânime está no estado 6.
         </p>
       </section>
 
@@ -636,6 +657,114 @@
             naquela rodada, e a shortlist é a de hoje.
           </div>
         </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          6 — O pacote não é unânime: a contagem por código
+          <small
+            >O aceite é de pacote, e dentro do pacote nem todo código tem a mesma evidência
+            atrás.</small
+          >
+        </h2>
+        <div class="corpo">
+          <p>
+            “Você já usou isto em 4 praças” é do <strong>rótulo</strong>. Um código do pacote pode
+            ter vindo de uma praça só — e, no aceite em um clique, ele entra com a mesma
+            autoridade dos outros. Quando isso acontece, <strong>todos</strong> os cartões passam a
+            escrever a contagem própria, e o minoritário é marcado.
+          </p>
+          <div class="duas iguais">
+            <div class="painel">
+              <h3>O bloco de precedente</h3>
+              <div class="bloco-fonte precedente">
+                <div class="cabeca">
+                  Você já usou isto em 4 praças
+                  <span class="selo precedente">SCO-Rio</span>
+                </div>
+                <ul class="codigos">
+                  <li>
+                    <div class="topo">
+                      <span class="codigo">BP09100050(B)</span>
+                      <span class="selo precedente">em 4 das 4 praças</span>
+                      <span class="selo">unidade compatível</span>
+                      <span class="preco">R$ 118,42/m²</span>
+                    </div>
+                    <span class="descricao"
+                      >Pavimento rígido em concreto, e=10cm, com juntas</span
+                    >
+                  </li>
+                  <li>
+                    <div class="topo">
+                      <span class="codigo">ET39050109(/)</span>
+                      <span class="selo precedente">em 4 das 4 praças</span>
+                      <span class="selo">unidade compatível</span>
+                      <span class="preco">R$ 24,90/m²</span>
+                    </div>
+                    <span class="descricao">Tela de aço soldada para armadura de piso</span>
+                  </li>
+                  <li>
+                    <div class="topo">
+                      <span class="codigo">ES11150102(/)</span>
+                      <span class="selo parcial">em 1 das 4 praças</span>
+                      <span class="selo">unidade compatível</span>
+                      <span class="preco">R$ 41,80/m²</span>
+                    </div>
+                    <span class="descricao">Junta de dilatação com selante elastomérico</span>
+                  </li>
+                  <li>
+                    <div class="aviso atencao">
+                      <strong>1 dos 3 códigos</strong> deste pacote não veio em todas as praças do
+                      rótulo. Ele entra junto se você aceitar o pacote inteiro.
+                    </div>
+                  </li>
+                  <li>
+                    <div class="acoes">
+                      <button class="pacote">Aceitar os 3 códigos deste rótulo</button>
+                      <span class="selo precedente">observação, não decisão</span>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>E de novo na hora de gravar</h3>
+              <div class="pacote-lista">
+                <div class="linha">
+                  <span class="selo confirmado">confirmar</span> BP09100050(B)
+                  <span class="desc">Pavimento rígido em concreto, e=10cm · R$ 118,42/m²</span>
+                </div>
+                <div class="linha">
+                  <span class="selo confirmado">confirmar</span> ET39050109(/)
+                  <span class="desc">Tela de aço soldada · R$ 24,90/m²</span>
+                </div>
+                <div class="linha">
+                  <span class="selo confirmado">confirmar</span> ES11150102(/)
+                  <span class="selo parcial">em 1 das 4 praças</span>
+                  <span class="desc">Junta de dilatação com selante · R$ 41,80/m²</span>
+                </div>
+              </div>
+              <p>
+                A marca se repete na lista de confirmação porque é ali que o clique grava. O que o
+                pacote não faz: não reordena os códigos, não tira o minoritário do aceite e não
+                desabilita nada. Quem decide continua sendo quem lê.
+              </p>
+            </div>
+          </div>
+          <div class="aviso precedente">
+            Quando <strong>todos</strong> os códigos vieram das mesmas praças do rótulo, nenhum
+            cartão repete a contagem — o cabeçalho já a disse, e repetir “em 4 das 4 praças” três
+            vezes gastaria o sinal justamente onde ele precisa ser notado. A regra é do bloco
+            inteiro: ou todos os cartões trazem a contagem, ou nenhum traz. Cartão sem contagem ao
+            lado de cartão com contagem seria ausência ambígua.
+          </div>
+        </div>
+        <p class="nota-implementador">
+          A contagem por código <strong>já vem da API</strong> (`codes[].worksite_count`, T3a); esta
+          revisão só a põe à vista. O limiar de quantas praças fazem um precedente confiável
+          continua em aberto (unknown 3): aqui não há limiar nenhum — a marca é
+          <em>relativa</em> ao rótulo, e aparece sempre que o código vem de menos praças que ele.
+        </p>
       </section>
     </main>
   </body>

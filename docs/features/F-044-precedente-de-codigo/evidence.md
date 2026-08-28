@@ -134,6 +134,9 @@ uma agressiva.
 Revisão 1 **aprovada em 2026-08-28** (Daniel Campos), condicionada a este gate 1 — que agora
 está cumprido. Ver [`mock/README.md`](mock/README.md).
 
+**Revisão 2 aprovada em 2026-08-28** (Daniel Campos): a contagem de praças **por código**
+(decisão 8, estado 6). As sete decisões da revisão 1 continuam válidas e nenhuma delas muda.
+
 ## Human Gate 3 — ADR-0059
 
 Cumprido em 2026-08-28.
@@ -183,6 +186,50 @@ de recall, não erro, e é da mesma família da que a medição já declarou (`P
 `CALÇADA DE ACESSO`). Não foi corrigida aqui de propósito: a T2 reusa a normalização da T1, e
 trocá-la exigiria refazer a medição que a sustenta.
 
+## T3c — a contagem por código, à vista
+
+**Data**: 2026-08-28. Executada.
+
+A T3a devolvia `worksite_count` em dois níveis e a tela escrevia só o do rótulo — o contrato
+dela registrou isso em uma linha (*"a tela mostra o do rótulo no cabeçalho"*). A consequência
+não era cosmética: um código de **1** praça dentro de um pacote de **4** entrava no aceite de
+um clique com a mesma autoridade dos outros, que é o risco de *propagar erro com autoridade*
+que a feature declara temer, e para o qual a contagem é o controle mínimo.
+
+Nenhum dado novo foi pedido: `codes[].worksite_count` já atravessava a fronteira desde a T3a.
+A mudança é de tela — quatro funções puras, duas frases, um selo e um aviso.
+
+A regra que ficou (decisão 8 do pacote, revisão 2):
+
+- **pacote não unânime** — algum código veio de menos praças que o rótulo: **todos** os
+  cartões escrevem a fração ("em 4 das 4 praças", "em 1 das 4 praças"), o minoritário leva
+  selo âmbar, e uma linha âmbar antes do botão diz quantos são e que eles entram junto;
+- **pacote unânime**: nenhum cartão repete a contagem — o cabeçalho já a disse;
+- a marca **se repete na lista de confirmação**, porque é ali que o clique grava;
+- o aceite continua sendo do pacote **inteiro**, num pedido só: nada foi desabilitado,
+  removido nem reordenado.
+
+Duas decisões de execução, ambas registradas no pacote:
+
+1. **Tudo-ou-nada dentro do bloco.** Marcar só o cartão divergente deixaria os outros sem
+   contagem, e ausência de rótulo é ambígua: o leitor não distingue "veio em todas" de "não
+   veio o dado". O contraste entre as frações é o que informa.
+2. **Nenhum limiar.** A marca é **relativa** ao rótulo (`código < rótulo`), e por isso não
+   toca o unknown 3, que continua aberto. Um pacote de rótulo com uma praça só é unânime por
+   construção, e ali só o aviso da revisão 1 aparece.
+
+O pacote que a governa é a **revisão 2, aprovada em 2026-08-28**.
+
+Um terceiro caso apareceu na revisão do próprio diff e não estava no pacote: a fração não
+cabe quando sobra **um** código só ("1 dos 1 códigos" conta certo e lê errado), nem quando
+**nenhum** código do que sobrou acompanhou o rótulo. Os dois nascem da mesma origem — a API
+omite código fora do catálogo vigente sem recalcular a contagem do rótulo (T3a) —, e as duas
+frases próprias foram escritas e testadas. A copy final continua sendo gate do dono.
+
+Validação: `npm --workspace @croquito/web run test -- src/orcamento/precedente.test.tsx`
+(29 testes, verdes; 7 novos), mais `make check` (exit 0) e `make test` (2821 pytest,
+1450 web, 261 campo).
+
 ## O que continua aberto
 
 - **Unknown 3 — quantas praças fazem um precedente confiável.** A medição não decide limiar.
@@ -192,4 +239,7 @@ trocá-la exigiria refazer a medição que a sustenta.
   junto com a decisão de trazer a semeadura para o escopo. A divergência que a T2 registrou
   entre o contrato dela e o [`feature.md`](feature.md)/[roadmap](../../product/ROADMAP.md)
   existia porque a worktree da T2 saiu antes desse commit; os três estão alinhados agora.
-- **A mudança na shortlist e a tela** — é a T3, e o pacote de design já aprovado a governa.
+- ~~**A mudança na shortlist e a tela**~~ — T3a, T3b e T3c entregues.
+- **Se o código minoritário deveria poder sair do pacote antes de confirmar.** A revisão 2
+  decide marcar, não decide desmarcar — retirar um código do aceite mudaria a decisão 4 e
+  precisa da evidência de que a marca sozinha não bastou.

@@ -5,8 +5,12 @@ import type { CodeSuggestionSet } from "@croquito/contracts";
 import {
   abrirConfirmacao,
   blocosDaShortlist,
+  codigoMinoritario,
   confirmacaoDoItem,
+  contagemDeMinoritarios,
   fonteDoPrecedente,
+  minoritarioNaConfirmacao,
+  pacoteUnanime,
   pedidoDeConfirmacao,
   podeConfirmar,
   precedenteDoItem,
@@ -90,6 +94,29 @@ const ALAMBRADO_DE_OUTRA_FONTE: ItemPrecedent = {
   normalized_label: "alambrado h=3,00m",
   worksite_count: 3,
   codes: [codigo("PJ14150203(A)", { catalog_sha256: FORA_DA_CASCATA })],
+};
+
+/**
+ * O pacote que NÃO é unânime: o rótulo veio de 4 praças, e um dos três códigos só apareceu
+ * em 1 delas. É o caso da decisão 8 (pacote de design, revisão 2) — no aceite em um clique,
+ * esse código entra com a mesma autoridade dos outros dois.
+ */
+const PACOTE_MISTO: ItemPrecedent = {
+  item_id: "ti_piso",
+  normalized_label: "piso em concreto",
+  worksite_count: 4,
+  codes: [
+    codigo("BP09100050(B)"),
+    codigo("ET39050109(/)", {
+      description: "Tela de aço soldada para armadura de piso",
+      unit_price: "24.90",
+    }),
+    codigo("ES11150102(/)", {
+      worksite_count: 1,
+      description: "Junta de dilatação com selante elastomérico",
+      unit_price: "41.80",
+    }),
+  ],
 };
 
 const UMA_PRACA: ItemPrecedent = {
@@ -517,6 +544,164 @@ describe("a confirmação desenhada", () => {
         />,
       ),
     ).toBe("");
+  });
+});
+
+describe("o pacote que não é unânime", () => {
+  it("um código de menos praças que o rótulo é minoritário; os outros não são", () => {
+    const [primeiro, segundo, terceiro] = PACOTE_MISTO.codes;
+
+    expect(codigoMinoritario(PACOTE_MISTO, primeiro)).toBe(false);
+    expect(codigoMinoritario(PACOTE_MISTO, segundo)).toBe(false);
+    expect(codigoMinoritario(PACOTE_MISTO, terceiro)).toBe(true);
+    expect(contagemDeMinoritarios(PACOTE_MISTO)).toBe(1);
+    expect(pacoteUnanime(PACOTE_MISTO)).toBe(false);
+  });
+
+  /**
+   * O caso comum continua sendo o unânime — e ali nada muda: o cabeçalho já disse a
+   * contagem, e repeti-la em cada cartão gastaria o sinal onde ele precisa ser notado.
+   */
+  it("o pacote em que todo código acompanhou o rótulo é unânime", () => {
+    expect(pacoteUnanime(PISO)).toBe(true);
+    expect(contagemDeMinoritarios(PISO)).toBe(0);
+    // Rótulo de uma praça só: todo código tem aquela mesma praça, e o caso não existe.
+    expect(pacoteUnanime(UMA_PRACA)).toBe(true);
+  });
+
+  it("todos os cartões escrevem a contagem, e só o minoritário leva a marca âmbar", () => {
+    const html = renderToStaticMarkup(
+      <BlocoDePrecedente
+        precedente={precedenteDoItem([PACOTE_MISTO], "ti_piso", CASCATA)}
+        fonte={fonteDoPrecedente(PACOTE_MISTO, CASCATA)}
+        onAceitar={() => undefined}
+        submitting={false}
+      />,
+    );
+
+    // A contagem do rótulo continua no cabeçalho, como na revisão 1.
+    expect(html).toContain("Você já usou isto em 4 praças");
+    // O contraste é o que informa: os três cartões trazem a fração.
+    expect(html.match(/em 4 das 4 praças/g)).toHaveLength(2);
+    expect(html).toContain("em 1 das 4 praças");
+    // Só o minoritário leva o âmbar — um selo em três cartões — e a palavra, não só a
+    // cor, o distingue.
+    expect(html.match(/selo-precedente-parcial/g)).toHaveLength(1);
+    expect(html).toContain("aviso-precedente-parcial");
+    expect(html).toContain(
+      "1 dos 3 códigos deste pacote não veio em todas as praças do rótulo",
+    );
+    expect(html).toContain("Ele entra junto se você aceitar o pacote inteiro");
+    // A decisão 4 não muda: o aceite continua sendo do pacote INTEIRO, com os três.
+    expect(html).toContain("Aceitar os 3 códigos deste rótulo");
+    // E não é o aviso do precedente fraco, que é sobre o rótulo inteiro.
+    expect(html).not.toContain("Decisão de uma praça só");
+  });
+
+  /** Tudo-ou-nada: no pacote unânime, nenhum cartão repete o que o cabeçalho já disse. */
+  it("o pacote unânime não escreve contagem em cartão nenhum", () => {
+    const html = renderToStaticMarkup(
+      <BlocoDePrecedente
+        precedente={precedenteDoItem([PISO], "ti_piso", CASCATA)}
+        fonte={fonteDoPrecedente(PISO, CASCATA)}
+        onAceitar={() => undefined}
+        submitting={false}
+      />,
+    );
+
+    expect(html).not.toContain("das 4 praças");
+    expect(html).not.toContain("selo-precedente-parcial");
+    expect(html).not.toContain("não veio em todas as praças");
+  });
+
+  /**
+   * A fração não cabe em dois casos reais, e os dois nascem da mesma origem: a API omite
+   * código fora do catálogo vigente SEM recalcular a contagem do rótulo, então o que sobra
+   * pode ser um código só, ou pode ser todo minoritário. "1 dos 1 códigos" conta certo e lê
+   * errado.
+   */
+  it("a frase do aviso não vira fração absurda quando sobra um código, ou nenhum unânime", () => {
+    const soUmMinoritario: ItemPrecedent = {
+      ...PACOTE_MISTO,
+      codes: [PACOTE_MISTO.codes[2]],
+    };
+    const html = renderToStaticMarkup(
+      <BlocoDePrecedente
+        precedente={precedenteDoItem([soUmMinoritario], "ti_piso", CASCATA)}
+        fonte={null}
+        onAceitar={() => undefined}
+        submitting={false}
+      />,
+    );
+    expect(html).toContain(
+      "O código deste pacote não veio em todas as praças do rótulo",
+    );
+    expect(html).not.toContain("1 dos 1");
+
+    const nenhumUnanime = renderToStaticMarkup(
+      <BlocoDePrecedente
+        precedente={precedenteDoItem(
+          [
+            {
+              ...PACOTE_MISTO,
+              codes: PACOTE_MISTO.codes.map((code) => ({
+                ...code,
+                worksite_count: 2,
+              })),
+            },
+          ],
+          "ti_piso",
+          CASCATA,
+        )}
+        fonte={null}
+        onAceitar={() => undefined}
+        submitting={false}
+      />,
+    );
+    expect(nenhumUnanime).toContain(
+      "Nenhum dos 3 códigos deste pacote veio em todas as praças do rótulo",
+    );
+    expect(nenhumUnanime).not.toContain("3 dos 3");
+  });
+
+  it("a marca se repete na lista de confirmação, que é onde o clique grava", () => {
+    const confirmacao = abrirConfirmacao(PACOTE_MISTO, "PISO EM CONCRETO");
+    const html = renderToStaticMarkup(
+      <ConfirmacaoDePrecedente
+        confirmacao={confirmacao}
+        submitting={false}
+        onConfirmar={() => undefined}
+        onCancelar={() => undefined}
+      />,
+    );
+
+    expect(confirmacao.worksiteCount).toBe(4);
+    expect(minoritarioNaConfirmacao(confirmacao, PACOTE_MISTO.codes[2])).toBe(
+      true,
+    );
+    expect(minoritarioNaConfirmacao(confirmacao, PACOTE_MISTO.codes[0])).toBe(
+      false,
+    );
+    expect(html).toContain("ES11150102(/)");
+    // Uma marca só, na linha do minoritário: as outras duas linhas seguem limpas.
+    expect(html.match(/em 1 das 4 praças/g)).toHaveLength(1);
+    expect(html).not.toContain("em 4 das 4 praças");
+    // O que vai ser gravado continua sendo o pacote inteiro.
+    expect(html).toContain("Confirmar os 3 códigos");
+  });
+
+  /** No pacote unânime, a lista de confirmação é exatamente a da revisão 1. */
+  it("a confirmação do pacote unânime não ganha marca nenhuma", () => {
+    const html = renderToStaticMarkup(
+      <ConfirmacaoDePrecedente
+        confirmacao={abrirConfirmacao(PISO, "PISO EM CONCRETO")}
+        submitting={false}
+        onConfirmar={() => undefined}
+        onCancelar={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain("praças");
   });
 });
 

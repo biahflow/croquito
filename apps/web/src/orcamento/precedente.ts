@@ -129,6 +129,51 @@ export function precedenteFraco(precedente: ItemPrecedent): boolean {
   return precedente.worksite_count <= PRACAS_DE_PRECEDENTE_FRACO;
 }
 
+/**
+ * `true` quando o código veio de MENOS praças que o rótulo (decisão 8 do pacote, revisão 2).
+ *
+ * A comparação é RELATIVA e não tem limiar: o unknown 3 da feature — quantas praças fazem um
+ * precedente confiável — continua em aberto, e não é aqui que ele se decide. O que se afirma
+ * é só o que o dado diz: este código não acompanhou o rótulo todas as vezes.
+ */
+export function codigoMinoritario(
+  precedente: ItemPrecedent,
+  code: PrecedentCode,
+): boolean {
+  return code.worksite_count < precedente.worksite_count;
+}
+
+/**
+ * A mesma pergunta, feita do lado da confirmação — que carrega a contagem do rótulo em
+ * `worksiteCount` e já não tem o precedente inteiro à mão. Uma regra só, dois lugares.
+ */
+export function minoritarioNaConfirmacao(
+  confirmacao: ConfirmacaoDoPrecedente,
+  code: PrecedentCode,
+): boolean {
+  return code.worksite_count < confirmacao.worksiteCount;
+}
+
+/** Quantos códigos do pacote não vieram de todas as praças do rótulo. */
+export function contagemDeMinoritarios(precedente: ItemPrecedent): number {
+  return precedente.codes.filter((code) => codigoMinoritario(precedente, code))
+    .length;
+}
+
+/**
+ * `true` quando TODO código do pacote veio das mesmas praças do rótulo — e é o caso em que
+ * nenhum cartão repete a contagem.
+ *
+ * O cabeçalho já disse "você já usou isto em 4 praças"; repetir "em 4 das 4 praças" em cada
+ * cartão gastaria o sinal justamente onde ele precisa ser notado. A recíproca é a outra
+ * metade da decisão 8: basta UM código minoritário para que TODOS os cartões passem a
+ * escrever a contagem, porque cartão sem contagem ao lado de cartão com contagem seria
+ * ausência ambígua — o leitor não saberia se é "veio em todas" ou "não veio o dado".
+ */
+export function pacoteUnanime(precedente: ItemPrecedent): boolean {
+  return contagemDeMinoritarios(precedente) === 0;
+}
+
 /** O selo de um elemento na lista de pendências. */
 export type SeloDeItem =
   | { kind: "precedente"; worksiteCount: number }
@@ -198,6 +243,12 @@ export function blocosDaShortlist<Candidato>(
 export type ConfirmacaoDoPrecedente = {
   itemId: string;
   rotulo: string;
+  /**
+   * A contagem de praças do RÓTULO, que viaja junto para que a lista de confirmação possa
+   * marcar o código minoritário sem voltar ao precedente (decisão 8, revisão 2). É ali que o
+   * clique grava, e é ali que a marca precisa aparecer pela segunda vez.
+   */
+  worksiteCount: number;
   codes: readonly PrecedentCode[];
 };
 
@@ -209,6 +260,7 @@ export function abrirConfirmacao(
   return {
     itemId: precedente.item_id,
     rotulo,
+    worksiteCount: precedente.worksite_count,
     codes: [...precedente.codes],
   };
 }
