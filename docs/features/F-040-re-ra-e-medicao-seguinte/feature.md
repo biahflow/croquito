@@ -2,8 +2,20 @@
 
 ## Status
 
-`IN_PROGRESS`
+`DONE`
 
+> Encerrada em 2026-08-28: a evidência de navegador (`BROWSER_REQUIRED`, AC 11) foi capturada
+> nessa data contra o stack local — quatro estados da tela real, registrados em
+> [evidence.md](evidence.md) — e o **aceite humano** que fecha a
+> [issue #100](https://github.com/biahflow/croquito/issues/100) ocorreu em 2026-08-28. O
+> código já estava na `main` (PRs #109, #112 e #113).
+>
+> **Dívida que fica escrita**: nenhuma medição real com contrato re-ratificado foi feita — o
+> aceite de 2026-08-28 é sobre o mecanismo, e a primeira rodada de obra com RE-RA declarada
+> segue sendo o teste de verdade. Ficam também os dois desvios declarados em
+> [evidence.md](evidence.md): o controle sem RE-RA não imprime contratado e vigente repetidos,
+> e a prévia antes de gravar não entrou nesta feature.
+>
 > Registrada em 2026-08-27, por seleção humana, a partir da
 > [issue #100](https://github.com/biahflow/croquito/issues/100). Três decisões de domínio
 > foram tomadas por ato humano na abertura e estão em **Scope** — elas são o que separa esta

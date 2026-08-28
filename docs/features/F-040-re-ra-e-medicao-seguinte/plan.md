@@ -26,13 +26,19 @@ do domínio, sob pena de dois veredictos sobre a mesma planilha (feature.md, Ris
 | T2 | [A medição seguinte: consolidado `n+1` a partir da rodada anterior](tasks/T2-medicao-seguinte.md) | **Entregue** |
 | T3 | [Declarar a RE-RA e abrir a medição seguinte na API](tasks/T3-declaracao-e-abertura-na-api.md) | **Entregue** |
 | T4 | [A memória mostra contratado → vigente com a RE-RA](tasks/T4-memoria-com-a-re-ra.md) | **Entregue** |
-| T5 | [A tela: declarar a RE-RA e abrir a medição seguinte](tasks/T5-tela-da-medicao.md) | **Parcial** |
+| T5 | [A tela: declarar a RE-RA e abrir a medição seguinte](tasks/T5-tela-da-medicao.md) | **Entregue** |
 
-> **T5 parcial**: a declaração da RE-RA na abertura, a memória (contratado → vigente → saldo,
-> com o selo "re-ratificada") e a **porta da medição seguinte** (a rodada aprovada aparece com
-> o selo e o botão "Abrir a medição n+1"; o período é calculado, não digitado) estão entregues
-> e testadas. Fica para o gate humano a **evidência de navegador** (`BROWSER_REQUIRED`, AC 11),
-> que exige subir o stack completo e é parte da disciplina de design-approval.
+> **T5**: a declaração da RE-RA na abertura, a memória (contratado → vigente → saldo, com o
+> selo "re-ratificada") e a **porta da medição seguinte** (a rodada aprovada aparece com o selo
+> e o botão "Abrir a medição n+1"; o período é calculado, não digitado) estão entregues e
+> testadas. A **evidência de navegador** (`BROWSER_REQUIRED`, AC 11), que exige subir o stack
+> completo e é parte da disciplina de design-approval, foi capturada em 2026-08-28 e está em
+> [evidence.md](evidence.md).
+>
+> **Desvio declarado da T5**: a **prévia antes de gravar** (critério 3 da tarefa, decisão 6 do
+> pacote de design) não foi entregue — o efeito código a código aparece depois de gravar, na
+> memória. A captura de navegador tornou o desvio visível, e ele está registrado em
+> [evidence.md](evidence.md).
 
 ## Compatibilidade de schema
 
@@ -50,5 +56,7 @@ baixo e some da `main` em silêncio.
 ## Human gates
 
 - ADR e Design Approval: **cumpridos**.
-- Merge do PR e o aceite que fecha a [issue #100](https://github.com/biahflow/croquito/issues/100),
-  numa medição real com contrato re-ratificado: atos humanos.
+- Merge do PR (feito: #109, #112 e #113) e o aceite que fecha a
+  [issue #100](https://github.com/biahflow/croquito/issues/100): **ocorrido em 2026-08-28**. O
+  aceite numa medição real com contrato re-ratificado permanece como dívida escrita na
+  [feature](feature.md).

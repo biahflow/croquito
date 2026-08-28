@@ -1,6 +1,8 @@
 # F-040 · T5 — A tela: declarar a RE-RA e abrir a medição seguinte
 
-Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Parcial** — declaração e memória entregues; porta da medição seguinte e evidência de navegador pendentes
+Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue** — declaração, memória e porta da medição seguinte no ar; evidência de
+navegador capturada em 2026-08-28 ([evidence.md](../evidence.md)). Fica o desvio declarado do
+critério 3: a prévia antes de gravar não foi entregue.
 
 ## Objetivo
 

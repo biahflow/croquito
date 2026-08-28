@@ -104,7 +104,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-037 | HIGH | DONE | [Acervo central de catálogos de preço](../features/F-037-acervo-de-catalogos/feature.md) |
 | F-038 | HIGH | IN_PROGRESS | [O item de legenda é um pacote de serviços, não um código](../features/F-038-pacote-de-servicos/feature.md) |
 | F-039 | HIGH | READY_FOR_REVIEW | [Reajuste de preços entre medições](../features/F-039-reajuste-entre-medicoes/feature.md) |
-| F-040 | HIGH | IN_PROGRESS | [RE-RA declarada e a medição seguinte](../features/F-040-re-ra-e-medicao-seguinte/feature.md) |
+| F-040 | HIGH | DONE | [RE-RA declarada e a medição seguinte](../features/F-040-re-ra-e-medicao-seguinte/feature.md) |
 | F-041 | HIGH | READY_FOR_PLANNING | [O braço semântico roda no caminho hospedado](../features/F-041-braco-semantico-hospedado/feature.md) |
 | F-042 | HIGH | IN_PROGRESS | [O canteiro sai de um acervo parametrizado, não da digitação](../features/F-042-acervo-de-parcelas-de-canteiro/feature.md) |
 | F-043 | HIGH | IN_PROGRESS | [A planilha sai no gabarito da prefeitura, com memória de cálculo](../features/F-043-planilha-no-gabarito-da-prefeitura/feature.md) |
