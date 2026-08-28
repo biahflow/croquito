@@ -373,7 +373,7 @@
     <header class="folha">
       <h1>F-045 — Desfazer um código confirmado</h1>
       <p>
-        Design Approval Package, revisão 1. Superfície na etapa <strong>Códigos</strong>: um ato
+        Design Approval Package, revisão 2. Superfície na etapa <strong>Códigos</strong>: um ato
         que retira um par <code>(elemento, código)</code> já confirmado, com justificativa, e
         diz o que a retirada leva junto.
       </p>
@@ -384,6 +384,12 @@
         decide a <em>forma</em>; a semântica é do ADR.
       </p>
       <p>Números, rótulos e códigos são <strong>sintéticos</strong>.</p>
+      <p>
+        <strong>O que a revisão 2 acrescenta:</strong> o estado 6, a mesma superfície na jornada
+        de <strong>medição</strong>. A rota já existe e é testada desde a revisão 1; o que
+        faltava era a tela, e ela estava registrada como questão aberta. Os estados 1 a 5, que
+        são do orçamento-base, não mudam.
+      </p>
     </header>
 
     <main>
@@ -587,6 +593,63 @@
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          6 — O mesmo ato na medição, com o vocabulário dela
+          <small>A rota é a mesma; a tela é a da obra licitada, e ali o pacote é uma frase, não uma lista de cartões.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas iguais">
+            <div class="painel">
+              <h3>Hoje, na medição</h3>
+              <p class="aviso">
+                Pacote em aberto, com 2 serviços (CE04100010(/), CE04100020(/)). O item só conta
+                como resolvido depois do fechamento.
+              </p>
+              <p>
+                O pacote é uma <strong>frase</strong>, com os códigos entre parênteses. Não há
+                onde pendurar um ato por código — e é essa a mudança da revisão 2.
+              </p>
+            </div>
+            <div class="painel">
+              <h3>Com o desfazer</h3>
+              <p>Pacote em aberto, com 2 serviços. O item só conta como resolvido depois do fechamento.</p>
+              <ul class="codigos">
+                <li>
+                  <div class="topo">
+                    <span class="codigo">CE04100010(/)</span>
+                    <div class="acoes"><button class="miudo">Desfazer este código</button></div>
+                  </div>
+                </li>
+                <li>
+                  <div class="topo">
+                    <span class="codigo">CE04100020(/)</span>
+                    <div class="acoes"><button class="miudo">Desfazer este código</button></div>
+                  </div>
+                </li>
+              </ul>
+              <p>
+                A frase vira <strong>lista</strong>, e cada código ganha o mesmo ato do
+                orçamento: caixa com motivo obrigatório, efeito escrito, e o botão que avisa
+                quando o pacote vai reabrir.
+              </p>
+            </div>
+          </div>
+          <div class="aviso">
+            <strong>Duas diferenças, e as duas são do domínio:</strong> na medição não existe a
+            linha do precedente — o índice é do orçamento-base, e a obra licitada não tem
+            shortlist que aprenda —, e não existe a recusa depois da aprovação, porque a
+            aprovação nominal é do orçamento. O resto é igual, de propósito: é o mesmo ato, na
+            mesma etapa, e duas formas para ele criariam dois vocabulários para a mesma coisa.
+          </div>
+        </div>
+        <p class="nota-implementador">
+          O que a medição NÃO ganha: nada da linha “apaga o precedente…”, que seria falsa ali.
+          O aviso de reabertura de pacote continua valendo — o boletim recusa pacote aberto do
+          mesmo jeito que o orçamento.
+        </p>
       </section>
     </main>
   </body>

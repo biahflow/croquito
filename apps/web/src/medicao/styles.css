@@ -1330,3 +1330,65 @@ p {
   align-items: center;
   font-size: 12px;
 }
+
+
+/* Desfazer um código confirmado (F-045, pacote de design revisão 2) ----------
+ *
+ * Nenhuma cor nova: a caixa usa o tracejado de "promessa do que o clique fará", e o aviso de
+ * pacote fechado reusa o âmbar que a folha já tem em `.aviso-fixo`. O que distingue o ato é a
+ * palavra, como no orçamento-base.
+ */
+
+.desfazer-caixa {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.desfazer-caixa h4,
+.desfeitos h4 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+}
+
+.desfeitos {
+  margin-top: 12px;
+}
+
+/* Lista sem marcador para as linhas do pacote e dos desfeitos: elas são itens de trabalho
+   com ação ao lado, não enumeração de texto corrido. */
+.lista-simples {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.lista-simples li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+/* O aviso do pacote que vai reabrir. Mesmo âmbar de `.aviso-fixo`, em caixa própria porque
+   ele vive dentro da caixa de desfazer e não no topo da tela. */
+.aviso-atencao {
+  margin: 8px 0;
+  padding: 9px 11px;
+  font-size: 0.82rem;
+  color: #2a1a05;
+  background: #f6d99a;
+  border-left: 5px solid #b47512;
+  border-radius: 4px;
+}
+
+/* O código desfeito vai RISCADO, além de dito por extenso no selo ao lado. */
+.codigo-desfeito {
+  text-decoration: line-through;
+  color: var(--ink-secondary);
+}

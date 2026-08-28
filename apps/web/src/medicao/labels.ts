@@ -492,3 +492,62 @@ export function extractionFailureMessage(code: string | null): string {
     `A leitura automática da legenda falhou (${code}).`
   );
 }
+
+
+/* Desfazer um código confirmado (F-045, pacote de design revisão 2) -----------
+ *
+ * A copy é a mesma do orçamento-base, menos uma linha: aqui não existe precedente a apagar —
+ * o índice é da pré-licitação, e a obra licitada não tem shortlist que aprenda. Repetir
+ * aquela frase seria prometer um efeito que não acontece.
+ */
+
+/** O botão de cada código do pacote. Ele só abre a caixa; não grava. */
+export const DESFAZER_BOTAO = "Desfazer este código";
+
+/** O título da caixa, com o código à vista: o ato é do par, não do elemento. */
+export function fraseDesfazerTitulo(code: string): string {
+  return `Desfazer ${code}`;
+}
+
+/** O campo obrigatório. "(obrigatório)" vai escrito, e não sinalizado por asterisco. */
+export const DESFAZER_MOTIVO_LABEL = "Por que este código sai do pacote? (obrigatório)";
+
+/** As duas linhas do efeito — a terceira, a do precedente, é só do orçamento-base. */
+export function frasesEfeitoDesfazer(code: string): readonly string[] {
+  return [
+    `tira ${code} do pacote deste item;`,
+    "registra quem desfez, quando e o motivo — a confirmação continua na revisão anterior.",
+  ];
+}
+
+/** O botão que grava, e o nome que ele assume quando o pacote está fechado. */
+export function fraseDesfazerConfirmar(pacoteFechado: boolean): string {
+  return pacoteFechado ? "Desfazer e reabrir o pacote" : "Desfazer o código";
+}
+
+/** O aviso do pacote fechado, por extenso e antes do clique. */
+export const DESFAZER_AVISO_PACOTE_FECHADO =
+  "O pacote deste item está fechado. Desfazer um código reabre o pacote: a completude foi " +
+  "afirmada sobre um pacote que vai mudar, e ela precisa ser afirmada de novo. Enquanto " +
+  "estiver aberto, o boletim recusa este item.";
+
+/** Desfazer é conserto, não punição — e quem lê precisa saber antes de hesitar. */
+export const DESFAZER_NAO_BANE =
+  "Desfazer não bane o código: se for engano, ele pode ser confirmado de novo neste mesmo " +
+  "item.";
+
+export const DESFAZER_CANCELAR = "Cancelar";
+
+/** O título da lista do que foi desfeito e continua desfeito. */
+export const DESFEITOS_TITULO = "Desfeitos neste item";
+
+/** O selo de cada linha da lista. A palavra, não a cor, é o que distingue. */
+export const DESFEITO_SELO = "desfeito";
+
+/** O aviso do sucesso: desfez, e o que isso deixou para trás. */
+export function fraseDesfeitoGravado(code: string, reabriu: boolean): string {
+  const base = `${code} saiu do pacote deste item, com o motivo registrado.`;
+  return reabriu
+    ? `${base} O pacote voltou a ficar em aberto: feche-o de novo quando não houver mais serviços.`
+    : base;
+}

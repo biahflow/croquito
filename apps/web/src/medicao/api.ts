@@ -36,6 +36,7 @@ import type {
 import { apiJson, ApiError } from "../api";
 import {
   codeClosureBody,
+  codeRevocationBody,
   codeDecisionBody,
   createRoundBody,
   takeoffDecisionBody,
@@ -592,6 +593,14 @@ export type TakeoffDecisionBatchDraft = {
   decisions: TakeoffDecisionDraft[];
 };
 
+/**
+ * Desfazer um par `(elemento, código)` já confirmado (F-045). O tipo mora na raiz porque o ato
+ * é o mesmo nas duas jornadas; aqui ele é reexportado para quem o importa desta.
+ */
+import type { CodeRevocationDraft } from "../codeRevocation";
+
+export type { CodeRevocationDraft };
+
 export type CodeClosureDraft = {
   itemId: string;
   baseVersion: number;
@@ -903,6 +912,26 @@ export function postCodeDecision(
  * Confirmar um código deixou de significar que o elemento acabou: ele pode disparar outros
  * serviços, e só este ato afirma que não dispara.
  */
+/**
+ * Desfaz um código confirmado por engano (F-045).
+ *
+ * A resposta é o conjunto NOVO, como nas outras mutações da etapa: a tela redesenha a partir
+ * dela em vez de tirar a linha por conta própria. Ao contrário do orçamento-base, aqui o ato
+ * não tem efeito de índice — o precedente é da pré-licitação, e a obra licitada não tem
+ * shortlist que aprenda.
+ */
+export function postCodeRevocation(
+  accessToken: string,
+  roundId: string,
+  draft: CodeRevocationDraft,
+): Promise<CodesResponse> {
+  return post<CodesResponse>(
+    roundPath(roundId, "/code-assignments/revocations"),
+    accessToken,
+    codeRevocationBody(draft),
+  );
+}
+
 export function postCodeClosure(
   accessToken: string,
   roundId: string,

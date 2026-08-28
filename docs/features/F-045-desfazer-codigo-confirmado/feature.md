@@ -66,7 +66,8 @@ aconteceu: ela fica no histórico, revogada por um ato tão rastreável quanto o
    `(praça, rótulo, fonte, código)` que aquele fechamento gravou é removida. Sem isso, o
    índice ensinaria à praça seguinte um código que esta praça desfez.
 5. **Tela**: desfazer no cartão do código confirmado, com o que vai acontecer à vista antes
-   do clique — inclusive que o pacote reabre.
+   do clique — inclusive que o pacote reabre. **Nas duas jornadas**: o orçamento-base na
+   revisão 1 do pacote de design, a medição na revisão 2.
 
 ## Out of Scope
 

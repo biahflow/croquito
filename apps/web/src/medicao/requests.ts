@@ -15,6 +15,7 @@
 import type {
   AmendmentDraft,
   CodeClosureDraft,
+  CodeRevocationDraft,
   CodeDecisionDraft,
   CreateRoundDraft,
   PriceAdjustmentDraft,
@@ -238,6 +239,24 @@ export function codeClosureBody(
     body.note = note;
   }
   return body;
+}
+
+/**
+ * O corpo de desfazer um código confirmado (F-045).
+ *
+ * A nota é OBRIGATÓRIA aqui — ao contrário do fechamento, onde é opcional —, e por isso entra
+ * sem o `if` que o fechamento tem: um corpo sem motivo é recusado pelo servidor, e omiti-lo
+ * aqui esconderia a recusa em vez de provocá-la cedo.
+ */
+export function codeRevocationBody(
+  draft: CodeRevocationDraft,
+): Record<string, string | number> {
+  return {
+    ...versionBody(draft.baseVersion),
+    item_id: draft.itemId,
+    code: draft.code,
+    note: draft.note.trim(),
+  };
 }
 
 export function codeDecisionBody(

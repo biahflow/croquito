@@ -29,6 +29,7 @@ import {
   postBulletinExport,
   postCalcBuild,
   postCodeClosure,
+  postCodeRevocation,
   postCodeDecision,
   postDossierBuild,
   postSuggestionsRecompute,
@@ -53,6 +54,16 @@ import {
   type AmendmentDraft,
 } from "./api";
 import { signOut } from "../auth";
+import {
+  abrirDesfazer,
+  desfazerDoItem,
+  desfeitosDoItem,
+  pacoteFechado,
+  pedidoDeDesfazer,
+  podeDesfazer,
+  type CaixaDeDesfazer,
+  type CodigoDesfeito,
+} from "../codeRevocation";
 import { BUSCA_DEBOUNCE_MS, consultaIncremental, resumoDaBusca } from "./busca";
 import { derivarEtapas, etapaStatusLabel, type Etapa, type EtapaId } from "./etapas";
 import {
@@ -85,7 +96,18 @@ import {
   AVISO_MEDICAO,
   AVISO_QUANTIDADE_AMBIGUA,
   DESCRICAO_CALCULO_SHORTLIST,
+  DESFAZER_AVISO_PACOTE_FECHADO,
+  DESFAZER_BOTAO,
+  DESFAZER_CANCELAR,
+  DESFAZER_MOTIVO_LABEL,
+  DESFAZER_NAO_BANE,
+  DESFEITOS_TITULO,
+  DESFEITO_SELO,
   DICA_QUANTIDADE,
+  fraseDesfazerConfirmar,
+  fraseDesfazerTitulo,
+  fraseDesfeitoGravado,
+  frasesEfeitoDesfazer,
   errorMessage,
   extractionFailureMessage,
   extractionStatusLabel,
@@ -590,6 +612,107 @@ async function leituraObservacional<T>(
 }
 
 /** Confirmado e com código — o único caso em que faz sentido buscar a descrição dele. */
+/**
+ * A caixa de desfazer um código confirmado (F-045, pacote de design revisão 2).
+ *
+ * Gêmea da do orçamento-base, e de propósito: é o mesmo ato, na mesma etapa, e duas formas
+ * criariam dois vocabulários para a mesma coisa. A diferença está na copy — aqui não há a
+ * linha do precedente, porque o índice é da pré-licitação e prometê-lo aqui seria falso.
+ */
+export function CaixaDeDesfazerCodigo({
+  caixa,
+  pacoteFechado: fechado,
+  submitting,
+  onChange,
+  onDesfazer,
+  onCancelar,
+}: {
+  caixa: CaixaDeDesfazer | null;
+  pacoteFechado: boolean;
+  submitting: boolean;
+  onChange: (caixa: CaixaDeDesfazer) => void;
+  onDesfazer: () => void;
+  onCancelar: () => void;
+}) {
+  if (caixa === null) {
+    return null;
+  }
+  return (
+    <section className="desfazer-caixa" aria-label={fraseDesfazerTitulo(caixa.code)}>
+      <h4>{fraseDesfazerTitulo(caixa.code)}</h4>
+      <div className="campo">
+        <label htmlFor="desfazer-motivo">{DESFAZER_MOTIVO_LABEL}</label>
+        <textarea
+          id="desfazer-motivo"
+          value={caixa.motivo}
+          onChange={(event) => onChange({ ...caixa, motivo: event.target.value })}
+          maxLength={500}
+          rows={3}
+        />
+      </div>
+      {fechado ? <p className="aviso-atencao">{DESFAZER_AVISO_PACOTE_FECHADO}</p> : null}
+      <p className="dica">O que este clique faz:</p>
+      <ul className="lista-simples">
+        {frasesEfeitoDesfazer(caixa.code).map((frase) => (
+          <li key={frase}>{frase}</li>
+        ))}
+      </ul>
+      <div className="acoes">
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={onCancelar}
+          disabled={submitting}
+        >
+          {DESFAZER_CANCELAR}
+        </button>
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={onDesfazer}
+          disabled={submitting || !podeDesfazer(caixa)}
+        >
+          {fraseDesfazerConfirmar(fechado)}
+        </button>
+      </div>
+      <p className="dica">{DESFAZER_NAO_BANE}</p>
+    </section>
+  );
+}
+
+/**
+ * O que foi desfeito e continua desfeito, no próprio item (F-045).
+ *
+ * Lista vazia não desenha nada. Ela existe porque "nunca decidido" e "decidido e desfeito"
+ * produzem a mesma ausência de código, e quem revisa a medição precisa distinguir os dois
+ * sem comparar revisões.
+ */
+export function ListaDeDesfeitos({
+  desfeitos,
+}: {
+  desfeitos: readonly CodigoDesfeito[];
+}) {
+  if (desfeitos.length === 0) {
+    return null;
+  }
+  return (
+    <section className="desfeitos" aria-label={DESFEITOS_TITULO}>
+      <h4>{DESFEITOS_TITULO}</h4>
+      <ul className="lista-simples">
+        {desfeitos.map((desfeito) => (
+          <li key={desfeito.revocation_id}>
+            <code className="codigo-desfeito">{desfeito.code}</code>{" "}
+            <span className="selo selo-neutro">{DESFEITO_SELO}</span>{" "}
+            <span className="dica">
+              “{desfeito.note}” · {desfeito.reviewer_id}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function isConfirmedWithCode(
   assignment: CodeAssignmentSet.CodeAssignment,
 ): assignment is CodeAssignmentSet.CodeAssignment & { code: string } {
@@ -1367,6 +1490,11 @@ export function MedicaoApp({
   const [selectedPendingId, setSelectedPendingId] = useState("");
   const [codeChoice, setCodeChoice] = useState<CodeChoice | null>(null);
   const [codeNote, setCodeNote] = useState("");
+  /**
+   * A caixa de desfazer um código confirmado (F-045). `null` é o estado normal: desfazer é
+   * ato deliberado, e a caixa só existe depois do clique que a abre.
+   */
+  const [desfazerCaixa, setDesfazerCaixa] = useState<CaixaDeDesfazer | null>(null);
   const [query, setQuery] = useState("");
   const [searchResult, setSearchResult] = useState<CatalogSearchResponse | null>(null);
   // Busca incremental: ela nunca toca `submitting` (cada tecla congelaria a tela inteira)
@@ -2225,6 +2353,54 @@ export function MedicaoApp({
     } catch (error) {
       // O conflito tem banner próprio, com o botão de recarregar e o formulário
       // preservado; repetir a frase no alerta comum só empilharia ruído.
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Desfaz um par `(item, código)` confirmado (F-045, pacote de design revisão 2).
+   *
+   * Gêmeo do handler do orçamento-base, menos o efeito de índice: aqui não há precedente a
+   * compensar. A tela redesenha a partir do conjunto que o servidor devolveu — o pacote pode
+   * ter reaberto, e isso não é a tela que decide.
+   */
+  const desfazerCodigo = async () => {
+    const token = tokenDaSessao();
+    const caixa = desfazerDoItem(desfazerCaixa, selectedPendingId);
+    if (
+      token === null ||
+      version === null ||
+      caixa === null ||
+      !podeDesfazer(caixa)
+    ) {
+      return;
+    }
+    const reabriu = pacoteFechado(codes?.assignments ?? null, caixa.itemId);
+    const code = caixa.code;
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const response = await postCodeRevocation(
+        token,
+        rodada,
+        pedidoDeDesfazer(caixa, version),
+      );
+      aplicarVersao(response.version);
+      setCodes(response);
+      setDesfazerCaixa(null);
+      setRevisionConflict(false);
+      setToast(fraseDesfeitoGravado(code, reabriu));
+      await atualizarEstado();
+    } catch (error) {
+      // Recusa preserva a caixa e o motivo digitado: nada foi gravado, e apagar o texto
+      // obrigaria a reescrever a justificativa para tentar de novo.
       const recusa = recusaDeMutacao(error);
       if (recusa.conflito) {
         setRevisionConflict(true);
@@ -3920,13 +4096,58 @@ export function MedicaoApp({
                     </button>
                   </div>
                   {pacoteDoItem.length === 0 ? null : (
-                    <p className="dica">
-                      Pacote em aberto, com {pacoteDoItem.length}{" "}
-                      {pacoteDoItem.length === 1 ? "serviço" : "serviços"} (
-                      {pacoteDoItem.map((item) => item.code).join(", ")}). O item só conta
-                      como resolvido depois do fechamento.
-                    </p>
+                    <>
+                      {/* A frase do pacote virou LISTA na revisão 2 do pacote de design: os
+                          códigos entre parênteses não davam onde pendurar um ato por código,
+                          e desfazer é do PAR (item, código). */}
+                      <p className="dica">
+                        Pacote em aberto, com {pacoteDoItem.length}{" "}
+                        {pacoteDoItem.length === 1 ? "serviço" : "serviços"}. O item só conta
+                        como resolvido depois do fechamento.
+                      </p>
+                      <ul className="lista-simples">
+                        {pacoteDoItem.map((assignment) =>
+                          assignment.code === null ? null : (
+                            <li key={assignment.code}>
+                              <code>{assignment.code}</code>{" "}
+                              <button
+                                type="button"
+                                className="botao-secundario"
+                                onClick={() =>
+                                  setDesfazerCaixa(
+                                    abrirDesfazer(
+                                      selectedPendingId,
+                                      assignment.code as string,
+                                    ),
+                                  )
+                                }
+                                disabled={submitting}
+                              >
+                                {DESFAZER_BOTAO}
+                              </button>
+                            </li>
+                          ),
+                        )}
+                      </ul>
+                      <CaixaDeDesfazerCodigo
+                        caixa={desfazerDoItem(desfazerCaixa, selectedPendingId)}
+                        pacoteFechado={pacoteFechado(
+                          codes?.assignments ?? null,
+                          selectedPendingId,
+                        )}
+                        submitting={submitting}
+                        onChange={setDesfazerCaixa}
+                        onDesfazer={() => void desfazerCodigo()}
+                        onCancelar={() => setDesfazerCaixa(null)}
+                      />
+                    </>
                   )}
+                  <ListaDeDesfeitos
+                    desfeitos={desfeitosDoItem(
+                      codes?.assignments ?? null,
+                      selectedPendingId,
+                    )}
+                  />
                   <p className="dica">
                     Rejeitar exige nota: é ela que vira o texto do pedido de aditivo.
                   </p>

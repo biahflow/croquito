@@ -308,7 +308,7 @@ import {
   pedidoDeDesfazer,
   podeDesfazer,
   type CaixaDeDesfazer,
-} from "./revogacao";
+} from "../codeRevocation";
 import { overlayFreshness } from "./overlay";
 import {
   aplicarZoom,

@@ -1,5 +1,5 @@
 /**
- * Desfazer um código confirmado (F-045), do lado da tela.
+ * Desfazer um código confirmado (F-045), do lado da tela — nas DUAS jornadas.
  *
  * A etapa de códigos só sabia avançar: a identidade da decisão é o par `(elemento, código)`,
  * re-decidir um par é recusado e não há rollback de revisão. Um código confirmado por engano
@@ -8,6 +8,12 @@
  * Módulo PURO de propósito, no molde de `precedente.ts` e `acervo.ts`: o que a caixa mostra,
  * o que o clique vai gravar e o que aparece como desfeito ficam testáveis sem transporte e
  * sem DOM.
+ *
+ * Ele vive na RAIZ, e não dentro de uma das jornadas, porque as duas exercem o mesmo ato
+ * sobre o mesmo domínio. `medicao/` e `orcamento/` não se importam entre si de propósito
+ * (ADR-0028 D9), e duplicar estas funções criaria duas verdades para regras que precisam ser
+ * uma só — em especial a de que um par reconfirmado sai da lista de desfeitos. O que continua
+ * sendo de cada jornada é a copy, o transporte e os componentes.
  *
  * O que o Design Approval Package (revisão 1) e o ADR-0061 fixaram e este módulo carrega:
  *
@@ -24,7 +30,19 @@
 
 import type { CodeAssignmentSet } from "@croquito/contracts";
 
-import type { CodeRevocationDraft } from "./api";
+/**
+ * Desfazer um par `(elemento, código)` já confirmado.
+ *
+ * `note` não é opcional: desfazer é o ato que alguém vai auditar depois, e a frase escrita é
+ * o que separa o conserto do descuido. O tipo carrega essa obrigação para que nenhuma das
+ * duas telas consiga montar o pedido sem ela.
+ */
+export type CodeRevocationDraft = {
+  itemId: string;
+  code: string;
+  baseVersion: number;
+  note: string;
+};
 
 /** O registro de um par desfeito, como o servidor o devolve no conjunto corrente. */
 export type CodigoDesfeito = {

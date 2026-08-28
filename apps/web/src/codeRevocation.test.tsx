@@ -9,9 +9,9 @@ import {
   pacoteFechado,
   pedidoDeDesfazer,
   podeDesfazer,
-} from "./revogacao";
-import { codeRevocationBody } from "./requests";
-import { CaixaDeDesfazerCodigo, ListaDeDesfeitos } from "./OrcamentoApp";
+} from "./codeRevocation";
+import { codeRevocationBody } from "./orcamento/requests";
+import { CaixaDeDesfazerCodigo, ListaDeDesfeitos } from "./orcamento/OrcamentoApp";
 
 /**
  * Desfazer um código confirmado (F-045), contra o pacote de design revisão 1 e o ADR-0061.
