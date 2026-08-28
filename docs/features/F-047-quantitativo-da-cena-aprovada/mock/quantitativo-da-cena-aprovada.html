@@ -1,0 +1,1465 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-047 — O quantitativo nasce da cena aprovada</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css (identidade "Grafite técnico"). O tratamento de
+         precisão por traço vem de styles.css:3257-3283 (.cena-forma.precisao-*), usado sem
+         alteração. O que é novo está marcado como NOVO na tabela de proveniência do README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --recusa: #a33d32;
+        --atencao: #7c5210;
+        /* NOVO — família da origem "cena aprovada". Azul-aço, escolhido por não colidir com
+           nenhum significado já em uso nas duas jornadas: verde = contratado/confirmado,
+           roxo = reajustado (F-039), petróleo = re-ratificado (F-040), âmbar = atenção,
+           vermelho = recusa, cinza = neutro/proposta. A legenda lida — que é o que já existe —
+           permanece neutra de propósito: a cor nova marca o que a feature acrescenta. */
+        --cena: #2b5ea8;
+        --cena-soft: #eaf0fa;
+        --cena-line: #b3c8e6;
+        --cena-ink: #1d3f73;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0 0 6px;
+        max-width: 80ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .duas {
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        gap: 16px;
+        align-items: start;
+      }
+      .duas.meio {
+        grid-template-columns: 1fr 1fr;
+      }
+      .painel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+        background: var(--surface);
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+      ul.limpa {
+        padding-left: 0;
+        list-style: none;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: right;
+        padding: 7px 9px;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th:first-child,
+      td:first-child,
+      th:nth-child(2),
+      td:nth-child(2) {
+        text-align: left;
+      }
+      thead th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+      }
+      td.mono,
+      th.mono {
+        font-variant-numeric: tabular-nums;
+      }
+      td.esq,
+      th.esq {
+        text-align: left;
+      }
+      tr.cena td {
+        background: var(--cena-soft);
+      }
+      tr.divergente td {
+        background: #fdf5e8;
+      }
+      tr.total td {
+        font-weight: 600;
+        color: var(--ink);
+        background: var(--surface-subtle);
+      }
+      code,
+      .codigo {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+      /* Selos — mesma pílula das duas jornadas (.selo do medicao/styles.css:660). */
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+        white-space: nowrap;
+      }
+      .selo.cena {
+        border-color: var(--cena-line);
+        background: var(--cena-soft);
+        color: var(--cena-ink);
+        font-weight: 600;
+      }
+      .selo.legenda {
+        border-color: var(--line);
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .selo.confirmado {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      .selo.proposta {
+        border-style: dashed;
+        border-color: var(--muted);
+        background: var(--surface);
+        color: var(--ink-secondary);
+      }
+      .selo.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .selo.recusa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      /* NOVO — a etiqueta de identidade de elemento. Monoespaçada e com o glifo ◇, para que
+         element_ref nunca se confunda com o rótulo humano nem com o entity_id. */
+      .elemento {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 4px;
+        border: 1px solid var(--cena-line);
+        background: var(--surface);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11.5px;
+        color: var(--cena-ink);
+      }
+      .elemento.ausente {
+        border-style: dashed;
+        border-color: var(--muted);
+        color: var(--muted);
+        font-family: inherit;
+      }
+      /* Precisão: traço + palavra, nunca só cor. Amostras reproduzem
+         .cena-forma.precisao-* de apps/web/src/styles.css:3257-3283. */
+      .amostra {
+        display: inline-block;
+        width: 34px;
+        height: 0;
+        vertical-align: middle;
+        margin-right: 6px;
+        border-top-style: solid;
+        border-top-color: var(--ink);
+      }
+      .amostra.exact {
+        border-top-width: 3px;
+      }
+      .amostra.derived {
+        border-top-width: 1.5px;
+      }
+      .amostra.approximate {
+        border-top-width: 2px;
+        border-top-style: dashed;
+      }
+      .amostra.unresolved {
+        border-top-width: 2px;
+        border-top-style: dotted;
+        border-top-color: var(--muted);
+      }
+      .precisao {
+        display: inline-flex;
+        align-items: center;
+        font-size: 12px;
+        color: var(--ink-secondary);
+        white-space: nowrap;
+      }
+      /* Avisos — mesma família das duas jornadas. */
+      .aviso {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.cena {
+        border-color: var(--cena-line);
+        background: var(--cena-soft);
+        color: var(--cena-ink);
+      }
+      .aviso.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .aviso.recusa {
+        border-color: #e0b7b1;
+        background: #fbf0ee;
+        color: #7a2c22;
+      }
+      .aviso.neutro {
+        border-style: dashed;
+        border-color: var(--muted);
+        background: var(--surface);
+        color: var(--ink-secondary);
+      }
+      /* Carimbo do ato humano — borda esquerda de 3 px, como o carimbo da declaração da F-040. */
+      .carimbo {
+        border: 1px solid var(--cena-line);
+        border-left: 3px solid var(--cena);
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: var(--surface);
+        display: grid;
+        gap: 3px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .carimbo b {
+        color: var(--ink);
+        font-size: 12.5px;
+      }
+      /* NOVO — os dois números lado a lado. Composição, não cor: cada coluna carrega a origem
+         escrita, a precisão e o número; a diferença fica numa terceira coluna, com a conta. */
+      .duplo {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 10px;
+        align-items: stretch;
+      }
+      .duplo > div {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        display: grid;
+        gap: 6px;
+        align-content: start;
+        background: var(--surface);
+      }
+      .duplo > div.origem-cena {
+        border-color: var(--cena-line);
+        background: var(--cena-soft);
+      }
+      .duplo > div.origem-diferenca {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+      }
+      .numerao {
+        font-variant-numeric: tabular-nums;
+        font-size: 24px;
+        font-weight: 600;
+        color: var(--ink);
+        line-height: 1.1;
+      }
+      .numerao small {
+        font-size: 13px;
+        font-weight: 400;
+        color: var(--ink-secondary);
+      }
+      .conta {
+        font-variant-numeric: tabular-nums;
+        font-size: 12.5px;
+        color: var(--ink);
+        padding: 9px 11px;
+        border: 1px dashed var(--cena-line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      label.campo {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      label.campo input,
+      label.campo select,
+      label.campo textarea {
+        font: inherit;
+        font-size: 13px;
+        color: var(--ink);
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+      .linha-campos {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.primario {
+        background: var(--accent);
+        border-color: var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      button[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .acoes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .escolha {
+        display: grid;
+        gap: 8px;
+      }
+      .escolha label {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 13px;
+        color: var(--ink);
+      }
+      .escolha label.ativa {
+        border-color: var(--cena-line);
+        background: var(--cena-soft);
+      }
+      .escolha label.indisponivel {
+        opacity: 0.55;
+      }
+      .escolha span small {
+        display: block;
+        color: var(--ink-secondary);
+        font-size: 12px;
+      }
+      .reservado {
+        border: 1px dashed var(--muted);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        color: var(--ink-secondary);
+        background: repeating-linear-gradient(
+          135deg,
+          rgba(154, 160, 168, 0.08) 0 8px,
+          transparent 8px 16px
+        );
+      }
+      .rodape {
+        border-top: 1px solid var(--line);
+        background: var(--surface-subtle);
+        padding: 10px 16px;
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      /* Lista de entidades / propostas — mesma anatomia de .review-row do croqui. */
+      .linhas {
+        display: grid;
+        gap: 6px;
+      }
+      .linha {
+        display: grid;
+        grid-template-columns: 168px 1fr 150px 132px;
+        gap: 10px;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 12.5px;
+        background: var(--surface);
+      }
+      .linha.proposta {
+        border-style: dashed;
+        border-color: var(--muted);
+        background: var(--surface-subtle);
+      }
+      .linha.confirmada {
+        border-color: var(--cena-line);
+        background: var(--cena-soft);
+      }
+      .linha .desc {
+        color: var(--ink-secondary);
+        white-space: normal;
+      }
+      .linha .num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+      }
+      /* Prancha esquemática. viewBox em metros, traço não-escalado, como no preview da cena. */
+      svg.cena {
+        width: 100%;
+        height: auto;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      svg.cena .forma {
+        fill: none;
+        stroke: var(--ink);
+        vector-effect: non-scaling-stroke;
+      }
+      svg.cena .exact {
+        stroke-width: 3;
+      }
+      svg.cena .derived {
+        stroke-width: 1.5;
+      }
+      svg.cena .approximate {
+        stroke-width: 2;
+        stroke-dasharray: 7 5;
+      }
+      svg.cena .unresolved {
+        stroke: var(--muted);
+        stroke-width: 2;
+        stroke-dasharray: 1 5;
+      }
+      svg.cena .rot {
+        font-size: 4px;
+        fill: var(--ink-secondary);
+        font-family: inherit;
+      }
+      svg.cena .rot.chave {
+        fill: var(--cena-ink);
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 3.6px;
+      }
+      .legenda-traco {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: var(--ink-secondary);
+      }
+      .csv {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11.5px;
+        color: var(--ink);
+        background: var(--surface-sunken);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        overflow-x: auto;
+        white-space: pre;
+        line-height: 1.6;
+      }
+      dl.procedencia {
+        display: grid;
+        grid-template-columns: 132px 1fr;
+        gap: 4px 10px;
+        margin: 0;
+        font-size: 12.5px;
+      }
+      dl.procedencia dt {
+        color: var(--ink-secondary);
+      }
+      dl.procedencia dd {
+        margin: 0;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .bloqueado {
+        border: 1px solid #e2c79a;
+        border-left: 3px solid var(--atencao);
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: #fdf5e8;
+        color: var(--atencao);
+        font-size: 12.5px;
+        display: grid;
+        gap: 4px;
+      }
+      .bloqueado b {
+        color: #5c3d0c;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-047 — O quantitativo nasce da cena aprovada</h1>
+      <p>
+        Design Approval Package, revisão 1. Rendição autocontida: abre no navegador sem build,
+        sem rede e sem servidor. Governado pelo <b>ADR-0058</b> — a entidade ganha identidade de
+        elemento declarada por ato humano, o <code>QuantitySource</code> casa por essa
+        identidade e nunca por proximidade, só <b>exata</b> e <b>derivada</b> alimentam a
+        medição, e a divergência é diagnóstico, nunca sobrescrita.
+      </p>
+      <p>
+        Obra <b>sintética</b>: Praça do Cedro, fixture inventada para este pacote. Nenhum dado
+        de cliente. Os números são sintéticos e <b>aritmeticamente consistentes</b>, inclusive
+        nas bordas da tolerância — o maior entre 1% do valor da legenda e 0,01 na unidade do
+        item.
+      </p>
+      <p>
+        <b>Nenhum agente aprova design.</b> Este artefato é evidência para um gate humano; o
+        que ele decide está listado no <code>README.md</code> ao lado.
+      </p>
+    </header>
+    <main>
+      <!-- 01 -->
+      <section class="estado" id="e01">
+        <h2>
+          01 · A revisão do croqui hoje: entidades sem identidade de elemento
+          <small>
+            O ponto de partida. A cena tem geometria, precisão e proveniência — e nada que diga
+            <i>que elemento do croqui este traço é</i>.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div>
+              <svg
+                class="cena"
+                viewBox="0 0 150 92"
+                role="img"
+                aria-label="Planta esquemática da Praça do Cedro com cinco feições e um rótulo de texto"
+              >
+                <polyline
+                  class="forma derived"
+                  points="8,8 142,8 142,78 8,78 8,8"
+                />
+                <polyline class="forma exact" points="14,72 136,72 136,16 100,16" />
+                <polygon class="forma derived" points="30,26 78,26 78,62 30,62" />
+                <polygon class="forma approximate" points="92,30 116,30 116,46 92,46" />
+                <circle class="forma exact" cx="124" cy="62" r="2.2" />
+                <text class="rot" x="32" y="24">piso em concreto</text>
+                <text class="rot" x="94" y="28">canteiro gramado</text>
+                <text class="rot" x="105" y="63">grelha</text>
+                <text class="rot" x="10" y="6">alambrado</text>
+                <text class="rot" x="14" y="70">meio-fio</text>
+                <text class="rot" x="30" y="46">418,12 m²</text>
+              </svg>
+              <p style="margin-top: 8px">
+                O texto <code>418,12 m²</code> é uma entidade <code>TEXT</code> na camada
+                <code>TEXTOS</code> — texto livre, que o <code>quantitativos.csv</code> descarta
+                por ser anotação. Ele não é elo com o polígono que rotula.
+              </p>
+            </div>
+            <div class="painel">
+              <h3>Entidade selecionada</h3>
+              <dl class="procedencia">
+                <dt>entity_id</dt>
+                <dd class="codigo">019538a1-…-7c41</dd>
+                <dt>tipo</dt>
+                <dd>polígono</dd>
+                <dt>camada</dt>
+                <dd>PISO</dd>
+                <dt>precisão</dt>
+                <dd><span class="precisao"><span class="amostra derived"></span>derivada</span></dd>
+                <dt>origem</dt>
+                <dd>solver retangular</dd>
+                <dt>área</dt>
+                <dd>418,12 m²</dd>
+                <dt>elemento</dt>
+                <dd><span class="elemento ausente">— sem identidade</span></dd>
+              </dl>
+              <div class="aviso">
+                <b>O bloqueio, e ele não é de esforço.</b> <code>entity_id</code> é identidade de
+                <i>linha</i> e muda quando a aprovação cria revisão nova. <code>camada</code> é
+                vocabulário de CAD — a praça tem vários elementos em <code>MURO</code>. E o
+                rótulo é texto livre. Nada aqui diz que elemento é.
+              </div>
+            </div>
+          </div>
+          <div class="legenda-traco">
+            <span class="precisao"><span class="amostra exact"></span>exata · linha cheia</span>
+            <span class="precisao"><span class="amostra derived"></span>derivada · linha fina</span>
+            <span class="precisao"><span class="amostra approximate"></span>aproximada · tracejada</span>
+            <span class="precisao"><span class="amostra unresolved"></span>não resolvida · pontilhada</span>
+          </div>
+          <div class="csv">quantitativos.csv (hoje)
+entity_id,layer,kind,precision,length_m,perimeter_m,area_m2
+019538a1-…-7c41,PISO,polygon,derived,,84.60,418.12
+019538a1-…-9b02,MEIO_FIO,polyline,exact,242.40,,
+019538a1-…-4d77,ALAMBRADO,polyline,derived,401.55,,</div>
+          <div class="aviso">
+            Indexado por <code>entity_id</code>. Do outro lado, o item de takeoff é indexado por
+            <code>ti_…</code> e descrito por um rótulo de texto livre. <b>Não há chave comum</b> —
+            e casar 418,12 com 418,12 é a associação por proximidade que o produto recusa em toda
+            parte.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0058, contexto — a identidade que falta é o que dimensiona a feature.</span>
+          <span>Traço e palavra dizem a precisão; a cor nunca decide sozinha.</span>
+        </div>
+      </section>
+
+      <!-- 02 -->
+      <section class="estado" id="e02">
+        <h2>
+          02 · A proposta do sistema, que nasce <code>unresolved</code>
+          <small>
+            Proposta não é identidade. Ela diz o motivo do agrupamento, aparece tracejada e não
+            alimenta quantidade nenhuma enquanto não houver decisão registrada.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="aviso neutro">
+            <b>⚙ Agrupamento proposto pelo sistema, sem toque humano.</b> Por camada, por rótulo
+            próximo e por mesma proveniência — os mesmos sinais que a visão usa para propor
+            candidatos. Como lá, a proposta nasce <code>unresolved</code> e não vale nada até
+            alguém declarar.
+          </div>
+          <div class="linhas">
+            <div class="linha proposta">
+              <span class="selo proposta">⚙ proposta · unresolved</span>
+              <span class="desc">
+                <b>2 entidades na camada PISO</b> — polígono + rótulo “PISO EM CONCRETO 418,12 m²”
+                a 0,4 m; mesma proveniência (solver retangular)
+              </span>
+              <span class="precisao"><span class="amostra derived"></span>derivada</span>
+              <span class="num">418,12 m²</span>
+            </div>
+            <div class="linha proposta">
+              <span class="selo proposta">⚙ proposta · unresolved</span>
+              <span class="desc">
+                <b>1 polilinha na camada MEIO_FIO</b> — rótulo “MEIO-FIO 240,00 m” a 1,1 m
+              </span>
+              <span class="precisao"><span class="amostra exact"></span>exata</span>
+              <span class="num">242,40 m</span>
+            </div>
+            <div class="linha proposta">
+              <span class="selo proposta">⚙ proposta · unresolved</span>
+              <span class="desc">
+                <span class="selo atencao">⚠ agrupou demais</span>
+                <b>3 polilinhas na camada ALAMBRADO</b> — a proposta juntou o alambrado da quadra
+                com o do playground porque a camada é a mesma
+              </span>
+              <span class="precisao">—</span>
+              <span class="num">561,90 m</span>
+            </div>
+          </div>
+          <div class="aviso atencao">
+            <b>A terceira proposta está errada, e é por isso que ela é só proposta.</b> Camada é
+            vocabulário de CAD, não identidade: dois alambrados distintos moram em
+            <code>ALAMBRADO</code>. Aceitar o agrupamento automático somaria 561,90 m onde há
+            401,55 m de um elemento e 160,35 m de outro — quantidade errada, sem ninguém ter
+            declarado nada. <span class="codigo">401,55 + 160,35 = 561,90</span>
+          </div>
+          <div class="acoes">
+            <button class="primario">Declarar elemento a partir da proposta</button>
+            <button>Separar as entidades</button>
+            <button>Descartar proposta</button>
+          </div>
+          <div class="reservado">
+            <b>Fatia em aberto.</b> Se a proposta assistida entra nesta feature ou numa seguinte é
+            decisão do plano (F-047, <i>Unknowns</i>). Os estados 01 e 03 a 09 não dependem dela:
+            sem proposta, o ato do estado 03 começa pela seleção manual das entidades. Ela torna o
+            ato barato; não o torna correto.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0058, decisão 2 — o sistema propõe, o humano declara.</span>
+          <span>Agrupamento inferido e não confirmado nunca alimenta quantidade.</span>
+        </div>
+      </section>
+
+      <!-- 03 -->
+      <section class="estado" id="e03">
+        <h2>
+          03 · O ato humano: declarar a identidade do elemento
+          <small>Com autor e instante carimbados pelo sistema. A declaração não se apaga.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Declarar elemento</h3>
+              <div class="linha-campos">
+                <label class="campo">
+                  Identidade do elemento
+                  <input type="text" value="EL-001" readonly />
+                  <span style="font-size: 11.5px">
+                    cunhada no ato, estável, sobrevive à revisão criada na aprovação
+                  </span>
+                </label>
+                <label class="campo">
+                  Rótulo (o que a pessoa lê)
+                  <input type="text" value="Piso em concreto — quadra" />
+                  <span style="font-size: 11.5px">
+                    texto livre, ao lado da identidade e nunca no lugar dela
+                  </span>
+                </label>
+              </div>
+              <div class="linhas">
+                <div class="linha confirmada">
+                  <span class="codigo">019538a1-…-7c41</span>
+                  <span class="desc">polígono · camada PISO · solver retangular</span>
+                  <span class="precisao"><span class="amostra derived"></span>derivada</span>
+                  <span class="num">418,12 m²</span>
+                </div>
+                <div class="linha confirmada">
+                  <span class="codigo">019538a1-…-8e10</span>
+                  <span class="desc">texto · camada TEXTOS · “PISO EM CONCRETO 418,12 m²”</span>
+                  <span class="precisao">anotação</span>
+                  <span class="num">—</span>
+                </div>
+              </div>
+              <label class="campo">
+                Justificativa (opcional)
+                <input type="text" value="Polígono e rótulo são o mesmo piso da quadra." />
+              </label>
+              <div class="acoes">
+                <button class="primario">Declarar EL-001</button>
+                <button>Cancelar</button>
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Depois de declarar</h3>
+              <div class="carimbo">
+                <b>EL-001 — Piso em concreto — quadra</b>
+                <span>
+                  Declarado por <b>Ana Beatriz Rangel</b> em 04/03/2026 14:32 (UTC−3), sobre a
+                  revisão <span class="codigo">v7</span> da cena.
+                </span>
+                <span>2 entidades · quantidade da cena: 418,12 m² (derivada)</span>
+              </div>
+              <div class="aviso">
+                A declaração <b>não se apaga</b>. Corrigir uma identidade errada é uma
+                retificação registrada — o mesmo padrão da decisão de leitura na revisão, onde o
+                ato anterior continua no histórico com autor e instante.
+              </div>
+              <div class="aviso cena">
+                A identidade <b>não é</b> o <code>entity_id</code> nem o texto do rótulo. É um
+                terceiro campo, <code>element_ref</code>, ao lado dos dois — a mesma escolha que o
+                ADR-0053 fez ao manter <code>label</code> ao lado de <code>source_item_id</code>.
+              </div>
+              <div class="reservado">
+                <b>Não decidido aqui.</b> A <i>forma</i> do <code>element_ref</code> (string
+                declarada, id opaco cunhado no ato) e o escopo da unicidade (cena, job ou praça)
+                são decisão do plano. O pacote mostra <code>EL-001</code> por ser legível na tela;
+                a composição não muda se ele for um UUID.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0058, decisões 1 e 2 — identidade estruturada, atribuída por ato humano.</span>
+          <span>Autor e instante são do sistema; o rótulo é de quem declara.</span>
+        </div>
+      </section>
+
+      <!-- 04 -->
+      <section class="estado" id="e04">
+        <h2>
+          04 · Precisão: <code>approximate</code> não alimenta a medição
+          <small>
+            E o motivo está escrito na tela, não num comentário de código. A legenda segue sendo a
+            fonte nesse caso.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="linhas">
+            <div class="linha confirmada">
+              <span class="elemento">◇ EL-001</span>
+              <span class="desc">Piso em concreto — quadra</span>
+              <span class="precisao"><span class="amostra derived"></span>derivada</span>
+              <span class="num">418,12 m² <span class="selo cena">→ alimenta</span></span>
+            </div>
+            <div class="linha confirmada">
+              <span class="elemento">◇ EL-002</span>
+              <span class="desc">Meio-fio — contorno da quadra</span>
+              <span class="precisao"><span class="amostra exact"></span>exata</span>
+              <span class="num">242,40 m <span class="selo cena">→ alimenta</span></span>
+            </div>
+            <div class="linha">
+              <span class="elemento">◇ EL-005</span>
+              <span class="desc">Canteiro gramado — faixa norte</span>
+              <span class="precisao"><span class="amostra approximate"></span>aproximada</span>
+              <span class="num">96,40 m² <span class="selo recusa">✕ não alimenta</span></span>
+            </div>
+            <div class="linha">
+              <span class="elemento">◇ EL-006</span>
+              <span class="desc">Talude — rampa leste</span>
+              <span class="precisao"><span class="amostra unresolved"></span>não resolvida</span>
+              <span class="num">— <span class="selo recusa">✕ não alimenta</span></span>
+            </div>
+          </div>
+          <div class="aviso recusa">
+            <b>EL-005 é aproximado e não atravessa a fronteira para a medição.</b> O aceite de
+            aproximação que o croqui já tem existe para <i>publicar um desenho</i> declarando o que
+            é aproximado. A quantidade da medição vira <b>dinheiro</b> num boletim que a prefeitura
+            paga: multiplicada por preço unitário, a aproximação vira uma linha de R$ que ninguém
+            lê como aproximada. Aqui a fronteira ganha uma trava a mais do que o croqui sozinho
+            precisa.
+          </div>
+          <div class="duas meio">
+            <div class="painel">
+              <h3>EL-005 na medição</h3>
+              <dl class="procedencia">
+                <dt>Origem da quantidade</dt>
+                <dd><span class="selo legenda">legenda lida</span></dd>
+                <dt>Quantidade</dt>
+                <dd>92,00 m²</dd>
+                <dt>Decisão</dt>
+                <dd>Ana Beatriz Rangel, 04/03/2026</dd>
+                <dt>Cena</dt>
+                <dd>96,40 m² · aproximada · <b>não usada</b></dd>
+              </dl>
+              <div class="aviso">
+                A cena continua visível e continua carimbada como aproximada — ela só não é a
+                fonte. E, por não ser fonte, <b>não abre divergência</b>: comparar 92,00 com um
+                número que não pode alimentar produziria uma issue sem decisão possível.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Por que a precisão nunca sobe</h3>
+              <ul>
+                <li><b>exata</b> — alimenta, e carrega a precisão até o boletim.</li>
+                <li><b>derivada</b> — alimenta, e carrega a precisão até o boletim.</li>
+                <li>
+                  <b>aproximada</b> — não alimenta, <i>nem sob aceite explícito</i>. Emenda do
+                  aceite humano de 28/08/2026.
+                </li>
+                <li><b>não resolvida</b> — não alimenta, e continua barrando o próprio export.</li>
+              </ul>
+              <div class="aviso">
+                É a mesma regra que o pipeline já aplica até o DXF: dimensão exata nunca é derivada
+                de pixels, e <code>approximate</code> continua <code>approximate</code>. A F-047 só
+                estende a regra por mais uma fronteira.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0058, decisão 4, <b>emendada no aceite humano de 28/08/2026</b>.</span>
+          <span>Traço tracejado + a palavra “aproximada” + o selo “não alimenta”.</span>
+        </div>
+      </section>
+
+      <!-- 05 -->
+      <section class="estado" id="e05">
+        <h2>
+          05 · Na medição: a quantidade chegou da cena, e não há onde redigitá-la
+          <small>
+            <code>source = scene_graph</code>. A origem ocupa o lugar do campo — a quantidade não
+            foi redigitada porque não existe campo para isso.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Item da legenda · Piso em concreto — quadra</h3>
+              <div class="acoes">
+                <span class="elemento">◇ EL-001</span>
+                <span class="selo cena">◇ origem: cena aprovada</span>
+                <span class="precisao"><span class="amostra derived"></span>derivada</span>
+              </div>
+              <dl class="procedencia">
+                <dt>Quantidade</dt>
+                <dd><b>418,12 m²</b></dd>
+                <dt>Origem</dt>
+                <dd>cena aprovada · revisão <span class="codigo">v8</span></dd>
+                <dt>Aprovada por</dt>
+                <dd>Ana Beatriz Rangel, 04/03/2026</dd>
+                <dt>Identidade</dt>
+                <dd class="codigo">EL-001</dd>
+                <dt>Precisão de origem</dt>
+                <dd>derivada</dd>
+                <dt>Legenda lida</dt>
+                <dd>418,12 m² · diferença 0,00 · dentro da tolerância</dd>
+              </dl>
+              <div class="aviso cena">
+                <b>Não existe campo de quantidade nesta tela.</b> Onde havia um
+                <code>input</code> há a origem e a conta. A redigitação era onde o erro entrava; o
+                jeito de eliminá-la é não oferecer o teclado.
+              </div>
+              <div class="acoes">
+                <button class="primario">Confirmar item</button>
+                <button>Rejeitar item</button>
+                <button disabled>Editar quantidade</button>
+              </div>
+              <p style="font-size: 11.5px">
+                “Editar quantidade” fica desabilitado e visível, com a razão ao lado — a ação não
+                some da tela, para que a ausência seja lida como decisão e não como falta.
+              </p>
+            </div>
+            <div class="painel">
+              <h3>Um elemento, dois serviços</h3>
+              <p>
+                A cadeia do ADR-0053: o elemento alimenta o item de legenda, e o item de legenda
+                alimenta N serviços, cada um com sua parcela. A base <code>DERIVED</code>
+                finalmente tem de onde derivar.
+              </p>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th class="mono">Un</th>
+                    <th class="mono">Parcela</th>
+                    <th class="mono">Preço</th>
+                    <th class="mono">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="cena">
+                    <td class="codigo">PJ12300100(/)</td>
+                    <td class="mono">m²</td>
+                    <td class="mono">418,12</td>
+                    <td class="mono">96,50</td>
+                    <td class="mono">40.348,58</td>
+                  </tr>
+                  <tr class="cena">
+                    <td class="codigo">PJ12300250(A)</td>
+                    <td class="mono">m²</td>
+                    <td class="mono">418,12</td>
+                    <td class="mono">22,50</td>
+                    <td class="mono">9.407,70</td>
+                  </tr>
+                  <tr class="total">
+                    <td colspan="4">Total do elemento EL-001</td>
+                    <td class="mono">49.756,28</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="aviso">
+                A mesma área alimenta os dois códigos — base e revestimento sobre o mesmo piso.
+                Cada linha declara sua parcela; nenhuma soma acontece por proximidade.
+              </div>
+            </div>
+          </div>
+          <div class="csv">quantitativos.csv (com identidade — coluna aditiva)
+element_ref,entity_id,layer,kind,precision,length_m,perimeter_m,area_m2
+EL-001,019538a1-…-7c41,PISO,polygon,derived,,84.60,418.12
+EL-002,019538a1-…-9b02,MEIO_FIO,polyline,exact,242.40,,
+EL-003,019538a1-…-4d77,ALAMBRADO,polyline,derived,401.55,,
+EL-004,019538a1-…-1a55,DRENAGEM,polygon,exact,,3.60,0.81
+,019538a1-…-6f30,MURO,polyline,derived,58.20,,</div>
+          <div class="aviso">
+            A última linha não tem identidade e sai como hoje. A coluna é aditiva: croqui sem
+            identidade declarada produz o mesmo arquivo de sempre.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0058, decisões 5 e 7 — casa por identidade, e só a partir da cena aprovada.</span>
+          <span>418,12 × 96,50 = 40.348,58 · 418,12 × 22,50 = 9.407,70 · soma 49.756,28</span>
+        </div>
+      </section>
+
+      <!-- 06 -->
+      <section class="estado" id="e06">
+        <h2>
+          06 · Divergência: os dois números, a tolerância nomeada e a issue aberta
+          <small>
+            Nenhum dos dois sobrescreve o outro. O item não fecha enquanto a issue existir.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="acoes">
+            <span class="elemento">◇ EL-003</span>
+            <b style="font-size: 13px; color: var(--ink)">Alambrado — quadra poliesportiva</b>
+            <span class="selo atencao">⚠ divergência aberta</span>
+          </div>
+          <div class="duplo">
+            <div class="origem-cena">
+              <span class="selo cena">◇ cena aprovada</span>
+              <span class="numerao">401,55 <small>m</small></span>
+              <span class="precisao"><span class="amostra derived"></span>derivada</span>
+              <p>revisão <span class="codigo">v8</span> · aprovada em 04/03/2026</p>
+            </div>
+            <div>
+              <span class="selo legenda">legenda lida</span>
+              <span class="numerao">385,00 <small>m</small></span>
+              <span class="precisao">decisão humana · Ana Beatriz Rangel</span>
+              <p>lida em 02/03/2026 · texto “ALAMBRADO H=2,00 — 385,00 m”</p>
+            </div>
+            <div class="origem-diferenca">
+              <span class="selo atencao">⚠ fora da tolerância</span>
+              <span class="numerao">16,55 <small>m</small></span>
+              <p>4,30% do valor da legenda</p>
+              <p>tolerância: <b>3,85 m</b></p>
+            </div>
+          </div>
+          <div class="conta">
+            tolerância = maior entre 1% da legenda e 0,01 na unidade do item<br />
+            1% × 385,00 m = 3,85 m · piso de unidade = 0,01 m · <b>tolerância = 3,85 m</b><br />
+            |401,55 − 385,00| = 16,55 m &gt; 3,85 m → <b>abre issue</b>
+          </div>
+          <div class="bloqueado">
+            <b>⚠ Este item não fecha enquanto a divergência estiver aberta.</b>
+            <span>
+              A cena é auditada, mas “auditada” não é “sempre certa”: um elemento mal traçado
+              produz comprimento errado com precisão declarada. E a legenda pode ter um dígito
+              trocado. O sistema não sabe qual é qual — por isso mostra os dois e recusa fechar.
+            </span>
+            <span>
+              Nenhuma origem apaga a outra: 401,55 e 385,00 continuam gravados, com quem os
+              produziu e quando.
+            </span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Elemento</th>
+                <th>Descrição</th>
+                <th class="mono">Un</th>
+                <th class="mono">Cena</th>
+                <th class="mono">Legenda</th>
+                <th class="mono">Diferença</th>
+                <th class="mono">1%</th>
+                <th class="mono">Tolerância</th>
+                <th class="esq">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="codigo">EL-001</td>
+                <td>Piso em concreto — quadra</td>
+                <td class="mono">m²</td>
+                <td class="mono">418,12</td>
+                <td class="mono">418,12</td>
+                <td class="mono">0,00</td>
+                <td class="mono">4,1812</td>
+                <td class="mono">4,1812</td>
+                <td class="esq">casou · sem divergência</td>
+              </tr>
+              <tr>
+                <td class="codigo">EL-002</td>
+                <td>Meio-fio — contorno da quadra</td>
+                <td class="mono">m</td>
+                <td class="mono">242,40</td>
+                <td class="mono">240,00</td>
+                <td class="mono">2,40</td>
+                <td class="mono">2,4000</td>
+                <td class="mono">2,4000</td>
+                <td class="esq"><b>na borda</b> · igual à tolerância, não abre</td>
+              </tr>
+              <tr class="divergente">
+                <td class="codigo">EL-003</td>
+                <td>Alambrado — quadra poliesportiva</td>
+                <td class="mono">m</td>
+                <td class="mono">401,55</td>
+                <td class="mono">385,00</td>
+                <td class="mono">16,55</td>
+                <td class="mono">3,8500</td>
+                <td class="mono">3,8500</td>
+                <td class="esq">⚠ <b>abre issue</b> · item bloqueado</td>
+              </tr>
+              <tr>
+                <td class="codigo">EL-004</td>
+                <td>Grelha de caixa de inspeção</td>
+                <td class="mono">m²</td>
+                <td class="mono">0,81</td>
+                <td class="mono">0,80</td>
+                <td class="mono">0,01</td>
+                <td class="mono">0,0080</td>
+                <td class="mono">0,0100</td>
+                <td class="esq"><b>0,01 &gt; 1%</b> · o piso segura, não abre</td>
+              </tr>
+              <tr>
+                <td class="codigo">EL-005</td>
+                <td>Canteiro gramado — faixa norte</td>
+                <td class="mono">m²</td>
+                <td class="mono">96,40</td>
+                <td class="mono">92,00</td>
+                <td class="mono">—</td>
+                <td class="mono">—</td>
+                <td class="mono">—</td>
+                <td class="esq">cena aproximada · não alimenta, não compara</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="aviso atencao">
+            <b>EL-002 está exatamente na borda</b> — a diferença é 2,40 e a tolerância é 2,40. A
+            redação do ADR diz que a issue abre quando a diferença <i>passa</i> da tolerância, e
+            este pacote lê “passa” como estritamente maior: a borda <b>não</b> abre. É uma leitura,
+            não um fato — está listada no README como decisão que o gate humano confirma ou
+            inverte.
+          </div>
+          <div class="aviso">
+            <b>EL-004 mostra por que o piso de 0,01 existe.</b> Por 1% sozinho a tolerância seria
+            0,008 e uma grelha de 90 × 90 cm abriria issue por um centímetro quadrado. O piso na
+            unidade do item absorve o arredondamento de quem escreve <code>0,80</code> para
+            <code>0,81</code>. <span class="codigo">0,90 × 0,90 = 0,81</span>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0058, decisão 6 — tolerância nomeada no aceite humano de 28/08/2026.</span>
+          <span>A tolerância é constante nomeada: quem a mudar muda uma declaração.</span>
+        </div>
+      </section>
+
+      <!-- 07 -->
+      <section class="estado" id="e07">
+        <h2>
+          07 · A resolução da divergência é decisão humana registrada
+          <small>Escolher uma origem não apaga a outra. A escolha fica carimbada com o motivo.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas">
+            <div class="painel">
+              <h3>Resolver a divergência de EL-003</h3>
+              <div class="escolha">
+                <label class="ativa">
+                  <input type="radio" name="res" checked />
+                  <span>
+                    <b>Vale a cena: 401,55 m</b>
+                    <small>
+                      A legenda foi escrita antes do último ajuste do traçado. A quantidade da
+                      medição passa a ser a da cena, com a precisão derivada.
+                    </small>
+                  </span>
+                </label>
+                <label>
+                  <input type="radio" name="res" />
+                  <span>
+                    <b>Vale a legenda: 385,00 m</b>
+                    <small>
+                      A cena inclui um trecho que não é do escopo desta obra. A quantidade continua
+                      sendo a lida, e a cena fica registrada como divergente resolvida.
+                    </small>
+                  </span>
+                </label>
+                <label class="indisponivel">
+                  <input type="radio" name="res" disabled />
+                  <span>
+                    <b>Nenhuma das duas</b>
+                    <small>
+                      Indisponível: uma terceira quantidade digitada aqui seria a redigitação que a
+                      feature existe para eliminar. Se as duas estão erradas, o caminho é corrigir
+                      o croqui ou a leitura, cada um na sua jornada.
+                    </small>
+                  </span>
+                </label>
+              </div>
+              <label class="campo">
+                Motivo da decisão (obrigatório)
+                <input
+                  type="text"
+                  value="Traçado ajustado em 04/03; a legenda é da prancha anterior."
+                />
+              </label>
+              <div class="acoes">
+                <button class="primario">Registrar decisão</button>
+                <button>Manter aberta</button>
+              </div>
+              <div class="reservado">
+                <b>Reservado, desenhado para segurar lugar.</b> “Retraçar o elemento sem sair da
+                medição” — o retorno à revisão do croqui a partir da divergência. Vira real quando
+                existir a ida e volta entre as duas jornadas dentro da mesma rodada; hoje o caminho
+                é a jornada do croqui, e o lugar do botão já está modelado para recebê-lo.
+              </div>
+            </div>
+            <div class="painel">
+              <h3>Depois de resolver</h3>
+              <div class="carimbo">
+                <b>EL-003 — divergência resolvida</b>
+                <span>
+                  <b>Ana Beatriz Rangel</b> em 05/03/2026 09:14 (UTC−3) decidiu que <b>vale a
+                  cena</b>: 401,55 m.
+                </span>
+                <span>
+                  Motivo: “Traçado ajustado em 04/03; a legenda é da prancha anterior.”
+                </span>
+              </div>
+              <dl class="procedencia">
+                <dt>Quantidade do item</dt>
+                <dd><b>401,55 m</b></dd>
+                <dt>Origem</dt>
+                <dd><span class="selo cena">◇ cena aprovada</span></dd>
+                <dt>Precisão</dt>
+                <dd>derivada</dd>
+                <dt>Preterida</dt>
+                <dd>385,00 m · legenda lida em 02/03/2026 · <b>continua gravada</b></dd>
+                <dt>Issue</dt>
+                <dd>fechada por decisão humana em 05/03/2026</dd>
+              </dl>
+              <div class="aviso cena">
+                O número preterido não some. Quem abrir a memória de cálculo meses depois vê os
+                dois, a diferença, a tolerância vigente e quem decidiu — que é exatamente o que a
+                redigitação escondia.
+              </div>
+              <div class="aviso">
+                Resolver <b>não</b> é sobrescrever: nenhuma origem foi apagada, e a decisão vale
+                para este par elemento/item nesta rodada. Uma divergência nova na rodada seguinte
+                abre uma issue nova.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0058, decisão 6 — a divergência recusa e explica; quem concilia é gente.</span>
+          <span>Mesmo padrão de AMENDMENT_APPLICATION_MISMATCH e LINE_PRICE_NOT_IN_CONTRACT.</span>
+        </div>
+      </section>
+
+      <!-- 08 -->
+      <section class="estado" id="e08">
+        <h2>
+          08 · Sem identidade dos dois lados, o <code>QuantitySource</code> não resolve
+          <small>
+            Ausência de par é estado legível, nunca palpite. Número igual não é identidade.
+          </small>
+        </h2>
+        <div class="corpo">
+          <div class="linhas">
+            <div class="linha">
+              <span class="elemento ausente">— sem identidade</span>
+              <span class="desc">
+                <b>Cena:</b> polígono na camada PISO, 418,12 m² &nbsp;·&nbsp;
+                <b>Legenda:</b> “PISO EM CONCRETO — 418,12 m²”
+              </span>
+              <span class="selo">sem par</span>
+              <span class="num">não resolve</span>
+            </div>
+            <div class="linha">
+              <span class="elemento">◇ EL-009</span>
+              <span class="desc">
+                <b>Cena:</b> identidade declarada &nbsp;·&nbsp; <b>Legenda:</b> item sem
+                <code>element_ref</code>
+              </span>
+              <span class="selo">sem par</span>
+              <span class="num">não resolve</span>
+            </div>
+            <div class="linha">
+              <span class="elemento ausente">— sem identidade</span>
+              <span class="desc">
+                <b>Cena:</b> entidade sem <code>element_ref</code> &nbsp;·&nbsp;
+                <b>Legenda:</b> item com <code>EL-010</code>
+              </span>
+              <span class="selo">sem par</span>
+              <span class="num">não resolve</span>
+            </div>
+          </div>
+          <div class="aviso recusa">
+            <b>418,12 e 418,12 são o mesmo número, e não casam.</b> É o caso mais tentador do
+            pacote e o que o ADR recusa por nome: casar pelo número parece seguro até o dia em que
+            dois elementos têm a mesma área, ou a leitura tem um dígito trocado — e aí o palpite
+            erra em silêncio. Número igual não é identidade; identidade é declarada.
+          </div>
+          <div class="duas meio">
+            <div class="painel">
+              <h3>O que a tela diz, em vez de adivinhar</h3>
+              <div class="aviso neutro">
+                <b>Nenhum par.</b> Este item não tem quantidade vinda da cena porque a identidade
+                do elemento não está declarada <b>na legenda</b>. Declare-a no item de takeoff, ou
+                siga com a quantidade lida — como hoje.
+              </div>
+              <div class="aviso neutro">
+                <b>Nenhum par.</b> Este elemento da cena não tem item de legenda que o cite. A
+                quantidade existe no <code>quantitativos.csv</code> e não vai para nenhum item.
+              </div>
+              <p>
+                A mensagem diz <b>de que lado</b> falta a identidade. “Não encontrado” sem lado
+                manda a pessoa procurar nos dois.
+              </p>
+            </div>
+            <div class="painel">
+              <h3>O que a tela nunca faz</h3>
+              <ul>
+                <li>Casar pelo número igual.</li>
+                <li>Casar pelo balão mais próximo do polígono.</li>
+                <li>Casar pela ordem das linhas do CSV e da legenda.</li>
+                <li>Casar pelo rótulo de texto parecido.</li>
+                <li>Escolher “o mais provável” e marcar como provisório.</li>
+              </ul>
+              <div class="aviso">
+                É a mesma recusa do solver, que exige associação explícita
+                <code>reading_id → proposal_id</code> mesmo para leituras já confirmadas.
+                Proximidade em pixels nunca é associação implícita — e proximidade numérica
+                também não.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0058, decisão 5 — sem identidade dos dois lados, não resolve e diz isso.</span>
+          <span>Alternativa rejeitada nomeadamente: casamento por proximidade.</span>
+        </div>
+      </section>
+
+      <!-- 09 -->
+      <section class="estado" id="e09">
+        <h2>
+          09 · O controle: sem identidade declarada, as duas telas são as de hoje
+          <small>Nenhum selo, nenhuma coluna a mais, nenhum aviso. A porta só abre quando alguém a abre.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas meio">
+            <div class="painel">
+              <h3>Revisão do croqui</h3>
+              <div class="linhas">
+                <div class="linha">
+                  <span class="precisao"><span class="amostra exact"></span>exata</span>
+                  <span class="desc">019538a1-…-9b02 · polilinha · camada MEIO_FIO</span>
+                  <span class="desc">solver retangular</span>
+                  <span class="num">242,40 m</span>
+                </div>
+                <div class="linha">
+                  <span class="precisao"><span class="amostra derived"></span>derivada</span>
+                  <span class="desc">019538a1-…-6f30 · polilinha · camada MURO</span>
+                  <span class="desc">traçado em lote</span>
+                  <span class="num">58,20 m</span>
+                </div>
+              </div>
+              <p>
+                Sem o ato do estado 03, a lista é a de hoje: <code>entity_id</code>, tipo, camada,
+                precisão e proveniência. Nenhuma etiqueta <code>◇</code>, nenhuma proposta de
+                agrupamento, nenhum painel de elemento.
+              </p>
+            </div>
+            <div class="painel">
+              <h3>Medição</h3>
+              <p style="color: var(--ink)">
+                <b>Muro de fechamento — trecho leste</b> — ambíguo · 58,20 m
+              </p>
+              <p class="codigo">MURO H=2,20 — 58,20 m</p>
+              <label class="campo">
+                Quantidade
+                <span style="color: var(--atencao)">obrigatória — a legenda não é conclusiva</span>
+                <input type="text" value="58,20" />
+                <span style="font-size: 11.5px">
+                  use ponto ou vírgula; será enviada como 58.20
+                </span>
+              </label>
+              <label class="campo">
+                Unidade
+                <span style="font-size: 11.5px">em branco mantém m</span>
+                <input type="text" value="" />
+              </label>
+              <div class="acoes">
+                <button class="primario">Confirmar item</button>
+                <button>Rejeitar item</button>
+              </div>
+              <div class="aviso">
+                O campo digitado continua existindo, e continua sendo o único caminho quando não
+                há identidade — ou quando a cena só tem aproximação. A feature é uma porta que se
+                abre, não um comportamento que muda o que já funciona.
+              </div>
+            </div>
+          </div>
+          <div class="csv">quantitativos.csv (croqui sem identidade declarada)
+entity_id,layer,kind,precision,length_m,perimeter_m,area_m2
+019538a1-…-9b02,MEIO_FIO,polyline,exact,242.40,,
+019538a1-…-6f30,MURO,polyline,derived,58.20,,</div>
+          <div class="aviso">
+            Sem <code>element_ref</code> em nenhuma entidade, o arquivo sai <b>byte a byte</b> como
+            sai hoje — a coluna nova não aparece, e o digest do croqui existente não muda.
+          </div>
+        </div>
+        <div class="rodape">
+          <span>ADR-0058, decisão 8 — sem identidade declarada, tudo responde como hoje.</span>
+          <span>É o controle que torna as oito telas anteriores auditáveis.</span>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

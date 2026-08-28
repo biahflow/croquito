@@ -12,7 +12,9 @@
 > ficou nomeada no mesmo ato: o maior entre 1% do valor da legenda e 0,01 na unidade do item.
 >
 > Falta o `DESIGN_APPROVAL_REQUIRED` antes do plano — atribuir identidade de elemento é ato
-> humano novo na revisão, e a divergência é tela nova na medição.
+> humano novo na revisão, e a divergência é tela nova na medição. O
+> [pacote de design, revisão 1](mock/README.md), foi produzido em 2026-08-28 e aguarda o ato
+> humano.
 
 ## Classification
 
@@ -180,8 +182,10 @@ os dois números discordam, o sistema mostra os dois e abre uma issue — nunca 
 
 - ~~Aceite do ADR-0058~~ — **satisfeito em 2026-08-28** (Daniel Campos), com a emenda da
   decisão 4 e a tolerância da decisão 6 fixada.
-- `DESIGN_APPROVAL_REQUIRED`: pacote de design da atribuição de identidade na revisão e da
-  divergência na medição, **pendente**.
+- `DESIGN_APPROVAL_REQUIRED`: [Design Approval Package, revisão 1](mock/README.md) — a
+  atribuição de identidade na revisão e a divergência na medição, em nove estados com capturas
+  fixas. **Pendente de aprovação humana**; enquanto ele não for aprovado, a feature não sai de
+  `READY_FOR_PLANNING`.
 - Merge do PR e o aceite que fecha a [issue #102](https://github.com/biahflow/croquito/issues/102),
   num croqui real cuja quantidade chega à medição sem redigitação.
 
