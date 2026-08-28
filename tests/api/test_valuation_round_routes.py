@@ -3637,3 +3637,81 @@ def test_acoes_auditadas_da_rodada_viram_evento_com_o_codigo_estavel(tmp_path: P
         assert eventos[-1].payload_json["round_id"] == round_id
         # Nome da obra e chave do objeto são dados do cliente e não atravessam.
         assert set(eventos[-1].payload_json) == {"action", "round_id", "version"}
+
+
+def _revoke_code(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    tenant: str = _TENANT,
+    key: str = "revogacao-001",
+    **body: Any,
+) -> Any:
+    payload: dict[str, Any] = {
+        "base_version": base_version,
+        "item_id": _ITEM_CLEAR,
+        "code": _CATALOG_CODE,
+        "note": "confirmei o código errado nesta praça",
+    }
+    payload.update(body)
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/code-assignments/revocations",
+        headers=_headers(tenant, key=key),
+        json=payload,
+    )
+
+
+def test_desfazer_um_codigo_da_medicao_tira_o_par_e_reabre_o_pacote(tmp_path: Path) -> None:
+    """A medição ganha o mesmo ato do orçamento (F-045), sem o efeito de índice.
+
+    Índice de precedentes é do orçamento-base; na medição licitada não há shortlist que
+    aprenda, então revogar aqui é só o que está no nome.
+    """
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+    decided = _decide_code(client, prepared["round_id"], base_version=prepared["version"])
+    assert decided.status_code == 200, decided.text
+    closed = _close_package(client, prepared["round_id"], base_version=decided.json()["version"])
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["closed"] == 1
+
+    response = _revoke_code(client, prepared["round_id"], base_version=closed.json()["version"])
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["confirmed"] == 0
+    assert body["closed"] == 0
+    assignments = body["assignments"]
+    assert assignments["assignments"] == []
+    assert assignments["closures"] == []
+    assert [(item["item_id"], item["code"]) for item in assignments["revocations"]] == [
+        (_ITEM_CLEAR, _CATALOG_CODE)
+    ]
+    assert assignments["revocations"][0]["note"] == "confirmei o código errado nesta praça"
+    # O elemento volta a aparecer como pendente de decisão de código.
+    assert [item["item_id"] for item in body["pending_items"]] == [_ITEM_CLEAR]
+
+
+def test_desfazer_sem_par_confirmado_recusa_na_medicao(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+
+    response = _revoke_code(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["details"]["code"] == "ASSIGNMENT_REVOCATION_PAIR_UNKNOWN"
+
+
+def test_desfazer_com_versao_base_velha_conflita(tmp_path: Path) -> None:
+    """Concorrência otimista, como toda mutação da etapa: a caixa aberta não grava às cegas."""
+    client = _client(tmp_path)
+    prepared = _round_with_confirmed_item(client)
+    decided = _decide_code(client, prepared["round_id"], base_version=prepared["version"])
+    assert decided.status_code == 200, decided.text
+
+    response = _revoke_code(
+        client, prepared["round_id"], base_version=prepared["version"], key="revogacao-velha"
+    )
+
+    assert response.status_code == 409, response.text

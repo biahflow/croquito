@@ -2,7 +2,11 @@
 
 Status: Active  
 Responsável: Product  
-Última revisão: 2026-08-28 (**F-042, F-043 e F-044 `IN_PROGRESS`** — os gates humanos das
+Última revisão: 2026-08-28 (**F-045 registrada e entregue** — `READY_FOR_REVIEW`/`HIGH`, com
+**ADR-0061 aceito** e pacote de design revisão 1 **aprovado** no mesmo dia. O que a originou: a etapa de códigos não tem como desfazer um par `(item, código)` confirmado, e o único
+conserto hoje é refazer a rodada inteira. A lacuna é da F-038, que fez do par a identidade da
+decisão; a revisão 2 do pacote da F-044 apenas aumentou o preço dela, ao criar um ato que
+grava N códigos de uma vez. Registrado antes: **F-042, F-043 e F-044 `IN_PROGRESS`** — os gates humanos das
 três foram exercidos no mesmo dia em que foram registradas: Design Approval Packages
 aprovados, **ADR-0060** aceito (o acervo de canteiro tem duas origens, plataforma e tenant,
 com um contrato de leitura só), e o gate que podia **cancelar a F-044** foi cumprido — o dono
@@ -100,6 +104,7 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-042 | HIGH | IN_PROGRESS | [O canteiro sai de um acervo parametrizado, não da digitação](../features/F-042-acervo-de-parcelas-de-canteiro/feature.md) |
 | F-043 | HIGH | IN_PROGRESS | [A planilha sai no gabarito da prefeitura, com memória de cálculo](../features/F-043-planilha-no-gabarito-da-prefeitura/feature.md) |
 | F-044 | HIGH | IN_PROGRESS | [A shortlist aprende com as decisões de código já tomadas](../features/F-044-precedente-de-codigo/feature.md) |
+| F-045 | HIGH | READY_FOR_REVIEW | [Desfazer um código confirmado](../features/F-045-desfazer-codigo-confirmado/feature.md) |
 | F-032 | HIGH | READY_FOR_HUMAN_REVIEW | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) |
 | F-031 | MEDIUM | READY_FOR_HUMAN_REVIEW | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — branch isolada `feat/f-031-value-events`, não integra no MVP |
 

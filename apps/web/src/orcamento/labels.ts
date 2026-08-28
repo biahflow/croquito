@@ -1049,6 +1049,73 @@ export function fraseCodigosAusentes(codigos: readonly string[]): string {
   return `${RECUSA_CODIGO_AUSENTE} O catálogo não tem ${rotulo}: ${listarPorExtenso(codigos)}.`;
 }
 
+/* Desfazer um código confirmado (F-045) --------------------------------------
+ *
+ * A copy do pacote de design revisão 1, que a registrou como gate humano ainda aberto — o
+ * texto final é do dono do produto. A regra que atravessa estas frases: o efeito vai escrito
+ * ANTES do clique, inclusive o que ninguém adivinharia sozinho (o precedente que some).
+ */
+
+/** O botão do cartão, dentro do pacote do elemento. Ele só abre a caixa; não grava. */
+export const DESFAZER_BOTAO = "Desfazer este código";
+
+/** O título da caixa, com o código à vista: o ato é do par, não do elemento. */
+export function fraseDesfazerTitulo(code: string): string {
+  return `Desfazer ${code}`;
+}
+
+/** O campo obrigatório. "(obrigatório)" vai escrito, e não sinalizado por asterisco. */
+export const DESFAZER_MOTIVO_LABEL = "Por que este código sai do pacote? (obrigatório)";
+
+/**
+ * As três linhas do efeito. A terceira é a que ninguém adivinharia: o precedente que este
+ * código deixou para as próximas praças desaparece junto (ADR-0061 D4).
+ */
+export function frasesEfeitoDesfazer(code: string): readonly string[] {
+  return [
+    `tira ${code} do pacote deste elemento;`,
+    "registra quem desfez, quando e o motivo — a confirmação continua na revisão anterior;",
+    "apaga o precedente que este código deixou para as próximas praças.",
+  ];
+}
+
+/**
+ * O botão que grava, e o que ele muda de nome quando o pacote está fechado.
+ *
+ * Reabrir em silêncio seria a pior versão disto: a exportação passa a recusar o elemento, e
+ * quem desfez descobriria três telas adiante.
+ */
+export function fraseDesfazerConfirmar(pacoteFechado: boolean): string {
+  return pacoteFechado ? "Desfazer e reabrir o pacote" : "Desfazer o código";
+}
+
+/** O aviso do pacote fechado, por extenso e antes do clique. */
+export const DESFAZER_AVISO_PACOTE_FECHADO =
+  "O pacote deste elemento está fechado. Desfazer um código reabre o pacote: a completude " +
+  "foi afirmada sobre um pacote que vai mudar, e ela precisa ser afirmada de novo. Enquanto " +
+  "estiver aberto, a exportação do orçamento recusa este elemento.";
+
+/** Desfazer é conserto, não punição — e quem lê precisa saber disso antes de hesitar. */
+export const DESFAZER_NAO_BANE =
+  "Desfazer não bane o código: se for engano, ele pode ser confirmado de novo neste mesmo " +
+  "elemento.";
+
+export const DESFAZER_CANCELAR = "Cancelar";
+
+/** O título da lista do que foi desfeito e continua desfeito. */
+export const DESFEITOS_TITULO = "Desfeitos neste elemento";
+
+/** O selo de cada linha da lista. A palavra, não a cor, é o que distingue. */
+export const DESFEITO_SELO = "desfeito";
+
+/** O aviso do sucesso: desfez, e o que isso deixou para trás. */
+export function fraseDesfeitoGravado(code: string, reabriu: boolean): string {
+  const base = `${code} saiu do pacote deste elemento, com o motivo registrado.`;
+  return reabriu
+    ? `${base} O pacote voltou a ficar em aberto: feche-o de novo quando não houver mais serviços.`
+    : base;
+}
+
 /* Precedente de código (F-044) ------------------------------------------------
  *
  * A copy do pacote de design aprovado (revisão 1, 2026-08-28), que a registrou

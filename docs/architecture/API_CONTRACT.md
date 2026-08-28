@@ -1486,6 +1486,31 @@ a pacote já fechado é `ASSIGNMENT_ITEM_ALREADY_CLOSED`.
 Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para versão
 divergente.
 
+### `POST /v1/valuation-rounds/{round_id}/code-assignments/revocations`
+
+Entrada: `base_version`, `item_id`, `code` e `note` **obrigatória**. Desfaz um par
+`(elemento, código)` já confirmado — o ato que faltava desde que o par virou a identidade da
+decisão (ADR-0053), e sem o qual um código confirmado por engano só se consertava refazendo a
+rodada inteira.
+
+Revogar é **decisão nova**: a revisão anterior continua gravada com o par confirmado lá
+dentro, e o conjunto novo registra em `revocations` quem desfez, quando e por quê — para que
+o conjunto corrente distinga "nunca decidido" de "decidido e desfeito" sem comparar revisões
+(ADR-0061 D1/D2).
+
+**Desfazer reabre o pacote** do elemento quando ele estava fechado (D3): a completude foi
+afirmada sobre um pacote que mudou. O efeito adiante é o desejado — o boletim volta a recusar
+o elemento em `CALC_PACKAGE_NOT_CLOSED` até alguém fechar de novo.
+
+A `note` é obrigatória aqui e opcional no fechamento, de propósito: desfazer é o ato que
+alguém vai auditar depois. Par que não está confirmado (`ASSIGNMENT_REVOCATION_PAIR_UNKNOWN`,
+que é também a resposta da segunda revogação do mesmo par), item fora do takeoff
+(`ASSIGNMENT_UNKNOWN_ITEM`) e rodada do regime `1.0.0`
+(`ASSIGNMENT_REVOCATION_NOT_SUPPORTED`) devolvem `422 DOMAIN_VALIDATION_FAILED`. **Desfazer
+não bane o código**: depois disto o mesmo par volta a ser decidível.
+
+Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para versão divergente.
+
 ### `POST /v1/valuation-rounds/{round_id}/calc`
 
 Entrada: `base_version` e, opcional, `calc_matrix`. `worksite_key`, `worksite_name`,
@@ -1936,6 +1961,23 @@ a pacote já fechado é `ASSIGNMENT_ITEM_ALREADY_CLOSED`.
 Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para versão
 divergente.
 
+### `POST /v1/estimate-rounds/{round_id}/code-assignments/revocations`
+
+Entrada: `base_version`, `item_id`, `code` e `note` **obrigatória**. Irmã da revogação da
+medição, com as mesmas regras e recusas — e **um efeito a mais**, na mesma transação.
+
+A observação que o fechamento desta praça gravou no índice de precedentes para este par é
+**removida** (ADR-0061 D4). Sem isso o índice seguiria oferecendo à praça seguinte, com a
+autoridade de "você já usou isto em N praças", o código que esta praça acabou de desfazer.
+
+A compensação é cirúrgica: só a observação **desta praça** e só a de origem `round`.
+Observação **semeada** de orçamento passado registra o que outra praça fez, e um ato desta
+rodada não tem autoridade sobre ela. A consequência é declarada: a contagem de praças do
+índice cai, e um precedente pode sumir da shortlist seguinte — é o que se quer, porque ele
+deixou de ser verdade.
+
+Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para versão divergente.
+
 ### `POST /v1/estimate-rounds/{round_id}/estimate`
 
 Entrada: `base_version`, `bdi_percent` (o percentual **único** do orçamento, como texto —
@@ -2175,8 +2217,11 @@ Ele tem duas fontes:
 
 - **a rodada do próprio sistema**, como efeito de
   `POST /v1/estimate-rounds/{round_id}/code-assignments/closures`, na mesma transação. Só
-  código confirmado entra; rejeitado nunca. Não há rota para isso — fechar o pacote é o ato,
-  e o índice é consequência dele;
+  código confirmado entra; rejeitado nunca. Não há rota para gravar — fechar o pacote é o
+  ato, e o índice é consequência dele. Para **apagar**, também não há rota própria: quem
+  remove é a revogação do par
+  (`POST /v1/estimate-rounds/{round_id}/code-assignments/revocations`), pela mesma razão
+  invertida;
 - **a semeadura de orçamentos passados**, pela rota abaixo.
 
 ### `POST /v1/precedents/seed`

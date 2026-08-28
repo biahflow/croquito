@@ -760,6 +760,43 @@ p {
   margin-bottom: 8px;
 }
 
+/* Desfazer um código confirmado (F-045) ------------------------------------
+ *
+ * Nenhuma cor nova, e isso é decisão do pacote de design, não economia: a folha não tem
+ * afordância de destrutivo, e a rejeição de código — que já é recusa — usa o botão neutro.
+ * O que distingue o ato é a palavra e o aviso do efeito. O tracejado é o mesmo da lista de
+ * confirmação do precedente, pelo mesmo motivo: é uma promessa do que o clique fará.
+ */
+
+.desfazer-caixa {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.desfazer-caixa h4,
+.desfeitos h4 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+}
+
+.desfazer-caixa .campo {
+  margin-bottom: 8px;
+}
+
+.desfeitos {
+  margin-top: 12px;
+}
+
+/* O código desfeito vai RISCADO, além de dito por extenso no selo ao lado: o estado não
+   depende de notar uma diferença de cor. */
+.codigo-desfeito {
+  text-decoration: line-through;
+  color: var(--ink-secondary);
+}
+
 /* Precedente de código (F-044) ---------------------------------------------
  *
  * O bloco vive ACIMA dos blocos por fonte e não os altera: a lista de códigos dentro dele

@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F-045 — Desfazer um código confirmado</title>
+    <style>
+      /* Tokens de apps/web/src/styles.css (identidade "Grafite técnico"). O que é novo está
+         marcado como NOVO na tabela de proveniência do README. */
+      :root {
+        --bg: #fafaf8;
+        --surface: #ffffff;
+        --surface-subtle: #f4f4f1;
+        --surface-sunken: #efefeb;
+        --ink: #14181d;
+        --ink-secondary: #5b6169;
+        --muted: #9aa0a8;
+        --line: #e5e5e0;
+        --accent: #00c877;
+        --accent-hover: #00b169;
+        --accent-ink: #0e1116;
+        --accent-text: #00744a;
+        --accent-soft: #e6f6ee;
+        --accent-line: #9bdcc0;
+        --recusa: #a33d32;
+        --atencao: #7c5210;
+        /* NOVO — família do precedente. Índigo, escolhido por não colidir com nenhum
+           significado já em uso: verde = confirmado, âmbar = atenção, vermelho = recusa,
+           cinza = observação da máquina. */
+        --precedente: #4a4a9c;
+        --precedente-soft: #eeeef8;
+        --precedente-line: #c2c2e4;
+        --precedente-ink: #2f2f6b;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }
+      header.folha {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 32px 8px;
+      }
+      header.folha h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      header.folha p {
+        margin: 0 0 6px;
+        max-width: 78ch;
+        color: var(--ink-secondary);
+        font-size: 14px;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 16px 32px 64px;
+        display: grid;
+        gap: 28px;
+      }
+      section.estado {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      section.estado > h2 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+      }
+      section.estado > h2 small {
+        display: block;
+        margin-top: 2px;
+        font-size: 12px;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--muted);
+      }
+      .corpo {
+        padding: 16px;
+        display: grid;
+        gap: 14px;
+      }
+      .duas {
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 16px;
+        align-items: start;
+      }
+      /* Duas colunas de peso igual: o estado 6 põe lado a lado o bloco e a confirmação, e
+         nenhum dos dois é coluna auxiliar. */
+      .duas.iguais {
+        grid-template-columns: 1fr 1fr;
+      }
+      .painel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+        background: var(--surface);
+      }
+      .painel h3 {
+        margin: 0;
+        font-size: 14px;
+      }
+      p,
+      li {
+        font-size: 13px;
+        color: var(--ink-secondary);
+        margin: 0;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
+      .selo {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+        width: fit-content;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--surface-subtle);
+        font-size: 11px;
+        color: var(--ink-secondary);
+      }
+      .selo.precedente {
+        border-color: var(--precedente-line);
+        background: #ffffff;
+        color: var(--precedente);
+      }
+      /* O código que não veio em todas as praças do rótulo. Âmbar, o mesmo de
+         `.aviso.atencao` — atenção, não recusa —, e a contagem vai ESCRITA dentro. */
+      .selo.parcial {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .selo.confirmado {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+        color: var(--accent-text);
+      }
+      .selo.fonte {
+        font-variant-numeric: tabular-nums;
+      }
+      .bloco-fonte {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .bloco-fonte > .cabeca {
+        padding: 7px 11px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .bloco-fonte.precedente > .cabeca {
+        background: var(--precedente-soft);
+        color: var(--precedente-ink);
+        border-bottom-color: var(--precedente-line);
+        font-weight: 600;
+      }
+      .bloco-fonte.precedente {
+        border-color: var(--precedente-line);
+        border-left: 3px solid var(--precedente);
+      }
+      .codigos {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+      }
+      .codigos li {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        display: grid;
+        gap: 5px;
+      }
+      .codigos li:last-child {
+        border-bottom: 0;
+      }
+      .codigos .topo {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .codigos .codigo {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .codigos .preco {
+        margin-left: auto;
+        font-size: 12.5px;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .codigos .descricao {
+        font-size: 12.5px;
+        color: var(--ink-secondary);
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      button.primario {
+        background: var(--accent);
+        border-color: var(--accent-hover);
+        color: var(--accent-ink);
+        font-weight: 600;
+      }
+      button.pacote {
+        background: #ffffff;
+        border-color: var(--precedente-line);
+        color: var(--precedente-ink);
+        font-weight: 600;
+      }
+      button.miudo {
+        font-size: 12px;
+        padding: 5px 9px;
+      }
+      .acoes {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .acoes .empurra {
+        margin-left: auto;
+      }
+      .aviso {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 11px;
+        font-size: 12px;
+        background: var(--surface-subtle);
+        color: var(--ink-secondary);
+      }
+      .aviso.precedente {
+        border-color: var(--precedente-line);
+        background: var(--precedente-soft);
+        color: var(--precedente-ink);
+      }
+      .aviso.atencao {
+        border-color: #e2c79a;
+        background: #fdf5e8;
+        color: var(--atencao);
+      }
+      .aviso strong {
+        color: inherit;
+      }
+      .item-legenda {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        display: grid;
+        gap: 4px;
+        background: var(--surface);
+      }
+      .item-legenda.selecionado {
+        border-color: var(--accent-line);
+        background: var(--accent-soft);
+      }
+      .item-legenda .rotulo {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .pacote-lista {
+        display: grid;
+        gap: 6px;
+        padding: 10px 12px;
+        border: 1px dashed var(--precedente-line);
+        border-radius: 6px;
+        background: #ffffff;
+      }
+      .pacote-lista .linha {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-size: 12.5px;
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+      .pacote-lista .linha .desc {
+        color: var(--ink-secondary);
+        font-variant-numeric: normal;
+      }
+      .nota-implementador {
+        font-size: 12px;
+        color: var(--muted);
+        padding: 0 16px 14px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 7px 9px;
+        border-bottom: 1px solid var(--line);
+      }
+      thead th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        color: var(--ink-secondary);
+        background: var(--surface-subtle);
+      }
+    
+      /* Nenhuma cor nova. Desfazer se distingue pela PALAVRA e pelo aviso do efeito, do
+         mesmo jeito que "Rejeitar com nota" se distingue hoje — a folha não tem afordância
+         de destrutivo, e inventar uma aqui criaria vocabulário que o resto da tela não fala. */
+      .campo {
+        display: grid;
+        gap: 4px;
+      }
+      .campo label {
+        font-size: 12px;
+        color: var(--ink-secondary);
+        font-weight: 600;
+      }
+      .campo textarea {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        min-height: 58px;
+        background: var(--surface);
+        color: var(--ink);
+      }
+      .risco {
+        text-decoration: line-through;
+        color: var(--muted);
+      }
+</style>
+  </head>
+  <body>
+    <header class="folha">
+      <h1>F-045 — Desfazer um código confirmado</h1>
+      <p>
+        Design Approval Package, revisão 1. Superfície na etapa <strong>Códigos</strong>: um ato
+        que retira um par <code>(elemento, código)</code> já confirmado, com justificativa, e
+        diz o que a retirada leva junto.
+      </p>
+      <p>
+        <strong>Este pacote está atrás de um gate anterior.</strong> A semântica da revogação
+        está no <strong>ADR-0061</strong>, ainda <code>Proposed</code>: revogar é decisão nova,
+        reabre o pacote do elemento e compensa o índice de precedentes. Aprovar este pacote
+        decide a <em>forma</em>; a semântica é do ADR.
+      </p>
+      <p>Números, rótulos e códigos são <strong>sintéticos</strong>.</p>
+    </header>
+
+    <main>
+      <section class="estado">
+        <h2>
+          1 — Hoje: o pacote do elemento não tem saída
+          <small>Confirmado é para sempre dentro da rodada; o único conserto é recomeçar a praça.</small>
+        </h2>
+        <div class="corpo">
+          <div class="painel">
+            <h3>Pacote de serviços deste elemento</h3>
+            <p>Pacote em aberto, com 3 serviços. Ele só conta como resolvido depois do fechamento.</p>
+            <ul class="codigos">
+              <li>
+                <div class="topo">
+                  <span class="codigo">BP09100050(B)</span>
+                  <span class="selo confirmado">contribuição autorada · quantidade do elemento</span>
+                  <span class="preco">R$ 118,42/m²</span>
+                </div>
+                <div class="acoes"><button class="miudo">Autorar contribuição</button></div>
+              </li>
+              <li>
+                <div class="topo">
+                  <span class="codigo">ET39050109(/)</span>
+                  <span class="selo confirmado">contribuição autorada · quantidade do elemento</span>
+                  <span class="preco">R$ 24,90/m²</span>
+                </div>
+                <div class="acoes"><button class="miudo">Autorar contribuição</button></div>
+              </li>
+              <li>
+                <div class="topo">
+                  <span class="codigo">ES11150102(/)</span>
+                  <span class="selo">sem contribuição</span>
+                  <span class="preco">R$ 41,80/m²</span>
+                </div>
+                <div class="acoes"><button class="miudo">Autorar contribuição</button></div>
+              </li>
+            </ul>
+            <div class="aviso">
+              O terceiro código entrou junto no aceite do precedente e não devia estar aqui. Não
+              há botão nenhum que o tire: a decisão é do par <code>(elemento, código)</code>, e a
+              rota recusa re-decidir par já decidido.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          2 — Desfazer, com o motivo escrito e o efeito à vista
+          <small>O ato custa uma frase — é ela que preserva a seriedade da confirmação.</small>
+        </h2>
+        <div class="corpo">
+          <div class="duas iguais">
+            <div class="painel">
+              <h3>Pacote de serviços deste elemento</h3>
+              <ul class="codigos">
+                <li>
+                  <div class="topo">
+                    <span class="codigo">ES11150102(/)</span>
+                    <span class="preco">R$ 41,80/m²</span>
+                  </div>
+                  <span class="descricao">Junta de dilatação com selante elastomérico</span>
+                  <div class="acoes">
+                    <button class="miudo">Autorar contribuição</button>
+                    <button class="miudo">Desfazer este código</button>
+                  </div>
+                </li>
+              </ul>
+            </div>
+            <div class="painel">
+              <h3>Desfazer <code>ES11150102(/)</code></h3>
+              <div class="campo">
+                <label for="motivo">Por que este código sai do pacote? (obrigatório)</label>
+                <textarea id="motivo">Entrou junto no aceite do precedente; a praça não tem junta de dilatação.</textarea>
+              </div>
+              <div class="aviso atencao">
+                O que este clique faz:
+                <ul>
+                  <li>tira <code>ES11150102(/)</code> do pacote deste elemento;</li>
+                  <li>registra quem desfez, quando e o motivo — a confirmação continua na revisão anterior;</li>
+                  <li>apaga o precedente que este código deixou para as próximas praças.</li>
+                </ul>
+              </div>
+              <div class="acoes">
+                <button>Cancelar</button>
+                <button class="empurra">Desfazer o código</button>
+              </div>
+              <p>
+                Desfazer não bane o código: se for engano, ele pode ser confirmado de novo no
+                mesmo elemento.
+              </p>
+            </div>
+          </div>
+        </div>
+        <p class="nota-implementador">
+          O botão que grava é o mesmo botão neutro de "Rejeitar com nota": desfazer não veste
+          o verde do ato de confirmar, e também não ganha vermelho próprio — a folha não tem
+          afordância de destrutivo, e o que distingue o ato é a palavra e o aviso do efeito. A
+          justificativa é campo obrigatório, como na rejeição de código.
+        </p>
+      </section>
+
+      <section class="estado">
+        <h2>
+          3 — Pacote fechado: desfazer reabre, e isso vai escrito antes do clique
+          <small>Reabrir em silêncio seria a pior versão disto: o boletim recusa pacote aberto.</small>
+        </h2>
+        <div class="corpo">
+          <div class="painel">
+            <h3>Desfazer <code>ET39050109(/)</code></h3>
+            <div class="aviso atencao">
+              O pacote deste elemento está <strong>fechado</strong>. Desfazer um código
+              <strong>reabre o pacote</strong>: a completude foi afirmada sobre um pacote que
+              vai mudar, e ela precisa ser afirmada de novo. Enquanto estiver aberto, a
+              exportação do orçamento recusa este elemento.
+            </div>
+            <div class="acoes">
+              <button>Cancelar</button>
+              <button class="empurra">Desfazer e reabrir o pacote</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          4 — Depois: o que foi desfeito continua à vista
+          <small>"Nunca decidido" e "decidido e desfeito" não podem parecer a mesma coisa.</small>
+        </h2>
+        <div class="corpo">
+          <div class="painel">
+            <h3>Pacote de serviços deste elemento</h3>
+            <p>Pacote em aberto, com 2 serviços.</p>
+            <ul class="codigos">
+              <li>
+                <div class="topo">
+                  <span class="codigo">BP09100050(B)</span>
+                  <span class="preco">R$ 118,42/m²</span>
+                </div>
+              </li>
+              <li>
+                <div class="topo">
+                  <span class="codigo">ET39050109(/)</span>
+                  <span class="preco">R$ 24,90/m²</span>
+                </div>
+              </li>
+            </ul>
+            <h3>Desfeitos neste elemento</h3>
+            <ul class="codigos">
+              <li>
+                <div class="topo">
+                  <span class="codigo risco">ES11150102(/)</span>
+                  <span class="selo">desfeito</span>
+                </div>
+                <span class="descricao">
+                  “Entrou junto no aceite do precedente; a praça não tem junta de dilatação.” ·
+                  orçamentista · 28/08/2026 16:40
+                </span>
+              </li>
+            </ul>
+          </div>
+          <div class="aviso">
+            A lista de desfeitos é do conjunto corrente, e não da auditoria: ela responde “por
+            que este elemento não tem mais aquele código?” sem obrigar ninguém a comparar duas
+            revisões.
+          </div>
+        </div>
+      </section>
+
+      <section class="estado">
+        <h2>
+          5 — As recusas, em português e sem beco
+          <small>Cada uma diz o que fazer em seguida.</small>
+        </h2>
+        <div class="corpo">
+          <table>
+            <thead>
+              <tr>
+                <th>Situação</th>
+                <th>O que a tela diz</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Motivo em branco</td>
+                <td>Escreva por que este código sai do pacote. Desfazer é ato que fica registrado.</td>
+              </tr>
+              <tr>
+                <td>Código já desfeito por outra aba</td>
+                <td>Este código já foi desfeito nesta rodada. Recarregue para ver o pacote atual.</td>
+              </tr>
+              <tr>
+                <td>Rodada mudou enquanto a caixa estava aberta</td>
+                <td>A rodada avançou desde que você abriu esta tela. Recarregue e refaça o ato.</td>
+              </tr>
+              <tr>
+                <td>Rodada antiga, de um código por elemento</td>
+                <td>Esta rodada é de antes do pacote de serviços; nela um elemento tem um código só, e desfazer não se aplica.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

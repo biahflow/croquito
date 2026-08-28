@@ -295,6 +295,7 @@ def _round_ready_for_codes(
         "version": version,
         "catalog_sha256": catalog_sha256,
         "tenant": tenant,
+        "worksite_key": worksite_key,
     }
 
 
@@ -1317,3 +1318,143 @@ def test_lote_com_base_version_defasada_e_409_e_nao_grava(tmp_path: Path) -> Non
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "REVISION_CONFLICT"
     assert _assignment_revisions(client, state["round_id"]) == []
+
+
+# --- F-045: desfazer um código confirmado, e o índice que vem junto -------------------------
+
+
+def _revoke(
+    client: TestClient,
+    state: dict[str, Any],
+    *,
+    item_id: str,
+    code: str,
+    key: str,
+    note: str = "entrou junto no aceite do precedente e não é desta praça",
+) -> Any:
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/code-assignments/revocations",
+        headers=_headers(state["tenant"], key=key),
+        json={
+            "base_version": state["version"],
+            "item_id": item_id,
+            "code": code,
+            "note": note,
+        },
+    )
+    if response.status_code == 200:
+        state["version"] = response.json()["version"]
+    return response
+
+
+def test_desfazer_um_codigo_apaga_o_precedente_que_ele_deixou(tmp_path: Path) -> None:
+    """A compensação do ADR-0061 D4: o índice não pode ensinar o que esta praça desfez."""
+    client = _client(tmp_path)
+    state = _round_with_closed_piso(client)
+    assert [row.code for row in _observations(client)] == [_PISO_CODE, _TELA_CODE]
+
+    response = _revoke(client, state, item_id=_ITEM_PISO, code=_TELA_CODE, key="desfaz-tela")
+
+    assert response.status_code == 200, response.text
+    # Só a observação do par desfeito sai; a do outro código do pacote continua.
+    assert [row.code for row in _observations(client)] == [_PISO_CODE]
+
+
+def test_desfazer_reabre_o_pacote_do_elemento(tmp_path: Path) -> None:
+    """A completude foi afirmada sobre um pacote que mudou (D3)."""
+    client = _client(tmp_path)
+    state = _round_with_closed_piso(client)
+
+    response = _revoke(client, state, item_id=_ITEM_PISO, code=_TELA_CODE, key="desfaz-tela")
+
+    document = response.json()["assignments"]
+    assert document["closures"] == []
+    assert [assignment["code"] for assignment in document["assignments"]] == [_PISO_CODE]
+    registro = document["revocations"]
+    assert [(item["item_id"], item["code"]) for item in registro] == [(_ITEM_PISO, _TELA_CODE)]
+    assert registro[0]["note"] == "entrou junto no aceite do precedente e não é desta praça"
+    assert registro[0]["revocation_id"].startswith("vr_")
+
+
+def test_a_revisao_anterior_continua_com_o_par_confirmado(tmp_path: Path) -> None:
+    """Desfazer acrescenta um ato ao presente; não reescreve o passado (D1)."""
+    client = _client(tmp_path)
+    state = _round_with_closed_piso(client)
+    antes = _assignment_revisions(client, state["round_id"])
+
+    _revoke(client, state, item_id=_ITEM_PISO, code=_TELA_CODE, key="desfaz-tela")
+
+    depois = _assignment_revisions(client, state["round_id"])
+    assert len(depois) == len(antes) + 1
+    anterior = cast(dict[str, Any], depois[-2].code_assignments_json)
+    assert [assignment["code"] for assignment in anterior["assignments"]] == [
+        _PISO_CODE,
+        _TELA_CODE,
+    ]
+
+
+def test_o_mesmo_codigo_pode_ser_confirmado_de_novo_depois_de_desfeito(
+    tmp_path: Path,
+) -> None:
+    """Desfazer é conserto, não punição (D5) — e refechar reindexa o par."""
+    client = _client(tmp_path)
+    state = _round_with_closed_piso(client)
+    _revoke(client, state, item_id=_ITEM_PISO, code=_TELA_CODE, key="desfaz-tela")
+
+    _decide_code(client, state, item_id=_ITEM_PISO, code=_TELA_CODE, key="reconfirma-tela")
+    fechado = _close_package(client, state, item_id=_ITEM_PISO, key="refecha-piso")
+
+    assert fechado.status_code == 200, fechado.text
+    assert sorted(row.code for row in _observations(client)) == sorted([_PISO_CODE, _TELA_CODE])
+
+
+def test_desfazer_o_que_nao_esta_confirmado_e_recusa_nomeada(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    state = _round_with_closed_piso(client)
+
+    # O par não existe: o código está no catálogo e confirmado noutro elemento, não neste.
+    response = _revoke(client, state, item_id=_ITEM_ALAMBRADO, code=_PISO_CODE, key="desfaz-nada")
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["details"]["code"] == "ASSIGNMENT_REVOCATION_PAIR_UNKNOWN"
+
+
+def test_desfazer_duas_vezes_o_mesmo_par_recusa_na_segunda(tmp_path: Path) -> None:
+    """Chaves de idempotência diferentes são atos diferentes: o segundo não tem o que desfazer."""
+    client = _client(tmp_path)
+    state = _round_with_closed_piso(client)
+    primeiro = _revoke(client, state, item_id=_ITEM_PISO, code=_TELA_CODE, key="desfaz-1")
+    assert primeiro.status_code == 200, primeiro.text
+
+    segundo = _revoke(client, state, item_id=_ITEM_PISO, code=_TELA_CODE, key="desfaz-2")
+
+    assert segundo.status_code == 422, segundo.text
+    assert segundo.json()["detail"]["details"]["code"] == "ASSIGNMENT_REVOCATION_PAIR_UNKNOWN"
+
+
+def test_desfazer_sem_motivo_escrito_recusa(tmp_path: Path) -> None:
+    """A nota é obrigatória aqui e opcional no fechamento, de propósito."""
+    client = _client(tmp_path)
+    state = _round_with_closed_piso(client)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/code-assignments/revocations",
+        headers=_headers(state["tenant"], key="sem-motivo"),
+        json={"base_version": state["version"], "item_id": _ITEM_PISO, "code": _TELA_CODE},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_desfazer_nao_toca_o_precedente_de_outra_praca(tmp_path: Path) -> None:
+    """A compensação é desta praça: o engano de uma não desmente o que a outra fez."""
+    client = _client(tmp_path)
+    outra = _round_with_closed_piso(client, worksite_key="praca-sintetica-sul", suffix="b")
+    state = _round_with_closed_piso(client)
+    assert len({row.worksite_key for row in _observations(client)}) == 2
+
+    _revoke(client, state, item_id=_ITEM_PISO, code=_TELA_CODE, key="desfaz-tela")
+
+    restantes = {(row.worksite_key, row.code) for row in _observations(client)}
+    assert (outra["worksite_key"], _TELA_CODE) in restantes
+    assert (state["worksite_key"], _TELA_CODE) not in restantes

@@ -620,6 +620,15 @@ def _write_paths(round_id: str) -> list[tuple[str, dict[str, Any]]]:
             f"/v1/estimate-rounds/{round_id}/code-assignments/closures",
             {"base_version": 1, "item_id": _ITEM_FIRST},
         ),
+        (
+            f"/v1/estimate-rounds/{round_id}/code-assignments/revocations",
+            {
+                "base_version": 1,
+                "item_id": _ITEM_FIRST,
+                "code": _SCO_CODE,
+                "note": "desfazer também é ato de orçamentista",
+            },
+        ),
         (f"/v1/estimate-rounds/{round_id}/estimate", {"base_version": 1, "bdi_percent": "25.00"}),
         (f"/v1/estimate-rounds/{round_id}/estimate/export", {"base_version": 1}),
         (
@@ -3459,3 +3468,54 @@ def test_fora_do_regime_omitir_o_bdi_recusa(tmp_path: Path) -> None:
 
     assert recusa.status_code == 422, recusa.text
     assert recusa.json()["code"] == "ESTIMATE_BDI_INVALID"
+
+
+def test_desfazer_depois_da_aprovacao_e_recusa_provisoria(tmp_path: Path) -> None:
+    """Recusa fail-closed enquanto o unknown 1 da F-045 não é decidido pelo dono.
+
+    Revogar não remonta o orçamento: o digest que a aprovação nominal amarra continuaria
+    conferindo enquanto o conjunto de códigos por baixo dela mudou, e o portão de exportação
+    — que leria a divergência como `APPROVAL_CONTENT_MISMATCH` — não veria nada.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+    built = _build_estimate(client, state["round_id"], base_version=state["version"], key="monta")
+    assert built.status_code == 200, built.text
+    approved = _approve_estimate(
+        client, state["round_id"], base_version=built.json()["version"], key="aprova"
+    )
+    assert approved.status_code == 200, approved.text
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/code-assignments/revocations",
+        headers=_headers(key="desfaz-depois"),
+        json={
+            "base_version": approved.json()["version"],
+            "item_id": _ITEM_FIRST,
+            "code": _SCO_CODE,
+            "note": "tentativa de desfazer depois da assinatura",
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "ASSIGNMENT_REVOCATION_AFTER_APPROVAL"
+
+
+def test_desfazer_antes_da_aprovacao_passa(tmp_path: Path) -> None:
+    """A recusa é da aprovação vigente, não do orçamento montado: sem assinatura, desfaz."""
+    client = _client(tmp_path)
+    state = _round_ready_for_estimate(client)
+
+    response = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/code-assignments/revocations",
+        headers=_headers(key="desfaz-antes"),
+        json={
+            "base_version": state["version"],
+            "item_id": _ITEM_FIRST,
+            "code": _SCO_CODE,
+            "note": "confirmei o código errado neste elemento",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["assignments"]["revocations"][0]["code"] == _SCO_CODE

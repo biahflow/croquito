@@ -59,6 +59,61 @@
       "title": "CodeAssignment",
       "type": "object"
     },
+    "CodeAssignmentRevocation": {
+      "additionalProperties": false,
+      "description": "O registro do que foi desfeito, no conjunto CORRENTE.\n\nA prova de que o par existiu está na revisão anterior, que continua gravada — mas quem lê\no conjunto corrente precisa distinguir \"nunca foi decidido\" de \"foi decidido e desfeito\"\nsem ter de comparar revisões. É essa distinção que uma auditoria procura, e é por isso\nque o registro fica aqui em vez de só no histórico (ADR-0061 D2).\n\nUm par revogado pode ser confirmado outra vez (D5). Quando isso acontece, ele aparece nos\ndois lugares — em `assignments`, corrente, e aqui, como o que já foi desfeito uma vez —, e\né a leitura que decide o que mostrar. Apagar o registro na reconfirmação perderia o ato.",
+      "properties": {
+        "code": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "item_id": {
+          "pattern": "^ti_[a-f0-9]{16}$",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "note": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Note",
+          "type": "string"
+        },
+        "reviewer_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Reviewer Id",
+          "type": "string"
+        },
+        "reviewer_role": {
+          "const": "orcamentista",
+          "title": "Reviewer Role",
+          "type": "string"
+        },
+        "revocation_id": {
+          "pattern": "^vr_[a-f0-9]{16}$",
+          "title": "Revocation Id",
+          "type": "string"
+        },
+        "revoked_at": {
+          "format": "date-time",
+          "title": "Revoked At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "code",
+        "revocation_id",
+        "reviewer_id",
+        "reviewer_role",
+        "revoked_at",
+        "note"
+      ],
+      "title": "CodeAssignmentRevocation",
+      "type": "object"
+    },
     "ItemPackageClosure": {
       "additionalProperties": false,
       "description": "Ato humano que declara o pacote de serviços de um elemento COMPLETO.\n\nExiste porque, com a cardinalidade N:N, a presença de um assignment deixou de responder\n\"este item acabou?\". Um elemento com um de seis códigos pareceria pronto e produziria\nboletim parcial em silêncio; o fechamento é o que separa \"resolvido\" de \"pela metade\".\nNunca é inferido da contagem de códigos — ninguém, além da orçamentista, sabe quantos\nserviços um elemento dispara.",
@@ -189,6 +244,13 @@
       "minLength": 1,
       "title": "Plate Id",
       "type": "string"
+    },
+    "revocations": {
+      "items": {
+        "$ref": "#/$defs/CodeAssignmentRevocation"
+      },
+      "title": "Revocations",
+      "type": "array"
     },
     "safety_notes": {
       "items": {

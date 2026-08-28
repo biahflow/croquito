@@ -195,11 +195,13 @@ from croquito_valuation.amendment_dossier import AmendmentDossier, build_amendme
 from croquito_valuation.assignment import (
     CodeAssignmentBatch,
     CodeAssignmentInput,
+    CodeAssignmentRevocationInput,
     CodeAssignmentSet,
     CodeSuggestionSet,
     ItemPackageClosureInput,
     apply_code_assignments,
     apply_code_assignments_over_cascade,
+    apply_code_revocation,
 )
 from croquito_valuation.calc import build_worksite_valuation
 from croquito_valuation.calc_matrix import CalcMatrix
@@ -220,7 +222,7 @@ from croquito_valuation.models import (
     PriceOrigin,
     Valuation,
 )
-from croquito_valuation.precedent import PrecedentSeedPacket
+from croquito_valuation.precedent import PRICE_SOURCE_UNDECLARED, PrecedentSeedPacket
 from croquito_valuation.site_setup import (
     SiteSetupKit,
     apply_site_setup_kit,
@@ -1816,6 +1818,24 @@ class ItemPackageClosureRequest(ApiModel):
     base_version: int = Field(ge=1)
     item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
     note: str | None = Field(default=None, min_length=1, max_length=500)
+
+
+class CodeAssignmentRevocationRequest(ApiModel):
+    """Retirada de um par `(elemento, código)` já confirmado (F-045).
+
+    Serve às duas jornadas: desfazer não cita fonte de preço — a fonte é a que o par
+    confirmado já carrega, e pedi-la de novo deixaria o cliente afirmar algo que o servidor
+    sabe melhor.
+
+    A `note` é **obrigatória**, ao contrário da do fechamento. Fechar é o curso normal do
+    trabalho; desfazer é o ato que alguém vai auditar depois, e a frase escrita é o que
+    separa o conserto do descuido.
+    """
+
+    base_version: int = Field(ge=1)
+    item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
+    code: str = Field(min_length=1, max_length=30)
+    note: str = Field(min_length=1, max_length=500)
 
 
 class CodeAssignmentDecisionRequest(ApiModel):
@@ -12142,6 +12162,114 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         return response
 
     @application.post(
+        "/v1/valuation-rounds/{round_id}/code-assignments/revocations",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def revoke_valuation_item_code(
+        round_id: UUID,
+        payload: CodeAssignmentRevocationRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Desfaz um código confirmado por engano, sem refazer a rodada (F-045, ADR-0061).
+
+        Até esta rota, a etapa só sabia avançar: a identidade da decisão é o par
+        `(item, código)`, re-decidir um par é recusado, e não há rollback de revisão em lugar
+        nenhum da `/v1`. Um código confirmado errado custava a praça inteira.
+
+        Revogar é **decisão nova**, e não edição do passado: a revisão anterior continua
+        gravada com o par confirmado lá dentro, e o conjunto novo registra em `revocations`
+        quem desfez, quando e por quê — para que quem lê o conjunto corrente distinga "nunca
+        decidido" de "decidido e desfeito" sem comparar revisões.
+
+        **Desfazer reabre o pacote** do elemento, quando ele estava fechado: a completude foi
+        afirmada sobre um pacote que acabou de mudar. O efeito adiante é o desejado — o
+        boletim volta a recusar aquele elemento até alguém fechar de novo.
+
+        Par que não está confirmado, item fora do takeoff e rodada do regime antigo continuam
+        sendo recusa do domínio, que esta rota não reimplementa.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.code-revocations:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        previous = assignments_of(revision)
+        if previous is None:
+            # Sem conjunto anterior não há par para desfazer. O `exception_handler` de
+            # `ValuationValidationError` transforma isto no mesmo `problem+json` que o
+            # domínio produziria, com o mesmo código estável.
+            raise ValuationValidationError(
+                "ASSIGNMENT_REVOCATION_PAIR_UNKNOWN",
+                "esta rodada ainda não tem código confirmado para desfazer",
+                {"item_id": payload.item_id, "code": payload.code},
+            )
+        try:
+            revocation = CodeAssignmentRevocationInput(
+                item_id=payload.item_id,
+                code=payload.code,
+                reviewer_id=principal.subject,
+                reviewer_role=VALUATION_REVIEWER_ROLE,
+                revoked_at=datetime.now(UTC),
+                note=payload.note,
+            )
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+        assignments = apply_code_revocation(packet, revocation, previous)
+
+        document = assignments.model_dump(mode="json")
+        append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_assignments_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = _assignments_payload(
+            record, packet=packet, assignments=assignments, document=document
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_ITEM_CODE_REVOKED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_ITEM_CODE_REVOKED",
+            record=record,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.post(
         "/v1/valuation-rounds/{round_id}/calc",
         response_model=dict[str, Any],
         tags=["valuation"],
@@ -14482,6 +14610,139 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             principal=principal,
             event_type=EVENT_ESTIMATE_ACTION_RECORDED,
             action="ESTIMATE_ITEM_PACKAGE_CLOSED",
+            record=record,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.post(
+        "/v1/estimate-rounds/{round_id}/code-assignments/revocations",
+        response_model=dict[str, Any],
+        tags=["estimate"],
+    )
+    async def revoke_estimate_item_code(
+        round_id: UUID,
+        payload: CodeAssignmentRevocationRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Desfaz um código confirmado por engano — e apaga o precedente que ele deixou.
+
+        Irmã de `revoke_valuation_item_code`, com **um efeito a mais**, na mesma transação: a
+        observação que o fechamento desta praça gravou no índice de precedentes para este par
+        é removida (F-044 fonte A, ADR-0061 D4). Sem isso o índice seguiria ensinando à praça
+        seguinte o código que esta praça desfez, com a autoridade de "você já fez assim" —
+        que é o argumento mais forte que a shortlist tem.
+
+        A compensação é cirúrgica: só a observação **desta praça** e só a de origem `round`.
+        A contagem de praças do índice cai, e um precedente pode desaparecer da shortlist da
+        próxima praça — que é exatamente o que se quer, porque ele deixou de ser verdade.
+
+        Observação **semeada** de orçamento passado não é tocada: ela registra o que outra
+        praça fez, e um ato desta rodada não tem autoridade sobre aquele arquivo.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"estimate-rounds.code-revocations:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_estimate_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        estimate_rounds.require_base_version(record, payload.base_version)
+        revision = estimate_rounds.head_revision(
+            session, round_id=record.id, tenant_id=principal.tenant_id
+        )
+        packet = estimate_rounds.require_takeoff_packet(revision)
+        previous = estimate_rounds.assignments_of(revision)
+        if previous is None:
+            raise ValuationValidationError(
+                "ASSIGNMENT_REVOCATION_PAIR_UNKNOWN",
+                "esta rodada ainda não tem código confirmado para desfazer",
+                {"item_id": payload.item_id, "code": payload.code},
+            )
+        # Recusa PROVISÓRIA e fail-closed (unknown 1 da F-045, decisão do dono ainda aberta):
+        # revogar não remonta o orçamento, então o digest que a aprovação amarra continuaria
+        # conferindo enquanto o conjunto de códigos por baixo dela mudou — e o portão de
+        # exportação, que leria a divergência, não veria nada.
+        if estimate_rounds.estimate_is_approved(revision):
+            raise estimate_rounds.revocation_after_approval()
+        # A fonte de preço do par sai do assignment que está sendo desfeito, e é lida ANTES
+        # de ele deixar o conjunto: é ela a chave do índice, e pedi-la ao cliente deixaria a
+        # tela afirmar algo que o servidor já sabe.
+        price_source = next(
+            (
+                assignment.catalog_sha256 or PRICE_SOURCE_UNDECLARED
+                for assignment in previous.assignments
+                if assignment.item_id == payload.item_id
+                and assignment.status == "confirmed"
+                and assignment.code == payload.code
+            ),
+            None,
+        )
+        try:
+            revocation = CodeAssignmentRevocationInput(
+                item_id=payload.item_id,
+                code=payload.code,
+                reviewer_id=principal.subject,
+                reviewer_role=VALUATION_REVIEWER_ROLE,
+                revoked_at=datetime.now(UTC),
+                note=payload.note,
+            )
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+        assignments = apply_code_revocation(packet, revocation, previous)
+
+        document = assignments.model_dump(mode="json")
+        estimate_rounds.append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"code_assignments_json": document},
+        )
+        if price_source is not None:
+            precedents.revoke_closure_precedent(
+                session,
+                tenant_id=principal.tenant_id,
+                worksite_key=record.worksite_key,
+                packet=packet,
+                item_id=payload.item_id,
+                code=payload.code,
+                price_source=price_source,
+            )
+        record.updated_at = datetime.now(UTC)
+        response = _estimate_assignments_payload(
+            record, packet=packet, assignments=assignments, document=document
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ESTIMATE_ITEM_CODE_REVOKED",
+            resource_type="estimate_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_ESTIMATE_ACTION_RECORDED,
+            action="ESTIMATE_ITEM_CODE_REVOKED",
             record=record,
         )
         _commit_valuation_revision(session)

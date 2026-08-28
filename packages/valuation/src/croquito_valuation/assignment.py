@@ -920,6 +920,60 @@ class CodeAssignmentInput(ValuationContractModel):
         return self
 
 
+class CodeAssignmentRevocationInput(ValuationContractModel):
+    """Retirada de um par `(item, código)` já confirmado — o ato que a etapa não tinha.
+
+    Desde o ADR-0053 a identidade da decisão é o par, e até a F-045 nada o desfazia: um
+    código confirmado por engano só se consertava refazendo a rodada inteira. Este input é o
+    ato inverso, e é ato PRÓPRIO — não uma terceira `action` de `CodeAssignmentInput`, porque
+    revogar não decide nada sobre o código: decide sobre uma decisão.
+
+    `note` é **obrigatória**, ao contrário de toda outra nota desta etapa. Desfazer é o ato
+    que alguém vai auditar depois, e é a frase escrita que separa o conserto do descuido
+    (ADR-0061 D1).
+    """
+
+    item_id: str = Field(pattern=_ITEM_ID_PATTERN)
+    code: str = Field(min_length=1, max_length=64)
+    reviewer_id: str = Field(min_length=1, max_length=120)
+    reviewer_role: Literal["orcamentista"]
+    revoked_at: datetime
+    note: str = Field(min_length=1, max_length=500)
+
+    @field_validator("revoked_at")
+    @classmethod
+    def validate_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValuationValidationError(
+                "ASSIGNMENT_DECISION_TIMESTAMP_NAIVE",
+                "revogação de código exige data e hora com fuso horário",
+                {"revoked_at": value.isoformat()},
+            )
+        return value
+
+
+class CodeAssignmentRevocation(ValuationContractModel):
+    """O registro do que foi desfeito, no conjunto CORRENTE.
+
+    A prova de que o par existiu está na revisão anterior, que continua gravada — mas quem lê
+    o conjunto corrente precisa distinguir "nunca foi decidido" de "foi decidido e desfeito"
+    sem ter de comparar revisões. É essa distinção que uma auditoria procura, e é por isso
+    que o registro fica aqui em vez de só no histórico (ADR-0061 D2).
+
+    Um par revogado pode ser confirmado outra vez (D5). Quando isso acontece, ele aparece nos
+    dois lugares — em `assignments`, corrente, e aqui, como o que já foi desfeito uma vez —, e
+    é a leitura que decide o que mostrar. Apagar o registro na reconfirmação perderia o ato.
+    """
+
+    item_id: str = Field(pattern=_ITEM_ID_PATTERN)
+    code: str = Field(min_length=1, max_length=64)
+    revocation_id: str = Field(pattern=r"^vr_[a-f0-9]{16}$")
+    reviewer_id: str = Field(min_length=1, max_length=120)
+    reviewer_role: Literal["orcamentista"]
+    revoked_at: datetime
+    note: str = Field(min_length=1, max_length=500)
+
+
 class ItemPackageClosureInput(ValuationContractModel):
     """Declaração de que o pacote de serviços de um elemento está COMPLETO.
 
@@ -1120,6 +1174,7 @@ class CodeAssignmentSet(ValuationContractModel):
     contract_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
     assignments: list[CodeAssignment]
     closures: list[ItemPackageClosure] = Field(default_factory=list)
+    revocations: list[CodeAssignmentRevocation] = Field(default_factory=list)
     safety_notes: list[str] = Field(min_length=2)
 
     @model_validator(mode="after")
@@ -1130,6 +1185,13 @@ class CodeAssignmentSet(ValuationContractModel):
                     "ASSIGNMENT_CLOSURE_NOT_SUPPORTED",
                     "conjunto no regime de código único não tem pacote para fechar",
                     {"item_ids": sorted({closure.item_id for closure in self.closures})},
+                )
+            if self.revocations:
+                raise ValuationValidationError(
+                    "ASSIGNMENT_REVOCATION_NOT_SUPPORTED",
+                    "conjunto no regime de código único não aceita revogação; ali a "
+                    "confirmação era o pacote inteiro",
+                    {"item_ids": sorted({item.item_id for item in self.revocations})},
                 )
             item_ids = [assignment.item_id for assignment in self.assignments]
             duplicated = sorted({item_id for item_id in item_ids if item_ids.count(item_id) > 1})
@@ -1275,6 +1337,19 @@ def _closure_of(closure: ItemPackageClosureInput) -> ItemPackageClosure:
     )
 
 
+def _carried_revocations(
+    previous: CodeAssignmentSet | None,
+) -> list[CodeAssignmentRevocation]:
+    """As revogações que o conjunto anterior leva adiante.
+
+    Nada é construído aqui, ao contrário de `_carried_closures`: no regime `1.0.0` não existe
+    revogação nenhuma para migrar, e inventar uma seria assinar um ato que ninguém praticou.
+    """
+    if previous is None or previous.schema_version == "1.0.0":
+        return []
+    return list(previous.revocations)
+
+
 def _carried_closures(previous: CodeAssignmentSet | None) -> list[ItemPackageClosure]:
     """Fechamentos que o conjunto anterior leva adiante, inclusive os do regime antigo.
 
@@ -1298,6 +1373,32 @@ def _carried_closures(previous: CodeAssignmentSet | None) -> list[ItemPackageClo
     ]
 
 
+def _ensure_same_plate(packet: TakeoffPacket, previous: CodeAssignmentSet) -> None:
+    """O conjunto anterior é da MESMA prancha, página e imagem que o pacote em mãos.
+
+    Extraída de `_ensure_batch_decidable` para valer também na revogação, que não tem lote:
+    aplicar um ato sobre um conjunto de outra prancha gravaria decisão no lugar errado, e a
+    checagem não pode existir só no caminho que a descobriu primeiro.
+    """
+    if (
+        previous.plate_id != packet.plate_id
+        or previous.page_number != packet.page_number
+        or previous.image_sha256 != packet.image_sha256
+    ):
+        raise ValuationValidationError(
+            "ASSIGNMENT_PACKET_MISMATCH",
+            "conjunto de assignments anterior pertence a outra prancha",
+            {
+                "expected_plate_id": packet.plate_id,
+                "expected_page_number": packet.page_number,
+                "expected_image_sha256": packet.image_sha256,
+                "previous_plate_id": previous.plate_id,
+                "previous_page_number": previous.page_number,
+                "previous_image_sha256": previous.image_sha256,
+            },
+        )
+
+
 def _ensure_batch_decidable(
     packet: TakeoffPacket,
     batch: CodeAssignmentBatch,
@@ -1312,23 +1413,7 @@ def _ensure_batch_decidable(
     para código ou preço — isso é da confirmação em si, que difere entre as duas cadeias.
     """
     if previous is not None:
-        if (
-            previous.plate_id != packet.plate_id
-            or previous.page_number != packet.page_number
-            or previous.image_sha256 != packet.image_sha256
-        ):
-            raise ValuationValidationError(
-                "ASSIGNMENT_PACKET_MISMATCH",
-                "conjunto de assignments anterior pertence a outra prancha",
-                {
-                    "expected_plate_id": packet.plate_id,
-                    "expected_page_number": packet.page_number,
-                    "expected_image_sha256": packet.image_sha256,
-                    "previous_plate_id": previous.plate_id,
-                    "previous_page_number": previous.page_number,
-                    "previous_image_sha256": previous.image_sha256,
-                },
-            )
+        _ensure_same_plate(packet, previous)
         if previous.catalog_sha256 != expected_catalog_sha256:
             raise ValuationValidationError(
                 "ASSIGNMENT_CATALOG_MISMATCH",
@@ -1663,7 +1748,122 @@ def apply_code_assignments(
         contract_sha256=contract.source_sha256 if contract else None,
         assignments=[*previous_assignments, *new_assignments],
         closures=[*_carried_closures(previous), *(_closure_of(c) for c in batch.closures)],
+        # O que já foi desfeito continua registrado: confirmar outro código não apaga o ato
+        # de quem desfez um. Um par revogado que volta a ser confirmado aparece nos dois
+        # lugares, e é a leitura que decide o que mostrar (ADR-0061 D2/D5).
+        revocations=_carried_revocations(previous),
         safety_notes=list(_ASSIGNMENT_SAFETY_NOTES),
+    )
+
+
+def _revocation_id(revocation: CodeAssignmentRevocationInput) -> str:
+    """Id determinístico da revogação; irmão de `_assignment_decision_id`.
+
+    Prefixo próprio (`vr_`) e não `vd_`: revogar não é uma decisão sobre o código, é um ato
+    sobre uma decisão, e misturar os dois espaços faria uma busca por `vd_` devolver coisas
+    de naturezas diferentes.
+    """
+    canonical = json.dumps(
+        {
+            "kind": "assignment_revocation",
+            "item_id": revocation.item_id,
+            "code": revocation.code,
+            "reviewer_id": revocation.reviewer_id,
+            "reviewer_role": revocation.reviewer_role,
+            "revoked_at": revocation.revoked_at.isoformat(),
+            "note": revocation.note,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"vr_{hashlib.sha256(canonical.encode()).hexdigest()[:16]}"
+
+
+def apply_code_revocation(
+    packet: TakeoffPacket,
+    revocation: CodeAssignmentRevocationInput,
+    previous: CodeAssignmentSet,
+) -> CodeAssignmentSet:
+    """Retira do conjunto corrente um par `(item, código)` já confirmado (F-045, ADR-0061).
+
+    O que ela faz, e por quê:
+
+    - **o par sai de `assignments`** em vez de ganhar um status novo. Marcar como revogado o
+      manteria na lista, e todo consumidor — boletim, exportação, precedente, contagens —
+      passaria a depender de lembrar de filtrar; um consumidor esquecido imprimiria linha
+      revogada. Sair da lista é falha fechada (D2);
+    - **o registro entra em `revocations`**, com autor, instante e motivo, para que o conjunto
+      corrente distinga "nunca decidido" de "decidido e desfeito";
+    - **o fechamento do item cai junto**. A completude foi afirmada sobre um pacote que acabou
+      de mudar, e mantê-la deixaria em pé uma afirmação que ninguém refez (D3). O efeito
+      adiante é real e é o desejado: o portão de exportação volta a recusar aquele elemento
+      até alguém fechar de novo;
+    - **o código não é banido**: depois disto o mesmo par volta a ser decidível, porque a
+      recusa de re-decisão olha para `assignments`, de onde ele saiu (D5).
+
+    O que ela **não** faz: tocar em revisão gravada. Quem chama grava o conjunto devolvido
+    como revisão nova, e a anterior continua existindo com o par confirmado lá dentro (D1).
+    """
+    if previous.schema_version == "1.0.0":
+        raise ValuationValidationError(
+            "ASSIGNMENT_REVOCATION_NOT_SUPPORTED",
+            "esta rodada é do regime de um código por elemento; nela não há pacote para desfazer",
+            {"item_id": revocation.item_id, "code": revocation.code},
+        )
+
+    _ensure_same_plate(packet, previous)
+
+    known_ids = {item.id for item in packet.items}
+    if revocation.item_id not in known_ids:
+        raise ValuationValidationError(
+            "ASSIGNMENT_UNKNOWN_ITEM",
+            "revogação aponta para item de takeoff desconhecido",
+            {"unknown_ids": [revocation.item_id]},
+        )
+
+    target = [
+        assignment
+        for assignment in previous.assignments
+        if assignment.item_id == revocation.item_id
+        and assignment.status == "confirmed"
+        and assignment.code == revocation.code
+    ]
+    if not target:
+        raise ValuationValidationError(
+            "ASSIGNMENT_REVOCATION_PAIR_UNKNOWN",
+            "não há código confirmado com este par de elemento e código para desfazer",
+            {"item_id": revocation.item_id, "code": revocation.code},
+        )
+
+    remaining = [assignment for assignment in previous.assignments if assignment not in target]
+    # O fechamento do item cai com a revogação — inclusive quando sobram outros códigos no
+    # pacote: o que se afirmou completo foi um pacote com este código dentro.
+    closures = [
+        closure for closure in _carried_closures(previous) if closure.item_id != revocation.item_id
+    ]
+    return CodeAssignmentSet(
+        schema_version=previous.schema_version,
+        plate_id=previous.plate_id,
+        page_number=previous.page_number,
+        image_sha256=previous.image_sha256,
+        catalog_sha256=previous.catalog_sha256,
+        contract_sha256=previous.contract_sha256,
+        assignments=remaining,
+        closures=closures,
+        revocations=[
+            *_carried_revocations(previous),
+            CodeAssignmentRevocation(
+                item_id=revocation.item_id,
+                code=revocation.code,
+                revocation_id=_revocation_id(revocation),
+                reviewer_id=revocation.reviewer_id,
+                reviewer_role=revocation.reviewer_role,
+                revoked_at=revocation.revoked_at,
+                note=revocation.note,
+            ),
+        ],
+        safety_notes=list(previous.safety_notes),
     )
 
 
@@ -1757,5 +1957,9 @@ def apply_code_assignments_over_cascade(
         contract_sha256=None,
         assignments=[*previous_assignments, *new_assignments],
         closures=[*_carried_closures(previous), *(_closure_of(c) for c in batch.closures)],
+        # O que já foi desfeito continua registrado: confirmar outro código não apaga o ato
+        # de quem desfez um. Um par revogado que volta a ser confirmado aparece nos dois
+        # lugares, e é a leitura que decide o que mostrar (ADR-0061 D2/D5).
+        revocations=_carried_revocations(previous),
         safety_notes=list(_ASSIGNMENT_SAFETY_NOTES),
     )
