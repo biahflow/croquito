@@ -275,6 +275,7 @@ import {
   pedidoDeConfirmacao,
   podeConfirmar,
   precedenteFraco,
+  precisaRelerPrecedentes,
   selosDosItens,
   type ConfirmacaoDoPrecedente,
   type ItemPrecedent,
@@ -4344,10 +4345,20 @@ export function OrcamentoApp({
     }
     setSubmitting(true);
     try {
-      const response =
+      let response =
         recompute && version !== null
           ? await postSuggestionsRecompute(token, orcamento, version)
           : await getSuggestions(token, orcamento);
+      if (precisaRelerPrecedentes(response)) {
+        // O recompute NÃO devolve `precedents`: a resposta dele é gravada no registro de
+        // idempotência, e congelar ali uma observação derivada faria um replay servir
+        // precedente velho como corrente. Sem esta releitura o bloco sumiria da tela até
+        // alguém recarregar a página — o precedente depende da fonte de preço, e é
+        // justamente o recompute que pode tê-la mudado, então preservar o anterior mentiria.
+        // O `GET` não paga nada e não avança versão (ADR-0054 D7).
+        const relido = await getSuggestions(token, orcamento);
+        response = { ...response, precedents: relido.precedents };
+      }
       setSuggestions(response);
       aplicarVersao(response.version);
       setAlertMessage(null);

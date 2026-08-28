@@ -251,3 +251,19 @@ export function pedidoDeConfirmacao(
     codes: confirmacao.codes.map((code) => code.code),
   };
 }
+
+/**
+ * O recompute da shortlist **não** devolve `precedents`, e o `GET` devolve.
+ *
+ * A assimetria é decisão da API e tem motivo: a resposta do recompute é gravada no registro
+ * de idempotência, então congelar ali uma observação derivada faria um replay servir
+ * precedente velho como se fosse corrente. A consequência para a tela é esta função: depois
+ * de um recompute, o bloco precisa ser RELIDO, ou ele sumiria até alguém recarregar a página.
+ *
+ * Preservar o precedente anterior seria pior que sumir: ele é chaveado pela fonte de preço, e
+ * é justamente o recompute que pode ter mudado a cascata. Mostrar o de antes mentiria sobre a
+ * tabela vigente, que é o erro que a decisão 7 do pacote de design existe para impedir.
+ */
+export function precisaRelerPrecedentes(resposta: { precedents?: unknown }): boolean {
+  return resposta.precedents === undefined;
+}

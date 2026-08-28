@@ -14,6 +14,7 @@ import {
   selosDosItens,
   type ItemPrecedent,
   type PrecedentCode,
+  precisaRelerPrecedentes,
 } from "./precedente";
 import { codeDecisionBody } from "./requests";
 import { postCodeClosure, postCodeDecision, type CascadeEntry } from "./api";
@@ -516,5 +517,20 @@ describe("a confirmação desenhada", () => {
         />,
       ),
     ).toBe("");
+  });
+});
+
+describe("releitura do precedente depois do recompute", () => {
+  it("a resposta do recompute, que não traz precedents, exige releitura", () => {
+    expect(precisaRelerPrecedentes({})).toBe(true);
+  });
+
+  it("a resposta do GET não exige releitura — nem quando a lista vem vazia", () => {
+    // Lista vazia é resposta: esta rodada não tem precedente nenhum. Ausência da chave é
+    // outra coisa — é o recompute não tendo o que dizer sobre isso.
+    expect(precisaRelerPrecedentes({ precedents: [] })).toBe(false);
+    expect(precisaRelerPrecedentes({ precedents: [{ item_id: "ti_0000000000000001" }] })).toBe(
+      false,
+    );
   });
 });
