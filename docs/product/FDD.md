@@ -595,9 +595,20 @@ nome **apenas quando o nome inteiro não couber**: caem primeiro as partículas 
 preservando sempre a primeira palavra e a folha. O nome inteiro da praça e da folha
 continua impresso **dentro** da aba, na identificação do BM e no cabeçalho da memória.
 Praça cujo nome já cabia não muda de aba nenhuma — a pasta que a prefeitura já recebe
-continua a mesma. Nome que não cabe nem encurtado é recusado quando o boletim é montado,
-dizendo o teto e pedindo o nome mais curto, e não na hora de publicar o arquivo, quando já
-não haveria o que fazer.
+continua a mesma. Nome que não cabe nem encurtado é recusado **na abertura da rodada**, quando
+é ali que ele é digitado: a tela mostra o teto ao lado do campo antes de o nome ser aceito,
+e a recusa do servidor diz o teto e pede o nome mais curto. A mesma recusa continua acontecendo
+quando o boletim é montado — é ela que alcança o sufixo da folha, que o nome sozinho não
+previa —, e nunca só na hora de publicar o arquivo, quando já não haveria o que fazer.
+
+Ato que muda o que a praça deve somar **vence** o boletim já montado, e a tela passa a dizer
+isso: declarar identidade, decidir um item, confirmar ou revogar um código e acrescentar
+folha deixam a medição gravada descrevendo uma praça que já não existe. Quem compara é o
+servidor, e a etapa `Boletim` volta a ficar em aberto com o motivo escrito, oferecendo o
+único ato que resolve — montar o boletim de novo. Nada é recalculado sozinho: os números da
+montagem anterior continuam à vista, declarados como tais. Se havia aprovação nominal em
+vigor, a tela diz **antes do clique** que remontar não a apaga — ela continua registrada —,
+mas a faz caducar, e a exportação passa a exigir uma aprovação nova sobre o conteúdo novo.
 
 Declarar que duas leituras de folhas diferentes são o mesmo elemento é ato humano oferecido
 **com a prévia do efeito no total**, calculada pelo servidor: as duas parcelas, o total sem

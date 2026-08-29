@@ -564,6 +564,55 @@ def test_chave_de_obra_fora_do_padrao_recusa_na_criacao_e_nao_no_boletim(
     assert not _revisions(client)
 
 
+def test_nome_de_obra_que_nao_cabe_na_aba_recusa_na_criacao_e_nao_no_boletim(
+    tmp_path: Path,
+) -> None:
+    """Espelho da chave: o nome também é imutável na rodada, e recusá-lo tarde é sem conserto.
+
+    A recusa é a MESMA do domínio (`WORKSITE_NAME_DOES_NOT_FIT_SHEET`), com o mesmo teto —
+    o que muda é a hora. Ela existia só na montagem do boletim, depois de o orçamentista
+    revisar e codificar as N folhas da praça, quando a única saída seria abrir rodada nova.
+    A recusa tardia continua onde estava, como rede de segurança das rodadas abertas antes
+    desta mudança e da praça de N folhas, onde o sufixo `P2` entra no orçamento.
+
+    Vale só onde o nome é DIGITADO: nas origens por orçamento assinado e por medição
+    seguinte ele vem do conteúdo aprovado e o corpo o recusa, então reprovar na abertura
+    trocaria uma recusa tardia com conserto por uma imediata sem conserto nenhum.
+    """
+    client = _client(tmp_path)
+    upload = _catalog_upload(client)
+
+    response = client.post(
+        "/v1/valuation-rounds",
+        headers=_headers(),
+        json=_round_payload(
+            catalog_upload_id=upload["upload_id"],
+            worksite_name="PRACA NOVA AURORA (SINTETICA)",
+        ),
+    )
+
+    assert response.status_code == 422, response.text
+    detalhe = response.json()["detail"]
+    assert detalhe["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detalhe["details"]["code"] == "WORKSITE_NAME_DOES_NOT_FIT_SHEET"
+    # O teto vai no envelope: é ele que a tela mostra para o humano encurtar na hora.
+    assert detalhe["details"]["limit"] == 23
+    assert not _revisions(client)
+    with _database(client).sessions() as session:
+        assert session.scalars(select(ValuationRoundRecord)).all() == []
+
+
+def test_o_nome_de_obra_que_cabe_pelos_degraus_continua_abrindo_a_rodada(
+    tmp_path: Path,
+) -> None:
+    """A recusa nova é só do que não cabe NEM na forma curta; o encurtamento segue valendo."""
+    client = _client(tmp_path)
+
+    criada = _create_round(client, key="nome-longo", worksite_name="Campo do Morro da Bandeira")
+
+    assert criada["version"] == 1
+
+
 def test_o_corpo_recusa_o_carimbo_de_identidade(tmp_path: Path) -> None:
     """`reviewer_id` e companhia são do servidor; o `extra="forbid"` os recusa."""
     client = _client(tmp_path)

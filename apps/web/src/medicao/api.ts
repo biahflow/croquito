@@ -204,11 +204,36 @@ export type ApprovalState = {
 };
 
 /**
+ * O boletim gravado ainda descreve a praça de agora? Derivado pelo SERVIDOR na leitura.
+ *
+ * Espelho de `ApprovalState`, e pela mesma razão: "vencido" é uma RELAÇÃO entre dois
+ * instantes, e a única forma de afirmá-la sem inventar é comparar o carimbo gravado quando
+ * o boletim foi montado (`sources_digest`) com as fontes de agora
+ * (`current_sources_digest`). Declarar identidade, decidir item, confirmar ou revogar
+ * código e acrescentar folha mudam o que a praça deve somar sem tocar no que ela SOMOU —
+ * o `valuation_sha256` continua o mesmo, e é justamente por isso que o vencimento precisa
+ * ser dito por extenso.
+ *
+ * A tela **não** compara nada: os dois digests chegam prontos e `stale` também. Comparar
+ * artefatos no navegador seria uma segunda verdade sobre o que gerou a medição.
+ *
+ * `sources_digest` nulo com boletim presente é a rodada montada antes desta feature: sem o
+ * carimbo do passado nada é afirmado, e `stale` sai falso.
+ */
+export type BulletinSourcesState = {
+  /** Fontes que geraram o boletim GRAVADO; `null` sem boletim ou em rodada anterior. */
+  sources_digest: string | null;
+  /** As mesmas fontes, como estão AGORA; `null` quando não há boletim gravado. */
+  current_sources_digest: string | null;
+  stale: boolean;
+};
+
+/**
  * Etapa `bulletin` do estado da rodada. `workbook_present` é a planilha publicada — só
  * existe depois de a auditoria de round-trip aprovar o arquivo, e o digest é o dos BYTES
  * dela, não o da medição.
  */
-export type RoundStateBulletin = {
+export type RoundStateBulletin = BulletinSourcesState & {
   present: boolean;
   valuation_sha256: string | null;
   workbook_present: boolean;
@@ -657,7 +682,7 @@ export type CodesResponse = {
   pending_items: PendingCodeItem[];
 };
 
-export type BulletinResponse = {
+export type BulletinResponse = BulletinSourcesState & {
   round_id: string;
   version: number;
   valuation: Valuation.CroquitoValuation;

@@ -93,7 +93,14 @@ import {
   type CodigoDesfeito,
 } from "../codeRevocation";
 import { BUSCA_DEBOUNCE_MS, consultaIncremental, resumoDaBusca } from "./busca";
-import { derivarEtapas, etapaStatusLabel, type Etapa, type EtapaId } from "./etapas";
+import {
+  BOLETIM_VENCIDO,
+  REMONTAR_CADUCA_A_APROVACAO,
+  derivarEtapas,
+  etapaStatusLabel,
+  type Etapa,
+  type EtapaId,
+} from "./etapas";
 import {
   avisoDoLoteDePromocao,
   boletimDaFolha,
@@ -182,7 +189,7 @@ import {
   sceneOutcomeLabel,
   sceneReasonLabel,
 } from "./labels";
-import { codeSearchTerm, worksiteKeyError } from "./requests";
+import { DICA_NOME_DA_OBRA, codeSearchTerm, worksiteKeyError } from "./requests";
 import { DICA_FATOR, REAJUSTE_OPCOES, reajusteIssue } from "./reajuste";
 import { DICA_DELTA, reRaIssue } from "./reratificacao";
 import { itemAnchor } from "./takeoff";
@@ -1615,6 +1622,50 @@ export function BannerRodadaMudou({ onReload }: { onReload?: () => void }) {
           Recarregar estado atual
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * O boletim gravado deixou de descrever a praça, e a saída (F-046 T5c).
+ *
+ * Quem declara o vencimento é o SERVIDOR (`bulletin.stale` do estado da rodada), comparando
+ * as fontes que geraram a medição com as de agora; esta tela só o diz por extenso e oferece
+ * o único ato que o resolve. Até aqui o botão de montar desaparecia assim que havia boletim
+ * gravado: o toast do ato mandava "montar o boletim de novo" e a tela não oferecia como, o
+ * que tornava a ordem do pacote aprovado — montar, ver a dupla contagem, declarar a
+ * identidade, ver o total novo — impercorrível numa rodada só.
+ *
+ * Aprovação em vigor ganha a frase própria ANTES do botão: remontar leva a assinatura
+ * adiante já caduca (preservar não é aprovar), e um efeito desses não pode ser descoberto
+ * depois do clique.
+ *
+ * Âmbar de aviso, o mesmo de `BannerRodadaMudou`, e o estado dito por extenso: cor nunca é
+ * o único indicador.
+ */
+export function BannerBoletimVencido({
+  aprovada,
+  submitting,
+  onRemontar,
+}: {
+  aprovada: boolean;
+  submitting: boolean;
+  onRemontar: () => void;
+}) {
+  return (
+    <div className="banner-conflito banner-vencido" role="alert">
+      <div>
+        <p>{BOLETIM_VENCIDO}</p>
+        {aprovada ? <p>{REMONTAR_CADUCA_A_APROVACAO}</p> : null}
+      </div>
+      <button
+        type="button"
+        className="botao-primario"
+        onClick={onRemontar}
+        disabled={submitting}
+      >
+        {submitting ? "Montando…" : "Montar o boletim de novo"}
+      </button>
     </div>
   );
 }
@@ -4473,7 +4524,8 @@ export function MedicaoApp({
       setRevisionConflict(false);
       setToast(
         "Identidade declarada: as duas leituras passam a contar como um elemento só. " +
-          "Monte o boletim de novo para o total refletir a fusão.",
+          "A etapa Boletim já marca a medição gravada como vencida e oferece montá-la de " +
+          "novo, para o total refletir a fusão.",
       );
       await atualizarEstado();
     } catch (error) {
@@ -4675,6 +4727,10 @@ export function MedicaoApp({
   // primeiro ofereceria uma exportação que a rota já sabe que vai recusar.
   const aprovacaoValida =
     aprovacao !== null && aprovacao.approved && !aprovacao.stale;
+  // O boletim gravado deixou de descrever a praça. A leitura é a do ESTADO da rodada, e não
+  // a do documento em mãos, de propósito: `atualizarEstado` roda depois de todo ato e traz
+  // o veredito novo, enquanto o documento em mãos é justamente o que venceu.
+  const boletimVencido = state !== null && state.bulletin.present && state.bulletin.stale;
   const nomeDoBoletimXlsx =
     state === null
       ? "boletim.xlsx"
@@ -4903,6 +4959,7 @@ export function MedicaoApp({
               ) : null}
               <label className="campo">
                 Nome da obra
+                <span className="campo-dica">{DICA_NOME_DA_OBRA}</span>
                 <input
                   type="text"
                   value={roundForm.worksiteName}
@@ -6492,6 +6549,20 @@ export function MedicaoApp({
               </div>
             ) : (
               <>
+                {boletimVencido ? (
+                  <>
+                    <BannerBoletimVencido
+                      aprovada={aprovacao?.approved ?? false}
+                      submitting={submitting}
+                      onRemontar={() => void montarBoletim()}
+                    />
+                    <p className="dica">
+                      Os números abaixo são os da montagem anterior e continuam gravados
+                      como estão: nada nesta rodada recalcula sozinho, e a medição só muda
+                      quando o boletim é montado de novo.
+                    </p>
+                  </>
+                ) : null}
                 <p>
                   Medição {bulletin.valuation.period_number} ·{" "}
                   {bulletin.valuation.reference_label} · sha256{" "}

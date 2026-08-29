@@ -1392,6 +1392,19 @@ aqui faria uma rodada nascer válida e só quebrar em `POST .../calc`, dezenas d
 depois. `period_number`, `address` e `contract_label` são atributos da RODADA — nenhum
 deles viaja em `POST .../calc`, que lê todos da rodada.
 
+`worksite_name` é conferido aqui pelo mesmo motivo, desde a F-046 T5c: ele vira o nome das
+abas **BM** e **MEMÓRIA** da planilha, que reservam 23 dos 31 caracteres do formato para
+ele. Nome que não cabe nem na forma curta (partículas fora, palavras do meio abreviadas)
+devolve `422 DOMAIN_VALIDATION_FAILED` com `WORKSITE_NAME_DOES_NOT_FIT_SHEET` e o `limit`
+em `details` — a mesma recusa do domínio, no lugar em que o nome ainda pode ser corrigido.
+
+Ela vale **só na origem por upload**, que é a única em que o nome viaja no corpo. Nas
+origens por orçamento assinado e por medição seguinte o nome vem do conteúdo aprovado e o
+corpo o recusa: reprovar ali trocaria uma recusa tardia **com** conserto por uma imediata
+sem conserto nenhum. Nessas origens, e nas rodadas abertas antes desta mudança, quem recusa
+continua sendo a montagem do boletim — que é também quem alcança o sufixo `P2` da praça de
+N folhas, porque ele consome orçamento a mais do que o nome sozinho.
+
 O catálogo de preços é instalado na criação e é imutável na rodada: trocar de catálogo é
 abrir rodada nova. Erros: `422 DOMAIN_VALIDATION_FAILED` para catálogo ilegível ou inválido.
 
@@ -1991,6 +2004,11 @@ trazendo em `details` o nome derivado, a forma curta, o comprimento dela e o `li
 recusa fica onde o rótulo nasce; na publicação do `.xlsx` ela sairia com a praça inteira já
 montada, servida e aprovada.
 
+Desde a F-046 T5c essa mesma recusa acontece também na **abertura da rodada**
+(`POST /v1/valuation-rounds`), que é onde o nome é digitado — ver a seção da criação. A
+recusa daqui continua existindo, e é ela que alcança as rodadas abertas antes da mudança e o
+sufixo `P2` que a praça de N folhas acrescenta ao nome.
+
 Duas recusas da praça passam a ser alcançáveis por aqui, nesta ordem: folha sem pacote
 extraído devolve `409 ROUND_STAGE_NOT_READY` com `stage: worksite` e `pending_plate_ids`, e
 folha com item ainda por revisar devolve `422 DOMAIN_VALIDATION_FAILED` com
@@ -2025,6 +2043,37 @@ Acompanha o bloco `approval` (`approved`, `approved_by`, `approved_at`, `approve
 `workbook_sha256`) e `workbook_url` — URL assinada de curta duração, montada na leitura e
 nunca persistida. `stale: true` é a **aprovação caduca**: houve aprovação, mas o conteúdo
 mudou depois dela, e a exportação vai recusar até um ato novo.
+
+#### `sources_digest`, `current_sources_digest` e `stale` — o boletim vencido
+
+Desde a F-046 T5c **toda** resposta de boletim — `POST .../calc`, este `GET`,
+`POST .../approve`, `POST .../bulletin/export` — e o bloco `bulletin` de
+`GET /v1/valuation-rounds/{round_id}` trazem três campos que respondem se a medição gravada
+ainda descreve a praça:
+
+| Campo | Significado |
+| --- | --- |
+| `sources_digest` | digest das fontes que geraram o boletim **gravado**, carimbado no ato que o montou |
+| `current_sources_digest` | as mesmas fontes **como estão agora** |
+| `stale` | `sources_digest` existe e difere de `current_sources_digest` |
+
+As fontes são os rótulos da obra que o boletim imprime, o catálogo instalado, as **folhas**
+da praça, os pacotes de takeoff e conjuntos de código de cada folha, os vínculos de
+identidade declarados e a matriz de cálculo posta no build. Declarar identidade, decidir
+item, confirmar ou revogar código e acrescentar folha mudam o que a praça **deve** somar sem
+tocar no que ela **somou** — `valuation_sha256` continua o mesmo, e é justamente por isso
+que o vencimento precisa ser declarado. Até a T5c a rodada não tinha como dizê-lo, e o único
+aviso existia no toast do ato que o causou.
+
+`stale` é derivado na leitura e nunca gravado, como `approval.stale` e a idade do overlay
+(ADR-0030): "vencido" é uma relação entre dois instantes. Sem boletim gravado os três campos
+saem neutros (`null`, `null`, `false`) — aviso permanente é aviso que se aprende a ignorar.
+Boletim montado por uma versão anterior da API não tem o carimbo do passado: `sources_digest`
+sai `null` e `stale` sai `false`, porque nada pode ser afirmado sobre ele.
+
+`stale` do boletim e `approval.stale` são perguntas diferentes: o primeiro fala da **praça**,
+o segundo da **assinatura**. Nenhum deles bloqueia nada por si — remontar o boletim continua
+sendo o mesmo `POST .../calc` de sempre, e aprovar continua sendo ato próprio.
 
 #### `consolidation` e `consolidation_drifts`
 

@@ -518,6 +518,15 @@ linha INTERVENÇÃO do BM e no cabeçalho da MEMÓRIA, onde não há teto. Nome 
 é tocado, e duas obras cujo rótulo curto colidiria reprovam em `PLAN_SHEET_NAME_COLLISION`
 em vez de virarem uma aba só.
 
+A recusa acontece em **três** lugares, do mais cedo ao mais tarde: na abertura da rodada de
+`/v1` quando o nome é DIGITADO (F-046 T5c), onde ele ainda pode ser corrigido; na composição
+do boletim da praça (`worksite_calc._plate_labels`), onde entra o sufixo `P2` que a folha
+acrescenta e que o nome sozinho não previa; e na escrita da pasta, onde o rótulo é
+efetivamente usado. As três chamam a mesma função e dizem o mesmo teto — o que muda é
+quanto trabalho já foi feito quando o humano descobre. Rodada cujo nome vem de um conteúdo
+assinado não é recusada na abertura: ali o nome não é editável, e a recusa não teria
+conserto.
+
 Sem consolidado contratual informado, a pasta é só o par BM/MEMÓRIA de cada obra — é o que
 o M1 gerava.
 

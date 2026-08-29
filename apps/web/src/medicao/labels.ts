@@ -411,6 +411,11 @@ const ERROR_MESSAGES: LookupTable = {
     "O vínculo de identidade aponta para uma folha ou um item que não está no consolidado desta praça.",
   WORKSITE_LINK_CHAIN_NOT_SUPPORTED:
     "Vínculos de identidade não formam cadeia: declare o vínculo direto entre as duas leituras em vez de encadear.",
+  // A recusa nasceu na composição do boletim e passou a acontecer também na ABERTURA da
+  // rodada (F-046 T5c), que é onde o nome é digitado e ainda pode ser corrigido. O teto vem
+  // no `detail` do servidor, e `errorMessage` o acrescenta entre parênteses.
+  WORKSITE_NAME_DOES_NOT_FIT_SHEET:
+    "O nome da obra não cabe no nome das abas BM e MEMÓRIA da planilha, nem na forma curta; encurte o nome da praça.",
   EXTRACTION_IN_PROGRESS:
     "Já existe uma leitura automática em andamento nesta rodada; aguarde ela terminar.",
   TAKEOFF_REVIEW_INCOMPLETE:
