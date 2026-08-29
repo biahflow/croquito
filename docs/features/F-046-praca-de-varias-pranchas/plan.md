@@ -54,6 +54,15 @@ de várias folhas vira o caso normal. O [ADR-0062](../../adr/0062-a-deriva-de-ce
 aceito por ato humano em 2026-08-29, resolve o caso que o ADR-0018 tinha deixado em aberto: a
 GERAL governa, e a deriva passa a ser declarada em vez de fatal. A T2b implementa.
 
+## O teto de gasto continua por chamada
+
+A T4 expôs que o teto de gasto da extração é **por chamada**, não por rodada: com a praça de
+várias folhas, promover 12 folhas autoriza 12 vezes o teto de uma prancha sem que ninguém tenha
+declarado esse total. **Decisão humana de 2026-08-29** (Daniel Campos): manter por chamada. Os
+freios declarados são a contagem de folhas que a resposta do lote informa antes de executar e o
+`WORKSITE_PLATE_LIMIT` de 12 por praça. Um teto agregado por rodada seria mudança do modelo de
+gasto, e fica registrado aqui como caminho conhecido, não como dívida esquecida.
+
 ## Decisões de mecanismo já tomadas
 
 - **A praça não vira entidade persistente.** Ela continua sendo `worksite_key` na rodada
