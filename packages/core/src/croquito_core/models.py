@@ -16,6 +16,29 @@ from croquito_core.ids import new_uuid7
 
 SCENE_SCHEMA_VERSION: Final = "1.0.0"
 
+#: Forma do `Entity.element_ref` (ADR-0058, decisão 1). Constante nomeada porque quem cunha
+#: o ref é a API, do lado de fora deste pacote: repetir a regex lá faria as duas metades do
+#: mesmo contrato — a que valida e a que cunha — poderem divergir em silêncio.
+ELEMENT_REF_PATTERN: Final = r"^EL-\d{3,}$"
+
+#: Prefixo do ref, separado do padrão para que quem lê o ordinal não o extraia por fatia
+#: mágica (`ref[3:]`) espalhada por dois pacotes.
+ELEMENT_REF_PREFIX: Final = "EL-"
+
+#: Teto do rótulo legível do elemento (F-047 T2b). Nome de elemento é frase curta de croqui
+#: ("Alambrado da quadra"), não descrição de serviço: o teto existe para que o campo não vire
+#: depósito de texto que ninguém lê na etiqueta ao lado do `EL-00N`.
+ELEMENT_LABEL_MAX_LENGTH: Final = 120
+
+#: A chave do mapa de rótulos é um `element_ref`, com a mesma forma que a entidade carrega —
+#: declarada aqui para que o contrato gerado a leve para o schema e para o TypeScript, em vez
+#: de aceitar qualquer string como chave.
+ElementRef = Annotated[str, Field(pattern=ELEMENT_REF_PATTERN)]
+
+#: O rótulo em si. `min_length=1` com `str_strip_whitespace` do `ContractModel` é o que recusa
+#: rótulo vazio ou só de espaço: "   " chega como "" à validação de tamanho.
+ElementLabel = Annotated[str, Field(min_length=1, max_length=ELEMENT_LABEL_MAX_LENGTH)]
+
 
 class ContractModel(BaseModel):
     """Configuração comum para contratos persistidos ou trocados pela API."""
@@ -186,6 +209,14 @@ class Entity(ContractModel):
     # Preenchimento declarado da região (ex.: a folha marca hachura na área vegetativa).
     # É apresentação rastreável, não geometria nova: o contorno continua sendo a entidade.
     fill: Literal["none", "hatch"] = "none"
+    # ADR-0058: identidade de elemento, ao lado do que a Entity já tem — nunca no lugar.
+    # Não é `id` (identidade de linha, muda a cada revisão nova) nem `TextGeometry.text`
+    # (a redação que o humano lê na prancha). É o elo estável que diz "este traço e aquele
+    # balão são o mesmo elemento": cunhado pelo sistema no ato humano de declaração na
+    # revisão, nunca digitado e nunca inferido por proximidade. Quem cunha é
+    # `POST /v1/jobs/{job_id}/elements` (`croquito_api.main._next_element_ref`), sequencial
+    # dentro do job; aqui ficam só a forma e a invariante mínima.
+    element_ref: str | None = Field(default=None, pattern=ELEMENT_REF_PATTERN)
 
     @model_validator(mode="after")
     def validate_kind_and_provenance(self) -> Entity:
@@ -272,6 +303,12 @@ class SceneRevision(ContractModel):
     measurements: list[Measurement] = Field(default_factory=list)
     constraints: list[Constraint] = Field(default_factory=list)
     issues: list[Issue] = Field(default_factory=list)
+    # F-047 T2b: o nome legível do elemento, por `element_ref` e nunca por entidade — repetir
+    # a mesma string em cada traço criaria duas verdades sobre o mesmo nome. É APRESENTAÇÃO:
+    # o que casa cena↔legenda continua sendo só o `element_ref` (ADR-0058, decisão 2), e nada
+    # em lugar nenhum pode passar a casar por este campo, que é texto livre. Também não
+    # substitui `TextGeometry.text`, que é a redação escrita na prancha.
+    element_labels: dict[ElementRef, ElementLabel] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_references(self) -> SceneRevision:
@@ -289,6 +326,32 @@ class SceneRevision(ContractModel):
             raise ValueError(f"referências apontam para entidades inexistentes: {unknown_ids}")
         if not self.accepted_approximation_ids <= known_ids:
             raise ValueError("accepted_approximation_ids contém entidade inexistente")
+        # ADR-0058: element_ref identifica UM elemento, nunca um agrupamento arbitrário.
+        # A invariante mínima e defensável que esta tarefa implementa: entidades que
+        # compartilham element_ref têm de compartilhar layer. Não prova que o grupo é
+        # coerente (isso é ato humano, T2), mas recusa cedo o caso claramente errado —
+        # misturar camadas sob o mesmo ref — em vez de deixá-lo virar quantidade errada
+        # silenciosamente mais adiante na cadeia elemento → legenda → serviços.
+        layers_by_ref: dict[str, set[LayerName]] = {}
+        for entity in self.entities:
+            if entity.element_ref is None:
+                continue
+            layers_by_ref.setdefault(entity.element_ref, set()).add(entity.layer)
+        mismatched_refs = {ref for ref, layers in layers_by_ref.items() if len(layers) > 1}
+        if mismatched_refs:
+            raise ValueError(
+                "ELEMENT_REF_LAYER_MISMATCH: element_ref compartilhado entre camadas "
+                f"diferentes: {sorted(mismatched_refs)}"
+            )
+        # F-047 T2b: rótulo é nome DE elemento — sem elemento, não é nome de nada. Um rótulo
+        # órfão sobreviveria a uma revogação e reapareceria colado no elemento seguinte que
+        # cunhasse aquele ref, e nomear a coisa errada é pior do que não nomear.
+        orphan_labels = sorted(set(self.element_labels) - set(layers_by_ref))
+        if orphan_labels:
+            raise ValueError(
+                "ELEMENT_LABEL_UNKNOWN_REF: rótulo declarado para element_ref que nenhuma "
+                f"entidade usa: {orphan_labels}"
+            )
         return self
 
     def export_errors(self) -> list[str]:

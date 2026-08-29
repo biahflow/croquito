@@ -1,4 +1,6 @@
+import csv
 import json
+import math
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -6,9 +8,22 @@ import pytest
 from ezdxf.filemanagement import readfile
 
 from croquito_core.errors import DomainValidationError
+from croquito_core.ids import new_uuid7
+from croquito_core.models import (
+    CircleGeometry,
+    Entity,
+    EntityKind,
+    LayerName,
+    LineGeometry,
+    Point2D,
+    PolylineGeometry,
+    Precision,
+    Provenance,
+    SceneRevision,
+)
 from croquito_worker.dxf import APP_ID, AutoDecidedReadingAudit, export_scene_package
 from croquito_worker.pipeline import run_synthetic_pipeline
-from croquito_worker.synthetic import build_synthetic_scene
+from croquito_worker.synthetic import FIELD_HEIGHT, FIELD_WIDTH, build_synthetic_scene
 
 
 def test_synthetic_pipeline_creates_audited_package(tmp_path: Path) -> None:
@@ -127,3 +142,222 @@ def test_export_refuses_unapproved_scene(tmp_path: Path) -> None:
 
     with pytest.raises(DomainValidationError, match="SCENE_NOT_APPROVED"):
         export_scene_package(scene, tmp_path)
+
+
+def _quantities_rows(tmp_path: Path) -> list[dict[str, str]]:
+    with open(tmp_path / "quantitativos.csv", encoding="utf-8", newline="") as stream:
+        return list(csv.DictReader(stream))
+
+
+def test_element_ref_agrupa_linhas_somando_comprimento_e_pegando_a_pior_precisao(
+    tmp_path: Path,
+) -> None:
+    """F-047 T3, critérios 1-4: coluna aditiva, grupo vira uma linha com grandezas somadas,
+    a pior precisão do grupo, e quem não declarou ref continua uma linha por entidade."""
+    scene = build_synthetic_scene()
+    campo_entities = [entity for entity in scene.entities if entity.layer == LayerName.CAMPO]
+    assert len(campo_entities) == 4
+    top, right, bottom, left = campo_entities
+
+    top.element_ref = "EL-000100"
+    right.element_ref = "EL-000100"
+    right.precision = Precision.DERIVED  # top continua exact: o grupo deve virar a pior.
+
+    # Reconstrói para forçar a invariante de camada compartilhada do ADR-0058 a rodar de
+    # novo (validate_assignment não repete o validador de nível de cena ao mutar campo).
+    scene = SceneRevision.model_validate(scene.model_dump())
+
+    export_scene_package(scene, tmp_path)
+    with open(tmp_path / "quantitativos.csv", encoding="utf-8", newline="") as stream:
+        fieldnames = csv.DictReader(stream).fieldnames
+    rows = _quantities_rows(tmp_path)
+
+    # Coluna aditiva: ao lado de entity_id, nunca no lugar dele.
+    assert fieldnames == [
+        "entity_id",
+        "element_ref",
+        "layer",
+        "kind",
+        "precision",
+        "length_m",
+        "perimeter_m",
+        "area_m2",
+    ]
+
+    grouped = [row for row in rows if row["element_ref"] == "EL-000100"]
+    assert len(grouped) == 1
+    row = grouped[0]
+    assert row["entity_id"] == "; ".join(sorted([str(top.id), str(right.id)]))
+    assert row["layer"] == "CAMPO"
+    assert row["kind"] == "line"
+    assert row["precision"] == "derived"  # a pior entre exact e derived, nunca promovida.
+    assert math.isclose(float(row["length_m"]), FIELD_WIDTH + FIELD_HEIGHT, rel_tol=1e-6)
+    assert row["perimeter_m"] == ""
+    assert row["area_m2"] == ""
+
+    # bottom/left não declararam ref: continuam uma linha cada, com a coluna nova vazia.
+    solo_rows = {row["entity_id"]: row for row in rows if row["element_ref"] == ""}
+    assert str(bottom.id) in solo_rows
+    assert str(left.id) in solo_rows
+    assert solo_rows[str(bottom.id)]["precision"] == "exact"
+    assert math.isclose(float(solo_rows[str(bottom.id)]["length_m"]), FIELD_WIDTH, rel_tol=1e-6)
+
+
+def test_element_ref_agrupa_circulos_somando_perimetro_e_area(tmp_path: Path) -> None:
+    """F-047 T3, critério 2: perímetro e área também somam entre si dentro do grupo."""
+    provenance = Provenance(
+        source_type="synthetic_test", source_ids=["fixture:f-047-t3"], summary_code="TEST_FIXTURE"
+    )
+    circle_a = Entity(
+        kind=EntityKind.CIRCLE,
+        layer=LayerName.EQUIPAMENTOS,
+        precision=Precision.EXACT,
+        geometry=CircleGeometry(center=Point2D(x=0, y=0), radius=1.0),
+        provenance=provenance,
+        element_ref="EL-000200",
+    )
+    circle_b = Entity(
+        kind=EntityKind.CIRCLE,
+        layer=LayerName.EQUIPAMENTOS,
+        precision=Precision.EXACT,
+        geometry=CircleGeometry(center=Point2D(x=5, y=0), radius=2.0),
+        provenance=provenance,
+        element_ref="EL-000200",
+    )
+    scene = SceneRevision(
+        job_id=new_uuid7(),
+        version=1,
+        approved=True,
+        entities=[circle_a, circle_b],
+    )
+
+    export_scene_package(scene, tmp_path, package_stem="circulos-agrupados")
+    rows = _quantities_rows(tmp_path)
+
+    assert len(rows) == 1
+    row = rows[0]
+    expected_perimeter = 2 * math.pi * 1.0 + 2 * math.pi * 2.0
+    expected_area = math.pi * 1.0**2 + math.pi * 2.0**2
+    assert row["length_m"] == ""
+    assert math.isclose(float(row["perimeter_m"]), expected_perimeter, rel_tol=1e-6)
+    assert math.isclose(float(row["area_m2"]), expected_area, rel_tol=1e-6)
+
+
+def test_croqui_sem_element_ref_nao_ganha_a_coluna(tmp_path: Path) -> None:
+    """F-047 T3, critério 5: sem nenhuma identidade declarada, a coluna nem aparece."""
+    scene = build_synthetic_scene()
+    export_scene_package(scene, tmp_path)
+
+    with open(tmp_path / "quantitativos.csv", encoding="utf-8", newline="") as stream:
+        header = stream.readline().strip()
+
+    assert header == "entity_id,layer,kind,precision,length_m,perimeter_m,area_m2"
+    assert "element_ref" not in header
+
+
+def test_polilinha_aberta_produz_comprimento_sem_perimetro_nem_area(tmp_path: Path) -> None:
+    """F-047 T3b, critério 1: polilinha aberta (um muro/alambrado) contribui `length_m`
+    como a soma euclidiana dos segmentos, e nenhum `perimeter_m`/`area_m2` — abrir região
+    não é fechá-la, e inventar área seria geometria fabricada."""
+    provenance = Provenance(
+        source_type="synthetic_test", source_ids=["fixture:f-047-t3b"], summary_code="TEST_FIXTURE"
+    )
+    wall = Entity(
+        kind=EntityKind.POLYLINE,
+        layer=LayerName.MURO,
+        precision=Precision.EXACT,
+        geometry=PolylineGeometry(
+            points=[
+                Point2D(x=0, y=0),
+                Point2D(x=3, y=0),
+                Point2D(x=3, y=4),
+            ],
+            closed=False,
+        ),
+        provenance=provenance,
+    )
+    scene = SceneRevision(job_id=new_uuid7(), version=1, approved=True, entities=[wall])
+
+    export_scene_package(scene, tmp_path, package_stem="polilinha-aberta")
+    rows = _quantities_rows(tmp_path)
+
+    assert len(rows) == 1
+    row = rows[0]
+    # (0,0)->(3,0) = 3.0 ; (3,0)->(3,4) = 4.0 ; soma = 7.0.
+    assert math.isclose(float(row["length_m"]), 7.0, rel_tol=1e-6)
+    assert row["perimeter_m"] == ""
+    assert row["area_m2"] == ""
+
+
+def test_polilinha_fechada_continua_sem_length_m(tmp_path: Path) -> None:
+    """F-047 T3b, critério 2: polilinha fechada não muda — continua só perímetro/área,
+    sem ganhar `length_m`."""
+    provenance = Provenance(
+        source_type="synthetic_test", source_ids=["fixture:f-047-t3b"], summary_code="TEST_FIXTURE"
+    )
+    square = Entity(
+        kind=EntityKind.POLYLINE,
+        layer=LayerName.MURO,
+        precision=Precision.EXACT,
+        geometry=PolylineGeometry(
+            points=[
+                Point2D(x=0, y=0),
+                Point2D(x=2, y=0),
+                Point2D(x=2, y=2),
+                Point2D(x=0, y=2),
+            ],
+            closed=True,
+        ),
+        provenance=provenance,
+    )
+    scene = SceneRevision(job_id=new_uuid7(), version=1, approved=True, entities=[square])
+
+    export_scene_package(scene, tmp_path, package_stem="polilinha-fechada")
+    rows = _quantities_rows(tmp_path)
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["length_m"] == ""
+    assert math.isclose(float(row["perimeter_m"]), 8.0, rel_tol=1e-6)
+    assert math.isclose(float(row["area_m2"]), 4.0, rel_tol=1e-6)
+
+
+def test_element_ref_agrupa_polilinha_aberta_somando_comprimento(tmp_path: Path) -> None:
+    """F-047 T3b, critério 3: o agrupamento por `element_ref` da T3 continua valendo —
+    polilinha aberta soma comprimento com as demais entidades do grupo, e a precisão da
+    linha agrupada continua sendo a pior do grupo."""
+    provenance = Provenance(
+        source_type="synthetic_test", source_ids=["fixture:f-047-t3b"], summary_code="TEST_FIXTURE"
+    )
+    open_polyline = Entity(
+        kind=EntityKind.POLYLINE,
+        layer=LayerName.ALAMBRADO,
+        precision=Precision.EXACT,
+        geometry=PolylineGeometry(
+            points=[Point2D(x=0, y=0), Point2D(x=3, y=0), Point2D(x=3, y=4)],
+            closed=False,
+        ),
+        provenance=provenance,
+        element_ref="EL-000300",
+    )
+    line = Entity(
+        kind=EntityKind.LINE,
+        layer=LayerName.ALAMBRADO,
+        precision=Precision.DERIVED,
+        geometry=LineGeometry(start=Point2D(x=3, y=4), end=Point2D(x=3, y=9)),
+        provenance=provenance,
+        element_ref="EL-000300",
+    )
+    scene = SceneRevision(
+        job_id=new_uuid7(), version=1, approved=True, entities=[open_polyline, line]
+    )
+
+    export_scene_package(scene, tmp_path, package_stem="polilinha-aberta-agrupada")
+    rows = _quantities_rows(tmp_path)
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert math.isclose(float(row["length_m"]), 7.0 + 5.0, rel_tol=1e-6)
+    assert row["perimeter_m"] == ""
+    assert row["area_m2"] == ""
+    assert row["precision"] == "derived"  # a pior entre exact e derived.

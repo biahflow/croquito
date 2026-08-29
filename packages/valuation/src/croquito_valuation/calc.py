@@ -295,6 +295,20 @@ def build_worksite_bulletin(
             {"plate_id": packet.plate_id},
         )
 
+    # F-047 T5 (ADR-0058 decisão 6): o boletim não imprime número que ninguém escolheu. O
+    # portão vive aqui além de viver no fechamento do pacote porque a divergência pode nascer
+    # DEPOIS do fechamento — a cena é aprovada quando é aprovada, e o pacote pode já estar
+    # completo quando o segundo número aparece. Só os itens que virariam linha são olhados:
+    # item com o código rejeitado não imprime nada e não trava o boletim dos outros.
+    divergent_ids = sorted(item.id for item in included_items if item.has_open_divergence())
+    if divergent_ids:
+        raise ValuationValidationError(
+            "CALC_QUANTITY_DIVERGENCE_OPEN",
+            "item com divergência de quantidade em aberto entre a cena e a legenda não vira "
+            "linha de boletim; resolva a divergência antes de medir",
+            {"item_ids": divergent_ids},
+        )
+
     included_ids = {item.id for item in included_items}
     if calc_plan is not None:
         plan_ids = {plan.item_id for plan in calc_plan.plans}

@@ -1667,3 +1667,263 @@ p {
 .jornada-medicao .previa-tabela {
   margin: 8px 0;
 }
+ * A quantidade que veio da cena aprovada, e a divergência (F-047 T7b, ADR-0058).
+ *
+ * A família `--cena` é declarada aqui de novo, com os MESMOS valores da jornada do croqui
+ * (`apps/web/src/styles.css`, bloco `.identidade-elemento` da T7a). A repetição é
+ * deliberada e é a mesma escolha que `formatarInstante` já registra na plataforma: as
+ * jornadas compartilham o transporte, nunca se importam entre si, e promover os tokens a
+ * `:root` mudaria a folha da outra jornada a partir daqui. Se o matiz da origem "cena
+ * aprovada" mudar, os dois lugares mudam juntos — e é essa a intenção.
+ *
+ * Nada aqui depende só de cor: precisão é palavra, divergência é glifo `⚠` MAIS borda
+ * esquerda MAIS texto, e a ausência de identidade é traço tracejado MAIS a frase "sem
+ * identidade".
+ */
+.jornada-medicao {
+  --cena: #2b5ea8;
+  --cena-soft: #eef3fb;
+  --cena-line: #b7cde8;
+  --cena-ink: #1f4a86;
+  --atencao: #7c5210;
+  --atencao-line: #e2c79a;
+  --atencao-soft: #fdf5e8;
+}
+
+.jornada-medicao .elo-croqui,
+.jornada-medicao .confronto-relatorio {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px 14px;
+}
+
+.jornada-medicao .elo-croqui h3,
+.jornada-medicao .confronto-relatorio h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.jornada-medicao .elo-linha {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.jornada-medicao .elo-confronto {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+/* O selo da origem nova. Glifo + palavra: "cena aprovada" nunca é só um matiz azul. */
+.jornada-medicao .selo-cena {
+  border: 1px solid var(--cena-line);
+  background: var(--cena-soft);
+  color: var(--cena-ink);
+}
+
+/* A etiqueta da identidade: monoespaçada e de cantos quadrados, para não se confundir com
+   as pílulas de selo nem com o `item_id`. Mesma forma da jornada do croqui. */
+.jornada-medicao .etiqueta-elemento {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--cena-line);
+  border-radius: 4px;
+  background: var(--cena-soft);
+  color: var(--cena-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.jornada-medicao .etiqueta-elemento-ausente {
+  border-style: dashed;
+  border-color: var(--muted);
+  background: transparent;
+  color: var(--ink-secondary);
+}
+
+.jornada-medicao .lista-confronto {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.jornada-medicao .confronto-linha {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  font-size: 0.8rem;
+}
+
+.jornada-medicao .confronto-fed {
+  border-color: var(--cena-line);
+  background: var(--cena-soft);
+}
+
+/* Divergência gravada é âmbar E borda esquerda de 3 px: bloqueio é diagnóstico, não recusa. */
+.jornada-medicao .confronto-divergence_recorded {
+  border-left: 3px solid var(--atencao);
+}
+
+.jornada-medicao .confronto-cabeca {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.jornada-medicao .confronto-rotulo {
+  font-weight: 600;
+}
+
+.jornada-medicao .confronto-motivo,
+.jornada-medicao .confronto-numero,
+.jornada-medicao .confronto-sem-par {
+  color: var(--ink-secondary);
+}
+
+.jornada-medicao .confronto-sem-par {
+  border-left: 3px solid var(--muted);
+  padding-left: 8px;
+}
+
+.jornada-medicao .origem-cena,
+.jornada-medicao .divergencia {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+  font-size: 0.85rem;
+}
+
+.jornada-medicao .origem-cena {
+  border-color: var(--cena-line);
+  background: var(--cena-soft);
+}
+
+.jornada-medicao .origem-acao {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+
+/* Os três blocos da divergência têm peso IGUAL — cena, legenda, diferença — para que
+   nenhum pareça o principal: nenhuma origem sobrescreve a outra. */
+.jornada-medicao .duplo {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.jornada-medicao .duplo-bloco {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.jornada-medicao .duplo-cena {
+  border-color: var(--cena-line);
+  background: var(--cena-soft);
+}
+
+.jornada-medicao .duplo-diferenca {
+  border-color: var(--atencao-line);
+  background: var(--atencao-soft);
+}
+
+.jornada-medicao .duplo-numero {
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.jornada-medicao .duplo-origem {
+  font-size: 0.75rem;
+  color: var(--ink-secondary);
+}
+
+/* A conta da tolerância vem por extenso e em caixa tracejada: ela é a REGRA escrita, e os
+   números dela são os que o servidor gravou. A tela não refaz nenhum. */
+.jornada-medicao .tolerancia-formula {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--cena-line);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.jornada-medicao .bloqueado {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--atencao-line);
+  border-left: 3px solid var(--atencao);
+  border-radius: 6px;
+  background: var(--atencao-soft);
+  color: #4a3208;
+  font-size: 0.82rem;
+}
+
+.jornada-medicao .carimbo-resolucao {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--cena-line);
+  border-left: 3px solid var(--cena);
+  border-radius: 6px;
+  background: var(--cena-soft);
+  color: var(--cena-ink);
+  font-size: 0.82rem;
+}
+
+.jornada-medicao .carimbo-resolucao p {
+  margin: 0;
+}
+
+.jornada-medicao .resolucao-divergencia {
+  margin: 0 0 12px;
+}
+
+/* A terceira opção fica VISÍVEL e indisponível, com a razão ao lado: a ausência calada não
+   ensina por que ela não existe. */
+.jornada-medicao .escolha-indisponivel {
+  color: var(--ink-secondary);
+  opacity: 0.75;
+}
+
+.jornada-medicao .acoes-linha {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.jornada-medicao .item-origem,
+.jornada-medicao .item-bloqueado {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--ink-secondary);
+}

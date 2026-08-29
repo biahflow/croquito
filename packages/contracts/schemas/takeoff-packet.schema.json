@@ -1,5 +1,80 @@
 {
   "$defs": {
+    "DivergenceChoice": {
+      "description": "Qual dos DOIS números passa a valer. Não há um terceiro valor, de propósito.\n\n\"Nenhuma das duas\" não é oferecida (ADR-0058, aceite de 2026-08-28): digitar uma\nterceira quantidade na resolução seria a redigitação que a feature existe para\neliminar. Quem quiser um número que não é nem o da cena nem o da legenda corrige a\norigem — a legenda, pela decisão de takeoff; a cena, pelo traçado — e volta aqui.",
+      "enum": [
+        "scene",
+        "legend"
+      ],
+      "title": "DivergenceChoice",
+      "type": "string"
+    },
+    "LegendQuantityOrigin": {
+      "additionalProperties": false,
+      "description": "De onde veio o número da LEGENDA: quem leu, com que versão, e quando foi decidido.\n\n`read_by`/`read_at` só existem depois da decisão do orçamentista sobre o item: antes\ndela quem \"leu\" é o extrator, e carimbar um instante humano que ninguém praticou seria\ninventar a metade mais auditada da origem.",
+      "properties": {
+        "extractor": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Extractor",
+          "type": "string"
+        },
+        "extractor_version": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Extractor Version",
+          "type": "string"
+        },
+        "quantity": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Quantity",
+          "type": "string"
+        },
+        "read_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Read At"
+        },
+        "read_by": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Read By"
+        },
+        "source": {
+          "enum": [
+            "legend_extraction",
+            "manual"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "quantity",
+        "source",
+        "extractor",
+        "extractor_version"
+      ],
+      "title": "LegendQuantityOrigin",
+      "type": "object"
+    },
     "PlateBox": {
       "additionalProperties": false,
       "description": "Espelho de `PixelBox`: recorte em pixels da prancha onde o item foi lido.",
@@ -73,6 +148,157 @@
       "title": "PlateEvidence",
       "type": "object"
     },
+    "Precision": {
+      "enum": [
+        "exact",
+        "derived",
+        "approximate",
+        "unresolved"
+      ],
+      "title": "Precision",
+      "type": "string"
+    },
+    "QuantityDivergence": {
+      "additionalProperties": false,
+      "description": "A issue: os dois números, as duas origens, a diferença e a tolerância que ela furou.\n\nO modelo se recusa a existir dentro da tolerância (`QUANTITY_DIVERGENCE_WITHIN_TOLERANCE`)\ne a carregar uma diferença ou uma tolerância que não sejam as recomputadas dos próprios\nnúmeros. Assim a issue nunca é um rótulo colado por fora: ela é o resultado da conta,\nconferido na construção e a cada releitura do JSON gravado.\n\n`relative_tolerance`, `absolute_floor`, `tolerance_bound` e `legend_ratio` (F-047 T5b)\nsão a mesma conta por extenso que a tela precisa mostrar (pacote de design aprovado,\nestado 06) — nascem OPCIONAIS e conferidos do mesmo jeito quando presentes, porque uma\ndivergência gravada antes desta mudança precisa continuar legível sem eles.",
+      "properties": {
+        "absolute_floor": {
+          "anyOf": [
+            {
+              "gt": 0,
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Absolute Floor"
+        },
+        "difference": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Difference",
+          "type": "string"
+        },
+        "legend": {
+          "$ref": "#/$defs/LegendQuantityOrigin"
+        },
+        "legend_ratio": {
+          "anyOf": [
+            {
+              "gt": 0,
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Legend Ratio"
+        },
+        "relative_tolerance": {
+          "anyOf": [
+            {
+              "gt": 0,
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Relative Tolerance"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantityDivergenceResolution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scene": {
+          "$ref": "#/$defs/SceneQuantityOrigin"
+        },
+        "tolerance": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Tolerance",
+          "type": "string"
+        },
+        "tolerance_bound": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToleranceBound"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "scene",
+        "legend",
+        "difference",
+        "tolerance"
+      ],
+      "title": "QuantityDivergence",
+      "type": "object"
+    },
+    "QuantityDivergenceResolution": {
+      "additionalProperties": false,
+      "description": "O ato humano que escolhe um dos dois números, com autor e instante.\n\nEspelha `ReviewerDecision` na forma, não no significado: aqui não se confirma nem se\nrejeita um item — declara-se qual origem prevalece numa divergência já aberta.",
+      "properties": {
+        "choice": {
+          "$ref": "#/$defs/DivergenceChoice"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "resolved_at": {
+          "format": "date-time",
+          "title": "Resolved At",
+          "type": "string"
+        },
+        "reviewer_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Reviewer Id",
+          "type": "string"
+        },
+        "reviewer_role": {
+          "const": "orcamentista",
+          "title": "Reviewer Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "choice",
+        "reviewer_id",
+        "reviewer_role",
+        "resolved_at"
+      ],
+      "title": "QuantityDivergenceResolution",
+      "type": "object"
+    },
     "ReviewerDecision": {
       "additionalProperties": false,
       "description": "Decisão humana rastreável do orçamentista.\n\nDuplicação local deliberada do `HumanDecision` do contexto de cena: o ADR-0016 mantém\nos dois contextos separados, e uma decisão sobre medição não é uma decisão sobre\ngeometria. O que se repete é a forma, não o significado.",
@@ -131,9 +357,49 @@
       "title": "ReviewerDecision",
       "type": "object"
     },
+    "SceneQuantityOrigin": {
+      "additionalProperties": false,
+      "description": "De onde veio o número da CENA: identidade do elemento, precisão declarada e revisão.\n\nA precisão é a que a entidade declarou e nunca sobe, como em toda a travessia\n(ADR-0058 decisão 4): só `exact` e `derived` chegam até aqui, porque `approximate` não\nalimenta quantidade e portanto também não tem com o que divergir.",
+      "properties": {
+        "element_ref": {
+          "pattern": "^EL-\\d{3,}$",
+          "title": "Element Ref",
+          "type": "string"
+        },
+        "precision": {
+          "$ref": "#/$defs/Precision"
+        },
+        "quantity": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Quantity",
+          "type": "string"
+        },
+        "scene_revision_id": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scene Revision Id"
+        }
+      },
+      "required": [
+        "quantity",
+        "element_ref",
+        "precision"
+      ],
+      "title": "SceneQuantityOrigin",
+      "type": "object"
+    },
     "TakeoffItem": {
       "additionalProperties": false,
-      "description": "Uma linha da legenda quantificada, do estado observado ao confirmado pelo orçamentista.\n\nEspelho de `DimensionReading`. `source` é a porta discriminada reservada no roadmap\n(`docs/product/ROADMAP.md`) para quando o quantitativo puder nascer do scene graph\naprovado em vez da extração de legenda.",
+      "description": "Uma linha da legenda quantificada, do estado observado ao confirmado pelo orçamentista.\n\nEspelho de `DimensionReading`. `source` era a porta discriminada reservada no roadmap\n(`docs/product/ROADMAP.md`) para quando o quantitativo pudesse nascer do scene graph\naprovado em vez da extração de legenda; a F-047 T4 a abriu com `scene_graph`.",
       "properties": {
         "decision": {
           "anyOf": [
@@ -145,6 +411,19 @@
             }
           ],
           "default": null
+        },
+        "element_ref": {
+          "anyOf": [
+            {
+              "pattern": "^EL-\\d{3,}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element Ref"
         },
         "evidence": {
           "$ref": "#/$defs/PlateEvidence"
@@ -205,10 +484,33 @@
           "title": "Raw Text",
           "type": "string"
         },
+        "scene_divergence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantityDivergence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scene_precision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Precision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "source": {
           "enum": [
             "legend_extraction",
-            "manual"
+            "manual",
+            "scene_graph"
           ],
           "title": "Source",
           "type": "string"
@@ -247,9 +549,18 @@
       ],
       "title": "TakeoffItemStatus",
       "type": "string"
+    },
+    "ToleranceBound": {
+      "description": "Qual das duas parcelas GOVERNOU a tolerância nomeada: a relativa (1% da legenda) ou\no piso absoluto. Existe para a tela não precisar comparar `relative_tolerance` com\n`absolute_floor` — o servidor já decidiu e nomeia.",
+      "enum": [
+        "relative",
+        "absolute_floor"
+      ],
+      "title": "ToleranceBound",
+      "type": "string"
     }
   },
-  "$id": "https://schemas.croquito.local/valuation/takeoff-packet/1.0.0.json",
+  "$id": "https://schemas.croquito.local/valuation/takeoff-packet/1.3.0.json",
   "additionalProperties": false,
   "description": "Pacote de takeoff de uma prancha: espelho de `ReviewPacket`.\n\nO JSON canônico é a fonte de verdade da extração; `safety_status` fixo lembra que a\ndecisão do orçamentista continua obrigatória e nada aqui é quantitativo aprovado.",
   "properties": {
@@ -292,8 +603,13 @@
       "type": "string"
     },
     "schema_version": {
-      "const": "1.0.0",
-      "default": "1.0.0",
+      "default": "1.3.0",
+      "enum": [
+        "1.0.0",
+        "1.1.0",
+        "1.2.0",
+        "1.3.0"
+      ],
       "title": "Schema Version",
       "type": "string"
     },

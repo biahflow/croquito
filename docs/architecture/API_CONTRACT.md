@@ -434,6 +434,156 @@ Entrada:
 Operações são uma allowlist; cliente não substitui um scene graph inteiro. Se a
 versão mudou, retorna `409 REVISION_CONFLICT` com a versão atual.
 
+### `POST /v1/jobs/{job_id}/elements`
+
+Declara que um conjunto de entidades é **um elemento**, cunhando o `element_ref` no ato
+([ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md),
+decisão 2). É ato humano: a rota não infere agrupamento por proximidade, rótulo próximo
+ou camada — quem escolhe o grupo é quem assina.
+
+Entrada:
+
+```json
+{
+  "base_version": 3,
+  "entity_ids": ["...", "..."],
+  "reason": "Estes traços são a mesma quadra",
+  "label": "Alambrado da quadra"
+}
+```
+
+Saída: o ato e a revisão nova que ele criou.
+
+```json
+{
+  "act": "declared",
+  "element_ref": "EL-001",
+  "label": "Alambrado da quadra",
+  "entity_ids": ["...", "..."],
+  "acted_by_role": "engineer",
+  "acted_at": "2026-08-28T21:00:00Z",
+  "scene": {"version": 4, "approved": false}
+}
+```
+
+- **O `element_ref` é cunhado pelo servidor**, sequencial dentro do job (`EL-001`,
+  `EL-002`, …), a partir do maior já cunhado em **qualquer** revisão do job. Um ref
+  revogado não volta ao estoque: nenhum elemento futuro herda o nome de um passado.
+  Mandar `element_ref` na entrada é `422 ELEMENT_REF_NOT_ASSIGNABLE`.
+- **O autor vem do JWT** e o instante é do servidor, com fuso. A resposta devolve o
+  **papel** profissional do ato, nunca o subject; o subject fica na revisão
+  (`created_by`) e na auditoria (`ELEMENT_IDENTITY_DECLARED`).
+- **Entidades de camadas diferentes recusam** com `422 ELEMENT_REF_LAYER_MISMATCH`, a
+  mesma invariante que `SceneRevision` aplica — conferida antes de montar a cena para
+  que a recusa seja legível.
+- **Entidade já declarada em outro elemento recusa** com `409 ELEMENT_ALREADY_DECLARED`:
+  mudar de elemento é revogar e declarar de novo, nunca reescrever por cima.
+- **Declarar sobre cena aprovada é permitido e cria revisão nova**, que nasce
+  `approved: false`. A revisão aprovada não é tocada e continua válida para o conteúdo
+  que aprovou.
+- **O `label` é o nome legível do elemento e é opcional** (F-047 T2b): ele é gravado na
+  cena por `element_ref` (`SceneRevision.element_labels`), aparado nas pontas, no máximo
+  120 caracteres. Vazio ou só de espaço é `422 ELEMENT_LABEL_INVALID` — para ficar sem
+  nome, omita o campo. **Rótulo não é identidade**: nada casa por ele, em lugar nenhum;
+  quem casa cena↔legenda é o `element_ref`, e dois elementos podem ter o mesmo rótulo.
+
+### `POST /v1/jobs/{job_id}/elements/labels`
+
+Renomeia o elemento: ato declarado, com autor, instante e motivo, criando revisão nova —
+nunca edição silenciosa. Não move entidade, não troca `element_ref` e não muda o que casa
+com a legenda.
+
+```json
+{
+  "base_version": 4,
+  "element_ref": "EL-001",
+  "label": "Alambrado da quadra poliesportiva",
+  "reason": "Nome conferido com a prancha"
+}
+```
+
+Responde no mesmo formato das demais, com `"act": "relabeled"` e o rótulo novo. Ref que a
+revisão corrente não tem recusa com `409 ELEMENT_NOT_DECLARED`; rótulo vazio ou só de
+espaço, com `422 ELEMENT_LABEL_INVALID`.
+
+### `POST /v1/jobs/{job_id}/elements/revocations`
+
+Desfaz a identidade declarada: limpa o `element_ref` das entidades que o carregam, numa
+revisão nova, com autor, instante e motivo. Aqui o `element_ref` vem do cliente porque
+nomeia o que já existe na cena — nomear alvo não é cunhar identidade.
+
+```json
+{"base_version": 4, "element_ref": "EL-001", "reason": "Agrupamento errado"}
+```
+
+Responde no mesmo formato, com `"act": "revoked"`. Ref que a revisão corrente não tem
+recusa com `409 ELEMENT_NOT_DECLARED`. **A revogação leva o rótulo junto**: sem elemento,
+o nome não nomeia nada, e um rótulo órfão reapareceria colado no elemento seguinte.
+
+As três rotas exigem `Idempotency-Key`, papel profissional elegível
+(`engineer`, `architect` ou `domain_reviewer`) e concorrência otimista por
+`base_version`. Duas declarações simultâneas sobre a mesma versão cunham o mesmo número:
+a segunda a gravar colide na unicidade `(job_id, version)` e recebe
+`409 REVISION_CONFLICT`, de modo que nunca existe cena com ref duplicado.
+
+### `GET /v1/jobs/{job_id}/elements/proposals`
+
+Propostas ASSISTIDAS de agrupamento (F-047 T6, [ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md),
+decisão 2): o sistema PROPÕE, nunca decide. O produtor
+(`croquito_core.element_proposals.propose_element_groups`) é determinístico, sem
+provider pago, e roda de novo a cada leitura sobre a cena corrente — nada fica em cache.
+Ele agrupa entidades que ainda não têm `element_ref` por dois sinais: mesma camada com a
+mesma procedência (`summary_code`/`source_ids`), ou mesma camada com o mesmo rótulo
+(`TEXT`) mais próximo. Os dois são só SINAL, não identidade: uma proposta pode agrupar
+errado, e é para isso que existe a recusa.
+
+Saída:
+
+```json
+{
+  "scene_version": 4,
+  "proposals": [
+    {
+      "proposal_id": "elp_...",
+      "status": "unresolved",
+      "layer": "MURO",
+      "signal": "provenance",
+      "label": null,
+      "entity_ids": ["...", "..."]
+    }
+  ]
+}
+```
+
+- `status` é sempre `"unresolved"`: nunca identidade.
+- **Confirmar é o MESMO ato da T2**: reenviar `entity_ids` para
+  `POST /v1/jobs/{job_id}/elements`. Esta rota não abre um segundo caminho de escrita.
+- Leitura: qualquer principal autenticado do tenant, como `GET /v1/jobs/{job_id}/scene`.
+
+### `POST /v1/jobs/{job_id}/elements/proposals/{proposal_id}/rejections`
+
+Recusa uma proposta: NUNCA escreve na cena, só registra quem recusou, quando e por quê.
+
+```json
+{"reason": "São dois muros diferentes, não um elemento só."}
+```
+
+Responde com o registro do ato:
+
+```json
+{
+  "proposal_id": "elp_...",
+  "entity_ids": ["...", "..."],
+  "rejected_by_role": "engineer",
+  "rejected_at": "2026-08-28T21:00:00Z"
+}
+```
+
+Exige `Idempotency-Key` e papel profissional elegível. Uma proposta recusada não volta a
+aparecer em `GET .../proposals` para o mesmo conjunto de entidades nesta cena; recusar de
+novo (com outra `Idempotency-Key`) ou recusar um id que nunca foi ofertado responde
+`404 ELEMENT_PROPOSAL_NOT_FOUND`.
+
 ## Sessão de revisão de cotas
 
 O worker persiste snapshots imutáveis de `ReviewPacket` por job: leituras e seus
@@ -1485,6 +1635,100 @@ ingestão escreve. O overlay é reconstruído **fora do request path**, por coma
 publicá-lo o overlay corrente fica marcado como vencido. Fila indisponível não derruba a
 decisão já gravada: o comando é repetível e a resposta continua `200`. Decisão em folha além
 da primeira **não enfileira** re-render (ver `GET .../takeoff/overlay`).
+
+### `POST /v1/valuation-rounds/{round_id}/takeoff/divergences/resolutions`
+
+Entrada: `base_version`, `item_id`, `choice` (`scene` ou `legend`) e `note` opcional.
+Declara **qual das duas quantidades prevalece** quando o mesmo elemento tem quantidade
+derivada da cena aprovada e quantidade lida na legenda, e as duas se afastam mais que a
+tolerância nomeada (F-047 T5, [ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md)
+decisão 6).
+
+A tolerância é `maior(1% da quantidade da legenda, 0,01 na unidade do item)`. Diferença
+**exatamente igual** à tolerância não abre divergência; um centavo acima abre.
+
+Não há campo de quantidade, e a ausência é a decisão de produto: a resolução escolhe entre
+os dois números que já existem. "Nenhuma das duas" não é oferecida — digitar uma terceira
+quantidade aqui seria a redigitação que a feature existe para eliminar. Quem precisa de
+outro número corrige a origem (a legenda, por `/takeoff/decisions`; a cena, por traçado e
+nova aprovação) e volta.
+
+Enquanto a divergência está aberta o elemento **não fecha**: o fechamento de pacote recusa
+em `ASSIGNMENT_QUANTITY_DIVERGENCE_OPEN` e o boletim, em `CALC_QUANTITY_DIVERGENCE_OPEN`.
+
+O número **preterido continua gravado** na divergência, com a origem que o produziu — a
+cena com a precisão declarada e a revisão de onde saiu; a legenda com quem leu e quando.
+Resolver não apaga nada.
+
+Item sem divergência (`TAKEOFF_DIVERGENCE_ABSENT`), divergência já resolvida
+(`TAKEOFF_DIVERGENCE_ALREADY_RESOLVED`) e item fora do pacote
+(`TAKEOFF_DIVERGENCE_UNKNOWN_ITEM`) devolvem `422 DOMAIN_VALIDATION_FAILED` com o código em
+`details`.
+
+Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para versão
+divergente. A resposta traz a rodada em versão nova com o pacote regravado, e o overlay
+marcado como vencido até o worker republicá-lo.
+
+### `POST /v1/valuation-rounds/{round_id}/scene-link`
+
+Entrada: `base_version` e `job_id`. Declara **qual croqui aprovado alimenta esta rodada de
+medição** (F-047 T4b, [ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md)
+decisões 5 e 7).
+
+O elo é **ato humano explícito e nunca inferido**: não existe casamento por `worksite_key`
+igual, por proximidade de data ou por semelhança de nome. É a mesma regra que o produto
+aplica em toda parte — proximidade não é associação —, e é a rejeição central do ADR-0058.
+Sem esta declaração, a rodada responde exatamente como respondia antes da feature.
+
+O corpo cita o **job**; o servidor resolve o pacote publicado dele e grava, junto, o
+`export_id`, o `scene_revision_id` e o `dxf_sha256` — o `quantitativos.csv` sai de um pacote
+específico, e é preciso saber de qual. Um export novo (nova aprovação, novo traçado) **não**
+muda o elo sozinho: trocar é declarar de novo, por esta mesma rota, e a declaração anterior
+continua legível na revisão em que foi feita.
+
+Recusas, todas com código estável e nunca `500`: job de outro tenant é `404 NOT_FOUND`, como
+se não existisse; croqui sem cena aprovada é `409 SCENE_LINK_SCENE_NOT_APPROVED`; croqui
+aprovado sem pacote publicado é `409 SCENE_LINK_EXPORT_REQUIRED` — sem pacote não há
+quantitativo de onde ler.
+
+Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para versão divergente.
+A resposta é o estado da rodada em versão nova, com o bloco `scene_link` preenchido; a
+ausência de elo aparece nele como `{"present": false}`, declarada e não omitida.
+
+### `POST /v1/valuation-rounds/{round_id}/takeoff/scene-quantities`
+
+Entrada: `base_version`. Confronta o pacote de takeoff **inteiro** com o `quantitativos.csv`
+do croqui declarado. O caminho até o arquivo não tem atalho: elo declarado →
+`export_artifacts.package_object_key` (conferido `COMPLETED` e sob o prefixo do tenant) →
+membro `quantitativos.csv` do pacote → `QuantitySource`. Como o pacote só é publicado depois
+de `ensure_exportable` e da auditoria do DXF, a quantidade automática **herda** o portão de
+exportação em vez de duplicá-lo.
+
+Cada item recebe um de três desfechos, e o relatório (`scene_confrontation.items`) traz
+**todos** os itens, inclusive os intactos:
+
+- `fed` — o item não tinha quantidade e recebeu a da cena, com a `scene_precision` de lá e
+  `source = scene_graph`; ele volta `proposed`, ainda esperando a decisão do orçamentista;
+- `divergence_recorded` — o item já trazia a quantidade da legenda e os dois números
+  discordam além da tolerância nomeada: a divergência fica gravada e ninguém escolhe por
+  ninguém (a saída é `POST .../takeoff/divergences/resolutions`);
+- `unchanged` — nada mudou, e `reason` diz por quê: `item_without_element_ref`,
+  `element_ref_absent_from_scene`, `precision_not_eligible` (cena `approximate`/`unresolved`),
+  `unit_not_derivable_from_scene`, `unit_mismatch`, `length_ambiguous`, `quantity_absent`,
+  `quantity_not_positive`, `item_rejected`, `already_fed_from_scene`,
+  `divergence_already_recorded` ou `within_tolerance`.
+
+**Repetir é seguro.** O confronto sobre o mesmo estado não duplica divergência, não
+realimenta o que já veio da cena, não reabre divergência resolvida e **não grava revisão**:
+`changed` sai `false` e a versão da rodada fica onde estava.
+
+Recusas: rodada sem elo declarado é `409 SCENE_LINK_REQUIRED`; rodada sem takeoff publicado é
+`409 ROUND_STAGE_NOT_READY`; pacote ausente do armazenamento, maior que o teto de leitura, sem
+o `quantitativos.csv`, ilegível ou de um export que deixou de estar publicado é
+`409 SCENE_PACKAGE_REQUIRED`.
+
+Exige `Idempotency-Key` e `base_version`. Quando algo muda, a resposta traz a rodada em versão
+nova com o pacote regravado e o overlay marcado como vencido até o worker republicá-lo.
 
 ### `GET /v1/valuation-rounds/{round_id}/code-suggestions`
 
@@ -2804,6 +3048,8 @@ idêntico ao desta rota.
 `JOURNEY_NOT_IN_PILOT`,
 `AGREEMENT_REFERENCE_REQUIRED`, `SCENE_NOT_APPROVED`,
 `CRITERION_NOT_ACKNOWLEDGEABLE`, `CRITERION_DECLARATION_CONFLICT`,
+`ELEMENT_REF_NOT_ASSIGNABLE`, `ELEMENT_REF_LAYER_MISMATCH`,
+`ELEMENT_ALREADY_DECLARED`, `ELEMENT_NOT_DECLARED`, `ELEMENT_LABEL_INVALID`,
 `DOMAIN_VALIDATION_FAILED`,
 `TRACE_PROPOSAL_UNKNOWN`, `TRACE_ACCEPTANCE_INVALID`,
 `READING_ALREADY_DECIDED`, `READING_NOT_DECIDED`,

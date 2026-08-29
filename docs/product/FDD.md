@@ -420,6 +420,50 @@ viram respectivamente `line`, `circle` e `polyline` fechada em layer
 Rejeitar preserva a proposta no histórico. A seleção não aceita aproximação, não
 marca entidade como `exact` e não libera exportação.
 
+#### Identidade de elemento na revisão
+
+Ao lado do preview da cena, a etapa de aprovação apresenta a **identidade de elemento**
+([ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md)).
+A tela distingue por texto e por forma as entidades **sem** identidade — etiqueta tracejada
+que diz "sem identidade" por escrito — das entidades **com** identidade, etiquetadas com o
+`element_ref`.
+
+O agrupamento proposto pelo sistema aparece **rotulado como proposta** (`proposta ·
+unresolved`, traço tracejado) e nunca como identidade, e diz por qual sinal foi gerado —
+mesma procedência de detecção, ou o mesmo rótulo mais próximo. Confirmar uma proposta é o
+**mesmo ato** da declaração manual: a proposta apenas semeia a seleção, e a escrita passa
+por `POST /v1/jobs/{job_id}/elements`, sem segundo caminho de identidade. Recusar registra
+a recusa com motivo, e a proposta recusada não volta a ser oferecida. Declarar sem proposta
+alguma, pela seleção manual das entidades, existe e usa a mesma rota.
+
+O `element_ref` é cunhado pelo servidor no ato: a tela não oferece campo para o nome do
+elemento, e declara por escrito de quem é a cunhagem. Depois do ato, a tela mostra o ref
+cunhado com o papel profissional de quem declarou e o instante, sobre qual revisão da cena.
+Como o ato cria revisão nova, a revisão em tela é recarregada, para que a aprovação assine
+a revisão em que o elemento existe.
+
+Ao lado do ref cunhado, o elemento carrega um **rótulo legível** — o nome que a pessoa lê
+("Alambrado da quadra"), escrito no mesmo ato da declaração e apresentado ao lado do
+`EL-00N`. O rótulo é **opcional**: cena sem rótulo nenhum é válida, e um elemento sem nome é
+apresentado como "sem rótulo", nunca com um traço mudo. Ele **não é identidade**: o
+casamento cena↔legenda continua sendo só pelo `element_ref`, e dois elementos com o mesmo
+rótulo continuam sendo dois elementos. Ele também não substitui o texto escrito na prancha,
+que continua sendo a redação que o humano lê no desenho. Renomear é ato declarado, com
+autor, instante e motivo, criando revisão nova — nunca edição silenciosa; revogar a
+identidade leva o rótulo junto, porque sem elemento o nome não nomeia nada.
+
+Um elemento cuja precisão é `approximate` ou `unresolved` é marcado como **não alimenta a
+medição**, com o motivo escrito na tela — a aproximação multiplicada por preço unitário
+vira uma linha de R$ que ninguém lê como aproximada. A precisão do elemento é a mais fraca
+entre as entidades **físicas** dele; anotação (`text`, `dimension`, `diameter_dimension`)
+documenta o elemento e não decide a precisão dele. Camadas diferentes no mesmo grupo são
+recusadas pelo servidor, e a tela apresenta a recusa legível, nomeando as camadas
+misturadas — nunca como erro genérico.
+
+Sem nenhuma identidade declarada, a revisão não ganha etiqueta, selo nem contagem de
+elemento em lugar nenhum: ela fica idêntica à de hoje. A tela não soma, não multiplica e
+não arredonda quantidade — ela não exibe quantidade nenhuma.
+
 ### 7. Exportação
 
 Após aprovação, a exportação é assíncrona: a interface solicita o pacote e acompanha
@@ -621,6 +665,52 @@ Nada disso recusa o recálculo. Contrato de IA inativo, ambiente sem provider, �
 ausente ou índice recusado: em todos, a shortlist sai léxica com o motivo escrito e o ato se
 completa. Tirar o recálculo inteiro por falta de um braço que é acréscimo levaria junto o
 léxico, que não custa nada e é o que a orçamentista usa todo dia.
+
+### A quantidade que vem da cena aprovada
+
+A rodada declara — por ato humano, nunca por inferência — **qual croqui aprovado a
+alimenta**
+([ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md)).
+O elo nunca é adivinhado por obra de mesmo nome, data próxima ou rótulo parecido, e a tela
+mostra os três identificadores que ele cita — o croqui, a revisão da cena e o pacote
+publicado — mais o digest do DXF auditado, para que a auditoria saiba **qual** desenho
+alimentou a medição. A ausência de elo é DECLARADA: sem croqui declarado a jornada segue
+exatamente como antes, com a quantidade vindo da legenda lida.
+
+O confronto com o `quantitativos.csv` do pacote declarado é gesto explícito, com o efeito
+escrito antes do clique: ele alimenta o item que está sem quantidade, grava divergência
+onde os dois números discordam além da tolerância e deixa o resto intacto. O relatório volta
+**item a item, para todos os itens** — inclusive os que não mudaram, com o motivo nomeado:
+identidade ausente de um dos lados, cena `approximate` (que não alimenta a medição e por
+isso também não compara), unidade que a cena não produz, grandeza ausente, divergência já
+gravada ou concordância dentro da tolerância. Ausência na lista nunca responde por "a cena
+não tinha esse número".
+
+Quando não há par, a tela diz **de que lado** falta a identidade e qual é o próximo ato.
+Ela nunca casa por número igual, por proximidade do balão, pela ordem das linhas nem por
+rótulo parecido: dois `418,12` continuam sendo ausência de par, porque número igual não é
+identidade — identidade é declarada.
+
+No item alimentado pela cena **não existe campo de quantidade**. A origem ocupa o lugar do
+`input` e mostra a identidade, a revisão da cena e a precisão declarada; "Editar quantidade"
+fica desabilitado e **visível**, com a razão ao lado, para que a ausência seja lida como
+decisão e não como falta. A redigitação era onde o erro entrava, e o jeito de eliminá-la é
+não oferecer o teclado.
+
+A **divergência** apresenta três blocos de peso igual — cena, legenda, diferença —, cada um
+com a sua origem escrita, e a conta da tolerância por extenso (`maior entre 1% da quantidade
+da legenda e 0,01 na unidade do item`). A diferença e a tolerância exibidas são as que o
+servidor gravou e confere a cada leitura; a tela não refaz nenhuma conta. Enquanto a
+divergência estiver aberta o item aparece **bloqueado** — por palavra e por forma, nunca só
+por cor — e o formulário de decisão não é oferecido.
+
+Resolver é escolher entre **duas** origens, cena ou legenda, com motivo obrigatório na tela.
+"Nenhuma das duas" aparece indisponível, com a razão escrita: digitar uma terceira
+quantidade ali seria a redigitação que a feature existe para eliminar; se as duas estão
+erradas, o caminho é corrigir o croqui ou a leitura, cada um na sua jornada. A decisão fica
+carimbada com autor e instante, e **o número preterido continua gravado** — resolver não é
+sobrescrever, e quem abrir a memória de cálculo meses depois vê os dois números, a
+diferença, a tolerância vigente e quem decidiu.
 
 ## O orçamento é assinado antes de sair
 

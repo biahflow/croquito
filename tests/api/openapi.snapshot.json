@@ -2579,6 +2579,63 @@
         "title": "DecideProposalRequest",
         "type": "object"
       },
+      "DeclareElementRequest": {
+        "additionalProperties": false,
+        "description": "O humano diz QUAIS entidades são um elemento; nunca QUAL é o nome dele.\n\n`element_ref` aparece na entrada só para poder ser RECUSADO com código estável\n(`ELEMENT_REF_NOT_ASSIGNABLE`). Omiti-lo faria a tentativa cair no 422 genérico do\nPydantic por `extra=\"forbid\"`, sem código e sem envelope `problem+json`, e quem\ninsistisse em cunhar do próprio lado leria \"campo extra não permitido\" em vez de \"a\ncunhagem é do servidor\" (ADR-0058, decisão 2).",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "element_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Ref"
+          },
+          "entity_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Entity Ids",
+            "type": "array"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "entity_ids",
+          "reason"
+        ],
+        "title": "DeclareElementRequest",
+        "type": "object"
+      },
       "DeclareIdentityLinkRequest": {
         "additionalProperties": false,
         "description": "Ato humano: duas leituras de folhas diferentes são o MESMO elemento físico.\n\nO corpo declara O QUE é o mesmo elemento e QUAL das duas leituras governa a quantidade\n(`kept`, \"a parcela que fica\"). Autor e instante NÃO viajam aqui: vêm do JWT e do relógio\ndo servidor, como em toda decisão desta cadeia — um corpo que carimbasse quem declarou\ndeixaria o cliente escolher a procedência do próprio ato.\n\nA nota é obrigatória porque o vínculo muda o total da praça: quem confere depois precisa\nler por que duas leituras viraram uma.",
@@ -2608,6 +2665,28 @@
           "note"
         ],
         "title": "DeclareIdentityLinkRequest",
+        "type": "object"
+      },
+      "DeclareSceneLinkRequest": {
+        "additionalProperties": false,
+        "description": "O croqui aprovado que alimenta esta rodada — declarado, nunca inferido (F-047 T4b).\n\nO corpo tem UM campo além da guarda de concorrência, e é o `job_id`: quem mede diz qual\ncroqui manda. Não há aqui nenhum critério de busca, nem \"usar o croqui da mesma obra\",\nnem \"o mais recente\" — inferir o elo por semelhança seria a associação por proximidade\nque o ADR-0058 rejeita com todas as letras.\n\nO carimbo de identidade não entra pelo corpo (`extra=\"forbid\"`): quem declarou vem do\n`Principal` e quando, do servidor. A revisão da cena e o export citados também não: o\nservidor os resolve do job e os grava, para que o elo aponte para um pacote específico.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "job_id"
+        ],
+        "title": "DeclareSceneLinkRequest",
         "type": "object"
       },
       "DeclaredChainResponse": {
@@ -2941,6 +3020,66 @@
         "title": "DimensionReading",
         "type": "object"
       },
+      "ElementIdentityResponse": {
+        "additionalProperties": false,
+        "description": "O ato de identidade e a revisão que ele criou.\n\nDevolve o PAPEL profissional de quem declarou, nunca o subject — a mesma regra que o\nevento de aprovação já aplica: quem age é pessoa identificável, e o que sai da API\nqualifica o ato em vez de identificar a pessoa.",
+        "properties": {
+          "act": {
+            "enum": [
+              "declared",
+              "revoked",
+              "relabeled"
+            ],
+            "title": "Act",
+            "type": "string"
+          },
+          "acted_at": {
+            "format": "date-time",
+            "title": "Acted At",
+            "type": "string"
+          },
+          "acted_by_role": {
+            "title": "Acted By Role",
+            "type": "string"
+          },
+          "element_ref": {
+            "title": "Element Ref",
+            "type": "string"
+          },
+          "entity_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Entity Ids",
+            "type": "array"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "scene": {
+            "$ref": "#/components/schemas/SceneRevision"
+          }
+        },
+        "required": [
+          "act",
+          "element_ref",
+          "entity_ids",
+          "acted_by_role",
+          "acted_at",
+          "scene"
+        ],
+        "title": "ElementIdentityResponse",
+        "type": "object"
+      },
       "ElementObject": {
         "additionalProperties": false,
         "description": "Espelho de `ElementObject`.",
@@ -2977,9 +3116,131 @@
         "title": "ElementObject",
         "type": "object"
       },
+      "ElementProposalListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "proposals": {
+            "items": {
+              "$ref": "#/components/schemas/ElementProposalResponse"
+            },
+            "title": "Proposals",
+            "type": "array"
+          },
+          "scene_version": {
+            "title": "Scene Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scene_version",
+          "proposals"
+        ],
+        "title": "ElementProposalListResponse",
+        "type": "object"
+      },
+      "ElementProposalRejectionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Entity Ids",
+            "type": "array"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "rejected_at": {
+            "format": "date-time",
+            "title": "Rejected At",
+            "type": "string"
+          },
+          "rejected_by_role": {
+            "title": "Rejected By Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "entity_ids",
+          "rejected_by_role",
+          "rejected_at"
+        ],
+        "title": "ElementProposalRejectionResponse",
+        "type": "object"
+      },
+      "ElementProposalResponse": {
+        "additionalProperties": false,
+        "description": "Uma proposta candidata de agrupamento (F-047 T6, ADR-0058 decisão 2).\n\n`status` é sempre `unresolved` — não é campo de escolha, é rótulo: lembra quem lê que\nnada aqui foi escrito na cena. Confirmar é o MESMO ato da T2 — reenviar `entity_ids`\npara `POST /v1/jobs/{job_id}/elements` — nunca um segundo caminho de identidade.",
+        "properties": {
+          "entity_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Entity Ids",
+            "type": "array"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "layer": {
+            "$ref": "#/components/schemas/LayerName"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "signal": {
+            "enum": [
+              "provenance",
+              "label_proximity"
+            ],
+            "title": "Signal",
+            "type": "string"
+          },
+          "status": {
+            "const": "unresolved",
+            "default": "unresolved",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "layer",
+          "signal",
+          "entity_ids"
+        ],
+        "title": "ElementProposalResponse",
+        "type": "object"
+      },
       "Entity": {
         "additionalProperties": false,
         "properties": {
+          "element_ref": {
+            "anyOf": [
+              {
+                "pattern": "^EL-\\d{3,}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Ref"
+          },
           "export": {
             "default": true,
             "title": "Export",
@@ -7272,6 +7533,58 @@
         "title": "RegionCandidate",
         "type": "object"
       },
+      "RejectElementProposalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RejectElementProposalRequest",
+        "type": "object"
+      },
+      "RelabelElementRequest": {
+        "additionalProperties": false,
+        "description": "Renomear é ato declarado, com autor, instante e motivo — nunca edição silenciosa.\n\nComo na revogação, o `element_ref` VEM do cliente porque nomeia o que já existe na cena.\nRenomear não toca geometria nem identidade: só o nome que a pessoa lê muda, e ainda assim\no ato cria revisão nova, porque quem revisa precisa ver que o nome mudou e por quem.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "element_ref": {
+            "pattern": "^EL-\\d{3,}$",
+            "title": "Element Ref",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "element_ref",
+          "label",
+          "reason"
+        ],
+        "title": "RelabelElementRequest",
+        "type": "object"
+      },
       "RemoveEstimateCascadeSourceRequest": {
         "additionalProperties": false,
         "description": "Remove uma fonte da cascata instalada, citada pelo `source_sha256` dela.\n\nEspelho de `ReorderEstimateCascadeRequest`: um único digest, e não posição nem origem,\npelo mesmo motivo que a reordenação cita digest — é o identificador estável da fonte,\no mesmo que a confirmação de código cita.",
@@ -7930,6 +8243,51 @@
         "title": "ReviewWitnessCommand",
         "type": "object"
       },
+      "RevokeElementRequest": {
+        "additionalProperties": false,
+        "description": "Desfazer é ato próprio, com autor, instante e motivo — nunca edição silenciosa.\n\nAqui o `element_ref` VEM do cliente porque ele nomeia o que já existe na cena; nomear\nalvo não é cunhar identidade.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "element_ref": {
+            "pattern": "^EL-\\d{3,}$",
+            "title": "Element Ref",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "element_ref",
+          "reason"
+        ],
+        "title": "RevokeElementRequest",
+        "type": "object"
+      },
+      "SceneQuantitiesRequest": {
+        "additionalProperties": false,
+        "description": "O confronto do takeoff com a cena declarada: o corpo é só a guarda de concorrência.\n\nNão há seleção de item. O confronto é do pacote inteiro porque é assim que ele é\nconferível: passar a cena por alguns itens e não por outros produziria um pacote em que\n\"sem divergência\" significaria coisas diferentes de linha para linha.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "base_version"
+        ],
+        "title": "SceneQuantitiesRequest",
+        "type": "object"
+      },
       "SceneRevision": {
         "additionalProperties": false,
         "properties": {
@@ -7958,6 +8316,17 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "element_labels": {
+            "patternProperties": {
+              "^EL-\\d{3,}$": {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "title": "Element Labels",
+            "type": "object"
           },
           "entities": {
             "items": {
@@ -8857,6 +9226,50 @@
           "decisions"
         ],
         "title": "TakeoffDecisionRequest",
+        "type": "object"
+      },
+      "TakeoffDivergenceResolutionRequest": {
+        "additionalProperties": false,
+        "description": "Escolha de qual quantidade prevalece numa divergência entre a cena e a legenda.\n\nSó há `choice`, e a ausência de um campo de quantidade é a decisão do produto (F-047 T5,\nADR-0058 decisão 6 com o aceite de 2026-08-28): a resolução escolhe entre os DOIS\nnúmeros que já existem. Aceitar um terceiro aqui seria a redigitação que a feature\nexiste para eliminar — quem precisa de outro número corrige a origem e volta.\n\nO carimbo de identidade não entra pelo corpo: `reviewer_id`, `reviewer_role` e\n`resolved_at` são recusados pelo `extra=\"forbid\"` do `ApiModel`. A identidade vem do\n`Principal`; o instante, do servidor.\n\nA `note` é opcional, como a do fechamento de pacote: escolher entre duas leituras é o\ncurso normal da conferência, e o que a auditoria precisa — quem escolheu, quando, e qual\nnúmero ficou preterido — já é gravado sem depender de ninguém escrever uma frase.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "choice": {
+            "enum": [
+              "scene",
+              "legend"
+            ],
+            "title": "Choice",
+            "type": "string"
+          },
+          "item_id": {
+            "pattern": "^ti_[a-f0-9]{16}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "base_version",
+          "item_id",
+          "choice"
+        ],
+        "title": "TakeoffDivergenceResolutionRequest",
         "type": "object"
       },
       "TakeoffItemAddressRequest": {
@@ -13091,6 +13504,364 @@
         "summary": "Create Chat Turn",
         "tags": [
           "chat"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/elements": {
+      "post": {
+        "description": "Declara que um conjunto de entidades é um elemento, cunhando o ref no ato.\n\nÉ ato humano, nunca inferência (ADR-0058, decisão 2): a rota não olha proximidade,\nrótulo próximo nem camada para escolher o grupo — quem escolhe é quem assina.",
+        "operationId": "declare_element_v1_jobs__job_id__elements_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeclareElementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementIdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Declare Element",
+        "tags": [
+          "scene"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/elements/labels": {
+      "post": {
+        "description": "Renomeia o elemento: ato declarado, com autor, instante e revisão nova.\n\nO rótulo é o nome que a pessoa lê — nunca identidade. Renomear não move entidade, não\ntroca `element_ref` e não muda o que casa com a legenda: quem casa continua sendo o\n`element_ref`, dos dois lados (ADR-0058, decisão 2). Ainda assim é revisão nova, e não\nedição no lugar, porque quem revisa a cena precisa ver que o nome mudou e por quem.",
+        "operationId": "relabel_element_v1_jobs__job_id__elements_labels_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelabelElementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementIdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Relabel Element",
+        "tags": [
+          "scene"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/elements/proposals": {
+      "get": {
+        "description": "Propostas determinísticas de agrupamento (F-047 T6, ADR-0058 decisão 2).\n\nO produtor (`croquito_core.element_proposals.propose_element_groups`) é puro,\ndeterminístico e sem provider pago: roda de novo a cada leitura, sobre a cena\ncorrente. Nada é lido de cache nem de estado próprio — só a RECUSA fica em memória\n(`ElementProposalRejectionRecord`), e é por isso que uma proposta recusada não\nvolta a aparecer aqui para o mesmo conjunto de entidades nesta cena.\n\nLeitura, como `GET /v1/jobs/{job_id}/scene`: qualquer principal autenticado do\ntenant lê; o papel profissional só é exigido para CONFIRMAR (a rota de sempre,\n`POST /v1/jobs/{job_id}/elements`) ou RECUSAR (abaixo).",
+        "operationId": "list_element_proposals_v1_jobs__job_id__elements_proposals_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementProposalListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Element Proposals",
+        "tags": [
+          "scene"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/elements/proposals/{proposal_id}/rejections": {
+      "post": {
+        "description": "Recusa uma proposta: NUNCA escreve na cena, só registra quem recusou e quando.\n\nRecomputa as propostas correntes e exige que `proposal_id` seja uma delas AGORA —\nrecusar um id já declarado, já recusado antes, ou nunca ofertado responde\n`404 ELEMENT_PROPOSAL_NOT_FOUND`, nunca o 404 genérico de rota. Sem `base_version`:\ncomo o ato não toca a cena, não há concorrência otimista para conferir.",
+        "operationId": "reject_element_proposal_v1_jobs__job_id__elements_proposals__proposal_id__rejections_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "title": "Proposal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectElementProposalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementProposalRejectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reject Element Proposal",
+        "tags": [
+          "scene"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}/elements/revocations": {
+      "post": {
+        "description": "Desfaz a identidade declarada: ato próprio, com autor, instante e revisão nova.\n\nO ref revogado não volta ao estoque de cunhagem — `_next_element_ref` segue do maior\njá cunhado, para que nenhum elemento futuro herde o nome de um elemento passado.",
+        "operationId": "revoke_element_v1_jobs__job_id__elements_revocations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeElementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ElementIdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revoke Element",
+        "tags": [
+          "scene"
         ]
       }
     },
@@ -18151,6 +18922,83 @@
         ]
       }
     },
+    "/v1/valuation-rounds/{round_id}/scene-link": {
+      "post": {
+        "description": "Declara QUAL croqui aprovado alimenta esta rodada de medição (F-047 T4b).\n\nO elo é **ato humano explícito**, e é a razão de esta rota existir. Ele nunca é\ninferido: nem por `worksite_key` igual, nem por proximidade de data, nem por\nsemelhança de nome entre a obra da rodada e o projeto do croqui. É a mesma regra que\no produto aplica em toda parte e a rejeição central do ADR-0058 — proximidade não é\nassociação. Sem esta declaração, a rodada responde exatamente como sempre respondeu.\n\nO corpo cita o JOB; o servidor resolve o **pacote publicado** dele e grava o export e\na revisão da cena junto, porque é de um pacote específico que o `quantitativos.csv`\nsai. Um export novo (nova aprovação, novo traçado) não muda o elo sozinho: mudar é\noutro ato declarado, por esta mesma rota, e a declaração anterior continua legível na\nrevisão onde foi feita.\n\nRecusa, nunca `500`: job de outro tenant é `404` como se não existisse; croqui sem\ncena aprovada é `409 SCENE_LINK_SCENE_NOT_APPROVED`; croqui aprovado mas sem pacote\npublicado é `409 SCENE_LINK_EXPORT_REQUIRED` — sem pacote não há `quantitativos.csv`\nde onde ler, e prometer o contrário seria oferecer uma quantidade que não existe.",
+        "operationId": "declare_valuation_scene_link_v1_valuation_rounds__round_id__scene_link_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeclareSceneLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Declare Valuation Scene Link V1 Valuation Rounds  Round Id  Scene Link Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Declare Valuation Scene Link",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
     "/v1/valuation-rounds/{round_id}/takeoff": {
       "get": {
         "description": "Pacote de takeoff de uma folha da praça, com a âncora de evidência de cada item.\n\n`plate_id` é OPCIONAL e a ausência é a leitura da PRIMEIRA folha, campo por campo como\nantes da praça (F-046 T4c). É por ele que a revisão dos itens alcança as folhas 2..N:\nsem ele, o pacote da segunda folha só existia dentro do consolidado, que a tela não usa\npara revisar item.",
@@ -18299,6 +19147,83 @@
         ]
       }
     },
+    "/v1/valuation-rounds/{round_id}/takeoff/divergences/resolutions": {
+      "post": {
+        "description": "Registra QUAL das duas quantidades prevalece numa divergência entre cena e legenda.\n\nA divergência é aberta pelo confronto do `quantitativos.csv` da cena aprovada com o\nnúmero lido na legenda (`QuantitySource`), e enquanto ela está aberta o item não\nfecha: o fechamento de pacote recusa em `ASSIGNMENT_QUANTITY_DIVERGENCE_OPEN` e o\nboletim, em `CALC_QUANTITY_DIVERGENCE_OPEN`. Esta rota é a única saída, e ela é um\nATO HUMANO — o sistema mostra os dois números e nunca escolhe sozinho.\n\nÉ rota própria, e não uma bandeira em `/takeoff/decisions`, porque o ato é outro:\n`/decisions` confirma ou rejeita a leitura da legenda; aqui já existem duas leituras\nválidas e o que se declara é qual delas manda. A auditoria precisa distingui-las.\n\n**O número preterido continua gravado**: ele fica na divergência, com a origem que o\nproduziu, e a resposta o devolve junto com o escolhido. Resolver não apaga nada.\n\nItem sem divergência (`TAKEOFF_DIVERGENCE_ABSENT`), divergência já resolvida\n(`TAKEOFF_DIVERGENCE_ALREADY_RESOLVED`) e item fora do pacote\n(`TAKEOFF_DIVERGENCE_UNKNOWN_ITEM`) continuam sendo recusa do domínio, que esta rota\nnão reimplementa.",
+        "operationId": "resolve_valuation_takeoff_divergence_v1_valuation_rounds__round_id__takeoff_divergences_resolutions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TakeoffDivergenceResolutionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Resolve Valuation Takeoff Divergence V1 Valuation Rounds  Round Id  Takeoff Divergences Resolutions Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve Valuation Takeoff Divergence",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
     "/v1/valuation-rounds/{round_id}/takeoff/overlay": {
       "get": {
         "description": "URL assinada do overlay e a idade dele; overlay vencido é `200`, nunca erro.\n\nEsconder a divergência seria pior do que mostrá-la: o desenho anterior continua\nsendo a única visão de onde cada número foi lido (ADR-0030). A URL assinada segue o\nregime da imagem da prancha — prefixo do tenant conferido antes do presign, e nunca\nregistrada em log nem em auditoria (ADR-0028 D5).\n\nUm overlay por FOLHA, e nunca um overlay de praça: não existe pixel de praça\n(ADR-0057, decisão 3). `plate_id` é OPCIONAL e a ausência é o overlay da primeira\nfolha, exatamente como antes; a idade é comparada contra o pacote DAQUELA folha, que é\no único pacote de que aquele desenho pode ter nascido.",
@@ -18363,6 +19288,83 @@
           }
         ],
         "summary": "Get Valuation Takeoff Overlay",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/takeoff/scene-quantities": {
+      "post": {
+        "description": "Confronta o takeoff com o `quantitativos.csv` do croqui declarado (F-047 T4b).\n\nO caminho até o arquivo é inteiro e não tem atalho: o elo declarado -> o export\ncitado (`export_artifacts.package_object_key`, conferido COMPLETO e sob o prefixo do\ntenant) -> o membro `quantitativos.csv` do pacote -> `QuantitySource`. A quantidade\nsó existe porque o pacote só é publicado depois de `ensure_exportable` e da auditoria\ndo DXF: esta rota **herda** o portão de exportação em vez de duplicá-lo (ADR-0058\ndecisão 7).\n\nItem a item, o desfecho é um dos três, e o relatório diz qual foi para TODOS os itens\n— inclusive os que não mudaram, com o motivo nomeado (identidade ausente num dos\nlados, cena `approximate`/`unresolved`, unidade que a cena não produz, grandeza\nausente, divergência já gravada, concordância dentro da tolerância). Ausência na\nresposta nunca é como este produto diz que não havia número.\n\n**Repetir é seguro.** Rodar de novo sobre o mesmo estado não duplica divergência, não\nrealimenta o que já veio da cena e não grava revisão nenhuma quando nada muda — a\nversão da rodada fica onde estava, e o `base_version` que a tela tem na mão continua\nvalendo.",
+        "operationId": "confront_valuation_takeoff_with_scene_v1_valuation_rounds__round_id__takeoff_scene_quantities_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SceneQuantitiesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Confront Valuation Takeoff With Scene V1 Valuation Rounds  Round Id  Takeoff Scene Quantities Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Confront Valuation Takeoff With Scene",
         "tags": [
           "valuation"
         ]

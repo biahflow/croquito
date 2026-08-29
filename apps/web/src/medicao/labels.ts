@@ -241,6 +241,137 @@ export function recipeLabel(recipe: string): string {
   return RECIPE_LABELS[recipe] ?? recipe;
 }
 
+/**
+ * Origem da quantidade do item, em língua de obra (F-047, ADR-0058).
+ *
+ * `scene_graph` é a origem NOVA e a única que dispensa digitação: o número atravessou a
+ * fronteira do croqui aprovado, com a precisão declarada lá.
+ */
+const QUANTITY_SOURCE_LABELS: LookupTable = {
+  legend_extraction: "legenda lida",
+  manual: "digitada na revisão",
+  scene_graph: "cena aprovada",
+};
+
+export function quantitySourceLabel(source: string): string {
+  return QUANTITY_SOURCE_LABELS[source] ?? source;
+}
+
+/** Precisão declarada pela entidade da cena. É palavra, nunca só traço ou cor. */
+const PRECISION_LABELS: LookupTable = {
+  exact: "exata",
+  derived: "derivada",
+  approximate: "aproximada",
+  unresolved: "não resolvida",
+};
+
+export function precisionLabel(precision: string): string {
+  return PRECISION_LABELS[precision] ?? precision;
+}
+
+/**
+ * A conta da tolerância, por extenso.
+ *
+ * É FRASE, não cálculo: a diferença e a tolerância de cada divergência chegam prontas do
+ * servidor, que as recomputa e confere na gravação. A tela escreve a regra para que quem
+ * lê saiba de onde os dois números saíram — e não refaz nenhum deles.
+ */
+export const FORMULA_DA_TOLERANCIA =
+  "tolerância = maior entre 1% da quantidade da legenda e 0,01 na unidade do item";
+
+/**
+ * Por que a divergência não concilia sozinha. É o texto do bloqueio, e ele diz que a
+ * recusa é diagnóstico: os dois números continuam gravados, e a decisão é de gente.
+ */
+export const AVISO_DIVERGENCIA_ABERTA =
+  "A cena é auditada, mas auditada não é sempre certa: um elemento mal traçado produz " +
+  "comprimento errado com precisão declarada, e a legenda pode ter um dígito trocado. O " +
+  "sistema não sabe qual é qual — por isso mostra os dois e recusa fechar. Nenhuma origem " +
+  "apaga a outra.";
+
+/**
+ * Por que a terceira opção não existe na tela (ADR-0058, aceite de 2026-08-28).
+ *
+ * Digitar uma terceira quantidade aqui seria exatamente a redigitação que a feature existe
+ * para eliminar. Quem quer um número que não é nem o da cena nem o da legenda corrige a
+ * ORIGEM, cada uma na sua jornada.
+ */
+export const RAZAO_SEM_TERCEIRA_ESCOLHA =
+  "Indisponível: uma terceira quantidade digitada aqui seria a redigitação que esta " +
+  "feature existe para eliminar. Se as duas estão erradas, o caminho é corrigir o croqui " +
+  "ou a leitura da legenda, cada um na sua jornada.";
+
+/**
+ * Por que não há campo de quantidade no item alimentado pela cena (ADR-0058, decisões 5 e
+ * 7). A ação não some da tela: ela fica visível com a razão ao lado, para que a ausência
+ * seja lida como decisão e não como falta.
+ */
+export const RAZAO_SEM_CAMPO_DE_QUANTIDADE =
+  "Não existe campo de quantidade neste item: a quantidade veio da cena aprovada. A " +
+  "redigitação era onde o erro entrava, e o jeito de eliminá-la é não oferecer o teclado.";
+
+/** As duas escolhas que resolvem uma divergência — e só elas. */
+const DIVERGENCE_CHOICE_LABELS: LookupTable = {
+  scene: "vale a cena",
+  legend: "vale a legenda",
+};
+
+export function divergenceChoiceLabel(choice: string): string {
+  return DIVERGENCE_CHOICE_LABELS[choice] ?? choice;
+}
+
+/** Desfecho do confronto para um item do pacote. Três desfechos, e só três. */
+const SCENE_OUTCOME_LABELS: LookupTable = {
+  fed: "alimentado pela cena",
+  divergence_recorded: "divergência gravada",
+  unchanged: "sem mudança",
+};
+
+export function sceneOutcomeLabel(outcome: string): string {
+  return SCENE_OUTCOME_LABELS[outcome] ?? outcome;
+}
+
+/**
+ * Por que o item não recebeu quantidade da cena, item a item.
+ *
+ * A tabela junta os DOIS enums que o servidor manda no mesmo campo do relatório — os
+ * motivos de a cena não ter número (`QuantityUnresolvedReason`) e os de o item ficar
+ * intacto (`SceneConfrontationSkipReason`). Os valores são disjuntos de propósito, então
+ * uma tabela só não confunde um motivo com o outro. Motivo desconhecido aparece como veio:
+ * inventar a frase esconderia o que o domínio disse.
+ */
+const SCENE_REASON_LABELS: LookupTable = {
+  // A cena não tinha número para o item.
+  item_without_element_ref:
+    "o item da legenda não declarou identidade de elemento — falta o par do lado da legenda",
+  element_ref_absent_from_scene:
+    "a identidade declarada neste item não aparece em nenhuma linha do quantitativos.csv — falta o par do lado da cena",
+  precision_not_eligible:
+    "a linha da cena é aproximada ou não resolvida: não alimenta a medição e também não compara",
+  unit_not_derivable_from_scene:
+    "a unidade deste item não é de comprimento nem de área; a cena não a produz",
+  unit_mismatch:
+    "a linha da cena traz a outra grandeza (área para item em metro, ou comprimento para item em m²)",
+  length_ambiguous:
+    "a linha da cena traz comprimento E perímetro; escolher um por conta própria seria palpite",
+  quantity_absent: "a linha da cena não traz grandeza nenhuma",
+  quantity_not_positive:
+    "a grandeza da cena é zero ou negativa; quantidade de medição é sempre positiva",
+  // O item ficou intacto, mesmo com a cena tendo número.
+  item_rejected:
+    "linha rejeitada pelo orçamentista: ela não vira boletim, então confrontá-la não destrava nada",
+  already_fed_from_scene:
+    "a quantidade deste item já nasceu da cena; não há legenda para confrontar",
+  divergence_already_recorded:
+    "este item já tem divergência gravada; regravá-la apagaria o número que alguém está olhando ou a decisão já tomada",
+  within_tolerance:
+    "os dois números existem e concordam dentro da tolerância nomeada: concordar não é evento",
+};
+
+export function sceneReasonLabel(reason: string): string {
+  return SCENE_REASON_LABELS[reason] ?? reason;
+}
+
 const ERROR_MESSAGES: LookupTable = {
   // Guarda otimista e sessão da API `/v1`.
   REVISION_CONFLICT:
@@ -435,6 +566,25 @@ const ERROR_MESSAGES: LookupTable = {
     "Há confirmação de código para um item que não está confirmado no takeoff desta rodada.",
   AMENDMENT_DOSSIER_PACKET_MISMATCH:
     "As confirmações de código desta rodada pertencem a outra prancha.",
+  // Elo com o croqui aprovado e confronto com a cena (F-047, ADR-0058).
+  SCENE_LINK_REQUIRED:
+    "Esta rodada não declarou qual croqui aprovado a alimenta; declare o elo antes de confrontar as quantidades.",
+  SCENE_LINK_SCENE_NOT_APPROVED:
+    "O croqui indicado não tem cena aprovada; só cena aprovada alimenta medição.",
+  SCENE_LINK_EXPORT_REQUIRED:
+    "O croqui indicado está aprovado mas ainda não tem pacote publicado; sem o pacote não há quantitativos.csv de onde ler.",
+  SCENE_PACKAGE_REQUIRED:
+    "O pacote do croqui declarado por esta rodada não pôde ser lido; nada foi alterado no takeoff.",
+  QUANTITY_SOURCE_CSV_INVALID:
+    "O quantitativos.csv do pacote declarado não segue o contrato de colunas; nada foi alterado no takeoff.",
+  QUANTITY_DIVERGENCE_ALREADY_RECORDED:
+    "Este item já tem divergência gravada; regravá-la apagaria o número que está na tela ou a decisão já tomada.",
+  TAKEOFF_DIVERGENCE_UNKNOWN_ITEM:
+    "Este item não está no pacote de takeoff desta rodada.",
+  TAKEOFF_DIVERGENCE_ABSENT:
+    "Este item não tem divergência para resolver.",
+  TAKEOFF_DIVERGENCE_ALREADY_RESOLVED:
+    "Esta divergência já foi resolvida; decisão não se sobrescreve.",
 };
 
 /**

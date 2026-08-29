@@ -54,6 +54,7 @@ from croquito_api.database import (
     ChatTurnRecord,
     Database,
     DomainEventRecord,
+    ElementProposalRejectionRecord,
     EstimateRoundRecord,
     EstimateRoundRevisionRecord,
     ExportArtifactRecord,
@@ -125,12 +126,15 @@ from croquito_api.valuation_rounds import (
     BULLETIN_WORKBOOK_DIGEST,
     BULLETIN_WORKBOOK_REF,
     CATALOG_MAX_BYTES,
+    SCENE_LINK_EXPORT_REQUIRED,
+    SCENE_LINK_SCENE_NOT_APPROVED,
     STAGE_BULLETIN,
     STAGE_DOSSIER,
     STAGE_TAKEOFF,
     WORKSITE_PLATE_LIMIT,
     CatalogCache,
     RoundRefusal,
+    SceneLink,
     append_revision,
     append_round_plate,
     append_round_plates,
@@ -159,6 +163,7 @@ from croquito_api.valuation_rounds import (
     plate_registration,
     plate_suggestions_changes,
     queue_plate_extractions,
+    read_scene_quantities,
     readable_valuation,
     render_valuation_workbook,
     require_assignments,
@@ -167,6 +172,7 @@ from croquito_api.valuation_rounds import (
     require_plate,
     require_plate_packet,
     require_reviewed_packet,
+    require_scene_link,
     require_takeoff_overlay,
     require_takeoff_packet,
     require_unrefined_suggestions,
@@ -174,6 +180,7 @@ from croquito_api.valuation_rounds import (
     resolve_plate,
     round_plates,
     round_state_payload,
+    scene_package_required,
     search_round_catalog,
     signed_artifact_url,
     stage_not_ready,
@@ -184,6 +191,7 @@ from croquito_api.valuation_rounds import (
     worksite_plate_inputs,
     worksite_state,
 )
+from croquito_core.element_proposals import ElementGroupProposal, propose_element_groups
 from croquito_core.errors import DomainValidationError
 from croquito_core.events import (
     EVENT_ESTIMATE_ACTION_RECORDED,
@@ -202,6 +210,9 @@ from croquito_core.field import SurveyOperation, SurveyPacket, SurveyStatus
 from croquito_core.ids import new_uuid7
 from croquito_core.logging_config import configure_logging
 from croquito_core.models import (
+    ELEMENT_LABEL_MAX_LENGTH,
+    ELEMENT_REF_PATTERN,
+    ELEMENT_REF_PREFIX,
     SCENE_SCHEMA_VERSION,
     Entity,
     EntityKind,
@@ -246,6 +257,12 @@ from croquito_valuation.models import (
     Valuation,
 )
 from croquito_valuation.precedent import PRICE_SOURCE_UNDECLARED, PrecedentSeedPacket
+from croquito_valuation.quantity_divergence import DivergenceChoice
+from croquito_valuation.scene_confrontation import (
+    SceneConfrontation,
+    SceneConfrontationOutcome,
+    confront_scene_quantities,
+)
 from croquito_valuation.site_setup import (
     SiteSetupKit,
     apply_site_setup_kit,
@@ -254,7 +271,9 @@ from croquito_valuation.site_setup import (
 from croquito_valuation.takeoff import (
     TakeoffDecisionBatch,
     TakeoffDecisionInput,
+    TakeoffDivergenceResolutionInput,
     TakeoffPacket,
+    apply_divergence_resolution,
     apply_takeoff_decisions,
 )
 from croquito_valuation.template import default_template
@@ -838,6 +857,109 @@ class CreateRevisionRequest(ApiModel):
     base_version: int = Field(ge=1)
     operations: list[ReviewOperation] = Field(min_length=1, max_length=50)
     reason: str = Field(min_length=3, max_length=500)
+
+
+class DeclareElementRequest(ApiModel):
+    """O humano diz QUAIS entidades são um elemento; nunca QUAL é o nome dele.
+
+    `element_ref` aparece na entrada só para poder ser RECUSADO com código estável
+    (`ELEMENT_REF_NOT_ASSIGNABLE`). Omiti-lo faria a tentativa cair no 422 genérico do
+    Pydantic por `extra="forbid"`, sem código e sem envelope `problem+json`, e quem
+    insistisse em cunhar do próprio lado leria "campo extra não permitido" em vez de "a
+    cunhagem é do servidor" (ADR-0058, decisão 2).
+    """
+
+    base_version: int = Field(ge=1)
+    entity_ids: list[UUID] = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=3, max_length=500)
+    element_ref: str | None = None
+    #: O nome legível do elemento (F-047 T2b), opcional: cena sem rótulo nenhum é válida, e
+    #: quem declara sem nomear declara identidade do mesmo jeito. Nomear no MESMO ato existe
+    #: para que a pessoa não precise declarar e renomear em seguida para chegar onde queria.
+    label: str | None = Field(default=None, max_length=ELEMENT_LABEL_MAX_LENGTH)
+
+
+class RelabelElementRequest(ApiModel):
+    """Renomear é ato declarado, com autor, instante e motivo — nunca edição silenciosa.
+
+    Como na revogação, o `element_ref` VEM do cliente porque nomeia o que já existe na cena.
+    Renomear não toca geometria nem identidade: só o nome que a pessoa lê muda, e ainda assim
+    o ato cria revisão nova, porque quem revisa precisa ver que o nome mudou e por quem.
+    """
+
+    base_version: int = Field(ge=1)
+    element_ref: str = Field(pattern=ELEMENT_REF_PATTERN)
+    label: str = Field(min_length=1, max_length=ELEMENT_LABEL_MAX_LENGTH)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class RevokeElementRequest(ApiModel):
+    """Desfazer é ato próprio, com autor, instante e motivo — nunca edição silenciosa.
+
+    Aqui o `element_ref` VEM do cliente porque ele nomeia o que já existe na cena; nomear
+    alvo não é cunhar identidade.
+    """
+
+    base_version: int = Field(ge=1)
+    element_ref: str = Field(pattern=ELEMENT_REF_PATTERN)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ElementIdentityResponse(ApiModel):
+    """O ato de identidade e a revisão que ele criou.
+
+    Devolve o PAPEL profissional de quem declarou, nunca o subject — a mesma regra que o
+    evento de aprovação já aplica: quem age é pessoa identificável, e o que sai da API
+    qualifica o ato em vez de identificar a pessoa.
+    """
+
+    act: Literal["declared", "revoked", "relabeled"]
+    element_ref: str
+    #: O rótulo legível do elemento DEPOIS do ato: o nome novo na renomeação, o nome dado na
+    #: declaração, e `None` quando não há nome — inclusive na revogação, que leva o rótulo
+    #: junto com a identidade.
+    label: str | None = None
+    #: As entidades que o ato tocou, na ordem da cena — resposta do servidor, não eco da
+    #: entrada: na revogação o cliente não as citou.
+    entity_ids: list[UUID]
+    acted_by_role: str
+    acted_at: datetime
+    scene: SceneRevision
+
+
+class ElementProposalResponse(ApiModel):
+    """Uma proposta candidata de agrupamento (F-047 T6, ADR-0058 decisão 2).
+
+    `status` é sempre `unresolved` — não é campo de escolha, é rótulo: lembra quem lê que
+    nada aqui foi escrito na cena. Confirmar é o MESMO ato da T2 — reenviar `entity_ids`
+    para `POST /v1/jobs/{job_id}/elements` — nunca um segundo caminho de identidade.
+    """
+
+    proposal_id: str
+    status: Literal["unresolved"] = "unresolved"
+    layer: LayerName
+    signal: Literal["provenance", "label_proximity"]
+    label: str | None = None
+    entity_ids: list[UUID]
+
+
+class ElementProposalListResponse(ApiModel):
+    #: Versão da cena sobre a qual as propostas foram calculadas — puramente informativo:
+    #: confirmar reusa o `base_version` que a rota de identidade já exige, e recusar não
+    #: precisa de nenhum, porque não escreve na cena.
+    scene_version: int
+    proposals: list[ElementProposalResponse]
+
+
+class RejectElementProposalRequest(ApiModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ElementProposalRejectionResponse(ApiModel):
+    proposal_id: str
+    entity_ids: list[UUID]
+    rejected_by_role: str
+    rejected_at: datetime
 
 
 #: Teto do touch time aceito num envio: 24 horas em milissegundos. Acima disso não é
@@ -1963,6 +2085,57 @@ class TakeoffDecisionRequest(ApiModel):
     #: maior pacote real observado tem dezenas de itens, e um corpo de milhares seria
     #: outro caso de uso, com outro desenho.
     decisions: list[TakeoffItemDecision] = Field(min_length=1, max_length=200)
+
+
+class TakeoffDivergenceResolutionRequest(ApiModel):
+    """Escolha de qual quantidade prevalece numa divergência entre a cena e a legenda.
+
+    Só há `choice`, e a ausência de um campo de quantidade é a decisão do produto (F-047 T5,
+    ADR-0058 decisão 6 com o aceite de 2026-08-28): a resolução escolhe entre os DOIS
+    números que já existem. Aceitar um terceiro aqui seria a redigitação que a feature
+    existe para eliminar — quem precisa de outro número corrige a origem e volta.
+
+    O carimbo de identidade não entra pelo corpo: `reviewer_id`, `reviewer_role` e
+    `resolved_at` são recusados pelo `extra="forbid"` do `ApiModel`. A identidade vem do
+    `Principal`; o instante, do servidor.
+
+    A `note` é opcional, como a do fechamento de pacote: escolher entre duas leituras é o
+    curso normal da conferência, e o que a auditoria precisa — quem escolheu, quando, e qual
+    número ficou preterido — já é gravado sem depender de ninguém escrever uma frase.
+    """
+
+    base_version: int = Field(ge=1)
+    item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
+    choice: Literal["scene", "legend"]
+    note: str | None = Field(default=None, min_length=1, max_length=500)
+
+
+class DeclareSceneLinkRequest(ApiModel):
+    """O croqui aprovado que alimenta esta rodada — declarado, nunca inferido (F-047 T4b).
+
+    O corpo tem UM campo além da guarda de concorrência, e é o `job_id`: quem mede diz qual
+    croqui manda. Não há aqui nenhum critério de busca, nem "usar o croqui da mesma obra",
+    nem "o mais recente" — inferir o elo por semelhança seria a associação por proximidade
+    que o ADR-0058 rejeita com todas as letras.
+
+    O carimbo de identidade não entra pelo corpo (`extra="forbid"`): quem declarou vem do
+    `Principal` e quando, do servidor. A revisão da cena e o export citados também não: o
+    servidor os resolve do job e os grava, para que o elo aponte para um pacote específico.
+    """
+
+    base_version: int = Field(ge=1)
+    job_id: UUID
+
+
+class SceneQuantitiesRequest(ApiModel):
+    """O confronto do takeoff com a cena declarada: o corpo é só a guarda de concorrência.
+
+    Não há seleção de item. O confronto é do pacote inteiro porque é assim que ele é
+    conferível: passar a cena por alguns itens e não por outros produziria um pacote em que
+    "sem divergência" significaria coisas diferentes de linha para linha.
+    """
+
+    base_version: int = Field(ge=1)
 
 
 class RecomputeSuggestionsRequest(ApiModel):
@@ -5229,6 +5402,109 @@ def _latest_scene(session: Session, *, job_id: UUID, tenant_id: str) -> Revision
     )
 
 
+#: Largura mínima do ordinal cunhado. `EL-001` é legível na tela, no `quantitativos.csv` e
+#: no item de legenda; passar de 999 elementos num job faz o número CRESCER (`EL-1000`) em
+#: vez de estourar, porque o padrão do contrato (`^EL-\d{3,}$`) aceita isso de propósito.
+ELEMENT_REF_MIN_DIGITS: Final = 3
+
+_ELEMENT_REF_RE: Final = re.compile(ELEMENT_REF_PATTERN)
+
+
+def _next_element_ref(session: Session, *, job_id: UUID, tenant_id: str) -> str:
+    """Cunha o próximo `element_ref` do job: o maior já cunhado + 1, nunca reaproveitado.
+
+    A varredura olha TODAS as revisões do job, não só a corrente. Desfazer uma identidade
+    limpa o `element_ref` da revisão seguinte, mas não apaga as revisões que já o citaram:
+    cunhar a partir da cena corrente devolveria `EL-003` a um elemento DIFERENTE depois de
+    uma revogação, e o `quantitativos.csv` de duas revisões do mesmo job passaria a chamar
+    duas coisas pelo mesmo nome — a quantidade errada em silêncio que o ADR-0058 existe
+    para impedir. Monotônico por job é o que faz do ref um elo estável.
+
+    Não há corrida aqui: duas declarações simultâneas sobre a mesma `base_version` cunham o
+    mesmo número, e a que perder colide em `uq_scene_version` ao gravar a revisão, virando
+    `REVISION_CONFLICT` antes de qualquer cena existir com ref duplicado. A cunhagem é
+    protegida pela concorrência otimista da revisão, não por um contador próprio.
+
+    Só a coluna `scene` é carregada: a varredura é O(revisões x entidades) do job, e
+    hidratar o ORM inteiro para ler um campo custaria sem devolver nada.
+    """
+    highest = 0
+    for scene in session.scalars(
+        select(RevisionRecord.scene).where(
+            RevisionRecord.job_id == str(job_id),
+            RevisionRecord.tenant_id == tenant_id,
+        )
+    ):
+        for entity in scene.get("entities", []):
+            ref = entity.get("element_ref")
+            # `fullmatch`, e não `match`: `$` também casa antes de um `\n` final, e um
+            # `"EL-001\n"` vindo de um banco antigo viraria ordinal em vez de ser ignorado.
+            if isinstance(ref, str) and _ELEMENT_REF_RE.fullmatch(ref):
+                highest = max(highest, int(ref.removeprefix(ELEMENT_REF_PREFIX)))
+    return f"{ELEMENT_REF_PREFIX}{highest + 1:0{ELEMENT_REF_MIN_DIGITS}d}"
+
+
+def _scene_with_element_ref(
+    scene: SceneRevision,
+    *,
+    entity_ids: Collection[UUID],
+    element_ref: str | None,
+    element_labels: Mapping[str, str] | None = None,
+) -> SceneRevision:
+    """Revisão NOVA com o ref escrito (ou limpo) nas entidades citadas.
+
+    A cena de origem nunca é editada — nem quando está aprovada. `approved` nasce `False`
+    aqui pelo mesmo motivo da retificação: a revisão nova carrega geometria idêntica, mas
+    ninguém a aprovou ainda, e herdar o carimbo de aprovação seria alegar um ato humano que
+    não houve. A revisão aprovada continua no banco, intacta e válida para o conteúdo que
+    aprovou.
+
+    `element_labels`, quando vem, SUBSTITUI o mapa de rótulos inteiro — quem chama já sabe se
+    o ato acrescenta um nome (declaração), troca um nome (renomeação) ou tira um nome
+    (revogação). Omiti-lo preserva os rótulos da cena de origem.
+    """
+    selected = set(entity_ids)
+    return SceneRevision.model_validate(
+        {
+            **scene.model_dump(mode="json"),
+            "id": str(new_uuid7()),
+            "version": scene.version + 1,
+            "approved": False,
+            "entities": [
+                {**entity.model_dump(mode="json"), "element_ref": element_ref}
+                if entity.id in selected
+                else entity.model_dump(mode="json")
+                for entity in scene.entities
+            ],
+            **({} if element_labels is None else {"element_labels": dict(element_labels)}),
+        }
+    )
+
+
+def _required_element_label(raw: str) -> str:
+    """O rótulo como ele será gravado: sem espaço nas pontas, ou a recusa nomeada.
+
+    O `SceneRevision` também apara e também recusa vazio, mas ali a recusa é um
+    `ValidationError` de Pydantic dentro da rota — 500 para quem chamou, sem código estável.
+    Aparar aqui é o que faz `"   "` virar `422 ELEMENT_LABEL_INVALID` em vez de erro de
+    servidor, e é o que garante que a string gravada é a mesma que o contrato aceita.
+    """
+    label = raw.strip()
+    if not label:
+        raise _problem(
+            "ELEMENT_LABEL_INVALID",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "O rótulo do elemento não pode ser vazio nem só de espaços; para ficar sem nome, "
+            "omita o campo.",
+        )
+    return label
+
+
+def _element_label(raw: str | None) -> str | None:
+    """O mesmo aparo onde o rótulo é opcional: sem campo, o elemento fica sem nome."""
+    return None if raw is None else _required_element_label(raw)
+
+
 #: O `algorithm` da forma corrigida por pessoa. Nome, e não versão de detector: quem
 #: produziu o conjunto já está dito em `detector_version` (ADR-0050, decisão 1).
 HUMAN_SHAPE_CORRECTION_ALGORITHM: Final = "human-shape-correction-v1"
@@ -5545,6 +5821,88 @@ def _export_response(application: FastAPI, record: ExportArtifactRecord) -> Expo
             "package_url": package_url,
         }
     )
+
+
+def _published_scene_export(
+    session: Session, *, job_id: str, tenant_id: str
+) -> ExportArtifactRecord | None:
+    """O pacote CAD publicado mais recente daquele croqui, ou `None` quando não há nenhum.
+
+    `COMPLETED` com chave de objeto é a prova de que o pacote existe de fato: o worker só
+    escreve as duas coisas depois de `ensure_exportable`, da reabertura do DXF e da auditoria
+    aprovada (`export_scene_package`). Export `QUEUED` ou `FAILED` não tem
+    `quantitativos.csv` nenhum atrás dele.
+
+    Quando o job tem mais de um pacote — uma aprovação por revisão traçada —, o mais recente
+    é o que a declaração do elo cita, e ela grava QUAL foi. Trocar depois é outro ato humano,
+    nunca uma consequência silenciosa de o croqui ter sido reexportado.
+    """
+    return session.scalar(
+        select(ExportArtifactRecord)
+        .where(
+            ExportArtifactRecord.job_id == job_id,
+            ExportArtifactRecord.tenant_id == tenant_id,
+            ExportArtifactRecord.status == "COMPLETED",
+            ExportArtifactRecord.package_object_key.is_not(None),
+        )
+        .order_by(ExportArtifactRecord.updated_at.desc(), ExportArtifactRecord.id.desc())
+        .limit(1)
+    )
+
+
+def _linked_package_key(session: Session, *, link: SceneLink, tenant_id: str) -> str:
+    """A chave do pacote citado pelo elo, reconferida no ato de ler — nunca guardada.
+
+    A chave não viaja dentro do elo de propósito: ela pertence ao registro de exportação, e
+    duas cópias divergiriam no dia em que o pacote for republicado. O que o elo guarda é a
+    identidade do export; quem responde onde ele está é a tabela que o publicou.
+
+    Três conferências, todas fail-closed: o export tem de ser DESTE tenant e DESTE job (o
+    `where` garante, e por isso a ausência é indistinguível de export alheio), tem de
+    continuar `COMPLETED` com chave, e a chave tem de estar sob o prefixo do tenant — a
+    mesma guarda que `_export_response` aplica antes de assinar qualquer URL, porque o
+    `ArtifactStore` não conhece tenant e não é ele quem isola nada.
+    """
+    export = session.scalar(
+        select(ExportArtifactRecord).where(
+            ExportArtifactRecord.id == link.export_id,
+            ExportArtifactRecord.job_id == link.job_id,
+            ExportArtifactRecord.tenant_id == tenant_id,
+        )
+    )
+    details = {"job_id": link.job_id, "export_id": link.export_id}
+    if export is None or export.status != "COMPLETED" or export.package_object_key is None:
+        raise scene_package_required(
+            "o pacote do croqui declarado por esta rodada não está publicado",
+            details,
+        )
+    if not export.package_object_key.startswith(f"tenants/{tenant_id}/"):
+        raise scene_package_required(
+            "o pacote do croqui declarado não está sob o prefixo deste tenant",
+            details,
+        )
+    return export.package_object_key
+
+
+def _confrontation_payload(link: SceneLink, confrontation: SceneConfrontation) -> dict[str, Any]:
+    """O relatório do confronto: de onde a quantidade veio e o que houve com cada item.
+
+    TODOS os itens aparecem, inclusive os intactos, com o motivo nomeado. Devolver só os que
+    mudaram deixaria a ausência responder por "a cena não tinha esse número", que é
+    exatamente o palpite silencioso que a feature existe para não fazer.
+    """
+    return {
+        "job_id": link.job_id,
+        "scene_revision_id": link.scene_revision_id,
+        "export_id": link.export_id,
+        "changed": confrontation.changed,
+        "fed": confrontation.count_of(SceneConfrontationOutcome.FED),
+        "divergences_recorded": confrontation.count_of(
+            SceneConfrontationOutcome.DIVERGENCE_RECORDED
+        ),
+        "unchanged": confrontation.count_of(SceneConfrontationOutcome.UNCHANGED),
+        "items": [outcome.model_dump(mode="json") for outcome in confrontation.outcomes],
+    }
 
 
 def _revision_version(session: Session, revision_id: str | None) -> int | None:
@@ -6004,12 +6362,25 @@ def _resolve_scene_after_review_change(
         )
     previous_scene_record = _latest_scene(session, job_id=job_id, tenant_id=tenant_id)
     preserved: list[Entity] = []
+    # F-047 T2b: o rótulo acompanha a identidade que sobreviveu ao re-solve. A cena vem do
+    # solver, que não conhece rótulo nenhum; sem este carregamento, o traço aceito por um
+    # profissional voltaria com o `element_ref` e SEM o nome, perdendo em silêncio um ato
+    # humano que só a revogação e a renomeação podem desfazer. Restrito aos refs que de fato
+    # sobreviveram, porque rótulo de elemento que sumiu é rótulo órfão — e órfão a cena recusa.
+    preserved_labels: dict[str, str] = {}
     parent_scene_id: str | None = None
     if previous_scene_record is not None:
         parent_scene_id = previous_scene_record.id
-        preserved = _human_accepted_entities(
-            SceneRevision.model_validate(previous_scene_record.scene)
-        )
+        previous_scene = SceneRevision.model_validate(previous_scene_record.scene)
+        preserved = _human_accepted_entities(previous_scene)
+        surviving_refs = {
+            entity.element_ref for entity in preserved if entity.element_ref is not None
+        }
+        preserved_labels = {
+            ref: label
+            for ref, label in previous_scene.element_labels.items()
+            if ref in surviving_refs
+        }
     blocker_issues = scope_criteria_issues(
         current.required_blocker_codes_json,
         current.required_criteria_texts_json or {},
@@ -6024,6 +6395,7 @@ def _resolve_scene_after_review_change(
                 *[entity.model_dump(mode="json") for entity in solver_result.scene.entities],
                 *[entity.model_dump(mode="json") for entity in preserved],
             ],
+            "element_labels": preserved_labels,
             "issues": [
                 *[issue.model_dump(mode="json") for issue in solver_result.scene.issues],
                 *[issue.model_dump(mode="json") for issue in blocker_issues],
@@ -10194,6 +10566,584 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session.commit()
         return next_scene
 
+    def _element_act_target(
+        session: Session,
+        *,
+        job_id: UUID,
+        tenant_id: str,
+        base_version: int,
+    ) -> tuple[RevisionRecord, SceneRevision]:
+        """Job existente e cena na versão que o cliente declarou ter em mãos.
+
+        A busca do job vem ANTES da cena de propósito: job de outro tenant é `NOT_FOUND`,
+        e não `JOB_NOT_READY`, que diria "ainda não tem cena" sobre algo que quem pergunta
+        não pode nem saber que existe.
+        """
+        job = session.scalar(
+            select(JobRecord).where(JobRecord.id == str(job_id), JobRecord.tenant_id == tenant_id)
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        current = _latest_scene(session, job_id=job_id, tenant_id=tenant_id)
+        if current is None:
+            raise _problem(
+                "JOB_NOT_READY", status.HTTP_409_CONFLICT, "Cena ainda não está disponível."
+            )
+        current_scene = SceneRevision.model_validate(current.scene)
+        if current_scene.version != base_version:
+            raise _problem(
+                "REVISION_CONFLICT", status.HTTP_409_CONFLICT, "Existe uma revisão mais recente."
+            )
+        return current, current_scene
+
+    def _persist_element_act(
+        session: Session,
+        *,
+        principal: Principal,
+        job_id: UUID,
+        parent: RevisionRecord,
+        scene: SceneRevision,
+        acted_at: datetime,
+    ) -> None:
+        """Grava a revisão nova, com autor e instante do servidor, ou recusa a corrida.
+
+        `uq_scene_version` é o que impede duas declarações simultâneas de cunharem o mesmo
+        ref: ambas leem a mesma `base_version`, ambas cunham o mesmo número, e a segunda a
+        gravar colide aqui. O que sobrevive é uma revisão só, com um ref só.
+        """
+        session.add(
+            RevisionRecord(
+                id=str(scene.id),
+                tenant_id=principal.tenant_id,
+                job_id=str(job_id),
+                version=scene.version,
+                parent_revision_id=parent.id,
+                scene=scene.model_dump(mode="json"),
+                created_by=principal.subject,
+                created_at=acted_at,
+            )
+        )
+        try:
+            session.flush()
+        except IntegrityError as error:
+            session.rollback()
+            raise _problem(
+                "REVISION_CONFLICT",
+                status.HTTP_409_CONFLICT,
+                "Um ato concorrente de identidade criou outra revisão.",
+            ) from error
+
+    @application.post(
+        "/v1/jobs/{job_id}/elements",
+        response_model=ElementIdentityResponse,
+        tags=["scene"],
+    )
+    async def declare_element(
+        job_id: UUID,
+        payload: DeclareElementRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ElementIdentityResponse:
+        """Declara que um conjunto de entidades é um elemento, cunhando o ref no ato.
+
+        É ato humano, nunca inferência (ADR-0058, decisão 2): a rota não olha proximidade,
+        rótulo próximo nem camada para escolher o grupo — quem escolhe é quem assina.
+        """
+        acted_by_role = _reviewer_role(principal)
+        if payload.element_ref is not None:
+            raise _problem(
+                "ELEMENT_REF_NOT_ASSIGNABLE",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "O element_ref é cunhado pelo servidor: o cliente declara quais entidades "
+                "são o elemento, nunca qual é o nome dele.",
+            )
+        operation = f"scene.element.declare:{job_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ElementIdentityResponse.model_validate(existing)
+        current, current_scene = _element_act_target(
+            session,
+            job_id=job_id,
+            tenant_id=principal.tenant_id,
+            base_version=payload.base_version,
+        )
+        entity_by_id = {entity.id: entity for entity in current_scene.entities}
+        unknown = sorted(str(item) for item in set(payload.entity_ids) - set(entity_by_id))
+        if unknown:
+            raise _problem(
+                "DOMAIN_VALIDATION_FAILED",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "O grupo cita entidade que não existe nesta revisão.",
+                {"entity_ids": unknown},
+            )
+        if len(set(payload.entity_ids)) != len(payload.entity_ids):
+            raise _problem(
+                "DOMAIN_VALIDATION_FAILED",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "A mesma entidade foi citada duas vezes no grupo.",
+            )
+        already = sorted(
+            str(item) for item in payload.entity_ids if entity_by_id[item].element_ref is not None
+        )
+        if already:
+            # Mover uma entidade de um elemento para outro é DOIS atos: revogar o anterior e
+            # declarar o novo. Reescrever por cima aqui seria a edição silenciosa que o
+            # produto recusa em toda parte, e apagaria de quem revisa que a identidade mudou.
+            raise _problem(
+                "ELEMENT_ALREADY_DECLARED",
+                status.HTTP_409_CONFLICT,
+                "Entidade já declarada em outro elemento; revogue a identidade antes.",
+                {"entity_ids": already},
+            )
+        layers = {entity_by_id[item].layer for item in payload.entity_ids}
+        if len(layers) > 1:
+            # A mesma invariante que `SceneRevision` recusa (T1), conferida ANTES de montar a
+            # cena: sem esta conferência o pedido morreria no `ValidationError` do Pydantic,
+            # que vira 500, em vez de dizer ao humano quais camadas ele misturou.
+            raise _problem(
+                "ELEMENT_REF_LAYER_MISMATCH",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Um elemento não mistura camadas; declare um grupo por camada.",
+                {"layers": sorted(layer.value for layer in layers)},
+            )
+        label = _element_label(payload.label)
+        element_ref = _next_element_ref(session, job_id=job_id, tenant_id=principal.tenant_id)
+        next_scene = _scene_with_element_ref(
+            current_scene,
+            entity_ids=payload.entity_ids,
+            element_ref=element_ref,
+            element_labels=(
+                current_scene.element_labels
+                if label is None
+                else {**current_scene.element_labels, element_ref: label}
+            ),
+        )
+        acted_at = datetime.now(UTC)
+        _persist_element_act(
+            session,
+            principal=principal,
+            job_id=job_id,
+            parent=current,
+            scene=next_scene,
+            acted_at=acted_at,
+        )
+        response = ElementIdentityResponse(
+            act="declared",
+            element_ref=element_ref,
+            label=label,
+            entity_ids=[
+                entity.id for entity in next_scene.entities if entity.element_ref == element_ref
+            ],
+            acted_by_role=acted_by_role,
+            acted_at=acted_at,
+            scene=next_scene,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ELEMENT_IDENTITY_DECLARED",
+            resource_type="scene_revision",
+            resource_id=str(next_scene.id),
+            request_id=request.state.request_id,
+            # O TEXTO do rótulo não entra na auditoria: ele é conteúdo do croqui do cliente,
+            # e a auditoria guarda o que qualifica o ato. Que houve nome, sim; qual, não.
+            details={"element_ref": element_ref, "labeled": label is not None},
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/elements/revocations",
+        response_model=ElementIdentityResponse,
+        tags=["scene"],
+    )
+    async def revoke_element(
+        job_id: UUID,
+        payload: RevokeElementRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ElementIdentityResponse:
+        """Desfaz a identidade declarada: ato próprio, com autor, instante e revisão nova.
+
+        O ref revogado não volta ao estoque de cunhagem — `_next_element_ref` segue do maior
+        já cunhado, para que nenhum elemento futuro herde o nome de um elemento passado.
+        """
+        acted_by_role = _reviewer_role(principal)
+        operation = f"scene.element.revoke:{job_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ElementIdentityResponse.model_validate(existing)
+        current, current_scene = _element_act_target(
+            session,
+            job_id=job_id,
+            tenant_id=principal.tenant_id,
+            base_version=payload.base_version,
+        )
+        revoked_ids = [
+            entity.id
+            for entity in current_scene.entities
+            if entity.element_ref == payload.element_ref
+        ]
+        if not revoked_ids:
+            raise _problem(
+                "ELEMENT_NOT_DECLARED",
+                status.HTTP_409_CONFLICT,
+                "Esta revisão não tem elemento declarado com este element_ref.",
+                {"element_ref": payload.element_ref},
+            )
+        next_scene = _scene_with_element_ref(
+            current_scene,
+            entity_ids=revoked_ids,
+            element_ref=None,
+            # Revogar leva o rótulo junto: sem elemento, o nome não nomeia nada, e deixá-lo
+            # para trás faria a cena guardar um nome órfão que o `SceneRevision` recusa.
+            element_labels={
+                ref: nome
+                for ref, nome in current_scene.element_labels.items()
+                if ref != payload.element_ref
+            },
+        )
+        acted_at = datetime.now(UTC)
+        _persist_element_act(
+            session,
+            principal=principal,
+            job_id=job_id,
+            parent=current,
+            scene=next_scene,
+            acted_at=acted_at,
+        )
+        response = ElementIdentityResponse(
+            act="revoked",
+            element_ref=payload.element_ref,
+            entity_ids=revoked_ids,
+            acted_by_role=acted_by_role,
+            acted_at=acted_at,
+            scene=next_scene,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ELEMENT_IDENTITY_REVOKED",
+            resource_type="scene_revision",
+            resource_id=str(next_scene.id),
+            request_id=request.state.request_id,
+            details={"element_ref": payload.element_ref},
+        )
+        session.commit()
+        return response
+
+    @application.post(
+        "/v1/jobs/{job_id}/elements/labels",
+        response_model=ElementIdentityResponse,
+        tags=["scene"],
+    )
+    async def relabel_element(
+        job_id: UUID,
+        payload: RelabelElementRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ElementIdentityResponse:
+        """Renomeia o elemento: ato declarado, com autor, instante e revisão nova.
+
+        O rótulo é o nome que a pessoa lê — nunca identidade. Renomear não move entidade, não
+        troca `element_ref` e não muda o que casa com a legenda: quem casa continua sendo o
+        `element_ref`, dos dois lados (ADR-0058, decisão 2). Ainda assim é revisão nova, e não
+        edição no lugar, porque quem revisa a cena precisa ver que o nome mudou e por quem.
+        """
+        acted_by_role = _reviewer_role(principal)
+        operation = f"scene.element.relabel:{job_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ElementIdentityResponse.model_validate(existing)
+        current, current_scene = _element_act_target(
+            session,
+            job_id=job_id,
+            tenant_id=principal.tenant_id,
+            base_version=payload.base_version,
+        )
+        label = _required_element_label(payload.label)
+        entity_ids = [
+            entity.id
+            for entity in current_scene.entities
+            if entity.element_ref == payload.element_ref
+        ]
+        if not entity_ids:
+            # Nomear um ref que a cena corrente não tem criaria o rótulo órfão que o
+            # `SceneRevision` recusa — e a recusa precisa dizer isso, não estourar em 500.
+            raise _problem(
+                "ELEMENT_NOT_DECLARED",
+                status.HTTP_409_CONFLICT,
+                "Esta revisão não tem elemento declarado com este element_ref.",
+                {"element_ref": payload.element_ref},
+            )
+        next_scene = _scene_with_element_ref(
+            current_scene,
+            entity_ids=(),
+            element_ref=None,
+            element_labels={**current_scene.element_labels, payload.element_ref: label},
+        )
+        acted_at = datetime.now(UTC)
+        _persist_element_act(
+            session,
+            principal=principal,
+            job_id=job_id,
+            parent=current,
+            scene=next_scene,
+            acted_at=acted_at,
+        )
+        response = ElementIdentityResponse(
+            act="relabeled",
+            element_ref=payload.element_ref,
+            label=label,
+            entity_ids=entity_ids,
+            acted_by_role=acted_by_role,
+            acted_at=acted_at,
+            scene=next_scene,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ELEMENT_LABEL_CHANGED",
+            resource_type="scene_revision",
+            resource_id=str(next_scene.id),
+            request_id=request.state.request_id,
+            details={"element_ref": payload.element_ref},
+        )
+        session.commit()
+        return response
+
+    def _element_proposal_response(proposal: ElementGroupProposal) -> ElementProposalResponse:
+        return ElementProposalResponse(
+            proposal_id=proposal.proposal_id,
+            layer=proposal.layer,
+            signal=proposal.signal,
+            label=proposal.label,
+            entity_ids=list(proposal.entity_ids),
+        )
+
+    @application.get(
+        "/v1/jobs/{job_id}/elements/proposals",
+        response_model=ElementProposalListResponse,
+        tags=["scene"],
+    )
+    async def list_element_proposals(
+        job_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> ElementProposalListResponse:
+        """Propostas determinísticas de agrupamento (F-047 T6, ADR-0058 decisão 2).
+
+        O produtor (`croquito_core.element_proposals.propose_element_groups`) é puro,
+        determinístico e sem provider pago: roda de novo a cada leitura, sobre a cena
+        corrente. Nada é lido de cache nem de estado próprio — só a RECUSA fica em memória
+        (`ElementProposalRejectionRecord`), e é por isso que uma proposta recusada não
+        volta a aparecer aqui para o mesmo conjunto de entidades nesta cena.
+
+        Leitura, como `GET /v1/jobs/{job_id}/scene`: qualquer principal autenticado do
+        tenant lê; o papel profissional só é exigido para CONFIRMAR (a rota de sempre,
+        `POST /v1/jobs/{job_id}/elements`) ou RECUSAR (abaixo).
+        """
+        job = session.scalar(
+            select(JobRecord).where(
+                JobRecord.id == str(job_id), JobRecord.tenant_id == principal.tenant_id
+            )
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        current = _latest_scene(session, job_id=job_id, tenant_id=principal.tenant_id)
+        if current is None:
+            raise _problem(
+                "JOB_NOT_READY", status.HTTP_409_CONFLICT, "Cena ainda não está disponível."
+            )
+        scene = SceneRevision.model_validate(current.scene)
+        rejected = set(
+            session.scalars(
+                select(ElementProposalRejectionRecord.proposal_id).where(
+                    ElementProposalRejectionRecord.tenant_id == principal.tenant_id,
+                    ElementProposalRejectionRecord.job_id == str(job_id),
+                )
+            )
+        )
+        proposals = [
+            _element_proposal_response(proposal)
+            for proposal in propose_element_groups(scene)
+            if proposal.proposal_id not in rejected
+        ]
+        return ElementProposalListResponse(scene_version=scene.version, proposals=proposals)
+
+    @application.post(
+        "/v1/jobs/{job_id}/elements/proposals/{proposal_id}/rejections",
+        response_model=ElementProposalRejectionResponse,
+        tags=["scene"],
+    )
+    async def reject_element_proposal(
+        job_id: UUID,
+        proposal_id: str,
+        payload: RejectElementProposalRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ElementProposalRejectionResponse:
+        """Recusa uma proposta: NUNCA escreve na cena, só registra quem recusou e quando.
+
+        Recomputa as propostas correntes e exige que `proposal_id` seja uma delas AGORA —
+        recusar um id já declarado, já recusado antes, ou nunca ofertado responde
+        `404 ELEMENT_PROPOSAL_NOT_FOUND`, nunca o 404 genérico de rota. Sem `base_version`:
+        como o ato não toca a cena, não há concorrência otimista para conferir.
+        """
+        rejected_by_role = _reviewer_role(principal)
+        job = session.scalar(
+            select(JobRecord).where(
+                JobRecord.id == str(job_id), JobRecord.tenant_id == principal.tenant_id
+            )
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        operation = f"scene.element.proposal.reject:{job_id}:{proposal_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ElementProposalRejectionResponse.model_validate(existing)
+        current = _latest_scene(session, job_id=job_id, tenant_id=principal.tenant_id)
+        if current is None:
+            raise _problem(
+                "JOB_NOT_READY", status.HTTP_409_CONFLICT, "Cena ainda não está disponível."
+            )
+        scene = SceneRevision.model_validate(current.scene)
+        already_rejected = session.scalar(
+            select(ElementProposalRejectionRecord.id).where(
+                ElementProposalRejectionRecord.tenant_id == principal.tenant_id,
+                ElementProposalRejectionRecord.job_id == str(job_id),
+                ElementProposalRejectionRecord.proposal_id == proposal_id,
+            )
+        )
+        if already_rejected is not None:
+            raise _problem(
+                "ELEMENT_PROPOSAL_NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Esta proposta já foi recusada; ela não é mais oferecida.",
+            )
+        match = next(
+            (
+                proposal
+                for proposal in propose_element_groups(scene)
+                if proposal.proposal_id == proposal_id
+            ),
+            None,
+        )
+        if match is None:
+            raise _problem(
+                "ELEMENT_PROPOSAL_NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Esta revisão não oferece esta proposta.",
+            )
+        rejected_at = datetime.now(UTC)
+        session.add(
+            ElementProposalRejectionRecord(
+                id=str(new_uuid7()),
+                tenant_id=principal.tenant_id,
+                job_id=str(job_id),
+                proposal_id=proposal_id,
+                entity_ids_json=[str(item) for item in match.entity_ids],
+                reason=payload.reason,
+                rejected_by=principal.subject,
+                rejected_by_role=rejected_by_role,
+                created_at=rejected_at,
+            )
+        )
+        try:
+            session.flush()
+        except IntegrityError as error:
+            session.rollback()
+            raise _problem(
+                "ELEMENT_PROPOSAL_NOT_FOUND",
+                status.HTTP_404_NOT_FOUND,
+                "Uma recusa concorrente já registrou esta proposta.",
+            ) from error
+        response = ElementProposalRejectionResponse(
+            proposal_id=proposal_id,
+            entity_ids=list(match.entity_ids),
+            rejected_by_role=rejected_by_role,
+            rejected_at=rejected_at,
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="ELEMENT_PROPOSAL_REJECTED",
+            resource_type="scene_revision",
+            resource_id=str(scene.id),
+            request_id=request.state.request_id,
+            details={"proposal_id": proposal_id},
+        )
+        session.commit()
+        return response
+
     @application.post("/v1/jobs/{job_id}/approve", response_model=SceneRevision, tags=["scene"])
     async def approve_scene(
         job_id: UUID,
@@ -12358,6 +13308,360 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 tenant_id=principal.tenant_id,
                 packet_sha256=packet_sha256,
             )
+        return response
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/takeoff/divergences/resolutions",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def resolve_valuation_takeoff_divergence(
+        round_id: UUID,
+        payload: TakeoffDivergenceResolutionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Registra QUAL das duas quantidades prevalece numa divergência entre cena e legenda.
+
+        A divergência é aberta pelo confronto do `quantitativos.csv` da cena aprovada com o
+        número lido na legenda (`QuantitySource`), e enquanto ela está aberta o item não
+        fecha: o fechamento de pacote recusa em `ASSIGNMENT_QUANTITY_DIVERGENCE_OPEN` e o
+        boletim, em `CALC_QUANTITY_DIVERGENCE_OPEN`. Esta rota é a única saída, e ela é um
+        ATO HUMANO — o sistema mostra os dois números e nunca escolhe sozinho.
+
+        É rota própria, e não uma bandeira em `/takeoff/decisions`, porque o ato é outro:
+        `/decisions` confirma ou rejeita a leitura da legenda; aqui já existem duas leituras
+        válidas e o que se declara é qual delas manda. A auditoria precisa distingui-las.
+
+        **O número preterido continua gravado**: ele fica na divergência, com a origem que o
+        produziu, e a resposta o devolve junto com o escolhido. Resolver não apaga nada.
+
+        Item sem divergência (`TAKEOFF_DIVERGENCE_ABSENT`), divergência já resolvida
+        (`TAKEOFF_DIVERGENCE_ALREADY_RESOLVED`) e item fora do pacote
+        (`TAKEOFF_DIVERGENCE_UNKNOWN_ITEM`) continuam sendo recusa do domínio, que esta rota
+        não reimplementa.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.takeoff-divergence-resolutions:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        try:
+            resolution_input = TakeoffDivergenceResolutionInput(
+                item_id=payload.item_id,
+                choice=DivergenceChoice(payload.choice),
+                reviewer_id=principal.subject,
+                reviewer_role=VALUATION_REVIEWER_ROLE,
+                resolved_at=datetime.now(UTC),
+                note=payload.note,
+            )
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+        resolved = apply_divergence_resolution(packet, resolution_input)
+
+        document = resolved.model_dump(mode="json")
+        packet_sha256 = document_digest(document)
+        new_revision = append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"takeoff_packet_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = {
+            **_takeoff_payload(record, new_revision),
+            "overlay": takeoff_overlay_state(new_revision, packet_sha256=packet_sha256),
+        }
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_TAKEOFF_DIVERGENCE_RESOLVED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_TAKEOFF_DIVERGENCE_RESOLVED",
+            record=record,
+        )
+        # A decisão fica durável ANTES da fila, como na revisão do takeoff: o desenho é
+        # consequência, e a quantidade escolhida é o que a tela precisa ver de imediato.
+        _commit_valuation_revision(session)
+        _enqueue_takeoff_overlay_rerender(
+            round_id=record.id,
+            tenant_id=principal.tenant_id,
+            packet_sha256=packet_sha256,
+        )
+        return response
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/scene-link",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def declare_valuation_scene_link(
+        round_id: UUID,
+        payload: DeclareSceneLinkRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Declara QUAL croqui aprovado alimenta esta rodada de medição (F-047 T4b).
+
+        O elo é **ato humano explícito**, e é a razão de esta rota existir. Ele nunca é
+        inferido: nem por `worksite_key` igual, nem por proximidade de data, nem por
+        semelhança de nome entre a obra da rodada e o projeto do croqui. É a mesma regra que
+        o produto aplica em toda parte e a rejeição central do ADR-0058 — proximidade não é
+        associação. Sem esta declaração, a rodada responde exatamente como sempre respondeu.
+
+        O corpo cita o JOB; o servidor resolve o **pacote publicado** dele e grava o export e
+        a revisão da cena junto, porque é de um pacote específico que o `quantitativos.csv`
+        sai. Um export novo (nova aprovação, novo traçado) não muda o elo sozinho: mudar é
+        outro ato declarado, por esta mesma rota, e a declaração anterior continua legível na
+        revisão onde foi feita.
+
+        Recusa, nunca `500`: job de outro tenant é `404` como se não existisse; croqui sem
+        cena aprovada é `409 SCENE_LINK_SCENE_NOT_APPROVED`; croqui aprovado mas sem pacote
+        publicado é `409 SCENE_LINK_EXPORT_REQUIRED` — sem pacote não há `quantitativos.csv`
+        de onde ler, e prometer o contrário seria oferecer uma quantidade que não existe.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.scene-link:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        job = session.scalar(
+            select(JobRecord).where(
+                JobRecord.id == str(payload.job_id),
+                JobRecord.tenant_id == principal.tenant_id,
+            )
+        )
+        if job is None:
+            raise _problem("NOT_FOUND", status.HTTP_404_NOT_FOUND, "Job não encontrado.")
+        export = _published_scene_export(session, job_id=job.id, tenant_id=principal.tenant_id)
+        if export is None:
+            approved = session.scalar(
+                select(ApprovalRecord).where(
+                    ApprovalRecord.job_id == job.id,
+                    ApprovalRecord.tenant_id == principal.tenant_id,
+                )
+            )
+            if approved is None:
+                raise RoundRefusal(
+                    status.HTTP_409_CONFLICT,
+                    SCENE_LINK_SCENE_NOT_APPROVED,
+                    "o croqui citado não tem cena aprovada; só cena aprovada produz quantitativo",
+                    {"job_id": str(payload.job_id)},
+                )
+            raise RoundRefusal(
+                status.HTTP_409_CONFLICT,
+                SCENE_LINK_EXPORT_REQUIRED,
+                "o croqui citado ainda não tem pacote de exportação publicado",
+                {"job_id": str(payload.job_id)},
+            )
+
+        link = SceneLink(
+            job_id=job.id,
+            scene_revision_id=export.scene_revision_id,
+            export_id=export.id,
+            dxf_sha256=export.dxf_sha256,
+            # Identidade do `Principal` e instante do servidor: o corpo não carimba nenhum
+            # dos dois, como em toda declaração desta cadeia.
+            declared_by=principal.subject,
+            declared_at=datetime.now(UTC),
+        )
+        new_revision = append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"scene_link_json": link.model_dump(mode="json")},
+        )
+        record.updated_at = datetime.now(UTC)
+        # As folhas entram aqui porque o estado da rodada passou a descrever a PRAÇA (F-046):
+        # sem elas o elo do croqui responderia um estado que não conhece as folhas da rodada.
+        response = round_state_payload(
+            record,
+            new_revision,
+            round_plates(session, round_id=record.id, tenant_id=principal.tenant_id),
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_SCENE_LINK_DECLARED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_SCENE_LINK_DECLARED",
+            record=record,
+        )
+        _commit_valuation_revision(session)
+        return response
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/takeoff/scene-quantities",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def confront_valuation_takeoff_with_scene(
+        round_id: UUID,
+        payload: SceneQuantitiesRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Confronta o takeoff com o `quantitativos.csv` do croqui declarado (F-047 T4b).
+
+        O caminho até o arquivo é inteiro e não tem atalho: o elo declarado -> o export
+        citado (`export_artifacts.package_object_key`, conferido COMPLETO e sob o prefixo do
+        tenant) -> o membro `quantitativos.csv` do pacote -> `QuantitySource`. A quantidade
+        só existe porque o pacote só é publicado depois de `ensure_exportable` e da auditoria
+        do DXF: esta rota **herda** o portão de exportação em vez de duplicá-lo (ADR-0058
+        decisão 7).
+
+        Item a item, o desfecho é um dos três, e o relatório diz qual foi para TODOS os itens
+        — inclusive os que não mudaram, com o motivo nomeado (identidade ausente num dos
+        lados, cena `approximate`/`unresolved`, unidade que a cena não produz, grandeza
+        ausente, divergência já gravada, concordância dentro da tolerância). Ausência na
+        resposta nunca é como este produto diz que não havia número.
+
+        **Repetir é seguro.** Rodar de novo sobre o mesmo estado não duplica divergência, não
+        realimenta o que já veio da cena e não grava revisão nenhuma quando nada muda — a
+        versão da rodada fica onde estava, e o `base_version` que a tela tem na mão continua
+        valendo.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.scene-quantities:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        packet = require_takeoff_packet(revision)
+        link = require_scene_link(revision)
+        source = read_scene_quantities(
+            application.state.artifact_store,
+            object_key=_linked_package_key(session, link=link, tenant_id=principal.tenant_id),
+            scene_revision_id=link.scene_revision_id,
+            details={"round_id": record.id, "job_id": link.job_id},
+        )
+        confrontation = confront_scene_quantities(packet, source)
+        if not confrontation.changed:
+            # Nada mudou: nenhuma revisão, nenhuma fila, nenhuma versão nova. Gravar aqui
+            # faria toda releitura do mesmo CSV avançar a cadeia por um ato que não houve.
+            #
+            # Também não há resposta idempotente a guardar, porque não houve efeito a
+            # repetir: reenviar a mesma chave reexecuta um confronto que continua não
+            # mudando nada — ou que muda, se a cena tiver sido reexportada nesse meio-tempo,
+            # que é justamente o desfecho correto.
+            return {
+                **_takeoff_payload(record, revision),
+                "scene_confrontation": _confrontation_payload(link, confrontation),
+            }
+
+        document = confrontation.packet.model_dump(mode="json")
+        packet_sha256 = document_digest(document)
+        new_revision = append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={"takeoff_packet_json": document},
+        )
+        record.updated_at = datetime.now(UTC)
+        response = {
+            **_takeoff_payload(record, new_revision),
+            "overlay": takeoff_overlay_state(new_revision, packet_sha256=packet_sha256),
+            "scene_confrontation": _confrontation_payload(link, confrontation),
+        }
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_SCENE_QUANTITIES_CONFRONTED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_SCENE_QUANTITIES_CONFRONTED",
+            record=record,
+        )
+        # O pacote fica durável ANTES da fila, como na decisão do takeoff: o overlay é
+        # consequência, e a quantidade é o que a tela precisa ver de imediato.
+        _commit_valuation_revision(session)
+        _enqueue_takeoff_overlay_rerender(
+            round_id=record.id,
+            tenant_id=principal.tenant_id,
+            packet_sha256=packet_sha256,
+        )
         return response
 
     @application.get(

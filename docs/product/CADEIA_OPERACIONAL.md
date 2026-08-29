@@ -84,6 +84,15 @@ representa. Está registrado como
 | 13 | Item executado sem código no contrato | fiscal | **dossiê do aditivo** (item, quantitativo, justificativa; **sem preço** por construção) | `build_amendment_dossier`, `/v1/valuation-rounds/{id}/amendment-dossier` | **no ar** |
 | 14 | Pagamento | prefeitura | — | — | ato humano, fora do produto |
 
+Entre a etapa **6** e a **12** existe, desde a F-047, um **elo declarado**: quem mede diz
+qual croqui aprovado alimenta a rodada (`POST /v1/valuation-rounds/{round_id}/scene-link`) e
+manda confrontar a legenda com o `quantitativos.csv` daquele pacote
+(`POST /v1/valuation-rounds/{round_id}/takeoff/scene-quantities`). O item sem quantidade
+recebe a da cena, com a precisão declarada lá; o item que já tinha a da legenda e discorda
+além da tolerância abre **divergência**, e ninguém escolhe por ninguém. O elo é ato humano:
+nada é ligado por obra de mesmo nome nem por data próxima. A etapa 7 continua fora do
+produto — o elo liga o croqui à medição, não dispensa a prancha.
+
 ## 3. Qual documento vai para a empresa
 
 Esta é a pergunta que originou o documento. Os três artefatos financeiros têm as mesmas

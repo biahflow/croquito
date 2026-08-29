@@ -28,8 +28,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import UTC, datetime
+import zipfile
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -42,10 +44,16 @@ from sqlalchemy import select
 from croquito_api import valuation_rounds
 from croquito_api.config import ApiSettings
 from croquito_api.database import (
+    ApprovalRecord,
     AuditRecord,
     Database,
     DomainEventRecord,
+    ExportArtifactRecord,
+    JobRecord,
+    ProjectRecord,
+    RevisionRecord,
     TenantAiProcessingEntitlementRecord,
+    UploadRecord,
     ValuationRoundPlateRecord,
     ValuationRoundRecord,
     ValuationRoundRevisionRecord,
@@ -78,6 +86,7 @@ from croquito_valuation.models import (
     PriceOrigin,
     Valuation,
 )
+from croquito_valuation.quantity_source import QuantitySource
 from croquito_valuation.takeoff import (
     PlateBox,
     PlateEvidence,
@@ -2029,6 +2038,229 @@ def test_a_decisao_registra_auditoria_sem_url_assinada_nem_conteudo(tmp_path: Pa
         assert len(decided) == 1
         assert decided[0].resource_id == published["round_id"]
         assert all(set(audit.metadata_json) == {"request_id"} for audit in audits)
+
+
+# --- takeoff: divergência entre a cena e a legenda --------------------------------------
+
+_ELEMENT_REF = "EL-000100"
+_SCENE_REVISION = "0192f1a0-0000-7000-8000-000000000001"
+#: A cena diz 12 m onde a legenda leu 10 m. A tolerância é `maior(1% de 10, 0,01)` = `0,10`,
+#: então a diferença de `2,00` abre a divergência com folga — o que se prova aqui é a rota,
+#: não a borda (essa é `tests/valuation/test_quantity_divergence.py`).
+_SCENE_QUANTITIES = (
+    "entity_id,element_ref,layer,kind,precision,length_m,perimeter_m,area_m2\n"
+    f"3f0f0f0f-0000-0000-0000-000000000001,{_ELEMENT_REF},MURO,line,exact,12.000000,,\n"
+)
+
+
+def _divergent_item(*, item_id: str = _ITEM_CLEAR) -> TakeoffItem:
+    """Item de legenda já confrontado com a cena, com a divergência aberta gravada."""
+    base = TakeoffItem.model_validate(
+        {
+            **_takeoff_item(item_id=item_id).model_dump(),
+            "element_ref": _ELEMENT_REF,
+        }
+    )
+    source = QuantitySource.from_csv_text(_SCENE_QUANTITIES, scene_revision_id=_SCENE_REVISION)
+    divergent = source.record_divergence(base)
+    assert divergent.has_open_divergence()
+    return divergent
+
+
+def _resolve_divergence(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    tenant: str = _TENANT,
+    key: str = "divergencia-001",
+    **body: Any,
+) -> Any:
+    payload: dict[str, Any] = {
+        "base_version": base_version,
+        "item_id": _ITEM_CLEAR,
+        "choice": "scene",
+    }
+    payload.update(body)
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/takeoff/divergences/resolutions",
+        headers=_headers(tenant, key=key),
+        json=payload,
+    )
+
+
+def test_resolver_a_divergencia_grava_autor_instante_e_o_numero_preterido(
+    tmp_path: Path,
+) -> None:
+    """F-047 T5, critério 5: escolher é ato humano, e o preterido continua gravado."""
+    client = _client(tmp_path)
+    queue = _observed_queue(client)
+    published = _round_with_takeoff(client, _takeoff_packet([_divergent_item()]))
+
+    response = _resolve_divergence(
+        client,
+        published["round_id"],
+        base_version=published["version"],
+        note="Conferido em campo: a legenda estava desatualizada.",
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == published["version"] + 1
+    item = body["packet"]["items"][0]
+    divergencia = item["scene_divergence"]
+    # O escolhido passou a valer, com a origem declarada.
+    assert item["quantity"] == "12.000000"
+    assert item["source"] == "scene_graph"
+    assert item["scene_precision"] == "exact"
+    # O preterido continua gravado, com a origem que o produziu.
+    assert divergencia["legend"]["quantity"] == "10.00"
+    assert divergencia["legend"]["extractor"] == "legend-extractor-sintetico"
+    assert divergencia["scene"]["scene_revision_id"] == _SCENE_REVISION
+    # E o ato tem autor e instante — do `Principal` e do servidor, nunca do corpo.
+    resolucao = divergencia["resolution"]
+    assert resolucao["choice"] == "scene"
+    assert resolucao["reviewer_id"] == "orcamentista-sintetica"
+    assert resolucao["reviewer_role"] == "orcamentista"
+    assert datetime.fromisoformat(resolucao["resolved_at"]).tzinfo is not None
+    # O overlay é consequência: sai da fila, e até lá a resposta o declara vencido.
+    assert body["overlay"]["stale"] is True
+    assert len(queue.messages) == 1
+    envelope = json.loads(queue.messages[0]["Body"])
+    assert envelope["command"] == "rerender_takeoff_overlay"
+    assert envelope["packet_sha256"] == body["packet_sha256"]
+    with _database(client).sessions() as session:
+        audits = session.scalars(select(AuditRecord)).all()
+        resolvidas = [
+            audit for audit in audits if audit.action == "VALUATION_TAKEOFF_DIVERGENCE_RESOLVED"
+        ]
+        assert len(resolvidas) == 1
+        assert resolvidas[0].resource_id == published["round_id"]
+
+
+def test_escolher_a_legenda_mantem_o_numero_lido_e_guarda_o_da_cena(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet([_divergent_item()]))
+
+    response = _resolve_divergence(
+        client, published["round_id"], base_version=published["version"], choice="legend"
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["packet"]["items"][0]
+    assert item["quantity"] == "10.00"
+    assert item["source"] == "legend_extraction"
+    assert item["scene_precision"] is None
+    assert item["scene_divergence"]["scene"]["quantity"] == "12.000000"
+
+
+def test_re_resolver_a_divergencia_e_recusado_com_codigo_de_dominio(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet([_divergent_item()]))
+    primeira = _resolve_divergence(client, published["round_id"], base_version=published["version"])
+    assert primeira.status_code == 200, primeira.text
+
+    segunda = _resolve_divergence(
+        client,
+        published["round_id"],
+        base_version=primeira.json()["version"],
+        key="divergencia-002",
+    )
+
+    assert segunda.status_code == 422
+    detail = segunda.json()["detail"]
+    assert detail["code"] == "DOMAIN_VALIDATION_FAILED"
+    assert detail["details"]["code"] == "TAKEOFF_DIVERGENCE_ALREADY_RESOLVED"
+
+
+def test_resolver_item_sem_divergencia_e_recusado(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet())
+
+    response = _resolve_divergence(client, published["round_id"], base_version=published["version"])
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["details"]["code"] == "TAKEOFF_DIVERGENCE_ABSENT"
+
+
+def test_a_resolucao_exige_idempotency_key_e_a_versao_corrente(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet([_divergent_item()]))
+
+    sem_chave = client.post(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff/divergences/resolutions",
+        headers={"Authorization": _headers()["Authorization"]},
+        json={
+            "base_version": published["version"],
+            "item_id": _ITEM_CLEAR,
+            "choice": "scene",
+        },
+    )
+    versao_velha = _resolve_divergence(
+        client, published["round_id"], base_version=published["version"] - 1, key="divergencia-003"
+    )
+
+    assert sem_chave.status_code == 400
+    assert sem_chave.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
+    assert versao_velha.status_code == 409
+    assert versao_velha.json()["detail"]["code"] == "REVISION_CONFLICT"
+
+
+def test_a_resolucao_e_idempotente_pela_chave(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet([_divergent_item()]))
+
+    primeira = _resolve_divergence(client, published["round_id"], base_version=published["version"])
+    repetida = _resolve_divergence(client, published["round_id"], base_version=published["version"])
+
+    assert primeira.status_code == 200, primeira.text
+    assert repetida.status_code == 200
+    assert repetida.json() == primeira.json()
+
+
+def test_a_resolucao_respeita_papel_e_isolamento_de_tenant(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet([_divergent_item()]))
+    corpo = {"base_version": published["version"], "item_id": _ITEM_CLEAR, "choice": "scene"}
+    caminho = f"/v1/valuation-rounds/{published['round_id']}/takeoff/divergences/resolutions"
+
+    sem_token = client.post(caminho, json=corpo)
+    papel_errado = client.post(
+        caminho, headers=_headers(roles="engineer", key="divergencia-004"), json=corpo
+    )
+    outro_tenant = client.post(
+        caminho, headers=_headers(_OTHER_TENANT, key="divergencia-005"), json=corpo
+    )
+
+    assert sem_token.status_code == 401
+    assert papel_errado.status_code == 403
+    assert outro_tenant.status_code == 404
+
+
+def test_uma_terceira_quantidade_nao_atravessa_a_fronteira_da_rota(tmp_path: Path) -> None:
+    """Decisão 7: só há duas escolhas, e o corpo não carrega quantidade nenhuma."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet([_divergent_item()]))
+    caminho = f"/v1/valuation-rounds/{published['round_id']}/takeoff/divergences/resolutions"
+
+    terceira_escolha = client.post(
+        caminho,
+        headers=_headers(key="divergencia-006"),
+        json={"base_version": published["version"], "item_id": _ITEM_CLEAR, "choice": "nenhuma"},
+    )
+    com_quantidade = client.post(
+        caminho,
+        headers=_headers(key="divergencia-007"),
+        json={
+            "base_version": published["version"],
+            "item_id": _ITEM_CLEAR,
+            "choice": "scene",
+            "quantity": "11.00",
+        },
+    )
+
+    assert terceira_escolha.status_code == 422
+    assert com_quantidade.status_code == 422
 
 
 # --- códigos: shortlist, busca e decisão ------------------------------------------------
@@ -4081,3 +4313,681 @@ def test_desfazer_com_versao_base_velha_conflita(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 409, response.text
+
+
+# --- o elo entre a rodada e o croqui aprovado (F-047 T4b) --------------------------------
+
+_SCENE_AREA_REF = "EL-000200"
+#: A cena diz 418,12 m² onde a legenda leu 400,00 m². A tolerância é `maior(1% de 400, 0,01)`
+#: = `4,00`, então a diferença de `18,12` abre a divergência com folga. A borda exata é
+#: `tests/valuation/test_scene_confrontation.py`; aqui o que se prova é a rota.
+_SCENE_PACKAGE_QUANTITIES = (
+    "entity_id,element_ref,layer,kind,precision,length_m,perimeter_m,area_m2\n"
+    f"3f0f0f0f-0000-0000-0000-000000000001,{_ELEMENT_REF},MURO,line,exact,12.000000,,\n"
+    f"3f0f0f0f-0000-0000-0000-000000000002,{_SCENE_AREA_REF},PATAMAR,polyline,exact,,,418.120000\n"
+)
+
+
+def _scene_package(quantities: str | None = _SCENE_PACKAGE_QUANTITIES) -> bytes:
+    """Um pacote de exportação como o worker o publica: `.zip` plano, arquivos por nome."""
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("desenho.dxf", "0\nSECTION\n0\nENDSEC\n0\nEOF\n")
+        if quantities is not None:
+            archive.writestr("quantitativos.csv", quantities)
+    return buffer.getvalue()
+
+
+def _seed_croqui(
+    client: TestClient,
+    *,
+    tenant: str = _TENANT,
+    approved: bool = True,
+    export_status: str | None = "COMPLETED",
+    package: bytes | None = _scene_package(),
+    label: str = "a",
+) -> dict[str, str]:
+    """Semeia um croqui do tenant no estágio pedido: aprovado, exportado, publicado.
+
+    As linhas entram direto no banco porque a cadeia do croqui inteira — upload, revisão,
+    traçado, aprovação, export pelo worker — é outro contexto e outro conjunto de testes
+    (`tests/api/test_api.py`); o que estes testes precisam é do ESTADO em que o elo é (ou
+    não é) declarável.
+    """
+    job_id = str(new_uuid7())
+    project_id = str(new_uuid7())
+    upload_id = str(new_uuid7())
+    revision_id = str(new_uuid7())
+    export_id = str(new_uuid7())
+    approval_id = str(new_uuid7())
+    package_key = f"tenants/{tenant}/jobs/{job_id}/exports/{export_id}/croquito.zip"
+    expires_at = datetime.now(UTC) + timedelta(days=7)
+    with _database(client).sessions() as session:
+        session.add(
+            ProjectRecord(
+                id=project_id,
+                tenant_id=tenant,
+                name=f"PRACA SINTETICA {label.upper()}",
+                default_unit="m",
+                created_by="engenheira-sintetica",
+                expires_at=expires_at,
+            )
+        )
+        session.add(
+            UploadRecord(
+                id=upload_id,
+                tenant_id=tenant,
+                object_key=f"tenants/{tenant}/uploads/{upload_id}/croqui-{label}.pdf",
+                filename=f"croqui-{label}.pdf",
+                content_type="application/pdf",
+                size_bytes=1024,
+                sha256="c" * 64,
+                status="VERIFIED",
+            )
+        )
+        session.flush()
+        session.add(
+            JobRecord(
+                id=job_id,
+                tenant_id=tenant,
+                project_id=project_id,
+                upload_id=upload_id,
+                status="COMPLETED",
+                stage="EXPORTING",
+                expires_at=expires_at,
+            )
+        )
+        session.flush()
+        session.add(
+            RevisionRecord(
+                id=revision_id,
+                tenant_id=tenant,
+                job_id=job_id,
+                version=1,
+                scene={"id": revision_id, "approved": approved},
+                created_by="engenheira-sintetica",
+            )
+        )
+        # `PRAGMA foreign_keys=ON` está ligado: a ordem de inserção é conferida de verdade.
+        session.flush()
+        if approved:
+            session.add(
+                ApprovalRecord(
+                    id=approval_id,
+                    tenant_id=tenant,
+                    job_id=job_id,
+                    source_revision_id=revision_id,
+                    approved_revision_id=revision_id,
+                    reviewer_id="engenheira-sintetica",
+                    reviewer_roles=["engineer"],
+                    acknowledgement="Conferi o croqui contra a prancha.",
+                )
+            )
+        session.flush()
+        if export_status is not None:
+            session.add(
+                ExportArtifactRecord(
+                    id=export_id,
+                    tenant_id=tenant,
+                    job_id=job_id,
+                    scene_revision_id=revision_id,
+                    approval_id=approval_id,
+                    format="dxf",
+                    status=export_status,
+                    package_object_key=(package_key if export_status == "COMPLETED" else None),
+                    dxf_sha256="d" * 64,
+                    audit_status="approved",
+                    requested_by="engenheira-sintetica",
+                )
+            )
+        session.commit()
+    if package is not None:
+        _store(client).put_direct(
+            object_key=package_key, body=package, content_type="application/zip"
+        )
+    return {
+        "job_id": job_id,
+        "export_id": export_id,
+        "scene_revision_id": revision_id,
+        "package_key": package_key,
+    }
+
+
+def _declare_scene_link(
+    client: TestClient,
+    round_id: str,
+    *,
+    job_id: str,
+    base_version: int,
+    tenant: str = _TENANT,
+    key: str = "elo-001",
+) -> Any:
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/scene-link",
+        headers=_headers(tenant, key=key),
+        json={"base_version": base_version, "job_id": job_id},
+    )
+
+
+def _confront_scene(
+    client: TestClient,
+    round_id: str,
+    *,
+    base_version: int,
+    tenant: str = _TENANT,
+    key: str = "confronto-001",
+) -> Any:
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/takeoff/scene-quantities",
+        headers=_headers(tenant, key=key),
+        json={"base_version": base_version},
+    )
+
+
+def _identified_item(
+    *, item_id: str, element_ref: str, quantity: str | None, status: TakeoffItemStatus
+) -> TakeoffItem:
+    """Item de legenda com identidade de elemento declarada (F-047 T2)."""
+    return TakeoffItem.model_validate(
+        {
+            **_takeoff_item(
+                item_id=item_id,
+                status=(
+                    TakeoffItemStatus.AMBIGUOUS if quantity is None else TakeoffItemStatus.PROPOSED
+                ),
+            ).model_dump(),
+            "element_ref": element_ref,
+            "unit": "m2" if element_ref == _SCENE_AREA_REF else "m",
+            "quantity": None if quantity is None else Decimal(quantity),
+            "status": status,
+        }
+    )
+
+
+def _round_with_linked_croqui(
+    client: TestClient,
+    packet: TakeoffPacket | None = None,
+    **seed: Any,
+) -> dict[str, Any]:
+    """Rodada com takeoff publicado E o elo declarado — o ponto de partida do confronto."""
+    published = _round_with_takeoff(client, packet or _takeoff_packet())
+    croqui = _seed_croqui(client, **seed)
+    declared = _declare_scene_link(
+        client,
+        published["round_id"],
+        job_id=croqui["job_id"],
+        base_version=published["version"],
+    )
+    assert declared.status_code == 200, declared.text
+    return {**published, **croqui, "version": declared.json()["version"]}
+
+
+def test_declarar_o_elo_e_ato_humano_com_autor_instante_e_revisao_nova(tmp_path: Path) -> None:
+    """F-047 T4b, critério 1: o elo é declarado, com autor do JWT e instante do servidor."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet())
+    croqui = _seed_croqui(client)
+
+    response = _declare_scene_link(
+        client,
+        published["round_id"],
+        job_id=croqui["job_id"],
+        base_version=published["version"],
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == published["version"] + 1
+    elo = body["scene_link"]
+    assert elo["present"] is True
+    assert elo["job_id"] == croqui["job_id"]
+    # O elo cita o PACOTE, não só o job: é de um export específico que o CSV sai.
+    assert elo["export_id"] == croqui["export_id"]
+    assert elo["scene_revision_id"] == croqui["scene_revision_id"]
+    assert elo["dxf_sha256"] == "d" * 64
+    assert elo["declared_by"] == "orcamentista-sintetica"
+    assert datetime.fromisoformat(elo["declared_at"]).tzinfo is not None
+    with _database(client).sessions() as session:
+        revisions = session.scalars(
+            select(ValuationRoundRevisionRecord).order_by(ValuationRoundRevisionRecord.version)
+        ).all()
+        # Revisão NOVA, append-only: a anterior continua sem elo nenhum.
+        assert [revision.scene_link_json is None for revision in revisions] == [True, False]
+        audits = session.scalars(select(AuditRecord)).all()
+        declared = [audit for audit in audits if audit.action == "VALUATION_SCENE_LINK_DECLARED"]
+        assert len(declared) == 1
+        assert declared[0].resource_id == published["round_id"]
+        assert set(declared[0].metadata_json) == {"request_id"}
+
+
+def test_trocar_o_elo_e_outro_ato_e_o_anterior_continua_legivel(tmp_path: Path) -> None:
+    """F-047 T4b, critério 3: trocar é declarar de novo, nunca edição silenciosa."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet())
+    primeiro = _seed_croqui(client, label="a")
+    segundo = _seed_croqui(client, label="b")
+    inicial = _declare_scene_link(
+        client, published["round_id"], job_id=primeiro["job_id"], base_version=published["version"]
+    )
+    assert inicial.status_code == 200, inicial.text
+
+    troca = _declare_scene_link(
+        client,
+        published["round_id"],
+        job_id=segundo["job_id"],
+        base_version=inicial.json()["version"],
+        key="elo-002",
+    )
+
+    assert troca.status_code == 200, troca.text
+    assert troca.json()["scene_link"]["job_id"] == segundo["job_id"]
+    with _database(client).sessions() as session:
+        links = [
+            revision.scene_link_json
+            for revision in session.scalars(
+                select(ValuationRoundRevisionRecord).order_by(ValuationRoundRevisionRecord.version)
+            ).all()
+        ]
+        # A declaração anterior continua legível na revisão onde foi feita.
+        assert links[1] is not None and links[1]["job_id"] == primeiro["job_id"]
+        assert links[2] is not None and links[2]["job_id"] == segundo["job_id"]
+        audits = session.scalars(select(AuditRecord)).all()
+        assert len([a for a in audits if a.action == "VALUATION_SCENE_LINK_DECLARED"]) == 2
+
+
+def test_o_elo_recusa_croqui_sem_cena_aprovada(tmp_path: Path) -> None:
+    """F-047 T4b, critério 2: sem aprovação não há pacote, e sem pacote não há quantidade."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet())
+    croqui = _seed_croqui(client, approved=False, export_status=None, package=None)
+
+    response = _declare_scene_link(
+        client,
+        published["round_id"],
+        job_id=croqui["job_id"],
+        base_version=published["version"],
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "SCENE_LINK_SCENE_NOT_APPROVED"
+    with _database(client).sessions() as session:
+        record = session.get(ValuationRoundRecord, published["round_id"])
+        assert record is not None
+        assert record.version == published["version"]
+
+
+def test_o_elo_recusa_croqui_aprovado_sem_pacote_publicado(tmp_path: Path) -> None:
+    """Cena aprovada mas export ainda na fila: não há `quantitativos.csv` de onde ler."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet())
+    croqui = _seed_croqui(client, export_status="QUEUED", package=None)
+
+    response = _declare_scene_link(
+        client,
+        published["round_id"],
+        job_id=croqui["job_id"],
+        base_version=published["version"],
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "SCENE_LINK_EXPORT_REQUIRED"
+
+
+def test_o_elo_com_croqui_de_outro_tenant_e_404_e_nunca_403(tmp_path: Path) -> None:
+    """Croqui do vizinho é indistinguível de inexistente, como toda leitura cruzada."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet())
+    alheio = _seed_croqui(client, tenant=_OTHER_TENANT)
+
+    response = _declare_scene_link(
+        client,
+        published["round_id"],
+        job_id=alheio["job_id"],
+        base_version=published["version"],
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"]["code"] == "NOT_FOUND"
+
+
+def test_a_declaracao_do_elo_exige_idempotency_key_e_a_versao_corrente(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet())
+    croqui = _seed_croqui(client)
+
+    sem_chave = client.post(
+        f"/v1/valuation-rounds/{published['round_id']}/scene-link",
+        headers={"Authorization": _headers()["Authorization"]},
+        json={"base_version": published["version"], "job_id": croqui["job_id"]},
+    )
+    versao_velha = _declare_scene_link(
+        client,
+        published["round_id"],
+        job_id=croqui["job_id"],
+        base_version=published["version"] - 1,
+        key="elo-003",
+    )
+
+    assert sem_chave.status_code == 400
+    assert sem_chave.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REQUIRED"
+    assert versao_velha.status_code == 409
+    assert versao_velha.json()["detail"]["code"] == "REVISION_CONFLICT"
+
+
+def test_o_confronto_alimenta_diverge_e_explica_item_a_item(tmp_path: Path) -> None:
+    """F-047 T4b, critérios 4 e 5: com o elo declarado, a cena atravessa — e diz tudo.
+
+    Três itens: um sem número recebe o da cena, um com número da legenda ganha divergência
+    gravada, e um sem identidade fica intacto com o motivo nomeado.
+    """
+    client = _client(tmp_path)
+    queue = _observed_queue(client)
+    packet = _takeoff_packet(
+        [
+            _identified_item(
+                item_id=_ITEM_AMBIGUOUS,
+                element_ref=_ELEMENT_REF,
+                quantity=None,
+                status=TakeoffItemStatus.AMBIGUOUS,
+            ),
+            _identified_item(
+                item_id=_ITEM_CLEAR,
+                element_ref=_SCENE_AREA_REF,
+                quantity="400.00",
+                status=TakeoffItemStatus.PROPOSED,
+            ),
+            _takeoff_item(item_id=_ITEM_SECOND),
+        ]
+    )
+    prepared = _round_with_linked_croqui(client, packet)
+
+    response = _confront_scene(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == prepared["version"] + 1
+    relatorio = body["scene_confrontation"]
+    assert relatorio["job_id"] == prepared["job_id"]
+    assert relatorio["export_id"] == prepared["export_id"]
+    assert (relatorio["fed"], relatorio["divergences_recorded"], relatorio["unchanged"]) == (
+        1,
+        1,
+        1,
+    )
+    desfechos = {item["item_id"]: (item["outcome"], item["reason"]) for item in relatorio["items"]}
+    assert desfechos == {
+        _ITEM_AMBIGUOUS: ("fed", None),
+        _ITEM_CLEAR: ("divergence_recorded", None),
+        _ITEM_SECOND: ("unchanged", "item_without_element_ref"),
+    }
+    itens = {item["id"]: item for item in body["packet"]["items"]}
+    # Alimentado com a quantidade e a precisão da cena, e ainda esperando decisão.
+    assert itens[_ITEM_AMBIGUOUS]["quantity"] == "12.000000"
+    assert itens[_ITEM_AMBIGUOUS]["source"] == "scene_graph"
+    assert itens[_ITEM_AMBIGUOUS]["scene_precision"] == "exact"
+    assert itens[_ITEM_AMBIGUOUS]["status"] == "proposed"
+    # Divergente: os dois números gravados, nenhum escolhido.
+    divergencia = itens[_ITEM_CLEAR]["scene_divergence"]
+    assert itens[_ITEM_CLEAR]["quantity"] == "400.00"
+    assert divergencia["scene"]["quantity"] == "418.120000"
+    assert divergencia["scene"]["scene_revision_id"] == prepared["scene_revision_id"]
+    assert divergencia["resolution"] is None
+    # O item sem identidade continua exatamente como estava.
+    assert itens[_ITEM_SECOND]["quantity"] == "10.00"
+    assert itens[_ITEM_SECOND]["source"] == "legend_extraction"
+    # O overlay é consequência e sai da fila; até lá, a resposta o declara vencido.
+    assert body["overlay"]["stale"] is True
+    assert len(queue.messages) == 1
+    with _database(client).sessions() as session:
+        audits = session.scalars(select(AuditRecord)).all()
+        confronted = [
+            audit for audit in audits if audit.action == "VALUATION_SCENE_QUANTITIES_CONFRONTED"
+        ]
+        assert len(confronted) == 1
+        assert all(set(audit.metadata_json) == {"request_id"} for audit in audits)
+
+
+def test_repetir_o_confronto_nao_duplica_divergencia_nem_avanca_a_rodada(tmp_path: Path) -> None:
+    """F-047 T4b, critério 6: o segundo confronto sobre o mesmo estado não grava nada."""
+    client = _client(tmp_path)
+    packet = _takeoff_packet(
+        [
+            _identified_item(
+                item_id=_ITEM_CLEAR,
+                element_ref=_SCENE_AREA_REF,
+                quantity="400.00",
+                status=TakeoffItemStatus.PROPOSED,
+            )
+        ]
+    )
+    prepared = _round_with_linked_croqui(client, packet)
+    primeiro = _confront_scene(client, prepared["round_id"], base_version=prepared["version"])
+    assert primeiro.status_code == 200, primeiro.text
+    queue = _observed_queue(client)
+
+    segundo = _confront_scene(
+        client,
+        prepared["round_id"],
+        base_version=primeiro.json()["version"],
+        key="confronto-002",
+    )
+
+    assert segundo.status_code == 200, segundo.text
+    body = segundo.json()
+    # Versão parada: o `base_version` que a tela tem na mão continua valendo.
+    assert body["version"] == primeiro.json()["version"]
+    assert body["scene_confrontation"]["changed"] is False
+    assert body["scene_confrontation"]["items"][0]["reason"] == "divergence_already_recorded"
+    assert len(queue.messages) == 0
+    with _database(client).sessions() as session:
+        revisions = session.scalars(select(ValuationRoundRevisionRecord)).all()
+        # Uma revisão do takeoff publicado, uma do elo, uma do primeiro confronto. E só.
+        assert len(revisions) == 3
+        packets = [r.takeoff_packet_json for r in revisions if r.takeoff_packet_json is not None]
+        divergentes = [
+            item for item in packets[-1]["items"] if item.get("scene_divergence") is not None
+        ]
+        assert len(divergentes) == 1
+
+
+def test_o_confronto_respeita_a_divergencia_ja_resolvida(tmp_path: Path) -> None:
+    """A escolha humana é soberana: reconfrontar não a apaga nem a reabre."""
+    client = _client(tmp_path)
+    packet = _takeoff_packet(
+        [
+            _identified_item(
+                item_id=_ITEM_CLEAR,
+                element_ref=_SCENE_AREA_REF,
+                quantity="400.00",
+                status=TakeoffItemStatus.PROPOSED,
+            )
+        ]
+    )
+    prepared = _round_with_linked_croqui(client, packet)
+    confrontado = _confront_scene(client, prepared["round_id"], base_version=prepared["version"])
+    assert confrontado.status_code == 200, confrontado.text
+    resolvido = _resolve_divergence(
+        client, prepared["round_id"], base_version=confrontado.json()["version"], choice="legend"
+    )
+    assert resolvido.status_code == 200, resolvido.text
+
+    response = _confront_scene(
+        client,
+        prepared["round_id"],
+        base_version=resolvido.json()["version"],
+        key="confronto-003",
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["scene_confrontation"]["changed"] is False
+    assert body["scene_confrontation"]["items"][0]["reason"] == "divergence_already_recorded"
+    item = body["packet"]["items"][0]
+    assert item["quantity"] == "400.00"
+    assert item["scene_divergence"]["resolution"]["choice"] == "legend"
+
+
+def test_a_cena_approximate_nao_alimenta_e_o_motivo_e_legivel(tmp_path: Path) -> None:
+    """F-047 T4b, critério 5: `approximate` não atravessa, e a recusa é nomeada."""
+    client = _client(tmp_path)
+    quantities = (
+        "entity_id,element_ref,layer,kind,precision,length_m,perimeter_m,area_m2\n"
+        f"3f0f0f0f-0000-0000-0000-000000000001,{_ELEMENT_REF},MURO,line,approximate,12.000000,,\n"
+    )
+    packet = _takeoff_packet(
+        [
+            _identified_item(
+                item_id=_ITEM_AMBIGUOUS,
+                element_ref=_ELEMENT_REF,
+                quantity=None,
+                status=TakeoffItemStatus.AMBIGUOUS,
+            )
+        ]
+    )
+    prepared = _round_with_linked_croqui(client, packet, package=_scene_package(quantities))
+
+    response = _confront_scene(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["version"] == prepared["version"]
+    assert body["scene_confrontation"]["items"][0]["reason"] == "precision_not_eligible"
+    assert body["packet"]["items"][0]["quantity"] is None
+    assert body["packet"]["items"][0]["source"] == "legend_extraction"
+
+
+def test_rodada_sem_elo_declarado_responde_como_antes(tmp_path: Path) -> None:
+    """F-047 T4b, critério 7: sem declaração, a jornada é exatamente a de sempre."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet())
+
+    confronto = _confront_scene(client, published["round_id"], base_version=published["version"])
+    estado = client.get(
+        f"/v1/valuation-rounds/{published['round_id']}", headers=_headers(key="estado-sem-elo")
+    )
+    takeoff = client.get(
+        f"/v1/valuation-rounds/{published['round_id']}/takeoff",
+        headers=_headers(key="takeoff-sem-elo"),
+    )
+
+    assert confronto.status_code == 409, confronto.text
+    assert confronto.json()["detail"]["code"] == "SCENE_LINK_REQUIRED"
+    # A ausência é DECLARADA, não omitida, e nada mais na rodada muda.
+    assert estado.json()["scene_link"] == {"present": False}
+    assert estado.json()["version"] == published["version"]
+    assert takeoff.status_code == 200
+    assert takeoff.json()["packet"]["items"][0]["scene_divergence"] is None
+
+
+def test_pacote_ausente_no_armazenamento_recusa_com_codigo_estavel(tmp_path: Path) -> None:
+    """Objeto sumido é falha de ambiente com código estável — nunca `500`."""
+    client = _client(tmp_path)
+    prepared = _round_with_linked_croqui(client, package=None)
+
+    response = _confront_scene(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "SCENE_PACKAGE_REQUIRED"
+
+
+def test_pacote_sem_o_quantitativo_recusa_em_vez_de_seguir_vazio(tmp_path: Path) -> None:
+    """Pacote sem `quantitativos.csv` não é pacote sem quantidade: é pacote que não serve."""
+    client = _client(tmp_path)
+    prepared = _round_with_linked_croqui(client, package=_scene_package(None))
+
+    response = _confront_scene(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "SCENE_PACKAGE_REQUIRED"
+
+
+def test_export_despublicado_depois_do_elo_recusa_o_confronto(tmp_path: Path) -> None:
+    """O pacote é reconferido a cada leitura: reexportar volta o export a `QUEUED`."""
+    client = _client(tmp_path)
+    prepared = _round_with_linked_croqui(client)
+    with _database(client).sessions() as session:
+        export = session.get(ExportArtifactRecord, prepared["export_id"])
+        assert export is not None
+        export.status = "QUEUED"
+        session.commit()
+
+    response = _confront_scene(client, prepared["round_id"], base_version=prepared["version"])
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "SCENE_PACKAGE_REQUIRED"
+
+
+def test_o_confronto_sem_takeoff_publicado_e_etapa_fora_de_ordem(tmp_path: Path) -> None:
+    """Ordem da cadeia: sem pacote de takeoff não há o que confrontar."""
+    client = _client(tmp_path)
+    created = _create_round(client)
+    croqui = _seed_croqui(client)
+    declared = _declare_scene_link(
+        client, created["round_id"], job_id=croqui["job_id"], base_version=1
+    )
+    assert declared.status_code == 200, declared.text
+
+    response = _confront_scene(client, created["round_id"], base_version=declared.json()["version"])
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "ROUND_STAGE_NOT_READY"
+
+
+def test_o_papel_e_o_tenant_valem_nas_duas_rotas_novas(tmp_path: Path) -> None:
+    """Papel antes do lookup (`403`) e rodada do vizinho indistinguível de ausente (`404`)."""
+    client = _client(tmp_path)
+    prepared = _round_with_linked_croqui(client)
+    desconhecida = str(new_uuid7())
+    sem_papel = _headers(roles="engineer", key="papel-errado-001")
+
+    respostas_403 = [
+        client.post(
+            f"/v1/valuation-rounds/{desconhecida}/scene-link",
+            headers=sem_papel,
+            json={"base_version": 1, "job_id": prepared["job_id"]},
+        ),
+        client.post(
+            f"/v1/valuation-rounds/{desconhecida}/takeoff/scene-quantities",
+            headers=sem_papel,
+            json={"base_version": 1},
+        ),
+    ]
+    intruso = _headers(_OTHER_TENANT, key="intruso-elo-001")
+    respostas_404 = [
+        client.post(
+            f"/v1/valuation-rounds/{prepared['round_id']}/scene-link",
+            headers=intruso,
+            json={"base_version": prepared["version"], "job_id": prepared["job_id"]},
+        ),
+        client.post(
+            f"/v1/valuation-rounds/{prepared['round_id']}/takeoff/scene-quantities",
+            headers=intruso,
+            json={"base_version": prepared["version"]},
+        ),
+    ]
+
+    assert [resposta.status_code for resposta in respostas_403] == [403, 403]
+    assert all(r.json()["detail"]["code"] == "FORBIDDEN" for r in respostas_403)
+    assert [resposta.status_code for resposta in respostas_404] == [404, 404]
+    assert all(r.json()["detail"]["code"] == "NOT_FOUND" for r in respostas_404)
+
+
+def test_a_mesma_chave_de_idempotencia_devolve_a_declaracao_ja_feita(tmp_path: Path) -> None:
+    """Repetir a chave devolve a resposta gravada, sem uma segunda revisão na cadeia."""
+    client = _client(tmp_path)
+    published = _round_with_takeoff(client, _takeoff_packet())
+    croqui = _seed_croqui(client)
+    primeira = _declare_scene_link(
+        client, published["round_id"], job_id=croqui["job_id"], base_version=published["version"]
+    )
+    assert primeira.status_code == 200, primeira.text
+
+    repetida = _declare_scene_link(
+        client, published["round_id"], job_id=croqui["job_id"], base_version=published["version"]
+    )
+
+    assert repetida.status_code == 200, repetida.text
+    assert repetida.json() == primeira.json()
+    with _database(client).sessions() as session:
+        revisions = session.scalars(select(ValuationRoundRevisionRecord)).all()
+        assert len(revisions) == 2

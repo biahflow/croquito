@@ -3540,3 +3540,277 @@ footer {
   text-decoration: underline;
   font-size: inherit;
 }
+
+/* ---------------------------------------------------------------------------
+ * Identidade de elemento na revisão do croqui (F-047 T7a).
+ *
+ * Nenhum valor aqui depende só de cor: a precisão é traço (`.amostra-precisao`, reusada
+ * do preview da cena sem alteração) E palavra; "alimenta"/"não alimenta" é selo com
+ * glifo E frase; proposta é traço tracejado E o selo escrito "proposta · unresolved".
+ *
+ * A família `--cena` é nova e marca a origem "cena aprovada" — nenhuma família existente
+ * significa geometria aprovada: verde é contratado/confirmado, âmbar é atenção, vermelho
+ * é recusa. A etiqueta `.etiqueta-elemento` é monoespaçada e de cantos quadrados para não
+ * se confundir com as pílulas de selo nem com o `entity_id`.
+ * --------------------------------------------------------------------------- */
+.identidade-elemento {
+  --cena: #2b5ea8;
+  --cena-soft: #eef3fb;
+  --cena-line: #b7cde8;
+  --cena-ink: #1f4a86;
+
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+  font-size: 13px;
+}
+
+.identidade-elemento h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.identidade-elemento h4 {
+  margin: 6px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.identidade-intro,
+.identidade-nota,
+.identidade-cunhagem,
+.identidade-vazio {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.identidade-elemento label {
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.identidade-elemento input[type="text"] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+  color: var(--ink);
+}
+
+/* Erro é persistente e anunciado; sucesso é carimbo, e o carimbo tem borda esquerda de
+   3 px — o padrão que o pacote da F-040 introduziu e este reaproveita. */
+.identidade-erro {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e0b7b1;
+  border-left: 3px solid #a33d32;
+  border-radius: 6px;
+  background: #fbf0ee;
+  color: #7a2c22;
+  font-size: 12px;
+}
+
+.identidade-carimbo {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--cena-line);
+  border-left: 3px solid var(--cena);
+  border-radius: 6px;
+  background: var(--cena-soft);
+  color: var(--cena-ink);
+  font-size: 12px;
+}
+
+.identidade-aviso,
+.identidade-impedimento,
+.identidade-semente {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e2c79a;
+  border-radius: 6px;
+  background: #fdf5e8;
+  color: #7c5210;
+  font-size: 12px;
+}
+
+.etiqueta-elemento {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--cena-line);
+  border-radius: 4px;
+  background: var(--cena-soft);
+  color: var(--cena-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* O rótulo legível (F-047 T2b) fica AO LADO da etiqueta, em texto comum e não monoespaçado:
+   é nome de gente, não identificador, e a diferença tipográfica é o que impede que alguém o
+   leia como se fosse a identidade. */
+.elemento-rotulo {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Sem nome, a palavra "sem rótulo" aparece esmaecida e em itálico — dita, nunca omitida. */
+.elemento-rotulo-ausente {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--ink-secondary);
+}
+
+/* A ausência é tracejada e diz "sem identidade" por escrito: ausência é estado, não
+   falta de dado que a tela devesse esconder. */
+.etiqueta-elemento-ausente {
+  border-style: dashed;
+  border-color: var(--muted);
+  background: transparent;
+  color: var(--ink-secondary);
+}
+
+.lista-elementos,
+.lista-propostas-elemento,
+.lista-entidades-sem-identidade {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.lista-elementos > li,
+.lista-propostas-elemento > li {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+}
+
+.lista-elementos > li.elemento-alimenta {
+  border-color: var(--cena-line);
+  background: var(--cena-soft);
+}
+
+/* Bloqueio é diagnóstico, não recusa: por isso âmbar, e por isso a frase do motivo fica
+   ao lado do selo em vez de num tooltip. */
+.lista-elementos > li.elemento-nao-alimenta {
+  border-left: 3px solid #c08a2e;
+}
+
+.elemento-linha,
+.proposta-elemento-linha,
+.proposta-elemento-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.elemento-composicao,
+.elemento-precisao,
+.proposta-elemento-descricao {
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.elemento-motivo,
+.proposta-elemento-sinal {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.selo-alimenta,
+.selo-nao-alimenta,
+.selo-proposta {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.selo-alimenta {
+  border: 1px solid var(--cena-line);
+  background: var(--surface);
+  color: var(--cena-ink);
+}
+
+.selo-nao-alimenta {
+  border: 1px solid #e0b7b1;
+  background: #fbf0ee;
+  color: #7a2c22;
+}
+
+/* Proposta é tracejada em toda parte — no selo e na borda do item — porque ela não é
+   identidade e não pode se parecer com uma. */
+.selo-proposta {
+  border: 1px dashed var(--muted);
+  background: transparent;
+  color: var(--ink-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.lista-propostas-elemento > li {
+  border-style: dashed;
+  background: var(--surface);
+}
+
+.proposta-elemento-recusa {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+}
+
+.lista-entidades-sem-identidade > li label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.entidade-sem-identidade-descricao {
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.identidade-elemento button {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.identidade-elemento button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.identidade-elemento button:disabled {
+  border-color: var(--line);
+  background: var(--surface-sunken);
+  color: var(--muted);
+}

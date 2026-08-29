@@ -31,15 +31,17 @@ import json
 import os
 import tempfile
 import threading
+import zipfile
 from collections import OrderedDict
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -65,6 +67,7 @@ from croquito_valuation.models import (
     Valuation,
     ValuationApproval,
 )
+from croquito_valuation.quantity_source import QuantitySource
 from croquito_valuation.takeoff import TakeoffItem, TakeoffPacket
 from croquito_valuation.template import WorkbookTemplate
 from croquito_valuation.workbook_writer import write_valuation_workbook
@@ -146,6 +149,15 @@ um custo que o orçamentista escolhe e um que ele descobre depois. Doze é gener
 praça real — planta geral, detalhes e cortes — e continua sendo um número para ser mexido com
 medida na mão, não uma verdade sobre o mundo."""
 
+SCENE_LINK_REQUIRED: Final = "SCENE_LINK_REQUIRED"
+"""A rodada não declarou o croqui aprovado que a alimenta (F-047 T4b)."""
+SCENE_LINK_SCENE_NOT_APPROVED: Final = "SCENE_LINK_SCENE_NOT_APPROVED"
+"""O croqui citado não tem cena aprovada; sem aprovação não há pacote de onde ler."""
+SCENE_LINK_EXPORT_REQUIRED: Final = "SCENE_LINK_EXPORT_REQUIRED"
+"""O croqui citado tem cena aprovada mas nenhum pacote de exportação publicado."""
+SCENE_PACKAGE_REQUIRED: Final = "SCENE_PACKAGE_REQUIRED"
+"""O pacote citado pelo elo não está utilizável agora (objeto sumido, ilegível, sem o
+quantitativo, ou export que deixou de estar completo)."""
 
 BULLETIN_WORKBOOK_REF: Final = "bulletin_workbook"
 """Chave do `.xlsx` publicado, em `artifact_refs_json`. Nunca uma URL assinada."""
@@ -196,6 +208,7 @@ REVISION_DOCUMENT_COLUMNS: Final[tuple[str, ...]] = (
     "worksite_plate_suggestions_json",
     "worksite_plate_assignments_json",
     "worksite_identity_links_json",
+    "scene_link_json",
 )
 """Colunas JSON de artefato; ausentes são `NULL`, e `NULL` é "a etapa não aconteceu".
 
@@ -1807,6 +1820,146 @@ def load_catalog(
     )
 
 
+# --- o elo com o croqui aprovado (F-047 T4b) ----------------------------------------------
+
+
+SCENE_PACKAGE_MAX_BYTES: Final = 32 * 1024 * 1024
+"""Teto de leitura do pacote de exportação do croqui.
+
+Mesmo teto e mesma razão do catálogo instalado: o `.zip` é artefato de APLICAÇÃO — DXF,
+preview, auditoria e o `quantitativos.csv` que esta rodada vem buscar —, e um objeto sem
+teto no request path da API é um blob, que sai por URL assinada e não por leitura. O pacote
+real do croqui tem centenas de KB; o teto existe para nomear a fronteira, não para caber
+justo."""
+
+SCENE_QUANTITIES_MEMBER: Final = "quantitativos.csv"
+"""O membro do pacote que carrega a quantidade auditada da cena. É `croquito_worker.dxf.
+export_scene_package` quem o escreve, com este nome exato, depois de `ensure_exportable` e
+da auditoria do DXF."""
+
+SCENE_QUANTITIES_MAX_BYTES: Final = 4 * 1024 * 1024
+"""Teto do CSV DESCOMPACTADO, conferido no cabeçalho do zip antes de descomprimir qualquer
+byte. O pacote é escrito pelo nosso worker sob o prefixo do tenant, mas ler o tamanho
+declarado antes de expandir custa nada e é a diferença entre um limite e uma esperança."""
+
+
+class SceneLink(BaseModel):
+    """O croqui aprovado que alimenta esta rodada de medição — ato humano declarado.
+
+    O elo **nunca** é inferido. Nem por `worksite_key` igual, nem por proximidade de data,
+    nem por qualquer semelhança entre a obra da rodada e o nome do projeto: é a mesma regra
+    que o produto aplica em toda parte, e a rejeição central do
+    `docs/adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md` —
+    proximidade não é associação. Quem mede declara qual croqui manda.
+
+    O elo cita o EXPORT, e não só o job: o `quantitativos.csv` é conteúdo de um pacote
+    publicado a partir de uma revisão aprovada específica, e um job pode ter mais de um. Um
+    export novo (nova aprovação, novo traçado) **não** muda o elo sozinho — mudar é outro ato
+    declarado, com autor e instante, pela mesma rota.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    job_id: str = Field(min_length=1, max_length=36)
+    scene_revision_id: str = Field(min_length=1, max_length=36)
+    export_id: str = Field(min_length=1, max_length=36)
+    dxf_sha256: str | None = Field(default=None, min_length=64, max_length=64)
+    """Digest do DXF auditado do pacote citado, quando o export o declarou. Viaja para que
+    a auditoria saiba QUAL desenho alimentou a medição, e não só de qual job ele veio."""
+    declared_by: str = Field(min_length=1, max_length=128)
+    declared_at: datetime
+
+
+def scene_link_of(revision: ValuationRoundRevisionRecord | None) -> SceneLink | None:
+    """O elo declarado nesta revisão da rodada, ou `None` quando ninguém o declarou."""
+    if revision is None or revision.scene_link_json is None:
+        return None
+    return SceneLink.model_validate(revision.scene_link_json)
+
+
+def require_scene_link(revision: ValuationRoundRevisionRecord | None) -> SceneLink:
+    """O elo declarado, ou a recusa de etapa fora de ordem.
+
+    Rodada sem elo não é rodada quebrada: é rodada que ninguém ligou a croqui nenhum, e
+    responde exatamente como sempre respondeu (F-047 T4b, critério 7). Por isso a recusa tem
+    código próprio e é `409`: falta um ATO — declarar o croqui —, e não um artefato perdido.
+    """
+    link = scene_link_of(revision)
+    if link is None:
+        raise RoundRefusal(
+            409,
+            SCENE_LINK_REQUIRED,
+            "a rodada ainda não declarou o croqui aprovado que a alimenta",
+            {},
+        )
+    return link
+
+
+def scene_package_required(
+    reason: str, details: Mapping[str, object] | None = None
+) -> RoundRefusal:
+    """Pacote citado pelo elo que não está utilizável agora: ambiente, não cadeia.
+
+    Espelha `catalog_required`: o pacote foi conferido no ato que declarou o elo, então uma
+    falha aqui é objeto sumido do store, export que deixou de estar completo ou conteúdo que
+    não é o que este leitor sabe ler — nunca "a rodada não tem croqui".
+    """
+    return RoundRefusal(409, SCENE_PACKAGE_REQUIRED, reason, details)
+
+
+def read_scene_quantities(
+    store: RoundArtifactStore,
+    *,
+    object_key: str,
+    scene_revision_id: str,
+    details: Mapping[str, object],
+) -> QuantitySource:
+    """O `quantitativos.csv` do pacote publicado, lido do object store e tipado.
+
+    Este é o caminho inteiro, e não há outro: `export_artifacts.package_object_key` -> bytes
+    do `.zip` sob o prefixo do tenant -> membro `quantitativos.csv` -> `QuantitySource`. A
+    API não reimplementa o portão de exportação nem reabre DXF nenhum; ela lê o arquivo que
+    o portão já deixou passar (ADR-0058, decisão 7).
+
+    Falha fechada em toda etapa: objeto ausente, maior que o teto, zip ilegível, membro
+    ausente ou maior que o teto recusam com `SCENE_PACKAGE_REQUIRED`; CSV fora do contrato de
+    colunas recusa com o código do domínio (`QUANTITY_SOURCE_CSV_INVALID`), que é o do
+    módulo que sabe o que é um quantitativo.
+    """
+    payload = store.read_object(object_key=object_key, max_bytes=SCENE_PACKAGE_MAX_BYTES)
+    if payload is None:
+        raise scene_package_required(
+            "o pacote do croqui citado por esta rodada não está disponível no armazenamento",
+            details,
+        )
+    if len(payload) > SCENE_PACKAGE_MAX_BYTES:
+        raise scene_package_required(
+            "o pacote do croqui citado por esta rodada excede o limite de leitura",
+            {**details, "max_bytes": SCENE_PACKAGE_MAX_BYTES},
+        )
+    try:
+        with zipfile.ZipFile(BytesIO(payload)) as archive:
+            try:
+                member = archive.getinfo(SCENE_QUANTITIES_MEMBER)
+            except KeyError as error:
+                raise scene_package_required(
+                    "o pacote do croqui citado não traz o quantitativo da cena",
+                    {**details, "member": SCENE_QUANTITIES_MEMBER},
+                ) from error
+            if member.file_size > SCENE_QUANTITIES_MAX_BYTES:
+                raise scene_package_required(
+                    "o quantitativo da cena excede o limite de leitura",
+                    {**details, "max_bytes": SCENE_QUANTITIES_MAX_BYTES},
+                )
+            text = archive.read(member).decode("utf-8")
+    except (zipfile.BadZipFile, UnicodeDecodeError) as error:
+        raise scene_package_required(
+            "o pacote do croqui citado por esta rodada não pôde ser lido",
+            details,
+        ) from error
+    return QuantitySource.from_csv_text(text, scene_revision_id=scene_revision_id)
+
+
 # --- aprovação nominal e planilha publicada -----------------------------------------------
 
 
@@ -2205,6 +2358,28 @@ def _contracted_prices(stored: Mapping[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _scene_link_state(revision: ValuationRoundRevisionRecord | None) -> dict[str, Any]:
+    """O croqui declarado desta rodada, ou a ausência DECLARADA dele (F-047 T4b).
+
+    `present: false` é informação, não omissão: rodada sem elo é rodada que ninguém ligou a
+    croqui nenhum, e a tela precisa dizer isso em vez de deixar o campo sumir. Só ids,
+    digest e o carimbo do ato saem daqui — nada do conteúdo do croqui atravessa a fronteira
+    da medição por esta leitura.
+    """
+    link = scene_link_of(revision)
+    if link is None:
+        return {"present": False}
+    return {
+        "present": True,
+        "job_id": link.job_id,
+        "scene_revision_id": link.scene_revision_id,
+        "export_id": link.export_id,
+        "dxf_sha256": link.dxf_sha256,
+        "declared_by": link.declared_by,
+        "declared_at": link.declared_at.isoformat(),
+    }
+
+
 def round_state_payload(
     round_record: ValuationRoundRecord,
     revision: ValuationRoundRevisionRecord | None,
@@ -2312,6 +2487,7 @@ def round_state_payload(
                 else round_record.extraction_updated_at.isoformat()
             ),
         },
+        "scene_link": _scene_link_state(revision),
         "takeoff": takeoff,
         "codes": codes,
         "bulletin": {
