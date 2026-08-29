@@ -81,6 +81,7 @@ Este documento é a única formulação do processo de ADR do repositório; `AGE
 | [0059](0059-item-contratado-fora-da-tabela-sco.md) | Em demanda contratada a fonte de preço é o contrato, e ele carrega item fora da tabela SCO | Accepted |
 | [0060](0060-onde-vive-o-acervo-de-parcelas-de-canteiro.md) | O acervo de parcelas de canteiro é receita publicada na plataforma, com autoria de tenant sobre ela | Accepted |
 | [0061](0061-revogacao-de-codigo-confirmado.md) | Desfazer um código confirmado é decisão nova, que reabre o pacote e compensa o índice | Accepted |
+| [0062](0062-a-deriva-de-centavo-entre-folhas-da-praca.md) | A GERAL governa o centavo, e a deriva entre folhas da praça é declarada | Accepted |
 
 ## Processo
 

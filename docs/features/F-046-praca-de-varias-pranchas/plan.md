@@ -24,12 +24,13 @@ A tela vem por último, porque é a única parte refeita sem custo de dado.
 |---|---|---|---|
 | T1 | [O consolidado da praça e o vínculo de identidade no domínio](tasks/T1-consolidado-e-vinculo-no-dominio.md) | — | M |
 | T2 | [O boletim da praça: união dos conjuntos e a parcela fundida](tasks/T2-boletim-da-praca.md) | T1 | L |
+| T2b | [O centavo da praça: a GERAL governa a deriva](tasks/T2b-centavo-da-praca.md) | T2 | S |
 | T3 | [Persistência e rotas `/v1` da praça](tasks/T3-persistencia-e-rotas.md) | T2 | M |
 | T4 | [Promover N folhas: seleção explícita, em lote](tasks/T4-promover-n-folhas.md) | T3 | M |
 | T5 | [A tela da praça: folhas, consolidado e a declaração de identidade](tasks/T5-tela-da-praca.md) | T3, T4 | L |
 | T6 | [Evidência de navegador](tasks/T6-evidencia-de-navegador.md) | T5 | S |
 
-Ordem: `T1 → T2 → T3 → T4 → T5 → T6`. Não há paralelismo seguro entre T1–T3: as três tocam a
+Ordem: `T1 → T2 → T2b → T3 → T4 → T5 → T6`. Não há paralelismo seguro entre T1–T3: as três tocam a
 mesma cadeia de cálculo. T4 e T5 poderiam ir juntas se houvesse dois executores, mas T5 precisa
 de N folhas reais para exercer a faixa de cartões.
 
@@ -43,6 +44,24 @@ de N folhas reais para exercer a faixa de cartões.
 - Erros novos nascem com nome estável em `application/problem+json`. Os nomes propostos no
   pacote de design (`WORKSITE_TAKEOFF_PLATE_PENDING`, `WORKSITE_LINK_SAME_PLATE`,
   `WORKSITE_LINK_INCOMPLETE`) são propostas do mock, não domínio existente: a T1 os fixa.
+
+## O centavo da praça
+
+A T2 expôs um efeito de segunda ordem: com um boletim por folha, o mesmo código medido em duas
+folhas faz `TRUNC(Σq×preço)` divergir de `Σ TRUNC(q_i×preço)`, e `_check_consolidated_total`
+recusava a pasta inteira. Era proporcional enquanto o caso era de exceção (multi-obra); na praça
+de várias folhas vira o caso normal. O [ADR-0062](../../adr/0062-a-deriva-de-centavo-entre-folhas-da-praca.md),
+aceito por ato humano em 2026-08-29, resolve o caso que o ADR-0018 tinha deixado em aberto: a
+GERAL governa, e a deriva passa a ser declarada em vez de fatal. A T2b implementa.
+
+## O teto de gasto continua por chamada
+
+A T4 expôs que o teto de gasto da extração é **por chamada**, não por rodada: com a praça de
+várias folhas, promover 12 folhas autoriza 12 vezes o teto de uma prancha sem que ninguém tenha
+declarado esse total. **Decisão humana de 2026-08-29** (Daniel Campos): manter por chamada. Os
+freios declarados são a contagem de folhas que a resposta do lote informa antes de executar e o
+`WORKSITE_PLATE_LIMIT` de 12 por praça. Um teto agregado por rodada seria mudança do modelo de
+gasto, e fica registrado aqui como caminho conhecido, não como dívida esquecida.
 
 ## Decisões de mecanismo já tomadas
 

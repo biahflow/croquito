@@ -30,14 +30,24 @@ A tela vem por último; a evidência de navegador fecha.
 | T1 | [`element_ref` na entidade e o contrato gerado](tasks/T1-element-ref-na-entidade.md) | — | M |
 | T2 | [O ato humano de identidade na revisão](tasks/T2-ato-de-identidade.md) | T1 | M |
 | T3 | [`quantitativos.csv` com identidade e agrupamento por elemento](tasks/T3-csv-por-elemento.md) | T1 | S |
+| T3b | [Polilinha aberta tem comprimento](tasks/T3b-polilinha-aberta.md) | T3 | S |
 | T4 | [`QuantitySource`: a quantidade atravessa a fronteira](tasks/T4-quantity-source.md) | T2, T3 | L |
+| T4b | [O elo entre a rodada de medição e o croqui aprovado](tasks/T4b-elo-rodada-croqui.md) | T5 | L |
 | T5 | [Divergência: tolerância nomeada, issue e bloqueio](tasks/T5-divergencia.md) | T4 | M |
 | T6 | [A proposta assistida de agrupamento](tasks/T6-proposta-assistida.md) | T2 | M |
-| T7 | [As duas telas: identidade na revisão, divergência na medição](tasks/T7-telas.md) | T5, T6 | L |
+| T7a | Tela da revisão: a identidade do elemento (metade croqui da T7) | T6 | L |
+| T7b | Tela da medição: a divergência (metade medição da T7) | T7a, T5 | L |
 | T8 | [Evidência de navegador](tasks/T8-evidencia-de-navegador.md) | T7 | S |
 
-Ordem: `T1 → (T2, T3) → T4 → T5 → T6 → T7 → T8`. T2 e T3 são genuinamente paralelas: uma mexe na
+Ordem: `T1 → (T2, T3) → T3b → T4 → T5 → T4b → T6 → T7a → T7b → T8`. T2 e T3 são genuinamente paralelas: uma mexe na
 revisão, a outra no export.
+
+Duas tarefas nasceram **durante** a execução, e as duas de achados que só apareceram com o
+código na mão: a **T3b**, porque polilinha aberta não produzia grandeza nenhuma e a feature
+cobriria menos do que aparenta; e a **T4b**, porque a T5 expôs que nada na `/v1` confrontava a
+cena com o takeoff — faltava o elo rodada ↔ croqui, sem o qual toda a feature só existia em
+teste. A T7 foi partida em **T7a** (croqui) e **T7b** (medição) para as duas metades não
+colidirem no mesmo `MedicaoApp.tsx`.
 
 ## O que atravessa todas as tarefas
 
