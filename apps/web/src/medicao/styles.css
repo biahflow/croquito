@@ -195,6 +195,18 @@ p {
   border-left: 5px solid var(--accent-text);
 }
 
+/* O boletim gravado que deixou de descrever a praça (F-046 T5c). Mesmo âmbar de aviso do
+   `.banner-conflito`, de que ele herda tudo: o que muda é o texto poder ter duas linhas —
+   a segunda diz o que acontece com a aprovação em vigor — com o ato à direita. */
+.banner-vencido {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.banner-vencido p + p {
+  margin-top: 6px;
+}
+
 .conteudo {
   padding: 16px 28px 48px;
 }

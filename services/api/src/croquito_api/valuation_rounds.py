@@ -157,6 +157,19 @@ BULLETIN_WORKBOOK_CONTENT_TYPE: Final = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
+BULLETIN_SOURCES_DIGEST: Final = "bulletin_sources_sha256"
+"""Digest das FONTES que geraram o boletim gravado, em `artifact_digests_json`.
+
+Ele é escrito no ato que monta a medição e nunca mais é tocado até a próxima montagem: é o
+carimbo de "de que praça este boletim foi feito". Comparado, na leitura, com o mesmo digest
+recalculado sobre a praça de AGORA, ele responde a pergunta que a tela precisava fazer e não
+tinha como — o boletim que está gravado ainda descreve esta rodada? Ver
+`bulletin_sources_state`.
+
+Mora em `artifact_digests_json` (coluna de mapa, carregada adiante por `append_revision`) e
+não numa coluna nova justamente porque precisa sobreviver aos atos seguintes sem ser
+recalculado por eles: é a fotografia do passado que dá sentido à comparação."""
+
 STAGE_CREATED: Final = "created"
 STAGE_PLATE: Final = "plate"
 STAGE_EXTRACTION: Final = "extraction"
@@ -2102,6 +2115,94 @@ def _artifact_digests(revision: ValuationRoundRevisionRecord | None) -> dict[str
     return digests
 
 
+BULLETIN_SOURCE_COLUMNS: Final[tuple[str, ...]] = (
+    "takeoff_packet_json",
+    "worksite_plate_packets_json",
+    "code_assignments_json",
+    "worksite_plate_assignments_json",
+    "worksite_identity_links_json",
+)
+"""As colunas que ALIMENTAM o boletim, e só elas.
+
+Quantitativo de cada folha, decisão de código de cada folha e os vínculos de identidade
+declarados: é dessas cinco que `build_worksite_takeoff_valuation` tira cada linha e cada
+parcela. `valuation_json` fica de fora porque é a SAÍDA — incluí-la faria o boletim
+descrever a si mesmo e nunca vencer. `code_suggestions_json` também fica de fora: shortlist
+é observação, e recalculá-la não muda nenhum número medido."""
+
+
+def bulletin_sources_digest(
+    round_record: ValuationRoundRecord,
+    revision: ValuationRoundRevisionRecord | None,
+    plates: Sequence[ValuationRoundPlateRecord],
+    *,
+    calc_matrix: Mapping[str, Any] | None,
+) -> str:
+    """Digest de tudo que decide o conteúdo do boletim desta praça, nesta rodada.
+
+    O ato que monta a medição grava este digest ao lado dela; a leitura o recalcula e
+    compara. É a mesma disciplina do overlay vencido (ADR-0030) e da aprovação caduca: o
+    estado "vencido" é uma RELAÇÃO entre dois instantes, e a única forma de afirmá-la sem
+    inventar é ter gravado o primeiro.
+
+    Entram aqui, e nada além: os rótulos da obra que a rodada imprime no boletim, o
+    catálogo instalado (é dele que sai cada preço), as FOLHAS da praça na ordem em que
+    estão, os artefatos de `BULLETIN_SOURCE_COLUMNS` e a matriz de cálculo que gerou a
+    memória. Acrescentar folha muda a lista de folhas ainda que a folha nova não tenha
+    pacote — e é exatamente isso que se quer dizer: a praça já não é a mesma que foi
+    medida.
+
+    `calc_matrix` é explícito e não lido da revisão porque no ato de montar ele é a matriz
+    POSTA no corpo, ainda não gravada. Passá-lo à mão nos dois lados é o que garante que o
+    digest gravado descreva o que foi realmente usado.
+    """
+    payload: dict[str, Any] = {
+        "worksite_key": round_record.worksite_key,
+        "worksite_name": round_record.worksite_name,
+        "period_number": round_record.period_number,
+        "reference_label": round_record.reference_label,
+        "address": round_record.address,
+        "contract_label": round_record.contract_label,
+        "catalog_source_sha256": round_record.catalog_source_sha256,
+        "plate_ids": [plate.plate_id for plate in plates],
+        "calc_matrix": None if calc_matrix is None else dict(calc_matrix),
+        "sources": {
+            column: None if revision is None else getattr(revision, column)
+            for column in BULLETIN_SOURCE_COLUMNS
+        },
+    }
+    return document_digest(payload)
+
+
+def bulletin_sources_state(
+    round_record: ValuationRoundRecord,
+    revision: ValuationRoundRevisionRecord | None,
+    plates: Sequence[ValuationRoundPlateRecord],
+) -> dict[str, Any]:
+    """O boletim gravado ainda descreve esta praça? Derivado na leitura, nunca gravado.
+
+    Espelho exato de `approval_state`: dois digests viajam para a tela poder mostrá-los lado
+    a lado, e `stale` é a relação entre eles. Sem boletim gravado não há nada a vencer, e os
+    três campos saem neutros — aviso permanente é aviso que se aprende a ignorar.
+
+    `sources_digest` ausente com boletim presente é a rodada montada ANTES desta feature: o
+    carimbo do passado não existe e nada pode ser afirmado sobre ele. Ela sai como não
+    vencida, e os dois digests ficam visíveis para quem quiser conferir — afirmar "vencido"
+    sem o fato que o sustenta seria a mesma invenção que este bloco existe para evitar.
+    """
+    if revision is None or revision.valuation_json is None:
+        return {"sources_digest": None, "current_sources_digest": None, "stale": False}
+    stored = (revision.artifact_digests_json or {}).get(BULLETIN_SOURCES_DIGEST)
+    current = bulletin_sources_digest(
+        round_record, revision, plates, calc_matrix=revision.calc_matrix_json
+    )
+    return {
+        "sources_digest": stored,
+        "current_sources_digest": current,
+        "stale": stored is not None and stored != current,
+    }
+
+
 def _contracted_state(round_record: ValuationRoundRecord) -> dict[str, Any]:
     """O regime de conferência da rodada, e o que ele custa quando não há origem assinada.
 
@@ -2317,6 +2418,11 @@ def round_state_payload(
         "bulletin": {
             "present": "valuation_json" in digests,
             "valuation_sha256": digests.get("valuation_json"),
+            # O boletim gravado ainda descreve esta praça? Declarar item, confirmar ou
+            # revogar código, declarar identidade e acrescentar folha mudam o que a medição
+            # deveria somar sem tocar no que ela SOMOU — e até aqui a rodada não tinha como
+            # dizer isso, apesar de o próprio ato mandar montar o boletim de novo.
+            **bulletin_sources_state(round_record, revision, plates),
             "workbook_present": bulletin_workbook_ref(revision) is not None,
             "workbook_sha256": digests.get(BULLETIN_WORKBOOK_DIGEST),
             "approval": approval_state(readable_valuation(revision)),

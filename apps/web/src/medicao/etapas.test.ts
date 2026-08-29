@@ -92,6 +92,9 @@ function estado(overrides: {
     bulletin: {
       present: false,
       valuation_sha256: null,
+      sources_digest: null,
+      current_sources_digest: null,
+      stale: false,
       workbook_present: false,
       workbook_sha256: null,
       approval: SEM_APROVACAO,
@@ -329,10 +332,63 @@ describe("derivarEtapas", () => {
     expect(porId(state, "boletim").summary).toBe("Medição gravada nesta rodada.");
     expect(porId(state, "boletim").summary).not.toContain("aprovação");
   });
+
+  /**
+   * O defeito da T5c: declarada uma identidade (ou decidido um item, confirmado um código,
+   * acrescentada uma folha) sobre uma praça cujo boletim já estava montado, a medição
+   * gravada deixa de descrever a praça — e a etapa continuava "concluída", como se não
+   * houvesse mais nada a fazer nela.
+   */
+  it("boletim vencido volta a ficar em aberto e diz o motivo por extenso", () => {
+    const state = medicaoMontada({}, false, true);
+    const jornada = derivarEtapas(state);
+
+    expect(porId(state, "boletim").status).toBe("available");
+    expect(porId(state, "boletim").summary).toBe(
+      "Boletim vencido: a rodada mudou depois de a medição ser montada; monte o boletim de novo.",
+    );
+    // Estado dito em texto, e é a etapa em que a jornada abre: é ali que está o ato.
+    expect(jornada.etapaAtiva).toBe("boletim");
+  });
+
+  it("boletim vencido não deixa a jornada fechar, nem com planilha publicada", () => {
+    const aprovada = {
+      approved: true,
+      approved_by: "orcamentista-de-teste",
+      approved_at: "2026-08-20T14:32:00+00:00",
+      approved_digest: "e".repeat(64),
+    };
+
+    const emDia = derivarEtapas(medicaoMontada(aprovada, true, false));
+    const vencido = derivarEtapas(medicaoMontada(aprovada, true, true));
+
+    // A mesma rodada, com a mesma assinatura em dia: o que muda é a praça ter andado.
+    expect(emDia.etapas.every((etapa) => etapa.status === "done")).toBe(true);
+    expect(vencido.etapas.every((etapa) => etapa.status === "done")).toBe(false);
+    expect(vencido.etapaAtiva).toBe("boletim");
+  });
+
+  /**
+   * Vencido e caduco são perguntas diferentes: `approval.stale` fala da assinatura,
+   * `bulletin.stale` fala da praça. Confundi-las faria o boletim vencido de uma rodada
+   * nunca aprovada aparecer como problema de aprovação.
+   */
+  it("boletim vencido não é a aprovação caduca", () => {
+    const state = medicaoMontada({}, false, true);
+
+    expect(porId(state, "aprovacao").summary).toBe(
+      "Medição montada, aguardando aprovação nominal.",
+    );
+    expect(porId(state, "boletim").summary).toContain("Boletim vencido");
+  });
 });
 
 /** Medição montada, com a etapa de aprovação já alcançável. */
-function medicaoMontada(approval: Partial<ApprovalState> = {}, workbook = false): RoundState {
+function medicaoMontada(
+  approval: Partial<ApprovalState> = {},
+  workbook = false,
+  vencido = false,
+): RoundState {
   return estado({
     takeoff: {
       review_status: "complete",
@@ -346,6 +402,11 @@ function medicaoMontada(approval: Partial<ApprovalState> = {}, workbook = false)
     bulletin: {
       present: true,
       valuation_sha256: "b".repeat(64),
+      // O par de digests é do SERVIDOR, como o da aprovação: iguais, o boletim está em dia;
+      // diferentes, ele venceu. A tela nunca os compara — `stale` já vem decidido.
+      sources_digest: "1".repeat(64),
+      current_sources_digest: vencido ? "2".repeat(64) : "1".repeat(64),
+      stale: vencido,
       workbook_present: workbook,
       workbook_sha256: workbook ? "f".repeat(64) : null,
       approval: { ...SEM_APROVACAO, ...approval },

@@ -160,6 +160,19 @@ function motivoSemTakeoff(
 const SEM_MEDICAO_A_APROVAR = "Nada a aprovar: a medição ainda não foi montada.";
 
 /**
+ * O boletim gravado deixou de descrever a praça: quem diz isso é o servidor (`stale` do
+ * bloco `bulletin`), comparando as fontes que geraram a medição com as de agora.
+ */
+export const BOLETIM_VENCIDO =
+  "Boletim vencido: a rodada mudou depois de a medição ser montada; monte o boletim de novo.";
+
+/** O que a aprovação em vigor perde ao boletim ser remontado. Preservar não é aprovar. */
+export const REMONTAR_CADUCA_A_APROVACAO =
+  "Esta medição está aprovada. Remontar não apaga a aprovação — ela continua registrada e " +
+  "à vista —, mas ela passa a caducar: a exportação recusa até uma aprovação nova sobre o " +
+  "conteúdo novo.";
+
+/**
  * Resumo da etapa "Aprovação e exportação" a partir do bloco de aprovação do servidor.
  *
  * `approved` e `stale` são lidos JUNTOS: na aprovação caduca os dois valem ao mesmo tempo,
@@ -322,13 +335,19 @@ export function derivarEtapas(
   // A etapa Boletim não antecipa mais o estado da aprovação: quem o declara é a etapa que
   // tem o bloco de aprovação do servidor em mãos. Dizer aqui "sem aprovação" mentiria
   // exatamente no caso em que a medição JÁ foi aprovada.
+  //
+  // `stale` é o boletim VENCIDO: o servidor comparou as fontes que o geraram com as de
+  // agora e disse que já não são as mesmas. Ele nunca é deduzido aqui.
+  const boletimVencido = state.bulletin.present && state.bulletin.stale;
   const boletim: Etapa = {
     id: "boletim",
     title: ETAPA_TITLES.boletim,
     status: "available",
-    summary: state.bulletin.present
-      ? "Medição gravada nesta rodada."
-      : "Boletim ainda não montado.",
+    summary: boletimVencido
+      ? BOLETIM_VENCIDO
+      : state.bulletin.present
+        ? "Medição gravada nesta rodada."
+        : "Boletim ainda não montado.",
   };
   if (codigos.status !== "done") {
     boletim.status = "blocked";
@@ -341,7 +360,9 @@ export function derivarEtapas(
             "itens",
           )}`
       : `aguarda ${plural(pending, "item", "itens")} da revisão do takeoff`;
-  } else if (state.bulletin.present) {
+  } else if (state.bulletin.present && !boletimVencido) {
+    // Boletim vencido continua "em aberto", e não "concluída": há um ato a fazer nele — o
+    // de montá-lo de novo —, e etapa concluída é etapa da qual o orçamentista pode sair.
     boletim.status = "done";
   }
   // Praça de várias folhas com consolidado que não fecha bloqueia o boletim: meia praça
@@ -368,7 +389,15 @@ export function derivarEtapas(
   } else {
     const approval = state.bulletin.approval;
     aprovacao.summary = resumoDaAprovacao(approval, state.bulletin.workbook_present);
-    if (approval.approved && !approval.stale && state.bulletin.workbook_present) {
+    // Boletim vencido não deixa a jornada fechar: o arquivo publicado descreve a praça de
+    // antes do último ato, e chamar isso de concluído é o mesmo erro de meia praça somada
+    // parecer praça inteira. A assinatura anterior continua legível na etapa.
+    if (
+      approval.approved &&
+      !approval.stale &&
+      state.bulletin.workbook_present &&
+      !boletimVencido
+    ) {
       aprovacao.status = "done";
     }
   }

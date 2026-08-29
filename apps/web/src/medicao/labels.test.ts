@@ -77,6 +77,19 @@ describe("errorMessage", () => {
     );
   });
 
+  it("o nome que não cabe na aba diz o que fazer e traz o teto do servidor", () => {
+    const message = errorMessage(
+      "WORKSITE_NAME_DOES_NOT_FIT_SHEET",
+      "o nome da obra não cabe no nome da aba nem na forma curta; encurte o nome da obra "
+        + "para no máximo 23 caracteres",
+    );
+
+    expect(message).toContain("encurte o nome da praça");
+    // O teto é do SERVIDOR e chega no detalhe: a frase da tela não o repete de cabeça.
+    expect(message).toContain("23 caracteres");
+    expect(message).not.toContain("WORKSITE_NAME_DOES_NOT_FIT_SHEET");
+  });
+
   it("o conflito de versão da rodada é dito como rodada que andou", () => {
     const message = errorMessage("REVISION_CONFLICT");
 
