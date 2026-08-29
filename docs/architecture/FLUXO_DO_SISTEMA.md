@@ -171,6 +171,18 @@ A calibração é a exceção: **não tem subcomando no CLI**. Ela só é alcan�
 `POST /v1/jobs/{job_id}/review/calibration`, e uma calibração que não fecha volta como
 `CALIBRATION_INVALID`.
 
+A **identidade de elemento** é a segunda exceção, pelo mesmo motivo: é ato humano, não
+etapa de processamento. `POST /v1/jobs/{job_id}/elements` declara que um conjunto de
+entidades é um elemento e cunha o `element_ref` no servidor, sequencial dentro do job;
+`POST /v1/jobs/{job_id}/elements/revocations` desfaz e
+`POST /v1/jobs/{job_id}/elements/labels` renomeia o **rótulo legível** do elemento — o nome
+que a pessoa lê, opcional, gravado na cena por `element_ref` e que nunca casa nada: quem casa
+cena↔legenda continua sendo só o `element_ref`, e revogar leva o rótulo junto. Os três criam
+**revisão nova** — nunca editam a cena existente, nem quando ela está aprovada — e o sistema
+nunca infere o agrupamento por proximidade ou por rótulo próximo
+([ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md),
+decisão 2). Sem nenhuma declaração, toda a cadeia responde exatamente como antes.
+
 ## 6. Cadeia de medição e orçamento
 
 Vive em `packages/valuation`, que não depende do worker nem do scene graph. A referência
@@ -222,6 +234,37 @@ ato só: os N códigos do rótulo entram em `/code-assignments/decisions` num lo
 viram **uma revisão**. Aceitar **não fecha** o pacote; fechar continua sendo o ato separado —
 e é ele que devolve o pacote ao índice.
 
+A quantidade pode chegar por **duas** origens, e elas nunca se sobrescrevem. A de sempre é a
+legenda, lida e confirmada por decisão humana. A segunda é a **cena aprovada**: `QuantitySource`
+(`packages/valuation/quantity_source.py`) lê o `quantitativos.csv` do pacote exportado e
+alimenta o item de legenda **pela identidade declarada** — o mesmo `element_ref` dos dois lados,
+nunca por número igual, rótulo parecido ou balão mais próximo
+([ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md),
+decisão 5). Sem identidade num dos lados, o adaptador **não resolve** e devolve o motivo; e só
+`exact` e `derived` atravessam — `approximate` não entra nem com aceite de aproximação registrado
+na cena, porque o carimbo sobrevive à tela e morre na planilha, onde o número vira uma linha de
+R$. Como a fonte é o `quantitativos.csv`, e ele só existe depois de `ensure_exportable` e da
+auditoria do DXF, a quantidade automática **herda** o portão de exportação em vez de duplicá-lo.
+
+O elo entre as duas jornadas é **declarado**, e é o que faz a quantidade automática existir
+ponta a ponta: quem mede diz qual croqui aprovado alimenta a rodada
+(`POST /v1/valuation-rounds/{round_id}/scene-link`), e o confronto
+(`POST /v1/valuation-rounds/{round_id}/takeoff/scene-quantities`) lê o `quantitativos.csv`
+daquele pacote publicado. Nada é ligado por `worksite_key` igual, por data próxima ou por
+nome parecido — proximidade não é associação, aqui como em todo o resto do produto. Trocar o
+croqui é outro ato declarado; rodada sem elo responde exatamente como sempre respondeu.
+
+Quando as **duas** origens existem para o mesmo elemento e discordam além da tolerância
+nomeada — `maior(1% da quantidade da legenda, 0,01 na unidade do item)`, com a diferença
+exatamente igual à tolerância ainda contando como igual —, o sistema abre uma **divergência**
+no item, com os dois números, as duas origens e a diferença, e **recusa fechar**: nem o pacote
+de serviços nem o boletim avançam enquanto ninguém decidir
+(`POST /v1/valuation-rounds/{round_id}/takeoff/divergences/resolutions`). A escolha é entre as
+duas origens; o número preterido continua gravado. Nenhuma das duas sobrescreve a outra em
+silêncio — é justamente na divergência que a redigitação escondia o erro
+([ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md),
+decisão 6).
+
 O documento final é que difere, e é onde a fronteira licitada vale:
 
 - **Medição** → boletim + memória de cálculo, só `PriceOrigin.sco`.
@@ -238,7 +281,11 @@ não defeito.
 | Código de saída 2 do CLI | `rectangle_solver.py`, `tracing.py` | o solver terminou em `review_required` **ou** em `conflict` — nos dois casos não há cena métrica aprovável |
 | Associação explícita obrigatória | solver | falta `reading_id → proposal_id`; proximidade em pixels nunca é associação implícita |
 | Auditoria do DXF | `dxf.py` | o auditor reprova o arquivo gerado ao reabri-lo — o ZIP não é publicado |
+| `ELEMENT_REF_NOT_ASSIGNABLE` / `ELEMENT_REF_LAYER_MISMATCH` / `ELEMENT_ALREADY_DECLARED` / `ELEMENT_NOT_DECLARED` / `ELEMENT_LABEL_INVALID` | rotas de identidade de elemento (`croquito_api/main.py`), invariante em `croquito_core.models.SceneRevision` | o cliente tentou **escolher** o `element_ref` (a cunhagem é do servidor), o grupo mistura camadas, a entidade já pertence a outro elemento (mudar exige revogar antes, nunca reescrever por cima), o ref a revogar ou renomear não existe na revisão corrente, ou o rótulo legível veio vazio/só de espaço (para ficar sem nome, omite-se o campo) |
 | `CALIBRATION_INVALID` | `proposal_calibration.py` | âncoras degeneradas ou erro acima da tolerância |
+| `QUANTITY_SOURCE_UNRESOLVED` / `QUANTITY_SOURCE_ITEM_ALREADY_QUANTIFIED` / `QUANTITY_SOURCE_DUPLICATE_ELEMENT_REF` | `valuation/quantity_source.py` | a cena não tem quantidade para aquele item (sem identidade num dos lados, precisão `approximate`/`unresolved`, unidade que não bate ou grandeza ausente), o item já traz o número da legenda — a cena **não** sobrescreve a legenda — ou o `quantitativos.csv` repete uma identidade, caso em que nem "pegar a primeira" é aceitável |
+| `SCENE_LINK_REQUIRED` / `SCENE_LINK_SCENE_NOT_APPROVED` / `SCENE_LINK_EXPORT_REQUIRED` / `SCENE_PACKAGE_REQUIRED` | rotas do elo com o croqui (`croquito_api/valuation_rounds.py`) | a rodada não declarou croqui nenhum; o croqui citado não tem cena aprovada; ele tem cena aprovada mas nenhum pacote publicado; ou o pacote citado não está utilizável agora (objeto ausente, ilegível, sem `quantitativos.csv`, ou export que voltou à fila) |
+| `ASSIGNMENT_QUANTITY_DIVERGENCE_OPEN` / `CALC_QUANTITY_DIVERGENCE_OPEN` | `valuation/assignment.py`, `valuation/calc.py` | o elemento tem divergência aberta entre a quantidade da cena e a lida na legenda: o pacote não é declarado completo e o item não vira linha de boletim até um humano escolher qual das duas vale |
 | `BULLETIN_PRICE_ORIGIN_FORBIDDEN` | `valuation/calc.py`, reafirmado em `workbook_writer.py` | catálogo com origem diferente de `sco` na obra licitada — **duas linhas de defesa**, a segunda na hora de escrever a planilha |
 | `CALC_PLAN_QUANTITY_MISMATCH` | `valuation/calc.py` | o plano de cálculo não fecha com a quantidade que o humano confirmou |
 | `CALC_PACKAGE_NOT_CLOSED` / `ESTIMATE_PACKAGE_NOT_CLOSED` | `valuation/calc.py`, `valuation/estimate.py` | item confirmado com pacote de serviços em aberto — o boletim não é montado pela metade. Rejeição fecha o item sozinha |

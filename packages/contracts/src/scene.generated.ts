@@ -13,6 +13,7 @@ export type Satisfied = boolean | null;
 export type Tolerance = number;
 export type Constraints = Constraint[];
 export type CreatedAt = string;
+export type ElementRef = string | null;
 export type Export = boolean;
 export type Fill = "none" | "hatch";
 export type Geometry =
@@ -267,6 +268,7 @@ export interface CroquitoSceneRevision {
   approved?: Approved;
   constraints?: Constraints;
   created_at?: CreatedAt;
+  element_labels?: ElementLabels;
   entities: Entities;
   id?: Id2;
   issues?: Issues;
@@ -283,7 +285,15 @@ export interface Constraint {
   satisfied?: Satisfied;
   tolerance: Tolerance;
 }
+export interface ElementLabels {
+  /**
+   * This interface was referenced by `ElementLabels`'s JSON-Schema definition
+   * via the `patternProperty` "^EL-\d{3,}$".
+   */
+  [k: string]: string;
+}
 export interface Entity {
+  element_ref?: ElementRef;
   export?: Export;
   fill?: Fill;
   geometry: Geometry;

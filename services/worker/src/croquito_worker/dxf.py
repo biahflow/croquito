@@ -12,6 +12,7 @@ import zipfile
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ from croquito_core.models import (
     LayerName,
     LineGeometry,
     PolylineGeometry,
+    Precision,
     SceneRevision,
     SplineGeometry,
     TextGeometry,
@@ -55,6 +57,15 @@ DETAIL_TAG_PREFIX = "detail:"
 
 QUANTITY_EXCLUDED_SUMMARY_CODES = frozenset({"DETAIL_FRAME", "DETAIL_SKETCH_AS_DRAWN"})
 """Moldura é apresentação e sketch não tem escala honesta: quantidade no CSV mentiria."""
+
+_PRECISION_RANK: dict[Precision, int] = {
+    Precision.EXACT: 0,
+    Precision.DERIVED: 1,
+    Precision.APPROXIMATE: 2,
+    Precision.UNRESOLVED: 3,
+}
+"""Ordem de piora (ADR-0058): agrupar por `element_ref` nunca promove precisão, então a
+linha agrupada herda a pior das entidades que a compõem."""
 
 
 def _is_detail_entity(entity: Entity) -> bool:
@@ -479,64 +490,111 @@ def _render_preview(document: Drawing, preview_path: Path) -> None:
     )
 
 
+def _entity_quantities(entity: Entity) -> tuple[float | None, float | None, float | None]:
+    """Comprimento, perímetro e área que UMA entidade contribui — `None` quando o tipo de
+    geometria não produz aquela grandeza (ex.: `line` não tem área)."""
+    geometry = entity.geometry
+    if isinstance(geometry, LineGeometry):
+        delta_x = geometry.end.x - geometry.start.x
+        delta_y = geometry.end.y - geometry.start.y
+        return math.hypot(delta_x, delta_y), None, None
+    if isinstance(geometry, PolylineGeometry) and geometry.closed:
+        polygon = Polygon([(point.x, point.y) for point in geometry.points])
+        return None, polygon.length, polygon.area
+    if isinstance(geometry, PolylineGeometry):
+        # Aberta (F-047 T3b): não fecha região, então soma dos segmentos vira só
+        # comprimento — nunca perímetro/área, que seria geometria fabricada.
+        length = sum(
+            math.hypot(end.x - start.x, end.y - start.y) for start, end in pairwise(geometry.points)
+        )
+        return length, None, None
+    if isinstance(geometry, CircleGeometry):
+        return None, 2 * math.pi * geometry.radius, math.pi * geometry.radius**2
+    return None, None, None
+
+
+def _quantity_row(group: list[Entity], *, include_element_ref: bool) -> dict[str, str]:
+    """Uma linha do CSV para o grupo — um único elemento quando `element_ref` não existe.
+
+    `entity_id` e `kind` são listados por ordem de string (estável, não a ordem de
+    iteração da cena); as grandezas somam entre si por tipo (ADR-0058: comprimentos com
+    comprimentos, perímetros com perímetros, áreas com áreas); a precisão da linha é a
+    pior das entidades do grupo — agrupar nunca promove precisão.
+    """
+    lengths: list[float] = []
+    perimeters: list[float] = []
+    areas: list[float] = []
+    for entity in group:
+        length, perimeter, area = _entity_quantities(entity)
+        if length is not None:
+            lengths.append(length)
+        if perimeter is not None:
+            perimeters.append(perimeter)
+        if area is not None:
+            areas.append(area)
+
+    worst = max(group, key=lambda entity: _PRECISION_RANK[entity.precision])
+    row: dict[str, str] = {
+        "entity_id": "; ".join(sorted(str(entity.id) for entity in group)),
+        "layer": group[0].layer.value,
+        "kind": "; ".join(sorted({entity.kind.value for entity in group})),
+        "precision": worst.precision.value,
+        "length_m": f"{sum(lengths):.6f}" if lengths else "",
+        "perimeter_m": f"{sum(perimeters):.6f}" if perimeters else "",
+        "area_m2": f"{sum(areas):.6f}" if areas else "",
+    }
+    if include_element_ref:
+        row["element_ref"] = group[0].element_ref or ""
+    return row
+
+
 def _write_quantities(scene: SceneRevision, path: Path) -> None:
     descriptor, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     temporary_path = Path(temporary_name)
     try:
+        included: list[Entity] = []
+        for entity in scene.entities:
+            if not entity.export:
+                continue
+            if entity.layer in {LayerName.TEXTOS, LayerName.COTAS}:
+                # Balão, rótulo, legenda, cota e risco de chamada são anotação: um
+                # traço de leader com comprimento no CSV mentiria quantidade física.
+                continue
+            if (
+                entity.provenance is not None
+                and entity.provenance.summary_code in QUANTITY_EXCLUDED_SUMMARY_CODES
+            ):
+                # Detalhe resolvido (escala verdadeira) continua entrando; moldura e
+                # sketch sem escala ficam fora — quantidade deles mentiria.
+                continue
+            included.append(entity)
+
+        # ADR-0058: entidade sem element_ref é seu próprio grupo de um — croqui sem
+        # nenhuma identidade declarada não tem chave repetida em nenhum grupo, então o
+        # laço abaixo produz exatamente uma linha por entidade, na ordem de sempre.
+        has_element_ref = any(entity.element_ref is not None for entity in included)
+        groups: dict[str, list[Entity]] = {}
+        group_order: list[str] = []
+        for entity in included:
+            key = entity.element_ref if entity.element_ref is not None else f"_solo_{entity.id}"
+            if key not in groups:
+                groups[key] = []
+                group_order.append(key)
+            groups[key].append(entity)
+
+        fieldnames = ["entity_id"]
+        if has_element_ref:
+            # Coluna aditiva: só aparece quando alguma entidade exportável declarou
+            # identidade. Croqui sem nenhuma sai byte a byte igual ao de antes desta
+            # tarefa (F-047 T3, critério de aceite 5).
+            fieldnames.append("element_ref")
+        fieldnames += ["layer", "kind", "precision", "length_m", "perimeter_m", "area_m2"]
+
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
-            writer = csv.DictWriter(
-                stream,
-                fieldnames=[
-                    "entity_id",
-                    "layer",
-                    "kind",
-                    "precision",
-                    "length_m",
-                    "perimeter_m",
-                    "area_m2",
-                ],
-            )
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
             writer.writeheader()
-            for entity in scene.entities:
-                if not entity.export:
-                    continue
-                if entity.layer in {LayerName.TEXTOS, LayerName.COTAS}:
-                    # Balão, rótulo, legenda, cota e risco de chamada são anotação: um
-                    # traço de leader com comprimento no CSV mentiria quantidade física.
-                    continue
-                if (
-                    entity.provenance is not None
-                    and entity.provenance.summary_code in QUANTITY_EXCLUDED_SUMMARY_CODES
-                ):
-                    # Detalhe resolvido (escala verdadeira) continua entrando; moldura e
-                    # sketch sem escala ficam fora — quantidade deles mentiria.
-                    continue
-                length = ""
-                perimeter = ""
-                area = ""
-                geometry = entity.geometry
-                if isinstance(geometry, LineGeometry):
-                    delta_x = geometry.end.x - geometry.start.x
-                    delta_y = geometry.end.y - geometry.start.y
-                    length = f"{math.hypot(delta_x, delta_y):.6f}"
-                elif isinstance(geometry, PolylineGeometry) and geometry.closed:
-                    polygon = Polygon([(point.x, point.y) for point in geometry.points])
-                    perimeter = f"{polygon.length:.6f}"
-                    area = f"{polygon.area:.6f}"
-                elif isinstance(geometry, CircleGeometry):
-                    perimeter = f"{2 * math.pi * geometry.radius:.6f}"
-                    area = f"{math.pi * geometry.radius**2:.6f}"
-                writer.writerow(
-                    {
-                        "entity_id": str(entity.id),
-                        "layer": entity.layer.value,
-                        "kind": entity.kind.value,
-                        "precision": entity.precision.value,
-                        "length_m": length,
-                        "perimeter_m": perimeter,
-                        "area_m2": area,
-                    }
-                )
+            for key in group_order:
+                writer.writerow(_quantity_row(groups[key], include_element_ref=has_element_ref))
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary_path, path)

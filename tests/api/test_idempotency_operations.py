@@ -27,9 +27,14 @@ from typing import Final
 
 import pytest
 from sqlalchemy import String
+from sqlalchemy.orm import DeclarativeBase
 
 from croquito_api import main as api_main
-from croquito_api.database import IDEMPOTENCY_OPERATION_MAX_LENGTH, IdempotencyRecord
+from croquito_api.database import (
+    IDEMPOTENCY_OPERATION_MAX_LENGTH,
+    ElementProposalRejectionRecord,
+    IdempotencyRecord,
+)
 from croquito_api.journeys import JOURNEYS
 
 #: Os dois auxiliares que leem e gravam `idempotency_records`. Toda chamada a eles carrega
@@ -39,14 +44,19 @@ IDEMPOTENCY_HELPERS: Final = frozenset({"_idempotent_response", "_store_idempote
 _SOURCE: Final = Path(api_main.__file__)
 
 
-def column_max_length(column: str) -> int:
-    """Largura declarada de uma coluna de `idempotency_records`, lida do próprio modelo.
+def column_max_length(column: str, model: type[DeclarativeBase] = IdempotencyRecord) -> int:
+    """Largura declarada de uma coluna, lida do próprio modelo.
+
+    O `model` existe porque nem todo campo que entra numa operação é limitado pela tabela de
+    idempotência: `proposal_id` é limitado pela tabela que guarda a recusa da proposta. Ler
+    do modelo dono do campo, e não repetir o número aqui, é o que mantém o portão honesto
+    quando a coluna mudar de largura.
 
     Também usada por `tests/api/test_migrations.py`, que precisa do maior `tenant_id` que
     cabe no registro para montar a operação longa da prova em PostgreSQL. Ler do modelo, e
     não repetir o número, é o que impede as duas metades do portão de divergirem.
     """
-    tipo = IdempotencyRecord.__table__.c[column].type
+    tipo = model.__table__.c[column].type
     assert isinstance(tipo, String), f"`{column}` deixou de ser texto de largura declarada"
     assert tipo.length is not None, f"`{column}` perdeu a largura declarada"
     return tipo.length
@@ -81,6 +91,9 @@ _FIELD_MAX_LENGTHS: Final[dict[str, int]] = {
     # parâmetro. Quem o limita de fato é a própria tabela: um tenant maior que a coluna
     # `idempotency_records.tenant_id` não caberia no registro de jeito nenhum.
     "tenant_id": column_max_length("tenant_id"),
+    # `proposal_id` (F-047 T6) é o hash determinístico do conjunto de entidades da proposta,
+    # e quem o limita é a coluna que o guarda — a mesma régua do `tenant_id` acima.
+    "proposal_id": column_max_length("proposal_id", ElementProposalRejectionRecord),
 }
 
 

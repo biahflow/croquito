@@ -1539,6 +1539,22 @@ def _ensure_batch_decidable(
             {"item_ids": empty_closures},
         )
 
+    # F-047 T5 (ADR-0058 decisão 6): o item não fecha enquanto a divergência entre a
+    # quantidade da cena e a lida na legenda estiver aberta. Fechar é afirmar que o pacote
+    # do elemento acabou, e não acabou enquanto ninguém disse QUAL das duas quantidades vale.
+    # A recusa é só do FECHAMENTO: confirmar código a um item divergente continua permitido,
+    # porque saber qual serviço precifica o elemento não depende de quanto ele mede.
+    divergent_closures = sorted(
+        {item_id for item_id in closure_ids if items_by_id[item_id].has_open_divergence()}
+    )
+    if divergent_closures:
+        raise ValuationValidationError(
+            "ASSIGNMENT_QUANTITY_DIVERGENCE_OPEN",
+            "o item tem divergência de quantidade em aberto entre a cena e a legenda; "
+            "resolva a divergência antes de declarar o pacote completo",
+            {"item_ids": divergent_closures},
+        )
+
 
 def _inputs_by_item(batch: CodeAssignmentBatch) -> dict[str, list[CodeAssignmentInput]]:
     """Decisões do lote agrupadas por item, preservando a ordem de chegada.

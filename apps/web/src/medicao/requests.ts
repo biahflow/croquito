@@ -20,7 +20,9 @@ import type {
   CreateRoundDraft,
   IdentityLinkDeclarationDraft,
   IdentityLinkDraft,
+  DivergenceResolutionDraft,
   PriceAdjustmentDraft,
+  SceneLinkDraft,
   TakeoffDecisionBatchDraft,
 } from "./api";
 
@@ -298,6 +300,46 @@ export function codeRevocationBody(
     code: draft.code,
     note: draft.note.trim(),
   };
+}
+
+/**
+ * Corpo do `POST .../scene-link`: o elo declarado com o croqui aprovado (F-047 T4b).
+ *
+ * Só o job viaja. `scene_revision_id`, `export_id` e o digest do DXF são DESCOBERTOS pelo
+ * servidor a partir do export publicado mais recente daquele job, e `declared_by`/
+ * `declared_at` são carimbo dele — mandar qualquer um deles daqui seria pedir para
+ * carimbar em nome de outra pessoa, e `extra="forbid"` recusaria o corpo inteiro.
+ */
+export function sceneLinkBody(
+  draft: SceneLinkDraft,
+): Record<string, string | number> {
+  return {
+    ...versionBody(draft.baseVersion),
+    job_id: draft.jobId.trim(),
+  };
+}
+
+/**
+ * Corpo do `POST .../takeoff/divergences/resolutions` (F-047 T5).
+ *
+ * `choice` é `scene` ou `legend`, e não há terceiro valor: uma terceira quantidade digitada
+ * aqui seria a redigitação que a feature existe para eliminar (ADR-0058, decisão 6). O
+ * motivo é opcional no contrato da rota e vai só quando escrito — string vazia não é
+ * "sem motivo", é um motivo vazio, e o servidor a recusaria por `min_length`.
+ */
+export function divergenceResolutionBody(
+  draft: DivergenceResolutionDraft,
+): Record<string, string | number> {
+  const body: Record<string, string | number> = {
+    ...versionBody(draft.baseVersion),
+    item_id: draft.itemId,
+    choice: draft.choice,
+  };
+  const note = draft.note?.trim();
+  if (note) {
+    body.note = note;
+  }
+  return body;
 }
 
 export function codeDecisionBody(

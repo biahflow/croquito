@@ -1412,6 +1412,87 @@ def test_accepted_approximation_survives_a_later_reading_decision(tmp_path: Path
     assert "CALIBRATION_SUPERSEDED" not in [issue["code"] for issue in resolved_scene["issues"]]
 
 
+def test_o_rotulo_do_elemento_sobrevive_ao_re_solve_junto_da_identidade(
+    tmp_path: Path,
+) -> None:
+    """F-047 T2b: o nome acompanha a identidade que o re-solve preserva.
+
+    A cena que o solver devolve não conhece rótulo nenhum. Sem o carregamento explícito, o
+    traço aceito por um profissional voltaria com o `element_ref` e SEM o nome — um ato
+    humano perdido em silêncio, quando só a revogação e a renomeação podem desfazê-lo.
+    """
+    client = _client(tmp_path)
+    job_id = _seed_review_session(client, extra_reading=True)
+    solved = _confirm_solver_readings(client, job_id, base_version=1)
+    assert solved.status_code == 200
+    solver_scene = solved.json()["scene"]
+    bottom_id = _line_entity_id(solver_scene, (25.9, 0.0), (0.0, 0.0))
+    left_id = _line_entity_id(solver_scene, (0.0, 0.0), (0.0, 21.75))
+    calibration = client.post(
+        f"/v1/jobs/{job_id}/review/calibration",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "rotulo-calibration"},
+        json={
+            "base_review_version": 2,
+            "base_scene_version": 2,
+            "anchors": [
+                {"proposal_id": "vp_1111111111111111", "entity_id": bottom_id, "reversed": True},
+                {"proposal_id": "vp_2222222222222222", "entity_id": left_id},
+            ],
+        },
+    )
+    assert calibration.status_code == 200
+    accepted = client.post(
+        f"/v1/jobs/{job_id}/review/proposals",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "rotulo-accept"},
+        json={
+            "base_review_version": 3,
+            "base_scene_version": 2,
+            "proposal_id": "vp_3333333333333333",
+            "action": "accept",
+            "justification": "Círculo aceito como hipótese visual.",
+            "calibration_id": calibration.json()["calibration"]["calibration_id"],
+        },
+    )
+    assert accepted.status_code == 200
+    approximate_id = accepted.json()["proposal_decisions"][-1]["entity_id"]
+
+    declared = client.post(
+        f"/v1/jobs/{job_id}/elements",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "rotulo-declare"},
+        json={
+            "base_version": 3,
+            "entity_ids": [approximate_id],
+            "reason": "Este círculo é o canteiro central.",
+            "label": "Canteiro central",
+        },
+    )
+    assert declared.status_code == 200
+    assert declared.json()["element_ref"] == "EL-001"
+
+    later = client.post(
+        f"/v1/jobs/{job_id}/review/decisions",
+        headers={**_headers("tenant-a"), "Idempotency-Key": "rotulo-extra-reading"},
+        json={
+            "base_version": 4,
+            "decisions": [
+                {
+                    "reading_id": "rd_4444444444444444",
+                    "action": "confirm",
+                    "justification": "Detalhe lateral revisado na evidência.",
+                    "association_proposal_id": "vp_4444444444444444",
+                }
+            ],
+        },
+    )
+
+    assert later.status_code == 200
+    resolved_scene = later.json()["scene"]
+    surviving = [entity for entity in resolved_scene["entities"] if entity["id"] == approximate_id]
+    assert len(surviving) == 1
+    assert surviving[0]["element_ref"] == "EL-001"
+    assert resolved_scene["element_labels"] == {"EL-001": "Canteiro central"}
+
+
 def test_superseded_calibration_freezes_accepted_geometry_instead_of_dropping_it(
     tmp_path: Path,
 ) -> None:

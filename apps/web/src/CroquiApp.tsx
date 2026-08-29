@@ -42,6 +42,8 @@ import {
   type PontoDoDesenho,
   type ViewBoxDaCena,
 } from "./scenePreview";
+import { cenaTemIdentidade } from "./elementIdentity";
+import { ElementIdentityPanel } from "./elementIdentityPanel";
 
 import {
   annotateDimension,
@@ -1442,6 +1444,7 @@ export function PreviewDaCena({
   const entidadeSelecionada = (scene?.entities ?? []).find(
     (entity) => (entity.id ?? "") === selecionada,
   );
+  const temIdentidade = cenaTemIdentidade(scene?.entities ?? []);
   const naoResolvidas = contagem.find((item) => item.precisao === "unresolved");
 
   /** Ponto do evento em metros do desenho: o SVG carrega a conversão, não a tela. */
@@ -1682,6 +1685,20 @@ export function PreviewDaCena({
             <span>{`tipo: ${entidadeSelecionada.kind}`}</span>
             {entidadeSelecionada.provenance ? (
               <span>{`origem: ${entidadeSelecionada.provenance.source_type}`}</span>
+            ) : null}
+            {/* A linha do elemento só existe depois que a cena tem alguma identidade
+                declarada (F-047 T7a, critério 8): sem nenhuma, este painel é o de hoje,
+                sem uma etiqueta nova a mais. */}
+            {temIdentidade ? (
+              entidadeSelecionada.element_ref ? (
+                <span className="etiqueta-elemento">
+                  <span aria-hidden="true">◇</span> {entidadeSelecionada.element_ref}
+                </span>
+              ) : (
+                <span className="etiqueta-elemento etiqueta-elemento-ausente">
+                  — sem identidade
+                </span>
+              )
             ) : null}
           </div>
         ) : (
@@ -6445,6 +6462,27 @@ export function CroquiApp({
                   estado={estadoDoPreview}
                   appliedSpans={traceSolve?.applied_spans ?? []}
                   contestedSpans={traceSolve?.contested_spans ?? []}
+                />
+                {/* A identidade de elemento (F-047 T7a) mora ao lado do preview porque
+                    ela é declarada SOBRE a geometria resolvida, e a cena que o painel
+                    escreve é a mesma que o desenho lê — uma leitura só, um estado só. */}
+                <ElementIdentityPanel
+                  accessToken={session?.access_token ?? ""}
+                  jobId={jobId}
+                  scene={cenaDoPreview}
+                  estado={estadoDoPreview}
+                  onSceneChanged={(nova) => {
+                    // A cena nova chega no ato, para o elemento declarado aparecer sem
+                    // esperar uma volta de rede.
+                    setCenaDoPreview(nova);
+                    // E a revisão é recarregada, porque o ato de identidade cria revisão
+                    // NOVA: sem isto `review.scene.id` continuaria apontando para a
+                    // anterior, e a aprovação assinaria a revisão errada — aquela em que
+                    // o elemento ainda não existe.
+                    if (session?.access_token) {
+                      void loadReview(session.access_token);
+                    }
+                  }}
                 />
                 <section className="issue-panel" aria-label="Bloqueios e issues">
                   <strong>Bloqueios visíveis</strong>

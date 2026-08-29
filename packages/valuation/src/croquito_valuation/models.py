@@ -28,6 +28,7 @@ from pydantic import (
 )
 
 from croquito_core.ids import new_uuid7
+from croquito_core.models import Precision
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.rounding import money_trunc, quantity_round
 from croquito_valuation.sco import CONTRACT_CODE_PATTERN, SCO_CODE_PATTERN
@@ -43,6 +44,16 @@ SHA256_PATTERN: Final = r"^[a-f0-9]{64}$"
 TAKEOFF_ITEM_ID_PATTERN: Final = r"^ti_[a-f0-9]{16}$"
 """Identidade do item de legenda. Vive aqui, e não em `takeoff`, porque a memória de
 cálculo passa a apontar para o elemento e `takeoff` importa deste módulo, não o contrário."""
+SCENE_ELIGIBLE_PRECISIONS: Final = frozenset({Precision.EXACT, Precision.DERIVED})
+"""As únicas precisões que atravessam a fronteira até a medição (ADR-0058 decisão 4, com a
+emenda humana de 2026-08-28): `approximate` e `unresolved` NÃO alimentam quantidade de item,
+nem sob aceite de aproximação registrado na cena. O carimbo de aproximação sobrevive à tela
+e morre na planilha, onde o número vira uma linha de R$.
+
+Vive aqui, e não em `takeoff`, pelo mesmo motivo de `TAKEOFF_ITEM_ID_PATTERN`: a divergência
+(`quantity_divergence.py`) precisa da mesma regra, e `takeoff` importa dela, não o
+contrário. Duas cópias divergiriam em silêncio."""
+
 SITE_SETUP_PARCEL_ID_PATTERN: Final = r"^ss_[a-f0-9]{16}$"
 """Identidade de uma parcela dentro de um acervo de canteiro (F-042). Mesmo molde de
 `TAKEOFF_ITEM_ID_PATTERN`: prefixo curto e opaco (`ss` de "site setup") mais 16 hex.

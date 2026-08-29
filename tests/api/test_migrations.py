@@ -436,6 +436,12 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
             # folhas entraram —, e sem índice de listagem por tenant: não há listagem de
             # folha, elas saem sempre pela rodada.
             "valuation_round_plates",
+            # `0027` (F-047): a recusa humana de uma proposta assistida de agrupamento. Só a
+            # RECUSA é gravada — a proposta é recomputada a cada leitura, determinística sobre
+            # a cena —, e a unicidade `(tenant_id, job_id, proposal_id)` é o que torna recusar
+            # duas vezes o mesmo ato. Índices por `tenant_id` e por `job_id`, os dois caminhos
+            # de leitura reais.
+            "element_proposal_rejections",
         }
         for table, index_name in (
             ("valuation_rounds", "ix_valuation_rounds_tenant_created"),

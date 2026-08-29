@@ -201,6 +201,19 @@
     "Entity": {
       "additionalProperties": false,
       "properties": {
+        "element_ref": {
+          "anyOf": [
+            {
+              "pattern": "^EL-\\d{3,}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element Ref"
+        },
         "export": {
           "default": true,
           "title": "Export",
@@ -693,6 +706,17 @@
       "format": "date-time",
       "title": "Created At",
       "type": "string"
+    },
+    "element_labels": {
+      "patternProperties": {
+        "^EL-\\d{3,}$": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "title": "Element Labels",
+      "type": "object"
     },
     "entities": {
       "items": {

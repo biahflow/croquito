@@ -676,6 +676,47 @@ class ProposalDecisionRecord(Base):
     )
 
 
+class ElementProposalRejectionRecord(Base):
+    """Recusa humana de uma proposta assistida de agrupamento (F-047 T6, ADR-0058 decisão 2).
+
+    Append-only, como `ProposalDecisionRecord`: a proposta em si nunca é persistida — ela é
+    recomputada a cada leitura por `croquito_core.element_proposals.propose_element_groups`,
+    puro e determinístico sobre a cena corrente. Só a RECUSA precisa de memória: sem ela, a
+    mesma proposta errada (critério de aceite 4 da T6) voltaria a ser oferecida a cada
+    `GET /v1/jobs/{job_id}/elements/proposals`, e "o humano recusa" deixaria de significar
+    "não vejo mais isto".
+
+    `proposal_id` é o hash determinístico do conjunto de entidades
+    (`element_proposals._proposal_id`) — nunca um contador; duas revisões diferentes do
+    mesmo job com o mesmo grupo cunham o mesmo id, e é por isso que a recusa sobrevive a
+    uma revisão nova que não tocou aquelas entidades. `entity_ids_json` é só auditoria:
+    quem lê a linha de recusa não precisa recomputar a proposta para saber o que foi
+    recusado.
+
+    A unicidade `(tenant_id, job_id, proposal_id)` é o que torna recusar a mesma proposta
+    duas vezes o MESMO ato, não dois.
+    """
+
+    __tablename__ = "element_proposal_rejections"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "job_id", "proposal_id", name="uq_element_proposal_rejection"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id"), index=True)
+    proposal_id: Mapped[str] = mapped_column(String(32))
+    entity_ids_json: Mapped[list[str]] = mapped_column(JSON)
+    reason: Mapped[str] = mapped_column(Text)
+    rejected_by: Mapped[str] = mapped_column(String(128))
+    rejected_by_role: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 class ApprovalRecord(Base):
     __tablename__ = "approvals"
 
@@ -1164,6 +1205,15 @@ class ValuationRoundRevisionRecord(Base):
     pacotes e desta lista na leitura. Gravá-lo criaria um quarto lugar onde a mesma praça pode
     divergir de si mesma — a folha acrescentada depois deixaria o consolidado gravado
     descrevendo uma praça que não existe mais."""
+    scene_link_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    """O croqui aprovado que alimenta esta rodada (F-047 T4b): job, revisão da cena, export
+    citado, digest do DXF auditado, e quem declarou o elo e quando.
+
+    Mora na cadeia append-only, e não numa coluna da raiz, porque declarar o elo é ATO
+    HUMANO e trocá-lo é outro ato: cada declaração vira revisão nova, e a anterior continua
+    legível na revisão onde foi feita. Numa coluna da raiz, `UPDATE` apagaria de qual croqui
+    a medição de ontem tinha vindo. `NULL` é o estado de sempre — rodada que ninguém ligou a
+    croqui nenhum responde exatamente como antes desta coluna existir."""
     artifact_refs_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     """Chaves de objeto sob o prefixo do tenant (prancha, overlay); nunca URL assinada."""
     artifact_digests_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)

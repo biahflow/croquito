@@ -36,7 +36,10 @@ import {
   postCodeClosure,
   postCodeRevocation,
   postCodeDecision,
+  postDivergenceResolution,
   postDossierBuild,
+  postSceneLink,
+  postSceneQuantities,
   postSuggestionsRecompute,
   postTakeoffDecision,
   previewIdentityLink,
@@ -64,6 +67,20 @@ import {
   type WorksiteResponse,
   type WorksiteSheet,
 } from "./api";
+import {
+  divergenciaAberta,
+  divergenciaDoItem,
+  divergenciaResolvida,
+  frasePorFaltaDePar,
+  itensComDivergenciaAberta,
+  motivoDeBloqueio,
+  numeroEscolhido,
+  numeroPreterido,
+  vemDaCena,
+  type DivergenceChoice,
+  type SceneConfrontationReport,
+  type SceneLinkState,
+} from "./cena";
 import { signOut } from "../auth";
 import {
   abrirDesfazer,
@@ -131,6 +148,7 @@ import {
   AVISO_DOSSIE_PREVIA,
   AVISO_EXPORTACAO_FAIL_CLOSED,
   AVISO_LOCALIZACAO_NAO_CONFIRMADA,
+  AVISO_DIVERGENCIA_ABERTA,
   AVISO_MEDICAO,
   AVISO_QUANTIDADE_AMBIGUA,
   DESCRICAO_CALCULO_SHORTLIST,
@@ -162,6 +180,14 @@ import {
   unitLabel,
   unitMismatchHint,
   violationDetailLine,
+  divergenceChoiceLabel,
+  FORMULA_DA_TOLERANCIA,
+  precisionLabel,
+  quantitySourceLabel,
+  RAZAO_SEM_CAMPO_DE_QUANTIDADE,
+  RAZAO_SEM_TERCEIRA_ESCOLHA,
+  sceneOutcomeLabel,
+  sceneReasonLabel,
 } from "./labels";
 import { DICA_NOME_DA_OBRA, codeSearchTerm, worksiteKeyError } from "./requests";
 import { DICA_FATOR, REAJUSTE_OPCOES, reajusteIssue } from "./reajuste";
@@ -1055,6 +1081,530 @@ export function OverlayDoTakeoff({
         </button>
       )}
     </details>
+  );
+}
+
+/**
+ * A etiqueta da identidade de elemento, ou a ausência dela dita por escrito (F-047).
+ *
+ * Espelha `.etiqueta-elemento` da jornada do croqui na FORMA — monoespaçada, cantos
+ * quadrados —, porque é a mesma coisa nas duas telas e ler as duas como coisas diferentes
+ * seria pior. A ausência é tracejada E diz "sem identidade": ausência é estado, nunca um
+ * campo que some.
+ */
+export function EtiquetaDeElemento({ elementRef }: { elementRef?: string | null }) {
+  if (!elementRef) {
+    return (
+      <span className="etiqueta-elemento etiqueta-elemento-ausente">
+        — sem identidade
+      </span>
+    );
+  }
+  return <span className="etiqueta-elemento">◇ {elementRef}</span>;
+}
+
+/**
+ * O elo declarado entre esta rodada e o croqui aprovado que a alimenta (F-047 T4b).
+ *
+ * Duas variantes do MESMO lugar da tela, e a diferença entre elas é o ponto: rodada sem elo
+ * é rodada em que a quantidade continua vindo da legenda lida, exatamente como antes desta
+ * feature, e isso é dito — não deduzido de um bloco que sumiu.
+ *
+ * O elo cita o EXPORT, e não só o job: o `quantitativos.csv` é conteúdo de um pacote
+ * publicado a partir de uma revisão aprovada específica. Por isso a tela mostra os três
+ * identificadores e o digest do DXF auditado: quem confere a medição meses depois precisa
+ * saber QUAL desenho a alimentou.
+ */
+export function EloComOCroqui({
+  link,
+  jobId,
+  onJobIdChange,
+  onDeclarar,
+  onConfrontar,
+  submitting,
+  confrontoDisponivel,
+}: {
+  link: SceneLinkState;
+  jobId: string;
+  onJobIdChange: (value: string) => void;
+  onDeclarar: () => void;
+  onConfrontar: () => void;
+  submitting: boolean;
+  confrontoDisponivel: boolean;
+}) {
+  return (
+    <div className="elo-croqui">
+      <h3>Croqui aprovado desta rodada</h3>
+      {link.present ? (
+        <>
+          <p className="elo-linha">
+            <span className="selo selo-cena">◇ croqui declarado</span> A quantidade desta
+            rodada pode nascer da cena aprovada, sem ninguém redigitar.
+          </p>
+          <dl className="procedencia">
+            <div>
+              <dt>Croqui</dt>
+              <dd className="mono">{link.job_id}</dd>
+            </div>
+            <div>
+              <dt>Revisão da cena</dt>
+              <dd className="mono">{link.scene_revision_id}</dd>
+            </div>
+            <div>
+              <dt>Pacote publicado</dt>
+              <dd className="mono">{link.export_id}</dd>
+            </div>
+            <div>
+              <dt>DXF auditado</dt>
+              <dd className="digest" title={link.dxf_sha256 ?? undefined}>
+                {link.dxf_sha256 === null
+                  ? "não declarado por este pacote"
+                  : `sha256 ${shortDigest(link.dxf_sha256)}`}
+              </dd>
+            </div>
+            <div>
+              <dt>Declarado por</dt>
+              <dd>
+                {link.declared_by} em {formatTimestamp(link.declared_at)}
+              </dd>
+            </div>
+          </dl>
+        </>
+      ) : (
+        <p className="aviso-fixo aviso-inline" role="status">
+          <span className="selo selo-neutro">Sem croqui declarado</span> Esta rodada não está
+          ligada a nenhum croqui aprovado. A quantidade continua vindo da legenda lida, como
+          antes: nada nesta jornada muda enquanto ninguém declarar o elo.
+        </p>
+      )}
+
+      <form
+        className="formulario"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onDeclarar();
+        }}
+      >
+        <label className="campo">
+          {link.present ? "Trocar o croqui declarado" : "Croqui aprovado que alimenta esta rodada"}
+          <span className="campo-dica">
+            O elo nunca é adivinhado: nem por obra de mesmo nome, nem por data próxima, nem
+            por semelhança de rótulo. Informe o identificador do croqui — o pacote citado
+            será o último publicado por ele, e um pacote novo não troca o elo sozinho.
+          </span>
+          <input
+            type="text"
+            value={jobId}
+            onChange={(event) => onJobIdChange(event.target.value)}
+            aria-label="Identificador do croqui aprovado"
+          />
+        </label>
+        <button
+          type="submit"
+          className="botao-secundario"
+          disabled={submitting || jobId.trim().length === 0}
+        >
+          {link.present ? "Trocar o croqui declarado" : "Declarar o croqui desta rodada"}
+        </button>
+      </form>
+
+      {link.present ? (
+        <div className="elo-confronto">
+          <p className="campo-dica">
+            O confronto lê o <span className="mono">quantitativos.csv</span> do pacote
+            declarado e, item a item: alimenta o item que está sem quantidade, grava
+            divergência onde os dois números discordam além da tolerância, e deixa intacto o
+            resto — dizendo por quê. Nenhum provider é chamado, e repetir o ato não
+            realimenta nem regrava nada.
+          </p>
+          <button
+            type="button"
+            className="botao-secundario"
+            onClick={onConfrontar}
+            disabled={submitting || !confrontoDisponivel}
+          >
+            Confrontar o takeoff com a cena aprovada
+          </button>
+          {confrontoDisponivel ? null : (
+            <p className="campo-dica">
+              Disponível depois que a revisão do takeoff desta rodada existir: é o pacote de
+              itens que o confronto percorre.
+            </p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * O relatório do confronto, item a item (F-047 T4b).
+ *
+ * TODOS os itens aparecem, inclusive os que não mudaram, com o motivo nomeado. Mostrar só
+ * os que mudaram deixaria a AUSÊNCIA responder por "a cena não tinha esse número", que é
+ * exatamente o palpite silencioso que esta feature existe para não fazer.
+ *
+ * Nenhuma contagem é feita aqui: `fed`, `divergences_recorded` e `unchanged` vêm do
+ * servidor, que confrontou. Sem confronto executado o bloco não existe, e a etapa fica
+ * idêntica à de antes da feature.
+ */
+export function RelatorioDoConfronto({
+  relatorio,
+  itens,
+}: {
+  relatorio: SceneConfrontationReport | null;
+  itens: TakeoffItem[];
+}) {
+  if (relatorio === null) {
+    return null;
+  }
+  const doPacote = new Map(itens.map((item) => [item.id, item]));
+  return (
+    <div className="confronto-relatorio">
+      <h3>Confronto com a cena aprovada</h3>
+      <p className="campo-dica">
+        {relatorio.fed} item(ns) alimentado(s) pela cena · {relatorio.divergences_recorded}{" "}
+        divergência(s) gravada(s) · {relatorio.unchanged} sem mudança. Revisão da cena{" "}
+        <span className="mono">{relatorio.scene_revision_id}</span>, pacote{" "}
+        <span className="mono">{relatorio.export_id}</span>.
+      </p>
+      {relatorio.changed ? null : (
+        <p className="campo-dica">
+          Nada mudou neste confronto, então nenhuma revisão nova foi gravada. O relatório
+          abaixo continua valendo: ele diz o que aconteceu com cada item.
+        </p>
+      )}
+      <ul className="lista-confronto">
+        {relatorio.items.map((linha) => {
+          const item = doPacote.get(linha.item_id) ?? null;
+          return (
+          <li key={linha.item_id} className={`confronto-linha confronto-${linha.outcome}`}>
+            <span className="confronto-cabeca">
+              <EtiquetaDeElemento elementRef={linha.element_ref} />{" "}
+              <span className="confronto-rotulo">{item?.label ?? linha.item_id}</span>{" "}
+              <span className="selo selo-neutro">{sceneOutcomeLabel(linha.outcome)}</span>
+            </span>
+            {linha.scene_quantity === null ? null : (
+              <span className="confronto-numero">
+                A cena ofereceu{" "}
+                {formatQuantityText(
+                  linha.scene_quantity,
+                  item === null ? "" : unitLabel(item.unit),
+                )}
+                {linha.scene_precision === null
+                  ? ""
+                  : ` · precisão ${precisionLabel(linha.scene_precision)}`}
+                .
+              </span>
+            )}
+            {linha.reason === null ? null : (
+              <span className="confronto-motivo">
+                Não recebeu quantidade da cena porque {sceneReasonLabel(linha.reason)}.
+              </span>
+            )}
+            {frasePorFaltaDePar(linha) === null ? null : (
+              <span className="confronto-sem-par">{frasePorFaltaDePar(linha)}</span>
+            )}
+          </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * A origem da quantidade que veio da cena — e o lugar onde havia um campo de digitação.
+ *
+ * A origem OCUPA o lugar do `input` (ADR-0058, decisões 5 e 7): a redigitação era onde o
+ * erro entrava, e o jeito de eliminá-la é não oferecer o teclado. "Editar quantidade" fica
+ * desabilitado e VISÍVEL, com a razão ao lado, para que a ausência seja lida como decisão
+ * e não como falta.
+ *
+ * Item que não veio da cena não desenha nada: sem confronto, a tela é a de sempre.
+ */
+export function OrigemDaQuantidade({
+  item,
+  sceneRevisionId,
+}: {
+  item: TakeoffItem;
+  sceneRevisionId: string | null;
+}) {
+  if (!vemDaCena(item)) {
+    return null;
+  }
+  return (
+    <div className="origem-cena">
+      <p className="elo-linha">
+        <EtiquetaDeElemento elementRef={item.element_ref} />{" "}
+        <span className="selo selo-cena">
+          ◇ origem: {quantitySourceLabel(item.source)}
+        </span>
+      </p>
+      <dl className="procedencia">
+        <div>
+          <dt>Quantidade</dt>
+          <dd>{formatQuantityText(item.quantity ?? null, unitLabel(item.unit))}</dd>
+        </div>
+        <div>
+          <dt>Origem</dt>
+          <dd>
+            {quantitySourceLabel(item.source)}
+            {sceneRevisionId === null ? "" : ` · revisão ${sceneRevisionId}`}
+          </dd>
+        </div>
+        <div>
+          <dt>Precisão de origem</dt>
+          <dd>
+            {item.scene_precision === null || item.scene_precision === undefined
+              ? "não declarada por este pacote"
+              : precisionLabel(item.scene_precision)}
+          </dd>
+        </div>
+      </dl>
+      <p className="aviso-fixo aviso-inline" role="status">
+        {RAZAO_SEM_CAMPO_DE_QUANTIDADE}
+      </p>
+      <p className="origem-acao">
+        <button type="button" className="botao-secundario" disabled>
+          Editar quantidade
+        </button>{" "}
+        <span className="campo-dica">
+          Indisponível porque a quantidade veio da cena aprovada. Para mudá-la, corrija o
+          traçado na jornada do croqui e declare o elo de novo.
+        </span>
+      </p>
+    </div>
+  );
+}
+
+/**
+ * A divergência entre a cena e a legenda: os dois números, a diferença e a tolerância.
+ *
+ * Três blocos de peso IGUAL, cada um com a sua origem escrita, para que nenhum pareça o
+ * principal — nenhum dos dois sobrescreve o outro. A tolerância aparece como fórmula por
+ * extenso E como resultado; a diferença e a tolerância chegam prontas do servidor, que as
+ * recomputa e confere na gravação. Nenhuma conta acontece aqui.
+ *
+ * Enquanto a divergência estiver aberta o item aparece BLOQUEADO, e o bloqueio é dito por
+ * palavra e por forma (borda esquerda âmbar), nunca só por cor. Bloqueio é diagnóstico, não
+ * recusa: por isso âmbar, e não vermelho.
+ */
+export function DivergenciaDoItem({ item }: { item: TakeoffItem }) {
+  const divergencia = divergenciaDoItem(item);
+  if (divergencia === null) {
+    return null;
+  }
+  const resolvida = divergenciaResolvida(item);
+  const aberta = resolvida === null;
+  const unidade = unitLabel(item.unit);
+  const resolucao = resolvida?.resolution ?? null;
+  const escolhido = resolvida === null ? null : numeroEscolhido(resolvida);
+  const preterido = resolvida === null ? null : numeroPreterido(resolvida);
+  return (
+    <div className={`divergencia ${aberta ? "divergencia-aberta" : "divergencia-resolvida"}`}>
+      <p className="elo-linha">
+        <EtiquetaDeElemento elementRef={item.element_ref} />{" "}
+        <span className="item-rotulo">{item.label}</span>{" "}
+        <span className={`selo ${aberta ? "selo-atencao" : "selo-ok"}`}>
+          {aberta ? "⚠ divergência aberta" : "divergência resolvida"}
+        </span>
+      </p>
+
+      <div className="duplo">
+        <div className="duplo-bloco duplo-cena">
+          <span className="selo selo-cena">◇ cena aprovada</span>
+          <span className="duplo-numero">
+            {formatQuantityText(divergencia.scene.quantity, unidade)}
+          </span>
+          <span className="duplo-origem">
+            precisão {precisionLabel(divergencia.scene.precision)} · identidade{" "}
+            <span className="mono">{divergencia.scene.element_ref}</span>
+            {divergencia.scene.scene_revision_id
+              ? ` · revisão ${divergencia.scene.scene_revision_id}`
+              : ""}
+          </span>
+        </div>
+        <div className="duplo-bloco duplo-legenda">
+          <span className="selo selo-neutro">
+            {quantitySourceLabel(divergencia.legend.source)}
+          </span>
+          <span className="duplo-numero">
+            {formatQuantityText(divergencia.legend.quantity, unidade)}
+          </span>
+          <span className="duplo-origem">
+            extrator <span className="mono">{divergencia.legend.extractor}</span>{" "}
+            {divergencia.legend.extractor_version}
+            {divergencia.legend.read_by
+              ? ` · decisão humana de ${divergencia.legend.read_by}`
+              : " · ainda sem decisão humana sobre a leitura"}
+            {divergencia.legend.read_at
+              ? ` em ${formatTimestamp(divergencia.legend.read_at)}`
+              : ""}
+          </span>
+        </div>
+        <div className="duplo-bloco duplo-diferenca">
+          <span className="selo selo-atencao">⚠ fora da tolerância</span>
+          <span className="duplo-numero">
+            {formatQuantityText(divergencia.difference, unidade)}
+          </span>
+          {divergencia.legend_ratio ? (
+            <span className="duplo-origem">
+              {formatDecimalText(divergencia.legend_ratio)}% do valor da legenda
+            </span>
+          ) : null}
+          <span className="duplo-origem">
+            tolerância desta divergência:{" "}
+            {formatQuantityText(divergencia.tolerance, unidade)}
+          </span>
+        </div>
+      </div>
+
+      <p className="tolerancia-formula">
+        {FORMULA_DA_TOLERANCIA}.{" "}
+        {divergencia.relative_tolerance &&
+        divergencia.absolute_floor &&
+        divergencia.tolerance_bound ? (
+          <>
+            1% × {formatQuantityText(divergencia.legend.quantity, unidade)} ={" "}
+            {formatQuantityText(divergencia.relative_tolerance, unidade)} · piso de
+            unidade = {formatQuantityText(divergencia.absolute_floor, unidade)} ·
+            tolerância = {formatQuantityText(divergencia.tolerance, unidade)} (
+            {divergencia.tolerance_bound === "relative" ? "1% mandou" : "o piso segurou"}
+            ).{" "}
+          </>
+        ) : null}
+        Os dois números desta linha — a diferença e a tolerância — são os que o servidor
+        gravou e confere a cada leitura; a tela não refaz nenhuma conta.
+      </p>
+
+      {aberta ? (
+        <p className="bloqueado" role="alert">
+          <strong>{motivoDeBloqueio(item)}</strong> {AVISO_DIVERGENCIA_ABERTA}
+        </p>
+      ) : null}
+
+      {resolucao && escolhido && preterido ? (
+        <div className="carimbo-resolucao">
+          <p>
+            <strong>{resolucao.reviewer_id}</strong> em{" "}
+            {formatTimestamp(resolucao.resolved_at)} decidiu que{" "}
+            <strong>{divergenceChoiceLabel(resolucao.choice)}</strong>:{" "}
+            {formatQuantityText(escolhido.quantity, unidade)}.
+          </p>
+          {resolucao.note ? <p>Motivo: “{resolucao.note}”</p> : null}
+          <p>
+            Preterida: {formatQuantityText(preterido.quantity, unidade)} ·{" "}
+            {preterido.origem === "scene"
+              ? quantitySourceLabel("scene_graph")
+              : quantitySourceLabel(divergencia.legend.source)}{" "}
+            — <strong>continua gravada</strong>. Resolver não é sobrescrever: nenhuma origem
+            foi apagada.
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A resolução da divergência: escolha humana registrada, com motivo, autor e instante.
+ *
+ * Duas escolhas, e só duas. A terceira aparece DESABILITADA e com a razão escrita, em vez
+ * de sumir: digitar uma terceira quantidade aqui seria a redigitação que esta feature
+ * existe para eliminar, e ver a opção indisponível ensina isso — a ausência calada, não.
+ *
+ * Nada nasce pré-marcado: a escolha vem do clique, nunca do default.
+ */
+export function ResolucaoDaDivergencia({
+  item,
+  escolha,
+  motivo,
+  submitting,
+  onEscolha,
+  onMotivo,
+  onRegistrar,
+  onCancelar,
+}: {
+  item: TakeoffItem;
+  escolha: DivergenceChoice | "";
+  motivo: string;
+  submitting: boolean;
+  onEscolha: (choice: DivergenceChoice) => void;
+  onMotivo: (value: string) => void;
+  onRegistrar: () => void;
+  onCancelar: () => void;
+}) {
+  const divergencia = divergenciaAberta(item);
+  if (divergencia === null) {
+    return null;
+  }
+  const unidade = unitLabel(item.unit);
+  const bloqueado = submitting || escolha === "" || motivo.trim().length === 0;
+  return (
+    <form
+      className="formulario resolucao-divergencia"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onRegistrar();
+      }}
+    >
+      <fieldset className="acoes">
+        <legend>Resolver a divergência de {item.label}</legend>
+        <label>
+          <input
+            type="radio"
+            name="divergencia"
+            value="scene"
+            checked={escolha === "scene"}
+            onChange={() => onEscolha("scene")}
+          />
+          Vale a cena: {formatQuantityText(divergencia.scene.quantity, unidade)} ·{" "}
+          precisão {precisionLabel(divergencia.scene.precision)}
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="divergencia"
+            value="legend"
+            checked={escolha === "legend"}
+            onChange={() => onEscolha("legend")}
+          />
+          Vale a legenda: {formatQuantityText(divergencia.legend.quantity, unidade)} ·{" "}
+          {quantitySourceLabel(divergencia.legend.source)}
+        </label>
+        <label className="escolha-indisponivel">
+          <input type="radio" name="divergencia" value="none" disabled />
+          Nenhuma das duas
+          <span className="campo-dica">{RAZAO_SEM_TERCEIRA_ESCOLHA}</span>
+        </label>
+      </fieldset>
+      <label className="campo">
+        Motivo da decisão (obrigatório)
+        <span className="campo-dica">
+          É o que fica na memória de cálculo ao lado dos dois números; quem conferir a
+          medição meses depois lê aqui por que uma origem prevaleceu.
+        </span>
+        <input
+          type="text"
+          value={motivo}
+          onChange={(event) => onMotivo(event.target.value)}
+        />
+      </label>
+      <div className="acoes-linha">
+        <button type="submit" className="botao-primario" disabled={bloqueado}>
+          Registrar decisão
+        </button>
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={onCancelar}
+          disabled={submitting}
+        >
+          Manter aberta
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -2455,6 +3005,22 @@ export function MedicaoApp({
   // Revisão do takeoff.
   const [selectedItemId, setSelectedItemId] = useState("");
   const [decision, setDecision] = useState(EMPTY_DECISION);
+  /**
+   * O croqui que a pessoa está declarando (F-047 T7b). É rascunho de formulário, e não o
+   * elo: o elo vive na rodada, e quem o lê é `state.scene_link`.
+   */
+  const [croquiDeclarado, setCroquiDeclarado] = useState("");
+  /**
+   * O relatório do último confronto desta sessão. `null` é "ninguém confrontou aqui", e é
+   * por isso que a etapa fica idêntica à de antes da feature enquanto ele for `null` — o
+   * relatório é do ATO, não da rodada, e nenhuma rota o republica.
+   */
+  const [confronto, setConfronto] = useState<SceneConfrontationReport | null>(null);
+  /** Rascunho da resolução de divergência. Nada nasce pré-marcado. */
+  const [resolucao, setResolucao] = useState<{
+    choice: DivergenceChoice | "";
+    motivo: string;
+  }>({ choice: "", motivo: "" });
   const [zoom, setZoom] = useState(MIN_ZOOM);
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(
     null,
@@ -3244,6 +3810,12 @@ export function MedicaoApp({
 
   const items = takeoff?.packet.items ?? [];
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
+  /**
+   * O elo desta rodada. Rodada lida antes da F-047 responde sem o campo, e a ausência de
+   * campo diz o mesmo que a ausência declarada: ninguém ligou esta rodada a croqui nenhum.
+   */
+  const elo: SceneLinkState = state?.scene_link ?? { present: false };
+  const divergenciasAbertas = itensComDivergenciaAberta(items);
   const pendingItems = codes?.pending_items ?? [];
   /** Os códigos já confirmados do item selecionado — o pacote que está sendo montado. */
   const pacoteDoItem = (codes?.assignments?.assignments ?? []).filter(
@@ -3379,6 +3951,9 @@ export function MedicaoApp({
   const selecionarItem = (item: TakeoffItem) => {
     setSelectedItemId(item.id);
     setDecision(EMPTY_DECISION);
+    // O rascunho da resolução é do ITEM que estava aberto: carregá-lo para o próximo faria
+    // uma escolha feita sobre um par de números ser registrada sobre outro.
+    setResolucao({ choice: "", motivo: "" });
   };
 
   const startPan = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -3486,6 +4061,150 @@ export function MedicaoApp({
     } catch (error) {
       // O conflito tem banner próprio, com o botão de recarregar e o formulário
       // preservado; repetir a frase no alerta comum só empilharia ruído.
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Declara — ou troca — o croqui aprovado que alimenta esta rodada (F-047 T7b).
+   *
+   * O ato é sobre a RODADA, não sobre o takeoff: ele não confronta nada e não muda número
+   * nenhum. Confrontar é o gesto seguinte, e é separado de propósito — declarar o elo
+   * errado e descobrir isso depois de o pacote inteiro ter sido reescrito seria pior do que
+   * dois cliques.
+   */
+  const declararElo = async () => {
+    const token = tokenDaSessao();
+    const job = croquiDeclarado.trim();
+    if (token === null || version === null || job.length === 0) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const proximo = await postSceneLink(token, rodada, {
+        jobId: job,
+        baseVersion: version,
+      });
+      setState(proximo);
+      aplicarVersao(proximo.version);
+      setCroquiDeclarado("");
+      // O relatório é do confronto ANTERIOR, contra outro pacote: mantê-lo na tela depois
+      // da troca do elo faria a pessoa ler o desfecho de um croqui que não é mais o desta
+      // rodada.
+      setConfronto(null);
+      setRevisionConflict(false);
+      setToast("Croqui aprovado declarado nesta rodada.");
+    } catch (error) {
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Confronta o takeoff com o `quantitativos.csv` do croqui declarado (F-047 T7b).
+   *
+   * O gesto é explícito porque ele GRAVA: alimenta item sem quantidade e abre divergência
+   * onde os dois números discordam. O texto ao lado do botão declara isso antes do clique,
+   * como o cálculo da shortlist.
+   */
+  const confrontarComACena = async () => {
+    const token = tokenDaSessao();
+    if (token === null || version === null) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const response = await postSceneQuantities(token, rodada, version);
+      aplicarVersao(response.version);
+      setTakeoff(response);
+      setConfronto(response.scene_confrontation);
+      // Confronto que não mudou nada não grava revisão nova, e por isso não devolve
+      // overlay: sem pacote novo não há desenho a envelhecer, e declará-lo vencido aqui
+      // seria uma marca sem fato atrás.
+      const idade = response.overlay;
+      if (idade !== undefined) {
+        setOverlay((current) =>
+          current === null
+            ? current
+            : { ...current, ...idade, packet_sha256: response.packet_sha256 },
+        );
+        setOverlayTentativas(0);
+      }
+      setRevisionConflict(false);
+      setToast(
+        `Confronto concluído: ${response.scene_confrontation.fed} alimentado(s) pela cena, ` +
+          `${response.scene_confrontation.divergences_recorded} divergência(s) gravada(s), ` +
+          `${response.scene_confrontation.unchanged} sem mudança.`,
+      );
+      await atualizarEstado();
+    } catch (error) {
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Registra a decisão humana que resolve uma divergência (F-047 T7b).
+   *
+   * Duas escolhas, e só duas: a rota não aceita uma terceira quantidade, e a tela também
+   * não a oferece. O número preterido continua gravado — resolver não é sobrescrever.
+   */
+  const resolverDivergencia = async () => {
+    const token = tokenDaSessao();
+    if (
+      token === null ||
+      selectedItem === null ||
+      version === null ||
+      resolucao.choice === ""
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const response = await postDivergenceResolution(token, rodada, {
+        itemId: selectedItem.id,
+        choice: resolucao.choice,
+        baseVersion: version,
+        note: resolucao.motivo,
+      });
+      aplicarVersao(response.version);
+      setTakeoff(response);
+      setOverlay((current) =>
+        current === null
+          ? current
+          : { ...current, ...response.overlay, packet_sha256: response.packet_sha256 },
+      );
+      setOverlayTentativas(0);
+      setResolucao({ choice: "", motivo: "" });
+      setRevisionConflict(false);
+      setToast(
+        `${selectedItem.label}: divergência resolvida — ` +
+          `${divergenceChoiceLabel(resolucao.choice)}.`,
+      );
+      await atualizarEstado();
+    } catch (error) {
       const recusa = recusaDeMutacao(error);
       if (recusa.conflito) {
         setRevisionConflict(true);
@@ -4603,6 +5322,16 @@ export function MedicaoApp({
                   </span>
                 </p>
                 <RegimeDeConferencia contracted={state.contracted} />
+                <EloComOCroqui
+                  link={elo}
+                  jobId={croquiDeclarado}
+                  onJobIdChange={setCroquiDeclarado}
+                  onDeclarar={() => void declararElo()}
+                  onConfrontar={() => void confrontarComACena()}
+                  submitting={submitting}
+                  confrontoDisponivel={takeoff !== null}
+                />
+                <RelatorioDoConfronto relatorio={confronto} itens={items} />
                 <p>
                   Prancha: {state.plate.present ? "enviada" : "ausente"} · leitura da
                   legenda: {extractionStatusLabel(state.extraction.status)}
@@ -4943,6 +5672,13 @@ export function MedicaoApp({
                 </span>
                 .
               </p>
+              {divergenciasAbertas.length === 0 ? null : (
+                <p className="aviso-fixo aviso-inline" role="alert">
+                  <span className="selo selo-atencao">⚠ divergência aberta</span>{" "}
+                  {divergenciasAbertas.length} item(ns) não fecham enquanto ninguém escolher
+                  entre a quantidade da cena e a da legenda. Eles estão marcados na lista.
+                </p>
+              )}
               <ul className="itens">
                 {items.map((item, index) => (
                   <li
@@ -4964,6 +5700,25 @@ export function MedicaoApp({
                         <span className="item-quantidade">
                           {formatQuantityText(item.quantity ?? null, unitLabel(item.unit))}
                         </span>
+                        {/* Origem e bloqueio aparecem na LISTA, não só no painel: quem
+                            percorre a legenda inteira precisa ver qual item não fecha sem
+                            abrir um por um. Palavra e forma, nunca só cor. */}
+                        {item.element_ref ? (
+                          <span className="item-origem">
+                            <EtiquetaDeElemento elementRef={item.element_ref} />
+                            {vemDaCena(item) ? (
+                              <span className="selo selo-cena">
+                                ◇ {quantitySourceLabel(item.source)}
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : null}
+                        {divergenciaAberta(item) === null ? null : (
+                          <span className="item-bloqueado">
+                            <span className="selo selo-atencao">⚠ divergência aberta</span>{" "}
+                            item bloqueado até alguém escolher a origem
+                          </span>
+                        )}
                         <span className="mono item-raw">{item.raw_text}</span>
                         {item.note ? (
                           <span className="item-nota">Anotação: {item.note}</span>
@@ -4979,7 +5734,39 @@ export function MedicaoApp({
               <h2>Decisão do item</h2>
               {selectedItem === null ? (
                 <p>Escolha um item na lista ou clique no retângulo da prancha.</p>
-              ) : selectedItem.decision ? (
+              ) : (
+                <>
+                  {/* A origem e a divergência vêm ANTES do ato, decidido ou não: elas são o
+                      que a pessoa precisa ler para decidir, e o item já decidido continua
+                      precisando mostrar de onde o número veio. */}
+                  <OrigemDaQuantidade
+                    item={selectedItem}
+                    sceneRevisionId={elo.present ? elo.scene_revision_id : null}
+                  />
+                  <DivergenciaDoItem item={selectedItem} />
+                  <ResolucaoDaDivergencia
+                    item={selectedItem}
+                    escolha={resolucao.choice}
+                    motivo={resolucao.motivo}
+                    submitting={submitting}
+                    onEscolha={(choice) =>
+                      setResolucao((current) => ({ ...current, choice }))
+                    }
+                    onMotivo={(motivo) =>
+                      setResolucao((current) => ({ ...current, motivo }))
+                    }
+                    onRegistrar={() => void resolverDivergencia()}
+                    onCancelar={() => setResolucao({ choice: "", motivo: "" })}
+                  />
+                  {divergenciaAberta(selectedItem) !== null ? (
+                    // O item não fecha enquanto a divergência existir: o formulário de
+                    // decisão não aparece, e a razão fica escrita no lugar dele.
+                    <p className="cartao-motivo">
+                      A decisão sobre este item fica indisponível enquanto a divergência
+                      estiver aberta. Escolha a origem acima; depois dela o item volta ao
+                      curso normal da revisão.
+                    </p>
+                  ) : selectedItem.decision ? (
                 <div className="decisao-registrada">
                   <p>
                     <strong>{selectedItem.label}</strong> —{" "}
@@ -5048,6 +5835,13 @@ export function MedicaoApp({
 
                   {decision.action === "confirm" ? (
                     <>
+                      {/* Item alimentado pela cena não tem campo de quantidade nem de
+                          unidade (ADR-0058, decisões 5 e 7): a origem ocupa o lugar do
+                          input, e a razão já está escrita no bloco de origem acima. A
+                          anotação do item continua, porque ela corrige o TEXTO da linha da
+                          legenda — não o número. */}
+                      {vemDaCena(selectedItem) ? null : (
+                      <>
                       <label className="campo">
                         Quantidade
                         {selectedItem.status === "ambiguous" ? (
@@ -5094,6 +5888,8 @@ export function MedicaoApp({
                           }
                         />
                       </label>
+                      </>
+                      )}
                       <label className="campo">
                         Anotação do item
                         <span className="campo-dica">
@@ -5154,6 +5950,8 @@ export function MedicaoApp({
                     identidade da sua sessão.
                   </p>
                 </form>
+                  )}
+                </>
               )}
               {selectedItem === null || itemAnchor(selectedItem) === "registered" ? null : (
                 <p className="aviso-fixo aviso-inline">

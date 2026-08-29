@@ -362,6 +362,38 @@ lexical continua sendo o fallback permanente, com ou sem provider.
   do PNG contra o que foi registrado na geração, e recusa (`TAKEOFF_FIXTURE_ARTIFACT_MISMATCH`)
   se o arquivo mudou entre gerar e extrair — gerar e extrair andam juntos de propósito; nada
   aqui lê prancha de cliente.
+- **A quantidade da cena entra por identidade declarada, com a precisão da origem, e nunca
+  sobrescreve a legenda.** `QuantitySource` casa a linha do `quantitativos.csv` com o
+  `TakeoffItem` pelo `element_ref` **dos dois lados**; faltando de um deles, não resolve e
+  devolve o motivo (`QuantityUnresolvedReason`). Só `exact` e `derived` alimentam —
+  `approximate` e `unresolved` não viram quantidade nem com aceite de aproximação registrado
+  na cena —, a precisão viaja em `TakeoffItem.scene_precision` e nunca sobe, e alimentar um
+  item que já traz número da legenda é recusado
+  (`QUANTITY_SOURCE_ITEM_ALREADY_QUANTIFIED`): comparar as duas origens é diagnóstico, não
+  conciliação silenciosa
+  ([ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md)).
+- **O croqui que alimenta a rodada é declarado, e o confronto é do pacote inteiro.**
+  `confront_scene_quantities` (`scene_confrontation.py`) passa o `quantitativos.csv` da cena
+  aprovada por todos os itens do takeoff e devolve o pacote resultante mais o relatório item a
+  item — inclusive dos que ficaram intactos, com o motivo nomeado. Ele não decide nada por
+  conta própria: alimentar é `QuantitySource.feed`, divergir é `record_divergence`, e a ordem
+  das perguntas (divergência já gravada, item rejeitado, a cena resolve?, o item já tem
+  número?) é o que torna o ato **repetível** — rodar de novo sobre o mesmo estado não duplica
+  divergência, não realimenta o que já veio da cena e não devolve pacote novo.
+- **Divergência entre a cena e a legenda é diagnóstico, e trava o item até alguém decidir.**
+  Quando o mesmo elemento tem os dois números e eles se afastam mais que a tolerância nomeada
+  — `maior(1% da quantidade da legenda, 0,01 na unidade do item)`, com `>` e nunca `>=`, de
+  modo que a diferença exatamente igual à tolerância **não** abre —, `QuantitySource.
+  record_divergence` grava a issue no próprio item: os dois valores, as duas origens (a cena
+  com a precisão declarada e a revisão de onde saiu; a legenda com quem leu e quando) e a
+  diferença. Enquanto ela está aberta o elemento **não fecha**: o fechamento de pacote recusa
+  em `ASSIGNMENT_QUANTITY_DIVERGENCE_OPEN` e o boletim, em `CALC_QUANTITY_DIVERGENCE_OPEN`.
+  Resolver é ato humano registrado (`apply_divergence_resolution`) e escolhe entre as **duas**
+  origens — "nenhuma das duas" não existe, porque digitar uma terceira quantidade ali seria a
+  redigitação que a feature elimina. O número preterido continua gravado. Cena `approximate`
+  não gera divergência: ela não alimenta, então não compara
+  ([ADR-0058](../adr/0058-quantitativo-derivado-do-scene-graph-e-identidade-de-elemento.md),
+  decisão 6).
 - **Decisão do orçamentista sobre o takeoff é imutável; re-decisão recusa.**
   `apply_takeoff_decisions` nunca muta o pacote de entrada e recusa
   (`TAKEOFF_ITEM_ALREADY_REVIEWED`) sobrescrever um item já confirmado ou rejeitado.

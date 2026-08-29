@@ -34,6 +34,11 @@ import type {
 } from "@croquito/contracts";
 
 import { apiJson, ApiError } from "../api";
+import type {
+  DivergenceChoice,
+  SceneConfrontationReport,
+  SceneLinkState,
+} from "./cena";
 import {
   appendPlatesBody,
   codeClosureBody,
@@ -43,11 +48,14 @@ import {
   identityLinkBody,
   identityLinkPreviewBody,
   platesExtractionBody,
+  divergenceResolutionBody,
+  sceneLinkBody,
   takeoffDecisionBody,
   versionBody,
 } from "./requests";
 
 export { ApiError };
+export type { DivergenceChoice, SceneConfrontationReport, SceneLinkState };
 
 /** `registered` = a bbox passou pelo registro fino contra a prancha; `raw` = ainda não. */
 export type AnchorStatus = "registered" | "raw";
@@ -360,6 +368,15 @@ export type RoundState = {
   codes: RoundStateCodes;
   bulletin: RoundStateBulletin;
   dossier: { present: boolean; dossier_sha256: string | null };
+  /**
+   * O croqui aprovado declarado como fonte de quantidade desta rodada (F-047 T4b).
+   *
+   * Opcional porque rodada lida antes da F-047 responde sem o campo; a tela usa
+   * `?? { present: false }`, que é o mesmo que o servidor manda quando ninguém declarou
+   * elo nenhum. Ausência DECLARADA e ausência de campo dizem a mesma coisa aqui: a jornada
+   * segue exatamente como antes da feature.
+   */
+  scene_link?: SceneLinkState;
   created_at: string;
   updated_at: string;
 };
@@ -565,6 +582,32 @@ export type TakeoffResponse = TakeoffCounts &
  */
 export type TakeoffDecisionResponse = TakeoffResponse & {
   overlay: OverlayState;
+};
+
+/**
+ * Resposta do confronto com a cena aprovada (F-047 T4b).
+ *
+ * `overlay` é OPCIONAL de propósito, e a ausência dele é informação: o confronto que não
+ * mudou nada não grava revisão nova, então também não há desenho a envelhecer. Tratá-lo
+ * como obrigatório faria a tela declarar o overlay vencido num ato que não mexeu no pacote.
+ */
+export type SceneQuantitiesResponse = TakeoffResponse & {
+  overlay?: OverlayState;
+  scene_confrontation: SceneConfrontationReport;
+};
+
+/** O elo declarado com o croqui: só o job viaja; o resto é descoberto e carimbado lá. */
+export type SceneLinkDraft = {
+  jobId: string;
+  baseVersion: number;
+};
+
+/** A escolha humana que resolve uma divergência: cena ou legenda, e nada além disso. */
+export type DivergenceResolutionDraft = {
+  itemId: string;
+  choice: DivergenceChoice;
+  baseVersion: number;
+  note?: string;
 };
 
 export type SuggestionsResponse = {
@@ -1183,6 +1226,69 @@ export function postTakeoffDecision(
  * Ela é por folha (F-046 T4d) porque é observação por ITEM, e os itens são os do pacote de
  * uma prancha: a shortlist da folha 1 sob o cabeçalho da folha 2 ofereceria códigos para
  * elementos que não estão naquele desenho. Sem `plateId`, a da primeira folha.
+ * Declara — ou troca — QUAL croqui aprovado alimenta esta rodada (F-047 T4b).
+ *
+ * O elo é ato humano e nunca é inferido: nem por `worksite_key` igual, nem por proximidade
+ * de data, nem por semelhança de nome. Um export novo do mesmo job também não muda o elo
+ * sozinho; trocar é chamar esta rota de novo, com autor e instante próprios.
+ *
+ * A resposta é o ESTADO NOVO da rodada, como as demais mutações: a tela redesenha a partir
+ * dela em vez de remontar o elo por conta própria.
+ */
+export function postSceneLink(
+  accessToken: string,
+  roundId: string,
+  draft: SceneLinkDraft,
+): Promise<RoundState> {
+  return post<RoundState>(
+    roundPath(roundId, "/scene-link"),
+    accessToken,
+    sceneLinkBody(draft),
+  );
+}
+
+/**
+ * Confronta o takeoff com o `quantitativos.csv` do croqui declarado (F-047 T4b).
+ *
+ * O ato é do PACOTE inteiro, não de um item: o corpo é só a guarda de concorrência. Ele é
+ * repetível sem efeito colateral — item já alimentado não é realimentado e divergência já
+ * gravada não é regravada —, e o relatório volta com TODOS os itens, inclusive os
+ * intactos, com o motivo nomeado.
+ */
+export function postSceneQuantities(
+  accessToken: string,
+  roundId: string,
+  baseVersion: number,
+): Promise<SceneQuantitiesResponse> {
+  return post<SceneQuantitiesResponse>(
+    roundPath(roundId, "/takeoff/scene-quantities"),
+    accessToken,
+    versionBody(baseVersion),
+  );
+}
+
+/**
+ * Registra a decisão humana que resolve uma divergência (F-047 T5).
+ *
+ * Resolver não apaga: o número preterido continua gravado, com quem o produziu e quando. A
+ * resposta é o pacote NOVO, como a decisão de item — a tela redesenha a partir dela.
+ */
+export function postDivergenceResolution(
+  accessToken: string,
+  roundId: string,
+  draft: DivergenceResolutionDraft,
+): Promise<TakeoffDecisionResponse> {
+  return post<TakeoffDecisionResponse>(
+    roundPath(roundId, "/takeoff/divergences/resolutions"),
+    accessToken,
+    divergenceResolutionBody(draft),
+  );
+}
+
+/**
+ * Shortlist da rodada. A primeira leitura **calcula e grava** o artefato (`computed`), sem
+ * avançar a versão da rodada — a shortlist é derivada, e um `GET` não é ato humano. Por
+ * isso a tela só a busca por gesto explícito na etapa de códigos.
  */
 export function getSuggestions(
   accessToken: string,

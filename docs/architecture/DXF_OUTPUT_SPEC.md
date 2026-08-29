@@ -94,6 +94,29 @@ project-name/
   aprovacao.json # quando o pacote deriva de revisão profissional
 ```
 
+`quantitativos.csv` traz `entity_id, layer, kind, precision, length_m, perimeter_m,
+area_m2` de sempre. A coluna `element_ref` (ADR-0058) é **aditiva**: só aparece quando
+alguma entidade exportável da cena declarou identidade de elemento — um croqui sem
+nenhuma sai byte a byte igual ao de antes desse campo existir. Quando aparece, fica ao
+lado de `entity_id`, nunca no lugar dele.
+
+A grandeza que cada tipo de geometria contribui: `line` e polilinha **aberta** produzem
+só `length_m` (soma euclidiana dos segmentos, no caso da polilinha); polilinha
+**fechada** e `circle` produzem só `perimeter_m`/`area_m2`. Polilinha aberta não fecha
+região — um muro ou alambrado traçado sem retorno ao ponto inicial nunca ganha
+`perimeter_m`/`area_m2`, porque inventar área a partir de um traço aberto seria
+geometria fabricada (F-047 T3b). Spline e arco continuam sem produzir grandeza nenhuma.
+
+Regra de agrupamento: entidades exportáveis que compartilham o mesmo `element_ref` viram
+**uma linha só**. `entity_id` passa a listar, em ordem de string (não a ordem de
+iteração da cena), os IDs das entidades que compõem a linha; `kind` segue a mesma regra
+quando o grupo mistura tipos. As grandezas somam por tipo — comprimentos com
+comprimentos, perímetros com perímetros, áreas com áreas — nunca cruzando tipos; uma
+coluna sem nenhuma contribuição no grupo continua vazia, como hoje. A precisão da linha
+agrupada é a **pior** entre as entidades que a compõem, na ordem `exact > derived >
+approximate > unresolved`: agrupar nunca promove precisão. Entidade sem `element_ref`
+continua produzindo uma linha por entidade, como sempre produziu.
+
 `auditoria.json` registra revision, exporter version, checks, units, entity counts e
 digest. Quando alguma cota entrou sem toque humano (modo automático local da F-029,
 [ADR-0041](../adr/0041-decisao-de-ator-maquina-atras-de-flag-local.md)), ele ganha

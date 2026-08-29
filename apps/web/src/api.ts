@@ -1098,6 +1098,111 @@ export async function getScene(
   );
 }
 
+/**
+ * Uma proposta de agrupamento de elemento (F-047 T6). Nasce `unresolved` e nunca escreveu
+ * nada na cena: confirmar é o MESMO ato da T2 — reenviar `entity_ids` para
+ * `POST /v1/jobs/{job_id}/elements` —, nunca um segundo caminho de identidade.
+ */
+export type ElementProposal = {
+  proposal_id: string;
+  status: "unresolved";
+  layer: string;
+  signal: "provenance" | "label_proximity";
+  label: string | null;
+  entity_ids: string[];
+};
+
+export type ElementProposalList = {
+  scene_version: number;
+  proposals: ElementProposal[];
+};
+
+/**
+ * O ato de identidade e a revisão que ele criou. `acted_by_role` é o PAPEL profissional,
+ * nunca o subject: o que sai da API qualifica o ato em vez de identificar a pessoa.
+ */
+export type ElementIdentityAct = {
+  act: "declared" | "revoked" | "relabeled";
+  element_ref: string;
+  /** O rótulo legível DEPOIS do ato (F-047 T2b); `null` quando o elemento ficou sem nome. */
+  label: string | null;
+  entity_ids: string[];
+  acted_by_role: string;
+  acted_at: string;
+  scene: SceneRevision.CroquitoSceneRevision;
+};
+
+export type ElementProposalRejection = {
+  proposal_id: string;
+  entity_ids: string[];
+  rejected_by_role: string;
+  rejected_at: string;
+};
+
+export async function listElementProposals(
+  accessToken: string,
+  jobId: string,
+): Promise<ElementProposalList> {
+  return apiJson<ElementProposalList>(
+    `/v1/jobs/${jobId}/elements/proposals`,
+    accessToken,
+  );
+}
+
+/**
+ * Declara que um conjunto de entidades é um elemento (F-047 T2, ADR-0058 decisão 2).
+ *
+ * O corpo NÃO carrega `element_ref`: quem cunha o nome é o servidor, e mandá-lo daqui é
+ * recusado com `ELEMENT_REF_NOT_ASSIGNABLE`. O `label` (F-047 T2b) é outra coisa: é o nome
+ * legível que a pessoa escreve, opcional, e vai no MESMO ato — quando ela não escreve nada,
+ * o campo não é enviado, porque `""` é recusado com `ELEMENT_LABEL_INVALID`. Como toda
+ * mutação da jornada, cita `base_version` da cena e manda uma `Idempotency-Key` por gesto.
+ */
+export async function declareElement(
+  accessToken: string,
+  jobId: string,
+  declaration: {
+    base_version: number;
+    entity_ids: string[];
+    reason: string;
+    label?: string;
+  },
+): Promise<ElementIdentityAct> {
+  return apiJson<ElementIdentityAct>(`/v1/jobs/${jobId}/elements`, accessToken, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify(declaration),
+  });
+}
+
+/**
+ * Recusa uma proposta de agrupamento (F-047 T6). Não toca a cena — por isso não há
+ * `base_version` a citar —, mas registra quem recusou e quando, e a proposta recusada não
+ * volta a ser oferecida.
+ */
+export async function rejectElementProposal(
+  accessToken: string,
+  jobId: string,
+  proposalId: string,
+  rejection: { reason: string },
+): Promise<ElementProposalRejection> {
+  return apiJson<ElementProposalRejection>(
+    `/v1/jobs/${jobId}/elements/proposals/${proposalId}/rejections`,
+    accessToken,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify(rejection),
+    },
+  );
+}
+
 export async function approveScene(
   accessToken: string,
   jobId: string,
