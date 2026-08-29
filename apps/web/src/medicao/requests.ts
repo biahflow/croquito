@@ -49,6 +49,27 @@ export function plateBody(plateId: string | undefined): { plate_id?: string } {
 export const WORKSITE_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{2,63}$/;
 
 /**
+ * Quantos caracteres o nome da obra tem dentro do nome das abas BM e MEMÓRIA da planilha.
+ *
+ * É o `worksite_sheet_budget` do template padrão (`packages/valuation/template.py`): 31 do
+ * formato menos os 8 de `MEMÓRIA `, que é a mais longa das duas. Duplicado aqui pelo mesmo
+ * motivo de `WORKSITE_KEY_PATTERN` — a tela precisa DIZER o teto antes de o nome ser
+ * aceito, e quem o aplica continua sendo o servidor, que recusa a abertura da rodada com
+ * `WORKSITE_NAME_DOES_NOT_FIT_SHEET` e devolve o teto no envelope.
+ *
+ * A tela não valida o nome, e a diferença é deliberada: um nome maior que o teto ainda
+ * pode caber pelos degraus declarados (partículas fora, palavras do meio abreviadas), e
+ * uma contagem de caracteres no navegador recusaria nomes que o domínio aceita.
+ */
+export const WORKSITE_SHEET_NAME_BUDGET = 23;
+
+/** O teto do nome da obra em língua de obra, mostrado ANTES de o nome ser aceito. */
+export const DICA_NOME_DA_OBRA =
+  `vira o nome das abas BM e MEMÓRIA da planilha, que reservam ` +
+  `${WORKSITE_SHEET_NAME_BUDGET} caracteres: nome maior é encurtado por degraus e, se não ` +
+  `couber nem assim, a rodada é recusada na abertura`;
+
+/**
  * Motivo, em língua de obra, de a chave da obra não servir — ou `null` quando ela serve.
  * A recusa do servidor continua valendo; esta é só a que evita a viagem.
  */

@@ -121,6 +121,7 @@ from croquito_api.semantic_arm import (
 )
 from croquito_api.storage import ArtifactStore
 from croquito_api.valuation_rounds import (
+    BULLETIN_SOURCES_DIGEST,
     BULLETIN_WORKBOOK_CONTENT_TYPE,
     BULLETIN_WORKBOOK_DIGEST,
     BULLETIN_WORKBOOK_REF,
@@ -139,6 +140,8 @@ from croquito_api.valuation_rounds import (
     assignments_document_for_plate,
     assignments_for_plate,
     bulletin_export_contract,
+    bulletin_sources_digest,
+    bulletin_sources_state,
     bulletin_workbook_key,
     bulletin_workbook_ref,
     carry_approval_forward,
@@ -11261,6 +11264,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
     def _bulletin_payload(
         record: ValuationRoundRecord,
         revision: ValuationRoundRevisionRecord | None,
+        plates: Sequence[ValuationRoundPlateRecord],
         *,
         document: Mapping[str, Any],
         valuation: Valuation,
@@ -11303,6 +11307,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         Nada disso entra em `valuation_json`: a consolidação é DERIVADA da medição gravada,
         e persistir um número derivado ao lado do fato que o gera é criar dois donos para
         ele. Por isso `valuation_sha256` não muda ao servir estes campos.
+
+        `stale` e os dois digests de fonte respondem, no próprio boletim, se ele ainda
+        descreve a praça de agora — o mesmo par de perguntas que `approval` faz sobre a
+        assinatura. As FOLHAS entram por parâmetro porque a praça é feita delas: acrescentar
+        folha vence o boletim ainda que nenhum pacote novo tenha chegado.
         """
         digests = {} if revision is None else dict(revision.artifact_digests_json or {})
         consolidation = consolidate_by_code(valuation)
@@ -11312,6 +11321,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             "valuation": valuation.model_dump(mode="json"),
             "valuation_sha256": document_digest(document),
             "total_amount": str(valuation.total_amount),
+            **bulletin_sources_state(record, revision, plates),
             "consolidation": [item.model_dump(mode="json") for item in consolidation],
             "consolidation_drifts": [
                 item.as_drift().model_dump(mode="json") for item in consolidation if item.has_drift
@@ -11438,6 +11448,20 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             principal=principal,
             storage_flavor=runtime_settings.storage_flavor,
         )
+        # Chamada pelo EFEITO: o rótulo é do escritor da planilha, o que interessa aqui é a
+        # recusa. `WORKSITE_NAME_DOES_NOT_FIT_SHEET` já existia, e o portão do domínio
+        # continua onde estava — mas ele reprovava na MONTAGEM do boletim, depois de a
+        # orçamentista ter revisado e codificado as N folhas da praça, quando o nome já não
+        # é mais editável e só resta refazer a rodada. Aqui ele ainda é, e por isso a
+        # recusa passa a acontecer aqui também, com a mesma mensagem e o mesmo teto.
+        #
+        # O nome do CORPO, e não o de `origin`: nas origens por orçamento assinado e por
+        # medição seguinte o nome vem do conteúdo aprovado e o corpo o RECUSA — recusar ali
+        # trocaria uma reprovação tardia com conserto (encurtar a praça na abertura da
+        # rodada seguinte) por uma imediata sem conserto nenhum. Naquelas origens quem
+        # recusa continua sendo a montagem do boletim.
+        if payload.worksite_name is not None:
+            default_template().sheet_worksite_label(payload.worksite_name)
 
         now = datetime.now(UTC)
         round_id = new_uuid7()
@@ -13246,14 +13270,31 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         # A matriz posta é gravada AO LADO do boletim (`None` no regime legado), auditável e
         # re-legível: cada revisão registra exatamente a matriz que gerou a memória dela.
         matrix_document = None if calc_matrix is None else calc_matrix.model_dump(mode="json")
+        # O carimbo de "de que praça este boletim foi feito", gravado no mesmo ato que o
+        # monta. Sem ele a rodada não tem como responder, depois, se a medição gravada ainda
+        # descreve a praça — e a tela ficava mandando montar de novo sem oferecer como.
+        # As fontes são as da CABEÇA (o build não altera nenhuma delas) e a matriz é a
+        # POSTA, que é a que acabou de gerar esta memória.
+        head_digests = {} if revision is None else dict(revision.artifact_digests_json or {})
         new_revision = append_revision(
             session,
             round_record=record,
             created_by=principal.subject,
-            changes={"valuation_json": document, "calc_matrix_json": matrix_document},
+            changes={
+                "valuation_json": document,
+                "calc_matrix_json": matrix_document,
+                "artifact_digests_json": {
+                    **head_digests,
+                    BULLETIN_SOURCES_DIGEST: bulletin_sources_digest(
+                        record, revision, plates, calc_matrix=matrix_document
+                    ),
+                },
+            },
         )
         record.updated_at = datetime.now(UTC)
-        response = _bulletin_payload(record, new_revision, document=document, valuation=valuation)
+        response = _bulletin_payload(
+            record, new_revision, plates, document=document, valuation=valuation
+        )
         _store_idempotent_response(
             session,
             principal=principal,
@@ -13309,7 +13350,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             detail="a rodada ainda não tem boletim construído",
         )
         payload = _bulletin_payload(
-            record, revision, document=document, valuation=_revalidated_bulletin(document)
+            record,
+            revision,
+            round_plates(session, round_id=record.id, tenant_id=principal.tenant_id),
+            document=document,
+            valuation=_revalidated_bulletin(document),
         )
         workbook_url = signed_artifact_url(
             application.state.artifact_store,
@@ -13390,7 +13435,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         record.updated_at = datetime.now(UTC)
         response = _bulletin_payload(
-            record, new_revision, document=approved_document, valuation=approved
+            record,
+            new_revision,
+            round_plates(session, round_id=record.id, tenant_id=principal.tenant_id),
+            document=approved_document,
+            valuation=approved,
         )
         _store_idempotent_response(
             session,
@@ -13511,7 +13560,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             },
         )
         record.updated_at = datetime.now(UTC)
-        response = _bulletin_payload(record, new_revision, document=document, valuation=valuation)
+        response = _bulletin_payload(
+            record,
+            new_revision,
+            round_plates(session, round_id=record.id, tenant_id=principal.tenant_id),
+            document=document,
+            valuation=valuation,
+        )
         _store_idempotent_response(
             session,
             principal=principal,
