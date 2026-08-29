@@ -400,6 +400,13 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
             # (`catalog_source_sha256`, `text_recipe`, `status`) — a tabela é de dezenas de
             # linhas e a consulta acontece no recompute, que é ato humano.
             "reference_catalog_embeddings",
+            # `0021` (F-042): acervo de parcelas de canteiro. Entrou sem passar por esta
+            # lista e derrubou o `quality` da `main` — a docstring acima avisa que nenhum
+            # dos outros dois gates cobre este teste, e foi exatamente o que aconteceu.
+            "site_setup_kits",
+            # `0022` (F-044): observações de precedente de código, que alimentam a
+            # shortlist. Entrou na mesma rodada e pela mesma porta.
+            "precedent_observations",
         }
         for table, index_name in (
             ("valuation_rounds", "ix_valuation_rounds_tenant_created"),
