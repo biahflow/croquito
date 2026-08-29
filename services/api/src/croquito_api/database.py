@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import (
     JSON,
@@ -38,6 +38,20 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
+
+#: Largura da coluna `idempotency_records.operation`. É a MESMA constante que
+#: `tests/api/test_idempotency_operations.py` usa como teto ao medir cada operação que a API
+#: monta: o número não pode existir em dois lugares, ou um deles envelhece calado.
+#:
+#: O valor nasceu de um defeito real: a coluna era `String(80)` e NOVE das operações passavam
+#: disso com ids reais, o que em PostgreSQL é `StringDataRightTruncation` (HTTP 500) e em
+#: SQLite — o banco dos testes — passa despercebido, porque ele ignora o limite do `VARCHAR`.
+#: A pior operação de hoje mede 167 caracteres; 512 é folga de três vezes sobre ela e
+#: comporta uma operação futura com dois UUIDs a mais no sufixo.
+#:
+#: Alargar `VARCHAR` não custa armazenamento em PostgreSQL: o que entra no índice único
+#: `uq_idempotency_scope` é o dado gravado, não a largura declarada.
+IDEMPOTENCY_OPERATION_MAX_LENGTH: Final = 512
 
 
 class Base(DeclarativeBase):
@@ -850,6 +864,16 @@ class AuditRecord(Base):
 
 
 class IdempotencyRecord(Base):
+    """Resposta guardada por `(tenant_id, operation, key)` para o reenvio do mesmo comando.
+
+    `operation` é montada pela rota por interpolação (`review.decisions:{job_id}`), e o
+    comprimento dela é limite de banco, não detalhe: em PostgreSQL um valor mais longo que a
+    coluna é `StringDataRightTruncation` — HTTP 500 na cara de quem clicou. O SQLite dos
+    testes não denuncia isso sozinho, então quem guarda a regra é
+    `tests/api/test_idempotency_operations.py`, que enumera TODAS as operações que a API
+    monta e as mede contra `IDEMPOTENCY_OPERATION_MAX_LENGTH`.
+    """
+
     __tablename__ = "idempotency_records"
     __table_args__ = (
         UniqueConstraint("tenant_id", "operation", "key", name="uq_idempotency_scope"),
@@ -857,7 +881,7 @@ class IdempotencyRecord(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(128), index=True)
-    operation: Mapped[str] = mapped_column(String(80))
+    operation: Mapped[str] = mapped_column(String(IDEMPOTENCY_OPERATION_MAX_LENGTH))
     key: Mapped[str] = mapped_column(String(255))
     request_hash: Mapped[str] = mapped_column(String(64))
     response_json: Mapped[dict[str, Any]] = mapped_column(JSON)

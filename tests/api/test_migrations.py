@@ -24,7 +24,17 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Engine, MetaData, create_engine, event, inspect, make_url, text
+from fastapi.testclient import TestClient
+from sqlalchemy import (
+    Engine,
+    MetaData,
+    create_engine,
+    event,
+    inspect,
+    make_url,
+    select,
+    text,
+)
 
 from croquito_api import bootstrap
 from croquito_api.bootstrap import (
@@ -35,7 +45,15 @@ from croquito_api.bootstrap import (
     apply_migrations,
     build_config,
 )
-from croquito_api.database import Base, Database
+from croquito_api.config import ApiSettings
+from croquito_api.database import (
+    IDEMPOTENCY_OPERATION_MAX_LENGTH,
+    Base,
+    Database,
+    IdempotencyRecord,
+)
+from croquito_api.main import create_app
+from tests.api.test_idempotency_operations import column_max_length
 
 POSTGRES_URL_ENV = "CROQUITO_TEST_POSTGRES_URL"
 _POSTGRES_URL = os.getenv(POSTGRES_URL_ENV)
@@ -229,10 +247,16 @@ def test_banco_anterior_ao_runner_e_carimbado(schema_url: str) -> None:
     # nenhuma. Toda linha existente já satisfaz o `NOT NULL` que sai, e todo código anterior
     # continua escrevendo o valor que sempre escreveu — é exatamente o passo "expand" do
     # expand/contract. O que continua proibido é o oposto: `SET NOT NULL` numa coluna que
-    # pode ter nulo derruba a adoção de um banco real, e `TYPE`/`RENAME` reescrevem o que já
-    # existe.
+    # pode ter nulo derruba a adoção de um banco real, e `RENAME` reescreve o que já existe.
+    #
+    # `TYPE VARCHAR(n)` entrou com a `0023`, e é o terceiro afrouxamento da mesma família:
+    # alargar um `VARCHAR` não reescreve a tabela no PostgreSQL desde a 9.2, e nenhuma linha
+    # existente muda de valor. O caso oposto — ESTREITAR — não precisa ser proibido por
+    # texto, porque o próprio PostgreSQL recusa a instrução enquanto existir linha mais longa
+    # que a largura nova: ele não trunca em silêncio. O que a tolerância NÃO cobre é troca de
+    # tipo de verdade (`TYPE INTEGER`, `TYPE TEXT`...), que continua caindo como destrutiva.
     ddl = [statement for statement in recorded if statement.startswith(_DDL_VERBS)]
-    aditivo = (" add column ", " drop not null")
+    aditivo = (" add column ", " drop not null", " type varchar(")
     destrutivo = [
         statement
         for statement in ddl
@@ -460,6 +484,139 @@ def test_configuracao_resolve_as_migrations_pelo_pacote_instalado() -> None:
     assert location is not None
     assert os.path.isfile(os.path.join(location, "env.py"))
     assert os.path.isfile(os.path.join(location, "versions", f"{BASELINE_REVISION}_baseline.py"))
+
+
+@requires_postgres
+def test_alargar_operation_preserva_o_registro_ja_gravado(schema_url: str) -> None:
+    """A `0023` alarga a coluna sem tocar em nenhuma linha: replay antigo continua casando.
+
+    Registro de idempotência é promessa: "este `Idempotency-Key` já foi processado, e a
+    resposta foi esta". Reescrever, truncar ou re-hashear o que já está gravado quebraria
+    essa promessa em silêncio — o mesmo comando reenviado deixaria de ser reconhecido, ou
+    (pior) um comando diferente passaria a casar com a resposta de outro. O teste grava uma
+    linha no schema ANTERIOR à revisão e confere campo a campo depois dela.
+    """
+    command.upgrade(build_config(schema_url), "0022")
+    gravado = {
+        "id": "01920000-0000-7000-8000-000000000001",
+        "tenant_id": "tenant-antigo",
+        "operation": "review.decisions:01920000-0000-7000-8000-0000000000ff",
+        "key": "chave-de-antes-da-0023",
+        "request_hash": "a" * 64,
+    }
+    engine = create_engine(schema_url, future=True)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO idempotency_records "
+                    "(id, tenant_id, operation, key, request_hash, response_json, created_at) "
+                    "VALUES (:id, :tenant_id, :operation, :key, :request_hash, "
+                    '\'{"status": "ok"}\', now())'
+                ),
+                gravado,
+            )
+
+        command.upgrade(build_config(schema_url), "head")
+
+        colunas = {
+            coluna["name"]: getattr(coluna["type"], "length", None)
+            for coluna in inspect(engine).get_columns("idempotency_records")
+        }
+        with engine.connect() as connection:
+            depois = (
+                connection.execute(
+                    text(
+                        "SELECT id, tenant_id, operation, key, request_hash, response_json "
+                        "FROM idempotency_records"
+                    )
+                )
+                .mappings()
+                .all()
+            )
+    finally:
+        engine.dispose()
+
+    # A migration e o modelo têm de coincidir: a largura que o banco ficou é a mesma que
+    # `database.py` declara.
+    assert colunas["operation"] == IDEMPOTENCY_OPERATION_MAX_LENGTH
+    assert len(depois) == 1
+    assert {campo: depois[0][campo] for campo in gravado} == gravado
+    assert depois[0]["response_json"] == {"status": "ok"}
+
+
+@requires_postgres
+def test_operacao_longa_de_idempotencia_grava_em_postgres(schema_url: str) -> None:
+    """A prova em banco de verdade: operação longa passa pelo caminho real e volta 2xx.
+
+    `tests/api/test_idempotency_operations.py` fecha a classe do defeito lendo o código; ele
+    não prova que o banco aceita. Esta é a outra metade, e ela só existe em PostgreSQL de
+    propósito: o SQLite do resto da suíte ignora a largura do `VARCHAR`, então este mesmo
+    request passava lá enquanto devolvia HTTP 500 em homologação e em produção.
+
+    A rota escolhida é a de entitlement de IA porque ela monta
+    `platform.ai-processing-entitlement:{tenant_id}` sem precisar de job, upload nem cena —
+    o request exercita `_store_idempotent_response` pelo caminho de sempre, sem SQL cru. Com
+    um `tenant_id` do tamanho máximo que a tabela aceita, a operação mede 163 caracteres;
+    antes da `0023` a coluna tinha 80 e o `commit` estourava em
+    `StringDataRightTruncation`.
+    """
+    engine = create_engine(schema_url, future=True)
+    try:
+        apply_migrations(engine, schema_url)
+    finally:
+        engine.dispose()
+
+    tenant_id = "tenant-" + "z" * (column_max_length("tenant_id") - len("tenant-"))
+    operation = f"platform.ai-processing-entitlement:{tenant_id}"
+    assert len(operation) > 80, "o teste precisa estourar a largura ANTIGA para provar algo"
+
+    database = Database(schema_url)
+    application = create_app(
+        settings=ApiSettings(
+            database_url=schema_url,
+            artifact_bucket="croquito-test-artifacts",
+            aws_region="sa-east-1",
+            aws_endpoint_url="http://localhost:4566",
+            queue_url=None,
+            oidc_issuer=None,
+            oidc_audience=None,
+            web_origin="http://localhost:5173",
+            allow_test_tokens=True,
+        ),
+        database=database,
+    )
+    headers = {
+        "Authorization": "Bearer test:plataforma:operador:platform_operator",
+        "Idempotency-Key": "operacao-longa-em-postgres",
+    }
+    body = {"enabled": True, "agreement_reference": "ctr-operacao-longa-v1"}
+    try:
+        with TestClient(application) as client:
+            gravado = client.put(
+                f"/v1/platform/tenants/{tenant_id}/ai-processing-entitlement",
+                headers=headers,
+                json=body,
+            )
+            assert gravado.status_code == 200, gravado.text
+            assert gravado.json()["tenant_id"] == tenant_id
+
+            # O reenvio prova que a linha gravada é ENCONTRÁVEL pela mesma operação: uma
+            # coluna que truncasse silenciosamente devolveria replay para operações
+            # diferentes que compartilhassem os primeiros caracteres.
+            replay = client.put(
+                f"/v1/platform/tenants/{tenant_id}/ai-processing-entitlement",
+                headers=headers,
+                json=body,
+            )
+            assert replay.status_code == 200, replay.text
+            assert replay.json() == gravado.json()
+
+        with database.sessions() as session:
+            gravada = session.scalars(select(IdempotencyRecord.operation)).all()
+        assert list(gravada) == [operation]
+    finally:
+        database.engine.dispose()
 
 
 @requires_postgres
