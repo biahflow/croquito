@@ -516,6 +516,63 @@ prancha só é desenhada quando o registro contra a tinta a confirmou
 (`anchor: registered`); sem confirmação, a tela declara "localização não confirmada —
 decida pela lista" em vez de apontar um lugar possivelmente errado.
 
+Uma praça grande não cabe numa folha, e a tela passa a dizer isso
+([ADR-0057](../adr/0057-multiplas-pranchas-por-praca-na-extracao-de-legenda.md)). A partir
+da **segunda** folha a jornada ganha uma faixa de cartões — uma folha por cartão, com nome,
+identidade da prancha, contagem de itens e o estado dito por extenso **e** por símbolo
+próprio (`✓` extraída e revisada, `▲` pendente de revisão, `◐` em extração) —, a etapa
+`Prancha` passa a se chamar `Pranchas` e nasce a etapa `Praça`, entre `Códigos` e
+`Boletim`. Com uma folha só nada disso aparece: a rodada de uma prancha continua sendo a
+tela de sempre. Acrescentar folha é ato humano em lote: a orçamentista marca quais páginas
+do documento viram prancha, **nada vem marcado por padrão**, e o número de folhas que o ato
+acrescenta — e o de leituras pagas que o lote seguinte dispara — fica escrito no próprio
+botão, antes do clique. A praça não fecha com folha pendente, e a recusa **nomeia a folha**
+("folha 2 de 3 …"), porque meia praça somada parece uma praça inteira.
+
+A folha em foco atravessa a jornada inteira: imagem, overlay, itens, decisões de item,
+shortlist, códigos, fechamento e revogação falam sempre **daquela** prancha, e trocar de
+folha na faixa relê tudo com ela. A etapa de códigos é por folha — o conjunto de códigos é
+de cada prancha e o boletim da praça é a união deles —, então ao lado da folha aberta a
+tela lista **o que falta em cada uma**, com as contagens que o servidor deu de cada folha:
+nada pendente na folha aberta não significa praça fechada. A etapa `Praça` mostra as folhas
+do consolidado por digest, os vínculos declarados e, quando o boletim está montado, os
+**números**: o total da praça, o total por código de cada folha e a memória com as parcelas
+na folha onde cada leitura foi feita — todos como o servidor os calculou. A soma do mesmo
+código **entre** folhas, e a deriva de centavo que o truncamento por linha pode produzir
+(ADR-0062), são escritas pela PLANILHA GERAL na exportação e declaradas na auditoria dela:
+esta tela não as calcula nem as estima, e diz isso por escrito — ela nunca soma, multiplica
+ou arredonda dinheiro ou quantidade.
+
+A pasta entregue à prefeitura ganha um par de abas por folha, e nome de aba tem teto de 31
+caracteres — limite do formato da planilha. Nome de praça real não cabe nele ("Campo do
+Morro da Bandeira" já estoura na primeira folha), então a aba passa a usar a forma curta do
+nome **apenas quando o nome inteiro não couber**: caem primeiro as partículas de ligação
+("Campo Morro Bandeira") e, se ainda faltar espaço, as palavras do meio são abreviadas,
+preservando sempre a primeira palavra e a folha. O nome inteiro da praça e da folha
+continua impresso **dentro** da aba, na identificação do BM e no cabeçalho da memória.
+Praça cujo nome já cabia não muda de aba nenhuma — a pasta que a prefeitura já recebe
+continua a mesma. Nome que não cabe nem encurtado é recusado quando o boletim é montado,
+dizendo o teto e pedindo o nome mais curto, e não na hora de publicar o arquivo, quando já
+não haveria o que fazer.
+
+Declarar que duas leituras de folhas diferentes são o mesmo elemento é ato humano oferecido
+**com a prévia do efeito no total**, calculada pelo servidor: as duas parcelas, o total sem
+o vínculo e o total depois dele aparecem antes de gravar, e sem essa prévia a declaração
+não é oferecida. Nada nasce escolhido, trocar uma das leituras apaga a prévia — um número
+conferido de outro par é pior que número nenhum — e o motivo é obrigatório. Unidade
+divergente não vira soma: os dois totais saem vazios com a divergência dita em palavra.
+
+Duas ausências continuam declaradas em vez de disfarçadas: a folha que ainda não virou
+pacote não desenha nada (um desenho de outra folha sob o cabeçalho desta engana com a
+autoridade de um desenho, e não existe overlay da praça — cada retângulo está em pixels da
+imagem da sua folha), e o desenho das âncoras da folha 2 em diante **não é refeito** depois
+de uma decisão, porque o re-render em fila ainda é o da primeira folha; a tela o declara
+vencido em palavra, e o recálculo pago da shortlist não é oferecido ali pelo mesmo motivo —
+ele regravaria a shortlist da primeira folha. Pela mesma razão, na praça de várias folhas o
+disparo **singular** da leitura não é oferecido: ele relê sempre a primeira folha, e seria
+uma chamada paga na prancha errada. A releitura ali é o lote, que nomeia as folhas e
+escreve no botão quantas chamadas pagas o ato dispara.
+
 Conferir quantidade contra desenho pede área e pede ritmo. Na revisão do takeoff a prancha
 ocupa a coluna larga e abre em tela cheia por gesto ("Ampliar", e `Esc` reduz), **sem
 perder a aproximação corrente**: quem chegou até um item continua nele, maior. Cada âncora

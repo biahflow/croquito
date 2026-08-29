@@ -406,18 +406,21 @@ def test_excecao_de_baseline_que_deixou_de_existir_reprova() -> None:
     )
 
 
-# As rotas de medição publicadas: as 18 do ADR-0028 (F-003, T12) mais a aprovação nominal e a
-# exportação auditada do boletim (F-028). Listadas explicitamente para que uma rota esquecida no
-# futuro — em qualquer um dos dois lados — apareça como falha nomeada, e não como conjunto que
-# encolheu em silêncio.
+# As rotas de medição publicadas: as 18 do ADR-0028 (F-003, T12), mais a aprovação nominal e a
+# exportação auditada do boletim (F-028), mais as quatro da praça de várias pranchas (F-046: a
+# leitura da praça, a declaração de identidade, a promoção de folhas em lote e a extração em
+# lote). Listadas explicitamente para que uma rota esquecida no futuro — em qualquer um dos dois
+# lados — apareça como falha nomeada, e não como conjunto que encolheu em silêncio.
 ROTAS_DE_MEDICAO: frozenset[str] = frozenset(
     {
         "POST /v1/valuation-rounds",
         "GET /v1/valuation-rounds",
         "GET /v1/valuation-rounds/{round_id}",
         "POST /v1/valuation-rounds/{round_id}/plate",
+        "POST /v1/valuation-rounds/{round_id}/plates",
         "GET /v1/valuation-rounds/{round_id}/plate",
         "POST /v1/valuation-rounds/{round_id}/plate/extractions",
+        "POST /v1/valuation-rounds/{round_id}/plates/extractions",
         "GET /v1/valuation-rounds/{round_id}/takeoff",
         "GET /v1/valuation-rounds/{round_id}/takeoff/overlay",
         "POST /v1/valuation-rounds/{round_id}/takeoff/decisions",
@@ -428,6 +431,9 @@ ROTAS_DE_MEDICAO: frozenset[str] = frozenset(
         "POST /v1/valuation-rounds/{round_id}/code-assignments/decisions",
         "POST /v1/valuation-rounds/{round_id}/code-assignments/closures",
         "POST /v1/valuation-rounds/{round_id}/code-assignments/revocations",
+        "GET /v1/valuation-rounds/{round_id}/worksite",
+        "POST /v1/valuation-rounds/{round_id}/worksite/identity-links",
+        "POST /v1/valuation-rounds/{round_id}/worksite/identity-links/preview",
         "POST /v1/valuation-rounds/{round_id}/calc",
         "GET /v1/valuation-rounds/{round_id}/bulletin",
         "POST /v1/valuation-rounds/{round_id}/approve",
@@ -439,7 +445,7 @@ ROTAS_DE_MEDICAO: frozenset[str] = frozenset(
 
 
 def test_as_rotas_da_medicao_estao_todas_vigentes_e_expostas() -> None:
-    """Ancora o estado de hoje: as 20 rotas da medição estão publicadas.
+    """Ancora o estado de hoje: as rotas da medição estão todas publicadas.
 
     Inverte o que este teste afirmava antes da publicação (nenhuma rota exposta, todas
     PENDENTE no contrato): agora exige o oposto dos dois lados, nomeando cada uma das
@@ -447,9 +453,11 @@ def test_as_rotas_da_medicao_estao_todas_vigentes_e_expostas() -> None:
     como contagem que encolheu em silêncio.
 
     Começou com as 18 rotas do ADR-0028 (F-003, T12); a F-028 acrescentou a aprovação
-    nominal e a exportação auditada do boletim. A lista é FECHADA nos dois sentidos de
-    propósito: publicar rota de medição sem passar por aqui reprova, que é como expor uma
-    rota nova continua sendo ato deliberado e não efeito colateral.
+    nominal e a exportação auditada do boletim; a F-046, a leitura da praça, a declaração de
+    identidade entre folhas, a promoção de folhas em lote e a extração em lote. A lista é
+    FECHADA nos dois sentidos de propósito: publicar rota de medição sem passar por aqui
+    reprova, que é como expor uma rota nova continua sendo ato deliberado e não efeito
+    colateral.
     """
     documented = documented_routes(API_CONTRACT_PATH.read_text(encoding="utf-8"))
     rotas_de_medicao_no_contrato = {

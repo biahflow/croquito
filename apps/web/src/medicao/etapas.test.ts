@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { ApprovalState, RoundState, RoundStateExtraction } from "./api";
+import type {
+  ApprovalState,
+  RoundState,
+  RoundStateExtraction,
+  WorksiteResponse,
+} from "./api";
 import { derivarEtapas, etapaStatusLabel, type EtapaId } from "./etapas";
 
 /** Medição montada e nunca aprovada — o estado em que a etapa nova nasce. */
@@ -482,5 +487,156 @@ describe("etapaStatusLabel", () => {
     expect(etapaStatusLabel("blocked")).toBe("bloqueada");
     expect(etapaStatusLabel("available")).toBe("em aberto");
     expect(etapaStatusLabel("done")).toBe("concluída");
+  });
+});
+
+/**
+ * A praça de várias folhas (F-046). O estado da praça entra como SEGUNDO argumento e não
+ * muda nada quando a rodada tem uma folha: é o que mantém a rodada de uma prancha
+ * respondendo como sempre respondeu (ADR-0057, decisão 8).
+ */
+function pracaDeFolhas(
+  folhas: { plate_id: string; extraida: boolean; pendentes?: number }[],
+  consolidado = false,
+): WorksiteResponse {
+  const plates = folhas.map((folha, indice) => ({
+    plate_id: folha.plate_id,
+    position: indice + 1,
+    source_sha256: "d".repeat(64),
+    page_number: indice + 1,
+    page_count: 6,
+    extraction_status: folha.extraida ? ("done" as const) : ("running" as const),
+    extraction_failure_code: null,
+    extraction_updated_at: null,
+    takeoff_present: folha.extraida,
+    packet_sha256: folha.extraida ? "a".repeat(64) : null,
+    review_status: folha.extraida
+      ? (folha.pendentes ?? 0) === 0
+        ? ("complete" as const)
+        : ("review_required" as const)
+      : null,
+    item_count: folha.extraida ? 4 : null,
+    pending_items: folha.extraida ? (folha.pendentes ?? 0) : null,
+  }));
+  return {
+    round_id: "0197f2a0-0000-7000-8000-000000000001",
+    version: 4,
+    worksite_key: "praca-sintetica-oeste",
+    worksite_name: "PRACA SINTETICA OESTE",
+    plate_limit: 12,
+    plates,
+    identity_links: [],
+    consolidated: {
+      present: consolidado,
+      worksite_takeoff_sha256: consolidado ? "c".repeat(64) : null,
+      document: consolidado
+        ? {
+            worksite_key: "praca-sintetica-oeste",
+            plates: plates.map((plate) => ({
+              plate_id: plate.plate_id,
+              packet_digest: "a".repeat(64),
+            })),
+            identity_links: [],
+          }
+        : null,
+      pending_plate_ids: plates
+        .filter((plate) => !plate.takeoff_present)
+        .map((plate) => plate.plate_id),
+      refusal_code: consolidado ? null : "ROUND_STAGE_NOT_READY",
+    },
+  };
+}
+
+describe("a praça de várias folhas na jornada", () => {
+  it("com uma folha só, a jornada é a de sempre: sem etapa Praça e no singular", () => {
+    const state = medicaoMontada();
+    const umaFolha = pracaDeFolhas([{ plate_id: "planta-geral", extraida: true }], true);
+
+    const jornada = derivarEtapas(state, umaFolha);
+
+    expect(jornada.etapas.map((etapa) => etapa.id)).toEqual(
+      derivarEtapas(state).etapas.map((etapa) => etapa.id),
+    );
+    expect(jornada.etapas.map((etapa) => etapa.title)).toEqual(
+      derivarEtapas(state).etapas.map((etapa) => etapa.title),
+    );
+    expect(jornada.etapas[0].title).toBe("Prancha");
+    expect(jornada.etapas.some((etapa) => etapa.id === "praca")).toBe(false);
+  });
+
+  it("a segunda folha faz nascer a etapa Praça, entre Códigos e Boletim, e o plural", () => {
+    const jornada = derivarEtapas(
+      medicaoMontada(),
+      pracaDeFolhas(
+        [
+          { plate_id: "planta-geral", extraida: true },
+          { plate_id: "detalhe-playground", extraida: true },
+        ],
+        true,
+      ),
+    );
+
+    expect(jornada.etapas.map((etapa) => etapa.id)).toEqual([
+      "prancha",
+      "revisao",
+      "codigos",
+      "praca",
+      "boletim",
+      "aprovacao",
+    ]);
+    expect(jornada.etapas[0].title).toBe("Pranchas");
+    expect(jornada.etapas[3].status).toBe("available");
+  });
+
+  /**
+   * Meia praça somada parece uma praça inteira (ADR-0057, decisão 7): a folha que falta é
+   * NOMEADA, e o bloqueio atravessa para o boletim — que é onde o número sairia errado.
+   */
+  it("folha pendente bloqueia a praça e o boletim, nomeando a folha", () => {
+    const jornada = derivarEtapas(
+      medicaoMontada(),
+      pracaDeFolhas([
+        { plate_id: "planta-geral", extraida: true },
+        { plate_id: "detalhe-playground", extraida: false },
+      ]),
+    );
+    const praca = jornada.etapas.find((etapa) => etapa.id === "praca");
+    const boletim = jornada.etapas.find((etapa) => etapa.id === "boletim");
+
+    expect(praca?.status).toBe("blocked");
+    expect(praca?.blockedReason).toContain("folha 2 de 2");
+    expect(praca?.blockedReason).toContain("detalhe-playground");
+    expect(boletim?.status).toBe("blocked");
+    expect(boletim?.blockedReason).toBe(praca?.blockedReason);
+  });
+
+  it("a praça só destrava quando o consolidado do servidor está presente", () => {
+    const folhas = [
+      { plate_id: "planta-geral", extraida: true },
+      { plate_id: "detalhe-playground", extraida: true },
+    ];
+    const antes = derivarEtapas(medicaoMontada(), pracaDeFolhas(folhas, false));
+    const depois = derivarEtapas(medicaoMontada(), pracaDeFolhas(folhas, true));
+
+    expect(antes.etapas.find((etapa) => etapa.id === "praca")?.status).toBe("blocked");
+    expect(depois.etapas.find((etapa) => etapa.id === "praca")?.status).toBe("available");
+  });
+
+  it("a praça plural aparece mesmo antes de existir pacote de takeoff", () => {
+    const semTakeoff = estado({
+      takeoff: { present: false },
+      extraction: { status: "running", lineage_present: false },
+    });
+    const jornada = derivarEtapas(
+      semTakeoff,
+      pracaDeFolhas([
+        { plate_id: "planta-geral", extraida: false },
+        { plate_id: "detalhe-playground", extraida: false },
+      ]),
+    );
+
+    expect(jornada.etapas.map((etapa) => etapa.id)).toContain("praca");
+    expect(jornada.etapas[0].title).toBe("Pranchas");
+    expect(jornada.etapaAtiva).toBe("prancha");
   });
 });

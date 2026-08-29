@@ -6,15 +6,19 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 import type { User } from "oidc-client-ts";
 import type { CodeAssignmentSet, CodeSuggestionSet } from "@croquito/contracts";
 
 import {
   ApiError,
+  appendPlates,
   associatePlate,
   createPlateExtraction,
+  createPlatesExtraction,
   createRound,
+  declareIdentityLink,
   getBulletin,
   getCodes,
   getDossier,
@@ -23,6 +27,7 @@ import {
   getSuggestions,
   getTakeoff,
   getTakeoffOverlay,
+  getWorksite,
   listRounds,
   listValuationOrigins,
   postApprove,
@@ -34,6 +39,7 @@ import {
   postDossierBuild,
   postSuggestionsRecompute,
   postTakeoffDecision,
+  previewIdentityLink,
   searchCatalog,
   uploadCatalog,
   uploadPlateFile,
@@ -42,16 +48,21 @@ import {
   type CatalogSearchResponse,
   type CodesResponse,
   type DossierResponse,
+  type IdentityLinkPreviewResponse,
   type OverlayResponse,
   type RoundState,
   type RoundStateExtraction,
   type RoundSummary,
   type SuggestionsResponse,
   type TakeoffItem,
+  type TakeoffItemAddress,
   type TakeoffResponse,
+  type PlateResponse,
   type ValuationOrigin,
   type PriceAdjustmentDraft,
   type AmendmentDraft,
+  type WorksiteResponse,
+  type WorksiteSheet,
 } from "./api";
 import { signOut } from "../auth";
 import {
@@ -66,6 +77,26 @@ import {
 } from "../codeRevocation";
 import { BUSCA_DEBOUNCE_MS, consultaIncremental, resumoDaBusca } from "./busca";
 import { derivarEtapas, etapaStatusLabel, type Etapa, type EtapaId } from "./etapas";
+import {
+  avisoDoLoteDePromocao,
+  boletimDaFolha,
+  chaveDoBoletimDaFolha,
+  codificacaoDasFolhas,
+  estadoDaFolha,
+  folhaDaChamada,
+  folhaEmFoco,
+  folhaLabel,
+  folhasQueAindaCabem,
+  memoriaDaFolha,
+  paginasPromovidas,
+  pracaPlural,
+  recusaDaPraca,
+  recusaDoVinculo,
+  resumoDaCodificacao,
+  resumoDaFolha,
+  rotuloDoLoteDeExtracao,
+  rotuloDoLoteDePromocao,
+} from "./praca";
 import {
   describeError,
   exportBlockedViolations,
@@ -880,15 +911,22 @@ function CartaoCodigo({
  * orçamentista precisa agir ou esperar. A frase da falha é escrita a partir do
  * `failure_code` estável da rodada — a API não manda mensagem pronta, e inventar uma sem
  * código seria pior do que dizer o que se sabe.
+ *
+ * `porFolha` é a praça plural: ali o disparo singular **não é oferecido**, porque a rota
+ * singular relê sempre a PRIMEIRA folha — numa praça de N folhas ele seria uma chamada
+ * paga na prancha errada. O caminho certo é o lote, que nomeia as folhas e escreve no
+ * botão quantas chamadas pagas ele dispara.
  */
 function EstadoExtracao({
   extraction,
   onRetry,
   retrying,
+  porFolha = false,
 }: {
   extraction: RoundStateExtraction;
   onRetry: () => void;
   retrying: boolean;
+  porFolha?: boolean;
 }) {
   return (
     <div className="extracao-status">
@@ -919,14 +957,21 @@ function EstadoExtracao({
               </>
             )}
           </p>
-          <button
-            type="button"
-            className="botao-secundario"
-            onClick={onRetry}
-            disabled={retrying}
-          >
-            Tentar leitura novamente
-          </button>
+          {porFolha ? (
+            <p className="dica">
+              Nesta praça a releitura é por folha, no lote abaixo: ele nomeia quais folhas
+              vão para a leitura e escreve no botão quantas chamadas pagas o ato dispara.
+            </p>
+          ) : (
+            <button
+              type="button"
+              className="botao-secundario"
+              onClick={onRetry}
+              disabled={retrying}
+            >
+              Tentar leitura novamente
+            </button>
+          )}
         </>
       ) : (
         <>
@@ -937,14 +982,20 @@ function EstadoExtracao({
             Disparar a leitura é uma chamada paga de IA, autorizada por contrato do seu
             tenant.
           </p>
-          <button
-            type="button"
-            className="botao-secundario"
-            onClick={onRetry}
-            disabled={retrying}
-          >
-            Disparar leitura automática
-          </button>
+          {porFolha ? (
+            <p className="dica">
+              Nesta praça a leitura é por folha, no lote abaixo.
+            </p>
+          ) : (
+            <button
+              type="button"
+              className="botao-secundario"
+              onClick={onRetry}
+              disabled={retrying}
+            >
+              Disparar leitura automática
+            </button>
+          )}
         </>
       )}
     </div>
@@ -1377,6 +1428,848 @@ export function TelaAuditoriaReprovada({
 }
 
 /**
+ * A faixa de folhas da praça: uma LISTA de folhas, não um explorador de arquivos.
+ *
+ * Cada folha é um cartão com nome, `plate_id`, estado por extenso e contagem de itens; a
+ * folha em foco traz a marca `▸ em foco` e a barra à esquerda. Uma árvore de arquivos
+ * convidaria a pensar em páginas de PDF, e a praça não é um arquivo — é o conjunto de
+ * folhas que a orçamentista declarou (pacote de design aprovado, decisão 1).
+ *
+ * A cor nunca é o único indicador: o estado tem símbolo próprio (`✓`, `▲`, `◐`, `✕`, `○`)
+ * e texto ao lado, e o foco é dito em palavra antes de ser desenhado.
+ */
+export function FaixaDeFolhas({
+  folhas,
+  emFoco,
+  onFocar,
+}: {
+  folhas: WorksiteSheet[];
+  emFoco: string;
+  onFocar: (plateId: string) => void;
+}) {
+  const total = folhas.length;
+  return (
+    <section className="folhas" aria-label="Folhas da praça">
+      <ul className="folhas-faixa">
+        {folhas.map((folha) => {
+          const estado = estadoDaFolha(folha);
+          const foco = folha.plate_id === emFoco;
+          return (
+            <li
+              key={folha.plate_id}
+              className={`folha-chip folha-${estado.id} ${foco ? "em-foco" : ""}`}
+            >
+              <button
+                type="button"
+                className="folha-botao"
+                onClick={() => onFocar(folha.plate_id)}
+                aria-current={foco}
+              >
+                {foco ? <span className="folha-foco">▸ em foco</span> : null}
+                <span className="folha-titulo">
+                  Folha {folha.position} de {total}
+                </span>
+                <span className="mono folha-id">{folha.plate_id}</span>
+                <span className="folha-estado">
+                  <span aria-hidden="true">{estado.symbol}</span> {estado.label}
+                </span>
+                <span className="folha-resumo">{resumoDaFolha(folha)}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * O ato de acrescentar folha: seleção de páginas em lote, nada marcado por padrão.
+ *
+ * Três coisas são deliberadas (pacote de design aprovado, decisões 3 e 4): a seleção é em
+ * lote e a confirmação é uma só; nenhuma página vem marcada, porque quadro de áreas, lista
+ * de materiais e carimbo não são legenda quantificada; e o número de folhas que o ato
+ * acrescenta fica escrito no próprio botão, porque o custo por folha não pode aparecer só
+ * na fatura.
+ *
+ * Página que já é folha desta praça aparece desabilitada e dita: o servidor a recusaria
+ * (`ROUND_PLATE_ALREADY_PRESENT`), e oferecer o que já se sabe recusado convida ao erro.
+ */
+export function AcrescentarFolhas({
+  paginas,
+  jaPromovidas,
+  selecionadas,
+  aindaCabem,
+  onAlternar,
+  onConfirmar,
+  submitting,
+}: {
+  paginas: number;
+  jaPromovidas: number[];
+  selecionadas: number[];
+  aindaCabem: number;
+  onAlternar: (pagina: number) => void;
+  onConfirmar: () => void;
+  submitting: boolean;
+}) {
+  const numeros = Array.from({ length: paginas }, (_, index) => index + 1);
+  const excedeu = selecionadas.length > aindaCabem;
+  return (
+    <div className="acrescentar-folhas">
+      <h3>Escolha as páginas que viram prancha</h3>
+      <p className="dica">
+        A praça <strong>não</strong> é um arquivo: é o conjunto de folhas que você
+        declarou. O documento tem {paginas} {paginas === 1 ? "página" : "páginas"} e{" "}
+        <strong>nenhuma vem marcada por padrão</strong>; página não é prancha — quadro de
+        áreas, lista de materiais e carimbo não são legenda quantificada.
+      </p>
+      <ul className="paginas-grade">
+        {numeros.map((pagina) => {
+          const promovida = jaPromovidas.includes(pagina);
+          const marcada = selecionadas.includes(pagina);
+          return (
+            <li key={pagina} className={`pagina-opcao ${marcada ? "marcada" : ""}`}>
+              <label className="campo-checkbox">
+                <input
+                  type="checkbox"
+                  checked={marcada}
+                  disabled={promovida || submitting}
+                  onChange={() => onAlternar(pagina)}
+                />
+                <span className="pagina-numero">Página {pagina}</span>
+                {promovida ? (
+                  <span className="pagina-estado">já é folha desta praça</span>
+                ) : null}
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+      {excedeu ? (
+        <p className="banner-erro" role="alert">
+          A praça ainda comporta {aindaCabem}{" "}
+          {aindaCabem === 1 ? "folha" : "folhas"}; desmarque{" "}
+          {selecionadas.length - aindaCabem} para caber no limite da rodada.
+        </p>
+      ) : null}
+      <div className="acoes-linha">
+        <button
+          type="button"
+          className="botao-primario"
+          onClick={onConfirmar}
+          disabled={selecionadas.length === 0 || submitting || excedeu}
+        >
+          {submitting ? "Acrescentando…" : rotuloDoLoteDePromocao(selecionadas.length)}
+        </button>
+      </div>
+      <p className="aviso-fixo aviso-inline">
+        {avisoDoLoteDePromocao(selecionadas.length)}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * O lote de leitura: quais folhas vão para a chamada paga, com o número no próprio botão.
+ *
+ * Cada folha é uma chamada paga de IA, e a lista marcada é a autorização. Nada vem marcado
+ * por padrão aqui pelo mesmo motivo da promoção — o número de extrações é escolha
+ * declarada de quem paga, e não efeito colateral de abrir a tela.
+ */
+export function LerFolhasEmLote({
+  folhas,
+  selecionadas,
+  onAlternar,
+  onConfirmar,
+  submitting,
+}: {
+  folhas: WorksiteSheet[];
+  selecionadas: string[];
+  onAlternar: (plateId: string) => void;
+  onConfirmar: () => void;
+  submitting: boolean;
+}) {
+  if (folhas.length === 0) {
+    return null;
+  }
+  return (
+    <div className="ler-folhas">
+      <h3>Ler a legenda das folhas escolhidas</h3>
+      <ul className="paginas-grade">
+        {folhas.map((folha) => (
+          <li
+            key={folha.plate_id}
+            className={`pagina-opcao ${
+              selecionadas.includes(folha.plate_id) ? "marcada" : ""
+            }`}
+          >
+            <label className="campo-checkbox">
+              <input
+                type="checkbox"
+                checked={selecionadas.includes(folha.plate_id)}
+                disabled={submitting}
+                onChange={() => onAlternar(folha.plate_id)}
+              />
+              <span className="pagina-numero">Folha {folha.position}</span>
+              <span className="mono folha-id">{folha.plate_id}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <div className="acoes-linha">
+        <button
+          type="button"
+          className="botao-primario"
+          onClick={onConfirmar}
+          disabled={selecionadas.length === 0 || submitting}
+        >
+          {submitting ? "Enfileirando…" : rotuloDoLoteDeExtracao(selecionadas.length)}
+        </button>
+      </div>
+      <p className="aviso-fixo aviso-inline">
+        Cada folha é uma chamada paga de IA, autorizada por contrato do seu tenant. O
+        número de folhas que a leitura dispara está escrito no botão.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * A folha em foco que ainda não virou pacote — não há o que revisar nela.
+ *
+ * Desde a F-046 T4c a `/v1` serve prancha, overlay e itens POR FOLHA, então esta tela
+ * deixou de ser "a folha que a API não alcança" e passou a ser o que sempre deveria ter
+ * sido: o estado honesto de uma folha que ainda não foi lida. Nada de outra folha é
+ * desenhado aqui — uma imagem de outra folha engana com a autoridade de um desenho.
+ */
+export function FolhaSemPacote({
+  folha,
+  total,
+}: {
+  folha: WorksiteSheet;
+  total: number;
+}) {
+  const estado = estadoDaFolha(folha);
+  return (
+    <article className="painel prancha-painel">
+      <div className="painel-cabecalho">
+        <h2>
+          Prancha e legenda — <strong>{folhaLabel(folha.position, total)}</strong> ·{" "}
+          <span className="mono">{folha.plate_id}</span>
+        </h2>
+      </div>
+      <p className="folha-estado">
+        <span aria-hidden="true">{estado.symbol}</span> {estado.label} ·{" "}
+        {resumoDaFolha(folha)}
+      </p>
+      <p className="banner-erro" role="alert">
+        Esta folha ainda não tem pacote de takeoff: não há item para revisar nela. Dispare
+        a leitura da legenda desta folha na etapa das pranchas — é chamada paga, e o
+        número delas está escrito no botão.
+      </p>
+      <p className="dica">
+        Não existe overlay da praça: cada retângulo está em pixels da imagem desta folha,
+        conferida pelo digest dela. O consolidado endereça os overlays das suas folhas; ele
+        não desenha nada.
+      </p>
+    </article>
+  );
+}
+
+/**
+ * O re-render do overlay ainda é só da PRIMEIRA folha — e a tela diz isso.
+ *
+ * Limitação declarada da `/v1` (F-046 T4c): o comando de fila desenha o pacote de
+ * `takeoff_packet_json` e ainda não conhece a praça, então uma decisão tomada na folha 2
+ * em diante deixa o overlay daquela folha vencido para sempre. Isso é desfecho
+ * fail-closed, não erro — o desenho anterior continua sendo a única visão de onde cada
+ * número foi lido —, e esconder a divergência seria pior que declará-la
+ * ([ADR-0030](../../docs/adr/0030-overlay-do-takeoff-reconstruido-na-fila.md)).
+ */
+export function OverlaySemRerender({ folha, total }: { folha: WorksiteSheet; total: number }) {
+  return (
+    <p className="aviso-fixo aviso-inline" role="status">
+      O desenho das âncoras desta folha ({folhaLabel(folha.position, total)}) não é
+      refeito depois de uma decisão: o re-render em fila ainda é o da primeira folha da
+      praça. O overlay aqui fica <strong>vencido</strong> e declarado como tal — os itens,
+      as quantidades e o boletim continuam corretos; só o desenho envelhece.
+    </p>
+  );
+}
+
+/**
+ * O andamento da codificação, folha por folha (F-046, ADR-0057, decisão 6).
+ *
+ * A etapa de códigos é por folha porque o conjunto é por PRANCHA, e sem esta lista a
+ * orçamentista veria "nada pendente" na folha aberta sem saber que outra folha trava o
+ * boletim da praça. Cada número aqui é o que a leitura DAQUELA folha devolveu — nenhum é
+ * somado, deduzido ou completado por esta tela.
+ */
+export function AndamentoDaCodificacao({
+  folhas,
+  total,
+  emFoco,
+  onFocar,
+}: {
+  folhas: ReturnType<typeof codificacaoDasFolhas>;
+  total: number;
+  emFoco: string;
+  onFocar: (plateId: string) => void;
+}) {
+  if (folhas.length === 0) {
+    return null;
+  }
+  return (
+    <section className="codificacao-folhas" aria-label="Codificação por folha">
+      <h3>O que falta codificar em cada folha</h3>
+      <ul className="praca-lista">
+        {folhas.map((folha) => (
+          <li
+            key={folha.plateId}
+            className={`codificacao-folha ${folha.plateId === emFoco ? "em-foco" : ""}`}
+          >
+            <button
+              type="button"
+              className="folha-botao"
+              onClick={() => onFocar(folha.plateId)}
+              aria-current={folha.plateId === emFoco}
+            >
+              {folha.plateId === emFoco ? (
+                <span className="folha-foco">▸ codificando esta</span>
+              ) : null}
+              <span className="folha-titulo">{resumoDaCodificacao(folha, total)}</span>
+              <span className="mono folha-id">{folha.plateId}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="dica">
+        O conjunto de códigos é de cada prancha, e o boletim da praça é a{" "}
+        <strong>união</strong> deles. Folha com elemento pendente trava o boletim inteiro —
+        meia praça somada parece uma praça inteira.
+      </p>
+    </section>
+  );
+}
+
+/** O vínculo em digitação: as duas leituras escolhidas e o motivo. */
+export type RascunhoDeVinculo = {
+  kept: TakeoffItemAddress;
+  discarded: TakeoffItemAddress;
+  note: string;
+};
+
+/** Rascunho vazio; nada nasce escolhido — fundir é ato declarado, nunca sugestão. */
+export const VINCULO_VAZIO: RascunhoDeVinculo = {
+  kept: { plate_id: "", item_id: "" },
+  discarded: { plate_id: "", item_id: "" },
+  note: "",
+};
+
+/** `true` quando a prévia à vista é exatamente do par que está no rascunho. */
+export function previaConfere(
+  previa: IdentityLinkPreviewResponse | null,
+  rascunho: RascunhoDeVinculo,
+): boolean {
+  return (
+    previa !== null &&
+    previa.kept.plate_id === rascunho.kept.plate_id &&
+    previa.kept.item_id === rascunho.kept.item_id &&
+    previa.discarded.plate_id === rascunho.discarded.plate_id &&
+    previa.discarded.item_id === rascunho.discarded.item_id
+  );
+}
+
+/** Uma parcela da prévia, com a quantidade que o SERVIDOR calculou. */
+function ParcelaDaPrevia({
+  parcela,
+  papel,
+}: {
+  parcela: IdentityLinkPreviewResponse["kept"];
+  papel: string;
+}) {
+  return (
+    <li className="previa-parcela">
+      <p className="praca-selo">{papel}</p>
+      <p>
+        <strong>{parcela.label}</strong> —{" "}
+        {formatQuantityText(parcela.quantity, unitLabel(parcela.unit))}
+      </p>
+      <p className="mono">
+        {parcela.plate_id} · {parcela.item_id}
+      </p>
+      <p className="dica">leitura {itemStatusLabel(parcela.status)}</p>
+    </li>
+  );
+}
+
+/**
+ * Declarar que duas leituras de folhas diferentes são o MESMO elemento (ADR-0057, D4;
+ * pacote de design aprovado, decisão 11).
+ *
+ * O ato só é oferecido **com a prévia do efeito no total**, e a prévia vem do servidor
+ * (`POST .../worksite/identity-links/preview`): a tela de medição não soma, e sem a rota a
+ * orçamentista só descobriria o efeito depois de declarar. Foi por faltar essa rota que a
+ * T5 se recusou a oferecer o ato; ela existe desde a T4c, e o ato voltou.
+ *
+ * Três coisas são deliberadas:
+ *
+ * - **nada nasce escolhido** — fundir por rótulo, unidade ou proximidade é exatamente o
+ *   que o ADR-0057 proíbe, e um par pré-selecionado seria essa proibição contornada pela
+ *   tela;
+ * - **declarar exige a prévia DAQUELE par** — trocar a leitura depois de pré-visualizar
+ *   apaga a prévia, porque um número conferido de outro par é pior que número nenhum;
+ * - **o motivo é obrigatório**, como no desfazer: quem confere depois precisa ler por que
+ *   duas leituras viraram uma.
+ */
+export function DeclararIdentidade({
+  folhas,
+  itensPorFolha,
+  rascunho,
+  previa,
+  onRascunho,
+  onPrever,
+  onDeclarar,
+  previewing,
+  submitting,
+}: {
+  folhas: WorksiteSheet[];
+  itensPorFolha: Readonly<Record<string, TakeoffItem[]>>;
+  rascunho: RascunhoDeVinculo;
+  previa: IdentityLinkPreviewResponse | null;
+  onRascunho: (proximo: RascunhoDeVinculo) => void;
+  onPrever: () => void;
+  onDeclarar: () => void;
+  previewing: boolean;
+  submitting: boolean;
+}) {
+  const recusa = recusaDoVinculo(rascunho.kept, rascunho.discarded);
+  // A prévia só vale para o par que ESTÁ no rascunho: trocar a leitura depois de
+  // pré-visualizar apaga o número da tela, porque um total conferido de outro par é pior
+  // que total nenhum.
+  const previaDoPar = previaConfere(previa, rascunho) ? previa : null;
+  const motivo = rascunho.note.trim();
+  const seletorDeFolha = (
+    papel: "kept" | "discarded",
+    rotulo: string,
+    dica: string,
+  ) => {
+    const endereco = rascunho[papel];
+    const itens = itensPorFolha[endereco.plate_id] ?? [];
+    return (
+      <fieldset className="vinculo-lado">
+        <legend>{rotulo}</legend>
+        <p className="dica">{dica}</p>
+        <label className="campo">
+          Folha
+          <select
+            value={endereco.plate_id}
+            disabled={submitting}
+            onChange={(event) =>
+              onRascunho({
+                ...rascunho,
+                [papel]: { plate_id: event.target.value, item_id: "" },
+              })
+            }
+          >
+            <option value="">escolha a folha</option>
+            {folhas.map((folha) => (
+              <option key={folha.plate_id} value={folha.plate_id}>
+                {folhaLabel(folha.position, folhas.length)} — {folha.plate_id}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="campo">
+          Leitura
+          <select
+            value={endereco.item_id}
+            disabled={submitting || endereco.plate_id === ""}
+            onChange={(event) =>
+              onRascunho({
+                ...rascunho,
+                [papel]: { ...endereco, item_id: event.target.value },
+              })
+            }
+          >
+            <option value="">escolha a leitura</option>
+            {itens.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label} —{" "}
+                {formatQuantityText(item.quantity ?? null, unitLabel(item.unit))}
+              </option>
+            ))}
+          </select>
+        </label>
+        {endereco.plate_id !== "" && itens.length === 0 ? (
+          <p className="campo-aviso">
+            O pacote desta folha ainda não foi lido nesta tela; abra a folha na etapa das
+            pranchas para carregá-lo.
+          </p>
+        ) : null}
+      </fieldset>
+    );
+  };
+
+  return (
+    <div className="declarar-identidade">
+      <h3>Declarar que duas leituras são o mesmo elemento</h3>
+      <p className="dica">
+        A planta geral e a folha de detalhe desenham o mesmo alambrado, e sem esta
+        declaração ele conta duas vezes. Nada funde sozinho: o sistema não usa rótulo,
+        unidade nem proximidade, e errar para o lado de somar demais é o erro que aparece.
+      </p>
+      <div className="vinculo-lados">
+        {seletorDeFolha(
+          "kept",
+          "A parcela que fica",
+          "É a leitura que governa a quantidade quando as duas divergirem.",
+        )}
+        {seletorDeFolha(
+          "discarded",
+          "A leitura absorvida",
+          "Ela continua impressa na memória da folha onde foi lida, com subtotal zero.",
+        )}
+      </div>
+      {recusa === null ? null : (
+        <p className="campo-aviso" role="status">
+          {recusa}
+        </p>
+      )}
+      <div className="acoes-linha">
+        <button
+          type="button"
+          className="botao-secundario"
+          onClick={onPrever}
+          disabled={recusa !== null || previewing || submitting}
+        >
+          {previewing ? "Calculando…" : "Ver o efeito no total antes de declarar"}
+        </button>
+      </div>
+      {previaDoPar === null ? (
+        <p className="dica">
+          O efeito no total é calculado pelo servidor — esta tela nunca soma. Sem a prévia
+          deste par, a declaração não é oferecida.
+        </p>
+      ) : (
+        <div className="previa-vinculo">
+          <h4>Efeito desta fusão no total da praça</h4>
+          <ul className="previa-parcelas">
+            <ParcelaDaPrevia parcela={previaDoPar.kept} papel="a parcela que fica" />
+            <ParcelaDaPrevia
+              parcela={previaDoPar.discarded}
+              papel="fundida, não contribui"
+            />
+          </ul>
+          {previaDoPar.unit_mismatch || previaDoPar.total_before === null ? (
+            <p className="banner-erro" role="alert">
+              {previaDoPar.unit_mismatch
+                ? "As duas leituras estão em unidades diferentes: não há soma a mostrar, e nenhum total é escrito aqui. Confira se elas são mesmo o mesmo elemento."
+                : "Uma das leituras ainda não tem quantidade: não há soma a mostrar, e nenhum total é escrito aqui."}
+            </p>
+          ) : (
+            <table className="tabela previa-tabela">
+              <caption>
+                Totais calculados pelo servidor para este par de leituras
+              </caption>
+              <tbody>
+                <tr>
+                  <th scope="row">Total hoje, sem o vínculo</th>
+                  <td className="numero">
+                    {formatQuantityText(
+                      previaDoPar.total_before,
+                      unitLabel(previaDoPar.kept.unit),
+                    )}
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Total depois do vínculo</th>
+                  <td className="numero">
+                    {formatQuantityText(
+                      previaDoPar.total_after,
+                      unitLabel(previaDoPar.kept.unit),
+                    )}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          )}
+          <label className="campo">
+            Por que estas duas leituras são o mesmo elemento
+            <textarea
+              value={rascunho.note}
+              rows={2}
+              disabled={submitting}
+              onChange={(event) =>
+                onRascunho({ ...rascunho, note: event.target.value })
+              }
+            />
+          </label>
+          <p className="dica">
+            O motivo é obrigatório: o vínculo muda o total da praça, e quem confere depois
+            precisa ler por que duas leituras viraram uma. Autor e instante são carimbados
+            pelo servidor.
+          </p>
+          <div className="acoes-linha">
+            <button
+              type="button"
+              className="botao-primario"
+              onClick={onDeclarar}
+              disabled={submitting || motivo.length === 0}
+            >
+              {submitting ? "Declarando…" : "Declarar identidade"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A etapa Praça: o consolidado da praça e os NÚMEROS que o boletim dela já traz.
+ *
+ * O consolidado (`GET .../worksite`) referencia o pacote de cada folha por `plate_id` e
+ * digest e **não contém itens**. Os números vêm do boletim da praça (`POST .../calc`,
+ * F-046 T4c): um boletim por folha, com as linhas já consolidadas por código e a memória
+ * de cada parcela na folha onde a leitura foi feita. Tudo o que aparece aqui é string que
+ * o servidor mandou — esta tela nunca soma, multiplica nem arredonda.
+ *
+ * A recusa nomeia a folha (pacote de design aprovado, decisão 12): meia praça somada
+ * parece uma praça inteira.
+ */
+export function PainelDaPraca({
+  worksite,
+  bulletin,
+  children,
+}: {
+  worksite: WorksiteResponse;
+  /** O boletim GRAVADO da praça; `null` enquanto ninguém montou a medição. */
+  bulletin: BulletinResponse | null;
+  /** O ato de declarar identidade, montado por quem tem os pacotes das folhas em mãos. */
+  children?: ReactNode;
+}) {
+  const recusa = recusaDaPraca(worksite);
+  const total = worksite.plates.length;
+  const consolidado = worksite.consolidated;
+  const valuation = bulletin?.valuation ?? null;
+  return (
+    <section className="painel praca-painel" aria-label="Consolidado da praça">
+      <h2>Praça {worksite.worksite_name}</h2>
+      <p className="dica">
+        <span className="mono">{worksite.worksite_key}</span> · {total} folhas ·{" "}
+        {consolidado.present ? (
+          <>
+            consolidado sha256{" "}
+            <span
+              className="digest"
+              title={consolidado.worksite_takeoff_sha256 ?? undefined}
+            >
+              {shortDigest(consolidado.worksite_takeoff_sha256)}
+            </span>
+          </>
+        ) : (
+          "consolidado ainda não montado"
+        )}
+        .
+      </p>
+
+      {recusa === null ? null : (
+        <div className="banner-erro" role="alert">
+          <p>{recusa.message}</p>
+          {recusa.code === null ? null : (
+            <p className="mono praca-codigo">{recusa.code}</p>
+          )}
+        </div>
+      )}
+
+      {consolidado.document === null ? null : (
+        <div className="praca-folhas">
+          <h3>Folhas do consolidado</h3>
+          <ul className="praca-lista">
+            {consolidado.document.plates.map((referencia) => (
+              <li key={referencia.plate_id}>
+                <span className="mono">{referencia.plate_id}</span> · pacote{" "}
+                <span className="digest" title={referencia.packet_digest}>
+                  {shortDigest(referencia.packet_digest)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="dica">
+            O consolidado <strong>não contém itens</strong>: ele referencia o pacote de
+            cada folha por prancha e digest. Cada parcela aponta para o item na folha de
+            onde foi lida — o total é explicável por composição, nunca por reextração.
+          </p>
+        </div>
+      )}
+
+      <div className="praca-numeros">
+        <h3>Total por código e memória, folha por folha</h3>
+        {bulletin === null || valuation === null ? (
+          <p className="dica">
+            Esta praça ainda não tem boletim montado, e por isso não há número nenhum a
+            mostrar aqui. Monte o boletim na etapa seguinte: é ele que traz o total por
+            código e a memória de cada parcela, calculados no servidor.
+          </p>
+        ) : (
+          <>
+            <p className="total-geral">
+              Total da praça: {formatMoneyText(bulletin.total_amount)}
+            </p>
+            <p className="dica">
+              Medição {valuation.period_number} · {valuation.reference_label} · sha256{" "}
+              <span className="digest" title={bulletin.valuation_sha256}>
+                {shortDigest(bulletin.valuation_sha256)}
+              </span>
+              . Um boletim <strong>por folha</strong>, com a leitura fundida por
+              declaração contando uma vez só.
+            </p>
+            {worksite.plates.map((folha) => {
+              const chave = chaveDoBoletimDaFolha(
+                worksite.worksite_key,
+                folha.position,
+                total,
+              );
+              const boletim = boletimDaFolha(
+                valuation,
+                worksite.worksite_key,
+                folha,
+                total,
+              );
+              return (
+                <div key={folha.plate_id} className="praca-folha-numeros">
+                  <h4>
+                    {folhaLabel(folha.position, total)} ·{" "}
+                    <span className="mono">{folha.plate_id}</span>
+                  </h4>
+                  {boletim === null ? (
+                    <p className="banner-erro" role="alert">
+                      O boletim gravado não cobre esta folha (
+                      <span className="mono">{chave}</span>): ele foi montado antes de ela
+                      entrar na praça. Monte o boletim de novo para medir a praça inteira —
+                      nada desta folha é somado aqui enquanto isso.
+                    </p>
+                  ) : (
+                    <>
+                      <table className="tabela">
+                        <caption>
+                          Boletim desta folha, já consolidado por código pelo servidor
+                        </caption>
+                        <thead>
+                          <tr>
+                            <th scope="col">Item</th>
+                            <th scope="col">Código</th>
+                            <th scope="col">Un</th>
+                            <th scope="col">Quant.</th>
+                            <th scope="col">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {boletim.lines.map((line) => (
+                            <tr key={line.item_number}>
+                              <td>{line.item_number}</td>
+                              <td className="mono">{line.code}</td>
+                              <td>{unitLabel(line.unit)}</td>
+                              <td className="numero">
+                                {formatDecimalText(line.quantity)}
+                              </td>
+                              <td className="numero">{formatMoneyText(line.total)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr>
+                            <th scope="row" colSpan={4}>
+                              Total desta folha
+                            </th>
+                            <td className="numero">
+                              {formatMoneyText(boletim.total_amount)}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                      <h5>Memória desta folha</h5>
+                      <ul className="memoria">
+                        {memoriaDaFolha(valuation, chave).map((sheet) => (
+                          <li key={sheet.item_number}>
+                            <p>
+                              <strong>Item {sheet.item_number}</strong> — total{" "}
+                              {formatDecimalText(sheet.total_quantity)}
+                            </p>
+                            <ul>
+                              {sheet.blocks.map((block, index) => (
+                                <li key={`${sheet.item_number}-${index}`}>
+                                  {block.label} ({recipeLabel(block.recipe)}) ={" "}
+                                  {formatDecimalText(block.subtotal)}
+                                </li>
+                              ))}
+                            </ul>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+            <p className="dica">
+              Cada número acima é a string que o servidor mandou; nada é somado,
+              multiplicado ou arredondado aqui. O mesmo código medido em duas folhas
+              aparece nas duas, e a <strong>soma dele entre as folhas</strong> — mais a
+              deriva de centavo que o truncamento por linha pode produzir (ADR-0062) — é
+              escrita pela PLANILHA GERAL na exportação, com o laudo dela; esta tela não a
+              calcula e não a estima.
+            </p>
+          </>
+        )}
+      </div>
+
+      <div className="praca-vinculos">
+        <h3>Vínculos de identidade declarados</h3>
+        {worksite.identity_links.length === 0 ? (
+          <p className="dica">
+            Nenhum vínculo declarado nesta praça. Sem declaração humana, duas leituras do
+            mesmo elemento em folhas diferentes <strong>contam as duas</strong>: o sistema
+            não funde por rótulo, unidade nem proximidade, e errar para o lado de somar
+            demais é erro que aparece.
+          </p>
+        ) : (
+          <ul className="praca-lista">
+            {worksite.identity_links.map((link) => (
+              <li
+                key={`${link.kept.plate_id}:${link.kept.item_id}:${link.discarded.plate_id}:${link.discarded.item_id}`}
+                className="praca-vinculo"
+              >
+                <p className="praca-selo">
+                  <span aria-hidden="true">≡</span> identidade declarada
+                </p>
+                <p className="mono">
+                  {link.kept.plate_id} · {link.kept.item_id}
+                </p>
+                <p className="dica">a parcela que fica</p>
+                <p className="mono">
+                  ≡ {link.discarded.plate_id} · {link.discarded.item_id}
+                </p>
+                <p className="dica">fundida, não contribui</p>
+                <p>
+                  {link.declared_by ?? "autor não registrado"} ·{" "}
+                  {link.declared_at === null
+                    ? "instante não registrado"
+                    : formatTimestamp(link.declared_at)}
+                </p>
+                {link.note === null ? null : <p>Nota: {link.note}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/**
  * Jornada de medição sobre a API `/v1` autenticada (ADR-0028).
  *
  * A sessão é da casca, não desta jornada: quem lê o OIDC, consome o authorization code
@@ -1420,6 +2313,44 @@ export function MedicaoApp({
   const [overlay, setOverlay] = useState<OverlayResponse | null>(null);
   const [overlayTentativas, setOverlayTentativas] = useState(0);
   const [plateSrc, setPlateSrc] = useState<string | null>(null);
+  /**
+   * A resposta da prancha, e não só a URL: o `upload_id` dela é o documento cujas páginas o
+   * lote de promoção oferece, e o `page_count` é quantas páginas esse documento tem.
+   */
+  const [plate, setPlate] = useState<PlateResponse | null>(null);
+  // A praça (F-046): as folhas da rodada e o consolidado que o servidor deriva delas. A
+  // rodada de uma folha lê isto do mesmo jeito e não mostra nada de praça na tela.
+  const [worksite, setWorksite] = useState<WorksiteResponse | null>(null);
+  /** `plate_id` da folha em foco; vazio é "a primeira folha da praça". */
+  const [folhaFocada, setFolhaFocada] = useState("");
+  /** Páginas marcadas para virar folha. Começa VAZIA e nunca é preenchida por padrão. */
+  const [paginasSelecionadas, setPaginasSelecionadas] = useState<number[]>([]);
+  /** Folhas marcadas para a leitura paga. Começa VAZIA, pelo mesmo motivo. */
+  const [folhasSelecionadas, setFolhasSelecionadas] = useState<string[]>([]);
+  /**
+   * O conjunto de códigos de CADA folha, por `plate_id` (F-046 T4d).
+   *
+   * A folha aberta já vive em `codes`; este mapa existe para a pergunta que só a praça
+   * faz — "o que falta nas OUTRAS folhas?" —, e é uma leitura por folha, feita quando a
+   * etapa de códigos é aberta. Folha ausente do mapa é "ainda não lida", nunca zero.
+   */
+  const [codigosPorFolha, setCodigosPorFolha] = useState<Record<string, CodesResponse>>(
+    {},
+  );
+  /**
+   * O pacote de takeoff de CADA folha, por `plate_id`. Serve à escolha das duas leituras
+   * do vínculo de identidade: o par `(plate_id, item_id)` é o endereço da praça, e sem os
+   * itens das duas folhas não há o que endereçar.
+   */
+  const [pacotesPorFolha, setPacotesPorFolha] = useState<Record<string, TakeoffItem[]>>(
+    {},
+  );
+  /** O vínculo em digitação; `VINCULO_VAZIO` é o normal — nada nasce escolhido. */
+  const [vinculo, setVinculo] = useState<RascunhoDeVinculo>(VINCULO_VAZIO);
+  /** A prévia do efeito da fusão, calculada pelo SERVIDOR. `null` é "ainda não pedida". */
+  const [previaDoVinculo, setPreviaDoVinculo] =
+    useState<IdentityLinkPreviewResponse | null>(null);
+  const [prevendo, setPrevendo] = useState(false);
   const [suggestions, setSuggestions] = useState<SuggestionsResponse | null>(null);
   const [codes, setCodes] = useState<CodesResponse | null>(null);
   const [bulletin, setBulletin] = useState<BulletinResponse | null>(null);
@@ -1607,11 +2538,22 @@ export function MedicaoApp({
       setVersion(nextState.version);
       setRevisionConflict(false);
       setAlertMessage(null);
-      if (nextState.takeoff.present) {
-        setTakeoff(await getTakeoff(token, rodada));
-        setCodes(await getCodes(token, rodada));
+      // A praça é lida ANTES do resto, e é a ordem que importa: é ela que diz de qual
+      // folha as leituras seguintes falam. A leitura é observacional — uma falha aqui não
+      // pode derrubar a revisão da folha que já está na tela —, e sem ela a jornada cai no
+      // caminho de sempre, o da primeira folha.
+      const praca = await leituraObservacional(() => getWorksite(token, rodada));
+      setWorksite(praca);
+      const aberta = folhaEmFoco(praca, folhaFocada);
+      const folha = folhaDaChamada(praca, folhaFocada);
+      // Quem sabe se ESTA folha tem pacote é a praça; sem ela (ou com uma folha só), a
+      // resposta continua sendo a da rodada, como sempre foi.
+      const temPacote = aberta === null ? nextState.takeoff.present : aberta.takeoff_present;
+      if (temPacote) {
+        setTakeoff(await getTakeoff(token, rodada, folha));
+        setCodes(await getCodes(token, rodada, folha));
         setOverlay(
-          await leituraObservacional(() => getTakeoffOverlay(token, rodada)),
+          await leituraObservacional(() => getTakeoffOverlay(token, rodada, folha)),
         );
         setOverlayTentativas(0);
       } else {
@@ -1621,17 +2563,19 @@ export function MedicaoApp({
       }
       // A URL da imagem é assinada e de curta duração: ela é relida junto com o estado e
       // vai direto no `src`, sem header nenhum e sem nunca aparecer em log.
-      setPlateSrc(
-        nextState.plate.present
-          ? ((await leituraObservacional(() => getPlate(token, rodada)))
-              ?.image_url ?? null)
-          : null,
-      );
+      const prancha = nextState.plate.present
+        ? await leituraObservacional(() => getPlate(token, rodada, folha))
+        : null;
+      setPlate(prancha);
+      setPlateSrc(prancha?.image_url ?? null);
       // A shortlist só é buscada quando já existe na rodada: a primeira leitura
       // **calcula e grava** o artefato, e isso é ato do orçamentista, não efeito colateral
-      // de abrir a tela.
+      // de abrir a tela. `suggestions_present` fala da PRIMEIRA folha, então a folha 2 em
+      // diante nunca entra aqui: um `GET` dela calcularia e gravaria a shortlist daquela
+      // folha sem gesto nenhum, que é exatamente o que a regra da jornada proíbe. Nas
+      // demais folhas o cálculo fica atrás do botão que declara o que vai ser gravado.
       setSuggestions(
-        nextState.codes.suggestions_present
+        folha === undefined && nextState.codes.suggestions_present
           ? await getSuggestions(token, rodada)
           : null,
       );
@@ -1644,7 +2588,7 @@ export function MedicaoApp({
     } finally {
       setLoading(false);
     }
-  }, [rodada, tokenDaSessao]);
+  }, [folhaFocada, rodada, tokenDaSessao]);
 
   // Sem sessão nada é chamado: toda rota da medição é autenticada e por tenant, e uma
   // chamada sem token devolveria 401 na tela de quem ainda nem entrou. `autenticado` é
@@ -1672,6 +2616,15 @@ export function MedicaoApp({
     setBulletin(null);
     setDossier(null);
     setPlateSrc(null);
+    setPlate(null);
+    setWorksite(null);
+    setFolhaFocada("");
+    setPaginasSelecionadas([]);
+    setFolhasSelecionadas([]);
+    setCodigosPorFolha({});
+    setPacotesPorFolha({});
+    setVinculo(VINCULO_VAZIO);
+    setPreviaDoVinculo(null);
     setOpenStep(null);
     setSelectedItemId("");
     setSelectedPendingId("");
@@ -1827,6 +2780,151 @@ export function MedicaoApp({
     }
   };
 
+  /**
+   * Promove EM LOTE as páginas marcadas a folhas da praça (F-046 T4).
+   *
+   * Um ato, uma confirmação: a seleção é toda enviada de uma vez, e o servidor apura o teto
+   * da praça e a página repetida sobre o lote inteiro antes da primeira folha. Promover
+   * **não** dispara leitura nenhuma — a chamada paga é o ato seguinte, com o número de
+   * folhas escrito no botão dele.
+   */
+  const acrescentarFolhas = async () => {
+    const token = tokenDaSessao();
+    if (
+      token === null ||
+      version === null ||
+      plate === null ||
+      paginasSelecionadas.length === 0
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const paginas = [...paginasSelecionadas].sort((left, right) => left - right);
+      const resposta = await appendPlates(
+        token,
+        rodada,
+        plate.upload_id,
+        paginas,
+        version,
+      );
+      aplicarVersao(resposta.version);
+      setPaginasSelecionadas([]);
+      setToast(
+        `${resposta.appended.length} ${
+          resposta.appended.length === 1 ? "folha acrescentada" : "folhas acrescentadas"
+        } à praça; a leitura da legenda ainda não foi disparada.`,
+      );
+      await atualizarEstado();
+    } catch (error) {
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Enfileira a leitura das folhas marcadas: uma chamada paga POR FOLHA.
+   *
+   * O número de folhas do lote é a autorização de quem paga, e ele vai no corpo e volta
+   * declarado na resposta — é a última fronteira em que esse número pode ser conferido
+   * antes de a primeira chamada acontecer.
+   */
+  const lerFolhasSelecionadas = async () => {
+    const token = tokenDaSessao();
+    if (token === null || version === null || folhasSelecionadas.length === 0) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const resposta = await createPlatesExtraction(
+        token,
+        rodada,
+        folhasSelecionadas,
+        version,
+      );
+      aplicarVersao(resposta.version);
+      setFolhasSelecionadas([]);
+      setToast(
+        `Leitura enfileirada para ${resposta.plate_count} ${
+          resposta.plate_count === 1 ? "folha" : "folhas"
+        } da praça.`,
+      );
+      await atualizarEstado();
+    } catch (error) {
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Outra origem: um PDF diferente vira mais uma folha da MESMA praça (F-046).
+   *
+   * A praça não é um arquivo — detalhe que veio em PDF separado entra pela mesma porta e
+   * vira mais uma folha. Ao contrário do primeiro envio, este ato **não** dispara leitura
+   * nenhuma: a folha nasce sem pacote e a chamada paga sai no ato de ler, onde o número de
+   * folhas está escrito no botão. A rota singular da extração é da PRIMEIRA folha, e
+   * chamá-la aqui releria a folha errada.
+   */
+  const enviarOutraFolha = async () => {
+    const token = tokenDaSessao();
+    if (token === null || uploadFile === null || version === null) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const uploadId = await uploadPlateFile(token, uploadFile);
+      const folha = await associatePlate(token, rodada, uploadId, version);
+      aplicarVersao(folha.version);
+      setUploadFile(null);
+      setToast(
+        "Folha acrescentada à praça; a leitura da legenda ainda não foi disparada.",
+      );
+      await atualizarEstado();
+    } catch (error) {
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /** Marca ou desmarca uma página do lote; nada aqui marca por conta própria. */
+  const alternarPagina = (pagina: number) => {
+    setPaginasSelecionadas((atual) =>
+      atual.includes(pagina)
+        ? atual.filter((numero) => numero !== pagina)
+        : [...atual, pagina],
+    );
+  };
+
+  /** Marca ou desmarca uma folha do lote de leitura; cada marca é uma chamada paga. */
+  const alternarFolha = (plateId: string) => {
+    setFolhasSelecionadas((atual) =>
+      atual.includes(plateId)
+        ? atual.filter((id) => id !== plateId)
+        : [...atual, plateId],
+    );
+  };
+
   /** Dispara a leitura de uma prancha já associada, sem reenviar o documento. */
   const tentarExtracaoNovamente = async () => {
     const token = tokenDaSessao();
@@ -1870,22 +2968,29 @@ export function MedicaoApp({
         nextState.extraction.status !== "running" &&
         nextState.takeoff.present
       ) {
-        setTakeoff(await getTakeoff(token, rodada));
-        setCodes(await getCodes(token, rodada));
-        setOverlay(
-          await leituraObservacional(() => getTakeoffOverlay(token, rodada)),
-        );
-        setOverlayTentativas(0);
-        setPlateSrc(
-          (await leituraObservacional(() => getPlate(token, rodada)))
-            ?.image_url ?? null,
-        );
+        // A folha que acabou de ser lida muda o estado da praça: ela é relida PRIMEIRO,
+        // porque é dela que sai a folha que as leituras seguintes nomeiam.
+        const praca = await leituraObservacional(() => getWorksite(token, rodada));
+        setWorksite(praca);
+        const aberta = folhaEmFoco(praca, folhaFocada);
+        const folha = folhaDaChamada(praca, folhaFocada);
+        if (aberta === null || aberta.takeoff_present) {
+          setTakeoff(await getTakeoff(token, rodada, folha));
+          setCodes(await getCodes(token, rodada, folha));
+          setOverlay(
+            await leituraObservacional(() => getTakeoffOverlay(token, rodada, folha)),
+          );
+          setOverlayTentativas(0);
+        }
+        const prancha = await leituraObservacional(() => getPlate(token, rodada, folha));
+        setPlate(prancha);
+        setPlateSrc(prancha?.image_url ?? null);
         setOpenStep("revisao");
       }
     } catch (error) {
       setAlertMessage(describeError(error));
     }
-  }, [rodada, tokenDaSessao]);
+  }, [folhaFocada, rodada, tokenDaSessao]);
 
   // Poll do estado a cada ~3s enquanto a leitura automática está na fila ou rodando; para
   // sozinho assim que ela fecha (`done` ou `failed`), porque a condição do efeito deixa de
@@ -1906,17 +3011,26 @@ export function MedicaoApp({
       return;
     }
     try {
-      setOverlay(await getTakeoffOverlay(token, rodada));
+      setOverlay(
+        await getTakeoffOverlay(token, rodada, folhaDaChamada(worksite, folhaFocada)),
+      );
     } catch (error) {
       setAlertMessage(describeError(error));
     }
-  }, [rodada, tokenDaSessao]);
+  }, [folhaFocada, rodada, tokenDaSessao, worksite]);
 
   // Overlay vencido é consequência normal de uma decisão (ADR-0030): o desenho é
   // reconstruído por comando de fila, e até lá a tela mostra o anterior MARCADO. O poll
   // acompanha o re-render, com teto — sem worker o desenho fica vencido, e isso precisa
   // aparecer como estado, não como tráfego infinito.
-  const overlayVencido = overlay !== null && overlay.stale;
+  /**
+   * A folha em foco é a PRIMEIRA da praça? Só ela tem re-render de overlay em fila
+   * (limitação declarada da F-046 T4c: o comando desenha `takeoff_packet_json` e ainda
+   * não conhece a praça). Nas demais, o desenho fica vencido para sempre — e esperar por
+   * ele seria tráfego que nunca vira resposta.
+   */
+  const folhaComRerender = (folhaEmFoco(worksite, folhaFocada)?.position ?? 1) === 1;
+  const overlayVencido = overlay !== null && overlay.stale && folhaComRerender;
   useEffect(() => {
     if (!overlayVencido || overlayTentativas >= OVERLAY_POLL_MAX) {
       return;
@@ -2049,9 +3163,33 @@ export function MedicaoApp({
     return () => window.clearTimeout(timer);
   }, [query, rodada, tokenDaSessao]);
 
-  const jornada = useMemo(() => derivarEtapas(state), [state]);
+  const jornada = useMemo(() => derivarEtapas(state, worksite), [state, worksite]);
   const etapaVisivel: EtapaId | "rodada" = openStep === null ? "rodada" : openStep;
   const overlayEstado = overlayFreshness(overlay);
+
+  // A praça (F-046). Tudo aqui é derivado do que o servidor mandou; com UMA folha, `praca`
+  // é falso e nada disto aparece na tela — a rodada de uma prancha continua a de sempre.
+  const folhas = worksite?.plates ?? [];
+  const praca = pracaPlural(worksite);
+  const folhaAtual = folhaEmFoco(worksite, folhaFocada);
+  /** A folha que TODA chamada desta tela nomeia; `undefined` é a primeira folha. */
+  const folhaDaVez = folhaDaChamada(worksite, folhaFocada);
+  /**
+   * A folha em foco é a que o pacote em mãos descreve? O pacote DECLARA de qual folha ele
+   * é, e é essa comparação que decide — nunca a posição na praça. Sob o cabeçalho de uma
+   * folha, a imagem e os itens de outra seriam uma afirmação falsa com cara de evidência,
+   * e a comparação continua valendo para pegar a leitura que ainda está em voo.
+   */
+  const folhaServida =
+    takeoff !== null &&
+    folhaAtual !== null &&
+    folhaAtual.plate_id === takeoff.packet.plate_id;
+  const folhasSemPacote = folhas.filter((folha) => !folha.takeoff_present);
+  const paginasDoDocumento = plate?.page_count ?? state?.plate.page_count ?? 0;
+  const paginasJaPromovidas = paginasPromovidas(
+    worksite,
+    plate?.source_sha256 ?? state?.plate.source_sha256 ?? null,
+  );
 
   const items = takeoff?.packet.items ?? [];
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
@@ -2074,16 +3212,117 @@ export function MedicaoApp({
       const nextState = await getRoundState(token, rodada);
       setState(nextState);
       setVersion(nextState.version);
+      // A praça anda junto com a rodada: acrescentar folha e enfileirar leitura mudam as
+      // folhas sem mudar o pacote de takeoff que a revisão já tem em mãos.
+      setWorksite(await leituraObservacional(() => getWorksite(token, rodada)));
     } catch (error) {
       setAlertMessage(describeError(error));
     }
   }, [rodada, tokenDaSessao]);
+
+  /**
+   * O que falta codificar em CADA folha — uma leitura por folha, só quando a etapa de
+   * códigos está aberta numa praça plural (F-046 T4d).
+   *
+   * A etapa de código é por prancha, e sem esta varredura a orçamentista veria "nada
+   * pendente" na folha aberta sem saber que outra folha trava o boletim da praça. Ela é
+   * feita à medida — o teto de folhas por rodada é 12 — e refeita quando a rodada anda
+   * (`version`), porque é uma decisão gravada que muda o que falta. `GET
+   * .../code-assignments` só LÊ: ele não calcula nem grava artefato nenhum, ao contrário
+   * da shortlist.
+   */
+  useEffect(() => {
+    const token = tokenDaSessao();
+    if (token === null || rodada === "" || !praca || etapaVisivel !== "codigos") {
+      return;
+    }
+    let cancelado = false;
+    void (async () => {
+      const lidas: Record<string, CodesResponse> = {};
+      for (const folha of worksite?.plates ?? []) {
+        if (!folha.takeoff_present) {
+          continue;
+        }
+        const resposta = await leituraObservacional(() =>
+          getCodes(token, rodada, folha.plate_id),
+        );
+        if (resposta !== null) {
+          lidas[folha.plate_id] = resposta;
+        }
+      }
+      if (!cancelado) {
+        setCodigosPorFolha(lidas);
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, [etapaVisivel, praca, rodada, tokenDaSessao, version, worksite]);
+
+  /**
+   * Os itens de cada folha, para o vínculo de identidade poder ser endereçado.
+   *
+   * O endereço da praça é o par `(plate_id, item_id)`, e escolher as duas leituras exige
+   * ter os itens das DUAS folhas em mãos — o pacote da folha aberta não basta. A varredura
+   * roda só na etapa da praça, pelo mesmo motivo da de cima: é leitura sob demanda, nunca
+   * efeito colateral de abrir a jornada.
+   */
+  useEffect(() => {
+    const token = tokenDaSessao();
+    if (token === null || rodada === "" || !praca || etapaVisivel !== "praca") {
+      return;
+    }
+    let cancelado = false;
+    void (async () => {
+      const lidos: Record<string, TakeoffItem[]> = {};
+      for (const folha of worksite?.plates ?? []) {
+        if (!folha.takeoff_present) {
+          continue;
+        }
+        const resposta = await leituraObservacional(() =>
+          getTakeoff(token, rodada, folha.plate_id),
+        );
+        if (resposta !== null) {
+          lidos[folha.plate_id] = resposta.packet.items;
+        }
+      }
+      if (!cancelado) {
+        setPacotesPorFolha(lidos);
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+  }, [etapaVisivel, praca, rodada, tokenDaSessao, version, worksite]);
 
   const abrirEtapa = (etapa: Etapa) => {
     if (etapa.status === "blocked") {
       return;
     }
     setOpenStep(etapa.id);
+  };
+
+  /**
+   * Trocar a folha em foco: a jornada inteira passa a falar DAQUELA prancha.
+   *
+   * O que muda de verdade é a recarga — `carregarEstado` depende de `folhaFocada`, então
+   * imagem, overlay, itens e conjunto de códigos são relidos com a folha nova. O que fica
+   * para trás é a seleção: um item escolhido na folha anterior não existe nesta, e deixar
+   * a seleção em pé abriria um formulário que promete decidir item de outra prancha.
+   */
+  const focarFolha = (plateId: string) => {
+    if (plateId === folhaAtual?.plate_id) {
+      return;
+    }
+    setFolhaFocada(plateId);
+    setSelectedItemId("");
+    setSelectedPendingId("");
+    setDecision(EMPTY_DECISION);
+    setCodeChoice(null);
+    setCodeNote("");
+    setDesfazerCaixa(null);
+    setImageSize(null);
+    setUltimoCodigoConfirmado(null);
   };
 
   const selecionarItem = (item: TakeoffItem) => {
@@ -2163,6 +3402,8 @@ export function MedicaoApp({
       // hoje só no orçamento-base. Dívida declarada, não esquecimento.
       const response = await postTakeoffDecision(token, rodada, {
         baseVersion: version,
+        // A folha é do ATO: este lote revisa a legenda DESTA prancha.
+        plateId: folhaDaVez,
         decisions: [
           {
             itemId: selectedItem.id,
@@ -2190,7 +3431,7 @@ export function MedicaoApp({
         }. Faltam ${response.pending} de ${response.items}.`,
       );
       await atualizarEstado();
-      setCodes(await getCodes(token, rodada));
+      setCodes(await getCodes(token, rodada, folhaDaVez));
     } catch (error) {
       // O conflito tem banner próprio, com o botão de recarregar e o formulário
       // preservado; repetir a frase no alerta comum só empilharia ruído.
@@ -2218,7 +3459,7 @@ export function MedicaoApp({
     setSubmitting(true);
     setAlertMessage(null);
     try {
-      const response = await getSuggestions(token, rodada);
+      const response = await getSuggestions(token, rodada, folhaDaVez);
       setSuggestions(response);
       // Híbrida ou lexical é o que a resposta declara (`matching`), não o que a tela
       // supõe: o artefato pode ter sido gravado por outra sessão.
@@ -2319,6 +3560,9 @@ export function MedicaoApp({
         itemId: selectedPending.item_id,
         action,
         baseVersion: version,
+        // `item_id` só é único DENTRO do pacote de uma folha (ADR-0057, decisão 5): sem a
+        // folha junto, duas prancha que cunharam o mesmo id seriam indistinguíveis.
+        plateId: folhaDaVez,
         code: action === "confirm" ? codeChoice?.code : undefined,
         note: codeNote,
       });
@@ -2387,11 +3631,10 @@ export function MedicaoApp({
     setSubmitting(true);
     setAlertMessage(null);
     try {
-      const response = await postCodeRevocation(
-        token,
-        rodada,
-        pedidoDeDesfazer(caixa, version),
-      );
+      const response = await postCodeRevocation(token, rodada, {
+        ...pedidoDeDesfazer(caixa, version),
+        plateId: folhaDaVez,
+      });
       aplicarVersao(response.version);
       setCodes(response);
       setDesfazerCaixa(null);
@@ -2423,6 +3666,7 @@ export function MedicaoApp({
       const response = await postCodeClosure(token, rodada, {
         itemId: selectedPending.item_id,
         baseVersion: version,
+        plateId: folhaDaVez,
         note: codeNote,
       });
       aplicarVersao(response.version);
@@ -2434,6 +3678,88 @@ export function MedicaoApp({
       setToast(`${selectedPending.label}: pacote de serviços declarado completo.`);
       await atualizarEstado();
     } catch (error) {
+      const recusa = recusaDeMutacao(error);
+      if (recusa.conflito) {
+        setRevisionConflict(true);
+      } else {
+        setAlertMessage(recusa.mensagem);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * A prévia do efeito da fusão: **não grava nada e não avança a versão da rodada**.
+   *
+   * Ela existe porque a conta é do SERVIDOR — esta tela não soma —, e é ela que torna a
+   * decisão informada: sem ela, o efeito do vínculo no total só apareceria depois de
+   * declarado. Recusa aqui não é acidente de caminho: as recusas da prévia são as mesmas
+   * da declaração, e ver a recusa antes de gravar é o ponto.
+   */
+  const preverVinculo = async () => {
+    const token = tokenDaSessao();
+    if (token === null || recusaDoVinculo(vinculo.kept, vinculo.discarded) !== null) {
+      return;
+    }
+    setPrevendo(true);
+    setAlertMessage(null);
+    try {
+      setPreviaDoVinculo(
+        await previewIdentityLink(token, rodada, {
+          kept: vinculo.kept,
+          discarded: vinculo.discarded,
+        }),
+      );
+    } catch (error) {
+      // A prévia recusada apaga a prévia anterior: mostrar o número de um par que o
+      // servidor acabou de recusar seria pior que não mostrar número nenhum.
+      setPreviaDoVinculo(null);
+      setAlertMessage(describeError(error));
+    } finally {
+      setPrevendo(false);
+    }
+  };
+
+  /**
+   * O ato: duas leituras de folhas diferentes são o MESMO elemento físico (ADR-0057, D4).
+   *
+   * Só sai daqui com a prévia DAQUELE par à vista e com motivo escrito. A resposta é a
+   * praça inteira já remontada com o vínculo novo, e é dela que a tela redesenha — o
+   * consolidado é derivado, e recalculá-lo aqui seria uma segunda verdade.
+   */
+  const declararIdentidade = async () => {
+    const token = tokenDaSessao();
+    if (
+      token === null ||
+      version === null ||
+      !previaConfere(previaDoVinculo, vinculo) ||
+      vinculo.note.trim().length === 0
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    setAlertMessage(null);
+    try {
+      const praca = await declareIdentityLink(token, rodada, {
+        kept: vinculo.kept,
+        discarded: vinculo.discarded,
+        baseVersion: version,
+        note: vinculo.note,
+      });
+      aplicarVersao(praca.version);
+      setWorksite(praca);
+      setVinculo(VINCULO_VAZIO);
+      setPreviaDoVinculo(null);
+      setRevisionConflict(false);
+      setToast(
+        "Identidade declarada: as duas leituras passam a contar como um elemento só. " +
+          "Monte o boletim de novo para o total refletir a fusão.",
+      );
+      await atualizarEstado();
+    } catch (error) {
+      // Recusa preserva o rascunho e o motivo digitado: nada foi gravado, e apagar o
+      // texto obrigaria a reescrever a justificativa para tentar de novo.
       const recusa = recusaDeMutacao(error);
       if (recusa.conflito) {
         setRevisionConflict(true);
@@ -3234,16 +4560,83 @@ export function MedicaoApp({
         ) : null}
 
         {etapaVisivel === "prancha" ? (
-          <section className="painel" aria-label="Prancha do projetista">
-            <h2>Prancha do projetista</h2>
+          <section
+            className="painel"
+            aria-label={praca ? "Pranchas da praça" : "Prancha do projetista"}
+          >
+            <h2>{praca ? "Pranchas da praça" : "Prancha do projetista"}</h2>
+            {praca ? (
+              <FaixaDeFolhas
+                folhas={folhas}
+                emFoco={folhaAtual?.plate_id ?? ""}
+                onFocar={focarFolha}
+              />
+            ) : null}
             {state === null ? (
               <p>O estado desta rodada ainda não foi lido.</p>
             ) : state.plate.present ? (
-              <EstadoExtracao
-                extraction={state.extraction}
-                onRetry={() => void tentarExtracaoNovamente()}
-                retrying={submitting}
-              />
+              <>
+                <EstadoExtracao
+                  extraction={state.extraction}
+                  onRetry={() => void tentarExtracaoNovamente()}
+                  retrying={submitting}
+                  porFolha={praca}
+                />
+                {plate === null || paginasDoDocumento <= 1 ? null : (
+                  <AcrescentarFolhas
+                    paginas={paginasDoDocumento}
+                    jaPromovidas={paginasJaPromovidas}
+                    selecionadas={paginasSelecionadas}
+                    aindaCabem={folhasQueAindaCabem(worksite)}
+                    onAlternar={alternarPagina}
+                    onConfirmar={() => void acrescentarFolhas()}
+                    submitting={submitting}
+                  />
+                )}
+                {folhasSemPacote.length === 0 ? null : (
+                  <LerFolhasEmLote
+                    folhas={folhasSemPacote}
+                    selecionadas={folhasSelecionadas}
+                    onAlternar={alternarFolha}
+                    onConfirmar={() => void lerFolhasSelecionadas()}
+                    submitting={submitting}
+                  />
+                )}
+                <form
+                  className="formulario outra-origem"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void enviarOutraFolha();
+                  }}
+                >
+                  <h3>Outra origem</h3>
+                  <p className="dica">
+                    A praça <strong>não</strong> é um arquivo: detalhe que veio em PDF
+                    separado entra pela mesma porta e vira mais uma folha da mesma praça.
+                    Cada folha nasce como pacote de takeoff próprio, com sua imagem, seu
+                    digest e sua evidência; nada é mesclado na ingestão.
+                  </p>
+                  <label className="campo">
+                    Enviar outro PDF para esta praça
+                    <input
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="botao-secundario"
+                    disabled={uploadFile === null || submitting || version === null}
+                  >
+                    {submitting ? "Enviando…" : "Acrescentar 1 folha à praça"}
+                  </button>
+                  <p className="aviso-fixo aviso-inline">
+                    Acrescentar não lê legenda nenhuma: a leitura é o ato seguinte, com o
+                    número de chamadas pagas escrito no botão dele.
+                  </p>
+                </form>
+              </>
             ) : (
               <form
                 className="formulario"
@@ -3277,11 +4670,32 @@ export function MedicaoApp({
           </section>
         ) : null}
 
-        {etapaVisivel === "revisao" && takeoff !== null ? (
+        {etapaVisivel === "revisao" && (takeoff !== null || praca) ? (
+          <>
+            {praca ? (
+              <FaixaDeFolhas
+                folhas={folhas}
+                emFoco={folhaAtual?.plate_id ?? ""}
+                onFocar={focarFolha}
+              />
+            ) : null}
+            {takeoff === null || (praca && !folhaServida) ? (
+              folhaAtual === null ? null : (
+                <FolhaSemPacote folha={folhaAtual} total={folhas.length} />
+              )
+            ) : (
           <section className="workspace" aria-label="Revisão do takeoff">
             <article className="painel prancha-painel">
               <div className="painel-cabecalho">
-                <h2>Prancha e legenda</h2>
+                <h2>
+                  Prancha e legenda
+                  {praca && folhaAtual !== null ? (
+                    <>
+                      {" — "}
+                      <strong>{folhaLabel(folhaAtual.position, folhas.length)}</strong>
+                    </>
+                  ) : null}
+                </h2>
                 <div className="cabecalho-controles">
                   <button
                     type="button"
@@ -3443,6 +4857,9 @@ export function MedicaoApp({
                 </div>
               </div>
 
+              {praca && !folhaComRerender && folhaAtual !== null ? (
+                <OverlaySemRerender folha={folhaAtual} total={folhas.length} />
+              ) : null}
               {overlay === null ? null : (
                 <OverlayDoTakeoff
                   overlay={overlay}
@@ -3452,7 +4869,15 @@ export function MedicaoApp({
             </article>
 
             <article className="painel lista-painel">
-              <h2>Itens da legenda</h2>
+              <h2>
+                Itens da legenda
+                {praca && folhaAtual !== null ? (
+                  <>
+                    {" — "}
+                    <strong>{folhaLabel(folhaAtual.position, folhas.length)}</strong>
+                  </>
+                ) : null}
+              </h2>
               <p className="dica">
                 {takeoff.packet.items.length} itens da prancha{" "}
                 <span className="mono">{takeoff.packet.plate_id}</span>. Pacote sha256{" "}
@@ -3680,17 +5105,51 @@ export function MedicaoApp({
               )}
             </article>
           </section>
+            )}
+          </>
+        ) : null}
+
+        {etapaVisivel === "codigos" && praca ? (
+          <>
+            <FaixaDeFolhas
+              folhas={folhas}
+              emFoco={folhaAtual?.plate_id ?? ""}
+              onFocar={focarFolha}
+            />
+            <AndamentoDaCodificacao
+              folhas={codificacaoDasFolhas(worksite, codigosPorFolha)}
+              total={folhas.length}
+              emFoco={folhaAtual?.plate_id ?? ""}
+              onFocar={focarFolha}
+            />
+          </>
         ) : null}
 
         {etapaVisivel === "codigos" && codes !== null ? (
           <section className="workspace duas-colunas" aria-label="Confirmação de código">
             <article className="painel lista-painel">
-              <h2>Itens confirmados sem código</h2>
+              <h2>
+                Itens confirmados sem código
+                {praca && folhaAtual !== null ? (
+                  <>
+                    {" — "}
+                    <strong>{folhaLabel(folhaAtual.position, folhas.length)}</strong>
+                  </>
+                ) : null}
+              </h2>
+              {praca && codes.plate_id !== undefined ? (
+                <p className="dica">
+                  Codificando a prancha <span className="mono">{codes.plate_id}</span>. O
+                  conjunto de códigos é <strong>desta folha</strong>; o boletim da praça é
+                  a união dos conjuntos de todas elas.
+                </p>
+              ) : null}
               {suggestions === null ? (
                 <div className="shortlist-vazia">
                   <p>
-                    A shortlist ainda não foi calculada nesta rodada. Calcular grava a
-                    shortlist de código como artefato da rodada.
+                    A shortlist ainda não foi calculada{" "}
+                    {praca ? "nesta folha" : "nesta rodada"}. Calcular grava a shortlist de
+                    código como artefato da rodada.
                   </p>
                   <p className="dica">{DESCRICAO_CALCULO_SHORTLIST}</p>
                   <button
@@ -3714,14 +5173,27 @@ export function MedicaoApp({
                       {note}
                     </p>
                   ))}
-                  <button
-                    type="button"
-                    className="botao-secundario"
-                    onClick={() => void recalcularShortlist()}
-                    disabled={submitting || version === null}
-                  >
-                    Recalcular shortlist
-                  </button>
+                  {folhaComRerender ? (
+                    <button
+                      type="button"
+                      className="botao-secundario"
+                      onClick={() => void recalcularShortlist()}
+                      disabled={submitting || version === null}
+                    >
+                      Recalcular shortlist
+                    </button>
+                  ) : (
+                    // O recompute — o braço PAGO — ainda é o da primeira folha: ele não
+                    // aceita a folha e regravaria a shortlist DELA. Oferecer o botão aqui
+                    // seria oferecer um ato que estraga outra folha, então ele não é
+                    // oferecido, e o motivo fica escrito.
+                    <p className="aviso-fixo aviso-inline" role="status">
+                      O recálculo pago da shortlist ainda é o da primeira folha da praça:
+                      ele não sabe de qual folha recalcular e regravaria a dela. Nesta
+                      folha vale a shortlist léxica que a leitura calculou — a mesma que a
+                      primeira folha tem antes de qualquer recálculo.
+                    </p>
+                  )}
                 </div>
               )}
               {pendingItems.length === 0 ? (
@@ -4157,10 +5629,45 @@ export function MedicaoApp({
           </section>
         ) : null}
 
+        {etapaVisivel === "praca" && worksite !== null ? (
+          <PainelDaPraca worksite={worksite} bulletin={bulletin}>
+            <DeclararIdentidade
+              folhas={folhas}
+              itensPorFolha={pacotesPorFolha}
+              rascunho={vinculo}
+              previa={previaDoVinculo}
+              onRascunho={(proximo) => {
+                // Trocar a leitura apaga a prévia: um total conferido de outro par é pior
+                // que total nenhum, e o botão de declarar depende dela.
+                setPreviaDoVinculo((atual) =>
+                  previaConfere(atual, proximo) ? atual : null,
+                );
+                setVinculo(proximo);
+              }}
+              onPrever={() => void preverVinculo()}
+              onDeclarar={() => void declararIdentidade()}
+              previewing={prevendo}
+              submitting={submitting}
+            />
+          </PainelDaPraca>
+        ) : null}
+
         {etapaVisivel === "boletim" ? (
           <section className="painel" aria-label="Boletim da medição">
             <h2>Boletim de medição</h2>
             <p className="aviso-fixo aviso-inline">{AVISO_MEDICAO}</p>
+            {praca ? (
+              // Desde a F-046 T4c o boletim é o da PRAÇA INTEIRA: um por folha, com o
+              // total saindo da consolidação por código e a leitura fundida contando uma
+              // vez. O que continua valendo é a recusa — folha pendente trava o boletim
+              // todo —, e é ela que a etapa da praça nomeia por folha.
+              <p className="dica">
+                Esta praça tem {folhas.length} folhas, e o boletim cobre todas: um boletim
+                por folha, cada parcela na folha onde foi lida, e o total da praça saindo
+                da consolidação por código. Folha pendente de revisão trava o boletim
+                inteiro — meia praça somada parece uma praça inteira.
+              </p>
+            ) : null}
             {bulletin === null ? (
               <div className="formulario">
                 <p>

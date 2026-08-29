@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 from collections import deque
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final, Literal
@@ -45,6 +46,13 @@ from croquito_valuation.sco import SCO_CODE_PATTERN
 from croquito_valuation.takeoff import TakeoffItem
 
 CALC_MATRIX_SCHEMA_VERSION: Final = "1.0.0"
+
+FUSED_BLOCK_LABEL_PREFIX: Final = "FUNDIDA NA FOLHA "
+"""Marcador que abre o rótulo da parcela absorvida por uma fusão declarada (F-046)."""
+FUSED_READING_OPERAND: Final = "QUANTIDADE LIDA"
+"""Nome do operando que preserva, impressa, a quantidade da leitura fundida."""
+FUSED_FACTOR_OPERAND: Final = "FATOR DE FUSAO"
+"""Nome do operando zero que leva o subtotal da parcela fundida a `0,00`."""
 
 _ELEMENT_BASES: Final = (
     ContributionBasis.FULL,
@@ -237,6 +245,15 @@ class ResolvedService:
     code: str
     blocks: tuple[CalcBlock, ...]
     total_quantity: Decimal
+    fused_quantity: Decimal = Decimal("0.00")
+    """Quanto deste serviço deixou de contar por fusão declarada (F-046, ADR-0057 D4).
+
+    `0.00` em toda cadeia que não é a da praça de várias folhas — e é por isso que o campo
+    tem default: nenhum chamador de hoje muda. Quem precisa dele é a conferência de que o
+    plano de cálculo fecha com a quantidade CONFIRMADA (`calc.py`): a leitura fundida
+    continua tendo de bater com o que a orçamentista confirmou, e o que a fusão faz é
+    zerar a contribuição DEPOIS dessa conferência, não dispensá-la.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,11 +306,56 @@ def materialize_contribution(
     )
 
 
+def _fuse_block(block: CalcBlock, *, kept_plate_id: str, unit: str | None) -> CalcBlock:
+    """Bloco da leitura FUNDIDA: a quantidade continua impressa e o subtotal vira zero.
+
+    A declaração de identidade (`TakeoffItemIdentityLink`) diz que duas leituras, em folhas
+    diferentes, são o MESMO elemento físico. A parcela que fica é a da leitura `kept`; a da
+    `discarded` não pode somar de novo — e também não pode sumir, senão a memória da folha
+    onde ela foi lida passaria a esconder um número que a orçamentista leu e decidiu.
+
+    A forma é `QUANTIDADE LIDA x FATOR DE FUSAO(0) = 0,00`, e não uma dedução acrescentada ao
+    bloco original, por uma razão concreta: a memória imprime **no máximo uma dedução por
+    bloco** (`workbook_writer.plan_calc_block`, `MEMORY_DEDUCTIONS_UNSUPPORTED`), então
+    somar a fusão como segunda dedução impediria de escrever a pasta justamente do bloco que
+    já tem vãos deduzidos. O fator zero é aritmética que a planilha reproduz sozinha
+    (`=ROUND(PRODUCT(...),2)`) e que o leitor confere sem conhecer a fusão.
+
+    O rótulo começa pelo marcador e nomeia a folha que ficou com a parcela: quando o corte de
+    120 caracteres morde, o que se perde é o rótulo original — que continua no item, apontado
+    por `source_item_id` —, nunca o aviso de que aquela leitura não conta aqui.
+    """
+    return CalcBlock(
+        label=f"{FUSED_BLOCK_LABEL_PREFIX}{kept_plate_id}: {block.label}"[:120],
+        source_item_id=block.source_item_id,
+        basis=block.basis,
+        # `DEPENDENT` exige `derived_from_code` e as demais bases o proíbem: preservar o que
+        # o bloco original declarou é o que mantém o bloco fundido válido nas duas.
+        derived_from_code=block.derived_from_code,
+        recipe=CalcRecipe.DECLARED_PRODUCT,
+        operands=[
+            CalcOperand(name=FUSED_READING_OPERAND, value=block.subtotal, unit=unit),
+            CalcOperand(name=FUSED_FACTOR_OPERAND, value=Decimal("0")),
+        ],
+        subtotal=Decimal("0.00"),
+    )
+
+
+def _fused_blocks(
+    blocks: Sequence[CalcBlock], *, kept_plate_id: str, unit: str | None
+) -> tuple[tuple[CalcBlock, ...], Decimal]:
+    """Blocos fundidos e quanto eles deixaram de somar; os subtotais originais já são 2 casas."""
+    fused = tuple(_fuse_block(block, kept_plate_id=kept_plate_id, unit=unit) for block in blocks)
+    removed = sum((block.subtotal for block in blocks), Decimal(0))
+    return fused, quantity_round(removed)
+
+
 def _resolve_legacy(
     included_items: list[TakeoffItem],
     assignments: CodeAssignmentSet,
     *,
     calc_plan: CalcPlan | None,
+    fused_into: Mapping[str, str],
 ) -> ResolvedMatrix:
     """Regime legado: um serviço por item, na ordem e numeração de hoje, byte-idêntico.
 
@@ -311,12 +373,26 @@ def _resolve_legacy(
         assert quantity is not None
         blocks = build_calc_blocks(plan_by_item.get(item.id), quantity=quantity, unit=item.unit)
         total_quantity = quantity_round(sum((block.subtotal for block in blocks), Decimal(0)))
+        fused_quantity = Decimal("0.00")
+        kept_plate_id = fused_into.get(item.id)
+        if kept_plate_id is not None:
+            # Aqui um item É um serviço, então a fusão zera o serviço inteiro. A quantidade
+            # removida vai adiante para que o builder ainda confira o plano contra a
+            # quantidade confirmada — fundir não perdoa plano que não fecha.
+            fused, fused_quantity = _fused_blocks(
+                blocks, kept_plate_id=kept_plate_id, unit=item.unit
+            )
+            blocks = list(fused)
+            # Recomputado dos blocos, e não fixado em zero: o total do serviço tem UMA
+            # fonte, que é a memória impressa.
+            total_quantity = quantity_round(sum((block.subtotal for block in blocks), Decimal(0)))
         resolved.append(
             ResolvedService(
                 item_number=str(index),
                 code=packages[item.id][0],
                 blocks=tuple(blocks),
                 total_quantity=total_quantity,
+                fused_quantity=fused_quantity,
             )
         )
     return ResolvedMatrix(services=tuple(resolved))
@@ -370,11 +446,19 @@ def _resolve_matrix(
     calc_matrix: CalcMatrix,
     *,
     error_prefix: str,
+    fused_into: Mapping[str, str],
 ) -> ResolvedMatrix:
-    """Regime novo: funde por serviço, resolve a dependência e numera na ordem topológica."""
+    """Regime novo: funde por serviço, resolve a dependência e numera na ordem topológica.
+
+    A fusão declarada é aplicada **dentro** do laço, parcela a parcela, e não depois: a
+    parcela `DEPENDENT` materializa como operando literal a quantidade já resolvida do
+    serviço de que ela depende, então zerar uma contribuição depois da resolução deixaria o
+    transporte multiplicando uma quantidade que deixou de existir.
+    """
     order = _topological_order(calc_matrix.services)
     assert order is not None  # o validador de `CalcMatrix` já recusou ciclo na leitura.
     cap_by_item = _partial_cap_by_item(included_items)
+    unit_by_item = {item.id: item.unit for item in included_items}
     service_by_code = {service.code: service for service in calc_matrix.services}
     matrix_codes = set(service_by_code)
     priced_codes = {
@@ -403,6 +487,7 @@ def _resolve_matrix(
     for index, code in enumerate(order, start=1):
         service = service_by_code[code]
         materialized: list[CalcBlock] = []
+        fused_quantity = Decimal("0.00")
         for contribution in service.contributions:
             block = materialize_contribution(
                 contribution,
@@ -420,6 +505,17 @@ def _resolve_matrix(
                     declared=block.subtotal,
                     cap_by_item=cap_by_item,
                 )
+            source_item_id = contribution.source_item_id
+            kept_plate_id = None if source_item_id is None else fused_into.get(source_item_id)
+            if kept_plate_id is not None and source_item_id is not None:
+                # O teto da `PARTIAL` é conferido ACIMA, sobre o bloco original: a fusão diz
+                # que a leitura não conta duas vezes, não que a parcela podia ultrapassar o
+                # elemento de origem.
+                fused, removed = _fused_blocks(
+                    [block], kept_plate_id=kept_plate_id, unit=unit_by_item.get(source_item_id)
+                )
+                block = fused[0]
+                fused_quantity += removed
             materialized.append(block)
         blocks = tuple(materialized)
         total_quantity = quantity_round(sum((block.subtotal for block in blocks), Decimal(0)))
@@ -428,6 +524,7 @@ def _resolve_matrix(
             code=code,
             blocks=blocks,
             total_quantity=total_quantity,
+            fused_quantity=quantity_round(fused_quantity),
         )
 
     return ResolvedMatrix(services=tuple(resolved_by_code[code] for code in order))
@@ -440,6 +537,7 @@ def resolve_calc_matrix(
     calc_plan: CalcPlan | None = None,
     calc_matrix: CalcMatrix | None = None,
     error_prefix: str = "CALC",
+    fused_into: Mapping[str, str] | None = None,
 ) -> ResolvedMatrix:
     """Normaliza os dois regimes num único formato que os builders consomem.
 
@@ -448,7 +546,22 @@ def resolve_calc_matrix(
     como operando literal e ordem topológica como numeração. `error_prefix` (`CALC` na cadeia
     da medição licitada, `ESTIMATE` no orçamento-base) espelha a convenção das duas famílias
     de erro já existentes.
+
+    `fused_into` (`item_id` desta folha → `plate_id` da folha que ficou com a parcela) é a
+    fusão declarada da praça de várias folhas (F-046). Vazio é o caso de toda cadeia de hoje,
+    e vazio significa exatamente o resultado de hoje: nenhuma folha isolada tem com quem
+    fundir. Quem traduz o par `(plate_id, item_id)` do consolidado para os `item_id` DESTA
+    folha é `worksite_calc.py`; aqui já chega resolvido, porque o resolver enxerga uma folha
+    por vez.
     """
     if calc_matrix is not None:
-        return _resolve_matrix(included_items, assignments, calc_matrix, error_prefix=error_prefix)
-    return _resolve_legacy(included_items, assignments, calc_plan=calc_plan)
+        return _resolve_matrix(
+            included_items,
+            assignments,
+            calc_matrix,
+            error_prefix=error_prefix,
+            fused_into=fused_into or {},
+        )
+    return _resolve_legacy(
+        included_items, assignments, calc_plan=calc_plan, fused_into=fused_into or {}
+    )

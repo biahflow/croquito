@@ -32,6 +32,7 @@ from croquito_api.database import (
     EstimateRoundRecord,
     EstimateRoundRevisionRecord,
     UploadRecord,
+    ValuationRoundPlateRecord,
     ValuationRoundRecord,
     ValuationRoundRevisionRecord,
 )
@@ -286,6 +287,29 @@ def _seed(tmp_path: Path, *, plate: bytes) -> tuple[Database, str]:
                 plate_upload_id="upload-prancha",
                 plate_object_key=PLATE_UPLOAD_KEY,
                 plate_source_sha256=hashlib.sha256(plate).hexdigest(),
+                extraction_id=EXTRACTION_ID,
+                extraction_status="queued",
+                extraction_requested_by="orcamentista-sintetica",
+                extraction_updated_at=now,
+                created_by="orcamentista-sintetica",
+            )
+        )
+        session.flush()
+        # A folha da praça: desde a F-046 T4 é DELA que a extração da medição lê a origem, e
+        # as colunas escalares acima seguem só como espelho. Sem esta linha o comando da
+        # medição não teria o que reivindicar — que é exatamente o que este arquivo prova ao
+        # rodar o comando da medição contra a cadeia certa.
+        session.add(
+            ValuationRoundPlateRecord(
+                id="plate-medicao-1",
+                tenant_id=TENANT_ID,
+                round_id=ROUND_ID,
+                plate_id=f"rodada-{ROUND_ID}",
+                position=1,
+                upload_id="upload-prancha",
+                object_key=PLATE_UPLOAD_KEY,
+                source_sha256=hashlib.sha256(plate).hexdigest(),
+                page_number=1,
                 extraction_id=EXTRACTION_ID,
                 extraction_status="queued",
                 extraction_requested_by="orcamentista-sintetica",

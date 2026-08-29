@@ -1,8 +1,12 @@
 /**
- * Jornada da medição: prancha → revisão do takeoff → códigos → boletim → aprovação e
- * exportação.
+ * Jornada da medição: prancha(s) → revisão do takeoff → códigos → praça → boletim →
+ * aprovação e exportação.
  *
- * A máquina de estados real é da API, e é ela quem recusa: segunda prancha na rodada
+ * A etapa `praça` e o plural de `prancha` só existem a partir da SEGUNDA folha (F-046,
+ * ADR-0057, decisão 8): a rodada de uma prancha responde exatamente como respondia antes,
+ * sem faixa de folhas e sem etapa nova.
+ *
+ * A máquina de estados real é da API, e é ela quem recusa: folha repetida na praça
  * (`ROUND_PLATE_ALREADY_PRESENT`), extração em voo (`EXTRACTION_IN_PROGRESS`), sugestão de
  * código antes da revisão completa (`TAKEOFF_REVIEW_INCOMPLETE`), etapa fora de ordem
  * (`ROUND_STAGE_NOT_READY`), boletim com item confirmado sem código
@@ -16,17 +20,20 @@
  */
 
 import { extractionFailureMessage } from "./labels";
+import { pracaPlural, recusaDaPraca } from "./praca";
 import type {
   ApprovalState,
   RoundState,
   RoundStateExtraction,
   RoundStatePlate,
+  WorksiteResponse,
 } from "./api";
 
 export type EtapaId =
   | "prancha"
   | "revisao"
   | "codigos"
+  | "praca"
   | "boletim"
   | "aprovacao";
 
@@ -60,9 +67,20 @@ const ETAPA_TITLES: Record<EtapaId, string> = {
   prancha: "Prancha",
   revisao: "Revisão do takeoff",
   codigos: "Códigos",
+  praca: "Praça",
   boletim: "Boletim",
   aprovacao: "Aprovação e exportação",
 };
+
+/**
+ * O título da primeira etapa é SINGULAR até a segunda folha existir (ADR-0057, decisão 8).
+ *
+ * A praça de uma folha continua exatamente como era: "Prancha", sem faixa e sem etapa
+ * própria. O plural nasce no momento em que a segunda folha é acrescentada, e não antes.
+ */
+function tituloDaPrancha(plural: boolean): string {
+  return plural ? "Pranchas" : ETAPA_TITLES.prancha;
+}
 
 const STATUS_LABELS: Record<EtapaStatus, string> = {
   blocked: "bloqueada",
@@ -161,20 +179,54 @@ function resumoDaAprovacao(approval: ApprovalState, workbookPresent: boolean): s
     : "Medição aprovada; o boletim ainda não foi exportado.";
 }
 
-export function derivarEtapas(state: RoundState | null): Jornada {
+/**
+ * A etapa da praça, entre Códigos e Boletim (pacote de design aprovado, decisão 2).
+ *
+ * Ela só existe na praça de VÁRIAS folhas, e o que a bloqueia é a recusa que o servidor já
+ * declarou ao montar o consolidado — folha sem pacote, folha com item sem decisão. Nenhum
+ * gate nasce aqui: `recusaDaPraca` só lê `consolidated` e as contagens por folha.
+ */
+function etapaDaPraca(worksite: WorksiteResponse): Etapa {
+  const recusa = recusaDaPraca(worksite);
+  const folhas = worksite.plates.length;
+  if (recusa !== null) {
+    return {
+      id: "praca",
+      title: ETAPA_TITLES.praca,
+      status: "blocked",
+      summary: `Praça de ${folhas} folhas; o consolidado ainda não fecha.`,
+      blockedReason: recusa.folhas.length === 0
+        ? "o consolidado da praça ainda não foi montado pelo servidor"
+        : `falta terminar ${recusa.folhas.join("; ")}`,
+    };
+  }
+  return {
+    id: "praca",
+    title: ETAPA_TITLES.praca,
+    status: "available",
+    summary: `Praça de ${folhas} folhas; consolidado montado sobre os pacotes das folhas.`,
+  };
+}
+
+export function derivarEtapas(
+  state: RoundState | null,
+  worksite: WorksiteResponse | null = null,
+): Jornada {
   if (state === null) {
     return semEstado("aguarda a leitura do estado da rodada");
   }
   const takeoff = state.takeoff;
   const extraction = state.extraction;
   const plate = state.plate;
+  const variasFolhas = pracaPlural(worksite);
+  const praca = variasFolhas && worksite !== null ? etapaDaPraca(worksite) : null;
 
   if (!takeoff.present) {
     const motivo = motivoSemTakeoff(extraction, plate);
     const etapas: Etapa[] = [
       {
         id: "prancha",
-        title: ETAPA_TITLES.prancha,
+        title: tituloDaPrancha(variasFolhas),
         status: "available",
         summary: pranchaSummarySemTakeoff(extraction, plate),
       },
@@ -192,6 +244,7 @@ export function derivarEtapas(state: RoundState | null): Jornada {
         summary: "Aguarda o fim da revisão do takeoff.",
         blockedReason: motivo,
       },
+      ...(praca === null ? [] : [praca]),
       {
         id: "boletim",
         title: ETAPA_TITLES.boletim,
@@ -212,9 +265,11 @@ export function derivarEtapas(state: RoundState | null): Jornada {
 
   const prancha: Etapa = {
     id: "prancha",
-    title: ETAPA_TITLES.prancha,
+    title: tituloDaPrancha(variasFolhas),
     status: "done",
-    summary: "Prancha lida; legenda quantificada disponível para revisão.",
+    summary: variasFolhas
+      ? `Praça de ${worksite?.plates.length ?? 0} folhas; a primeira já virou pacote de takeoff.`
+      : "Prancha lida; legenda quantificada disponível para revisão.",
   };
 
   const total = takeoff.items ?? 0;
@@ -289,6 +344,13 @@ export function derivarEtapas(state: RoundState | null): Jornada {
   } else if (state.bulletin.present) {
     boletim.status = "done";
   }
+  // Praça de várias folhas com consolidado que não fecha bloqueia o boletim: meia praça
+  // somada parece uma praça inteira (ADR-0057, decisão 7). Não é gate inventado aqui — é a
+  // recusa que o servidor já declarou no consolidado, espelhada uma etapa adiante.
+  if (praca !== null && praca.status === "blocked") {
+    boletim.status = "blocked";
+    boletim.blockedReason = praca.blockedReason;
+  }
 
   // Aprovação e exportação: a etapa só existe sobre medição montada, e só fica "concluída"
   // quando há arquivo publicado — aprovar é metade do fechamento, e a jornada não declara
@@ -311,7 +373,14 @@ export function derivarEtapas(state: RoundState | null): Jornada {
     }
   }
 
-  const etapas = [prancha, revisao, codigos, boletim, aprovacao];
+  const etapas = [
+    prancha,
+    revisao,
+    codigos,
+    ...(praca === null ? [] : [praca]),
+    boletim,
+    aprovacao,
+  ];
   // A ativa é a primeira em aberto. Com tudo concluído (ou o que resta bloqueado), fica
   // na última alcançável em vez de abrir uma etapa bloqueada.
   const aberta = etapas.find((etapa) => etapa.status === "available");

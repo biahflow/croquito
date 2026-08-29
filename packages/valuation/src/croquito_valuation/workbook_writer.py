@@ -26,7 +26,8 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -40,6 +41,8 @@ from pydantic import Field, model_validator
 from croquito_valuation.contract import AmendmentLine, ContractLine, ContractWorkbook
 from croquito_valuation.errors import ValuationValidationError
 from croquito_valuation.models import (
+    MAX_DESCRIPTION_LENGTH,
+    BulletinLine,
     CalcBlock,
     ExactDecimal,
     PriceCatalog,
@@ -58,6 +61,7 @@ from croquito_valuation.template import (
 
 MAX_DECIMAL_PLACES: Final = 2
 PINNED_REASON: Final = "TRUNC_DOUBLE_DIVERGENCE"
+CONSOLIDATION_DRIFT_REASON: Final = "TRUNC_CONSOLIDATION_DRIFT"
 _FIXED_TIMESTAMP: Final = datetime(2026, 1, 1, tzinfo=UTC)
 
 CellKind = Literal["text", "number", "formula"]
@@ -73,6 +77,71 @@ class PinnedCell(ValuationContractModel):
     quantity: ExactDecimal
     unit_price: ExactDecimal
     value: ExactDecimal
+
+
+class ConsolidationDrift(ValuationContractModel):
+    """Um código cujo valor consolidado diverge da soma dos boletins por truncamento.
+
+    ADR-0062 completa a decisão (c) do ADR-0018: `TRUNC(Σ quantidade x preço)` — o valor
+    que a linha da GERAL imprime — governa, e a pasta é gerada mesmo quando ele fica um
+    centavo acima de `Σ TRUNC(quantidade_i x preço)` — a soma do que cada boletim de obra
+    truncou na própria linha. A deriva deixa de recusar a geração (`TRUNC_CONSOLIDATION_
+    DRIFT` não é mais fatal) e vira este registro declarado, no mesmo lugar do plano/
+    relatório de gravação e da auditoria de round-trip onde `PinnedCell` já declara a
+    outra exceção de truncamento do escritor — quem confere a pasta olha um artefato só
+    para saber onde o número escrito não é a soma ingênua das partes. Nenhuma linha de
+    boletim é ajustada para fechar com este valor (rejeitado no ADR-0062): a folha
+    continua truncando o que ela mede, parcial por natureza.
+    """
+
+    reason: Literal["TRUNC_CONSOLIDATION_DRIFT"] = CONSOLIDATION_DRIFT_REASON
+    code: str
+    quantity: ExactDecimal
+    general: ExactDecimal
+    bulletins: ExactDecimal
+    difference: ExactDecimal
+
+
+class CodeConsolidation(ValuationContractModel):
+    """Quanto um código somou na medição INTEIRA e o valor que a linha da GERAL imprime.
+
+    É a linha que a PLANILHA GERAL entrega à prefeitura: quantidade somada entre todos os
+    boletins da medição e `amount = TRUNC(Σq x preço)`. `bulletins_amount` é a outra soma,
+    `Σ TRUNC(qᵢ x preço)` — o que cada boletim truncou na própria linha —, e as duas saem
+    JUNTAS porque a diferença entre elas é fato declarado do ADR-0062, não detalhe de quem
+    imprime: quem só recebesse `amount` não teria como saber que ele não é a soma ingênua
+    das partes, e quem só recebesse `bulletins_amount` estaria com um número diferente do
+    que a prefeitura vai ler.
+
+    `difference` sai calculada aqui pelo mesmo motivo de todo decimal desta cadeia sair
+    como texto: subtrair dois centavos no cliente é refazer no navegador uma conta que o
+    servidor acabou de fechar em `Decimal`.
+    """
+
+    code: str
+    description: str = Field(min_length=1, max_length=MAX_DESCRIPTION_LENGTH)
+    unit: str = Field(min_length=1, max_length=20)
+    unit_price: ExactDecimal = Field(ge=0)
+    quantity: ExactDecimal = Field(ge=0)
+    amount: ExactDecimal = Field(ge=0)
+    bulletins_amount: ExactDecimal = Field(ge=0)
+    difference: ExactDecimal
+    worksite_keys: list[str] = Field(min_length=1)
+
+    @property
+    def has_drift(self) -> bool:
+        """Se o consolidado deste código diverge da soma dos boletins (ADR-0062)."""
+        return self.difference != Decimal("0")
+
+    def as_drift(self) -> ConsolidationDrift:
+        """A mesma divergência na forma declarada do ADR-0062, sem recontá-la."""
+        return ConsolidationDrift(
+            code=self.code,
+            quantity=self.quantity,
+            general=self.amount,
+            bulletins=self.bulletins_amount,
+            difference=self.difference,
+        )
 
 
 class PlannedCell(ValuationContractModel):
@@ -132,6 +201,7 @@ class WorkbookPlan(ValuationContractModel):
     amendment_sheet: str | None = None
     sheets: list[PlannedSheet] = Field(min_length=1)
     pinned_cells: list[PinnedCell] = Field(default_factory=list)
+    consolidation_drifts: list[ConsolidationDrift] = Field(default_factory=list)
 
     @property
     def formula_cells(self) -> int:
@@ -150,6 +220,7 @@ class WriteReport(ValuationContractModel):
     written_cells: int = Field(ge=1)
     formula_cells: int = Field(ge=0)
     pinned_cells: list[PinnedCell] = Field(default_factory=list)
+    consolidation_drifts: list[ConsolidationDrift] = Field(default_factory=list)
 
 
 def _checked_number(value: Decimal, ref: str, role: str) -> Decimal:
@@ -645,13 +716,93 @@ def _sum_of_refs(refs: Sequence[str]) -> str:
     return f"=SUM({','.join(refs)})"
 
 
-def _measured_by_code(valuation: Valuation) -> dict[str, Decimal]:
-    """Quanto cada código somou nesta medição, atravessando todas as obras."""
-    measured: dict[str, Decimal] = {}
+@dataclass(frozen=True, slots=True)
+class _MeasuredCode:
+    """O que a medição inteira tem sobre um código, antes de qualquer preço entrar."""
+
+    quantity: Decimal
+    lines: tuple[BulletinLine, ...]
+    worksite_keys: tuple[str, ...]
+
+
+def _measured_index(valuation: Valuation) -> dict[str, _MeasuredCode]:
+    """Quantidade, linhas e obras de cada código, numa varredura só da medição."""
+    quantities: dict[str, Decimal] = {}
+    lines: dict[str, list[BulletinLine]] = {}
+    worksites: dict[str, list[str]] = {}
     for bulletin in valuation.bulletins:
         for line in bulletin.lines:
-            measured[line.code] = measured.get(line.code, Decimal("0.00")) + line.quantity
-    return measured
+            quantities[line.code] = quantities.get(line.code, Decimal("0.00")) + line.quantity
+            lines.setdefault(line.code, []).append(line)
+            keys = worksites.setdefault(line.code, [])
+            if bulletin.worksite_key not in keys:
+                keys.append(bulletin.worksite_key)
+    return {
+        code: _MeasuredCode(
+            quantity=quantity,
+            lines=tuple(lines[code]),
+            worksite_keys=tuple(worksites[code]),
+        )
+        for code, quantity in quantities.items()
+    }
+
+
+def _measured_by_code(valuation: Valuation) -> dict[str, Decimal]:
+    """Quanto cada código somou nesta medição, atravessando todas as obras."""
+    return {code: measured.quantity for code, measured in _measured_index(valuation).items()}
+
+
+def _consolidate(code: str, measured: _MeasuredCode, unit_price: Decimal) -> CodeConsolidation:
+    """A consolidação de UM código a UM preço — o coração da derivação, sem cópia.
+
+    `amount` é o que a linha da GERAL imprime e `bulletins_amount` é a soma do que cada
+    boletim truncou; a diferença entre os dois é o fato do ADR-0062.
+    """
+    amount = money_trunc(measured.quantity * unit_price)
+    bulletins_amount = sum((line.total for line in measured.lines), Decimal("0.00"))
+    return CodeConsolidation(
+        code=code,
+        description=measured.lines[0].description,
+        unit=measured.lines[0].unit,
+        unit_price=unit_price,
+        quantity=measured.quantity,
+        amount=amount,
+        bulletins_amount=bulletins_amount,
+        difference=amount - bulletins_amount,
+        worksite_keys=list(measured.worksite_keys),
+    )
+
+
+def consolidate_by_code(
+    valuation: Valuation, *, unit_prices: Mapping[str, Decimal] | None = None
+) -> list[CodeConsolidation]:
+    """A consolidação por código da medição inteira — a ÚNICA derivação dela.
+
+    Três lugares precisam do mesmo número e nenhum deles pode tê-lo por conta própria: a
+    coluna corrente da PLANILHA GERAL (`_plan_general`), a deriva declarada do ADR-0062
+    (`_record_consolidation_drift`) e a leitura do boletim na `/v1`, que serve à praça o
+    total do código somado ENTRE as folhas. Duas derivações do mesmo valor são duas
+    verdades esperando divergir, e a divergência apareceria justamente onde ninguém
+    confere: entre o que a tela mostra e o que a planilha imprime.
+
+    A quantidade vem de `_measured_index` e o valor de `_consolidate`, que aplica a mesma
+    regra de dinheiro de `BulletinLine.expected_total` e `_total_cell` — trunca, nunca
+    arredonda.
+
+    `unit_prices` é o preço que GOVERNA o consolidado quando ele não é o da linha do
+    boletim: na pasta com consolidado contratual quem imprime é a linha da GERAL, e o preço
+    dela é o do CONTRATO. Código ausente do mapa usa o preço da própria linha do boletim —
+    idêntico ao do catálogo instalado, conferido por `_validate_against_catalog`.
+
+    A ordem é a do código, e não a das folhas: a mesma medição consolidada tem de sair na
+    mesma ordem independentemente de qual prancha entrou primeiro na praça.
+    """
+    index = _measured_index(valuation)
+    prices = {} if unit_prices is None else unit_prices
+    return [
+        _consolidate(code, index[code], prices.get(code, index[code].lines[0].unit_price))
+        for code in sorted(index)
+    ]
 
 
 def _check_measured_codes(contract: ContractWorkbook, measured: dict[str, Decimal]) -> None:
@@ -674,55 +825,37 @@ def _has_code(contract: ContractWorkbook, code: str) -> bool:
     return any(line.code == code for line in contract.lines)
 
 
-def _check_consolidated_total(
-    valuation: Valuation, contract: ContractWorkbook, measured: dict[str, Decimal]
+def _record_consolidation_drift(
+    contract: ContractWorkbook,
+    valuation: Valuation,
+    drifts: list[ConsolidationDrift],
 ) -> None:
     """O valor corrente da GERAL é por código; o da medição é por linha de boletim.
 
-    Quando o mesmo código é medido em mais de uma obra, `TRUNC(Σq x preço)` pode ficar um
-    centavo acima de `Σ TRUNC(q_i x preço)`. Não existe ainda decisão do orçamentista
-    sobre qual dos dois é o valor consolidado correto, então a pasta não é gerada: fixar
-    um dos dois em silêncio publicaria um total que a medição não declara.
+    Quando o mesmo código é medido em mais de uma obra, `TRUNC(Σq x preço)` — o que a
+    célula da GERAL imprime — pode ficar um centavo acima de `Σ TRUNC(q_i x preço)` — a
+    soma do que cada boletim truncou na própria linha. ADR-0062 (que completa a decisão
+    (c) do ADR-0018) resolveu o desempate: o valor da GERAL governa e a pasta é gerada;
+    a deriva não é mais fatal (`GENERAL_CONSOLIDATION_MISMATCH` deixou de ser levantado
+    aqui) e vira `ConsolidationDrift` declarado em `drifts`, carregado adiante para o
+    plano, o relatório de gravação e a auditoria de round-trip — visível a quem confere
+    o artefato, não só um retorno de função. O boletim de cada obra não é tocado: ele
+    continua truncando a própria linha, sem ajuste (rejeitado no ADR-0062).
+
+    Os dois valores saem de `_consolidate`, o mesmo núcleo que `consolidate_by_code` serve
+    ao cliente. A varredura é por LINHA do consolidado, e não por código consolidado, de
+    propósito: o mesmo código pode aparecer em grupos diferentes da pasta com preço próprio
+    (`CONTRACT_DUPLICATE_CODE` só recusa a repetição dentro de um grupo), e cada linha
+    imprime a célula dela. Código do contrato que esta medição não mediu é pulado.
     """
-    divergences: list[dict[str, object]] = []
-    general_total = Decimal("0.00")
+    index = _measured_index(valuation)
     for line in contract.lines:
-        quantity = measured.get(line.code)
-        if quantity is None:
+        measured = index.get(line.code)
+        if measured is None:
             continue
-        general_amount = money_trunc(quantity * line.unit_price)
-        general_total += general_amount
-        bulletin_amount = sum(
-            (
-                bulletin_line.total
-                for bulletin in valuation.bulletins
-                for bulletin_line in bulletin.lines
-                if bulletin_line.code == line.code
-            ),
-            Decimal("0.00"),
-        )
-        if general_amount != bulletin_amount:
-            divergences.append(
-                {
-                    "code": line.code,
-                    "quantity": str(quantity),
-                    "general": str(general_amount),
-                    "bulletins": str(bulletin_amount),
-                }
-            )
-    if general_total != valuation.total_amount:
-        raise ValuationValidationError(
-            "GENERAL_CONSOLIDATION_MISMATCH",
-            "o valor consolidado da planilha geral não fecha com o total da medição: o "
-            "mesmo código medido em mais de uma obra trunca de forma diferente somado "
-            "(TRUNC da soma) e linha a linha (soma dos TRUNC)",
-            {
-                "reason": "TRUNC_CONSOLIDATION_DRIFT",
-                "general_total": str(general_total),
-                "valuation_total": str(valuation.total_amount),
-                "codes": divergences,
-            },
-        )
+        item = _consolidate(line.code, measured, line.unit_price)
+        if item.has_drift:
+            drifts.append(item.as_drift())
 
 
 def _general_header_cells(
@@ -945,6 +1078,7 @@ def _plan_general(
     contract: ContractWorkbook,
     template: WorkbookTemplate,
     pinned: list[PinnedCell],
+    drifts: list[ConsolidationDrift],
 ) -> PlannedSheet:
     """Planeja a PLANILHA GERAL como ela fica **depois** desta medição.
 
@@ -963,7 +1097,7 @@ def _plan_general(
         )
     measured = _measured_by_code(valuation)
     _check_measured_codes(contract, measured)
-    _check_consolidated_total(valuation, contract, measured)
+    _record_consolidation_drift(contract, valuation, drifts)
 
     period_numbers = [*contract.period_numbers, contract.next_period_number]
     pairs = [_pair_columns(layout, index) for index in range(len(period_numbers))]
@@ -1197,11 +1331,12 @@ def plan_workbook(
     for bulletin in valuation.bulletins:
         _validate_against_catalog(bulletin, catalog)
     pinned: list[PinnedCell] = []
+    drifts: list[ConsolidationDrift] = []
     sheets: list[PlannedSheet] = []
     general_sheet: str | None = None
     amendment_sheet: str | None = None
     if contract is not None:
-        general = _plan_general(valuation, contract, template, pinned)
+        general = _plan_general(valuation, contract, template, pinned, drifts)
         general_sheet = general.name
         sheets.append(general)
         amendment = _plan_amendment_sheet(contract, template)
@@ -1234,6 +1369,7 @@ def plan_workbook(
         amendment_sheet=amendment_sheet,
         sheets=sheets,
         pinned_cells=pinned,
+        consolidation_drifts=drifts,
     )
 
 
@@ -1315,4 +1451,5 @@ def write_valuation_workbook(
         written_cells=sum(len(sheet.cells) for sheet in plan.sheets),
         formula_cells=plan.formula_cells,
         pinned_cells=plan.pinned_cells,
+        consolidation_drifts=plan.consolidation_drifts,
     )

@@ -23,14 +23,17 @@ from croquito_api import valuation_rounds
 from croquito_api.database import (
     Database,
     UploadRecord,
+    ValuationRoundPlateRecord,
     ValuationRoundRecord,
     ValuationRoundRevisionRecord,
 )
 from croquito_api.valuation_rounds import (
     CATALOG_MAX_BYTES,
+    WORKSITE_PLATE_LIMIT,
     CatalogCache,
     RoundRefusal,
     append_revision,
+    append_round_plate,
     assignments_of,
     current_stage,
     document_digest,
@@ -43,6 +46,7 @@ from croquito_api.valuation_rounds import (
     require_plate,
     require_plate_object_key,
     require_takeoff_packet,
+    round_plates,
     round_state_payload,
     signed_artifact_url,
 )
@@ -218,6 +222,34 @@ def _database(tmp_path: Path) -> Database:
     database = Database(f"sqlite+pysqlite:///{tmp_path / 'rounds.db'}")
     database.create_schema()
     return database
+
+
+def _plate(
+    session: Session,
+    record: ValuationRoundRecord,
+    *,
+    source_sha256: str = _PDF_DIGEST,
+    page_number: int = 1,
+) -> ValuationRoundPlateRecord:
+    """Acrescenta uma folha à praça pelo mesmo caminho que a rota usa.
+
+    Reaproveitar `append_round_plate` em vez de montar a linha à mão é o que faz o teste
+    exercitar a cunhagem de `plate_id` e o espelho escalar, e não uma imitação deles.
+    """
+    plate = append_round_plate(
+        session,
+        round_record=record,
+        plates=round_plates(session, round_id=record.id, tenant_id=record.tenant_id),
+        # A coluna é chave estrangeira e o banco a cobra: o upload do catálogo é um upload
+        # real deste tenant, e serve para o que este ajudante precisa provar.
+        upload_id=record.catalog_upload_id or "",
+        object_key=f"tenants/{record.tenant_id}/rounds/{record.id}/plate.pdf",
+        source_sha256=source_sha256,
+        created_by=_REVIEWER,
+        page_number=page_number,
+    )
+    session.flush()
+    return plate
 
 
 def _round(
@@ -430,13 +462,13 @@ def test_base_version_divergente_recusa_com_revision_conflict(tmp_path: Path) ->
 def test_etapa_anterior_ausente_recusa_com_round_stage_not_ready(tmp_path: Path) -> None:
     database = _database(tmp_path)
     with database.sessions() as session:
-        record = _round(session)
+        _round(session)
         session.commit()
 
         for guard in (
             lambda: require_takeoff_packet(None),
             lambda: require_assignments(None),
-            lambda: require_plate_object_key(record),
+            lambda: require_plate_object_key([]),
             lambda: require_document(
                 None, "valuation_json", stage="bulletin", detail="boletim não construído"
             ),
@@ -467,39 +499,76 @@ def test_a_guarda_devolve_o_artefato_quando_a_etapa_existe(tmp_path: Path) -> No
                 "valuation_json": {"schema_version": "1.0.0"},
             },
         )
-        record.plate_object_key = f"tenants/{_TENANT}/rounds/{record.id}/plate.pdf"
+        plates = [_plate(session, record)]
         session.commit()
 
         assert require_takeoff_packet(revision).plate_id == _PLATE_ID
         assert require_assignments(revision).assignments[0].item_id == _ITEM_1
-        assert require_plate_object_key(record).endswith("plate.pdf")
+        assert require_plate_object_key(plates).endswith("plate.pdf")
         assert require_document(
             revision, "valuation_json", stage="bulletin", detail="boletim não construído"
         ) == {"schema_version": "1.0.0"}
 
 
-def test_a_prancha_meio_associada_e_tratada_como_ausente(tmp_path: Path) -> None:
-    """As três colunas da prancha são gravadas juntas; ler uma isolada esconderia o buraco."""
+def test_a_folha_meio_associada_e_tratada_como_ausente(tmp_path: Path) -> None:
+    """Folha sem `upload_id` é tratada como ausente; devolvê-la pela metade esconderia o buraco."""
     database = _database(tmp_path)
     with database.sessions() as session:
         record = _round(session)
-        record.plate_object_key = f"tenants/{_TENANT}/rounds/{record.id}/plate.pdf"
+        plate = _plate(session, record)
+        plate.upload_id = None
         session.commit()
 
         with pytest.raises(RoundRefusal) as refusal:
-            require_plate(record)
+            require_plate([plate])
         assert refusal.value.code == "ROUND_STAGE_NOT_READY"
 
-        # Um upload real do tenant: a coluna é chave estrangeira e o banco a cobra.
-        record.plate_upload_id = record.catalog_upload_id
-        record.plate_source_sha256 = _PDF_DIGEST
-        record.plate_page_count = 3
+        plate.upload_id = record.catalog_upload_id
+        # A contagem de páginas é da FOLHA desde a T4; a coluna da raiz é só o espelho dela.
+        plate.page_count = 3
         session.commit()
 
-        plate = require_plate(record)
-        assert plate.object_key.endswith("plate.pdf")
-        assert plate.source_sha256 == _PDF_DIGEST
-        assert plate.page_count == 3
+        ref = require_plate([plate])
+        assert ref.object_key.endswith("plate.pdf")
+        assert ref.source_sha256 == _PDF_DIGEST
+        assert ref.page_count == 3
+        assert ref.plate_id == f"rodada-{record.id}"
+        assert ref.position == 1
+
+
+def test_a_praca_recusa_a_folha_repetida_e_nomeia_a_que_ja_esta_la(tmp_path: Path) -> None:
+    """A segunda folha é o caso normal; a MESMA folha duas vezes é que não é (ADR-0057)."""
+    database = _database(tmp_path)
+    with database.sessions() as session:
+        record = _round(session)
+        _plate(session, record)
+        segunda = _plate(session, record, source_sha256="c" * 64)
+        session.commit()
+
+        assert segunda.position == 2
+        assert segunda.plate_id == f"rodada-{record.id}-f2"
+        # O espelho escalar continua o da PRIMEIRA folha: é ele que o comando de fila lê.
+        assert record.plate_source_sha256 == _PDF_DIGEST
+
+        with pytest.raises(RoundRefusal) as refusal:
+            _plate(session, record, source_sha256="c" * 64)
+        assert refusal.value.code == "ROUND_PLATE_ALREADY_PRESENT"
+        assert refusal.value.details["plate_id"] == segunda.plate_id
+
+
+def test_a_praca_recusa_folha_alem_do_teto(tmp_path: Path) -> None:
+    """Cada folha é uma extração paga a mais; o teto é declarado, não descoberto na conta."""
+    database = _database(tmp_path)
+    with database.sessions() as session:
+        record = _round(session)
+        for position in range(WORKSITE_PLATE_LIMIT):
+            _plate(session, record, source_sha256=f"{position:064d}")
+        session.commit()
+
+        with pytest.raises(RoundRefusal) as refusal:
+            _plate(session, record, source_sha256="f" * 64)
+        assert refusal.value.code == "ROUND_PLATE_LIMIT_REACHED"
+        assert refusal.value.details == {"limit": WORKSITE_PLATE_LIMIT}
 
 
 def test_a_etapa_corrente_e_a_mais_avancada_da_cadeia(tmp_path: Path) -> None:
@@ -508,13 +577,13 @@ def test_a_etapa_corrente_e_a_mais_avancada_da_cadeia(tmp_path: Path) -> None:
     with database.sessions() as session:
         record = _round(session)
         session.commit()
-        assert current_stage(record, None) == "created"
+        assert current_stage(record, None, has_plate=False) == "created"
 
-        record.plate_object_key = f"tenants/{_TENANT}/rounds/{record.id}/plate.pdf"
+        _plate(session, record)
         # Extração em voo NÃO é etapa: a rodada segue na prancha até haver pacote.
         record.extraction_status = "running"
         session.commit()
-        assert current_stage(record, None) == "plate"
+        assert current_stage(record, None, has_plate=True) == "plate"
 
         revision = append_revision(
             session,
@@ -523,7 +592,7 @@ def test_a_etapa_corrente_e_a_mais_avancada_da_cadeia(tmp_path: Path) -> None:
             changes={"takeoff_packet_json": _packet().model_dump(mode="json")},
         )
         session.commit()
-        assert current_stage(record, revision) == "takeoff"
+        assert current_stage(record, revision, has_plate=True) == "takeoff"
 
         for column, stage in (
             ("code_assignments_json", "code_assignments"),
@@ -537,7 +606,7 @@ def test_a_etapa_corrente_e_a_mais_avancada_da_cadeia(tmp_path: Path) -> None:
                 changes={column: {"schema_version": "1.0.0"}},
             )
             session.commit()
-            assert current_stage(record, revision) == stage
+            assert current_stage(record, revision, has_plate=True) == stage
 
 
 # --- estado da rodada ------------------------------------------------------------------
@@ -559,7 +628,7 @@ def test_o_estado_declara_as_etapas_por_presenca_e_digest(tmp_path: Path) -> Non
         )
         session.commit()
 
-        state = round_state_payload(record, revision)
+        state = round_state_payload(record, revision, [])
 
         assert state["round_id"] == record.id
         assert state["version"] == record.version
@@ -593,7 +662,7 @@ def test_rodada_sem_revisao_tem_estado_legivel(tmp_path: Path) -> None:
         record = _round(session)
         session.commit()
 
-        state = round_state_payload(record, None)
+        state = round_state_payload(record, None, [])
 
         assert state["revision_id"] is None
         assert state["artifacts"] == {}
@@ -634,7 +703,7 @@ def test_a_ancora_confiavel_vem_do_relatorio_de_registro(tmp_path: Path) -> None
         )
         session.commit()
 
-        takeoff = round_state_payload(record, revision)["takeoff"]
+        takeoff = round_state_payload(record, revision, [])["takeoff"]
 
         assert isinstance(takeoff, dict)
         assert takeoff["anchors_registered"] == 1
@@ -656,7 +725,7 @@ def test_os_artefatos_da_revisao_incluem_o_digest_de_blob(tmp_path: Path) -> Non
         )
         session.commit()
 
-        artifacts = round_state_payload(record, revision)["artifacts"]
+        artifacts = round_state_payload(record, revision, [])["artifacts"]
 
         assert isinstance(artifacts, dict)
         assert artifacts["overlay"] == "f" * 64

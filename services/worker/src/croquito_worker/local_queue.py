@@ -137,6 +137,7 @@ from croquito_worker.valuation.round_extraction import (
     extraction_unavailable,
     ingest_plate_upload,
     plate_image_object_key,
+    plate_ref_key,
     registration_payload,
     takeoff_overlay_object_key,
     upload_invalid,
@@ -239,19 +240,33 @@ ESTIMATE_OVERLAY_VERSION: Final = "estimate-overlay-v1"
 """Autor da revisão que o re-render do overlay do orçamento-base publica."""
 
 
-def _estimate_plate_image_object_key(*, tenant_id: str, round_id: str) -> str:
+def _estimate_plate_image_object_key(
+    *, tenant_id: str, round_id: str, position: int = 1, page_number: int = PLATE_PAGE_NUMBER
+) -> str:
     """PNG da página promovida da rodada de orçamento, sempre sob `tenants/{tenant_id}/`.
 
     Espelho de `round_extraction.plate_image_object_key` com o segmento da OUTRA cadeia —
     o mesmo prefixo que a rota da API já usa para a planilha publicada da rodada
     (`estimate_rounds`), e não o da medição: rodada de orçamento não escreve blob sob
     `valuation-rounds/`.
+
+    `position` e `page_number` existem na assinatura porque o comando de fila é UM só para as
+    duas cadeias e chama a chave com os dados da folha. Deste lado a praça de várias folhas
+    não existe (`ESTIMATE_ROUND_CHAIN.plates_table is None`), então a posição é sempre 1 —
+    mas a fórmula é a MESMA da medição, para que ligá-la um dia não exija reescrever o
+    caminho do blob.
     """
-    return f"tenants/{tenant_id}/estimate-rounds/{round_id}/plate/page-001.png"
+    prefix = f"tenants/{tenant_id}/estimate-rounds/{round_id}/plate"
+    sheet = "" if position <= 1 else f"/f{position}"
+    return f"{prefix}{sheet}/page-{page_number:03d}.png"
 
 
-def _estimate_takeoff_overlay_object_key(*, tenant_id: str, round_id: str) -> str:
-    return f"tenants/{tenant_id}/estimate-rounds/{round_id}/takeoff/overlay.png"
+def _estimate_takeoff_overlay_object_key(
+    *, tenant_id: str, round_id: str, position: int = 1
+) -> str:
+    prefix = f"tenants/{tenant_id}/estimate-rounds/{round_id}/takeoff"
+    sheet = "" if position <= 1 else f"/f{position}"
+    return f"{prefix}{sheet}/overlay.png"
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,6 +290,18 @@ class RoundChain:
     """Nome da cadeia nas mensagens de recusa do despacho; nunca vai para log estruturado."""
     rounds_table: str
     revisions_table: str
+    plates_table: str | None
+    """Tabela das FOLHAS da praça, quando a cadeia tem uma (F-046, ADR-0057).
+
+    `None` diz que a cadeia continua com UMA prancha por rodada, guardada nas colunas
+    escalares da raiz — é o caso do orçamento-base, que não tem praça de várias folhas. É
+    esse `None` que mantém a segunda cadeia intocada por esta feature, em vez de obrigá-la a
+    ganhar uma tabela filha que ela não usaria.
+
+    Quando a tabela existe, ela é a ÚNICA fonte da folha: a extração não lê mais
+    `plate_object_key`/`plate_source_sha256` da raiz. As colunas escalares seguem sendo
+    escritas como espelho da primeira folha (expand/contract, `services/api/AGENTS.md`), e é
+    esta leitura que acabou de deixar de precisar delas."""
     document_columns: tuple[str, ...]
     extraction_author: str
     overlay_author: str
@@ -291,14 +318,28 @@ VALUATION_ROUND_CHAIN: Final = RoundChain(
     label="medição",
     rounds_table="valuation_rounds",
     revisions_table="valuation_round_revisions",
+    plates_table="valuation_round_plates",
     document_columns=(
         "takeoff_packet_json",
         "takeoff_registration_json",
         "code_suggestions_json",
         "code_assignments_json",
         "valuation_json",
+        # `calc_matrix_json` estava FORA desta lista e isso era perda de dado real: a matriz
+        # de cálculo gravada no build (F-038, ADR-0053) sumia na primeira extração posterior,
+        # porque a revisão nova só carrega o que a lista declara. A cabeça de `/v1` sempre a
+        # carregou (`valuation_rounds.REVISION_DOCUMENT_COLUMNS`); quem a esquecia era só o
+        # comando de fila, e por isso o buraco não aparecia em nenhum teste de rota.
+        "calc_matrix_json",
         "amendment_dossier_json",
         "extraction_lineage_json",
+        # As duas colunas da praça (F-046, ADR-0057) viajam aqui pelo motivo que o docstring
+        # do `RoundChain` declara: coluna esquecida nesta lista é coluna que some na revisão
+        # seguinte, e a extração de uma folha nova é exatamente o ato que roda DEPOIS de a
+        # orçamentista já ter declarado vínculo de identidade nesta praça.
+        "worksite_plate_packets_json",
+        "worksite_plate_registrations_json",
+        "worksite_identity_links_json",
         "artifact_refs_json",
         "artifact_digests_json",
     ),
@@ -312,6 +353,9 @@ ESTIMATE_ROUND_CHAIN: Final = RoundChain(
     label="orçamento-base",
     rounds_table="estimate_rounds",
     revisions_table="estimate_round_revisions",
+    # Sem tabela de folhas: a praça de várias pranchas é da medição (F-046). Aqui a prancha
+    # continua nas colunas escalares da raiz, e a extração continua lendo dali.
+    plates_table=None,
     # Sem `valuation_json` nem `amendment_dossier_json`, e com `estimate_json` no lugar:
     # boletim e dossiê de aditivo são artefatos da obra LICITADA e não existem deste lado
     # da fronteira (ADR-0027/ADR-0038).
@@ -321,6 +365,10 @@ ESTIMATE_ROUND_CHAIN: Final = RoundChain(
         "code_suggestions_json",
         "code_assignments_json",
         "estimate_json",
+        # Mesmo buraco que a medição tinha, e pela mesma razão: a cabeça de `/v1`
+        # (`estimate_rounds.REVISION_DOCUMENT_COLUMNS`) carrega a matriz, o comando de fila
+        # não carregava, e uma extração posterior ao build a apagava.
+        "calc_matrix_json",
         "extraction_lineage_json",
         "artifact_refs_json",
         "artifact_digests_json",
@@ -330,6 +378,194 @@ ESTIMATE_ROUND_CHAIN: Final = RoundChain(
     plate_image_key=_estimate_plate_image_object_key,
     takeoff_overlay_key=_estimate_takeoff_overlay_object_key,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _NothingClaimed:
+    """Sentinela do claim vazio: ninguém confunde "nada a fazer" com "a folha é a primeira".
+
+    `None` já significa uma coisa no retorno do claim — "a cadeia não tem tabela de folhas,
+    siga pelo caminho escalar" —, e usá-lo também para "não peguei trabalho" faria as duas
+    situações responderem igual. A distinção não é estilo: uma delas paga um provider.
+    """
+
+
+_NOTHING_CLAIMED: Final = _NothingClaimed()
+
+
+@dataclass(frozen=True, slots=True)
+class RoundPlate:
+    """A folha que UMA extração vai ingerir: origem, página e identidade dentro da praça.
+
+    Existe para que o comando de fila deixe de falar em "a prancha da rodada" e passe a falar
+    em "esta folha" (F-046). Ela é montada de duas origens conforme a cadeia — a tabela filha
+    da medição ou as colunas escalares do orçamento-base —, e daí para a frente o resto do
+    comando não sabe nem precisa saber de qual das duas veio.
+    """
+
+    plate_id: str
+    """Identidade da folha na praça; vira `TakeoffPacket.plate_id` e nomeia o diretório."""
+    position: int
+    """Ordem de entrada. A posição 1 é a folha única de sempre, e por isso não tem sufixo."""
+    object_key: str
+    source_sha256: str
+    page_number: int
+
+
+def _legacy_plate_id(round_id: str) -> str:
+    """A `plate_id` da rodada de UMA prancha, que é o nome do diretório de trabalho.
+
+    É o mesmo valor que `round_extraction.dataset_id` cunha a partir do diretório e o mesmo
+    que `valuation_rounds.mint_plate_id` cunha para a primeira folha da praça. Escrito aqui
+    porque a cadeia sem tabela de folhas (o orçamento-base) não tem de onde lê-lo.
+    """
+    return f"rodada-{round_id}"
+
+
+def _round_plate_target(
+    connection: Connection,
+    chain: RoundChain,
+    *,
+    round_id: str,
+    tenant_id: str,
+    plate_id: str | None,
+) -> RoundPlate | None:
+    """A folha que este comando vai extrair, ou `None` quando a rodada não tem prancha.
+
+    Na cadeia com tabela de folhas a leitura vem DELA e só dela (F-046): as colunas escalares
+    da raiz continuam existindo como espelho da primeira folha, mas já não são lidas por aqui
+    — é o que torna o passo de `contract` possível sem tocar neste comando de novo.
+
+    `plate_id` ausente resolve para a PRIMEIRA folha, e isso não é conveniência: é o envelope
+    publicado antes da F-046, que pode estar em voo na fila durante o deploy. Ele continua
+    significando exatamente o que significava — a prancha da rodada.
+    """
+    if chain.plates_table is None:
+        record = (
+            connection.execute(
+                text(
+                    "SELECT plate_object_key, plate_source_sha256 "
+                    f"FROM {chain.rounds_table} "
+                    "WHERE id = :round_id AND tenant_id = :tenant_id"
+                ),
+                {"round_id": round_id, "tenant_id": tenant_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if record is None or not record["plate_object_key"]:
+            return None
+        return RoundPlate(
+            plate_id=_legacy_plate_id(round_id),
+            position=1,
+            object_key=str(record["plate_object_key"]),
+            source_sha256=str(record["plate_source_sha256"]),
+            page_number=PLATE_PAGE_NUMBER,
+        )
+    parameters: dict[str, Any] = {"round_id": round_id, "tenant_id": tenant_id}
+    condition = ""
+    if plate_id is not None:
+        condition = "AND plate_id = :plate_id "
+        parameters["plate_id"] = plate_id
+    row = (
+        connection.execute(
+            text(
+                "SELECT plate_id, position, object_key, source_sha256, page_number "
+                f"FROM {chain.plates_table} "
+                "WHERE round_id = :round_id AND tenant_id = :tenant_id "
+                f"{condition}"
+                "ORDER BY position LIMIT 1"
+            ),
+            parameters,
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        return None
+    return RoundPlate(
+        plate_id=str(row["plate_id"]),
+        position=int(row["position"]),
+        object_key=str(row["object_key"]),
+        source_sha256=str(row["source_sha256"]),
+        page_number=int(row["page_number"]),
+    )
+
+
+def _mirror_round_extraction(
+    connection: Connection, chain: RoundChain, *, round_id: str, tenant_id: str
+) -> None:
+    """Reescreve o estado de extração da RAIZ a partir do estado das folhas (F-046).
+
+    A raiz continua respondendo pela rodada inteira porque é ela que a tela de hoje lê, mas o
+    estado verdadeiro passou a ser por folha: uma extração que falha numa folha não pode
+    derrubar as outras, e um `failed` na raiz enquanto duas folhas seguem rodando descreveria
+    uma rodada que não existe.
+
+    A composição erra para o lado de "ainda não acabou", que é o único lado seguro: enquanto
+    houver folha correndo ou na fila, a raiz diz isso; só depois de todas assentarem é que
+    `failed` (com o código da PRIMEIRA folha que falhou, na ordem da praça) ou `done`
+    aparecem. Folha nunca extraída não entra na conta — ela tem `extraction_status` nulo, e
+    acrescentar uma folha não pode reabrir a extração que já terminou.
+
+    Espelho DERIVADO e reescrito dentro da mesma transação de quem mudou a folha: não há
+    janela em que a raiz e as folhas discordem para um leitor.
+    """
+    if chain.plates_table is None:  # pragma: no cover - cadeia sem praça não espelha nada
+        return
+    rows = (
+        connection.execute(
+            text(
+                "SELECT extraction_status, extraction_failure_code "
+                f"FROM {chain.plates_table} "
+                "WHERE round_id = :round_id AND tenant_id = :tenant_id "
+                "AND extraction_status IS NOT NULL ORDER BY position"
+            ),
+            {"round_id": round_id, "tenant_id": tenant_id},
+        )
+        .mappings()
+        .all()
+    )
+    if not rows:
+        return
+    statuses = [str(row["extraction_status"]) for row in rows]
+    failure: str | None = None
+    if "running" in statuses:
+        status = "running"
+    elif "queued" in statuses:
+        status = "queued"
+    elif "failed" in statuses:
+        status = "failed"
+        first_failed = next(row for row in rows if row["extraction_status"] == "failed")
+        code = first_failed["extraction_failure_code"]
+        failure = None if code is None else str(code)
+    else:
+        status = "done"
+    connection.execute(
+        text(
+            f"UPDATE {chain.rounds_table} SET extraction_status = :status, "
+            "extraction_failure_code = :failure, extraction_updated_at = CURRENT_TIMESTAMP, "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = :round_id AND tenant_id = :tenant_id"
+        ),
+        {
+            "round_id": round_id,
+            "tenant_id": tenant_id,
+            "status": status,
+            "failure": failure,
+        },
+    )
+
+
+_ROUND_PUBLISH_ATTEMPTS: Final = 3
+"""Tentativas de gravar a revisão de uma extração quando a cabeça da cadeia se move.
+
+Existe porque duas folhas da mesma praça podem ser extraídas ao mesmo tempo e disputar a
+próxima versão da cadeia append-only (F-046). Retentar é barato — a chamada paga já
+aconteceu e o resultado está em memória —, e não retentar jogaria fora um pacote pago por
+causa de uma colisão de contador. Três é o compromisso declarado entre absorver a corrida
+normal e não insistir para sempre contra uma cadeia que alguém está reescrevendo."""
+
 
 _ROUND_EXTRACTION_COMMANDS: Final[Mapping[str, RoundChain]] = {
     "extract_valuation_plate": VALUATION_ROUND_CHAIN,
@@ -1010,11 +1246,16 @@ class LocalQueueWorker:
                 raise UnroutableMessageError(
                     f"Mensagem de extração de {extraction_chain.label} inválida"
                 )
+            # `plate_id` é opcional no envelope (F-046): ausente significa a primeira folha,
+            # que é o que o comando queria dizer antes de a praça ter mais de uma. Envelope
+            # publicado antes do deploy continua sendo executado, e não descartado.
+            plate_id = body.get("plate_id")
             return self._handle_round_extraction(
                 extraction_chain,
                 round_id=round_id,
                 extraction_id=extraction_id,
                 tenant_id=tenant_id,
+                plate_id=plate_id if isinstance(plate_id, str) else None,
             )
         overlay_chain = _ROUND_OVERLAY_COMMANDS.get(command)
         if overlay_chain is not None:
@@ -2271,15 +2512,45 @@ class LocalQueueWorker:
         round_id: str,
         extraction_id: str,
         tenant_id: str,
+        plate_id: str | None,
         failure_code: str,
     ) -> None:
-        """Fecha a extração como `failed`: nenhuma revisão, versão da rodada intacta.
+        """Fecha a extração DESTA folha como `failed`: nenhuma revisão, versão intacta.
 
         O `WHERE` repete o par extração+estado do claim: um desfecho tardio nunca sobrescreve
-        uma extração posterior que já tomou a rodada para si. Falha em não casar linha
+        uma extração posterior que já tomou a folha para si. Falha em não casar linha
         nenhuma é justamente o caso em que não há nada a fechar.
+
+        Desde a F-046 quem guarda o desfecho é a FOLHA, e a raiz é reescrita a partir das
+        folhas (`_mirror_round_extraction`). É isso que faz uma folha que falha não derrubar
+        as outras: as demais seguem `running` e a praça continua sabendo disso.
         """
         with self.engine.begin() as connection:
+            if chain.plates_table is not None:
+                # O claim garante o par: cadeia com tabela de folhas devolve a folha
+                # reivindicada, e é ela que este desfecho fecha. Cair no ramo escalar aqui
+                # marcaria a RAIZ como falha sem tocar em folha nenhuma — e a folha seguiria
+                # `running` para sempre.
+                assert plate_id is not None
+                connection.execute(
+                    text(
+                        f"UPDATE {chain.plates_table} SET extraction_status = 'failed', "
+                        "extraction_failure_code = :failure_code, "
+                        "extraction_updated_at = CURRENT_TIMESTAMP "
+                        "WHERE round_id = :round_id AND tenant_id = :tenant_id "
+                        "AND plate_id = :plate_id AND extraction_id = :extraction_id "
+                        "AND extraction_status = 'running'"
+                    ),
+                    {
+                        "round_id": round_id,
+                        "tenant_id": tenant_id,
+                        "plate_id": plate_id,
+                        "extraction_id": extraction_id,
+                        "failure_code": failure_code,
+                    },
+                )
+                _mirror_round_extraction(connection, chain, round_id=round_id, tenant_id=tenant_id)
+                return
             connection.execute(
                 text(
                     f"UPDATE {chain.rounds_table} SET extraction_status = 'failed', "
@@ -2304,6 +2575,7 @@ class LocalQueueWorker:
         round_id: str,
         extraction_id: str,
         tenant_id: str,
+        plate: RoundPlate,
         packet: dict[str, Any],
         registration: dict[str, Any],
         lineage: dict[str, Any],
@@ -2311,12 +2583,73 @@ class LocalQueueWorker:
         digests: dict[str, str],
         page_count: int,
     ) -> None:
-        """Grava a revisão e fecha a extração na MESMA transação.
+        """Publica o pacote da folha, reagendando a gravação quando a cabeça se move.
 
-        Pacote publicado com a rodada ainda `running`, ou rodada `done` sem revisão, seriam
+        Duas folhas da MESMA praça podem estar sendo extraídas ao mesmo tempo (F-046: o lote
+        publica um comando por folha), e as duas disputam a próxima versão da cadeia
+        append-only. Quem perde a corrida bate em `uq_valuation_round_version` — e descartar
+        o pacote nesse ponto jogaria fora uma chamada JÁ PAGA por causa de uma colisão de
+        contador.
+
+        Por isso a gravação é retentada relendo a cabeça: o trabalho caro já aconteceu e está
+        em memória, e o que a retentativa refaz é só a transação. Esgotadas as tentativas, o
+        erro propaga e o desfecho da folha vira `failed` declarado, como qualquer outro.
+
+        O que NÃO é retentado é a folha ter saído do estado de extração em curso: ali outra
+        extração tomou a folha, e insistir publicaria um pacote por cima do dela.
+        """
+        for attempt in range(_ROUND_PUBLISH_ATTEMPTS):
+            try:
+                self._write_round_extraction(
+                    chain,
+                    round_id=round_id,
+                    extraction_id=extraction_id,
+                    tenant_id=tenant_id,
+                    plate=plate,
+                    packet=packet,
+                    registration=registration,
+                    lineage=lineage,
+                    refs=refs,
+                    digests=digests,
+                    page_count=page_count,
+                )
+            except IntegrityError:
+                if attempt + 1 == _ROUND_PUBLISH_ATTEMPTS:
+                    raise
+                continue
+            return
+
+    def _write_round_extraction(
+        self,
+        chain: RoundChain,
+        *,
+        round_id: str,
+        extraction_id: str,
+        tenant_id: str,
+        plate: RoundPlate,
+        packet: dict[str, Any],
+        registration: dict[str, Any],
+        lineage: dict[str, Any],
+        refs: dict[str, str],
+        digests: dict[str, str],
+        page_count: int,
+    ) -> None:
+        """Grava a revisão e fecha a extração DESTA folha na MESMA transação.
+
+        Pacote publicado com a folha ainda `running`, ou folha `done` sem revisão, seriam
         estados que a tela não sabe ler — e nenhum dos dois é recuperável por retentativa.
         A revisão copia da cabeça o que a extração não produziu, porque revisão é
         append-only e o que o ato não mudou viaja idêntico (ADR-0028 D2).
+
+        Onde o pacote é gravado depende da POSIÇÃO da folha (F-046, ADR-0057 decisão 8): a
+        primeira continua em `takeoff_packet_json`, com o mesmo conteúdo e o mesmo digest de
+        sempre, e da segunda em diante o pacote entra no mapa `worksite_plate_packets_json`,
+        indexado pela `plate_id`. É essa divisão que mantém a praça de uma folha byte-idêntica
+        e o que faz o `GET /takeoff` de hoje continuar respondendo a mesma coisa.
+
+        Uma revisão POR folha extraída, e não uma por lote: é ela que carrega o `lineage`
+        daquela chamada paga, e é por isso que o custo sai apurado por folha sem nenhuma soma
+        nova — quem contabiliza (`metrics._extraction_cost`) já varre todas as revisões.
         """
         dialect = self.engine.dialect.name
         with self.engine.begin() as connection:
@@ -2330,6 +2663,20 @@ class LocalQueueWorker:
             carried_digests = dict(carried.get("artifact_digests_json") or {})
             carried_refs.update(refs)
             carried_digests.update(digests)
+            if plate.position <= 1:
+                produced: dict[str, Any] = {
+                    "takeoff_packet_json": packet,
+                    "takeoff_registration_json": registration,
+                }
+            else:
+                packets = dict(carried.get("worksite_plate_packets_json") or {})
+                registrations = dict(carried.get("worksite_plate_registrations_json") or {})
+                packets[plate.plate_id] = packet
+                registrations[plate.plate_id] = registration
+                produced = {
+                    "worksite_plate_packets_json": packets,
+                    "worksite_plate_registrations_json": registrations,
+                }
             _insert_round_revision(
                 connection,
                 chain,
@@ -2341,15 +2688,25 @@ class LocalQueueWorker:
                 created_by=chain.extraction_author,
                 documents={
                     # A cabeça viaja inteira e a extração sobrescreve só o que ela produziu:
-                    # pacote, registro e lineage.
+                    # pacote e registro DESTA folha, mais o lineage.
                     **carried,
-                    "takeoff_packet_json": packet,
-                    "takeoff_registration_json": registration,
+                    **produced,
                     "extraction_lineage_json": lineage,
                     "artifact_refs_json": carried_refs,
                     "artifact_digests_json": carried_digests,
                 },
             )
+            if chain.plates_table is not None:
+                self._settle_published_plate(
+                    connection,
+                    chain,
+                    round_id=round_id,
+                    tenant_id=tenant_id,
+                    extraction_id=extraction_id,
+                    plate=plate,
+                    page_count=page_count,
+                )
+                return
             published = connection.execute(
                 text(
                     f"UPDATE {chain.rounds_table} SET extraction_status = 'done', "
@@ -2372,28 +2729,90 @@ class LocalQueueWorker:
                 # extração já tomou.
                 raise ValueError(f"Rodada de {chain.label} saiu do estado de extração em curso")
 
-    def _extract_round_plate(
-        self, chain: RoundChain, *, round_id: str, extraction_id: str, tenant_id: str
+    def _settle_published_plate(
+        self,
+        connection: Connection,
+        chain: RoundChain,
+        *,
+        round_id: str,
+        tenant_id: str,
+        extraction_id: str,
+        plate: RoundPlate,
+        page_count: int,
     ) -> None:
-        """Ingere a página da prancha, extrai a legenda e publica o pacote da rodada.
+        """Fecha a FOLHA como `done` dentro da transação que acabou de gravar a revisão.
+
+        O `WHERE` repete o par extração+estado do claim, agora na linha da folha: um desfecho
+        tardio nunca sobrescreve uma extração posterior que já tomou aquela folha. Não casar
+        linha nenhuma derruba a transação inteira de propósito — pacote publicado numa folha
+        que outra extração já tomou é pior do que extração perdida.
+
+        A raiz recebe o contador da rodada e o espelho escalar da primeira folha; o estado de
+        extração dela é DERIVADO das folhas logo em seguida, e não escrito aqui.
+        """
+        assert chain.plates_table is not None
+        published = connection.execute(
+            text(
+                f"UPDATE {chain.plates_table} SET extraction_status = 'done', "
+                "extraction_failure_code = NULL, page_count = :page_count, "
+                "extraction_updated_at = CURRENT_TIMESTAMP "
+                "WHERE round_id = :round_id AND tenant_id = :tenant_id "
+                "AND plate_id = :plate_id AND extraction_id = :extraction_id "
+                "AND extraction_status = 'running'"
+            ),
+            {
+                "round_id": round_id,
+                "tenant_id": tenant_id,
+                "plate_id": plate.plate_id,
+                "extraction_id": extraction_id,
+                "page_count": page_count,
+            },
+        )
+        if published.rowcount != 1:
+            raise ValueError(
+                f"Folha da rodada de {chain.label} saiu do estado de extração em curso"
+            )
+        # `plate_page_count` continua sendo o espelho escalar da PRIMEIRA folha, mantido
+        # enquanto a coluna existir (expand/contract, `services/api/AGENTS.md`). Folha 2 em
+        # diante não o toca: a contagem de páginas dela vive na linha dela.
+        mirror = "plate_page_count = :page_count, " if plate.position <= 1 else ""
+        parameters: dict[str, Any] = {"round_id": round_id, "tenant_id": tenant_id}
+        if plate.position <= 1:
+            parameters["page_count"] = page_count
+        connection.execute(
+            text(
+                f"UPDATE {chain.rounds_table} SET version = version + 1, {mirror}"
+                "updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = :round_id AND tenant_id = :tenant_id"
+            ),
+            parameters,
+        )
+        _mirror_round_extraction(connection, chain, round_id=round_id, tenant_id=tenant_id)
+
+    def _extract_round_plate(
+        self,
+        chain: RoundChain,
+        *,
+        round_id: str,
+        extraction_id: str,
+        tenant_id: str,
+        plate_id: str | None = None,
+    ) -> None:
+        """Ingere a página da FOLHA, extrai a legenda e publica o pacote dela.
 
         Toda a escrita de disco acontece num diretório temporário desta tarefa; o que
         sobrevive são dois PNGs sob o prefixo do tenant no object store e uma revisão nova.
+
+        Desde a F-046 o comando é de UMA folha da praça, e não mais "da prancha da rodada":
+        `plate_id` diz qual, e a origem dela vem da tabela de folhas (`_round_plate_target`)
+        na cadeia que tem uma. `plate_id` ausente é a primeira folha — o envelope de antes
+        desta feature, que continua significando o mesmo.
         """
         with self.engine.connect() as connection:
-            record = (
-                connection.execute(
-                    text(
-                        "SELECT plate_object_key, plate_source_sha256 "
-                        f"FROM {chain.rounds_table} "
-                        "WHERE id = :round_id AND tenant_id = :tenant_id"
-                    ),
-                    {"round_id": round_id, "tenant_id": tenant_id},
-                )
-                .mappings()
-                .one_or_none()
+            plate = _round_plate_target(
+                connection, chain, round_id=round_id, tenant_id=tenant_id, plate_id=plate_id
             )
-        if record is None or not record["plate_object_key"]:
+        if plate is None:
             raise ValuationValidationError(
                 "ROUND_STAGE_NOT_READY",
                 "a rodada não tem prancha associada para extrair",
@@ -2404,12 +2823,13 @@ class LocalQueueWorker:
         reserve = self._valuation_extraction_reserve()
 
         with tempfile.TemporaryDirectory() as workspace:
-            # O nome do diretório vira `plate_id` do pacote (`round_extraction.dataset_id`),
-            # então ele identifica a RODADA — nunca um temporário aleatório do sistema.
-            workdir = Path(workspace) / f"rodada-{round_id}"
+            # O nome do diretório é a `plate_id` da folha, e não um temporário aleatório do
+            # sistema: ele vira o `dataset_id` do manifest da ingestão, que é o que amarra a
+            # página renderizada ao documento consentido.
+            workdir = Path(workspace) / plate.plate_id
             workdir.mkdir()
             body = self.s3_client.get_object(
-                Bucket=self.settings.artifact_bucket, Key=str(record["plate_object_key"])
+                Bucket=self.settings.artifact_bucket, Key=plate.object_key
             )["Body"]
             with closing(body):
                 payload = cast(bytes, body.read(MAX_PLATE_PDF_BYTES + 1))
@@ -2418,16 +2838,28 @@ class LocalQueueWorker:
                     "a prancha armazenada excede o limite de ingestão",
                     {"max_bytes": MAX_PLATE_PDF_BYTES},
                 )
-            manifest = ingest_plate_upload(workdir, filename=PLATE_PDF_FILENAME, payload=payload)
-            if manifest.source_sha256 != str(record["plate_source_sha256"]):
+            manifest = ingest_plate_upload(
+                workdir,
+                filename=PLATE_PDF_FILENAME,
+                payload=payload,
+                page_number=plate.page_number,
+            )
+            if manifest.source_sha256 != plate.source_sha256:
                 # O digest declarado no presign é o que o orçamentista consentiu; um objeto
                 # que não o reproduz não é a prancha dele.
                 raise upload_invalid(
                     "a prancha armazenada diverge do digest declarado no upload",
                     {"round_id": round_id},
                 )
-            result = extract_legend_from_upload(workdir, manifest, adapter, reserve)
-            image_path = workdir / manifest.pages[PLATE_PAGE_NUMBER - 1].render_file
+            result = extract_legend_from_upload(
+                workdir,
+                manifest,
+                adapter,
+                reserve,
+                plate_id=plate.plate_id,
+                page_number=plate.page_number,
+            )
+            image_path = workdir / manifest.pages[plate.page_number - 1].render_file
             # Overlay renderizado ANTES de qualquer publicação, como em `cli._publish_takeoff`:
             # pacote sem overlay não é meio caminho aceitável — é o overlay que mostra ao
             # orçamentista de onde cada número foi lido.
@@ -2436,8 +2868,15 @@ class LocalQueueWorker:
             image_bytes = image_path.read_bytes()
             overlay_bytes = overlay_path.read_bytes()
 
-        plate_key = chain.plate_image_key(tenant_id=tenant_id, round_id=round_id)
-        overlay_key = chain.takeoff_overlay_key(tenant_id=tenant_id, round_id=round_id)
+        plate_key = chain.plate_image_key(
+            tenant_id=tenant_id,
+            round_id=round_id,
+            position=plate.position,
+            page_number=plate.page_number,
+        )
+        overlay_key = chain.takeoff_overlay_key(
+            tenant_id=tenant_id, round_id=round_id, position=plate.position
+        )
         self._put_round_png(object_key=plate_key, payload=image_bytes)
         self._put_round_png(object_key=overlay_key, payload=overlay_bytes)
 
@@ -2453,59 +2892,155 @@ class LocalQueueWorker:
             "execution": execution_payload(result.execution),
         }
         packet_document = result.packet.model_dump(mode="json")
+
+        def _ref(base: str) -> str:
+            """Nome da chave DESTA folha nos mapas da revisão; a primeira fica sem sufixo."""
+            return plate_ref_key(base, position=plate.position, plate_id=plate.plate_id)
+
         self._publish_round_extraction(
             chain,
             round_id=round_id,
             extraction_id=extraction_id,
             tenant_id=tenant_id,
+            plate=plate,
             packet=packet_document,
             registration=dict(registration_payload(result.registration)),
             lineage=lineage,
-            refs={PLATE_IMAGE_REF: plate_key, TAKEOFF_OVERLAY_REF: overlay_key},
+            refs={_ref(PLATE_IMAGE_REF): plate_key, _ref(TAKEOFF_OVERLAY_REF): overlay_key},
             digests={
-                PLATE_IMAGE_DIGEST: result.packet.image_sha256,
-                TAKEOFF_OVERLAY_DIGEST: hashlib.sha256(overlay_bytes).hexdigest(),
+                _ref(PLATE_IMAGE_DIGEST): result.packet.image_sha256,
+                _ref(TAKEOFF_OVERLAY_DIGEST): hashlib.sha256(overlay_bytes).hexdigest(),
                 # O overlay nasce do pacote recém-extraído, e é este digest que a rota
                 # compara com o pacote corrente para saber se o desenho envelheceu
                 # (ADR-0030). Gravá-lo aqui é o que faz o overlay recém-publicado não
                 # nascer marcado como vencido.
-                TAKEOFF_OVERLAY_PACKET_DIGEST: document_digest(packet_document),
+                _ref(TAKEOFF_OVERLAY_PACKET_DIGEST): document_digest(packet_document),
             },
             page_count=manifest.page_count,
         )
 
-    def _handle_round_extraction(
-        self, chain: RoundChain, *, round_id: str, extraction_id: str, tenant_id: str
-    ) -> int:
-        """Executa a extração paga da legenda no máximo UMA vez por comando enfileirado.
+    def _claim_round_extraction(
+        self,
+        chain: RoundChain,
+        *,
+        round_id: str,
+        extraction_id: str,
+        tenant_id: str,
+        plate_id: str | None,
+    ) -> str | _NothingClaimed | None:
+        """Toma o trabalho desta FOLHA para si, ou devolve `_NOTHING_CLAIMED`.
 
         O claim é um `UPDATE` condicional, e não um `SELECT` seguido de escrita: duas
         entregas simultâneas do mesmo envelope passariam pela leitura, e o provider seria
-        pago duas vezes. `rowcount != 1` significa que outra entrega já levou o trabalho —
-        ou que a extração não está mais em fila — e o retorno normal é o ack sem trabalho.
+        pago duas vezes.
 
-        Nenhuma falha reenfileira: depois do claim a rodada está `running`, e uma reentrega
+        Desde a F-046 quem é reivindicado é a LINHA DA FOLHA, e não a raiz: com o claim na
+        raiz, a segunda folha do mesmo lote encontraria a rodada já `running` e o comando
+        dela seria descartado em silêncio — meia praça extraída, sem ninguém reclamar.
+
+        Envelope sem `plate_id` (o de antes desta feature, que pode estar em voo na fila
+        durante o deploy) resolve para a folha na fila de menor posição.
+        """
+        with self.engine.begin() as connection:
+            if chain.plates_table is None:
+                claimed = connection.execute(
+                    text(
+                        f"UPDATE {chain.rounds_table} SET extraction_status = 'running', "
+                        "extraction_updated_at = CURRENT_TIMESTAMP, "
+                        "updated_at = CURRENT_TIMESTAMP "
+                        "WHERE id = :round_id AND tenant_id = :tenant_id "
+                        "AND extraction_id = :extraction_id AND extraction_status = 'queued'"
+                    ),
+                    {
+                        "round_id": round_id,
+                        "tenant_id": tenant_id,
+                        "extraction_id": extraction_id,
+                    },
+                )
+                return None if claimed.rowcount == 1 else _NOTHING_CLAIMED
+            target = plate_id
+            if target is None:
+                pending = (
+                    connection.execute(
+                        text(
+                            "SELECT plate_id "
+                            f"FROM {chain.plates_table} "
+                            "WHERE round_id = :round_id AND tenant_id = :tenant_id "
+                            "AND extraction_id = :extraction_id AND extraction_status = 'queued' "
+                            "ORDER BY position LIMIT 1"
+                        ),
+                        {
+                            "round_id": round_id,
+                            "tenant_id": tenant_id,
+                            "extraction_id": extraction_id,
+                        },
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if pending is None:
+                    return _NOTHING_CLAIMED
+                target = str(pending["plate_id"])
+            claimed = connection.execute(
+                text(
+                    f"UPDATE {chain.plates_table} SET extraction_status = 'running', "
+                    "extraction_updated_at = CURRENT_TIMESTAMP "
+                    "WHERE round_id = :round_id AND tenant_id = :tenant_id "
+                    "AND plate_id = :plate_id AND extraction_id = :extraction_id "
+                    "AND extraction_status = 'queued'"
+                ),
+                {
+                    "round_id": round_id,
+                    "tenant_id": tenant_id,
+                    "plate_id": target,
+                    "extraction_id": extraction_id,
+                },
+            )
+            if claimed.rowcount != 1:
+                return _NOTHING_CLAIMED
+            _mirror_round_extraction(connection, chain, round_id=round_id, tenant_id=tenant_id)
+            return target
+
+    def _handle_round_extraction(
+        self,
+        chain: RoundChain,
+        *,
+        round_id: str,
+        extraction_id: str,
+        tenant_id: str,
+        plate_id: str | None = None,
+    ) -> int:
+        """Executa a extração paga de UMA folha no máximo uma vez por comando enfileirado.
+
+        Claim tomado significa que esta entrega leva o trabalho; `_NOTHING_CLAIMED` significa
+        que outra entrega já o levou — ou que a folha não está mais em fila — e o retorno
+        normal é o ack sem trabalho.
+
+        Nenhuma falha reenfileira: depois do claim a folha está `running`, e uma reentrega
         encontraria o claim fechado e não faria nada. Por isso todo desfecho é declarado —
         `done` com o pacote, ou `failed` com o código —, e a retomada é um ato explícito do
         orçamentista, que é também o único que pode decidir pagar de novo.
+
+        O desfecho é DA FOLHA: uma folha que falha deixa as demais correndo, com o estado
+        delas intacto (F-046). A raiz continua respondendo pela rodada, derivada das folhas.
         """
-        with self.engine.begin() as connection:
-            claimed = connection.execute(
-                text(
-                    f"UPDATE {chain.rounds_table} SET extraction_status = 'running', "
-                    "extraction_updated_at = CURRENT_TIMESTAMP, "
-                    "updated_at = CURRENT_TIMESTAMP "
-                    "WHERE id = :round_id AND tenant_id = :tenant_id "
-                    "AND extraction_id = :extraction_id AND extraction_status = 'queued'"
-                ),
-                {"round_id": round_id, "tenant_id": tenant_id, "extraction_id": extraction_id},
-            )
-        if claimed.rowcount != 1:
+        claimed = self._claim_round_extraction(
+            chain,
+            round_id=round_id,
+            extraction_id=extraction_id,
+            tenant_id=tenant_id,
+            plate_id=plate_id,
+        )
+        if isinstance(claimed, _NothingClaimed):
             return 1
 
         try:
             self._extract_round_plate(
-                chain, round_id=round_id, extraction_id=extraction_id, tenant_id=tenant_id
+                chain,
+                round_id=round_id,
+                extraction_id=extraction_id,
+                tenant_id=tenant_id,
+                plate_id=claimed,
             )
         except Exception as error:
             # A mensagem da exceção pode carregar evidência da prancha; só o código sai.
@@ -2514,6 +3049,7 @@ class LocalQueueWorker:
                 round_id=round_id,
                 extraction_id=extraction_id,
                 tenant_id=tenant_id,
+                plate_id=claimed,
                 failure_code=extraction_failure_code(error),
             )
         return 1

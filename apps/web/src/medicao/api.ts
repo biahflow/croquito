@@ -35,10 +35,14 @@ import type {
 
 import { apiJson, ApiError } from "../api";
 import {
+  appendPlatesBody,
   codeClosureBody,
   codeRevocationBody,
   codeDecisionBody,
   createRoundBody,
+  identityLinkBody,
+  identityLinkPreviewBody,
+  platesExtractionBody,
   takeoffDecisionBody,
   versionBody,
 } from "./requests";
@@ -356,6 +360,152 @@ export type ExtractionResponse = {
 };
 
 /**
+ * Uma folha da praça como `GET /v1/valuation-rounds/{id}/worksite` a descreve (F-046).
+ *
+ * Envelope, não domínio: a folha é linha da rodada no servidor, e o que chega aqui são os
+ * metadados dela mais as contagens que a leitura derivou do pacote daquela folha. O
+ * conteúdo do pacote — os itens da legenda — **não** vem por aqui.
+ *
+ * Todo campo derivado do pacote é `null` enquanto a folha não foi extraída: é assim que a
+ * tela distingue "folha sem item" de "folha que ainda não foi lida", sem inventar zero.
+ */
+export type WorksiteSheet = {
+  plate_id: string;
+  /** Ordem de entrada na praça, a partir de 1; é ela que dá o "folha N de M". */
+  position: number;
+  source_sha256: string;
+  page_number: number;
+  /** Páginas do PDF de origem DESTA folha; `null` enquanto o worker não ingeriu. */
+  page_count: number | null;
+  /** Estado da extração desta folha; `null` é "nunca enfileirada". */
+  extraction_status: ExtractionStatus | null;
+  extraction_failure_code: string | null;
+  extraction_updated_at: string | null;
+  takeoff_present: boolean;
+  packet_sha256: string | null;
+  review_status: "review_required" | "complete" | null;
+  item_count: number | null;
+  pending_items: number | null;
+  anchors_registered?: number;
+  anchors_raw?: number;
+};
+
+/** Endereço que atravessa a praça: o par `(plate_id, item_id)` (ADR-0057, decisão 5). */
+export type TakeoffItemAddress = {
+  plate_id: string;
+  item_id: string;
+};
+
+/**
+ * Vínculo de identidade declarado: duas leituras de folhas diferentes são o mesmo
+ * elemento. `kept` é a parcela que fica; autor, instante e nota são do servidor.
+ */
+export type WorksiteIdentityLink = {
+  kept: TakeoffItemAddress;
+  discarded: TakeoffItemAddress;
+  declared_by: string | null;
+  declared_at: string | null;
+  note: string | null;
+};
+
+/**
+ * Uma das duas leituras da prévia da fusão, como o servidor a descreve.
+ *
+ * `quantity` é **texto** e pode ser `null` — leitura ainda sem quantidade é ausência, e
+ * ausência não é `"0"`. Nada aqui é recalculado pela tela.
+ */
+export type IdentityLinkParcel = {
+  plate_id: string;
+  item_id: string;
+  label: string;
+  unit: string;
+  status: TakeoffPacket.TakeoffItemStatus;
+  quantity: string | null;
+};
+
+/**
+ * O efeito da fusão no total da praça ANTES de gravar
+ * (`POST .../worksite/identity-links/preview`, F-046 T4c).
+ *
+ * É a rota que torna a decisão informada, e existe porque **a conta é do servidor**: a
+ * tela de medição não soma (`apps/web/AGENTS.md`), então `total_before` e `total_after`
+ * chegam prontos, como strings decimais.
+ *
+ * Unidade divergente não tem soma: os dois totais saem `null` com `unit_mismatch: true` e
+ * as duas parcelas à vista. Um número escrito ali teria a aparência de conta conferida.
+ */
+export type IdentityLinkPreviewResponse = {
+  round_id: string;
+  version: number;
+  worksite_key: string;
+  kept: IdentityLinkParcel;
+  discarded: IdentityLinkParcel;
+  unit_mismatch: boolean;
+  total_before: string | null;
+  total_after: string | null;
+};
+
+/**
+ * O consolidado da praça como a leitura o entrega.
+ *
+ * `present: false` é estado honesto e não erro: a praça que ainda não fecha sai com as
+ * folhas pendentes nomeadas e o código da recusa. `document` referencia os pacotes de cada
+ * folha por digest — ele **não** contém itens, quantidade nem dinheiro.
+ */
+export type WorksiteConsolidated = {
+  present: boolean;
+  worksite_takeoff_sha256: string | null;
+  document: {
+    worksite_key: string;
+    plates: { plate_id: string; packet_digest: string }[];
+    identity_links: WorksiteIdentityLink[];
+  } | null;
+  /** Folhas da praça ainda sem pacote extraído, na ordem da praça. */
+  pending_plate_ids: string[];
+  refusal_code: string | null;
+};
+
+/** A praça: as folhas da rodada, os vínculos declarados e o consolidado derivado. */
+export type WorksiteResponse = {
+  round_id: string;
+  version: number;
+  worksite_key: string;
+  worksite_name: string;
+  /** Teto de folhas por rodada; a distância até `plates.length` é o que ainda cabe. */
+  plate_limit: number;
+  plates: WorksiteSheet[];
+  identity_links: WorksiteIdentityLink[];
+  consolidated: WorksiteConsolidated;
+};
+
+/** As folhas acrescentadas em lote e o tamanho da praça depois do ato. */
+export type PlatesResponse = {
+  round_id: string;
+  version: number;
+  plate_count: number;
+  plate_limit: number;
+  appended: {
+    plate_id: string;
+    position: number;
+    page_number: number;
+    source_sha256: string;
+  }[];
+};
+
+/**
+ * O lote de extração aceito. `plate_count` volta declarado para que o número de chamadas
+ * pagas autorizadas possa ser conferido depois do ato, e não só na fatura.
+ */
+export type PlatesExtractionResponse = {
+  round_id: string;
+  version: number;
+  extraction_id: string;
+  status: ExtractionStatus;
+  plate_count: number;
+  plate_ids: string[];
+};
+
+/**
  * Idade do overlay declarada na leitura (ADR-0030): `stale` é a comparação entre o pacote
  * que originou o desenho e o pacote corrente. Overlay vencido é `200` com a marca, nunca
  * erro — ele continua sendo a única visão de onde cada número foi lido.
@@ -444,6 +594,14 @@ export type PendingCodeItem = {
 export type CodesResponse = {
   round_id: string;
   version: number;
+  /**
+   * De qual folha da praça esta etapa está falando (F-046 T4d).
+   *
+   * Sai do PACOTE e não do conjunto, então continua declarada mesmo quando a folha ainda
+   * não tem decisão nenhuma — que é justamente o estado em que a tela mais precisa saber
+   * qual prancha está sendo codificada.
+   */
+  plate_id?: string;
   assignments: CodeAssignmentSet.CroquitoCodeAssignmentSet | null;
   assignments_sha256: string | null;
   confirmed: number;
@@ -590,6 +748,15 @@ export type TakeoffDecisionDraft = {
  */
 export type TakeoffDecisionBatchDraft = {
   baseVersion: number;
+  /**
+   * Qual folha da praça este lote revisa (F-046 T4c). Ausente é a PRIMEIRA folha, e o
+   * corpo sai idêntico ao de antes da praça.
+   *
+   * A folha é do ATO e não de cada decisão: um lote é a legenda de UMA prancha por
+   * construção, e decidir itens de duas folhas no mesmo ato seria outro ato, sobre outro
+   * pacote, com outra revisão.
+   */
+  plateId?: string;
   decisions: TakeoffDecisionDraft[];
 };
 
@@ -601,9 +768,22 @@ import type { CodeRevocationDraft } from "../codeRevocation";
 
 export type { CodeRevocationDraft };
 
+/**
+ * Desfazer um par na praça de várias folhas (F-046 T4d).
+ *
+ * A folha entra AQUI, e não em `CodeRevocationDraft`, porque aquele tipo mora na raiz e é
+ * o mesmo nas duas jornadas: o orçamento-base não tem praça, e pôr `plateId` lá daria à
+ * outra jornada um campo que ela nunca preenche. Ausente é a primeira folha — e a folha
+ * sem conjunto nenhum recusa em `ASSIGNMENT_REVOCATION_PAIR_UNKNOWN` em vez de herdar o
+ * conjunto da folha 1.
+ */
+export type CodeRevocationDaPracaDraft = CodeRevocationDraft & { plateId?: string };
+
 export type CodeClosureDraft = {
   itemId: string;
   baseVersion: number;
+  /** Em qual folha da praça está o elemento (F-046 T4d); ausente é a primeira. */
+  plateId?: string;
   note?: string;
 };
 
@@ -611,8 +791,33 @@ export type CodeDecisionDraft = {
   itemId: string;
   action: "confirm" | "reject";
   baseVersion: number;
+  /**
+   * Em qual folha da praça o item foi lido (F-046 T4d); ausente é a primeira.
+   *
+   * Ele entra no corpo e não no `item_id` porque `item_id` só é único **dentro** do pacote
+   * de uma folha (ADR-0057, decisão 5).
+   */
+  plateId?: string;
   code?: string;
   note?: string;
+};
+
+/** O vínculo que a orçamentista está considerando, para a prévia ou para o ato. */
+export type IdentityLinkDraft = {
+  kept: TakeoffItemAddress;
+  discarded: TakeoffItemAddress;
+};
+
+/**
+ * A declaração de identidade (F-046 T1): a prévia mais o que só o ato tem.
+ *
+ * `note` é obrigatória porque o vínculo muda o total da praça — quem confere depois
+ * precisa ler por que duas leituras viraram uma. Autor e instante **não** viajam: são do
+ * JWT e do relógio do servidor.
+ */
+export type IdentityLinkDeclarationDraft = IdentityLinkDraft & {
+  baseVersion: number;
+  note: string;
 };
 
 const JSON_HEADERS: Record<string, string> = {
@@ -638,6 +843,19 @@ function post<T>(
 
 function roundPath(roundId: string, suffix = ""): string {
   return `/v1/valuation-rounds/${encodeURIComponent(roundId)}${suffix}`;
+}
+
+/**
+ * A folha em query, quando há folha a nomear (F-046 T4c/T4d).
+ *
+ * Folha ausente é a PRIMEIRA folha e a URL de sempre, byte a byte — é isso que mantém a
+ * rodada de uma prancha idêntica à de antes da praça (ADR-0057, decisão 8). Por isso o
+ * caminho não ganha `?plate_id=` "vazio": string vazia é ausência, e ausência não viaja.
+ */
+function plateQuery(plateId?: string): string {
+  return plateId === undefined || plateId === ""
+    ? ""
+    : `?plate_id=${encodeURIComponent(plateId)}`;
 }
 
 function toHex(buffer: ArrayBuffer): string {
@@ -774,11 +992,103 @@ export function associatePlate(
   });
 }
 
+/**
+ * Metadados e URL assinada de UMA folha. Sem `plateId`, a primeira — a resposta de sempre;
+ * com ela, a folha nomeada, cuja imagem está sob a chave sufixada que a ingestão escreveu.
+ */
 export function getPlate(
   accessToken: string,
   roundId: string,
+  plateId?: string,
 ): Promise<PlateResponse> {
-  return apiJson<PlateResponse>(roundPath(roundId, "/plate"), accessToken);
+  return apiJson<PlateResponse>(
+    roundPath(roundId, `/plate${plateQuery(plateId)}`),
+    accessToken,
+  );
+}
+
+/** A praça: as folhas da rodada, o estado de cada uma e o consolidado derivado (F-046). */
+export function getWorksite(
+  accessToken: string,
+  roundId: string,
+): Promise<WorksiteResponse> {
+  return apiJson<WorksiteResponse>(roundPath(roundId, "/worksite"), accessToken);
+}
+
+/**
+ * O efeito da fusão no total da praça, **sem gravar nada** (F-046 T4c).
+ *
+ * É leitura: sem `base_version` e sem revisão nova. A conta é do SERVIDOR — é essa a razão
+ * de a rota existir, e é o que permite oferecer o ato de declarar identidade sem que a
+ * tela some coisa alguma. As recusas são as mesmas da declaração, e pelo mesmo caminho:
+ * uma prévia que dissesse "pode" para o que o ato recusa seria pior que prévia nenhuma.
+ */
+export function previewIdentityLink(
+  accessToken: string,
+  roundId: string,
+  draft: IdentityLinkDraft,
+): Promise<IdentityLinkPreviewResponse> {
+  return post<IdentityLinkPreviewResponse>(
+    roundPath(roundId, "/worksite/identity-links/preview"),
+    accessToken,
+    identityLinkPreviewBody(draft),
+  );
+}
+
+/**
+ * Declara que duas leituras de folhas diferentes são o MESMO elemento físico (ADR-0057).
+ *
+ * É o único caminho de fusão que existe: nada funde por rótulo, unidade ou proximidade, e
+ * sem esta declaração as duas leituras contam — o fail-closed erra para somar demais, e
+ * visivelmente. A resposta é a praça inteira já remontada com o vínculo novo.
+ */
+export function declareIdentityLink(
+  accessToken: string,
+  roundId: string,
+  draft: IdentityLinkDeclarationDraft,
+): Promise<WorksiteResponse> {
+  return post<WorksiteResponse>(
+    roundPath(roundId, "/worksite/identity-links"),
+    accessToken,
+    identityLinkBody(draft),
+  );
+}
+
+/**
+ * Promove EM LOTE as páginas escolhidas a folhas da praça (F-046 T4).
+ *
+ * A escolha é humana e explícita: `page_numbers` nunca sai daqui preenchida por padrão, e
+ * promover **não** extrai nada — a chamada paga é ato à parte, com custo próprio.
+ */
+export function appendPlates(
+  accessToken: string,
+  roundId: string,
+  uploadId: string,
+  pageNumbers: readonly number[],
+  baseVersion: number,
+): Promise<PlatesResponse> {
+  return post<PlatesResponse>(
+    roundPath(roundId, "/plates"),
+    accessToken,
+    appendPlatesBody(uploadId, pageNumbers, baseVersion),
+  );
+}
+
+/**
+ * Enfileira a leitura automática das folhas escolhidas (`202`). Uma chamada paga POR
+ * FOLHA: o número delas é a escolha declarada de quem paga, e viaja no corpo.
+ */
+export function createPlatesExtraction(
+  accessToken: string,
+  roundId: string,
+  plateIds: readonly string[],
+  baseVersion: number,
+): Promise<PlatesExtractionResponse> {
+  return post<PlatesExtractionResponse>(
+    roundPath(roundId, "/plates/extractions"),
+    accessToken,
+    platesExtractionBody(plateIds, baseVersion),
+  );
 }
 
 /**
@@ -798,19 +1108,32 @@ export function createPlateExtraction(
   );
 }
 
+/** O pacote de UMA folha; sem `plateId`, o da primeira (F-046 T4c). */
 export function getTakeoff(
   accessToken: string,
   roundId: string,
+  plateId?: string,
 ): Promise<TakeoffResponse> {
-  return apiJson<TakeoffResponse>(roundPath(roundId, "/takeoff"), accessToken);
+  return apiJson<TakeoffResponse>(
+    roundPath(roundId, `/takeoff${plateQuery(plateId)}`),
+    accessToken,
+  );
 }
 
+/**
+ * O overlay de UMA folha; sem `plateId`, o da primeira (F-046 T4c).
+ *
+ * Não existe overlay de praça: cada retângulo está em pixels da imagem daquela folha,
+ * conferida pelo digest dela (ADR-0057, decisão 3). A idade (`stale`) é comparada contra o
+ * pacote **daquela** folha.
+ */
 export function getTakeoffOverlay(
   accessToken: string,
   roundId: string,
+  plateId?: string,
 ): Promise<OverlayResponse> {
   return apiJson<OverlayResponse>(
-    roundPath(roundId, "/takeoff/overlay"),
+    roundPath(roundId, `/takeoff/overlay${plateQuery(plateId)}`),
     accessToken,
   );
 }
@@ -828,16 +1151,21 @@ export function postTakeoffDecision(
 }
 
 /**
- * Shortlist da rodada. A primeira leitura **calcula e grava** o artefato (`computed`), sem
- * avançar a versão da rodada — a shortlist é derivada, e um `GET` não é ato humano. Por
- * isso a tela só a busca por gesto explícito na etapa de códigos.
+ * Shortlist de UMA folha. A primeira leitura **calcula e grava** o artefato (`computed`),
+ * sem avançar a versão da rodada — a shortlist é derivada, e um `GET` não é ato humano.
+ * Por isso a tela só a busca por gesto explícito na etapa de códigos.
+ *
+ * Ela é por folha (F-046 T4d) porque é observação por ITEM, e os itens são os do pacote de
+ * uma prancha: a shortlist da folha 1 sob o cabeçalho da folha 2 ofereceria códigos para
+ * elementos que não estão naquele desenho. Sem `plateId`, a da primeira folha.
  */
 export function getSuggestions(
   accessToken: string,
   roundId: string,
+  plateId?: string,
 ): Promise<SuggestionsResponse> {
   return apiJson<SuggestionsResponse>(
-    roundPath(roundId, "/code-suggestions"),
+    roundPath(roundId, `/code-suggestions${plateQuery(plateId)}`),
     accessToken,
   );
 }
@@ -884,12 +1212,20 @@ export function searchCatalog(
   );
 }
 
+/**
+ * O conjunto de códigos de UMA folha e os itens dela ainda sem pacote fechado.
+ *
+ * Sem `plateId`, a primeira folha e a resposta de sempre (F-046 T4d). Conjunto ausente
+ * **não** é erro: `assignments` sai `null` e `pending_items` nomeia o que aquela folha tem
+ * pela frente.
+ */
 export function getCodes(
   accessToken: string,
   roundId: string,
+  plateId?: string,
 ): Promise<CodesResponse> {
   return apiJson<CodesResponse>(
-    roundPath(roundId, "/code-assignments"),
+    roundPath(roundId, `/code-assignments${plateQuery(plateId)}`),
     accessToken,
   );
 }
@@ -923,7 +1259,7 @@ export function postCodeDecision(
 export function postCodeRevocation(
   accessToken: string,
   roundId: string,
-  draft: CodeRevocationDraft,
+  draft: CodeRevocationDaPracaDraft,
 ): Promise<CodesResponse> {
   return post<CodesResponse>(
     roundPath(roundId, "/code-assignments/revocations"),

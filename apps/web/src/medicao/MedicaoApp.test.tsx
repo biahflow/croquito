@@ -1,11 +1,29 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { User } from "oidc-client-ts";
-import type { ApprovalState, OverlayResponse, ValuationOrigin } from "./api";
+import type {
+  ApprovalState,
+  BulletinResponse,
+  IdentityLinkPreviewResponse,
+  OverlayResponse,
+  TakeoffItem,
+  ValuationOrigin,
+  WorksiteResponse,
+  WorksiteSheet,
+} from "./api";
 import {
+  AcrescentarFolhas,
   AtoDeAprovacao,
   BannerRodadaMudou,
+  AndamentoDaCodificacao,
+  DeclararIdentidade,
+  FaixaDeFolhas,
+  FolhaSemPacote,
+  LerFolhasEmLote,
   MedicaoApp,
+  OverlaySemRerender,
+  PainelDaPraca,
+  VINCULO_VAZIO,
   OrigemDoOrcamento,
   OverlayDoTakeoff,
   PainelSemAcesso,
@@ -636,5 +654,706 @@ describe("ReRatificacaoFieldset", () => {
     expect(html).toContain("Processo ou publicação");
     expect(html).toContain("adicionar código");
     expect(html).toContain("item novo");
+  });
+});
+
+/**
+ * A praça de várias folhas na tela (F-046). Todos os render são estáticos: o que se prova
+ * aqui é o que a orçamentista lê, e nenhum número de obra é fabricado pela tela.
+ */
+function folhaDeTeste(overrides: Partial<WorksiteSheet> = {}): WorksiteSheet {
+  return {
+    plate_id: "planta-geral",
+    position: 1,
+    source_sha256: "a".repeat(64),
+    page_number: 1,
+    page_count: 6,
+    extraction_status: "done",
+    extraction_failure_code: null,
+    extraction_updated_at: null,
+    takeoff_present: true,
+    packet_sha256: "b".repeat(64),
+    review_status: "complete",
+    item_count: 4,
+    pending_items: 0,
+    ...overrides,
+  };
+}
+
+/**
+ * O boletim da praça como `POST .../calc` o devolve desde a T4c: UM boletim por folha,
+ * com a chave sufixada pela posição, e a memória de cada parcela na folha onde a leitura
+ * foi feita. Nenhum número desta fixture é recalculado pela tela — é isso que os testes
+ * do painel provam.
+ */
+function boletimDaPracaDeTeste(): BulletinResponse {
+  return {
+    round_id: "0197f2a0-0000-7000-8000-000000000001",
+    version: 9,
+    valuation_sha256: "e".repeat(64),
+    total_amount: "9000.00",
+    workbook_present: false,
+    workbook_sha256: null,
+    approval: {
+      approved: false,
+      approved_by: null,
+      approved_at: null,
+      approved_digest: null,
+      current_digest: "e".repeat(64),
+      stale: false,
+    },
+    valuation: {
+      period_number: 1,
+      reference_label: "AGOSTO/2026",
+      bulletins: [
+        {
+          worksite_key: "praca-sintetica-oeste-p1",
+          worksite_name: "Praça Sintética Oeste P1",
+          total_amount: "6000.00",
+          lines: [
+            {
+              item_number: "1",
+              code: "04.02.010",
+              description: "ALAMBRADO",
+              unit: "m",
+              unit_price: "150.00",
+              quantity: "40.00",
+              total: "6000.00",
+            },
+          ],
+        },
+        {
+          worksite_key: "praca-sintetica-oeste-p2",
+          worksite_name: "Praça Sintética Oeste P2",
+          total_amount: "3000.00",
+          lines: [
+            {
+              item_number: "1",
+              code: "04.02.010",
+              description: "ALAMBRADO",
+              unit: "m",
+              unit_price: "150.00",
+              quantity: "20.00",
+              total: "3000.00",
+            },
+          ],
+        },
+      ],
+      calc_sheets: [
+        {
+          worksite_key: "praca-sintetica-oeste-p1",
+          item_number: "1",
+          total_quantity: "40.00",
+          blocks: [
+            {
+              label: "PERÍMETRO NORTE",
+              recipe: "length",
+              operands: [{ name: "COMPRIMENTO", value: "40.00", unit: "m" }],
+              subtotal: "40.00",
+            },
+          ],
+        },
+        {
+          worksite_key: "praca-sintetica-oeste-p2",
+          item_number: "1",
+          total_quantity: "20.00",
+          blocks: [
+            {
+              label: "PERÍMETRO SUL",
+              recipe: "length",
+              operands: [{ name: "COMPRIMENTO", value: "20.00", unit: "m" }],
+              subtotal: "20.00",
+            },
+          ],
+        },
+      ],
+    },
+  } as unknown as BulletinResponse;
+}
+
+describe("FaixaDeFolhas", () => {
+  it("diz o estado de cada folha por extenso e marca o foco em palavra", () => {
+    const html = renderToStaticMarkup(
+      <FaixaDeFolhas
+        folhas={[
+          folhaDeTeste(),
+          folhaDeTeste({
+            plate_id: "detalhe-playground",
+            position: 2,
+            review_status: "review_required",
+            item_count: 3,
+            pending_items: 2,
+          }),
+        ]}
+        emFoco="detalhe-playground"
+        onFocar={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("extraída e revisada");
+    expect(html).toContain("pendente de revisão");
+    expect(html).toContain("em foco");
+    expect(html).toContain("Folha 2 de 2");
+    expect(html).toContain("detalhe-playground");
+    // O foco tem marca escrita, e não só a classe que o desenha.
+    expect(html).toContain('aria-current="true"');
+  });
+});
+
+describe("AcrescentarFolhas", () => {
+  it("não marca nenhuma página por padrão e escreve o custo no botão", () => {
+    const html = renderToStaticMarkup(
+      <AcrescentarFolhas
+        paginas={6}
+        jaPromovidas={[1]}
+        selecionadas={[]}
+        aindaCabem={11}
+        onAlternar={() => undefined}
+        onConfirmar={() => undefined}
+        submitting={false}
+      />,
+    );
+
+    expect(html).not.toContain("checked");
+    expect(html).toContain("nenhuma vem marcada por padrão");
+    expect(html).toContain("já é folha desta praça");
+    // Sem seleção, o botão não promete folha nenhuma e fica desabilitado.
+    expect(html).toContain("Escolha as páginas que viram prancha");
+    expect(html).toContain("disabled");
+  });
+
+  it("com páginas marcadas, o botão diz quantas folhas o ato acrescenta", () => {
+    const html = renderToStaticMarkup(
+      <AcrescentarFolhas
+        paginas={6}
+        jaPromovidas={[]}
+        selecionadas={[1, 3, 5]}
+        aindaCabem={11}
+        onAlternar={() => undefined}
+        onConfirmar={() => undefined}
+        submitting={false}
+      />,
+    );
+
+    expect(html).toContain("Acrescentar 3 folhas à praça");
+    expect(html).toContain("3 páginas selecionadas");
+  });
+
+  it("seleção acima do teto da praça vira recusa lida, com o botão travado", () => {
+    const html = renderToStaticMarkup(
+      <AcrescentarFolhas
+        paginas={6}
+        jaPromovidas={[]}
+        selecionadas={[1, 2, 3]}
+        aindaCabem={1}
+        onAlternar={() => undefined}
+        onConfirmar={() => undefined}
+        submitting={false}
+      />,
+    );
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("desmarque");
+    expect(html).toContain("disabled");
+  });
+});
+
+describe("LerFolhasEmLote", () => {
+  it("escreve quantas chamadas pagas o lote dispara e não marca folha nenhuma", () => {
+    const folhas = [
+      folhaDeTeste({ plate_id: "detalhe", position: 2, takeoff_present: false }),
+      folhaDeTeste({ plate_id: "corte", position: 3, takeoff_present: false }),
+    ];
+
+    const vazio = renderToStaticMarkup(
+      <LerFolhasEmLote
+        folhas={folhas}
+        selecionadas={[]}
+        onAlternar={() => undefined}
+        onConfirmar={() => undefined}
+        submitting={false}
+      />,
+    );
+    const marcado = renderToStaticMarkup(
+      <LerFolhasEmLote
+        folhas={folhas}
+        selecionadas={["detalhe", "corte"]}
+        onAlternar={() => undefined}
+        onConfirmar={() => undefined}
+        submitting={false}
+      />,
+    );
+
+    expect(vazio).not.toContain("checked");
+    expect(vazio).toContain("disabled");
+    expect(marcado).toContain("2 chamadas pagas");
+    expect(marcado).toContain("chamada paga de IA");
+  });
+});
+
+describe("FolhaSemPacote", () => {
+  /**
+   * Sob o cabeçalho de uma folha, a imagem de outra seria uma afirmação falsa com cara de
+   * evidência. A folha ainda não lida declara a ausência e não desenha nada.
+   */
+  it("declara a ausência em palavra e não desenha imagem nenhuma", () => {
+    const html = renderToStaticMarkup(
+      <FolhaSemPacote
+        folha={folhaDeTeste({
+          plate_id: "detalhe-playground",
+          position: 2,
+          takeoff_present: false,
+          packet_sha256: null,
+          review_status: null,
+          item_count: null,
+          pending_items: null,
+          extraction_status: null,
+        })}
+        total={3}
+      />,
+    );
+
+    expect(html).toContain("folha 2 de 3");
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("ainda não tem pacote de takeoff");
+    expect(html).toContain("Não existe overlay da praça");
+    expect(html).not.toContain("<img");
+  });
+
+  /** A ausência que a T5 declarava — "a API responde pela primeira folha" — acabou. */
+  it("não promete mais que a leitura por folha falta na API", () => {
+    const html = renderToStaticMarkup(
+      <FolhaSemPacote
+        folha={folhaDeTeste({ plate_id: "detalhe", position: 2, takeoff_present: false })}
+        total={2}
+      />,
+    );
+
+    expect(html).not.toContain("ainda não é servida pela API");
+    expect(html).not.toContain("responde pela primeira");
+  });
+});
+
+/**
+ * O re-render do overlay ainda é o da primeira folha (limitação declarada da T4c): a tela
+ * DIZ isso na folha 2 em diante, em vez de esconder o desenho vencido.
+ */
+describe("OverlaySemRerender", () => {
+  it("declara que o desenho desta folha não é refeito e não chama isso de erro", () => {
+    const html = renderToStaticMarkup(
+      <OverlaySemRerender
+        folha={folhaDeTeste({ plate_id: "detalhe", position: 2 })}
+        total={2}
+      />,
+    );
+
+    expect(html).toContain("folha 2 de 2");
+    expect(html).toContain("não é refeito");
+    expect(html).toContain("vencido");
+    // Estado declarado, não recusa: o boletim e as quantidades continuam corretos.
+    expect(html).toContain('role="status"');
+    expect(html).not.toContain('role="alert"');
+  });
+});
+
+/**
+ * A etapa de códigos é por folha, e sem esta lista a orçamentista veria "nada pendente" na
+ * folha aberta sem saber que outra folha trava o boletim da praça inteira.
+ */
+describe("AndamentoDaCodificacao", () => {
+  it("mostra o que falta em cada folha com as contagens do servidor", () => {
+    const html = renderToStaticMarkup(
+      <AndamentoDaCodificacao
+        folhas={[
+          { plateId: "planta-geral", position: 1, confirmed: 4, closed: 3, pending: 0 },
+          { plateId: "detalhe", position: 2, confirmed: 1, closed: 0, pending: 2 },
+        ]}
+        total={2}
+        emFoco="planta-geral"
+        onFocar={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("folha 1 de 2");
+    expect(html).toContain("folha 2 de 2");
+    expect(html).toContain("nada pendente");
+    expect(html).toContain("2 elementos pendentes");
+    expect(html).toContain("codificando esta");
+    expect(html).toContain("união");
+  });
+
+  /** Sem leitura de folha nenhuma, nada é escrito: ausência não vira zero. */
+  it("some inteira quando nenhuma folha foi lida", () => {
+    const html = renderToStaticMarkup(
+      <AndamentoDaCodificacao
+        folhas={[]}
+        total={2}
+        emFoco=""
+        onFocar={() => undefined}
+      />,
+    );
+
+    expect(html).toBe("");
+  });
+});
+
+describe("PainelDaPraca", () => {
+  const base: WorksiteResponse = {
+    round_id: "0197f2a0-0000-7000-8000-000000000001",
+    version: 4,
+    worksite_key: "praca-sintetica-oeste",
+    worksite_name: "Praça Sintética Oeste",
+    plate_limit: 12,
+    plates: [
+      folhaDeTeste(),
+      folhaDeTeste({ plate_id: "detalhe-playground", position: 2 }),
+    ],
+    identity_links: [],
+    consolidated: {
+      present: true,
+      worksite_takeoff_sha256: "c".repeat(64),
+      document: {
+        worksite_key: "praca-sintetica-oeste",
+        plates: [
+          { plate_id: "planta-geral", packet_digest: "b".repeat(64) },
+          { plate_id: "detalhe-playground", packet_digest: "d".repeat(64) },
+        ],
+        identity_links: [],
+      },
+      pending_plate_ids: [],
+      refusal_code: null,
+    },
+  };
+
+  it("mostra as folhas do consolidado por digest e não fabrica dinheiro nenhum", () => {
+    const html = renderToStaticMarkup(<PainelDaPraca worksite={base} bulletin={null} />);
+
+    expect(html).toContain("planta-geral");
+    expect(html).toContain("detalhe-playground");
+    expect(html).toContain("não contém itens");
+    // Nenhum total, preço ou quantidade é escrito por esta tela.
+    expect(html).not.toContain("R$");
+    expect(html).not.toContain("Total da praça");
+  });
+
+  it("sem vínculo declarado, diz que duas leituras contam as duas", () => {
+    const html = renderToStaticMarkup(<PainelDaPraca worksite={base} bulletin={null} />);
+
+    expect(html).toContain("contam as duas");
+    expect(html).toContain("não funde por rótulo");
+  });
+
+  it("o vínculo declarado aparece com a parcela que fica, autor, instante e nota", () => {
+    const html = renderToStaticMarkup(
+      <PainelDaPraca
+        worksite={{
+          ...base,
+          identity_links: [
+            {
+              kept: { plate_id: "planta-geral", item_id: "ti_b3d5e820a7c14f69" },
+              discarded: {
+                plate_id: "detalhe-playground",
+                item_id: "ti_5d2f83b60e4a1c97",
+              },
+              declared_by: "orcamentista-de-teste",
+              declared_at: "2026-08-28T12:41:00+00:00",
+              note: "mesmo trecho de alambrado do perímetro",
+            },
+          ],
+        }}
+        bulletin={null}
+      />,
+    );
+
+    expect(html).toContain("identidade declarada");
+    expect(html).toContain("a parcela que fica");
+    expect(html).toContain("fundida, não contribui");
+    expect(html).toContain("orcamentista-de-teste");
+    expect(html).toContain("mesmo trecho de alambrado do perímetro");
+  });
+
+  it("a recusa nomeia a folha pendente e mostra o código estável do servidor", () => {
+    const html = renderToStaticMarkup(
+      <PainelDaPraca
+        worksite={{
+          ...base,
+          plates: [
+            folhaDeTeste(),
+            folhaDeTeste({
+              plate_id: "detalhe-playground",
+              position: 2,
+              takeoff_present: false,
+              packet_sha256: null,
+              review_status: null,
+              item_count: null,
+              pending_items: null,
+              extraction_status: "running",
+            }),
+          ],
+          consolidated: {
+            present: false,
+            worksite_takeoff_sha256: null,
+            document: null,
+            pending_plate_ids: ["detalhe-playground"],
+            refusal_code: "ROUND_STAGE_NOT_READY",
+          },
+        }}
+        bulletin={null}
+      />,
+    );
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("folha 2 de 2");
+    expect(html).toContain("detalhe-playground");
+    expect(html).toContain("ROUND_STAGE_NOT_READY");
+  });
+
+  /**
+   * Sem boletim montado não há número nenhum a mostrar — e a ausência é declarada, nunca
+   * preenchida com zero.
+   */
+  it("sem boletim montado, declara a ausência e não escreve dinheiro nenhum", () => {
+    const html = renderToStaticMarkup(<PainelDaPraca worksite={base} bulletin={null} />);
+
+    expect(html).toContain("ainda não tem boletim montado");
+    expect(html).not.toContain("R$");
+    expect(html).not.toContain("Total da praça");
+  });
+
+  /**
+   * Com boletim, os NÚMEROS aparecem — e cada um deles é a string que o servidor mandou.
+   * O oráculo é textual de propósito: qualquer soma feita aqui produziria um número que
+   * não está na resposta.
+   */
+  it("mostra o total por código e a memória por folha, com os números do servidor", () => {
+    const html = renderToStaticMarkup(
+      <PainelDaPraca worksite={base} bulletin={boletimDaPracaDeTeste()} />,
+    );
+
+    // O total da praça é `total_amount`, do servidor — não a soma das duas folhas.
+    expect(html).toContain("Total da praça: R$ 9.000,00");
+    // Uma linha por código, com a folha nomeada e o total daquela folha.
+    expect(html).toContain("folha 1 de 2");
+    expect(html).toContain("folha 2 de 2");
+    expect(html).toContain("04.02.010");
+    expect(html).toContain("R$ 6.000,00");
+    expect(html).toContain("R$ 3.000,00");
+    // A memória de cada folha, com a parcela na folha onde a leitura foi feita.
+    expect(html).toContain("Memória desta folha");
+    expect(html).toContain("PERÍMETRO NORTE");
+    expect(html).toContain("PERÍMETRO SUL");
+  });
+
+  /**
+   * A soma do mesmo código ENTRE folhas é da PLANILHA GERAL, na exportação. Esta tela diz
+   * isso em palavra em vez de somar — é a regra da casa, e a deriva de centavo do
+   * ADR-0062 mora no mesmo lugar.
+   */
+  it("declara que a soma por código entre folhas e a deriva de centavo são da planilha", () => {
+    const html = renderToStaticMarkup(
+      <PainelDaPraca worksite={base} bulletin={boletimDaPracaDeTeste()} />,
+    );
+
+    expect(html).toContain("soma dele entre as folhas");
+    expect(html).toContain("ADR-0062");
+    expect(html).toContain("não a calcula");
+  });
+
+  /**
+   * Boletim montado antes de a folha entrar na praça: o painel DIZ que aquela folha ficou
+   * de fora, em vez de rotular o boletim da folha 1 com o cabeçalho da folha 2.
+   */
+  it("boletim que não cobre a folha vira recusa lida, nunca boletim de outra folha", () => {
+    const boletim = boletimDaPracaDeTeste();
+    const html = renderToStaticMarkup(
+      <PainelDaPraca
+        worksite={base}
+        bulletin={{
+          ...boletim,
+          valuation: {
+            ...boletim.valuation,
+            bulletins: [boletim.valuation.bulletins[0]],
+            calc_sheets: [boletim.valuation.calc_sheets[0]],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("não cobre esta folha");
+    expect(html).toContain("praca-sintetica-oeste-p2");
+  });
+});
+
+/**
+ * A declaração de identidade (pacote de design aprovado, decisão 11). O ato só é oferecido
+ * COM a prévia do servidor: foi por faltar essa rota que a T5 se recusou a oferecê-lo.
+ */
+describe("DeclararIdentidade", () => {
+  const itens = {
+    "planta-geral": [
+      {
+        id: "ti_b3d5e820a7c14f69",
+        label: "ALAMBRADO",
+        raw_text: "ALAMBRADO 40,00 m",
+        quantity: "40.00",
+        unit: "m",
+        status: "proposed",
+        evidence: { bbox: [0, 0, 10, 10], page_number: 1 },
+      },
+    ],
+    "detalhe-playground": [
+      {
+        id: "ti_5d2f83b60e4a1c97",
+        label: "ALAMBRADO",
+        raw_text: "ALAMBRADO 40,00 m",
+        quantity: "40.00",
+        unit: "m",
+        status: "proposed",
+        evidence: { bbox: [0, 0, 10, 10], page_number: 1 },
+      },
+    ],
+  } as unknown as Record<string, TakeoffItem[]>;
+
+  const folhas = [
+    folhaDeTeste(),
+    folhaDeTeste({ plate_id: "detalhe-playground", position: 2 }),
+  ];
+
+  const previa: IdentityLinkPreviewResponse = {
+    round_id: "0197f2a0-0000-7000-8000-000000000001",
+    version: 7,
+    worksite_key: "praca-sintetica-oeste",
+    kept: {
+      plate_id: "planta-geral",
+      item_id: "ti_b3d5e820a7c14f69",
+      label: "ALAMBRADO",
+      unit: "m",
+      status: "proposed",
+      quantity: "40.00",
+    },
+    discarded: {
+      plate_id: "detalhe-playground",
+      item_id: "ti_5d2f83b60e4a1c97",
+      label: "ALAMBRADO",
+      unit: "m",
+      status: "proposed",
+      quantity: "40.00",
+    },
+    unit_mismatch: false,
+    total_before: "80.00",
+    total_after: "40.00",
+  };
+
+  const rascunhoDaPrevia = {
+    kept: { plate_id: "planta-geral", item_id: "ti_b3d5e820a7c14f69" },
+    discarded: { plate_id: "detalhe-playground", item_id: "ti_5d2f83b60e4a1c97" },
+    note: "",
+  };
+
+  function render(
+    props: Partial<Parameters<typeof DeclararIdentidade>[0]> = {},
+  ): string {
+    return renderToStaticMarkup(
+      <DeclararIdentidade
+        folhas={folhas}
+        itensPorFolha={itens}
+        rascunho={VINCULO_VAZIO}
+        previa={null}
+        onRascunho={() => undefined}
+        onPrever={() => undefined}
+        onDeclarar={() => undefined}
+        previewing={false}
+        submitting={false}
+        {...props}
+      />,
+    );
+  }
+
+  it("nada nasce escolhido e a declaração não é oferecida sem prévia", () => {
+    const html = render();
+
+    expect(html).toContain("escolha a folha");
+    expect(html).toContain("Escolha as duas leituras");
+    expect(html).toContain("esta tela nunca soma");
+    expect(html).not.toContain("Declarar identidade");
+    // Nenhuma folha e nenhuma leitura vêm marcadas: o que está escolhido é o vazio, e
+    // fundir por rótulo, unidade ou proximidade é exatamente o que o ADR-0057 proíbe.
+    expect(html).toContain('<option value="" selected="">escolha a folha</option>');
+    expect(html).not.toContain('value="planta-geral" selected');
+    expect(html).not.toContain('value="ti_b3d5e820a7c14f69" selected');
+  });
+
+  it("as duas leituras na mesma folha são recusadas antes da viagem", () => {
+    const html = render({
+      rascunho: {
+        kept: { plate_id: "planta-geral", item_id: "ti_b3d5e820a7c14f69" },
+        discarded: { plate_id: "planta-geral", item_id: "ti_5d2f83b60e4a1c97" },
+        note: "",
+      },
+    });
+
+    expect(html).toContain("entre folhas diferentes");
+    expect(html).not.toContain("Declarar identidade");
+  });
+
+  it("com a prévia do par, mostra total antes e depois — os dois do servidor", () => {
+    const html = render({ rascunho: rascunhoDaPrevia, previa });
+
+    expect(html).toContain("Total hoje, sem o vínculo");
+    expect(html).toContain("80,00 m");
+    expect(html).toContain("Total depois do vínculo");
+    expect(html).toContain("40,00 m");
+    expect(html).toContain("Declarar identidade");
+  });
+
+  /**
+   * Sem motivo escrito o ato não sai: o vínculo muda o total, e quem confere depois
+   * precisa ler por que duas leituras viraram uma.
+   */
+  it("declarar fica travado sem motivo e liberado com ele", () => {
+    expect(render({ rascunho: rascunhoDaPrevia, previa })).toContain("disabled");
+    const comMotivo = render({
+      rascunho: { ...rascunhoDaPrevia, note: "mesmo alambrado do perímetro" },
+      previa,
+    });
+
+    expect(comMotivo).toContain("Declarar identidade");
+    expect(comMotivo).not.toMatch(/Declarar identidade[^<]*<\/button>[\s\S]*disabled/);
+  });
+
+  /** Prévia de OUTRO par não vale: ela some, e com ela some o botão de declarar. */
+  it("trocar a leitura depois de pré-visualizar apaga o número da tela", () => {
+    const html = render({
+      rascunho: {
+        ...rascunhoDaPrevia,
+        discarded: { plate_id: "detalhe-playground", item_id: "ti_outro_item_xxxx" },
+      },
+      previa,
+    });
+
+    expect(html).not.toContain("Total hoje, sem o vínculo");
+    expect(html).not.toContain("Declarar identidade");
+  });
+
+  /**
+   * Unidade divergente não tem soma, e um número escrito ali teria a aparência de conta
+   * conferida. Os dois totais saem `null` do servidor e a tela não os inventa.
+   */
+  it("unidade divergente não vira soma: a recusa é lida e nenhum total é escrito", () => {
+    const html = render({
+      rascunho: rascunhoDaPrevia,
+      previa: {
+        ...previa,
+        discarded: { ...previa.discarded, unit: "m2" },
+        unit_mismatch: true,
+        total_before: null,
+        total_after: null,
+      },
+    });
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("unidades diferentes");
+    expect(html).not.toContain("Total hoje, sem o vínculo");
   });
 });

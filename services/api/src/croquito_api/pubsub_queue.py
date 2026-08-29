@@ -112,17 +112,18 @@ class PubSubProcessingQueue:
         )
 
     def enqueue_valuation_plate_extraction(
-        self, *, round_id: str, extraction_id: str, tenant_id: str
+        self, *, round_id: str, extraction_id: str, tenant_id: str, plate_id: str | None = None
     ) -> None:
         """Publica a extração paga da legenda; o corpo é o mesmo do SQS, byte a byte."""
-        self._publish(
-            {
-                "command": "extract_valuation_plate",
-                "round_id": round_id,
-                "extraction_id": extraction_id,
-                "tenant_id": tenant_id,
-            }
-        )
+        body: dict[str, str] = {
+            "command": "extract_valuation_plate",
+            "round_id": round_id,
+            "extraction_id": extraction_id,
+            "tenant_id": tenant_id,
+        }
+        if plate_id is not None:
+            body["plate_id"] = plate_id
+        self._publish(body)
 
     def enqueue_takeoff_overlay_rerender(
         self, *, round_id: str, tenant_id: str, packet_sha256: str

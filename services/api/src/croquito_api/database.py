@@ -988,6 +988,94 @@ class ValuationRoundRecord(Base):
     )
 
 
+class ValuationRoundPlateRecord(Base):
+    """Uma folha da praça (F-046, ADR-0057): a prancha deixa de ser atributo escalar da rodada.
+
+    Praça grande não cabe numa folha — vem em planta geral, folhas de detalhe e cortes —, e a
+    legenda quantificada é da OBRA. A rodada passa a ter N folhas, cada uma com a sua origem
+    (upload, objeto, digest, página) e com a `plate_id` que o pacote de takeoff daquela folha
+    carrega. A praça continua **sem** entidade própria: ela é `worksite_key` na rodada
+    (ADR-0028 D8), e esta tabela é filha da RODADA, não de uma obra.
+
+    `plate_id` é cunhado no ato de acrescentar a folha, e não pela extração: é ele que amarra a
+    folha ao `TakeoffPacket` que nascerá dela e ao endereço `(plate_id, item_id)` que atravessa
+    a praça (ADR-0057, decisão 5). Para a PRIMEIRA folha ele é `rodada-{round_id}` — exatamente
+    o que `round_extraction.dataset_id` já cunha hoje —, e é isso que mantém a rodada de uma
+    folha byte-idêntica (decisão 8).
+
+    Duas unicidades, porque são duas coisas diferentes:
+
+    - `(round_id, plate_id)` é a identidade da folha na praça, exigida pelo consolidado;
+    - `(round_id, source_sha256, page_number)` é o que impede a MESMA folha de entrar duas
+      vezes — mesma origem, mesma página —, que é a única recusa que sobra de
+      `ROUND_PLATE_ALREADY_PRESENT` depois que a segunda folha passou a ser caso normal.
+
+    Expand/contract (`services/api/AGENTS.md`): `valuation_rounds.plate_upload_id`,
+    `plate_object_key` e `plate_source_sha256` continuam existindo e continuam escritas como
+    ESPELHO da primeira folha, porque o comando de fila da extração ainda as lê e porque
+    remover coluna é trabalho posterior ao que parou de usá-la, com aprovação humana explícita.
+    Toda LEITURA nova da folha já vem daqui. `plate_page_count` é a contagem de páginas do PDF
+    de origem, escrita pelo worker, e segue na raiz até a T4 apurá-la por folha.
+    """
+
+    __tablename__ = "valuation_round_plates"
+    __table_args__ = (
+        UniqueConstraint("round_id", "plate_id", name="uq_valuation_round_plate"),
+        UniqueConstraint(
+            "round_id",
+            "source_sha256",
+            "page_number",
+            name="uq_valuation_round_plate_source",
+        ),
+        # A praça é lida sempre inteira e sempre na ordem em que as folhas entraram.
+        Index("ix_valuation_round_plates_round_position", "round_id", "position"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    round_id: Mapped[str] = mapped_column(ForeignKey("valuation_rounds.id"), index=True)
+    plate_id: Mapped[str] = mapped_column(String(64))
+    """Identidade da folha na praça; é a `plate_id` do `TakeoffPacket` que sai dela."""
+    position: Mapped[int] = mapped_column(Integer)
+    """Ordem de entrada, a partir de 1. A primeira folha é a que a rodada já tinha."""
+    upload_id: Mapped[str | None] = mapped_column(ForeignKey("uploads.id"), nullable=True)
+    object_key: Mapped[str] = mapped_column(String(512))
+    source_sha256: Mapped[str] = mapped_column(String(64))
+    page_number: Mapped[int] = mapped_column(Integer, default=1)
+    """Página do PDF de origem que esta folha promove, escolhida por ato humano (F-046 T4).
+
+    Não há valor implícito na escolha: a rota em lote exige a lista de páginas e nada vem
+    marcado por padrão. O `default=1` desta coluna serve a linha antiga e à rota singular, que
+    é o caminho da praça de uma folha — nunca a uma promoção automática de todas as páginas,
+    recusada nominalmente no pacote de design."""
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Páginas do PDF de origem DESTA folha, escritas pelo worker na ingestão dela.
+
+    Por folha, e não só na raiz (F-046 T4): duas folhas podem vir de PDFs diferentes, e uma
+    contagem só na rodada descreveria o documento de uma delas como se fosse o das outras.
+    `valuation_rounds.plate_page_count` continua sendo escrita como espelho da PRIMEIRA folha
+    enquanto a coluna existir. `NULL` é "esta folha ainda não foi ingerida"."""
+    extraction_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    extraction_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """`queued` | `running` | `done` | `failed` — o estado da extração DESTA folha.
+
+    Estado por folha, e não só na raiz (F-046 T4): a extração de uma folha que falha não pode
+    derrubar as demais, e um `failed` na rodada enquanto duas folhas seguem correndo
+    descreveria uma praça que não existe. O estado da raiz passa a ser derivado das folhas
+    (`local_queue._mirror_round_extraction`), reescrito na mesma transação de quem mudou a
+    folha. `NULL` é "esta folha nunca foi enfileirada"."""
+    extraction_failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """Código estável do desfecho desta folha; nunca a mensagem, que pode citar a prancha."""
+    extraction_requested_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    extraction_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 class ValuationRoundRevisionRecord(Base):
     """Estado imutável da cadeia de medição numa versão da rodada (ADR-0028 D2).
 
@@ -1017,6 +1105,65 @@ class ValuationRoundRevisionRecord(Base):
     — código único por item, sem matriz —, que continua byte-idêntico."""
     amendment_dossier_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     extraction_lineage_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    worksite_plate_packets_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    """Pacotes de takeoff das folhas da praça **além da primeira** (F-046, ADR-0057).
+
+    Mapa `plate_id -> TakeoffPacket`. A primeira folha continua em `takeoff_packet_json`, com o
+    mesmo conteúdo e o mesmo digest de sempre: é isso que mantém a rodada de uma folha
+    byte-idêntica (decisão 8), e é por isso que a coluna nova guarda o RESTO em vez de guardar
+    tudo. `NULL` é a praça de uma folha — o regime de sempre.
+
+    Um pacote por folha, e nunca um pacote de praça: `TakeoffPacket` não muda e continua
+    amarrado a `plate_id`/`page_number`/`image_sha256`, com `TAKEOFF_EVIDENCE_MISMATCH` intacto
+    dentro de cada um (decisão 1)."""
+    worksite_plate_registrations_json: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True
+    )
+    """Relatórios do registro fino de bbox das folhas **além da primeira** (F-046 T4).
+
+    Mapa `plate_id -> relatório`, espelho exato da divisão de `worksite_plate_packets_json`:
+    a primeira folha continua em `takeoff_registration_json`, com o mesmo conteúdo de sempre.
+    É este relatório que separa âncora `registered` de `raw` (`round_view.registered_item_ids`)
+    — sem ele, toda âncora da folha 2 em diante seria declarada não confiável, e o retângulo
+    desenhado sobre a prancha diria menos do que o sistema realmente sabe."""
+    worksite_plate_suggestions_json: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True
+    )
+    """Shortlists de código das folhas **além da primeira** (F-046 T4d, ADR-0057, decisão 6).
+
+    Mapa `plate_id -> CodeSuggestionSet`, mesma divisão de `worksite_plate_packets_json`: a
+    primeira folha continua em `code_suggestions_json`, com o mesmo conteúdo e o mesmo digest
+    de sempre. A shortlist é observação por ITEM, e os itens são os do pacote de UMA folha —
+    servir a da primeira folha sob o cabeçalho da segunda ofereceria códigos para elementos
+    que não estão naquela prancha."""
+    worksite_plate_assignments_json: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True
+    )
+    """Conjuntos de código das folhas **além da primeira** (F-046 T4d, ADR-0057, decisão 6).
+
+    Mapa `plate_id -> CodeAssignmentSet`. `CodeAssignmentSet` continua sendo POR PRANCHA — ele
+    carrega `plate_id`, `page_number` e `image_sha256`, e é essa amarração que faz um conjunto
+    de outra folha ser recusado (`CALC_ASSIGNMENT_PACKET_MISMATCH`) —, e o boletim da praça
+    consome a UNIÃO dos conjuntos, um por folha. É por isso que a coluna é um mapa, e não um
+    conjunto de praça.
+
+    A primeira folha continua em `code_assignments_json`, e é isso que mantém a praça de uma
+    folha byte-idêntica (decisão 8). `NULL` é a praça de uma folha — o regime de sempre."""
+    worksite_identity_links_json: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON, nullable=True
+    )
+    """Vínculos de identidade declarados na praça (F-046, ADR-0057, decisão 4).
+
+    Lista de `TakeoffItemIdentityLink`: duas leituras de folhas DIFERENTES que a orçamentista
+    declarou serem o mesmo elemento físico, com autor, instante e nota. Nunca nasce de
+    semelhança de rótulo, unidade ou proximidade — só do ato humano, e por isso é dado gravado
+    e não derivado. `NULL` é "nenhuma declaração", e sem declaração as duas leituras contam:
+    o fail-closed erra para somar demais, e visivelmente.
+
+    O consolidado (`WorksiteTakeoff`) NÃO é gravado: ele é derivado das folhas da rodada, dos
+    pacotes e desta lista na leitura. Gravá-lo criaria um quarto lugar onde a mesma praça pode
+    divergir de si mesma — a folha acrescentada depois deixaria o consolidado gravado
+    descrevendo uma praça que não existe mais."""
     artifact_refs_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
     """Chaves de objeto sob o prefixo do tenant (prancha, overlay); nunca URL assinada."""
     artifact_digests_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)

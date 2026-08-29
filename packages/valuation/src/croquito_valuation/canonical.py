@@ -42,6 +42,7 @@ from croquito_valuation.rounding import money_trunc, quantity_round
 from croquito_valuation.template import WorkbookTemplate
 from croquito_valuation.workbook_writer import (
     MAX_DECIMAL_PLACES,
+    ConsolidationDrift,
     PinnedCell,
     PlannedCell,
     WorkbookPlan,
@@ -99,7 +100,15 @@ class AuditedWorksite(ValuationContractModel):
 
 
 class AuditReport(ValuationContractModel):
-    """Resultado da auditoria de round-trip da planilha."""
+    """Resultado da auditoria de round-trip da planilha.
+
+    `consolidation_drifts` carrega adiante a deriva de centavo declarada em
+    `WorkbookPlan`/`WriteReport` (ADR-0062): a auditoria é o artefato que
+    `croquito-valuation export-valuation` grava em disco (`audit.json`) e que o CLI
+    resume no console, então é aqui — ao lado de `pinned_cells`, a mesma ideia para a
+    outra exceção de truncamento do escritor — que quem confere a pasta encontra a
+    deriva sem precisar ler o log da execução.
+    """
 
     schema_version: Literal["2.0.0"] = AUDIT_SCHEMA_VERSION
     status: Literal["ok", "divergent"]
@@ -111,6 +120,7 @@ class AuditReport(ValuationContractModel):
     formula_cells: int = Field(ge=0)
     total_amount: ExactDecimal
     pinned_cells: list[PinnedCell] = Field(default_factory=list)
+    consolidation_drifts: list[ConsolidationDrift] = Field(default_factory=list)
     findings: list[AuditFinding] = Field(default_factory=list)
 
 
@@ -588,5 +598,6 @@ def audit_workbook(
         formula_cells=plan.formula_cells,
         total_amount=valuation.total_amount,
         pinned_cells=plan.pinned_cells,
+        consolidation_drifts=plan.consolidation_drifts,
         findings=findings,
     )
