@@ -79,6 +79,7 @@ from croquito_api.database import (
     TenantJourneyEntitlementRecord,
     TraceSolveRecord,
     UploadRecord,
+    ValuationRoundPlateRecord,
     ValuationRoundRecord,
     ValuationRoundRevisionRecord,
 )
@@ -127,38 +128,61 @@ from croquito_api.valuation_rounds import (
     STAGE_BULLETIN,
     STAGE_DOSSIER,
     STAGE_TAKEOFF,
+    WORKSITE_PLATE_LIMIT,
     CatalogCache,
     RoundRefusal,
     append_revision,
+    append_round_plate,
+    append_round_plates,
     approval_state,
     approve_valuation,
-    assignments_of,
+    assignments_document_for_plate,
+    assignments_for_plate,
     bulletin_export_contract,
     bulletin_workbook_key,
     bulletin_workbook_ref,
     carry_approval_forward,
     compute_round_suggestions,
     current_stage,
+    declared_identity_link,
     document_digest,
+    extracted_plate_ids,
     head_revision,
+    identity_link_preview,
+    identity_links_of,
     load_catalog,
     load_round,
+    plate_artifact_name,
+    plate_assignments_changes,
+    plate_packet_changes,
+    plate_packet_document,
+    plate_registration,
+    plate_suggestions_changes,
+    queue_plate_extractions,
     readable_valuation,
     render_valuation_workbook,
     require_assignments,
     require_base_version,
     require_document,
     require_plate,
+    require_plate_packet,
     require_reviewed_packet,
     require_takeoff_overlay,
     require_takeoff_packet,
     require_unrefined_suggestions,
+    require_worksite_takeoff,
+    resolve_plate,
+    round_plates,
     round_state_payload,
     search_round_catalog,
     signed_artifact_url,
     stage_not_ready,
+    suggestions_document_for_plate,
     suggestions_of,
     takeoff_overlay_state,
+    worksite_packets,
+    worksite_plate_inputs,
+    worksite_state,
 )
 from croquito_core.errors import DomainValidationError
 from croquito_core.events import (
@@ -203,7 +227,6 @@ from croquito_valuation.assignment import (
     apply_code_assignments_over_cascade,
     apply_code_revocation,
 )
-from croquito_valuation.calc import build_worksite_valuation
 from croquito_valuation.calc_matrix import CalcMatrix
 from croquito_valuation.contract import (
     Amendment,
@@ -235,6 +258,8 @@ from croquito_valuation.takeoff import (
     apply_takeoff_decisions,
 )
 from croquito_valuation.template import default_template
+from croquito_valuation.workbook_writer import consolidate_by_code
+from croquito_valuation.worksite_calc import build_worksite_takeoff_valuation
 from croquito_worker.association import AssociationSet
 from croquito_worker.association_confidence import (
     CONFIDENCE_REFERENCE_THRESHOLD,
@@ -1700,9 +1725,76 @@ class ValuationOriginsResponse(ApiModel):
     items: list[ValuationOriginSummary]
 
 
+PlateIdQuery = Annotated[
+    str | None,
+    Query(
+        min_length=1,
+        max_length=64,
+        description=(
+            "Folha da praça a ler. Ausente, a leitura é a da primeira folha — o "
+            "comportamento de sempre (F-046)."
+        ),
+    ),
+]
+"""A folha escolhida numa leitura da praça, sempre OPCIONAL (F-046 T4c).
+
+Um alias só, para que as três leituras por folha — prancha, takeoff e overlay — declarem o
+mesmo parâmetro com o mesmo limite e a mesma descrição. Ele nunca tem valor padrão diferente
+de `None`: a ausência é o que mantém toda tela que ainda não conhece a praça respondendo
+exatamente como antes.
+
+O limite de 64 caracteres é o de `plate_id` no domínio (`CodeAssignmentSet.plate_id`,
+`TakeoffItemAddressRequest.plate_id`): um id maior que isso não é folha de praça nenhuma, e
+recusá-lo na fronteira evita carregar a praça para procurar o que não pode existir."""
+
+
 class AssociatePlateRequest(ApiModel):
     upload_id: UUID
     base_version: int = Field(ge=1)
+
+
+class AppendPlatesRequest(ApiModel):
+    """Ato em lote: quais páginas do documento enviado viram folhas da praça (F-046 T4).
+
+    `page_numbers` é EXIGIDO e não tem valor padrão. Não é rigor decorativo: promover todas
+    as páginas automaticamente encheria a praça de quadro de áreas e carimbo, e foi recusado
+    nominalmente no pacote de design aprovado. A escolha é humana, explícita e em lote.
+
+    O teto de 12 páginas por requisição é o teto da praça (`WORKSITE_PLATE_LIMIT`) repetido na
+    fronteira: um corpo com mil páginas seria recusado de todo jeito, e recusá-lo antes de
+    chegar ao domínio evita carregar a lista para nada.
+    """
+
+    upload_id: UUID
+    base_version: int = Field(ge=1)
+    # Página é 1-based; `ge=1` recusa o zero e o negativo na fronteira, em vez de deixá-los
+    # virar uma folha que só a ingestão descobriria ser impossível.
+    page_numbers: list[Annotated[int, Field(ge=1)]] = Field(
+        min_length=1, max_length=WORKSITE_PLATE_LIMIT
+    )
+
+
+class ValuationPlateSummary(ApiModel):
+    """Uma folha da praça como o lote a devolve: identidade, origem e página."""
+
+    plate_id: str
+    position: int
+    page_number: int
+    source_sha256: str
+
+
+class ValuationPlatesResponse(ApiModel):
+    """As folhas acrescentadas e o tamanho da praça depois do ato.
+
+    `plate_count` e `plate_limit` viajam juntos porque é a distância entre os dois que diz à
+    tela quantas folhas ainda cabem — e cada folha que cabe é uma extração paga a mais.
+    """
+
+    round_id: UUID
+    version: int
+    plate_count: int
+    plate_limit: int
+    appended: list[ValuationPlateSummary]
 
 
 class ValuationPlateResponse(ApiModel):
@@ -1716,8 +1808,66 @@ class ValuationPlateResponse(ApiModel):
     image_url: str | None = None
 
 
+class TakeoffItemAddressRequest(ApiModel):
+    """Endereço de um item que atravessa a praça: o par `(plate_id, item_id)`.
+
+    `item_id` só é único DENTRO do pacote de uma folha; sem a `plate_id` junto, duas folhas
+    que cunharam o mesmo id seriam indistinguíveis (ADR-0057, decisão 5).
+    """
+
+    plate_id: str = Field(min_length=1, max_length=64)
+    item_id: str = Field(min_length=1, max_length=32)
+
+
+class DeclareIdentityLinkRequest(ApiModel):
+    """Ato humano: duas leituras de folhas diferentes são o MESMO elemento físico.
+
+    O corpo declara O QUE é o mesmo elemento e QUAL das duas leituras governa a quantidade
+    (`kept`, "a parcela que fica"). Autor e instante NÃO viajam aqui: vêm do JWT e do relógio
+    do servidor, como em toda decisão desta cadeia — um corpo que carimbasse quem declarou
+    deixaria o cliente escolher a procedência do próprio ato.
+
+    A nota é obrigatória porque o vínculo muda o total da praça: quem confere depois precisa
+    ler por que duas leituras viraram uma.
+    """
+
+    base_version: int = Field(ge=1)
+    kept: TakeoffItemAddressRequest
+    discarded: TakeoffItemAddressRequest
+    note: str = Field(min_length=1, max_length=300)
+
+
+class PreviewIdentityLinkRequest(ApiModel):
+    """O vínculo que a orçamentista está considerando, para ver o efeito ANTES de declarar.
+
+    Espelho de `DeclareIdentityLinkRequest` sem o que só o ato tem: sem `base_version` — nada
+    é gravado e a versão da rodada não anda, como no `GET` da shortlist e na pré-visualização
+    do acervo de canteiro — e sem `note`, porque a justificativa é do ato, não da simulação.
+
+    É `POST`, e não `GET`, pelo mesmo motivo da pré-visualização do acervo: o endereço das
+    duas leituras viaja no corpo, e pô-lo em query string publicaria identificadores de
+    conteúdo da prancha do cliente na URL, que é o que os logs de infraestrutura registram.
+    """
+
+    kept: TakeoffItemAddressRequest
+    discarded: TakeoffItemAddressRequest
+
+
 class CreatePlateExtractionRequest(ApiModel):
     base_version: int = Field(ge=1)
+
+
+class CreatePlatesExtractionRequest(ApiModel):
+    """Ato em lote: quais folhas da praça vão para a extração paga (F-046 T4).
+
+    `plate_ids` é exigido e nada vem marcado por padrão, pelo mesmo motivo da promoção: cada
+    folha é uma chamada paga, e o número delas é escolha declarada de quem paga.
+    """
+
+    base_version: int = Field(ge=1)
+    plate_ids: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        min_length=1, max_length=WORKSITE_PLATE_LIMIT
+    )
 
 
 class ValuationExtractionResponse(ApiModel):
@@ -1725,6 +1875,22 @@ class ValuationExtractionResponse(ApiModel):
     version: int
     extraction_id: UUID
     status: str
+
+
+class ValuationPlatesExtractionResponse(ApiModel):
+    """O lote aceito, com o número de folhas que serão extraídas declarado na resposta.
+
+    `plate_count` existe para ser lido ANTES de a primeira chamada paga acontecer: o comando
+    só sai enfileirado, o worker é quem paga, e esta é a última fronteira em que o número de
+    extrações autorizadas pode ser confirmado por quem as autorizou.
+    """
+
+    round_id: UUID
+    version: int
+    extraction_id: UUID
+    status: str
+    plate_count: int
+    plate_ids: list[str]
 
 
 class ValuationTakeoffOverlayResponse(ApiModel):
@@ -1788,6 +1954,11 @@ class TakeoffDecisionRequest(ApiModel):
     """
 
     base_version: int = Field(ge=1)
+    #: A folha da praça que este lote revisa. **Opcional**, e a ausência é a primeira folha —
+    #: o comportamento de sempre (F-046 T4c). Um lote é a legenda de UMA prancha por
+    #: construção, então a folha entra no corpo do ato e não em cada decisão: decidir itens de
+    #: duas folhas no mesmo lote seria outro ato, sobre outro pacote, com outra revisão.
+    plate_id: str | None = Field(default=None, min_length=1, max_length=64)
     #: Teto de tamanho porque um lote é a legenda de uma prancha, não uma importação: o
     #: maior pacote real observado tem dezenas de itens, e um corpo de milhares seria
     #: outro caso de uso, com outro desenho.
@@ -1855,6 +2026,11 @@ class CodeAssignmentDecisionRequest(ApiModel):
     """
 
     base_version: int = Field(ge=1)
+    #: A folha da praça em que este item foi lido. **Opcional**, e a ausência é a primeira
+    #: folha — o comportamento de sempre (F-046 T4d). Ela entra no corpo, e não no `item_id`,
+    #: porque `item_id` só é único DENTRO do pacote de uma folha (ADR-0057, decisão 5): sem a
+    #: folha junto, duas pranchas que cunharam o mesmo id seriam indistinguíveis.
+    plate_id: str | None = Field(default=None, min_length=1, max_length=64)
     item_id: str = Field(pattern=r"^ti_[a-f0-9]{16}$")
     action: Literal["confirm", "reject"]
     code: str | None = Field(default=None, min_length=1, max_length=30)
@@ -1866,6 +2042,32 @@ class CodeAssignmentDecisionRequest(ApiModel):
             # Mensagem fixa: nada do corpo recusado volta ao cliente pelo erro de contrato.
             raise ValueError("rejeição de código exige justificativa em `note`")
         return self
+
+
+class ValuationItemPackageClosureRequest(ItemPackageClosureRequest):
+    """Fechamento de pacote na medição, que desde a F-046 acontece POR FOLHA da praça.
+
+    Modelo próprio, e não um campo a mais no compartilhado: `ItemPackageClosureRequest` serve
+    às duas jornadas, e o orçamento-base não tem praça nenhuma. Acrescentar `plate_id` lá
+    deixaria a rota do orçamento aceitar um campo que ela ignora em silêncio — que é
+    exatamente o tipo de contrato que o `extra="forbid"` desta API existe para não ter.
+    """
+
+    #: A folha da praça cujo pacote este ato declara completo. **Opcional**, e a ausência é a
+    #: primeira folha — o comportamento de sempre (F-046 T4d).
+    plate_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class ValuationCodeAssignmentRevocationRequest(CodeAssignmentRevocationRequest):
+    """Retirada de um par `(elemento, código)` na medição, por folha da praça (F-046 T4d).
+
+    Existe pelo mesmo motivo de `ValuationItemPackageClosureRequest`: a revogação é ato das
+    duas jornadas, e só uma delas tem folhas.
+    """
+
+    #: A folha da praça em que o par foi confirmado. **Opcional**, e a ausência é a primeira
+    #: folha — o comportamento de sempre.
+    plate_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class BuildValuationCalcRequest(ApiModel):
@@ -2666,27 +2868,30 @@ class ProcessingQueue:
         )
 
     def enqueue_valuation_plate_extraction(
-        self, *, round_id: str, extraction_id: str, tenant_id: str
+        self, *, round_id: str, extraction_id: str, tenant_id: str, plate_id: str | None = None
     ) -> None:
         """Publica a extração paga da legenda; nenhum provider é chamado no request path.
 
         O envelope não tem `job_id` de propósito: o ADR-0016 proíbe `Job` no vocabulário da
         medição, e é por isso que o despacho do worker roteia por comando ANTES de exigir
         aquele campo.
+
+        `plate_id` diz QUAL folha da praça esta mensagem extrai (F-046). Um comando por folha,
+        e não um por lote: é o que faz a folha que falha não derrubar as demais, e é o que dá
+        a cada uma o seu claim atômico. Ausente significa a primeira folha — o envelope de
+        antes desta feature, que continua válido enquanto estiver em voo na fila.
         """
         if self.queue_url is None:
             return
-        self.client.send_message(
-            QueueUrl=self.queue_url,
-            MessageBody=json.dumps(
-                {
-                    "command": "extract_valuation_plate",
-                    "round_id": round_id,
-                    "extraction_id": extraction_id,
-                    "tenant_id": tenant_id,
-                }
-            ),
-        )
+        body: dict[str, str] = {
+            "command": "extract_valuation_plate",
+            "round_id": round_id,
+            "extraction_id": extraction_id,
+            "tenant_id": tenant_id,
+        }
+        if plate_id is not None:
+            body["plate_id"] = plate_id
+        self.client.send_message(QueueUrl=self.queue_url, MessageBody=json.dumps(body))
 
     def enqueue_takeoff_overlay_rerender(
         self, *, round_id: str, tenant_id: str, packet_sha256: str
@@ -4149,6 +4354,31 @@ def _round_is_approved(revision: ValuationRoundRevisionRecord | None) -> bool:
     """
     state = approval_state(readable_valuation(revision))
     return bool(state["approved"]) and not bool(state["stale"])
+
+
+def _valuation_round_plate_counts(
+    session: Session, *, tenant_id: str, round_ids: Sequence[str]
+) -> dict[str, int]:
+    """Quantas folhas cada rodada da página tem, numa consulta só (F-046).
+
+    Existe pelo mesmo motivo de `_valuation_round_heads`: desde que a folha virou tabela
+    filha, a etapa da linha da listagem depende de "tem folha?", e perguntar isso por linha
+    faria a primeira tela que o orçamentista abre custar N+1 idas ao banco.
+    """
+    if not round_ids:
+        return {}
+    rows = session.execute(
+        select(
+            ValuationRoundPlateRecord.round_id,
+            func.count(ValuationRoundPlateRecord.id),
+        )
+        .where(
+            ValuationRoundPlateRecord.tenant_id == tenant_id,
+            ValuationRoundPlateRecord.round_id.in_(round_ids),
+        )
+        .group_by(ValuationRoundPlateRecord.round_id)
+    ).all()
+    return {str(round_id): int(total) for round_id, total in rows}
 
 
 def _valuation_round_heads(
@@ -10803,15 +11033,29 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
     # -- Medição de obra (ADR-0028) -----------------------------------------------------
 
-    def _enqueue_plate_extraction(*, round_id: str, extraction_id: str, tenant_id: str) -> None:
-        """Publica o comando com o intent já durável; falha de transporte é 503 repetível."""
+    def _enqueue_plate_extraction(
+        *, round_id: str, extraction_id: str, tenant_id: str, plate_ids: Sequence[str] = ()
+    ) -> None:
+        """Publica o comando com o intent já durável; falha de transporte é 503 repetível.
+
+        Um comando POR folha (F-046): é o que dá a cada uma o seu claim atômico no worker e o
+        que faz a folha que falha não levar as outras junto. `plate_ids` vazio publica o
+        envelope de sempre, sem folha nomeada, que o worker resolve para a primeira — é o
+        caminho da rota singular e da praça de uma folha.
+
+        A recusa da fila continua sendo `503` repetível para o lote INTEIRO: com o intent já
+        durável e o claim atômico do worker, repetir o mesmo comando reenfileira sem repagar
+        nada — e uma folha publicada a mais é melhor do que uma folha que ninguém extrai.
+        """
         queue: QueueAdapter = application.state.queue
         try:
-            queue.enqueue_valuation_plate_extraction(
-                round_id=round_id,
-                extraction_id=extraction_id,
-                tenant_id=tenant_id,
-            )
+            for plate_id in plate_ids or (None,):
+                queue.enqueue_valuation_plate_extraction(
+                    round_id=round_id,
+                    extraction_id=extraction_id,
+                    tenant_id=tenant_id,
+                    plate_id=plate_id,
+                )
         except QUEUE_TRANSPORT_ERRORS as error:
             raise _problem(
                 "PROCESSING_UNAVAILABLE",
@@ -10840,25 +11084,37 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             )
 
     def _takeoff_payload(
-        record: ValuationRoundRecord, revision: ValuationRoundRevisionRecord | None
+        record: ValuationRoundRecord,
+        revision: ValuationRoundRevisionRecord | None,
+        plate: ValuationRoundPlateRecord | None = None,
     ) -> dict[str, Any]:
-        """Pacote da rodada com a âncora de cada item declarada, contagens e digest.
+        """Pacote de UMA folha da praça, com a âncora de cada item declarada, contagens e digest.
 
         Espelha o `/takeoff` do servidor de medição pelas MESMAS funções puras, com as
         chaves em inglês. O digest é o do documento guardado na revisão — não o desta
         resposta —, para que ele seja idêntico ao que o estado da rodada publica: é por
         esse valor que a tela sabe se o que ela tem na mão ainda é o pacote corrente.
+
+        `plate=None` é a folha de sempre — a primeira —, e a resposta é a de sempre, campo por
+        campo. Nenhuma chave nova entra aqui: quem precisa saber de qual folha o pacote é já
+        lê `packet.plate_id`, que sempre esteve na resposta porque sempre esteve no pacote.
         """
-        packet = require_takeoff_packet(revision)
-        stored = require_document(
-            revision,
-            "takeoff_packet_json",
-            stage=STAGE_TAKEOFF,
-            detail="a rodada ainda não tem pacote de takeoff publicado",
-        )
-        registered = registered_item_ids(
-            None if revision is None else revision.takeoff_registration_json
-        )
+        if plate is None:
+            packet = require_takeoff_packet(revision)
+            stored: Mapping[str, Any] = require_document(
+                revision,
+                "takeoff_packet_json",
+                stage=STAGE_TAKEOFF,
+                detail="a rodada ainda não tem pacote de takeoff publicado",
+            )
+            registration: Mapping[str, Any] | None = (
+                None if revision is None else revision.takeoff_registration_json
+            )
+        else:
+            packet = require_plate_packet(revision, plate)
+            stored = plate_packet_document(revision, plate)
+            registration = plate_registration(revision, plate)
+        registered = registered_item_ids(registration)
         return {
             "round_id": record.id,
             "version": record.version,
@@ -10938,6 +11194,37 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             "semantic_notes": notes,
         }
 
+    def _resolve_code_plate(
+        session: Session,
+        record: ValuationRoundRecord,
+        principal: AuthenticatedPrincipal,
+        plate_id: str | None,
+    ) -> ValuationRoundPlateRecord | None:
+        """A folha da praça que a etapa de código deste ato toca, ou `None` para a primeira.
+
+        `None` é o caminho de sempre, e ele nem carrega a praça: a rodada de uma folha não
+        passa a fazer uma query a mais só porque a praça passou a existir (F-046 T4d). Folha
+        nomeada que não é desta praça é `404 ROUND_PLATE_NOT_FOUND`, pela resolução única.
+        """
+        if plate_id is None:
+            return None
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+        return resolve_plate(plates, plate_id)
+
+    def _packet_for_code_plate(
+        revision: ValuationRoundRevisionRecord | None,
+        plate: ValuationRoundPlateRecord | None,
+    ) -> TakeoffPacket:
+        """O pacote contra o qual a decisão de código é aplicada — recusa por recusa, o de sempre.
+
+        Sem folha nomeada, a recusa é `require_takeoff_packet` ("a rodada ainda não tem pacote
+        de takeoff publicado"); com folha, é a da folha. As duas são `ROUND_STAGE_NOT_READY` na
+        etapa `takeoff`, e nenhuma delas passa a existir onde não existia.
+        """
+        if plate is None:
+            return require_takeoff_packet(revision)
+        return require_plate_packet(revision, plate)
+
     def _assignments_payload(
         record: ValuationRoundRecord,
         *,
@@ -10950,10 +11237,15 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         Conjunto inexistente **não** é erro: a rodada com takeoff revisado e nenhuma decisão
         de código é o estado normal de quem acabou de chegar nesta etapa, e é `pending_items`
         que diz o que ela tem pela frente. Zero é informação: as contagens sempre saem.
+
+        `plate_id` sai do PACOTE, e não do conjunto: a folha continua declarada quando ainda
+        não há decisão nenhuma nela, que é justamente o estado em que a tela mais precisa saber
+        de qual prancha esta etapa está falando (F-046 T4d).
         """
         return {
             "round_id": record.id,
             "version": record.version,
+            "plate_id": packet.plate_id,
             "assignments": None if assignments is None else assignments.model_dump(mode="json"),
             "assignments_sha256": None if document is None else document_digest(document),
             "confirmed": 0 if assignments is None else count_status(assignments, "confirmed"),
@@ -10990,14 +11282,40 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         `_estimate_payload`: esta forma é a que o registro de idempotência guarda no banco, e
         gravar URL assinada seria persistir credencial de leitura fora de um cofre. Ela sai
         só no `GET`, montada na hora.
+
+        `consolidation` é a linha por CÓDIGO somando as folhas da praça (F-046 T4e) — o
+        número que a PLANILHA GERAL entrega à prefeitura e que, até aqui, só existia dentro
+        do `.xlsx`. A resposta trazia o total da praça e o total de cada folha; a praça de N
+        folhas em que o mesmo código aparece em duas delas ficava sem o único total que a
+        prefeitura lê. Quem deriva é `workbook_writer.consolidate_by_code`, a MESMA função
+        que planeja a coluna corrente da GERAL: derivá-la aqui de novo seria uma segunda
+        verdade, e a tela somar as folhas no navegador seria uma terceira.
+
+        `consolidation_drifts` é a deriva declarada do ADR-0062 chegando a quem confere.
+        Ela sai daqui, e não de `rendered.audit` da exportação, por dois motivos: a rodada
+        de `/v1` grava a pasta com `contract=None` (não há PLANILHA GERAL a imprimir; ver
+        `render_valuation_workbook`), então a lista da auditoria é sempre vazia neste
+        caminho e transportá-la seria declarar que a deriva não existe; e a conferência
+        acontece ANTES de exportar — a deriva precisa estar visível no boletim recém-montado,
+        não só depois que o `.xlsx` foi publicado. É a mesma consolidação acima, filtrada,
+        na forma que o plano, o relatório de gravação e a auditoria já publicam.
+
+        Nada disso entra em `valuation_json`: a consolidação é DERIVADA da medição gravada,
+        e persistir um número derivado ao lado do fato que o gera é criar dois donos para
+        ele. Por isso `valuation_sha256` não muda ao servir estes campos.
         """
         digests = {} if revision is None else dict(revision.artifact_digests_json or {})
+        consolidation = consolidate_by_code(valuation)
         return {
             "round_id": record.id,
             "version": record.version,
             "valuation": valuation.model_dump(mode="json"),
             "valuation_sha256": document_digest(document),
             "total_amount": str(valuation.total_amount),
+            "consolidation": [item.model_dump(mode="json") for item in consolidation],
+            "consolidation_drifts": [
+                item.as_drift().model_dump(mode="json") for item in consolidation if item.has_drift
+            ],
             "workbook_present": bulletin_workbook_ref(revision) is not None,
             "workbook_sha256": digests.get(BULLETIN_WORKBOOK_DIGEST),
             "approval": approval_state(valuation),
@@ -11046,17 +11364,27 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             raise _valuation_model_problem(error) from error
 
     def _plate_response(
-        record: ValuationRoundRecord, revision: ValuationRoundRevisionRecord | None, *, tenant: str
+        record: ValuationRoundRecord,
+        revision: ValuationRoundRevisionRecord | None,
+        plates: Sequence[ValuationRoundPlateRecord],
+        *,
+        tenant: str,
+        plate_id: str | None = None,
     ) -> ValuationPlateResponse:
-        """Metadados da prancha e, quando a página já foi promovida, a URL assinada dela.
+        """Metadados de UMA folha e, quando a página já foi promovida, a URL assinada.
 
         `image_url` nulo é estado honesto e não erro: a página só existe depois que o worker
         ingere o PDF. Chave gravada fora do prefixo do tenant, essa sim, é tratada como
         inexistente — e o presign nunca chega a ser chamado.
+
+        Sem `plate_id` responde pela PRIMEIRA folha, e por isso a praça de uma folha lê
+        exatamente o que lia antes; com `plate_id`, pela folha nomeada (T4c), cuja imagem está
+        sob a chave sufixada que a ingestão escreveu (`plate_ref_key`). Quem quer o estado das
+        N folhas de uma vez lê a rota da praça.
         """
-        plate = require_plate(record)
+        plate = require_plate(plates, plate_id)
         refs = {} if revision is None else dict(revision.artifact_refs_json or {})
-        image_key = refs.get(PLATE_IMAGE_REF)
+        image_key = refs.get(plate_artifact_name(PLATE_IMAGE_REF, plate))
         image_url: str | None = None
         if image_key is not None:
             image_url = signed_artifact_url(
@@ -11213,6 +11541,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             tenant_id=principal.tenant_id,
             round_ids=[record.id for record in page],
         )
+        plate_counts = _valuation_round_plate_counts(
+            session,
+            tenant_id=principal.tenant_id,
+            round_ids=[record.id for record in page],
+        )
         return ValuationRoundPage(
             items=[
                 ValuationRoundSummary(
@@ -11223,7 +11556,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                     period_number=record.period_number,
                     version=record.version,
                     status=record.status,
-                    stage=current_stage(record, heads.get(record.id)),
+                    stage=current_stage(
+                        record,
+                        heads.get(record.id),
+                        has_plate=plate_counts.get(record.id, 0) > 0,
+                    ),
                     extraction_status=record.extraction_status,
                     created_at=record.created_at,
                     updated_at=record.updated_at,
@@ -11320,7 +11657,8 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         _require_valuation_reviewer(principal)
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        return round_state_payload(record, revision)
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+        return round_state_payload(record, revision, plates)
 
     @application.post(
         "/v1/valuation-rounds/{round_id}/plate",
@@ -11335,10 +11673,16 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
         idempotency_key: Annotated[str, Depends(_require_idempotency)],
     ) -> ValuationPlateResponse:
-        """Associa o PDF já enviado pelo presign; a API não renderiza nem lê a prancha.
+        """Acrescenta uma folha à praça; a API não renderiza nem lê a prancha.
 
         A ingestão da página — render a 200 DPI, manifest, digest da imagem — é trabalho do
         worker: aqui o PDF é só conferido contra o que o presign declarou.
+
+        Desde a F-046 a rodada tem N folhas (ADR-0057): praça grande vem em planta geral,
+        detalhes e cortes, e a legenda quantificada é da OBRA. A segunda folha deixou de ser
+        recusa e passou a ser o caso normal; `ROUND_PLATE_ALREADY_PRESENT` recusa só a folha
+        REPETIDA — mesma origem e mesma página. A resposta é da folha recém-acrescentada e
+        tem a forma de sempre.
         """
         _require_valuation_reviewer(principal)
         operation = f"valuation-rounds.plate:{round_id}"
@@ -11355,12 +11699,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         require_base_version(record, payload.base_version)
-        if record.plate_object_key is not None:
-            raise _problem(
-                "ROUND_PLATE_ALREADY_PRESENT",
-                status.HTTP_409_CONFLICT,
-                "A rodada já tem uma prancha associada.",
-            )
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
         upload = _require_valuation_upload(
             session,
             application,
@@ -11370,16 +11709,24 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             storage_flavor=runtime_settings.storage_flavor,
         )
         now = datetime.now(UTC)
-        record.plate_upload_id = str(payload.upload_id)
-        record.plate_object_key = upload.object_key
-        record.plate_source_sha256 = upload.sha256.lower()
-        # Associar a prancha é ato humano, e o contador da rodada é o token de concorrência
+        # A recusa da folha repetida é do núcleo e acontece ANTES de qualquer escrita: duas
+        # rotas não podem discordar sobre o que é a mesma folha.
+        plate = append_round_plate(
+            session,
+            round_record=record,
+            plates=plates,
+            upload_id=str(payload.upload_id),
+            object_key=upload.object_key,
+            source_sha256=upload.sha256,
+            created_by=principal.subject,
+        )
+        # Acrescentar a folha é ato humano, e o contador da rodada é o token de concorrência
         # de toda a cadeia (D3): quem leu a rodada antes disso precisa reler antes de decidir.
-        # Nenhuma revisão nasce aqui — a prancha é coluna da raiz, e revisão guarda artefato.
+        # Nenhuma revisão nasce aqui — a folha é linha própria, e revisão guarda artefato.
         record.version += 1
         record.updated_at = now
         upload.status = "VERIFIED"
-        response = _plate_response(record, None, tenant=principal.tenant_id)
+        response = _plate_response(record, None, [plate], tenant=principal.tenant_id)
         _store_idempotent_response(
             session,
             principal=principal,
@@ -11403,7 +11750,122 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             action="VALUATION_PLATE_ASSOCIATED",
             record=record,
         )
-        session.commit()
+        # Duas folhas acrescentadas da MESMA versão passam as duas pela guarda otimista em
+        # memória e vão disputar a mesma posição da praça, onde `uq_valuation_round_plate`
+        # arbitra. Quem perde recebeu, de fato, uma rodada que mudou depois da leitura dele —
+        # que é o que `REVISION_CONFLICT` diz. Antes da F-046 a corrida só sobrescrevia as
+        # colunas escalares em silêncio.
+        _commit_valuation_revision(session)
+        return response
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/plates",
+        response_model=ValuationPlatesResponse,
+        tags=["valuation"],
+    )
+    async def append_valuation_plates(
+        round_id: UUID,
+        payload: AppendPlatesRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ValuationPlatesResponse:
+        """Promove EM LOTE as páginas escolhidas de um documento a folhas da praça (F-046 T4).
+
+        O ato é a seleção: a orçamentista marca quais páginas viram folha e confirma uma vez.
+        Nada vem marcado por padrão e não há promoção automática de todas as páginas — as duas
+        alternativas foram recusadas no pacote de design aprovado, e a segunda encheria a
+        praça de quadro de áreas e carimbo.
+
+        Tudo ou nada: o teto da praça e a página repetida são apurados sobre o lote inteiro
+        antes da primeira folha. Meia promoção deixaria a orçamentista com folhas que ela não
+        pediu e uma conta de extração que ela não escolheu.
+
+        A API não abre o PDF (`services/api/AGENTS.md`): página que não existe no documento é
+        descoberta pela ingestão, no worker, e o desfecho fica NA folha, sem derrubar as
+        demais. Promover não extrai nada — extração é ato à parte, e é o que custa dinheiro.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.plates:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return ValuationPlatesResponse.model_validate(existing)
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+        upload = _require_valuation_upload(
+            session,
+            application,
+            upload_id=payload.upload_id,
+            principal=principal,
+            content_type=PDF_CONTENT_TYPE,
+            storage_flavor=runtime_settings.storage_flavor,
+        )
+        now = datetime.now(UTC)
+        appended = append_round_plates(
+            session,
+            round_record=record,
+            plates=plates,
+            upload_id=str(payload.upload_id),
+            object_key=upload.object_key,
+            source_sha256=upload.sha256,
+            created_by=principal.subject,
+            page_numbers=payload.page_numbers,
+        )
+        # Um ato humano, um avanço do contador — mesmo que o lote traga N folhas: o token de
+        # concorrência conta ATOS, e quem leu a rodada antes do lote precisa reler antes de
+        # decidir qualquer coisa sobre ela.
+        record.version += 1
+        record.updated_at = now
+        upload.status = "VERIFIED"
+        response = ValuationPlatesResponse(
+            round_id=UUID(record.id),
+            version=record.version,
+            plate_count=len(plates) + len(appended),
+            plate_limit=WORKSITE_PLATE_LIMIT,
+            appended=[
+                ValuationPlateSummary(
+                    plate_id=plate.plate_id,
+                    position=plate.position,
+                    page_number=plate.page_number,
+                    source_sha256=plate.source_sha256,
+                )
+                for plate in appended
+            ],
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_PLATE_ASSOCIATED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_PLATE_ASSOCIATED",
+            record=record,
+        )
+        _commit_valuation_revision(session)
         return response
 
     @application.get(
@@ -11415,12 +11877,21 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         round_id: UUID,
         principal: AuthenticatedPrincipal,
         session: DatabaseSession,
+        plate_id: PlateIdQuery = None,
     ) -> ValuationPlateResponse:
-        """Metadados e URL assinada da página promovida; a URL não vai para log nem auditoria."""
+        """Metadados e URL assinada da página promovida; a URL não vai para log nem auditoria.
+
+        `plate_id` é OPCIONAL e a ausência dele é a leitura de sempre — a primeira folha
+        (F-046 T4c). É por ele que a tela da praça abre a folha 2 em diante sem precisar de
+        rota nova.
+        """
         _require_valuation_reviewer(principal)
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        return _plate_response(record, revision, tenant=principal.tenant_id)
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+        return _plate_response(
+            record, revision, plates, tenant=principal.tenant_id, plate_id=plate_id
+        )
 
     @application.post(
         "/v1/valuation-rounds/{round_id}/plate/extractions",
@@ -11436,7 +11907,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
         idempotency_key: Annotated[str, Depends(_require_idempotency)],
     ) -> ValuationExtractionResponse:
-        """Enfileira a extração paga da legenda; nenhum provider é chamado no request path."""
+        """Enfileira a extração paga da legenda; nenhum provider é chamado no request path.
+
+        Rota da PRIMEIRA folha, que é a folha única da rodada de sempre: desde a F-046 ela
+        delega ao mesmo núcleo do lote (`queue_plate_extractions`), com a folha nomeada, para
+        que a praça de uma folha e a de N passem exatamente pelas mesmas recusas. Quem quer
+        escolher quais folhas extrair usa a rota do lote.
+        """
         _require_valuation_reviewer(principal)
         operation = f"valuation-rounds.extractions:{round_id}"
         request_hash = _request_hash(payload)
@@ -11461,20 +11938,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         require_base_version(record, payload.base_version)
-        require_plate(record)
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+        plate = require_plate(plates)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        if revision is not None and revision.takeoff_packet_json is not None:
-            raise _problem(
-                "ROUND_PLATE_ALREADY_PRESENT",
-                status.HTTP_409_CONFLICT,
-                "A rodada já tem pacote de takeoff publicado.",
-            )
-        if record.extraction_status in ("queued", "running"):
-            raise _problem(
-                "EXTRACTION_IN_PROGRESS",
-                status.HTTP_409_CONFLICT,
-                "Já existe uma extração em andamento nesta rodada.",
-            )
         # Chamada paga de provider: entitlement contratual do tenant primeiro, e sem
         # enfileirar nada quando ele falta (ADR-0012).
         _require_active_ai_entitlement(
@@ -11495,11 +11961,15 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         now = datetime.now(UTC)
         extraction_id = new_uuid7()
-        record.extraction_id = str(extraction_id)
-        record.extraction_status = "queued"
-        record.extraction_failure_code = None
-        record.extraction_requested_by = principal.subject
-        record.extraction_updated_at = now
+        queue_plate_extractions(
+            record,
+            plates,
+            extracted_plate_ids(revision, plates),
+            plate_ids=[plate.plate_id],
+            extraction_id=str(extraction_id),
+            requested_by=principal.subject,
+            now=now,
+        )
         record.version += 1
         record.updated_at = now
         response = ValuationExtractionResponse(
@@ -11540,6 +12010,135 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         return response
 
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/plates/extractions",
+        response_model=ValuationPlatesExtractionResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["valuation"],
+    )
+    async def create_valuation_plates_extraction(
+        round_id: UUID,
+        payload: CreatePlatesExtractionRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> ValuationPlatesExtractionResponse:
+        """Enfileira a extração paga de VÁRIAS folhas da praça, num ato só (F-046 T4).
+
+        Cada folha é uma chamada paga a mais, e por isso duas coisas são explícitas: quais
+        folhas (`plate_ids`, sem nada marcado por padrão) e quantas (`plate_count` na
+        resposta, escrito antes de o worker gastar o primeiro centavo). O custo por folha não
+        pode aparecer só na fatura.
+
+        Os freios de gasto que já existiam continuam todos: entitlement contratual do tenant
+        (ADR-0012) e teto de gasto declarado no ambiente do servidor
+        (`extraction_unavailable`), os dois antes de qualquer enfileiramento. O teto de folhas
+        por rodada (`WORKSITE_PLATE_LIMIT`) já foi cobrado quando a folha entrou na praça.
+
+        Tudo ou nada: folha inexistente, folha já extraída e folha com extração em voo
+        recusam o LOTE inteiro. Uma autorização pela metade seria a pior das respostas — quem
+        pagou por três folhas leria "aceito" e receberia duas.
+
+        Um comando de fila por folha, com o mesmo `extraction_id` do lote: é o que dá a cada
+        uma o seu claim atômico e o que faz a que falha não derrubar as demais.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.plates-extractions:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            replay = ValuationPlatesExtractionResponse.model_validate(existing)
+            # Repetir o mesmo comando é o caminho de retomada quando a fila recusou: o
+            # intent já está durável, e o claim atômico do worker garante que uma entrega
+            # extra não repague o provider.
+            _enqueue_plate_extraction(
+                round_id=str(round_id),
+                extraction_id=str(replay.extraction_id),
+                tenant_id=principal.tenant_id,
+                plate_ids=replay.plate_ids,
+            )
+            return replay
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+        require_plate(plates)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        _require_active_ai_entitlement(
+            session,
+            principal,
+            real_providers_enabled=runtime_settings.real_providers_enabled,
+        )
+        unavailable = extraction_unavailable(extraction_arm_spec())
+        if unavailable is not None:
+            raise _problem(
+                "PROVIDER_UNAVAILABLE",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "A extração automática não está disponível neste ambiente.",
+                {"code": unavailable.code},
+            )
+
+        now = datetime.now(UTC)
+        extraction_id = new_uuid7()
+        queued = queue_plate_extractions(
+            record,
+            plates,
+            extracted_plate_ids(revision, plates),
+            plate_ids=payload.plate_ids,
+            extraction_id=str(extraction_id),
+            requested_by=principal.subject,
+            now=now,
+        )
+        record.version += 1
+        record.updated_at = now
+        response = ValuationPlatesExtractionResponse(
+            round_id=round_id,
+            version=record.version,
+            extraction_id=extraction_id,
+            status="queued",
+            plate_count=len(queued),
+            plate_ids=[plate.plate_id for plate in queued],
+        )
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=response,
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_EXTRACTION_REQUESTED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_EXTRACTION_REQUESTED",
+            record=record,
+        )
+        # O intent é durável ANTES da fila, e nenhuma transação atravessa a publicação.
+        session.commit()
+        _enqueue_plate_extraction(
+            round_id=str(round_id),
+            extraction_id=str(extraction_id),
+            tenant_id=principal.tenant_id,
+            plate_ids=response.plate_ids,
+        )
+        return response
+
     @application.get(
         "/v1/valuation-rounds/{round_id}/takeoff",
         response_model=dict[str, Any],
@@ -11549,12 +12148,22 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         round_id: UUID,
         principal: AuthenticatedPrincipal,
         session: DatabaseSession,
+        plate_id: PlateIdQuery = None,
     ) -> dict[str, Any]:
-        """Pacote de takeoff da rodada, com a âncora de evidência de cada item."""
+        """Pacote de takeoff de uma folha da praça, com a âncora de evidência de cada item.
+
+        `plate_id` é OPCIONAL e a ausência é a leitura da PRIMEIRA folha, campo por campo como
+        antes da praça (F-046 T4c). É por ele que a revisão dos itens alcança as folhas 2..N:
+        sem ele, o pacote da segunda folha só existia dentro do consolidado, que a tela não usa
+        para revisar item.
+        """
         _require_valuation_reviewer(principal)
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        return _takeoff_payload(record, revision)
+        if plate_id is None:
+            return _takeoff_payload(record, revision)
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+        return _takeoff_payload(record, revision, resolve_plate(plates, plate_id))
 
     @application.get(
         "/v1/valuation-rounds/{round_id}/takeoff/overlay",
@@ -11565,6 +12174,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         round_id: UUID,
         principal: AuthenticatedPrincipal,
         session: DatabaseSession,
+        plate_id: PlateIdQuery = None,
     ) -> ValuationTakeoffOverlayResponse:
         """URL assinada do overlay e a idade dele; overlay vencido é `200`, nunca erro.
 
@@ -11572,17 +12182,28 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         sendo a única visão de onde cada número foi lido (ADR-0030). A URL assinada segue o
         regime da imagem da prancha — prefixo do tenant conferido antes do presign, e nunca
         registrada em log nem em auditoria (ADR-0028 D5).
+
+        Um overlay por FOLHA, e nunca um overlay de praça: não existe pixel de praça
+        (ADR-0057, decisão 3). `plate_id` é OPCIONAL e a ausência é o overlay da primeira
+        folha, exatamente como antes; a idade é comparada contra o pacote DAQUELA folha, que é
+        o único pacote de que aquele desenho pode ter nascido.
         """
         _require_valuation_reviewer(principal)
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        stored = require_document(
-            revision,
-            "takeoff_packet_json",
-            stage=STAGE_TAKEOFF,
-            detail="a rodada ainda não tem pacote de takeoff publicado",
-        )
-        overlay_key = require_takeoff_overlay(revision)
+        plate: ValuationRoundPlateRecord | None = None
+        if plate_id is None:
+            stored: Mapping[str, Any] = require_document(
+                revision,
+                "takeoff_packet_json",
+                stage=STAGE_TAKEOFF,
+                detail="a rodada ainda não tem pacote de takeoff publicado",
+            )
+        else:
+            plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+            plate = resolve_plate(plates, plate_id)
+            stored = plate_packet_document(revision, plate)
+        overlay_key = require_takeoff_overlay(revision, plate)
         image_url = signed_artifact_url(
             application.state.artifact_store,
             object_key=overlay_key,
@@ -11595,7 +12216,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 "Overlay do takeoff não encontrado.",
             )
         packet_sha256 = document_digest(stored)
-        state = takeoff_overlay_state(revision, packet_sha256=packet_sha256)
+        state = takeoff_overlay_state(revision, packet_sha256=packet_sha256, plate=plate)
         return ValuationTakeoffOverlayResponse(
             round_id=UUID(record.id),
             version=record.version,
@@ -11629,6 +12250,13 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         O overlay, não — ele é consequência, e é reconstruído fora do request path
         (ADR-0030). Entre a decisão e o desenho novo, a resposta já declara o overlay
         vencido, para que a tela não mostre o desenho anterior como se fosse deste pacote.
+
+        `plate_id` no corpo diz QUAL folha da praça este lote revisa (F-046 T4c); sem ele, a
+        primeira, exatamente como antes. O re-render do overlay só é enfileirado para a
+        primeira folha: o comando de fila desenha o pacote de `takeoff_packet_json` e ainda
+        não sabe da praça, então enfileirá-lo para a folha 2 seria um comando que não desenha
+        nada. A resposta continua verdadeira nas duas — o overlay daquela folha sai declarado
+        vencido, que é o que ele é, e não some da tela (ADR-0030).
         """
         _require_valuation_reviewer(principal)
         operation = f"valuation-rounds.takeoff-decisions:{round_id}"
@@ -11646,7 +12274,15 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         require_base_version(record, payload.base_version)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        packet = require_takeoff_packet(revision)
+        # Sem folha nomeada, o caminho é o de sempre, recusa por recusa: a rodada de uma folha
+        # não passa a carregar a praça só porque a praça passou a existir.
+        plate: ValuationRoundPlateRecord | None = None
+        if payload.plate_id is None:
+            packet = require_takeoff_packet(revision)
+        else:
+            plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+            plate = resolve_plate(plates, payload.plate_id)
+            packet = require_plate_packet(revision, plate)
         try:
             # Identidade do `Principal` e instante do servidor: o corpo não carimba nenhum
             # dos dois. A regra de decisão é do domínio e não é reimplementada aqui.
@@ -11682,12 +12318,14 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             session,
             round_record=record,
             created_by=principal.subject,
-            changes={"takeoff_packet_json": document},
+            changes=plate_packet_changes(revision, plate, document),
         )
         record.updated_at = datetime.now(UTC)
         response = {
-            **_takeoff_payload(record, new_revision),
-            "overlay": takeoff_overlay_state(new_revision, packet_sha256=packet_sha256),
+            **_takeoff_payload(record, new_revision, plate),
+            "overlay": takeoff_overlay_state(
+                new_revision, packet_sha256=packet_sha256, plate=plate
+            ),
         }
         _store_idempotent_response(
             session,
@@ -11714,11 +12352,12 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         )
         # A decisão fica durável ANTES da fila, e nenhuma transação atravessa a publicação.
         _commit_valuation_revision(session)
-        _enqueue_takeoff_overlay_rerender(
-            round_id=record.id,
-            tenant_id=principal.tenant_id,
-            packet_sha256=packet_sha256,
-        )
+        if plate is None or plate.position <= 1:
+            _enqueue_takeoff_overlay_rerender(
+                round_id=record.id,
+                tenant_id=principal.tenant_id,
+                packet_sha256=packet_sha256,
+            )
         return response
 
     @application.get(
@@ -11730,6 +12369,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         round_id: UUID,
         principal: AuthenticatedPrincipal,
         session: DatabaseSession,
+        plate_id: PlateIdQuery = None,
     ) -> dict[str, Any]:
         """Shortlist de código por item confirmado: observação, nunca decisão (ADR-0021).
 
@@ -11738,6 +12378,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         rodada** (decisão humana de 2026-08-17): a shortlist é artefato derivado, e se um
         `GET` movesse o token de concorrência, a próxima decisão do orçamentista levaria
         `409` por algo que ele não fez.
+
+        `plate_id` é OPCIONAL e a ausência é a shortlist da PRIMEIRA folha, campo por campo
+        como antes da praça (F-046 T4d). Ela é por FOLHA porque é observação por ITEM, e os
+        itens são os do pacote de uma prancha: servir a shortlist da primeira folha sob o
+        cabeçalho da segunda ofereceria códigos para elementos que não estão naquele desenho.
 
         **Nenhuma chamada paga acontece aqui**, e isso é invariante, não circunstância
         (ADR-0054 D7). O cálculo é chamado sem braço semântico (`semantic=None`), então
@@ -11752,7 +12397,8 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         _require_valuation_reviewer(principal)
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        stored = None if revision is None else revision.code_suggestions_json
+        plate = _resolve_code_plate(session, record, principal, plate_id)
+        stored = suggestions_document_for_plate(revision, plate)
         if stored is not None:
             try:
                 # Artefato gravado que não valida é recusa, e não recálculo silencioso: a
@@ -11764,7 +12410,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
                 record, document=stored, suggestions=suggestions, computed=False, notes=[]
             )
 
-        packet = require_takeoff_packet(revision)
+        packet = _packet_for_code_plate(revision, plate)
         require_reviewed_packet(packet)
         computed, notes, _telemetry = compute_round_suggestions(packet, _round_catalog(record))
         document = computed.model_dump(mode="json")
@@ -11772,7 +12418,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             session,
             round_record=record,
             created_by=principal.subject,
-            changes={"code_suggestions_json": document},
+            changes=plate_suggestions_changes(revision, plate, document),
             advance_version=False,
         )
         # `updated_at` da rodada continua marcando o último ato humano: a leitura que calcula
@@ -11790,7 +12436,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             # concorrência normal de tela em erro de servidor.
             session.rollback()
             revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-            stored = None if revision is None else revision.code_suggestions_json
+            stored = suggestions_document_for_plate(revision, plate)
             if stored is None:
                 raise
             return _suggestions_payload(
@@ -11954,17 +12600,25 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         round_id: UUID,
         principal: AuthenticatedPrincipal,
         session: DatabaseSession,
+        plate_id: PlateIdQuery = None,
     ) -> dict[str, Any]:
-        """Decisões de código da rodada e os itens confirmados que ainda esperam por uma."""
+        """Decisões de código de uma folha e os itens dela que ainda esperam por uma.
+
+        `plate_id` é OPCIONAL e a ausência é a leitura da PRIMEIRA folha, campo por campo como
+        antes da praça (F-046 T4d). A etapa de código é POR FOLHA porque o conjunto é por
+        prancha: `CodeAssignmentSet` carrega `plate_id`, `page_number` e `image_sha256`, e
+        `pending_items` só faz sentido contra o pacote daquela folha (ADR-0057, decisão 6).
+        """
         _require_valuation_reviewer(principal)
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        packet = require_takeoff_packet(revision)
+        plate = _resolve_code_plate(session, record, principal, plate_id)
+        packet = _packet_for_code_plate(revision, plate)
         return _assignments_payload(
             record,
             packet=packet,
-            assignments=assignments_of(revision),
-            document=None if revision is None else revision.code_assignments_json,
+            assignments=assignments_for_plate(revision, plate),
+            document=assignments_document_for_plate(revision, plate),
         )
 
     @application.post(
@@ -11986,6 +12640,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         (`ASSIGNMENT_ITEM_ALREADY_DECIDED`) e quem carrega adiante as confirmações já
         registradas. A rota não confere código, unidade nem estado do item — ela só monta a
         decisão com a identidade do `Principal` e o instante do servidor.
+
+        `plate_id` no corpo diz em QUAL folha da praça o item foi lido (F-046 T4d); sem ele, a
+        primeira, exatamente como antes. O conjunto acumulado é o DAQUELA folha, e é gravado no
+        lugar dela: um conjunto é por prancha (ADR-0057, decisão 6), e o boletim da praça
+        consome a união deles.
         """
         _require_valuation_reviewer(principal)
         operation = f"valuation-rounds.code-decisions:{round_id}"
@@ -12003,8 +12662,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         require_base_version(record, payload.base_version)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        packet = require_takeoff_packet(revision)
-        previous = assignments_of(revision)
+        plate = _resolve_code_plate(session, record, principal, payload.plate_id)
+        packet = _packet_for_code_plate(revision, plate)
+        previous = assignments_for_plate(revision, plate)
         catalog = _round_catalog(record)
         try:
             decision = CodeAssignmentInput(
@@ -12030,7 +12690,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             session,
             round_record=record,
             created_by=principal.subject,
-            changes={"code_assignments_json": document},
+            changes=plate_assignments_changes(revision, plate, document),
         )
         record.updated_at = datetime.now(UTC)
         response = _assignments_payload(
@@ -12069,7 +12729,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
     )
     async def close_valuation_item_package(
         round_id: UUID,
-        payload: ItemPackageClosureRequest,
+        payload: ValuationItemPackageClosureRequest,
         request: Request,
         principal: AuthenticatedPrincipal,
         session: DatabaseSession,
@@ -12088,7 +12748,11 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         A rota não confere quantos códigos o item tem: fechar é decisão de quem monta o
         pacote. Item sem código confirmado, pacote já fechado e item fora do takeoff
-        continuam sendo recusa do domínio."""
+        continuam sendo recusa do domínio.
+
+        `plate_id` no corpo diz de QUAL folha da praça é o elemento (F-046 T4d); sem ele, a
+        primeira, exatamente como antes. Fechar é afirmação sobre o pacote de um elemento, e
+        elemento mora numa prancha."""
         _require_valuation_reviewer(principal)
         operation = f"valuation-rounds.code-closures:{round_id}"
         request_hash = _request_hash(payload)
@@ -12105,8 +12769,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         require_base_version(record, payload.base_version)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        packet = require_takeoff_packet(revision)
-        previous = assignments_of(revision)
+        plate = _resolve_code_plate(session, record, principal, payload.plate_id)
+        packet = _packet_for_code_plate(revision, plate)
+        previous = assignments_for_plate(revision, plate)
         catalog = _round_catalog(record)
         try:
             batch = CodeAssignmentBatch(
@@ -12129,7 +12794,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             session,
             round_record=record,
             created_by=principal.subject,
-            changes={"code_assignments_json": document},
+            changes=plate_assignments_changes(revision, plate, document),
         )
         record.updated_at = datetime.now(UTC)
         response = _assignments_payload(
@@ -12168,7 +12833,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
     )
     async def revoke_valuation_item_code(
         round_id: UUID,
-        payload: CodeAssignmentRevocationRequest,
+        payload: ValuationCodeAssignmentRevocationRequest,
         request: Request,
         principal: AuthenticatedPrincipal,
         session: DatabaseSession,
@@ -12191,6 +12856,10 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
 
         Par que não está confirmado, item fora do takeoff e rodada do regime antigo continuam
         sendo recusa do domínio, que esta rota não reimplementa.
+
+        `plate_id` no corpo diz em QUAL folha da praça o par foi confirmado (F-046 T4d); sem
+        ele, a primeira, exatamente como antes. Desfazer é decisão nova sobre o conjunto
+        DAQUELA folha, e é lá que ela é gravada.
         """
         _require_valuation_reviewer(principal)
         operation = f"valuation-rounds.code-revocations:{round_id}"
@@ -12208,8 +12877,9 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         require_base_version(record, payload.base_version)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        packet = require_takeoff_packet(revision)
-        previous = assignments_of(revision)
+        plate = _resolve_code_plate(session, record, principal, payload.plate_id)
+        packet = _packet_for_code_plate(revision, plate)
+        previous = assignments_for_plate(revision, plate)
         if previous is None:
             # Sem conjunto anterior não há par para desfazer. O `exception_handler` de
             # `ValuationValidationError` transforma isto no mesmo `problem+json` que o
@@ -12237,7 +12907,7 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
             session,
             round_record=record,
             created_by=principal.subject,
-            changes={"code_assignments_json": document},
+            changes=plate_assignments_changes(revision, plate, document),
         )
         record.updated_at = datetime.now(UTC)
         response = _assignments_payload(
@@ -12269,6 +12939,190 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         _commit_valuation_revision(session)
         return response
 
+    @application.get(
+        "/v1/valuation-rounds/{round_id}/worksite",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def get_valuation_worksite(
+        round_id: UUID,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """A praça: as folhas da rodada, o estado de cada uma e o consolidado (F-046).
+
+        O consolidado é DERIVADO das folhas gravadas, dos pacotes das revisões e dos vínculos
+        declarados — nunca servido de uma coluna que guardasse a soma dos três e envelhecesse
+        sozinha assim que uma folha nova entrasse.
+
+        Leitura tolerante, como o estado da rodada: praça que ainda não fecha sai com
+        `consolidated.present = false`, as folhas pendentes nomeadas e o código da recusa,
+        em vez de derrubar a tela. Quem recusa de verdade é a declaração do vínculo e o
+        boletim, que é onde a resposta importa.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+        return worksite_state(record, revision, plates)
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/worksite/identity-links/preview",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def preview_valuation_identity_link(
+        round_id: UUID,
+        payload: PreviewIdentityLinkRequest,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+    ) -> dict[str, Any]:
+        """O efeito da fusão no total da praça — **sem gravar nada** (F-046 T4c).
+
+        É LEITURA, e o corpo diz isso: sem `base_version`, sem `Idempotency-Key`, sem revisão
+        nova e sem avançar a versão da rodada, como a pré-visualização do acervo de canteiro.
+
+        Ela existe porque a conta é do SERVIDOR. A tela de medição não soma
+        (`apps/web/AGENTS.md`), e sem esta rota a orçamentista só descobriria o efeito do
+        vínculo depois de declará-lo — que é justamente a decisão que o pacote de design quis
+        tornar informada. Todo decimal sai como TEXTO, pelo mesmo motivo do resto da jornada.
+
+        As recusas são as MESMAS da declaração, e pelo mesmo caminho: o consolidado é montado
+        com o vínculo candidato, então vínculo dentro da mesma folha, alvo inexistente e
+        cadeia de vínculos recusam aqui exatamente como recusariam lá. Uma prévia que
+        dissesse "pode" para o que o ato recusa seria pior do que prévia nenhuma.
+
+        O que ela **não** faz é somar o que não tem soma: unidade divergente entre as duas
+        leituras devolve os dois totais `null` com `unit_mismatch = true`, com as duas parcelas
+        à vista. Um número inventado ali teria a aparência de conta conferida.
+        """
+        _require_valuation_reviewer(principal)
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+        try:
+            candidate = declared_identity_link(
+                kept=(payload.kept.plate_id, payload.kept.item_id),
+                discarded=(payload.discarded.plate_id, payload.discarded.item_id),
+                # A nota é do ATO e não da simulação; o modelo exige uma, e esta declara o que
+                # ela é. Nada deste vínculo é gravado — ele vive nesta chamada e morre nela.
+                note="pré-visualização do vínculo de identidade; nenhuma declaração foi gravada",
+                declared_by=principal.subject,
+                declared_at=datetime.now(UTC),
+            )
+            worksite = require_worksite_takeoff(
+                record, revision, plates, identity_links=[*identity_links_of(revision), candidate]
+            )
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+        return {
+            "round_id": record.id,
+            "version": record.version,
+            **identity_link_preview(
+                worksite,
+                worksite_packets(revision),
+                kept=candidate.kept,
+                discarded=candidate.discarded,
+            ),
+        }
+
+    @application.post(
+        "/v1/valuation-rounds/{round_id}/worksite/identity-links",
+        response_model=dict[str, Any],
+        tags=["valuation"],
+    )
+    async def declare_valuation_identity_link(
+        round_id: UUID,
+        payload: DeclareIdentityLinkRequest,
+        request: Request,
+        principal: AuthenticatedPrincipal,
+        session: DatabaseSession,
+        idempotency_key: Annotated[str, Depends(_require_idempotency)],
+    ) -> dict[str, Any]:
+        """Declara que duas leituras de folhas diferentes são o mesmo elemento (ADR-0057).
+
+        É o único caminho de fusão que existe: nada aqui funde por rótulo, unidade ou
+        proximidade, e sem esta declaração as duas leituras contam — o fail-closed erra para
+        somar demais, e visivelmente (decisão 4).
+
+        Ato humano de ponta a ponta: avança o contador da rodada, cria revisão NOVA
+        (append-only, a lista de vínculos inteira gravada de uma vez) e carimba autor e
+        instante do lado do servidor. O consolidado é remontado com o vínculo novo ANTES de
+        gravar qualquer coisa: é essa montagem que aplica as recusas da T1 — vínculo dentro
+        da mesma folha, vínculo incompleto, alvo inexistente e cadeia de vínculos —, e uma
+        declaração recusada não deixa revisão nenhuma para trás.
+        """
+        _require_valuation_reviewer(principal)
+        operation = f"valuation-rounds.identity-links:{round_id}"
+        request_hash = _request_hash(payload)
+        existing = _idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing is not None:
+            return existing
+
+        record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
+        require_base_version(record, payload.base_version)
+        revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+        try:
+            link = declared_identity_link(
+                kept=(payload.kept.plate_id, payload.kept.item_id),
+                discarded=(payload.discarded.plate_id, payload.discarded.item_id),
+                note=payload.note,
+                declared_by=principal.subject,
+                declared_at=datetime.now(UTC),
+            )
+            links = [*identity_links_of(revision), link]
+            # Monta o consolidado com o vínculo novo: é aqui que a T1 recusa. O resultado é
+            # descartado de propósito — o que fica gravado são os vínculos, e o consolidado
+            # volta a ser derivado na leitura seguinte.
+            require_worksite_takeoff(record, revision, plates, identity_links=links)
+        except ValidationError as error:
+            raise _valuation_model_problem(error) from error
+
+        new_revision = append_revision(
+            session,
+            round_record=record,
+            created_by=principal.subject,
+            changes={
+                "worksite_identity_links_json": [
+                    declared.model_dump(mode="json") for declared in links
+                ]
+            },
+        )
+        record.updated_at = datetime.now(UTC)
+        response = worksite_state(record, new_revision, plates)
+        _store_idempotent_response(
+            session,
+            principal=principal,
+            operation=operation,
+            key=idempotency_key,
+            request_hash=request_hash,
+            response=ValuationDocumentResponse(response),
+        )
+        _record_audit(
+            session,
+            principal=principal,
+            action="VALUATION_ITEM_IDENTITY_DECLARED",
+            resource_type="valuation_round",
+            resource_id=record.id,
+            request_id=request.state.request_id,
+        )
+        _record_round_event(
+            session,
+            principal=principal,
+            event_type=EVENT_VALUATION_ACTION_RECORDED,
+            action="VALUATION_ITEM_IDENTITY_DECLARED",
+            record=record,
+        )
+        _commit_valuation_revision(session)
+        return response
+
     @application.post(
         "/v1/valuation-rounds/{round_id}/calc",
         response_model=dict[str, Any],
@@ -12282,7 +13136,22 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         session: DatabaseSession,
         idempotency_key: Annotated[str, Depends(_require_idempotency)],
     ) -> dict[str, Any]:
-        """Constrói boletim e memória de cálculo do takeoff confirmado e dos códigos decididos.
+        """Constrói boletim e memória de cálculo da PRAÇA INTEIRA (F-046 T4c, ADR-0057).
+
+        Até a T4c esta rota media a PRIMEIRA folha: numa praça de N folhas o boletim media
+        `1/N` e não dizia nada — exatamente o erro que a F-046 existe para impedir. Agora ela
+        monta o consolidado das folhas gravadas e delega a `build_worksite_takeoff_valuation`:
+        um boletim por folha, com a folha de origem preservada em cada memória, o total da
+        praça saindo da consolidação por código que a PLANILHA GERAL já faz, e a leitura
+        declarada como o mesmo elemento físico contando UMA vez.
+
+        Praça de uma folha responde byte a byte como antes: `build_worksite_takeoff_bulletins`
+        passa chave e nome da praça intactos quando a praça tem uma folha só (decisão 8), e a
+        `Valuation` resultante é a mesma que `build_worksite_valuation` produzia.
+
+        Duas recusas da praça passam a ser alcançáveis por aqui, as duas do domínio e nesta
+        ordem: folha sem pacote extraído é `409 ROUND_STAGE_NOT_READY` nomeando as folhas, e
+        folha com item ainda por revisar é `422` com `WORKSITE_TAKEOFF_PLATE_PENDING`.
 
         A identidade da obra vem da RODADA (`worksite_key`, `worksite_name`,
         `period_number`, `reference_label`, `address`, `contract_label`), nunca do corpo:
@@ -12337,21 +13206,37 @@ def create_app(settings: ApiSettings | None = None, database: Database | None = 
         record = _load_valuation_round(session, round_id=round_id, tenant_id=principal.tenant_id)
         require_base_version(record, payload.base_version)
         revision = head_revision(session, round_id=record.id, tenant_id=principal.tenant_id)
-        packet = require_takeoff_packet(revision)
+        # Chamada pela RECUSA, e o pacote é descartado: a rodada sem takeoff nenhum precisa
+        # continuar saindo com a mesma ordem de recusas de antes da praça — takeoff, depois
+        # código —, e é a partir daí que o consolidado assume.
+        require_takeoff_packet(revision)
         assignments = require_assignments(revision)
         calc_matrix = _validate_calc_matrix(payload.calc_matrix)
-        valuation = build_worksite_valuation(
-            packet,
-            assignments,
-            _round_catalog(record),
-            worksite_key=record.worksite_key,
+        catalog = _round_catalog(record)
+        plates = round_plates(session, round_id=record.id, tenant_id=principal.tenant_id)
+        # O consolidado é montado ANTES do boletim porque é ele quem sabe de quais folhas a
+        # praça é feita: sem esta linha o boletim seria o da PRIMEIRA folha, e meia praça
+        # somada parece uma praça inteira.
+        worksite = require_worksite_takeoff(record, revision, plates)
+        valuation = build_worksite_takeoff_valuation(
+            worksite,
+            worksite_plate_inputs(
+                revision,
+                plates,
+                catalog=catalog,
+                first_assignments=assignments,
+                calc_matrix=calc_matrix,
+            ),
+            catalog,
             worksite_name=record.worksite_name,
             period_number=record.period_number,
             reference_label=record.reference_label,
             address=record.address,
             contract_label=record.contract_label,
-            calc_plan=None,
-            calc_matrix=calc_matrix,
+            # O MESMO template da exportação, aqui e não só lá: é este layout que decide
+            # se o nome da folha cabe na aba, e a recusa precisa sair AGORA — no `.xlsx`
+            # ela sairia depois de a praça inteira estar montada, servida e aprovada.
+            template=default_template(),
         )
         # Preservar não é aprovar: a aprovação anterior segue adiante já caduca, apontando
         # para o digest do conteúdo que ela cobria.

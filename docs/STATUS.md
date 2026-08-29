@@ -546,9 +546,13 @@ Atos humanos ainda pendentes neste contexto, não fabricáveis por agente:
 - Aprovação nominal de orçamentista sobre uma medição real. **Pendente.**
 - Confirmação, com o orçamentista responsável, da semântica de consolidação e saldo depois
   de RE-RA — em especial qual valor a prefeitura reconhece quando o mesmo código medido em
-  mais de uma obra deriva um centavo entre `TRUNC(Σq × preço)` e `Σ TRUNC(qᵢ × preço)`. Até
-  lá o escritor recusa (`GENERAL_CONSOLIDATION_MISMATCH`) em vez de escolher
-  ([ADR-0018](adr/0018-valuation-consolidation-and-balance-semantics.md)). **Pendente.**
+  mais de uma obra deriva um centavo entre `TRUNC(Σq × preço)` e `Σ TRUNC(qᵢ × preço)`.
+  **Decidido em 2026-08-29 (ADR-0062, completando a decisão (c) do ADR-0018): o valor da
+  GERAL governa e a pasta é gerada; a deriva vira `ConsolidationDrift` declarado no plano,
+  no relatório de gravação e na auditoria de round-trip, sem ajustar a linha de nenhum
+  boletim** ([ADR-0018](adr/0018-valuation-consolidation-and-balance-semantics.md)). Desde a
+  F-046 T4e a deriva declarada e a consolidação por código que a origina também saem na
+  leitura do boletim na `/v1`, e não só dentro do `.xlsx`.
 - Primeira importação do MAPÃO real: verificação local, fora do CI, com o arquivo do
   cliente fora do repositório. **Rodadas executadas em 2026-08-12.** Na primeira, o
   `import-workbook` recusou fechado com diagnóstico exato e mapeou as lacunas de layout;

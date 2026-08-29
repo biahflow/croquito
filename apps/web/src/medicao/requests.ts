@@ -15,9 +15,11 @@
 import type {
   AmendmentDraft,
   CodeClosureDraft,
-  CodeRevocationDraft,
+  CodeRevocationDaPracaDraft,
   CodeDecisionDraft,
   CreateRoundDraft,
+  IdentityLinkDeclarationDraft,
+  IdentityLinkDraft,
   PriceAdjustmentDraft,
   TakeoffDecisionBatchDraft,
 } from "./api";
@@ -25,6 +27,18 @@ import type {
 /** Corpo mínimo de toda mutação da rodada: só a guarda de concorrência. */
 export function versionBody(baseVersion: number): { base_version: number } {
   return { base_version: baseVersion };
+}
+
+/**
+ * A folha da praça no corpo, quando há folha a nomear (F-046 T4c/T4d).
+ *
+ * Ausência **não viaja**: `plate_id` omitido é a PRIMEIRA folha, e é essa omissão que
+ * mantém o corpo da rodada de uma prancha byte-idêntico ao de antes da praça (ADR-0057,
+ * decisão 8). Mandar `null` seria declarar uma folha nula, que não é a mesma afirmação.
+ */
+export function plateBody(plateId: string | undefined): { plate_id?: string } {
+  const plate = plateId?.trim();
+  return plate ? { plate_id: plate } : {};
 }
 
 /**
@@ -191,6 +205,10 @@ export function takeoffDecisionBody(
     // A versão-base é do ATO, não do item: ela cita a revisão que a pessoa tinha na tela
     // quando decidiu, e o lote inteiro é gravado contra ela.
     ...versionBody(batch.baseVersion),
+    // A folha também é do ATO (F-046 T4c): um lote é a legenda de UMA prancha. Ausente
+    // NÃO viaja — a omissão é a primeira folha, e é ela que mantém o corpo da rodada de
+    // uma prancha idêntico ao de antes da praça.
+    ...plateBody(batch.plateId),
     decisions: batch.decisions.map((draft) => {
       const decisao: Record<string, string> = {
         item_id: draft.itemId,
@@ -232,6 +250,7 @@ export function codeClosureBody(
 ): Record<string, string | number> {
   const body: Record<string, string | number> = {
     ...versionBody(draft.baseVersion),
+    ...plateBody(draft.plateId),
     item_id: draft.itemId,
   };
   const note = draft.note?.trim();
@@ -249,10 +268,11 @@ export function codeClosureBody(
  * aqui esconderia a recusa em vez de provocá-la cedo.
  */
 export function codeRevocationBody(
-  draft: CodeRevocationDraft,
+  draft: CodeRevocationDaPracaDraft,
 ): Record<string, string | number> {
   return {
     ...versionBody(draft.baseVersion),
+    ...plateBody(draft.plateId),
     item_id: draft.itemId,
     code: draft.code,
     note: draft.note.trim(),
@@ -264,6 +284,7 @@ export function codeDecisionBody(
 ): Record<string, string | number> {
   const body: Record<string, string | number> = {
     ...versionBody(draft.baseVersion),
+    ...plateBody(draft.plateId),
     item_id: draft.itemId,
     action: draft.action,
   };
@@ -276,6 +297,75 @@ export function codeDecisionBody(
     body.note = note;
   }
   return body;
+}
+
+/**
+ * O corpo de promover páginas a folhas da praça em lote (F-046 T4).
+ *
+ * As páginas viajam **na ordem escolhida e sem repetição**, e a lista nunca é preenchida por
+ * omissão: promover todas as páginas de um documento foi recusado nominalmente no pacote de
+ * design aprovado, e um corpo montado "por padrão" aqui seria essa recusa contornada pelo
+ * cliente. Lote vazio é recusa do servidor (`ROUND_PLATE_PAGES_REQUIRED`), e é ele quem a diz.
+ */
+export function appendPlatesBody(
+  uploadId: string,
+  pageNumbers: readonly number[],
+  baseVersion: number,
+): Record<string, unknown> {
+  return {
+    ...versionBody(baseVersion),
+    upload_id: uploadId,
+    page_numbers: [...new Set(pageNumbers)],
+  };
+}
+
+/**
+ * O corpo do lote de extração (F-046 T4): quais folhas vão para a chamada paga.
+ *
+ * Cada folha é uma chamada paga; a lista é a autorização, e por isso ela sai daqui
+ * exatamente como foi marcada, sem folha acrescentada por conveniência.
+ */
+export function platesExtractionBody(
+  plateIds: readonly string[],
+  baseVersion: number,
+): Record<string, unknown> {
+  return {
+    ...versionBody(baseVersion),
+    plate_ids: [...new Set(plateIds)],
+  };
+}
+
+/**
+ * O corpo da PRÉVIA da fusão (F-046 T4c): só os dois endereços.
+ *
+ * Sem `base_version` — nada é gravado e a versão da rodada não anda — e **sem nota**: a
+ * justificativa é do ato, não da simulação. Mandá-la aqui faria a prévia parecer meio
+ * ato, e o servidor recusaria o campo a mais (`extra="forbid"`).
+ */
+export function identityLinkPreviewBody(
+  draft: IdentityLinkDraft,
+): Record<string, unknown> {
+  return {
+    kept: { ...draft.kept },
+    discarded: { ...draft.discarded },
+  };
+}
+
+/**
+ * O corpo da DECLARAÇÃO de identidade (F-046 T1).
+ *
+ * A prévia mais o que só o ato tem: `base_version` e a nota obrigatória. Autor e instante
+ * NÃO viajam — vêm do JWT e do relógio do servidor, como em toda decisão desta cadeia; um
+ * corpo que os carimbasse deixaria o cliente escolher a procedência do próprio ato.
+ */
+export function identityLinkBody(
+  draft: IdentityLinkDeclarationDraft,
+): Record<string, unknown> {
+  return {
+    ...versionBody(draft.baseVersion),
+    ...identityLinkPreviewBody(draft),
+    note: draft.note.trim(),
+  };
 }
 
 /**

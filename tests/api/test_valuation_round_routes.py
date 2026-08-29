@@ -46,6 +46,7 @@ from croquito_api.database import (
     Database,
     DomainEventRecord,
     TenantAiProcessingEntitlementRecord,
+    ValuationRoundPlateRecord,
     ValuationRoundRecord,
     ValuationRoundRevisionRecord,
 )
@@ -151,12 +152,20 @@ def _observed_queue(client: TestClient) -> FakeQueue:
     return queue
 
 
-def _catalog_bytes(*, unit: str = "m", origin: PriceOrigin = PriceOrigin.SCO) -> bytes:
+def _catalog_bytes(
+    *,
+    unit: str = "m",
+    origin: PriceOrigin = PriceOrigin.SCO,
+    unit_price: Decimal = Decimal("50.00"),
+) -> bytes:
     """Catálogo sintético de uma entrada.
 
     `unit` existe para exercitar a unidade divergente; `origin` para exercitar a fronteira
     licitada do ADR-0027 — o código sintético satisfaz tanto o padrão fechado do SCO quanto
     o superset das demais origens, então a única coisa que muda entre os dois é a origem.
+
+    `unit_price` existe para exercitar o truncamento: a 50,00 nenhuma quantidade de duas casas
+    produz centavo a truncar, e a deriva do ADR-0062 seria inalcançável pelas rotas.
     """
     catalog = PriceCatalog(
         source_label="CATALOGO SINTETICO",
@@ -168,7 +177,7 @@ def _catalog_bytes(*, unit: str = "m", origin: PriceOrigin = PriceOrigin.SCO) ->
                 code="CE04100010(/)",
                 description="ALAMBRADO GALVANIZADO",
                 unit=unit,
-                unit_price=Decimal("50.00"),
+                unit_price=unit_price,
                 family_code="CE",
                 family_name="SERVICOS SINTETICOS",
                 subgroup_code="CE0410",
@@ -214,26 +223,37 @@ def _catalog_upload(
     key: str = "catalogo-001",
     unit: str = "m",
     origin: PriceOrigin = PriceOrigin.SCO,
+    unit_price: Decimal = Decimal("50.00"),
 ) -> dict[str, Any]:
     return _presign_and_put(
         client,
         tenant=tenant,
         filename="catalogo.json",
         content_type="application/json",
-        payload=_catalog_bytes(unit=unit, origin=origin),
+        payload=_catalog_bytes(unit=unit, origin=origin, unit_price=unit_price),
         key=key,
     )
 
 
 def _plate_upload(
-    client: TestClient, *, tenant: str = _TENANT, key: str = "prancha-001"
+    client: TestClient,
+    *,
+    tenant: str = _TENANT,
+    key: str = "prancha-001",
+    payload: bytes | None = None,
 ) -> dict[str, Any]:
+    """Sobe um PDF de prancha. `payload` existe para reusar os MESMOS bytes.
+
+    `synthetic_pdf()` não é determinístico — dois PDFs sintéticos têm digests diferentes —,
+    então duas chamadas produzem duas folhas distintas, que é o caso normal da praça. Quem
+    quiser exercitar a folha REPETIDA precisa passar os mesmos bytes de propósito.
+    """
     return _presign_and_put(
         client,
         tenant=tenant,
         filename="prancha.pdf",
         content_type="application/pdf",
-        payload=synthetic_pdf(),
+        payload=synthetic_pdf() if payload is None else payload,
         key=key,
     )
 
@@ -258,10 +278,16 @@ def _create_round(
     key: str = "rodada-001",
     catalog_unit: str = "m",
     catalog_origin: PriceOrigin = PriceOrigin.SCO,
+    catalog_unit_price: Decimal = Decimal("50.00"),
     **overrides: Any,
 ) -> dict[str, Any]:
     upload = _catalog_upload(
-        client, tenant=tenant, key=f"catalogo-{key}", unit=catalog_unit, origin=catalog_origin
+        client,
+        tenant=tenant,
+        key=f"catalogo-{key}",
+        unit=catalog_unit,
+        origin=catalog_origin,
+        unit_price=catalog_unit_price,
     )
     response = client.post(
         "/v1/valuation-rounds",
@@ -279,8 +305,9 @@ def _associate_plate(
     tenant: str = _TENANT,
     base_version: int = 1,
     key: str = "prancha-assoc-001",
+    payload: bytes | None = None,
 ) -> Any:
-    upload = _plate_upload(client, tenant=tenant, key=f"upload-{key}")
+    upload = _plate_upload(client, tenant=tenant, key=f"upload-{key}", payload=payload)
     return client.post(
         f"/v1/valuation-rounds/{round_id}/plate",
         headers=_headers(tenant, key=key),
@@ -353,6 +380,11 @@ def _publish_takeoff(
 
     O teste escreve a revisão direto porque a extração é PAGA: exercitá-la aqui só para
     chegar ao takeoff faria cada teste desta seção depender do braço do provider.
+
+    A FOLHA da praça é gravada junto quando ainda não existe (F-046 T4c). Ela não é
+    decoração de fixture: pacote de takeoff só nasce de uma folha promovida e ingerida, e a
+    `plate_id` que o pacote declara é a da folha. Publicar pacote sem folha montava um estado
+    que a cadeia real não produz, e sobre o qual o boletim da praça não tem o que consolidar.
     """
     document = packet.model_dump(mode="json")
     digest = document_digest(document)
@@ -367,6 +399,25 @@ def _publish_takeoff(
     with _database(client).sessions() as session:
         record = session.get(ValuationRoundRecord, round_id)
         assert record is not None
+        existing = session.scalars(
+            select(ValuationRoundPlateRecord).where(ValuationRoundPlateRecord.round_id == round_id)
+        ).all()
+        if not existing:
+            session.add(
+                ValuationRoundPlateRecord(
+                    id=str(new_uuid7()),
+                    tenant_id=tenant,
+                    round_id=round_id,
+                    plate_id=packet.plate_id,
+                    position=1,
+                    upload_id=None,
+                    object_key=refs[PLATE_IMAGE_REF],
+                    source_sha256=packet.source_pdf_sha256,
+                    page_number=packet.page_number,
+                    extraction_status="succeeded",
+                    created_by="valuation-extraction-v1",
+                )
+            )
         session.add(
             ValuationRoundRevisionRecord(
                 id=str(new_uuid7()),
@@ -734,15 +785,57 @@ def test_a_prancha_associada_avanca_a_versao_da_rodada(tmp_path: Path) -> None:
         assert record.version == 2
 
 
-def test_segunda_prancha_na_mesma_rodada_recusa(tmp_path: Path) -> None:
+def test_a_segunda_folha_entra_na_praca(tmp_path: Path) -> None:
+    """A praça de várias folhas é o caso normal desde a F-046 (ADR-0057)."""
     client = _client(tmp_path)
     created = _create_round(client)
     assert _associate_plate(client, created["round_id"]).status_code == 200
 
     response = _associate_plate(client, created["round_id"], base_version=2, key="prancha-2")
 
+    assert response.status_code == 200, response.text
+    assert response.json()["version"] == 3
+    with _database(client).sessions() as session:
+        plates = session.scalars(
+            select(ValuationRoundPlateRecord)
+            .where(ValuationRoundPlateRecord.round_id == created["round_id"])
+            .order_by(ValuationRoundPlateRecord.position)
+        ).all()
+        assert [plate.position for plate in plates] == [1, 2]
+        assert plates[0].plate_id == f"rodada-{created['round_id']}"
+        assert plates[1].plate_id == f"rodada-{created['round_id']}-f2"
+        # O espelho escalar continua o da PRIMEIRA folha: é ele que o worker de hoje lê.
+        record = session.get(ValuationRoundRecord, created["round_id"])
+        assert record is not None
+        assert record.plate_source_sha256 == plates[0].source_sha256
+
+
+def test_a_folha_repetida_recusa_nomeando_a_que_ja_esta_la(tmp_path: Path) -> None:
+    """Mesma origem e mesma página é a MESMA folha; `ROUND_PLATE_ALREADY_PRESENT` é dela."""
+    client = _client(tmp_path)
+    created = _create_round(client)
+    mesma_prancha = synthetic_pdf()
+    assert _associate_plate(client, created["round_id"], payload=mesma_prancha).status_code == 200
+
+    response = _associate_plate(
+        client,
+        created["round_id"],
+        base_version=2,
+        key="prancha-2",
+        payload=mesma_prancha,
+    )
+
     assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "ROUND_PLATE_ALREADY_PRESENT"
+    detail = response.json()["detail"]
+    assert detail["code"] == "ROUND_PLATE_ALREADY_PRESENT"
+    assert detail["details"] == {
+        "plate_id": f"rodada-{created['round_id']}",
+        "page_number": 1,
+    }
+    with _database(client).sessions() as session:
+        record = session.get(ValuationRoundRecord, created["round_id"])
+        assert record is not None
+        assert record.version == 2
 
 
 def test_base_version_divergente_recusa_sem_gravar_nada(tmp_path: Path) -> None:
@@ -762,6 +855,7 @@ def test_base_version_divergente_recusa_sem_gravar_nada(tmp_path: Path) -> None:
         assert record is not None
         assert record.plate_object_key is None
         assert record.version == 1
+        assert session.scalars(select(ValuationRoundPlateRecord)).all() == []
         assert session.scalars(select(ValuationRoundRevisionRecord)).all() == []
 
 
@@ -961,6 +1055,278 @@ def test_extracao_sem_prancha_e_etapa_fora_de_ordem(
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "ROUND_STAGE_NOT_READY"
     assert list(queue.messages) == []
+
+
+# --- promover N folhas e extrair em lote (F-046 T4) -------------------------------------
+
+
+def _append_plates(
+    client: TestClient,
+    round_id: str,
+    *,
+    page_numbers: list[int],
+    base_version: int = 1,
+    key: str = "folhas-001",
+    payload: bytes | None = None,
+) -> Any:
+    upload = _plate_upload(client, key=f"upload-{key}", payload=payload)
+    return client.post(
+        f"/v1/valuation-rounds/{round_id}/plates",
+        headers=_headers(key=key),
+        json={
+            "upload_id": upload["upload_id"],
+            "base_version": base_version,
+            "page_numbers": page_numbers,
+        },
+    )
+
+
+def test_o_lote_promove_as_paginas_escolhidas_e_so_elas(tmp_path: Path) -> None:
+    """A seleção é o ato: três páginas marcadas viram três folhas, num clique só."""
+    client = _client(tmp_path)
+    created = _create_round(client)
+
+    response = _append_plates(client, created["round_id"], page_numbers=[1, 3, 4])
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["plate_count"] == 3
+    assert body["plate_limit"] == 12
+    assert [folha["page_number"] for folha in body["appended"]] == [1, 3, 4]
+    assert [folha["position"] for folha in body["appended"]] == [1, 2, 3]
+    assert body["appended"][0]["plate_id"] == f"rodada-{created['round_id']}"
+    assert body["appended"][2]["plate_id"] == f"rodada-{created['round_id']}-f3"
+    # Um ato humano, um avanço do contador — mesmo com três folhas no mesmo lote.
+    assert body["version"] == 2
+    with _database(client).sessions() as session:
+        plates = session.scalars(
+            select(ValuationRoundPlateRecord)
+            .where(ValuationRoundPlateRecord.round_id == created["round_id"])
+            .order_by(ValuationRoundPlateRecord.position)
+        ).all()
+        assert [plate.page_number for plate in plates] == [1, 3, 4]
+        # Promover não extrai: nenhuma folha nasce enfileirada, e nada foi pago.
+        assert all(plate.extraction_status is None for plate in plates)
+
+
+def test_o_lote_sem_pagina_nenhuma_e_recusado(tmp_path: Path) -> None:
+    """Nada vem marcado por padrão; lote vazio é recusa, não um `200` que não promoveu nada."""
+    client = _client(tmp_path)
+    created = _create_round(client)
+    upload = _plate_upload(client, key="upload-vazio")
+
+    response = client.post(
+        f"/v1/valuation-rounds/{created['round_id']}/plates",
+        headers=_headers(key="folhas-vazio"),
+        json={"upload_id": upload["upload_id"], "base_version": 1, "page_numbers": []},
+    )
+
+    assert response.status_code == 422
+
+
+def test_o_lote_alem_do_teto_nao_promove_folha_nenhuma(tmp_path: Path) -> None:
+    """Tudo ou nada: meia promoção deixaria uma conta de extração que ninguém escolheu.
+
+    Duas fronteiras, e as duas contam: o corpo com mais páginas do que o teto é recusado
+    antes do domínio (`422`), e o lote que caberia sozinho mas não cabe na praça que já
+    existe é recusado pelo domínio, com o código do teto.
+    """
+    client = _client(tmp_path)
+    created = _create_round(client)
+
+    excessivo = _append_plates(client, created["round_id"], page_numbers=list(range(1, 14)))
+
+    assert excessivo.status_code == 422, excessivo.text
+
+    assert (
+        _append_plates(
+            client, created["round_id"], page_numbers=list(range(1, 13)), key="folhas-cheias"
+        ).status_code
+        == 200
+    )
+    response = _append_plates(
+        client, created["round_id"], page_numbers=[13], base_version=2, key="folhas-excedente"
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "ROUND_PLATE_LIMIT_REACHED"
+    assert detail["details"] == {"limit": 12, "present": 12, "requested": 1}
+    with _database(client).sessions() as session:
+        plates = session.scalars(
+            select(ValuationRoundPlateRecord).where(
+                ValuationRoundPlateRecord.round_id == created["round_id"]
+            )
+        ).all()
+        assert len(plates) == 12
+
+
+def test_o_lote_com_pagina_repetida_recusa_o_lote_inteiro(tmp_path: Path) -> None:
+    """A mesma página duas vezes seria a mesma folha duas vezes, dentro de um clique só."""
+    client = _client(tmp_path)
+    created = _create_round(client)
+
+    response = _append_plates(client, created["round_id"], page_numbers=[2, 5, 2])
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "ROUND_PLATE_ALREADY_PRESENT"
+    assert detail["details"] == {"page_numbers": [2]}
+    with _database(client).sessions() as session:
+        plates = session.scalars(
+            select(ValuationRoundPlateRecord).where(
+                ValuationRoundPlateRecord.round_id == created["round_id"]
+            )
+        ).all()
+        assert plates == []
+
+
+def test_o_lote_de_extracao_declara_quantas_folhas_serao_extraidas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cada folha é uma chamada paga: o número sai na resposta, antes de o worker gastar."""
+    _allow_paid_extraction(monkeypatch)
+    client = _client(tmp_path)
+    queue = _observed_queue(client)
+    created = _create_round(client)
+    folhas = _append_plates(client, created["round_id"], page_numbers=[1, 2]).json()
+    plate_ids = [folha["plate_id"] for folha in folhas["appended"]]
+
+    response = client.post(
+        f"/v1/valuation-rounds/{created['round_id']}/plates/extractions",
+        headers=_headers(key="lote-extracao-001"),
+        json={"base_version": 2, "plate_ids": plate_ids},
+    )
+
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["plate_count"] == 2
+    assert body["plate_ids"] == plate_ids
+    # Um comando de fila POR folha, com o mesmo `extraction_id`: é o que dá a cada uma o seu
+    # claim atômico e o que faz a que falha não derrubar as demais.
+    envelopes = [json.loads(message["Body"]) for message in queue.messages]
+    assert [envelope["plate_id"] for envelope in envelopes] == plate_ids
+    assert {envelope["extraction_id"] for envelope in envelopes} == {body["extraction_id"]}
+    with _database(client).sessions() as session:
+        plates = session.scalars(
+            select(ValuationRoundPlateRecord)
+            .where(ValuationRoundPlateRecord.round_id == created["round_id"])
+            .order_by(ValuationRoundPlateRecord.position)
+        ).all()
+        assert [plate.extraction_status for plate in plates] == ["queued", "queued"]
+        assert all(plate.extraction_id == body["extraction_id"] for plate in plates)
+
+
+def test_o_lote_de_extracao_com_folha_inexistente_nao_enfileira_nada(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tudo ou nada: quem autorizou duas folhas não pode receber uma."""
+    _allow_paid_extraction(monkeypatch)
+    client = _client(tmp_path)
+    queue = _observed_queue(client)
+    created = _create_round(client)
+    folhas = _append_plates(client, created["round_id"], page_numbers=[1, 2]).json()
+
+    response = client.post(
+        f"/v1/valuation-rounds/{created['round_id']}/plates/extractions",
+        headers=_headers(key="lote-extracao-002"),
+        json={
+            "base_version": 2,
+            "plate_ids": [folhas["appended"][0]["plate_id"], "rodada-inexistente-f9"],
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "ROUND_PLATE_NOT_FOUND"
+    assert list(queue.messages) == []
+    with _database(client).sessions() as session:
+        plates = session.scalars(
+            select(ValuationRoundPlateRecord).where(
+                ValuationRoundPlateRecord.round_id == created["round_id"]
+            )
+        ).all()
+        assert all(plate.extraction_status is None for plate in plates)
+
+
+def test_o_lote_de_extracao_sem_entitlement_nao_enfileira(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O freio de gasto do lote é o mesmo da rota singular, e vem antes da fila (ADR-0012)."""
+    _allow_paid_extraction(monkeypatch)
+    client = _client(tmp_path, real_providers_enabled=True)
+    queue = _observed_queue(client)
+    created = _create_round(client)
+    folhas = _append_plates(client, created["round_id"], page_numbers=[1, 2]).json()
+
+    response = client.post(
+        f"/v1/valuation-rounds/{created['round_id']}/plates/extractions",
+        headers=_headers(key="lote-extracao-003"),
+        json={
+            "base_version": 2,
+            "plate_ids": [folha["plate_id"] for folha in folhas["appended"]],
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "AI_PROCESSING_NOT_AUTHORIZED"
+    assert list(queue.messages) == []
+
+
+def test_a_extracao_da_folha_unica_marca_a_folha_e_nao_so_a_raiz(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rota singular passa pelo MESMO núcleo do lote: a praça de uma folha não é exceção."""
+    _allow_paid_extraction(monkeypatch)
+    client = _client(tmp_path)
+    _observed_queue(client)
+    created = _create_round(client)
+    assert _associate_plate(client, created["round_id"]).status_code == 200
+
+    response = client.post(
+        f"/v1/valuation-rounds/{created['round_id']}/plate/extractions",
+        headers=_headers(key="extracao-unica"),
+        json={"base_version": 2},
+    )
+
+    assert response.status_code == 202, response.text
+    with _database(client).sessions() as session:
+        plate = session.scalar(
+            select(ValuationRoundPlateRecord).where(
+                ValuationRoundPlateRecord.round_id == created["round_id"]
+            )
+        )
+        assert plate is not None
+        assert plate.extraction_status == "queued"
+        assert plate.extraction_id == response.json()["extraction_id"]
+
+
+def test_a_praca_declara_o_estado_de_extracao_de_cada_folha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A recusa e o andamento são por folha; a tela precisa saber QUAL está pendente."""
+    _allow_paid_extraction(monkeypatch)
+    client = _client(tmp_path)
+    _observed_queue(client)
+    created = _create_round(client)
+    folhas = _append_plates(client, created["round_id"], page_numbers=[1, 2]).json()
+    primeira = folhas["appended"][0]["plate_id"]
+    assert (
+        client.post(
+            f"/v1/valuation-rounds/{created['round_id']}/plates/extractions",
+            headers=_headers(key="lote-extracao-004"),
+            json={"base_version": 2, "plate_ids": [primeira]},
+        ).status_code
+        == 202
+    )
+
+    response = client.get(
+        f"/v1/valuation-rounds/{created['round_id']}/worksite", headers=_headers()
+    )
+
+    assert response.status_code == 200
+    folhas_do_estado = response.json()["plates"]
+    assert [folha["extraction_status"] for folha in folhas_do_estado] == ["queued", None]
+    assert all(folha["page_count"] is None for folha in folhas_do_estado)
 
 
 def test_entitlement_revogado_recusa_sem_enfileirar(

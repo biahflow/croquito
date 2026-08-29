@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,9 +26,11 @@ from sqlalchemy import select
 from croquito_api.database import (
     Database,
     UploadRecord,
+    ValuationRoundPlateRecord,
     ValuationRoundRecord,
     ValuationRoundRevisionRecord,
 )
+from croquito_worker import local_queue
 from croquito_worker.local_queue import (
     LocalQueueWorker,
     LocalWorkerSettings,
@@ -68,6 +71,11 @@ _ANTHROPIC_KEY_ENV = "CROQUITO_ANTHROPIC_API_KEY"
 _RESERVE_MODEL_ID = "fixture-legend-reserva-v1"
 _RESERVE_ARM_SPEC = "luna=openai:gpt-5.6-luna"
 _RESERVE_NOTE = "PROVIDER_FALLBACK_LEGEND_EXTRACTION_OPENAI"
+
+
+def plate_id_for(position: int) -> str:
+    """A `plate_id` da folha nesta posição, cunhada como `valuation_rounds.mint_plate_id`."""
+    return f"rodada-{ROUND_ID}" if position == 1 else f"rodada-{ROUND_ID}-f{position}"
 
 
 def _plate_pdf() -> bytes:
@@ -168,8 +176,17 @@ def _install_reserve(monkeypatch: pytest.MonkeyPatch, adapter: Any) -> None:
 
 
 def _seed(
-    tmp_path: Path, *, plate: bytes, extraction_status: str = "queued"
+    tmp_path: Path,
+    *,
+    plate: bytes,
+    extraction_status: str = "queued",
+    page_numbers: Sequence[int] = (1,),
 ) -> tuple[Database, str]:
+    """Rodada de medição com a praça já formada: uma folha por página escolhida.
+
+    `page_numbers` é a seleção humana que a rota em lote grava (F-046 T4), e o padrão `(1,)`
+    é a praça de UMA folha — o caso da vida real, e o que os testes de não regressão exercem.
+    """
     database_url = f"sqlite+pysqlite:///{tmp_path / 'medicao.db'}"
     database = Database(database_url)
     database.create_schema()
@@ -222,6 +239,26 @@ def _seed(
                 created_by="orcamentista-sintetica",
             )
         )
+        session.flush()
+        for position, page_number in enumerate(page_numbers, start=1):
+            session.add(
+                ValuationRoundPlateRecord(
+                    id=f"plate-{position}",
+                    tenant_id=TENANT_ID,
+                    round_id=ROUND_ID,
+                    plate_id=plate_id_for(position),
+                    position=position,
+                    upload_id="upload-prancha",
+                    object_key=PLATE_KEY,
+                    source_sha256=hashlib.sha256(plate).hexdigest(),
+                    page_number=page_number,
+                    extraction_id=EXTRACTION_ID,
+                    extraction_status=extraction_status,
+                    extraction_requested_by="orcamentista-sintetica",
+                    extraction_updated_at=now,
+                    created_by="orcamentista-sintetica",
+                )
+            )
     return database, database_url
 
 
@@ -571,3 +608,288 @@ def test_os_comandos_do_croqui_continuam_exigindo_job_id(tmp_path: Path) -> None
     ):
         with pytest.raises(UnroutableMessageError):
             worker.dispatch({"command": command, "tenant_id": TENANT_ID})
+
+
+# --- a praça de várias folhas (F-046 T4) ------------------------------------------------
+
+
+def _plate_pdf_pages(count: int) -> bytes:
+    """Prancha sintética de N páginas, cada uma com uma legenda distinta.
+
+    A distinção importa: é ela que faz cada folha ter `image_sha256` próprio, e é o digest da
+    imagem que `TAKEOFF_EVIDENCE_MISMATCH` cobra item a item DENTRO de cada pacote.
+    """
+    document = pymupdf.open()
+    try:
+        for number in range(1, count + 1):
+            page = document.new_page(width=595, height=842)
+            page.insert_text((60, 120), f"PRANCHA SINTETICA FOLHA {number}", fontsize=14)
+            page.insert_text((60, 160), "PISO INTERTRAVADO SINTETICO 61,20 M2", fontsize=12)
+            page.insert_text((60, 190), "PISO EMBORRACHADO SINTETICO --- M2", fontsize=12)
+        return bytes(document.tobytes())
+    finally:
+        document.close()
+
+
+def _plates(database: Database) -> list[ValuationRoundPlateRecord]:
+    with database.sessions() as session:
+        return list(
+            session.scalars(
+                select(ValuationRoundPlateRecord).order_by(ValuationRoundPlateRecord.position)
+            )
+        )
+
+
+@dataclass
+class _FailingSecondAdapter:
+    """Fixture que responde à primeira folha e falha na segunda, sem tocar em rede.
+
+    É o oráculo do critério que importa: uma folha que falha não pode derrubar as demais, e
+    provar isso exige duas folhas com desfechos DIFERENTES na mesma praça.
+    """
+
+    inner: FixtureProviderAdapter
+    calls: list[str] = field(default_factory=list)
+
+    def execute(self, request: ProviderRequest) -> ProviderExecution:
+        self.calls.append(request.task.value)
+        if len(self.calls) > 1:
+            raise ProviderExecutionError(ProviderFailureCode.TIMEOUT)
+        return self.inner.execute(request)
+
+
+def test_duas_folhas_publicam_dois_pacotes_com_evidencia_propria(tmp_path: Path) -> None:
+    """Cada folha vira SEU pacote, com `plate_id`, página e digest de imagem próprios."""
+    plate = _plate_pdf_pages(2)
+    database, database_url = _seed(tmp_path, plate=plate, page_numbers=(1, 2))
+    worker, storage = _worker(database_url, adapter=_counting_adapter(), stored=plate)
+
+    assert worker.dispatch(_message(plate_id=plate_id_for(1))) == 1
+    assert worker.dispatch(_message(plate_id=plate_id_for(2))) == 1
+
+    revisions = _revisions(database)
+    assert len(revisions) == 2
+    first = revisions[0].takeoff_packet_json
+    assert first is not None
+    assert first["plate_id"] == plate_id_for(1)
+    assert first["page_number"] == 1
+    # A primeira folha continua onde sempre esteve; a segunda vai para o mapa da praça.
+    assert revisions[0].worksite_plate_packets_json is None
+    stored_packets = revisions[1].worksite_plate_packets_json
+    assert stored_packets is not None
+    second = stored_packets[plate_id_for(2)]
+    assert second["plate_id"] == plate_id_for(2)
+    assert second["page_number"] == 2
+    # Evidência é POR folha: dois pacotes apontando para a mesma imagem seriam a mesma
+    # leitura contada duas vezes.
+    assert second["image_sha256"] != first["image_sha256"]
+    assert all(item["evidence"]["plate_id"] == plate_id_for(2) for item in second["items"])
+    assert all(item["evidence"]["page_number"] == 2 for item in second["items"])
+    registrations = revisions[1].worksite_plate_registrations_json
+    assert registrations is not None
+    assert plate_id_for(2) in registrations
+    # O pacote da primeira folha viaja intocado para a revisão da segunda (append-only).
+    assert revisions[1].takeoff_packet_json == first
+
+    prefix = f"tenants/{TENANT_ID}/valuation-rounds/{ROUND_ID}"
+    assert revisions[1].artifact_refs_json == {
+        PLATE_IMAGE_REF: f"{prefix}/plate/page-001.png",
+        TAKEOFF_OVERLAY_REF: f"{prefix}/takeoff/overlay.png",
+        f"{PLATE_IMAGE_REF}:{plate_id_for(2)}": f"{prefix}/plate/f2/page-002.png",
+        f"{TAKEOFF_OVERLAY_REF}:{plate_id_for(2)}": f"{prefix}/takeoff/f2/overlay.png",
+    }
+    assert (
+        revisions[1].artifact_digests_json[f"{PLATE_IMAGE_DIGEST}:{plate_id_for(2)}"]
+        == second["image_sha256"]
+    )
+    assert len(storage.puts) == 4
+
+    plates = _plates(database)
+    assert [record.extraction_status for record in plates] == ["done", "done"]
+    # A contagem de páginas é declarada POR folha, e não só na raiz.
+    assert [record.page_count for record in plates] == [2, 2]
+    record = _round(database)
+    assert record.extraction_status == "done"
+    assert record.plate_page_count == 2
+    # Uma revisão por folha extraída, cada uma com o lineage da SUA chamada paga: é assim que
+    # o custo sai apurado por folha, sem soma nova em lugar nenhum.
+    digests = {
+        revision.extraction_lineage_json["execution"]["input_digest"]
+        for revision in revisions
+        if revision.extraction_lineage_json is not None
+    }
+    assert len(digests) == 2
+
+
+def test_a_folha_que_falha_nao_derruba_as_demais(tmp_path: Path) -> None:
+    """Estado de extração é DA folha: a que falhou fica `failed`, a que publicou fica `done`."""
+    plate = _plate_pdf_pages(2)
+    database, database_url = _seed(tmp_path, plate=plate, page_numbers=(1, 2))
+    adapter = _FailingSecondAdapter(
+        inner=FixtureProviderAdapter(
+            provider=ProviderName.ANTHROPIC,
+            model_id=_FIXTURE_MODEL_ID,
+            outputs={PromptTask.LEGEND_EXTRACTION: _legend_output()},
+        )
+    )
+    worker, _storage = _worker(database_url, adapter=adapter, stored=plate)
+
+    assert worker.dispatch(_message(plate_id=plate_id_for(1))) == 1
+    assert worker.dispatch(_message(plate_id=plate_id_for(2))) == 1
+
+    plates = _plates(database)
+    assert [record.extraction_status for record in plates] == ["done", "failed"]
+    assert plates[0].extraction_failure_code is None
+    assert plates[1].extraction_failure_code == "PROVIDER_EXECUTION_FAILED"
+    # O pacote da folha que deu certo continua publicado: meia praça extraída é meia praça,
+    # não praça nenhuma.
+    revisions = _revisions(database)
+    assert len(revisions) == 1
+    assert revisions[0].takeoff_packet_json is not None
+    # A raiz é o espelho das folhas, e ela nomeia o desfecho de quem falhou.
+    record = _round(database)
+    assert record.extraction_status == "failed"
+    assert record.extraction_failure_code == "PROVIDER_EXECUTION_FAILED"
+
+
+def test_enquanto_uma_folha_corre_a_raiz_nao_declara_desfecho(tmp_path: Path) -> None:
+    """A raiz erra para o lado de "ainda não acabou": é o único lado seguro."""
+    plate = _plate_pdf_pages(2)
+    database, database_url = _seed(tmp_path, plate=plate, page_numbers=(1, 2))
+    worker, _storage = _worker(database_url, adapter=_counting_adapter(), stored=plate)
+
+    assert worker.dispatch(_message(plate_id=plate_id_for(1))) == 1
+
+    plates = _plates(database)
+    assert [record.extraction_status for record in plates] == ["done", "queued"]
+    assert _round(database).extraction_status == "queued"
+
+
+def test_a_pagina_fora_do_documento_recusa_so_aquela_folha(tmp_path: Path) -> None:
+    """PDF de N páginas não é recusado; promover a página que não existe, sim — e só ela."""
+    plate = _plate_pdf_pages(2)
+    database, database_url = _seed(tmp_path, plate=plate, page_numbers=(1, 9))
+    worker, _storage = _worker(database_url, adapter=_counting_adapter(), stored=plate)
+
+    assert worker.dispatch(_message(plate_id=plate_id_for(1))) == 1
+    assert worker.dispatch(_message(plate_id=plate_id_for(2))) == 1
+
+    plates = _plates(database)
+    assert [record.extraction_status for record in plates] == ["done", "failed"]
+    assert plates[1].extraction_failure_code == "LOCAL_PLATE_PAGE_ABSENT"
+    assert len(_revisions(database)) == 1
+
+
+def test_a_extracao_le_a_folha_da_tabela_e_nao_das_colunas_escalares(tmp_path: Path) -> None:
+    """Critério da T4: as colunas escalares deixaram de ser LIDAS por este comando.
+
+    O espelho escalar é apontado para uma chave que não existe no store e para um digest que
+    nenhum arquivo reproduz. Se a extração ainda os lesse, ela falharia; ela passa porque a
+    folha da tabela filha virou a fonte — e é isso que torna o `contract` possível.
+    """
+    plate = _plate_pdf()
+    database, database_url = _seed(tmp_path, plate=plate)
+    with database.sessions.begin() as session:
+        record = session.get(ValuationRoundRecord, ROUND_ID)
+        assert record is not None
+        record.plate_object_key = f"tenants/{TENANT_ID}/uploads/inexistente/prancha.pdf"
+        record.plate_source_sha256 = "f" * 64
+    worker, _storage = _worker(database_url, adapter=_counting_adapter(), stored=plate)
+
+    assert worker.dispatch(_message()) == 1
+
+    assert _round(database).extraction_status == "done"
+    assert len(_revisions(database)) == 1
+
+
+def test_envelope_sem_folha_continua_extraindo_a_primeira(tmp_path: Path) -> None:
+    """Mensagem publicada antes da F-046 pode estar em voo: ela continua valendo."""
+    plate = _plate_pdf_pages(2)
+    database, database_url = _seed(tmp_path, plate=plate, page_numbers=(1, 2))
+    worker, _storage = _worker(database_url, adapter=_counting_adapter(), stored=plate)
+
+    assert worker.dispatch(_message()) == 1
+
+    plates = _plates(database)
+    assert [record.extraction_status for record in plates] == ["done", "queued"]
+
+
+def test_a_corrida_de_versao_entre_folhas_nao_descarta_o_pacote_pago(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Duas folhas disputam a próxima versão da cadeia; nenhuma pode perder o que já pagou.
+
+    A corrida é simulada gravando uma revisão nova ENTRE a leitura da cabeça e o `INSERT`,
+    que é exatamente o que a outra folha faria. Sem a retentativa, a colisão em
+    `uq_valuation_round_version` viraria `failed` — com a chamada paga já feita e o pacote
+    jogado fora.
+    """
+    plate = _plate_pdf()
+    database, database_url = _seed(tmp_path, plate=plate)
+    worker, _storage = _worker(database_url, adapter=_counting_adapter(), stored=plate)
+    original = local_queue._head_revision_row
+    intrusa = {"gravada": False}
+
+    def _com_corrida(*args: Any, **kwargs: Any) -> Any:
+        head = original(*args, **kwargs)
+        if not intrusa["gravada"]:
+            # A janela real: entre a leitura da cabeça e o `INSERT` desta transação, a outra
+            # folha do lote grava a versão que esta ia gravar.
+            intrusa["gravada"] = True
+            with database.sessions.begin() as session:
+                session.add(
+                    ValuationRoundRevisionRecord(
+                        id="00000000-0000-7000-8000-0000000009f2",
+                        tenant_id=TENANT_ID,
+                        round_id=ROUND_ID,
+                        version=1,
+                        created_by="outra-folha",
+                        artifact_refs_json={},
+                        artifact_digests_json={},
+                    )
+                )
+        return head
+
+    monkeypatch.setattr(local_queue, "_head_revision_row", _com_corrida)
+
+    assert worker.dispatch(_message()) == 1
+
+    record = _round(database)
+    assert record.extraction_status == "done"
+    assert record.extraction_failure_code is None
+    revisions = _revisions(database)
+    assert [revision.version for revision in revisions] == [1, 2]
+    assert revisions[1].takeoff_packet_json is not None
+
+
+def test_a_matriz_de_calculo_sobrevive_a_extracao_posterior_ao_build(tmp_path: Path) -> None:
+    """`calc_matrix_json` viaja para a revisão nova; sem isso, extrair apagava a matriz.
+
+    A matriz é o artefato que o build grava (F-038 T8, ADR-0053) e o que explica a memória de
+    cálculo. Ela estava fora da lista de colunas que o comando de fila carrega adiante, então
+    qualquer extração posterior a um build a apagava — em silêncio, e sem teste que
+    reclamasse, porque a cabeça de `/v1` sempre a carregou.
+    """
+    plate = _plate_pdf()
+    database, database_url = _seed(tmp_path, plate=plate)
+    matrix = {"schema_version": "1.0.0", "plate_id": plate_id_for(1), "entries": []}
+    with database.sessions.begin() as session:
+        session.add(
+            ValuationRoundRevisionRecord(
+                id="00000000-0000-7000-8000-0000000009f1",
+                tenant_id=TENANT_ID,
+                round_id=ROUND_ID,
+                version=1,
+                created_by="orcamentista-sintetica",
+                calc_matrix_json=matrix,
+                artifact_refs_json={},
+                artifact_digests_json={},
+            )
+        )
+    worker, _storage = _worker(database_url, adapter=_counting_adapter(), stored=plate)
+
+    assert worker.dispatch(_message()) == 1
+
+    revisions = _revisions(database)
+    assert len(revisions) == 2
+    assert revisions[1].calc_matrix_json == matrix

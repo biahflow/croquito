@@ -12,6 +12,7 @@ todo item confirmado tenha memória de cálculo mesmo sem detalhamento explícit
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Final
@@ -103,6 +104,13 @@ class CalcBuildResult:
     service_numbers: dict[str, str]
     excluded_item_ids: tuple[str, ...]
     safety_notes: tuple[str, ...]
+    fused_item_ids: tuple[str, ...] = ()
+    """Itens desta folha cuja parcela foi absorvida por fusão declarada (F-046).
+
+    Vazio em toda folha isolada — inclusive na praça de uma folha só, que não tem com quem
+    fundir. Quem lê o resultado precisa distinguir a leitura que ZEROU por fusão da que
+    saiu do boletim por rejeição de código (`excluded_item_ids`): a primeira continua no
+    boletim, com linha e memória; a segunda não está lá."""
 
 
 def _confirmed_quantity(item: TakeoffItem) -> Decimal:
@@ -159,6 +167,7 @@ def build_worksite_bulletin(
     contract_label: str | None = None,
     calc_plan: CalcPlan | None = None,
     calc_matrix: CalcMatrix | None = None,
+    fused_into: Mapping[str, str] | None = None,
 ) -> CalcBuildResult:
     """Constrói o boletim e a memória de cálculo de uma obra a partir do takeoff confirmado.
 
@@ -167,7 +176,19 @@ def build_worksite_bulletin(
     item restante após excluir rejeitados, plano referenciando item fora dos incluídos,
     quantidade confirmada com escala não suportada (mais de duas casas) e por fim o plano
     que não fecha com a quantidade confirmada.
+
+    `fused_into` (`item_id` desta folha → `plate_id` da folha que ficou com a parcela) é a
+    fusão declarada do consolidado da praça (F-046, ADR-0057 D4/D6), e chega sempre vazia
+    em quem monta uma folha isolada — o boletim de hoje. Duas coisas mudam quando ela vem
+    preenchida, e só duas: a contribuição do item fundido é zerada com a quantidade ainda
+    impressa na memória (`calc_matrix._fuse_block`), e o item deixa de precisar de
+    `ItemPackageClosure` próprio. A segunda é a decisão 6 do ADR: o pacote de serviços é do
+    ELEMENTO DA OBRA, e um elemento fundido é fechado uma vez, do lado que fica. O que NÃO
+    muda é `CALC_ASSIGNMENT_MISSING`: a leitura absorvida continua exigindo código decidido,
+    porque é o código que lhe dá linha e memória — sem ele ela sumiria da folha onde foi
+    lida, que é o oposto de fundir visivelmente.
     """
+    fused = dict(fused_into or {})
     if (
         assignments.plate_id != packet.plate_id
         or assignments.page_number != packet.page_number
@@ -227,7 +248,10 @@ def build_worksite_bulletin(
     # presença de um assignment deixou de significar que o item acabou. Um elemento com um
     # de seis códigos passaria por aqui e viraria boletim pela metade, em silêncio — que é
     # exatamente o erro que `CALC_ASSIGNMENT_MISSING` existe para impedir no caso vizinho.
-    open_ids = sorted(assignments.open_package_item_ids() & confirmed_ids)
+    # O item fundido sai desta conferência porque o pacote dele é fechado do lado que fica
+    # (ADR-0057 D6): exigir um segundo fechamento aqui seria pedir duas vezes a mesma
+    # afirmação sobre UM elemento da obra.
+    open_ids = sorted((assignments.open_package_item_ids() & confirmed_ids) - set(fused))
     if open_ids:
         raise ValuationValidationError(
             "CALC_PACKAGE_NOT_CLOSED",
@@ -303,21 +327,24 @@ def build_worksite_bulletin(
         calc_plan=calc_plan,
         calc_matrix=calc_matrix,
         error_prefix="CALC",
+        fused_into=fused,
     )
 
     if calc_matrix is None:
         # Regime legado: cada serviço é um item, na ordem de `included_items`. A conferência
         # de que o plano fecha com a quantidade CONFIRMADA continua sendo do builder — o
-        # resolver só soma os subtotais, não conhece a quantidade humana.
+        # resolver só soma os subtotais, não conhece a quantidade humana. A parcela fundida
+        # volta para a soma aqui de propósito: ela não conta no total da praça, mas continua
+        # tendo de bater com o que a orçamentista confirmou naquela folha.
         for item, service in zip(included_items, resolved.services, strict=True):
-            if service.total_quantity != _confirmed_quantity(item):
+            if service.total_quantity + service.fused_quantity != _confirmed_quantity(item):
                 raise ValuationValidationError(
                     "CALC_PLAN_QUANTITY_MISMATCH",
                     "plano de cálculo não fecha com a quantidade confirmada pelo orçamentista",
                     {
                         "item_id": item.id,
                         "expected": str(_confirmed_quantity(item)),
-                        "recomputed": str(service.total_quantity),
+                        "recomputed": str(service.total_quantity + service.fused_quantity),
                     },
                 )
 
@@ -374,6 +401,7 @@ def build_worksite_bulletin(
         service_numbers=service_numbers,
         excluded_item_ids=tuple(excluded_item_ids),
         safety_notes=_CALC_SAFETY_NOTES,
+        fused_item_ids=tuple(item.id for item in included_items if item.id in fused),
     )
 
 

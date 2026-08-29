@@ -136,6 +136,7 @@ from croquito_worker.valuation.round_extraction import (
     ARM_UNAVAILABLE_MESSAGE,
     MAX_PLATE_PDF_BYTES,
     PLATE_PAGE_NUMBER,
+    dataset_id,
     extract_legend_from_upload,
     ingest_plate_upload,
     upload_invalid,
@@ -811,7 +812,17 @@ def _extract_legend_from_upload(
     rodada do servidor. O nome privado continua aqui porque é o seam que a suíte troca:
     nenhuma chamada externa acontece nos testes.
     """
-    return extract_legend_from_upload(run.root, manifest, adapter, reserve)
+    return extract_legend_from_upload(
+        run.root,
+        manifest,
+        adapter,
+        reserve,
+        # O servidor local é de UMA prancha por rodada, e a página é a 1: os dois valores são
+        # passados por extenso desde a F-046, porque quem os omitisse publicaria um pacote que
+        # se declara de outra folha (`round_extraction.extract_legend_from_upload`).
+        plate_id=dataset_id(run.root),
+        page_number=PLATE_PAGE_NUMBER,
+    )
 
 
 def _publish_extraction(
@@ -1449,7 +1460,13 @@ def _build_app(run: _Run, *, origins: Sequence[str]) -> FastAPI:
         if run.extraction.is_running():
             raise _round_already_has_plate("a rodada já tem uma prancha em processamento")
         payload = await _read_upload(file)
-        manifest = ingest_plate_upload(run.root, filename=file.filename, payload=payload)
+        manifest = ingest_plate_upload(
+            run.root,
+            filename=file.filename,
+            payload=payload,
+            # Uma prancha por rodada neste servidor: a página promovida é a 1, declarada.
+            page_number=PLATE_PAGE_NUMBER,
+        )
         _trigger_extraction(run, manifest)
         return _state_payload(run)
 

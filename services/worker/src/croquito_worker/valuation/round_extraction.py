@@ -71,10 +71,16 @@ MAX_PLATE_PDF_BYTES: Final = 50 * 1024 * 1024
 PLATE_INGEST_DPI: Final = 200
 PLATE_INGEST_ROLE: Final = "legenda-quantificada"
 PLATE_PAGE_NUMBER: Final = 1
-"""Uma rodada é uma prancha, e a prancha é a página 1.
+"""A página da PRIMEIRA folha da praça no caminho de sempre: a página 1.
 
-PDF com mais páginas não é recusado nem lido às escondidas: a página 1 é promovida e a
-contagem vai declarada no estado, para o orçamentista saber o que ficou de fora."""
+Desde a F-046 ela não é mais a única página que vira prancha — a promoção recebe QUAL página
+promover (`promote_page`), e quem escolhe é o humano, em lote e sem nada marcado por padrão.
+Esta constante segue existindo porque a praça de uma folha é o caso da vida real, e é ela que
+mantém esse caso byte-idêntico (ADR-0057, decisão 8).
+
+PDF com mais páginas continua não sendo recusado nem lido às escondidas: a contagem vai
+declarada no estado — desde a F-046 por FOLHA, e não só na raiz —, para o orçamentista saber
+o que ficou de fora."""
 
 MEDICAO_EXTRACTION_ARM: Final = "sonnet=anthropic:claude-sonnet-5"
 """Braço pago da extração automática: o vencedor da eval paga de 2026-08-13.
@@ -99,6 +105,14 @@ O nome não diz "MEDICAO" porque a legenda quantificada é a MESMA tarefa de pro
 jornadas — medição e orçamento-base compartilham handler, adapter e pacote. Uma reserva que
 valesse só para uma delas seria degradação pela metade, e a outra descobriria isso na
 primeira falha do fornecedor."""
+
+PLATE_PAGE_ABSENT_CODE: Final = "LOCAL_PLATE_PAGE_ABSENT"
+"""A página escolhida não existe no PDF enviado.
+
+Recusa da FOLHA, e não do documento: um PDF de N páginas continua sendo aceito inteiro
+(ADR-0057), e o que se recusa aqui é promover a página 9 de um PDF de 3. Código próprio, e
+não `LOCAL_UPLOAD_INVALID`, porque o desfecho vira `extraction_failure_code` DAQUELA folha e
+o orçamentista precisa distinguir "o arquivo não presta" de "essa página não existe"."""
 
 PLATE_IMAGE_REF: Final = "plate_image_key"
 TAKEOFF_OVERLAY_REF: Final = "takeoff_overlay_key"
@@ -142,13 +156,41 @@ def round_object_prefix(*, tenant_id: str, round_id: str) -> str:
     return f"tenants/{tenant_id}/valuation-rounds/{round_id}"
 
 
-def plate_image_object_key(*, tenant_id: str, round_id: str) -> str:
-    """PNG da página promovida — a imagem que a tela vê por URL assinada (D5)."""
-    return f"{round_object_prefix(tenant_id=tenant_id, round_id=round_id)}/plate/page-001.png"
+def plate_image_object_key(
+    *, tenant_id: str, round_id: str, position: int = 1, page_number: int = PLATE_PAGE_NUMBER
+) -> str:
+    """PNG da página promovida — a imagem que a tela vê por URL assinada (D5).
+
+    A PRIMEIRA folha da praça mantém a chave de sempre; da segunda em diante o segmento
+    `f{posição}` separa as folhas (F-046). Sem essa separação a folha 2 sobrescreveria o PNG
+    da folha 1 no object store, e a praça perderia a evidência de uma das duas — silenciosa e
+    irreversivelmente, porque o digest gravado continuaria apontando para a chave certa.
+    """
+    prefix = f"{round_object_prefix(tenant_id=tenant_id, round_id=round_id)}/plate"
+    sheet = "" if position <= 1 else f"/f{position}"
+    return f"{prefix}{sheet}/page-{page_number:03d}.png"
 
 
-def takeoff_overlay_object_key(*, tenant_id: str, round_id: str) -> str:
-    return f"{round_object_prefix(tenant_id=tenant_id, round_id=round_id)}/takeoff/overlay.png"
+def takeoff_overlay_object_key(*, tenant_id: str, round_id: str, position: int = 1) -> str:
+    """Overlay da folha. Um overlay POR folha, nunca da praça (ADR-0057, decisão 3)."""
+    prefix = round_object_prefix(tenant_id=tenant_id, round_id=round_id)
+    sheet = "" if position <= 1 else f"/f{position}"
+    return f"{prefix}/takeoff{sheet}/overlay.png"
+
+
+def plate_ref_key(base: str, *, position: int, plate_id: str) -> str:
+    """Nome da chave de artefato de UMA folha dentro dos mapas da revisão.
+
+    `artifact_refs_json` e `artifact_digests_json` são mapas planos por revisão, e a praça
+    tem N folhas: sem sufixo, a folha 2 sobrescreveria a referência da folha 1 e a tela
+    passaria a servir a imagem errada com o digest errado.
+
+    A primeira folha fica SEM sufixo, com o nome exato de sempre — é isso que mantém a praça
+    de uma folha byte-idêntica e o que faz a rota da prancha continuar lendo `plate_image_key`
+    sem saber que a praça existe. Uma regra só, num lugar só, porque quem ESCREVE (o comando
+    de fila) e quem LÊ (a rota) são processos diferentes.
+    """
+    return base if position <= 1 else f"{base}:{plate_id}"
 
 
 _PROVIDER_CREDENTIAL_ENV: Final[Mapping[str, str]] = {
@@ -201,14 +243,25 @@ def dataset_id(workdir: Path) -> str:
     return slug if re.fullmatch(r"[a-z0-9][a-z0-9-]{2,63}", slug) else _FALLBACK_DATASET_ID
 
 
-def promote_first_page(workdir: Path, pdf_path: Path) -> PdfManifest:
-    """Renderiza o PDF num temporário da rodada e promove a página 1 mais o manifest.
+def promote_page(workdir: Path, pdf_path: Path, *, page_number: int) -> PdfManifest:
+    """Renderiza o PDF num temporário da rodada e promove UMA página mais o manifest.
 
     Renderizar fora do lugar final e mover depois é o que impede a rodada de ficar com
     meia prancha: só entram no diretório o PNG da página que o manifest declara e o
     próprio manifest. O resto da ingestão (contact sheet, demais páginas) é descartado —
-    esta rodada é de uma prancha só.
+    cada folha da praça é uma página, e é a página que este ato promove.
+
+    `page_number` é EXPLÍCITO e sem valor padrão desde a F-046: quem escolhe quais páginas
+    viram folha da praça é o humano, em lote, e nada vem marcado por padrão. Página fora do
+    documento é recusa nomeada (`LOCAL_PLATE_PAGE_ABSENT`) — e recusa da folha, não do PDF,
+    que continua aceito com as N páginas que tiver.
     """
+    if page_number < 1:
+        raise ValuationValidationError(
+            PLATE_PAGE_ABSENT_CODE,
+            "a página escolhida não existe no PDF enviado",
+            {"page_number": page_number},
+        )
     workspace = Path(tempfile.mkdtemp(dir=workdir, prefix=".prancha-ingest-"))
     try:
         # A tradução cobre a RENDERIZAÇÃO e só ela: `ValuationValidationError` é um
@@ -225,7 +278,13 @@ def promote_first_page(workdir: Path, pdf_path: Path) -> PdfManifest:
         except (ValueError, RuntimeError) as error:
             # PDF protegido por senha, sem páginas ou ilegível para o renderizador.
             raise upload_invalid(str(error)[:200], {"stage": "ingest"}) from error
-        page = manifest.pages[PLATE_PAGE_NUMBER - 1]
+        if page_number > manifest.page_count:
+            raise ValuationValidationError(
+                PLATE_PAGE_ABSENT_CODE,
+                "a página escolhida não existe no PDF enviado",
+                {"page_number": page_number, "page_count": manifest.page_count},
+            )
+        page = manifest.pages[page_number - 1]
         rendered = manifest_path.parent / page.render_file
         if file_sha256(rendered) != page.image_sha256:  # pragma: no cover - ingestão coerente
             raise upload_invalid("a página renderizada não confere com o manifest da ingestão")
@@ -236,12 +295,18 @@ def promote_first_page(workdir: Path, pdf_path: Path) -> PdfManifest:
         shutil.rmtree(workspace, ignore_errors=True)
 
 
-def ingest_plate_upload(workdir: Path, *, filename: str | None, payload: bytes) -> PdfManifest:
+def ingest_plate_upload(
+    workdir: Path, *, filename: str | None, payload: bytes, page_number: int
+) -> PdfManifest:
     """Grava a prancha enviada e devolve o manifest da ingestão.
 
     Validação antes de qualquer escrita (extensão, tamanho e assinatura do arquivo) e
     desfazimento depois de qualquer falha: ingestão que não fecha remove o PDF, e a rodada
     volta a ser exatamente o que era antes do clique.
+
+    `page_number` diz QUAL página do documento vira esta folha, e não tem valor padrão de
+    propósito (F-046): um padrão silencioso aqui reintroduziria a promoção automática que o
+    pacote de design recusou nominalmente.
     """
     name = (filename or "").strip()
     if not name.lower().endswith(".pdf"):
@@ -254,7 +319,7 @@ def ingest_plate_upload(workdir: Path, *, filename: str | None, payload: bytes) 
     pdf_path = workdir / PLATE_PDF_FILENAME
     atomic_write_bytes(pdf_path, payload)
     try:
-        return promote_first_page(workdir, pdf_path)
+        return promote_page(workdir, pdf_path, page_number=page_number)
     except Exception:
         pdf_path.unlink(missing_ok=True)
         raise
@@ -394,6 +459,9 @@ def extract_legend_from_upload(
     manifest: PdfManifest,
     adapter: ProviderAdapter,
     reserve: ProviderAdapter | None = None,
+    *,
+    plate_id: str,
+    page_number: int,
 ) -> LegendExtractionResult:
     """Extrai a legenda da prancha consentida pelo upload.
 
@@ -406,8 +474,14 @@ def extract_legend_from_upload(
 
     `reserve` é o braço de degradação, desligado por padrão (`None`) — quem o monta a
     partir do ambiente é `build_extraction_reserve_adapter`, no chamador.
+
+    `plate_id` e `page_number` são exigidos e não têm padrão (F-046): eles são a IDENTIDADE
+    da folha dentro da praça e viajam para dentro do pacote, onde `TAKEOFF_EVIDENCE_MISMATCH`
+    os cobra item a item. Um padrão silencioso aqui deixaria a folha 3 publicar um pacote que
+    se declara página 1 — evidência apontando para a folha errada, que é exatamente o que o
+    pacote existe para impedir.
     """
-    page = manifest.pages[PLATE_PAGE_NUMBER - 1]
+    page = manifest.pages[page_number - 1]
     image_path = (workdir / page.render_file).resolve(strict=True)
     image_sha256 = hashlib.sha256(image_path.read_bytes()).hexdigest()
     source_sha256 = authorize_uploaded_page(workdir / PLATE_MANIFEST_FILENAME, image_sha256)
@@ -419,8 +493,8 @@ def extract_legend_from_upload(
         raise ProviderExecutionError(ProviderFailureCode.INVALID_SCHEMA)
     packet = takeoff_packet_from_legend(
         output,
-        plate_id=dataset_id(workdir),
-        page_number=PLATE_PAGE_NUMBER,
+        plate_id=plate_id,
+        page_number=page_number,
         image_sha256=image_sha256,
         source_pdf_sha256=source_sha256,
         image_width=width,

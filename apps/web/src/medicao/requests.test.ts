@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  appendPlatesBody,
   codeClosureBody,
   codeDecisionBody,
+  codeRevocationBody,
   codeSearchTerm,
   createRoundBody,
+  identityLinkBody,
+  identityLinkPreviewBody,
+  plateBody,
+  platesExtractionBody,
   priceAdjustmentBody,
   takeoffDecisionBody,
   versionBody,
@@ -412,5 +418,174 @@ describe("priceAdjustmentBody", () => {
     });
 
     expect(typeof corpo?.factor).toBe("string");
+  });
+});
+
+/**
+ * Os corpos do lote da praça (F-046 T4). A regra que eles guardam é a mesma da tela: a
+ * escolha é explícita, e nada é acrescentado por conveniência do cliente.
+ */
+describe("os lotes da praça", () => {
+  it("promover manda a guarda de concorrência, o documento e as páginas escolhidas", () => {
+    const corpo = appendPlatesBody("0197f2a0-0000-7000-8000-0000000000aa", [3, 1], 7);
+
+    expect(corpo).toEqual({
+      base_version: 7,
+      upload_id: "0197f2a0-0000-7000-8000-0000000000aa",
+      page_numbers: [3, 1],
+    });
+  });
+
+  it("página repetida no lote não vira duas folhas", () => {
+    const corpo = appendPlatesBody("0197f2a0-0000-7000-8000-0000000000aa", [2, 2, 4], 7);
+
+    expect(corpo.page_numbers).toEqual([2, 4]);
+  });
+
+  /**
+   * Lote vazio VIAJA: a recusa (`ROUND_PLATE_PAGES_REQUIRED`) é do servidor, e um corpo
+   * inventado aqui — uma página "por padrão" — seria a escolha explícita contornada pelo
+   * cliente.
+   */
+  it("lote vazio sai vazio, para o servidor recusar", () => {
+    expect(appendPlatesBody("0197f2a0-0000-7000-8000-0000000000aa", [], 7).page_numbers).toEqual(
+      [],
+    );
+    expect(platesExtractionBody([], 7).plate_ids).toEqual([]);
+  });
+
+  it("o lote de leitura manda as folhas marcadas, sem repetir e sem carimbar identidade", () => {
+    const corpo = platesExtractionBody(["planta-geral", "detalhe", "planta-geral"], 9);
+
+    expect(corpo).toEqual({
+      base_version: 9,
+      plate_ids: ["planta-geral", "detalhe"],
+    });
+    expect(corpo).not.toHaveProperty("reviewer_id");
+    expect(corpo).not.toHaveProperty("requested_at");
+  });
+});
+
+/**
+ * A folha no corpo dos atos por folha (F-046 T4c/T4d).
+ *
+ * A regra que estes testes guardam é a da OMISSÃO: folha ausente não viaja, e é por isso
+ * que o corpo da rodada de uma prancha continua idêntico ao de antes da praça.
+ */
+describe("a folha no corpo dos atos", () => {
+  it("folha ausente, vazia ou em branco não vira campo nenhum", () => {
+    expect(plateBody(undefined)).toEqual({});
+    expect(plateBody("")).toEqual({});
+    expect(plateBody("   ")).toEqual({});
+    expect(plateBody("detalhe")).toEqual({ plate_id: "detalhe" });
+  });
+
+  it("o lote de revisão nomeia a folha do ATO, e não de cada decisão", () => {
+    const corpo = takeoffDecisionBody({
+      baseVersion: 7,
+      plateId: "detalhe",
+      decisions: [{ itemId: "ti_1", action: "confirm" }],
+    });
+
+    expect(corpo.plate_id).toBe("detalhe");
+    expect(decisoesDoCorpo(corpo)[0]).not.toHaveProperty("plate_id");
+  });
+
+  it("sem folha, os quatro corpos saem exatamente como saíam antes da praça", () => {
+    expect(
+      takeoffDecisionBody({
+        baseVersion: 7,
+        decisions: [{ itemId: "ti_1", action: "confirm" }],
+      }),
+    ).toEqual({
+      base_version: 7,
+      decisions: [{ item_id: "ti_1", action: "confirm" }],
+    });
+    expect(
+      codeDecisionBody({
+        itemId: "ti_1",
+        action: "confirm",
+        baseVersion: 7,
+        code: "04.02.010",
+      }),
+    ).toEqual({ base_version: 7, item_id: "ti_1", action: "confirm", code: "04.02.010" });
+    expect(codeClosureBody({ itemId: "ti_1", baseVersion: 7 })).toEqual({
+      base_version: 7,
+      item_id: "ti_1",
+    });
+    expect(
+      codeRevocationBody({
+        itemId: "ti_1",
+        code: "04.02.010",
+        baseVersion: 7,
+        note: "código trocado por engano",
+      }),
+    ).toEqual({
+      base_version: 7,
+      item_id: "ti_1",
+      code: "04.02.010",
+      note: "código trocado por engano",
+    });
+  });
+
+  it("com folha, os três atos de código a nomeiam — `item_id` não é único entre folhas", () => {
+    expect(
+      codeDecisionBody({
+        itemId: "ti_1",
+        action: "confirm",
+        baseVersion: 7,
+        plateId: "detalhe",
+        code: "04.02.010",
+      }).plate_id,
+    ).toBe("detalhe");
+    expect(
+      codeClosureBody({ itemId: "ti_1", baseVersion: 7, plateId: "detalhe" }).plate_id,
+    ).toBe("detalhe");
+    expect(
+      codeRevocationBody({
+        itemId: "ti_1",
+        code: "04.02.010",
+        baseVersion: 7,
+        plateId: "detalhe",
+        note: "código trocado por engano",
+      }).plate_id,
+    ).toBe("detalhe");
+  });
+});
+
+/**
+ * O vínculo de identidade (F-046 T1/T4c). A prévia é LEITURA: sem `base_version` e sem
+ * nota, porque a justificativa é do ato e não da simulação.
+ */
+describe("o vínculo de identidade", () => {
+  const kept = { plate_id: "planta-geral", item_id: "ti_b3d5e820a7c14f69" };
+  const discarded = { plate_id: "detalhe", item_id: "ti_5d2f83b60e4a1c97" };
+
+  it("a prévia leva só os dois endereços — nem versão, nem nota, nem identidade", () => {
+    const corpo = identityLinkPreviewBody({ kept, discarded });
+
+    expect(corpo).toEqual({ kept, discarded });
+    expect(corpo).not.toHaveProperty("base_version");
+    expect(corpo).not.toHaveProperty("note");
+    expect(corpo).not.toHaveProperty("declared_by");
+    expect(corpo).not.toHaveProperty("declared_at");
+  });
+
+  it("o ato leva a versão-base e a nota, e nunca carimba autor nem instante", () => {
+    const corpo = identityLinkBody({
+      kept,
+      discarded,
+      baseVersion: 7,
+      note: "  mesmo trecho de alambrado do perímetro  ",
+    });
+
+    expect(corpo).toEqual({
+      base_version: 7,
+      kept,
+      discarded,
+      note: "mesmo trecho de alambrado do perímetro",
+    });
+    expect(corpo).not.toHaveProperty("declared_by");
+    expect(corpo).not.toHaveProperty("declared_at");
   });
 });

@@ -2219,6 +2219,7 @@ def _command_export_valuation(args: argparse.Namespace) -> int:
             "checked_cells": audit.checked_cells,
             "formula_cells": audit.formula_cells,
             "pinned_cells": len(audit.pinned_cells),
+            "consolidation_drifts": len(audit.consolidation_drifts),
             "total_amount": str(audit.total_amount),
         }
     )
@@ -2257,6 +2258,7 @@ def _command_demo(args: argparse.Namespace) -> int:
             "checked_cells": result.audit.checked_cells,
             "formula_cells": result.audit.formula_cells,
             "pinned_cells": len(result.audit.pinned_cells),
+            "consolidation_drifts": len(result.audit.consolidation_drifts),
             "total_amount": str(result.valuation.total_amount),
             "takeoff": {
                 "packet": str(result.takeoff_packet_path),

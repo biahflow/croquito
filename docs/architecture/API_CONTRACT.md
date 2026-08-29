@@ -1331,17 +1331,55 @@ ausência de um campo: as duas rodadas não podem parecer iguais.
 ### `POST /v1/valuation-rounds/{round_id}/plate`
 
 Entrada: `upload_id`, `base_version`. O PDF sobe por `POST /v1/uploads/presign` e nunca em
-JSON. Uma rodada tem no máximo uma prancha: segunda chamada devolve
-`409 ROUND_PLATE_ALREADY_PRESENT`.
+JSON. **Acrescenta uma folha à praça** (F-046, ADR-0057): praça grande vem em planta geral,
+folhas de detalhe e cortes, e a legenda quantificada é da obra. A segunda folha deixou de ser
+recusa e passou a ser o caso normal.
+
+`409 ROUND_PLATE_ALREADY_PRESENT` recusa agora só a folha **repetida** — mesmo digest de
+origem e mesma página —, com `plate_id` e `page_number` em `details`. O teto de folhas por
+praça é declarado em `GET .../worksite` (`plate_limit`) e ultrapassá-lo devolve
+`409 ROUND_PLATE_LIMIT_REACHED`.
+
+Cada folha nasce com uma `plate_id` própria, que é a mesma que o `TakeoffPacket` daquela
+folha carrega. A resposta é da folha recém-acrescentada e tem a forma de sempre.
+
+Erros: `422 INVALID_UPLOAD` quando o objeto não é PDF legível de prancha,
+`409 REVISION_CONFLICT` por versão movida.
+
+### `POST /v1/valuation-rounds/{round_id}/plates`
+
+Entrada: `upload_id`, `base_version` e `page_numbers` — **quais** páginas do documento viram
+folhas da praça, num ato em lote (F-046, ADR-0057). `page_numbers` é obrigatório e **nada vem
+marcado por padrão**: não existe promoção automática de todas as páginas do PDF, e um lote
+vazio devolve `422 ROUND_PLATE_PAGES_REQUIRED`.
+
+Tudo ou nada: página repetida dentro do lote devolve `409 ROUND_PLATE_ALREADY_PRESENT`, folha
+já presente na praça (mesmo digest de origem, mesma página) devolve o mesmo código, e lote que
+ultrapassaria o teto da praça devolve `409 ROUND_PLATE_LIMIT_REACHED` — nenhuma folha é criada
+em nenhum dos três casos.
+
+Resposta: `plate_count` (o tamanho da praça depois do ato), `plate_limit` e `appended`, com
+`plate_id`, `position`, `page_number` e `source_sha256` de cada folha acrescentada.
+
+Promover **não** extrai nada: a extração é ato à parte, e é ela que custa dinheiro. A API não
+abre o PDF, então página inexistente no documento não é recusada aqui — ela é descoberta pela
+ingestão, no worker, e o desfecho fica na folha (`LOCAL_PLATE_PAGE_ABSENT`, visível em
+`GET .../worksite`) sem derrubar as demais.
 
 Erros: `422 INVALID_UPLOAD` quando o objeto não é PDF legível de prancha,
 `409 REVISION_CONFLICT` por versão movida.
 
 ### `GET /v1/valuation-rounds/{round_id}/plate`
 
-Retorna metadados da prancha e `image_url`: URL assinada de curta duração para o PNG
-promovido, sob o prefixo do tenant, nunca registrada em log nem em auditoria. Prancha ainda
-não ingerida devolve `409 ROUND_STAGE_NOT_READY`.
+Retorna metadados de **uma** folha e `image_url`: URL assinada de curta duração para o
+PNG promovido, sob o prefixo do tenant, nunca registrada em log nem em auditoria. Prancha
+ainda não ingerida devolve `409 ROUND_STAGE_NOT_READY`. Quem quer o estado das N folhas de uma
+vez lê `GET .../worksite`.
+
+Aceita `plate_id` em query, **opcional** (F-046 T4c): ausente, a resposta é a da **primeira**
+folha, exatamente como antes; presente, a da folha nomeada, cuja imagem está sob a chave
+sufixada que a ingestão escreveu. Folha que não é desta praça devolve
+`404 ROUND_PLATE_NOT_FOUND`.
 
 ### `POST /v1/valuation-rounds/{round_id}/plate/extractions`
 
@@ -1356,10 +1394,41 @@ ambiente não tem provider configurado. Fila indisponível devolve
 `503 PROCESSING_UNAVAILABLE`, com o comando repetível. Resposta bruta de provider nunca
 volta ao cliente; o lineage (modelo, tokens, custo) fica no estado da rodada.
 
+Desde a F-046 esta rota é a da **primeira** folha, que é a folha única da rodada de sempre.
+Quem escolhe quais folhas extrair usa `POST .../plates/extractions`.
+
+### `POST /v1/valuation-rounds/{round_id}/plates/extractions`
+
+Entrada: `base_version` e `plate_ids` — **quais** folhas da praça vão para a extração paga
+(F-046). Obrigatório e sem nada marcado por padrão, pelo mesmo motivo da promoção: cada folha
+é uma chamada paga a mais.
+
+Retorna `202` com `extraction_id`, `status`, `plate_count` e `plate_ids`. `plate_count` é o
+número de folhas que **serão** extraídas, declarado antes de o worker gastar o primeiro
+centavo — o custo por folha não pode aparecer só na fatura.
+
+Tudo ou nada: folha inexistente na praça devolve `404 ROUND_PLATE_NOT_FOUND`, folha que já tem
+pacote publicado ou repetida no lote devolve `409 ROUND_PLATE_ALREADY_PRESENT`, e folha com
+extração em voo devolve `409 EXTRACTION_IN_PROGRESS`. Lote vazio devolve
+`422 ROUND_PLATE_PAGES_REQUIRED`.
+
+Valem os mesmos freios de gasto da rota singular: entitlement contratual por tenant
+(`403 AI_PROCESSING_NOT_AUTHORIZED`) e teto de gasto declarado no ambiente
+(`503 PROVIDER_UNAVAILABLE`), ambos antes de qualquer enfileiramento. Cada folha vira um
+comando de fila próprio, com o mesmo `extraction_id` do lote: uma folha que falha não derruba
+as demais, e o estado de cada uma aparece em `GET .../worksite`.
+
 ### `GET /v1/valuation-rounds/{round_id}/takeoff`
 
-Retorna o `TakeoffPacket` da rodada, com a âncora de evidência por item e o digest do pacote.
-Sem extração publicada devolve `409 ROUND_STAGE_NOT_READY`.
+Retorna o `TakeoffPacket` de **uma folha** da praça, com a âncora de evidência por item e o
+digest do pacote. Sem extração publicada devolve `409 ROUND_STAGE_NOT_READY`.
+
+Aceita `plate_id` em query, **opcional** (F-046 T4c). Ausente, a leitura é a da **primeira**
+folha e a resposta é a de sempre, campo por campo; presente, é a da folha nomeada — é por ele
+que a revisão dos itens alcança as folhas 2..N. Nenhuma chave nova entra na resposta: quem
+precisa saber de qual folha o pacote é já lê `packet.plate_id`. Folha que não é desta praça
+devolve `404 ROUND_PLATE_NOT_FOUND`; folha da praça ainda sem pacote devolve
+`409 ROUND_STAGE_NOT_READY`.
 
 ### `GET /v1/valuation-rounds/{round_id}/takeoff/overlay`
 
@@ -1370,13 +1439,29 @@ imagem da prancha, mais `stale` e o digest do pacote que originou o desenho
 Overlay vencido devolve `200` com a marca, nunca erro: o desenho anterior continua sendo a
 única visão de onde cada número foi lido, e esconder a divergência é pior que declará-la.
 
+Aceita `plate_id` em query, **opcional**, com a mesma semântica da rota do takeoff. Existe um
+overlay por **folha** e nunca um de praça: não existe pixel de praça (ADR-0057, decisão 3). A
+idade é comparada contra o pacote **daquela** folha.
+
+O re-render depois de uma decisão continua sendo enfileirado **só para a primeira folha**: o
+comando de fila desenha o pacote de `takeoff_packet_json` e ainda não conhece a praça. Nas
+demais folhas o overlay permanece declarado `stale` até que o comando passe a ser por folha —
+desfecho fail-closed, e não desenho servido como se fosse do pacote corrente.
+
 ### `POST /v1/valuation-rounds/{round_id}/takeoff/decisions`
 
-Entrada: `base_version` — uma só, do ato — e `decisions`, o **lote** de decisões do
-orçamentista, de 1 a 200 entradas. Cada decisão traz `item_id`, `action` (`confirm` ou
-`reject`), `quantity`, `unit`, `note`, `item_note`. `quantity` viaja como **texto**, porque
-quantidade é `Decimal` exato neste contexto e um `float` de JSON já teria perdido a escala
-escrita.
+Entrada: `base_version` — uma só, do ato —, `plate_id` **opcional** e `decisions`, o **lote**
+de decisões do orçamentista, de 1 a 200 entradas. Cada decisão traz `item_id`, `action`
+(`confirm` ou `reject`), `quantity`, `unit`, `note`, `item_note`. `quantity` viaja como
+**texto**, porque quantidade é `Decimal` exato neste contexto e um `float` de JSON já teria
+perdido a escala escrita.
+
+`plate_id` diz **qual folha da praça** este lote revisa (F-046 T4c); ausente, é a primeira
+folha, exatamente como antes. A folha entra no corpo do ato e não em cada decisão: um lote é a
+legenda de UMA prancha por construção, e decidir itens de duas folhas no mesmo ato seria outro
+ato, sobre outro pacote, com outra revisão. Folha que não é desta praça devolve
+`404 ROUND_PLATE_NOT_FOUND`; folha da praça ainda sem pacote devolve
+`409 ROUND_STAGE_NOT_READY`.
 
 A rota é **só-lote**: quem decide um item de cada vez manda um lote de um. A forma singular
 transformava o ato único de conferir a legenda em um ato por linha — uma revisão na cadeia,
@@ -1393,11 +1478,13 @@ Decisão do orçamentista é imutável: item já confirmado ou rejeitado devolve
 `422 DOMAIN_VALIDATION_FAILED` com `TAKEOFF_ITEM_ALREADY_REVIEWED` em `details`. Correção de
 decisão é ato declarado, não sobrescrita.
 
-A resposta traz a rodada em versão nova, com o pacote regravado. O overlay é reconstruído
-**fora do request path**, por comando de fila
+A resposta traz a rodada em versão nova, com o pacote regravado — o da primeira folha em
+`takeoff_packet_json`, o das demais no mapa por `plate_id`, que é a mesma divisão que a
+ingestão escreve. O overlay é reconstruído **fora do request path**, por comando de fila
 ([ADR-0030](../adr/0030-overlay-do-takeoff-reconstruido-na-fila.md)), e até o worker
 publicá-lo o overlay corrente fica marcado como vencido. Fila indisponível não derruba a
-decisão já gravada: o comando é repetível e a resposta continua `200`.
+decisão já gravada: o comando é repetível e a resposta continua `200`. Decisão em folha além
+da primeira **não enfileira** re-render (ver `GET .../takeoff/overlay`).
 
 ### `GET /v1/valuation-rounds/{round_id}/code-suggestions`
 
@@ -1410,6 +1497,14 @@ takeoff incompleta devolve `409 TAKEOFF_REVIEW_INCOMPLETE`; rodada sem catálogo
 ([ADR-0054](../adr/0054-indice-de-embeddings-publicado-e-braco-semantico-hospedado.md), decisão 7):
 a shortlist que a primeira leitura grava é **léxica**, e a híbrida exige o recálculo
 explícito. O motivo viaja em `semantic_notes`.
+
+Aceita `plate_id` em query, **opcional** (F-046 T4d): ausente, a shortlist é a da **primeira**
+folha, campo por campo como antes da praça; presente, a da folha nomeada. Ela é por folha
+porque é observação por **item**, e os itens são os do pacote de uma prancha — servir a
+shortlist da primeira folha sob o cabeçalho da segunda ofereceria códigos para elementos que
+não estão naquele desenho. Cada folha é calculada uma vez e persistida no lugar dela: a da
+primeira em `code_suggestions_json`, as demais no mapa por `plate_id`. Folha que não é desta
+praça devolve `404 ROUND_PLATE_NOT_FOUND`.
 
 ### `POST /v1/valuation-rounds/{round_id}/code-suggestions/recompute`
 
@@ -1433,6 +1528,11 @@ Os vetores de consulta **não são persistidos**: cada recompute embute os rótu
 rodada e descarta o cache ao terminar (ADR-0054, emenda de 2026-08-28). Recompute repetido
 repaga.
 
+**Limitação declarada**: o recompute continua sendo o da **primeira** folha — ele não aceita
+`plate_id` e reescreve `code_suggestions_json`. O braço pago por folha é fatia própria; até
+lá, a folha 2 em diante fica com a shortlist léxica que o `GET` calcula, que é a mesma que a
+primeira folha tem antes de qualquer recálculo.
+
 ### `GET /v1/valuation-rounds/{round_id}/catalog/search`
 
 Busca no catálogo instalado. Parâmetros: `q`, `limit`, `arm`. Consulta sem termo utilizável
@@ -1449,26 +1549,43 @@ híbrida.
 
 ### `GET /v1/valuation-rounds/{round_id}/code-assignments`
 
-Retorna o `CodeAssignmentSet` corrente e os itens confirmados cujo pacote de serviços
-ainda não está completo. As contagens saem sempre: `confirmed` e `rejected` contam **pares**
-`(item, código)`, e `closed` conta **elementos** com o pacote declarado completo — sob
-pacote os dois números divergem.
+Retorna o `CodeAssignmentSet` corrente **de uma folha** e os itens confirmados dela cujo
+pacote de serviços ainda não está completo. As contagens saem sempre: `confirmed` e `rejected`
+contam **pares** `(item, código)`, e `closed` conta **elementos** com o pacote declarado
+completo — sob pacote os dois números divergem.
+
+Aceita `plate_id` em query, **opcional** (F-046 T4d): ausente, a leitura é a da **primeira**
+folha e a resposta é a de sempre; presente, a da folha nomeada. `plate_id` sai também **na
+resposta**, tirado do pacote e não do conjunto, para que a folha continue declarada quando
+ainda não há decisão nenhuma nela — que é o estado em que a tela mais precisa saber de qual
+prancha a etapa está falando. Conjunto ausente **não** é erro: `assignments` sai `null`,
+`assignments_sha256` sai `null` e `pending_items` nomeia o que aquela folha tem pela frente.
+Folha que não é desta praça devolve `404 ROUND_PLATE_NOT_FOUND`; folha da praça ainda sem
+pacote devolve `409 ROUND_STAGE_NOT_READY`.
 
 ### `POST /v1/valuation-rounds/{round_id}/code-assignments/decisions`
 
-Entrada: `base_version`, `item_id`, `action` (`confirm` ou `reject`), `code` e `note`.
-Confirmação exige `code`; rejeição exige justificativa e recusa `code`. Item não confirmado no
-takeoff, código fora do catálogo instalado, item já decidido ou unidade incompatível sem nota
-devolvem `422 DOMAIN_VALIDATION_FAILED` com o código `ASSIGNMENT_*` correspondente em
-`details`.
+Entrada: `base_version`, `plate_id` **opcional**, `item_id`, `action` (`confirm` ou
+`reject`), `code` e `note`. Confirmação exige `code`; rejeição exige justificativa e recusa
+`code`. Item não confirmado no takeoff, código fora do catálogo instalado, item já decidido ou
+unidade incompatível sem nota devolvem `422 DOMAIN_VALIDATION_FAILED` com o código
+`ASSIGNMENT_*` correspondente em `details`.
 
 Desde o ADR-0053 a identidade da decisão é o par `(item_id, code)`: o mesmo item pode
 receber mais de um código, e o que recusa a repetição é o par, não o item.
 
+`plate_id` diz **em qual folha da praça** o item foi lido (F-046 T4d); ausente, é a primeira
+folha, exatamente como antes. Ele entra no corpo e não no `item_id` porque `item_id` só é
+único **dentro** do pacote de uma folha (ADR-0057, decisão 5). O conjunto acumulado é o
+**daquela** folha e é gravado no lugar dela: a primeira em `code_assignments_json`, as demais
+no mapa por `plate_id`. Folha que não é desta praça devolve `404 ROUND_PLATE_NOT_FOUND`.
+
 ### `POST /v1/valuation-rounds/{round_id}/code-assignments/closures`
 
-Entrada: `base_version`, `item_id` e `note` opcional. Declara **completo** o pacote de
-serviços do elemento — o ato que a confirmação de código não pratica.
+Entrada: `base_version`, `plate_id` **opcional**, `item_id` e `note` opcional. Declara
+**completo** o pacote de serviços do elemento — o ato que a confirmação de código não pratica.
+`plate_id` diz de qual folha da praça é o elemento (F-046 T4d); ausente, a primeira, como
+sempre. Elemento mora numa prancha, e o pacote é do elemento.
 
 É rota própria, e não uma bandeira em `/decisions`, porque `/decisions` carrega **uma**
 decisão: um elemento que dispara seis serviços é montado em seis chamadas, e quem monta não
@@ -1488,7 +1605,10 @@ divergente.
 
 ### `POST /v1/valuation-rounds/{round_id}/code-assignments/revocations`
 
-Entrada: `base_version`, `item_id`, `code` e `note` **obrigatória**. Desfaz um par
+Entrada: `base_version`, `plate_id` **opcional**, `item_id`, `code` e `note`
+**obrigatória**. `plate_id` diz em qual folha da praça o par foi confirmado (F-046 T4d);
+ausente, a primeira, como sempre — e a folha sem conjunto nenhum recusa em
+`ASSIGNMENT_REVOCATION_PAIR_UNKNOWN` em vez de herdar o conjunto da folha 1. Desfaz um par
 `(elemento, código)` já confirmado — o ato que faltava desde que o par virou a identidade da
 decisão (ADR-0053), e sem o qual um código confirmado por engano só se consertava refazendo a
 rodada inteira.
@@ -1511,6 +1631,80 @@ não bane o código**: depois disto o mesmo par volta a ser decidível.
 
 Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para versão divergente.
 
+### `GET /v1/valuation-rounds/{round_id}/worksite`
+
+A praça (F-046, [ADR-0057](../adr/0057-multiplas-pranchas-por-praca-na-extracao-de-legenda.md)):
+as folhas da rodada, o estado de cada uma e o consolidado.
+
+Cada folha traz `plate_id`, `position`, `source_sha256`, `page_number`, `page_count` (as
+páginas do PDF de origem **daquela** folha), o estado da extração dela
+(`extraction_status`, `extraction_failure_code`, `extraction_updated_at`), se já tem pacote
+extraído (`takeoff_present`, `packet_sha256`), o estado de revisão dela (`review_status`), as
+contagens de item e as de âncora (`anchors_registered`, `anchors_raw`). `plate_limit` declara
+o teto de folhas por praça.
+
+O estado da extração é **por folha** desde a F-046 T4: uma folha que falha não derruba as
+demais, e o `extraction` da raiz passa a ser derivado das folhas — errando sempre para o lado
+de "ainda não acabou" enquanto qualquer uma seguir na fila ou em curso.
+
+`consolidated` é o `WorksiteTakeoff` **derivado** — folhas, pacotes e vínculos declarados —,
+nunca uma cópia gravada que envelheceria assim que uma folha nova entrasse. Enquanto alguma
+folha não tiver pacote, ele sai `present: false` com `pending_plate_ids` nomeando quais faltam
+e `refusal_code` dizendo por quê; a leitura é tolerante e não derruba a tela.
+
+`identity_links` lista as declarações de identidade com autor, instante e nota.
+
+### `POST /v1/valuation-rounds/{round_id}/worksite/identity-links`
+
+Entrada: `base_version`, `kept`, `discarded` (cada um com `plate_id` e `item_id`) e `note`
+**obrigatória**. Declara que duas leituras de folhas **diferentes** são o mesmo elemento
+físico (ADR-0057, decisão 4): `kept` é "a parcela que fica", a leitura que governa a
+quantidade quando as duas divergirem, e a absorvida continua gravada e visível.
+
+Nada funde por rótulo, unidade ou proximidade — a declaração é o único caminho. Sem ela, as
+duas leituras contam, e o erro é para somar demais e visível.
+
+Autor e instante **não viajam no corpo**: vêm do JWT e do relógio do servidor. A declaração
+cria revisão nova (append-only) e avança `version`.
+
+Recusas em `422 DOMAIN_VALIDATION_FAILED` com o código estável em `details.code`:
+`WORKSITE_LINK_SAME_PLATE` (as duas pontas na mesma folha), `WORKSITE_LINK_INCOMPLETE`
+(sem autor, sem instante com fuso ou sem nota), `WORKSITE_LINK_UNKNOWN_TARGET` (endereço que
+não existe no pacote da folha) e `WORKSITE_LINK_CHAIN_NOT_SUPPORTED` (vínculos encadeados).
+Folha ainda sem pacote devolve `409 ROUND_STAGE_NOT_READY` com `stage: worksite` e
+`pending_plate_ids`.
+
+Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para versão divergente.
+
+### `POST /v1/valuation-rounds/{round_id}/worksite/identity-links/preview`
+
+Requer `orcamentista`. **Não grava nada e não avança a versão da rodada** — é leitura, como o
+`GET` da shortlist e a pré-visualização do acervo de canteiro, e por isso **não** tem
+`base_version` e **não** aceita `Idempotency-Key`. É `POST`, e não `GET`, porque o endereço
+das duas leituras viaja no corpo: pô-lo em query string publicaria identificadores de conteúdo
+da prancha do cliente na URL.
+
+Entrada: `kept` e `discarded` (cada um com `plate_id` e `item_id`). Sem `note`: a justificativa
+é do ato, não da simulação.
+
+Saída: `round_id`, `version`, `worksite_key`, `kept`, `discarded`, `unit_mismatch`,
+`total_before` e `total_after`. Cada parcela traz `plate_id`, `item_id`, `label`, `unit`,
+`status` e `quantity`. **Todo decimal sai como texto**, e a conta é do servidor — a tela de
+medição não soma. É o que torna a decisão de fundir informada: sem ela, o efeito do vínculo no
+total só apareceria depois de declarado.
+
+O efeito é aritmético e é um só: a leitura absorvida deixa de contar e a que fica governa
+(ADR-0057, decisão 4). `total_before` é a soma das duas leituras; `total_after`, a quantidade
+da que fica. **Unidade divergente não é somada**: os dois totais saem `null` com
+`unit_mismatch: true` e as duas parcelas à vista. Quantidade ausente também sai `null`, nunca
+`"0"`.
+
+As recusas são as **mesmas** da declaração e pelo mesmo caminho — o consolidado é montado com
+o vínculo candidato: `WORKSITE_LINK_SAME_PLATE`, `WORKSITE_LINK_UNKNOWN_TARGET` e
+`WORKSITE_LINK_CHAIN_NOT_SUPPORTED` em `422 DOMAIN_VALIDATION_FAILED`, e folha ainda sem
+pacote em `409 ROUND_STAGE_NOT_READY`. Uma prévia que dissesse "pode" para o que o ato recusa
+seria pior que prévia nenhuma.
+
 ### `POST /v1/valuation-rounds/{round_id}/calc`
 
 Entrada: `base_version` e, opcional, `calc_matrix`. `worksite_key`, `worksite_name`,
@@ -1530,11 +1724,45 @@ parcela cuja quantidade declarada ultrapassa a do elemento de origem devolve
 declarado e o teto em `details`). A matriz continua viajando **inteira** no campo `calc_matrix`;
 nenhum campo por par entra no corpo, e o snapshot OpenAPI não muda.
 
-Constrói o boletim e a memória de cálculo a partir do takeoff confirmado e das confirmações
-de código. Exige `Idempotency-Key` e `base_version`, com `409 REVISION_CONFLICT` para
-versão divergente. Não aprova nada: aprovação nominal é ato próprio e não pertence a esta
-rota. Confirmação de código pendente devolve `422 DOMAIN_VALIDATION_FAILED` com
-`CALC_ASSIGNMENT_MISSING`.
+Constrói o boletim e a memória de cálculo da **praça inteira** a partir do takeoff confirmado
+e das confirmações de código. Exige `Idempotency-Key` e `base_version`, com
+`409 REVISION_CONFLICT` para versão divergente. Não aprova nada: aprovação nominal é ato
+próprio e não pertence a esta rota. Confirmação de código pendente devolve
+`422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`.
+
+Desde a F-046 T4c a medição é a da **praça**, e não a da primeira folha: a rota monta o
+consolidado das folhas gravadas e delega a `build_worksite_takeoff_valuation` — **um boletim
+por folha**, com a folha de origem preservada em cada memória, o total saindo da consolidação
+por código que a PLANILHA GERAL já faz, e a leitura declarada como o mesmo elemento físico
+contando **uma** vez. Antes disso, uma praça de N folhas era medida pela primeira e o boletim
+media `1/N` sem dizer nada.
+
+Praça de **uma** folha responde byte a byte como antes: com uma folha só, chave e nome do
+boletim são os da praça, sem sufixo (ADR-0057, decisão 8).
+
+O nome da aba em que cada folha será publicada é conferido **aqui**, contra o mesmo template
+da exportação (F-046 T4f): nome que não cabe no teto de 31 caracteres da planilha nem na
+forma curta devolve `422 DOMAIN_VALIDATION_FAILED` com `WORKSITE_NAME_DOES_NOT_FIT_SHEET`,
+trazendo em `details` o nome derivado, a forma curta, o comprimento dela e o `limit`. A
+recusa fica onde o rótulo nasce; na publicação do `.xlsx` ela sairia com a praça inteira já
+montada, servida e aprovada.
+
+Duas recusas da praça passam a ser alcançáveis por aqui, nesta ordem: folha sem pacote
+extraído devolve `409 ROUND_STAGE_NOT_READY` com `stage: worksite` e `pending_plate_ids`, e
+folha com item ainda por revisar devolve `422 DOMAIN_VALIDATION_FAILED` com
+`WORKSITE_TAKEOFF_PLATE_PENDING`, nomeando as folhas e quantos itens faltam em cada uma. Meia
+praça somada parece uma praça inteira, e é isso que o portão impede.
+
+O boletim consome a **união** dos conjuntos de código, um por folha (F-046 T4d, ADR-0057
+decisão 6): `CodeAssignmentSet` continua sendo por prancha — ele carrega `plate_id`,
+`page_number` e `image_sha256` —, e cada folha é medida com o conjunto **dela**. Folha sem
+decisão nenhuma não é recusada por esta camada: ela entra com o conjunto vazio, e quem recusa
+é o domínio, nomeando os itens em `CALC_ASSIGNMENT_MISSING`. É recusa, nunca boletim pela
+metade.
+
+`calc_matrix`, quando posta, vale para a **primeira** folha: a matriz cita `source_item_id` de
+um pacote (ADR-0053), e espalhá-la pelas demais faria cada folha ser cobrada por uma memória
+escrita sobre os itens de outra.
 
 Se a rodada já tinha uma aprovação, ela é **levada adiante** — e preservar não é aprovar. A
 aprovação carregada continua amarrada ao digest do conteúdo anterior, então a medição
@@ -1553,6 +1781,38 @@ Acompanha o bloco `approval` (`approved`, `approved_by`, `approved_at`, `approve
 `workbook_sha256`) e `workbook_url` — URL assinada de curta duração, montada na leitura e
 nunca persistida. `stale: true` é a **aprovação caduca**: houve aprovação, mas o conteúdo
 mudou depois dela, e a exportação vai recusar até um ato novo.
+
+#### `consolidation` e `consolidation_drifts`
+
+Desde a F-046 T4e **toda** resposta de boletim — `POST .../calc`, este `GET`,
+`POST .../approve` e `POST .../bulletin/export` — traz, além dos boletins por folha, a
+**consolidação por código** da praça:
+
+| Campo | Significado |
+| --- | --- |
+| `code`, `description`, `unit`, `unit_price` | a linha do catálogo, para a tabela ser lida sem cruzamento |
+| `quantity` | quantidade do código somada **entre** as folhas |
+| `amount` | `TRUNC(Σ quantidade × preço)` — o número que a PLANILHA GERAL entrega à prefeitura |
+| `bulletins_amount` | `Σ TRUNC(quantidadeᵢ × preço)` — a soma do que cada folha truncou na própria linha |
+| `difference` | `amount - bulletins_amount`, já calculada |
+| `worksite_keys` | de quais boletins de folha o número veio, na ordem das folhas |
+
+**Todo decimal sai como texto** e nenhuma soma é do cliente: até a T4e a resposta trazia o
+total da praça e o total de cada folha, e a linha por código somando as folhas — o único
+número que a prefeitura lê — só existia dentro do `.xlsx`. Quem deriva é
+`workbook_writer.consolidate_by_code`, a mesma função que planeja a coluna corrente da
+PLANILHA GERAL; uma segunda derivação seria uma segunda verdade.
+
+`consolidation_drifts` é essa mesma lista filtrada, na forma declarada do
+ADR-0062 (`reason`, `code`, `quantity`, `general`, `bulletins`, `difference`): o código cujo consolidado fica um centavo acima da
+soma dos boletins por truncamento. Lista vazia é o caso normal, e sai **vazia**, não ausente.
+A deriva sai da leitura do boletim, e não do laudo da exportação, por dois motivos: a rodada
+de `/v1` grava a pasta **sem** consolidado contratual (não há PLANILHA GERAL a imprimir lá),
+de modo que a lista da auditoria é sempre vazia nesse caminho; e a conferência acontece antes
+de exportar. Nenhuma linha de boletim é ajustada para fechar com o consolidado.
+
+Nada disso entra em `valuation_json`: a consolidação é **derivada** da medição gravada, e
+`valuation_sha256` não muda por servi-la.
 
 ### `POST /v1/valuation-rounds/{round_id}/approve`
 
@@ -1804,8 +2064,10 @@ mesmo com outras decisões já registradas na rodada.
 
 ### `POST /v1/estimate-rounds/{round_id}/plate`
 
-Entrada: `upload_id`, `base_version`. Mesmo regime da prancha da medição: uma rodada tem no
-máximo uma prancha, e a segunda chamada devolve `409 ROUND_PLATE_ALREADY_PRESENT`.
+Entrada: `upload_id`, `base_version`. Uma rodada de ORÇAMENTO tem no máximo uma prancha, e a
+segunda chamada devolve `409 ROUND_PLATE_ALREADY_PRESENT`. Deixou de ser "o mesmo regime da
+medição" com a F-046: lá a rodada passou a ter N folhas, e o mesmo código de erro passou a
+recusar apenas a folha repetida.
 
 ### `GET /v1/estimate-rounds/{round_id}/plate`
 
@@ -2548,7 +2810,8 @@ idêntico ao desta rota.
 `RECTIFICATION_TARGET_STALE`, `RECTIFICATION_ALREADY_APPLIED`,
 `CHAT_SESSION_CLOSED`, `CHAT_TURN_PENDING`, `CHAT_ANCHOR_UNKNOWN`,
 `IDEMPOTENCY_KEY_REUSED`,
-`ROUND_STAGE_NOT_READY`, `ROUND_PLATE_ALREADY_PRESENT`, `EXTRACTION_IN_PROGRESS`,
+`ROUND_STAGE_NOT_READY`, `ROUND_PLATE_ALREADY_PRESENT`, `ROUND_PLATE_LIMIT_REACHED`,
+`EXTRACTION_IN_PROGRESS`,
 `SUGGESTIONS_ALREADY_REFINED`, `TAKEOFF_REVIEW_INCOMPLETE`, `CATALOG_QUERY_EMPTY`,
 `CATALOG_REQUIRED`, `INVALID_METRICS_PERIOD`,
 `SURVEY_CONFLICT`, `SURVEY_PACKET_INVALID`, `SURVEY_MEDIA_NOT_REFERENCED`,

@@ -259,8 +259,27 @@ const ERROR_MESSAGES: LookupTable = {
   // Etapas da rodada: a cadeia tem ordem, e sair dela é caminho normal do orçamentista.
   ROUND_STAGE_NOT_READY:
     "Esta etapa ainda não está disponível nesta rodada; conclua a etapa anterior antes de continuar.",
+  // Desde a F-046 a segunda folha é o caso normal: o que este código recusa é a folha
+  // REPETIDA — mesma origem e mesma página — e não a segunda prancha da praça.
   ROUND_PLATE_ALREADY_PRESENT:
-    "Esta rodada já tem prancha; uma rodada é uma prancha. Para enviar outra, abra uma rodada nova.",
+    "Esta folha já está na praça: mesma origem e mesma página. Escolha outra página, ou envie outro documento.",
+  ROUND_PLATE_LIMIT_REACHED:
+    "A praça atingiu o limite de folhas por rodada; nenhuma folha nova foi acrescentada.",
+  ROUND_PLATE_PAGES_REQUIRED:
+    "O lote chegou sem escolha nenhuma; marque as páginas que viram prancha, ou as folhas que vão para a leitura.",
+  ROUND_PLATE_NOT_FOUND:
+    "Uma das folhas escolhidas não é desta praça; recarregue o estado atual e escolha de novo.",
+  // A praça de várias folhas (F-046, ADR-0057).
+  WORKSITE_TAKEOFF_PLATE_PENDING:
+    "A praça não fecha com folha pendente de revisão: item proposto ou ambíguo em qualquer folha bloqueia o boletim da obra.",
+  WORKSITE_LINK_SAME_PLATE:
+    "O vínculo de identidade é entre folhas diferentes; duas leituras da mesma folha são dois itens da legenda, e item repetido dentro de uma folha se resolve rejeitando um deles na revisão.",
+  WORKSITE_LINK_INCOMPLETE:
+    "O vínculo de identidade exige a nota: autor e instante são carimbados pelo servidor, mas o motivo é de quem declara.",
+  WORKSITE_LINK_UNKNOWN_TARGET:
+    "O vínculo de identidade aponta para uma folha ou um item que não está no consolidado desta praça.",
+  WORKSITE_LINK_CHAIN_NOT_SUPPORTED:
+    "Vínculos de identidade não formam cadeia: declare o vínculo direto entre as duas leituras em vez de encadear.",
   EXTRACTION_IN_PROGRESS:
     "Já existe uma leitura automática em andamento nesta rodada; aguarde ela terminar.",
   TAKEOFF_REVIEW_INCOMPLETE:

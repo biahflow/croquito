@@ -431,6 +431,11 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
             # `0022` (F-044): observações de precedente de código, que alimentam a
             # shortlist. Entrou na mesma rodada e pela mesma porta.
             "precedent_observations",
+            # `0024` (F-046): as folhas da praça. Filha da rodada, com índice próprio por
+            # (`round_id`, `position`) — a praça é sempre lida inteira e na ordem em que as
+            # folhas entraram —, e sem índice de listagem por tenant: não há listagem de
+            # folha, elas saem sempre pela rodada.
+            "valuation_round_plates",
         }
         for table, index_name in (
             ("valuation_rounds", "ix_valuation_rounds_tenant_created"),
@@ -441,6 +446,153 @@ def test_medicao_nasce_depois_da_baseline_com_o_indice_da_listagem(schema_url: s
                 for index in inspector.get_indexes(table)
             }
             assert indices[index_name] == ("tenant_id", "created_at", "id"), table
+    finally:
+        engine.dispose()
+
+
+@requires_postgres
+def test_a_0023_preserva_a_prancha_como_a_primeira_folha_da_praca(schema_url: str) -> None:
+    """F-046 T3, critério 1: a migração MOVE dado, e o que ela move é a prancha da rodada.
+
+    Exercita o `upgrade` de verdade, e não o backfill chamado à mão: uma rodada gravada no
+    formato de antes da `0023` — prancha em colunas escalares — atravessa a revisão e sai
+    com a folha correspondente, na posição 1, com a `plate_id` que o pacote já declarava.
+
+    As colunas escalares continuam preenchidas depois da migração, e isso é a metade
+    `expand` do expand/contract (`services/api/AGENTS.md`): removê-las é trabalho posterior
+    ao que parou de usá-las, com aprovação humana explícita.
+    """
+    command.upgrade(build_config(schema_url), "0022")
+    engine = create_engine(schema_url, future=True)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO uploads (id, tenant_id, object_key, filename, content_type, "
+                    "size_bytes, sha256, status, created_at) VALUES ('u-1', 't-1', "
+                    "'tenants/t-1/uploads/u-1/prancha.pdf', 'prancha.pdf', 'application/pdf', "
+                    "2048, 'd', 'VERIFIED', now())"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO valuation_rounds (id, tenant_id, worksite_key, worksite_name, "
+                    "reference_label, period_number, status, version, catalog_upload_id, "
+                    "catalog_object_key, catalog_source_sha256, catalog_summary_json, "
+                    "plate_upload_id, plate_object_key, plate_source_sha256, plate_page_count, "
+                    "extraction_status, created_by, created_at, updated_at) VALUES "
+                    "('r-1', 't-1', 'praca-norte', 'PRACA NORTE', 'MEDICAO 01/2026', 1, 'OPEN', "
+                    "3, 'u-1', 'tenants/t-1/catalogo.json', 'c', '{}', 'u-1', "
+                    "'tenants/t-1/valuation-rounds/r-1/plate/origem.pdf', 'd', 1, 'done', "
+                    "'orcamentista', now(), now())"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO valuation_round_revisions (id, tenant_id, round_id, version, "
+                    "takeoff_packet_json, artifact_refs_json, artifact_digests_json, "
+                    "created_by, created_at) VALUES ('rev-1', 't-1', 'r-1', 1, "
+                    "'{\"plate_id\": \"rodada-legada\"}', '{}', '{}', 'extracao', now())"
+                )
+            )
+
+        command.upgrade(build_config(schema_url), "head")
+
+        with engine.connect() as connection:
+            folha = (
+                connection.execute(
+                    text(
+                        "SELECT plate_id, position, page_number, object_key, source_sha256, "
+                        "upload_id, tenant_id, created_by FROM valuation_round_plates "
+                        "WHERE round_id = 'r-1'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+            espelho = (
+                connection.execute(
+                    text(
+                        "SELECT plate_object_key, plate_source_sha256, plate_page_count "
+                        "FROM valuation_rounds WHERE id = 'r-1'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert folha["plate_id"] == "rodada-legada"
+        assert folha["position"] == 1
+        assert folha["page_number"] == 1
+        assert folha["object_key"].endswith("origem.pdf")
+        assert folha["source_sha256"] == "d"
+        assert folha["upload_id"] == "u-1"
+        assert folha["tenant_id"] == "t-1"
+        assert folha["created_by"] == "orcamentista"
+        assert espelho["plate_object_key"].endswith("origem.pdf")
+        assert espelho["plate_source_sha256"] == "d"
+        assert espelho["plate_page_count"] == 1
+    finally:
+        engine.dispose()
+
+
+@requires_postgres
+def test_a_0024_preserva_o_estado_de_extracao_na_primeira_folha(schema_url: str) -> None:
+    """F-046 T4: o estado de extração e a contagem de páginas descem da rodada para a folha.
+
+    Sem este backfill, uma rodada JÁ extraída apareceria com a folha em estado nulo, e o
+    espelho da raiz — que passou a ser derivado das folhas — a reescreveria para "nunca
+    extraída" no primeiro ato seguinte. Perda de estado real, e silenciosa.
+
+    Exercita o `upgrade` de verdade a partir da revisão anterior, e não o backfill chamado à
+    mão: é a passagem inteira que precisa preservar o dado.
+    """
+    command.upgrade(build_config(schema_url), "0022")
+    engine = create_engine(schema_url, future=True)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO uploads (id, tenant_id, object_key, filename, content_type, "
+                    "size_bytes, sha256, status, created_at) VALUES ('u-2', 't-2', "
+                    "'tenants/t-2/uploads/u-2/prancha.pdf', 'prancha.pdf', 'application/pdf', "
+                    "2048, 'd', 'VERIFIED', now())"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO valuation_rounds (id, tenant_id, worksite_key, worksite_name, "
+                    "reference_label, period_number, status, version, catalog_upload_id, "
+                    "catalog_object_key, catalog_source_sha256, catalog_summary_json, "
+                    "plate_upload_id, plate_object_key, plate_source_sha256, plate_page_count, "
+                    "extraction_id, extraction_status, extraction_failure_code, "
+                    "extraction_requested_by, created_by, created_at, updated_at) VALUES "
+                    "('r-2', 't-2', 'praca-sul', 'PRACA SUL', 'MEDICAO 02/2026', 2, 'OPEN', "
+                    "4, 'u-2', 'tenants/t-2/catalogo.json', 'c', '{}', 'u-2', "
+                    "'tenants/t-2/valuation-rounds/r-2/plate/origem.pdf', 'd', 7, "
+                    "'ext-2', 'failed', 'PROVIDER_EXECUTION_FAILED', 'orcamentista', "
+                    "'orcamentista', now(), now())"
+                )
+            )
+
+        command.upgrade(build_config(schema_url), "head")
+
+        with engine.connect() as connection:
+            folha = (
+                connection.execute(
+                    text(
+                        "SELECT page_count, extraction_id, extraction_status, "
+                        "extraction_failure_code, extraction_requested_by "
+                        "FROM valuation_round_plates WHERE round_id = 'r-2'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        assert folha["page_count"] == 7
+        assert folha["extraction_id"] == "ext-2"
+        assert folha["extraction_status"] == "failed"
+        assert folha["extraction_failure_code"] == "PROVIDER_EXECUTION_FAILED"
+        assert folha["extraction_requested_by"] == "orcamentista"
     finally:
         engine.dispose()
 

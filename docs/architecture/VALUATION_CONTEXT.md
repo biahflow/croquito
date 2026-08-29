@@ -342,12 +342,18 @@ lexical continua sendo o fallback permanente, com ou sem provider.
   válido. Nenhum modelo do dossiê tem campo de preço, por construção, e nada aqui cria ou
   altera `Amendment`
   ([ADR-0027](../adr/0027-price-source-provenance-and-bid-boundary.md)).
-- **A GERAL gerada fecha com a soma dos boletins.** O valor consolidado do período é
-  `TRUNC(Σ quantidade × preço)` por código. Quando isso não bate com a soma dos totais dos
-  boletins — o mesmo código medido em mais de uma obra pode derivar um centavo — o escritor
-  recusa com `GENERAL_CONSOLIDATION_MISMATCH` e nenhuma pasta é gerada; a semântica correta
-  desse caso está pendente de confirmação com o orçamentista
-  ([ADR-0018](../adr/0018-valuation-consolidation-and-balance-semantics.md)).
+- **O valor da GERAL governa; a deriva de centavo vira registro declarado.** O valor
+  consolidado do período é `TRUNC(Σ quantidade × preço)` por código, e é o que a linha da
+  GERAL imprime. Quando isso não bate com a soma dos totais dos boletins — o mesmo código
+  medido em mais de uma obra pode derivar um centavo — a pasta é gerada normalmente e a
+  diferença vira `ConsolidationDrift` declarado no plano, no relatório de gravação e na
+  auditoria de round-trip (`consolidation_drifts`), com o valor da GERAL, a soma dos
+  boletins e a diferença; nenhuma linha de boletim é ajustada para fechar com a GERAL
+  ([ADR-0018](../adr/0018-valuation-consolidation-and-balance-semantics.md) decisão (c),
+  completada pelo ADR-0062). Desde a F-046 T4e essa consolidação sai de uma derivação só
+  (`workbook_writer.consolidate_by_code`), usada pela coluna corrente da GERAL, pela deriva
+  declarada e pela leitura do boletim na `/v1` — quem confere o número não precisa abrir o
+  `.xlsx` para vê-lo, e nem a tela nem a planilha podem derivá-lo por conta própria.
 - **Extração de legenda é observação, nunca decisão.** Todo `TakeoffItem` nasce `proposed`
   ou `ambiguous`; confirmado exige quantidade e `ReviewerDecision` (`TAKEOFF_ITEM_CONFIRMED_INCOMPLETE`
   quando falta uma das duas).
@@ -464,6 +470,21 @@ A pasta abre pelo consolidado e fecha pelas obras:
   `TOTAL DA OBRA`. `MEMÓRIA {obra}`: título, INTERVENÇÃO, cabeçalho das mesmas sete colunas
   e, por item, a linha-resumo seguida dos blocos de cálculo (rótulo, nomes dos operandos,
   valores com subtotal) e da linha `TOTAL` do item.
+
+O nome de aba tem teto de **31 caracteres** — limite do formato, não nosso —, e nome de
+praça real não cabe nele: `MEMÓRIA ` come 8 e "Campo do Morro da Bandeira" tem 26. O
+rótulo da obra dentro do nome da aba (`WorkbookTemplate.sheet_worksite_label`) encurta em
+degraus declarados, e **só quando o nome inteiro não couber**: primeiro caem as partículas
+de ligação (`de`, `da`, `do`, `das`, `dos`), depois as palavras do **meio** são abreviadas
+nas quatro primeiras letras com um ponto ("SINTETICA" → "SINT.") —
+a primeira palavra (o tipo: PRAÇA, CAMPO) e a última (a palavra pela qual a aba é
+procurada, ou o `P2` da folha) ficam inteiras —, e o que não couber nem assim é recusado
+com `WORKSITE_NAME_DOES_NOT_FIT_SHEET`, dizendo o teto. O orçamento é o **menor** entre as
+duas abas, porque BM e MEMÓRIA da mesma obra se chamam igual; com o template padrão são 23
+caracteres. Só o rótulo encurta: o nome inteiro da obra continua impresso DENTRO da aba, na
+linha INTERVENÇÃO do BM e no cabeçalho da MEMÓRIA, onde não há teto. Nome que já cabia não
+é tocado, e duas obras cujo rótulo curto colidiria reprovam em `PLAN_SHEET_NAME_COLLISION`
+em vez de virarem uma aba só.
 
 Sem consolidado contratual informado, a pasta é só o par BM/MEMÓRIA de cada obra — é o que
 o M1 gerava.

@@ -27,6 +27,10 @@ WORKSITE_PLACEHOLDER: Final = "{worksite}"
 PERIOD_PLACEHOLDER: Final = "{n}"
 MAX_SHEET_NAME_LENGTH: Final = 31
 _FORBIDDEN_SHEET_CHARS: Final = set(r"[]:*?/\'")
+_SHEET_LABEL_PARTICLES: Final = frozenset({"de", "da", "do", "das", "dos"})
+"""Partículas de ligação que o rótulo da aba perde primeiro (`_worksite_sheet_label`)."""
+_SHEET_LABEL_STEM: Final = 4
+"""Letras que sobram da palavra do meio abreviada, antes do ponto ("SINTETICA" → "SINT.")."""
 
 
 class SheetColumn(ValuationContractModel):
@@ -744,30 +748,127 @@ class WorkbookTemplate(ValuationContractModel):
 
     @model_validator(mode="after")
     def validate_patterns(self) -> WorkbookTemplate:
-        missing = [
+        """O padrão precisa de `{worksite}` exatamente uma vez.
+
+        Uma vez porque `worksite_sheet_budget` desconta o padrão inteiro menos o
+        marcador para saber quanto sobra para o nome da obra; com dois marcadores a
+        conta mediria a metade do que o nome custa, e a aba estouraria o teto que a
+        conta jurava respeitar.
+        """
+        invalid = [
             pattern
             for pattern in (self.bulletin_sheet_pattern, self.memory_sheet_pattern)
-            if WORKSITE_PLACEHOLDER not in pattern
+            if pattern.count(WORKSITE_PLACEHOLDER) != 1
         ]
-        if missing:
+        if invalid:
             raise ValuationValidationError(
                 "TEMPLATE_SHEET_PATTERN_INVALID",
-                "padrão de nome de aba precisa conter {worksite}",
-                {"patterns": missing},
+                "padrão de nome de aba precisa conter {worksite} exatamente uma vez",
+                {"patterns": invalid},
             )
         return self
 
+    @property
+    def worksite_sheet_budget(self) -> int:
+        """Quantos caracteres sobram para o nome da obra dentro do nome da aba.
+
+        É o MENOR orçamento entre as duas abas da obra, e não um por aba, porque BM e
+        MEMÓRIA da mesma obra precisam se chamar do mesmo jeito: quem confere abre as
+        duas lado a lado. Com o padrão do MAPÃO (`BM {worksite}` e `MEMÓRIA {worksite}`)
+        quem manda é a memória, e sobram 23 dos 31 caracteres da planilha.
+        """
+        return MAX_SHEET_NAME_LENGTH - max(
+            len(pattern.replace(WORKSITE_PLACEHOLDER, ""))
+            for pattern in (self.bulletin_sheet_pattern, self.memory_sheet_pattern)
+        )
+
+    def sheet_worksite_label(self, worksite_name: str) -> str:
+        """O nome da obra COMO ELE CABE no nome da aba — inteiro sempre que couber."""
+        return _worksite_sheet_label(worksite_name, self.worksite_sheet_budget)
+
     def bulletin_sheet_name(self, worksite_name: str) -> str:
         """Nome da aba BM da obra, validado contra os limites da planilha."""
-        return _sheet_name(self.bulletin_sheet_pattern, worksite_name)
+        return _sheet_name(self.bulletin_sheet_pattern, self.sheet_worksite_label(worksite_name))
 
     def memory_sheet_name(self, worksite_name: str) -> str:
         """Nome da aba MEMÓRIA da obra, validado contra os limites da planilha."""
-        return _sheet_name(self.memory_sheet_pattern, worksite_name)
+        return _sheet_name(self.memory_sheet_pattern, self.sheet_worksite_label(worksite_name))
 
 
 def _sheet_name(pattern: str, worksite_name: str) -> str:
     return _validate_sheet_name(pattern.replace(WORKSITE_PLACEHOLDER, worksite_name))
+
+
+def _worksite_sheet_label(worksite_name: str, budget: int) -> str:
+    """A forma curta do nome da obra para o nome da aba, em degraus declarados.
+
+    O teto de 31 caracteres é do FORMATO, não nosso, e praça de nome real não cabe nele:
+    "Campo do Morro da Bandeira" tem 26, e `MEMÓRIA ` come 8. Sem esta função a praça de
+    nome real simplesmente não exporta. A alternativa — encurtar o `worksite_name` do
+    boletim — apagaria o nome de dentro da pasta também; aqui só o RÓTULO da aba encurta,
+    e o nome inteiro continua impresso na linha INTERVENÇÃO do BM e no cabeçalho da
+    MEMÓRIA, onde não há teto nenhum.
+
+    Os degraus, nesta ordem, parando no primeiro que couber:
+
+    1. **O nome inteiro.** Enquanto couber, a aba é a de hoje, caractere a caractere — é
+       isso que mantém a pasta que a prefeitura já recebe exatamente como ela é.
+    2. **Sem as partículas de ligação** (`de`, `da`, `do`, `das`, `dos`): a forma que a
+       própria orçamentista fala ("Campo Morro Bandeira"). Nenhuma palavra que NOMEIA a
+       praça se perde. O `e` fica de fora do conjunto de propósito: em nome de praça ele
+       tanto liga dois nomes quanto é inicial de um deles, e abreviar o que não se tem
+       certeza de ser ligação é inventar.
+    3. **Palavras do MEIO abreviadas** — as quatro primeiras letras e um ponto
+       ("SINTETICA" → "SINT.") —, da mais longa para a mais curta, até caber. A primeira
+       palavra (o tipo — PRAÇA, CAMPO) e a última (a palavra pela qual a aba é procurada,
+       ou o `P2` da folha) ficam inteiras; a redundância mora no meio.
+    4. **Recusa.** Não existe degrau que caiba em toda entrada, e truncar às cegas
+       produziria duas praças diferentes com a mesma aba. Quem encurta o nome da praça é
+       o humano, e a recusa diz o teto para que ele possa.
+
+    Com o padrão do MAPÃO, os nomes reais deste produto cabem com folga; o mais longo
+    ("Campo do Morro da Bandeira") cabe pelo degrau 2 até a folha P9 e pelo degrau 3 daí
+    em diante.
+    """
+    if len(worksite_name) <= budget:
+        return worksite_name
+    words = _without_sheet_label_particles(worksite_name.split())
+    candidate = " ".join(words)
+    if len(candidate) <= budget:
+        return candidate
+    candidate = " ".join(_with_abbreviated_middle_words(words, budget))
+    if len(candidate) <= budget:
+        return candidate
+    raise ValuationValidationError(
+        "WORKSITE_NAME_DOES_NOT_FIT_SHEET",
+        "o nome da obra não cabe no nome da aba nem na forma curta; encurte o nome da "
+        f"obra para no máximo {budget} caracteres",
+        {
+            "worksite_name": worksite_name,
+            "shortened": candidate,
+            "length": len(candidate),
+            "limit": budget,
+        },
+    )
+
+
+def _without_sheet_label_particles(words: list[str]) -> list[str]:
+    """Degrau 2. Nome só de partículas volta inteiro: aí não há redundância a tirar."""
+    kept = [word for word in words if word.casefold() not in _SHEET_LABEL_PARTICLES]
+    return kept or words
+
+
+def _with_abbreviated_middle_words(words: list[str], budget: int) -> list[str]:
+    """Degrau 3, determinístico: empate de tamanho abrevia a palavra mais à esquerda."""
+    abbreviated = list(words)
+    order = sorted(range(1, len(abbreviated) - 1), key=lambda index: (-len(words[index]), index))
+    for index in order:
+        if len(" ".join(abbreviated)) <= budget:
+            break
+        stem = f"{abbreviated[index][:_SHEET_LABEL_STEM]}."
+        if len(stem) < len(abbreviated[index]):
+            abbreviated[index] = stem
+    return abbreviated
 
 
 def _validate_sheet_name(name: str) -> str:

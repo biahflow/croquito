@@ -1,22 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api";
 import {
+  appendPlates,
   associatePlate,
   createPlateExtraction,
+  createPlatesExtraction,
   createRound,
+  declareIdentityLink,
   getCodes,
+  getPlate,
   getRoundState,
+  getSuggestions,
   getTakeoff,
   getTakeoffOverlay,
   getBulletin,
+  getWorksite,
   listRounds,
   postApprove,
   postBulletinExport,
   postCalcBuild,
+  postCodeClosure,
   postCodeDecision,
+  postCodeRevocation,
   postDossierBuild,
   postSuggestionsRecompute,
   postTakeoffDecision,
+  previewIdentityLink,
   searchCatalog,
   uploadCatalog,
 } from "./api";
@@ -541,5 +550,285 @@ describe("imagem por URL assinada", () => {
     expect(overlay.image_url).toContain("assinatura=x");
     expect(overlay.stale).toBe(true);
     expect(overlay.overlay_packet_sha256).not.toBe(overlay.packet_sha256);
+  });
+});
+
+/**
+ * A praça de várias folhas (F-046). O oráculo é o que SAIU no `fetch`: caminho sob a
+ * rodada, `base_version` em toda mutação, `Idempotency-Key` por gesto e nenhuma identidade
+ * carimbada pelo cliente.
+ */
+describe("a praça de várias folhas", () => {
+  it("a leitura da praça é GET sob a rodada, sem chave de idempotência", async () => {
+    await getWorksite(TOKEN, ROUND);
+
+    expect(chamadas[0].url).toBe(`${BASE}/v1/valuation-rounds/${ROUND}/worksite`);
+    expect(chamadas[0].init?.method ?? "GET").toBe("GET");
+    expect(headersDaChamada()).not.toHaveProperty("Idempotency-Key");
+  });
+
+  it("promover folhas manda as páginas escolhidas, sem repetir e em ordem", async () => {
+    await appendPlates(TOKEN, ROUND, "0197f2a0-0000-7000-8000-0000000000aa", [1, 3, 3, 5], 4);
+
+    expect(chamadas[0].url).toBe(`${BASE}/v1/valuation-rounds/${ROUND}/plates`);
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(headersDaChamada()["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(corpoDaChamada()).toEqual({
+      base_version: 4,
+      upload_id: "0197f2a0-0000-7000-8000-0000000000aa",
+      page_numbers: [1, 3, 5],
+    });
+  });
+
+  /**
+   * Cada folha do lote é uma chamada paga: a lista marcada é a autorização, e ela sai como
+   * foi marcada — nenhuma folha entra por conveniência do cliente.
+   */
+  it("o lote de leitura manda exatamente as folhas marcadas, com base_version", async () => {
+    await createPlatesExtraction(TOKEN, ROUND, ["planta-geral", "detalhe", "planta-geral"], 9);
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/valuation-rounds/${ROUND}/plates/extractions`,
+    );
+    expect(corpoDaChamada()).toEqual({
+      base_version: 9,
+      plate_ids: ["planta-geral", "detalhe"],
+    });
+    const corpo = corpoDaChamada();
+    expect(corpo).not.toHaveProperty("reviewer_id");
+    expect(corpo).not.toHaveProperty("declared_at");
+  });
+
+  it("a recusa da praça chega com o código estável e a folha citada nos detalhes", async () => {
+    stub(() =>
+      problema(409, "ROUND_STAGE_NOT_READY", "a praça só fecha com todas as folhas extraídas", {
+        stage: "worksite",
+        pending_plate_ids: ["detalhe-playground"],
+      }),
+    );
+
+    const erro = (await getWorksite(TOKEN, ROUND).catch(
+      (error: unknown) => error,
+    )) as ApiError;
+
+    expect(erro).toBeInstanceOf(ApiError);
+    expect(medicaoErrorCode(erro)).toBe("ROUND_STAGE_NOT_READY");
+    expect(erro.details.pending_plate_ids).toEqual(["detalhe-playground"]);
+  });
+
+  it("o teto da praça chega como recusa própria, e não como conflito de versão", async () => {
+    stub(() =>
+      problema(409, "ROUND_PLATE_LIMIT_REACHED", "a praça atingiu o limite de folhas por rodada", {
+        limit: 12,
+      }),
+    );
+
+    const erro = (await appendPlates(
+      TOKEN,
+      ROUND,
+      "0197f2a0-0000-7000-8000-0000000000aa",
+      [2],
+      4,
+    ).catch((error: unknown) => error)) as ApiError;
+
+    expect(medicaoErrorCode(erro)).toBe("ROUND_PLATE_LIMIT_REACHED");
+    expect(isRevisionConflict(erro)).toBe(false);
+    expect(describeError(erro)).not.toContain("ROUND_PLATE_LIMIT_REACHED");
+  });
+});
+
+/**
+ * A folha em TODA leitura e em TODA decisão (F-046 T4c/T4d).
+ *
+ * O oráculo é o que saiu no `fetch`: URL com `plate_id` em query nas leituras, `plate_id`
+ * no corpo nas decisões, e — a parte que mantém a rodada de uma prancha idêntica — nada
+ * disso quando não há folha a nomear.
+ */
+describe("a folha em cada chamada da praça", () => {
+  it("sem folha, as cinco leituras saem na URL de sempre, sem query nenhuma", async () => {
+    await getPlate(TOKEN, ROUND);
+    await getTakeoff(TOKEN, ROUND);
+    await getTakeoffOverlay(TOKEN, ROUND);
+    await getCodes(TOKEN, ROUND);
+    await getSuggestions(TOKEN, ROUND);
+
+    expect(chamadas.map((chamada) => chamada.url)).toEqual([
+      `${BASE}/v1/valuation-rounds/${ROUND}/plate`,
+      `${BASE}/v1/valuation-rounds/${ROUND}/takeoff`,
+      `${BASE}/v1/valuation-rounds/${ROUND}/takeoff/overlay`,
+      `${BASE}/v1/valuation-rounds/${ROUND}/code-assignments`,
+      `${BASE}/v1/valuation-rounds/${ROUND}/code-suggestions`,
+    ]);
+  });
+
+  it("com folha, as cinco leituras a nomeiam em query, já escapada", async () => {
+    await getPlate(TOKEN, ROUND, "detalhe playground");
+    await getTakeoff(TOKEN, ROUND, "detalhe");
+    await getTakeoffOverlay(TOKEN, ROUND, "detalhe");
+    await getCodes(TOKEN, ROUND, "detalhe");
+    await getSuggestions(TOKEN, ROUND, "detalhe");
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/valuation-rounds/${ROUND}/plate?plate_id=detalhe%20playground`,
+    );
+    expect(chamadas.slice(1).map((chamada) => chamada.url)).toEqual([
+      `${BASE}/v1/valuation-rounds/${ROUND}/takeoff?plate_id=detalhe`,
+      `${BASE}/v1/valuation-rounds/${ROUND}/takeoff/overlay?plate_id=detalhe`,
+      `${BASE}/v1/valuation-rounds/${ROUND}/code-assignments?plate_id=detalhe`,
+      `${BASE}/v1/valuation-rounds/${ROUND}/code-suggestions?plate_id=detalhe`,
+    ]);
+  });
+
+  it("as quatro decisões levam a folha no CORPO, com base_version e chave de idempotência", async () => {
+    await postTakeoffDecision(TOKEN, ROUND, {
+      baseVersion: 4,
+      plateId: "detalhe",
+      decisions: [{ itemId: "ti_1", action: "confirm" }],
+    });
+    await postCodeDecision(TOKEN, ROUND, {
+      itemId: "ti_1",
+      action: "confirm",
+      baseVersion: 5,
+      plateId: "detalhe",
+      code: "04.02.010",
+    });
+    await postCodeClosure(TOKEN, ROUND, {
+      itemId: "ti_1",
+      baseVersion: 6,
+      plateId: "detalhe",
+    });
+    await postCodeRevocation(TOKEN, ROUND, {
+      itemId: "ti_1",
+      code: "04.02.010",
+      baseVersion: 7,
+      plateId: "detalhe",
+      note: "código trocado por engano",
+    });
+
+    expect(chamadas.map((chamada) => chamada.url)).toEqual([
+      `${BASE}/v1/valuation-rounds/${ROUND}/takeoff/decisions`,
+      `${BASE}/v1/valuation-rounds/${ROUND}/code-assignments/decisions`,
+      `${BASE}/v1/valuation-rounds/${ROUND}/code-assignments/closures`,
+      `${BASE}/v1/valuation-rounds/${ROUND}/code-assignments/revocations`,
+    ]);
+    for (let indice = 0; indice < 4; indice += 1) {
+      expect(corpoDaChamada(indice).plate_id).toBe("detalhe");
+      expect(corpoDaChamada(indice).base_version).toBe(4 + indice);
+      expect(headersDaChamada(indice)["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/i);
+    }
+  });
+});
+
+/**
+ * A prévia e o ato do vínculo de identidade (F-046 T1/T4c). A prévia é LEITURA — nada é
+ * gravado, a versão da rodada não anda —, e é ela que permite oferecer o ato sem que a
+ * tela some nada.
+ */
+describe("o vínculo de identidade na praça", () => {
+  const kept = { plate_id: "planta-geral", item_id: "ti_b3d5e820a7c14f69" };
+  const discarded = { plate_id: "detalhe", item_id: "ti_5d2f83b60e4a1c97" };
+
+  it("a prévia é POST sob a praça, sem base_version e sem nota", async () => {
+    await previewIdentityLink(TOKEN, ROUND, { kept, discarded });
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/valuation-rounds/${ROUND}/worksite/identity-links/preview`,
+    );
+    expect(chamadas[0].init?.method).toBe("POST");
+    expect(corpoDaChamada()).toEqual({ kept, discarded });
+  });
+
+  /** Os totais chegam como TEXTO e são usados como texto: nada vira `number` aqui. */
+  it("os totais da prévia chegam como string decimal, calculados pelo servidor", async () => {
+    stub(() =>
+      ok({
+        round_id: ROUND,
+        version: 7,
+        worksite_key: "praca-sintetica-oeste",
+        kept: { ...kept, label: "ALAMBRADO", unit: "m", status: "proposed", quantity: "40.00" },
+        discarded: {
+          ...discarded,
+          label: "ALAMBRADO",
+          unit: "m",
+          status: "proposed",
+          quantity: "40.00",
+        },
+        unit_mismatch: false,
+        total_before: "80.00",
+        total_after: "40.00",
+      }),
+    );
+
+    const previa = await previewIdentityLink(TOKEN, ROUND, { kept, discarded });
+
+    expect(previa.total_before).toBe("80.00");
+    expect(previa.total_after).toBe("40.00");
+    expect(typeof previa.total_before).toBe("string");
+  });
+
+  it("unidade divergente devolve os totais nulos, e nenhum número é fabricado", async () => {
+    stub(() =>
+      ok({
+        round_id: ROUND,
+        version: 7,
+        worksite_key: "praca-sintetica-oeste",
+        kept: { ...kept, label: "ALAMBRADO", unit: "m", status: "proposed", quantity: "40.00" },
+        discarded: {
+          ...discarded,
+          label: "ALAMBRADO",
+          unit: "m2",
+          status: "proposed",
+          quantity: "40.00",
+        },
+        unit_mismatch: true,
+        total_before: null,
+        total_after: null,
+      }),
+    );
+
+    const previa = await previewIdentityLink(TOKEN, ROUND, { kept, discarded });
+
+    expect(previa.unit_mismatch).toBe(true);
+    expect(previa.total_before).toBeNull();
+    expect(previa.total_after).toBeNull();
+  });
+
+  it("o ato leva base_version, nota e chave de idempotência, e nunca a identidade de quem declara", async () => {
+    await declareIdentityLink(TOKEN, ROUND, {
+      kept,
+      discarded,
+      baseVersion: 7,
+      note: "mesmo trecho de alambrado do perímetro",
+    });
+
+    expect(chamadas[0].url).toBe(
+      `${BASE}/v1/valuation-rounds/${ROUND}/worksite/identity-links`,
+    );
+    expect(headersDaChamada()["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(corpoDaChamada()).toEqual({
+      base_version: 7,
+      kept,
+      discarded,
+      note: "mesmo trecho de alambrado do perímetro",
+    });
+    expect(corpoDaChamada()).not.toHaveProperty("declared_by");
+    expect(corpoDaChamada()).not.toHaveProperty("declared_at");
+  });
+
+  /** A prévia recusa o MESMO que a declaração recusaria — é esse o ponto dela. */
+  it("vínculo dentro da mesma folha é recusado na prévia, com o código do domínio", async () => {
+    stub(() =>
+      problema(422, "DOMAIN_VALIDATION_FAILED", "vínculo de identidade dentro da mesma folha", {
+        code: "WORKSITE_LINK_SAME_PLATE",
+      }),
+    );
+
+    const erro = (await previewIdentityLink(TOKEN, ROUND, {
+      kept,
+      discarded: { plate_id: "planta-geral", item_id: "ti_5d2f83b60e4a1c97" },
+    }).catch((error: unknown) => error)) as ApiError;
+
+    expect(medicaoErrorCode(erro)).toBe("WORKSITE_LINK_SAME_PLATE");
+    expect(describeError(erro)).toContain("folhas diferentes");
   });
 });

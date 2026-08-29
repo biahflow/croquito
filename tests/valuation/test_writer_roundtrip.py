@@ -21,10 +21,12 @@ from croquito_valuation.models import (
     PriceCatalog,
     Valuation,
 )
+from croquito_valuation.rounding import money_trunc
 from croquito_valuation.template import WorkbookTemplate, default_template
 from croquito_valuation.workbook_reader import read_contract_workbook
 from croquito_valuation.workbook_writer import (
     PlannedCell,
+    consolidate_by_code,
     plan_workbook,
     write_valuation_workbook,
 )
@@ -473,10 +475,12 @@ def test_a_tampered_general_quantity_is_caught_with_its_cascade(tmp_path: Path) 
     assert cascade <= divergent
 
 
-def test_consolidation_drift_of_one_cent_refuses_the_workbook(tmp_path: Path) -> None:
-    fixture = _multi_worksite(tmp_path)
-    # 1,15 e 2,15 a 12,50: 14,37 + 26,87 = 41,24 linha a linha e 41,25 consolidado.
-    drifting = build_valuation_from_catalog(
+def _drifting_valuation(fixture: _MultiWorksiteFixture) -> Valuation:
+    """Duas obras medindo o MESMO código, com o truncamento por linha perdendo um centavo.
+
+    1,15 e 2,15 a 12,50: 14,37 + 26,87 = 41,24 linha a linha e 41,25 consolidado.
+    """
+    return build_valuation_from_catalog(
         fixture.catalog,
         fixture.contract.next_period_number,
         [
@@ -493,13 +497,138 @@ def test_consolidation_drift_of_one_cent_refuses_the_workbook(tmp_path: Path) ->
         ],
     )
 
-    with pytest.raises(ValuationValidationError) as raised:
-        plan_workbook(drifting, fixture.catalog, fixture.template, fixture.contract)
 
-    assert raised.value.code == "GENERAL_CONSOLIDATION_MISMATCH"
-    assert raised.value.details["reason"] == "TRUNC_CONSOLIDATION_DRIFT"
-    assert raised.value.details["general_total"] == "41.25"
-    assert raised.value.details["valuation_total"] == "41.24"
+def test_consolidation_drift_of_one_cent_is_declared_and_the_workbook_is_generated(
+    tmp_path: Path,
+) -> None:
+    """ADR-0062 completa a decisão (c) do ADR-0018: a deriva de centavo não recusa mais a
+    pasta. O valor da GERAL (`TRUNC(Σq x p)`) governa e a pasta é gerada; a diferença contra
+    a soma dos boletins (`Σ TRUNC(qᵢ x p)`) vira `ConsolidationDrift` declarado no plano, no
+    relatório de gravação e na auditoria de round-trip — sem ajustar a linha de nenhum
+    boletim, que continua truncando só o que ela mede.
+    """
+    fixture = _multi_worksite(tmp_path)
+    drifting = _drifting_valuation(fixture)
+
+    plan = plan_workbook(drifting, fixture.catalog, fixture.template, fixture.contract)
+
+    assert [drift.code for drift in plan.consolidation_drifts] == ["AD04050055(A)"]
+    drift = plan.consolidation_drifts[0]
+    assert drift.reason == "TRUNC_CONSOLIDATION_DRIFT"
+    assert drift.quantity == Decimal("3.30")
+    assert drift.general == Decimal("41.25")
+    assert drift.bulletins == Decimal("41.24")
+    assert drift.difference == Decimal("0.01")
+
+    # A linha de cada boletim continua com o próprio truncamento, sem ajuste.
+    for bulletin in drifting.bulletins:
+        for line in bulletin.lines:
+            if line.code == "AD04050055(A)":
+                assert line.total == money_trunc(line.quantity * line.unit_price)
+
+    output = tmp_path / "medicao-com-deriva.xlsx"
+    write_report = write_valuation_workbook(
+        drifting, fixture.catalog, fixture.template, output, contract=fixture.contract
+    )
+    assert output.is_file()
+    assert write_report.consolidation_drifts == plan.consolidation_drifts
+
+    audit = audit_workbook(output, drifting, fixture.catalog, fixture.template, fixture.contract)
+    assert audit.status == "ok"
+    assert audit.findings == []
+    assert audit.consolidation_drifts == plan.consolidation_drifts
+
+
+def _assert_consolidacao_bate_com_a_geral(fixture: _MultiWorksiteFixture, output: Path) -> None:
+    """A consolidação servida e a coluna corrente da GERAL, célula a célula.
+
+    A auditoria de round-trip entra ANTES da comparação porque é ela que faz do plano um
+    oráculo do ARQUIVO: laudo aprovado significa que toda célula planejada está no `.xlsx`
+    reaberto com o valor planejado. Sem esse elo, comparar com o plano provaria só que duas
+    chamadas da mesma função concordam.
+    """
+    audit = audit_workbook(
+        output, fixture.valuation, fixture.catalog, fixture.template, fixture.contract
+    )
+    assert audit.status == "ok"
+    assert audit.findings == []
+
+    consolidacao = {
+        item.code: item
+        for item in consolidate_by_code(
+            fixture.valuation,
+            unit_prices={line.code: line.unit_price for line in fixture.contract.lines},
+        )
+    }
+    assert consolidacao, "medição sem código consolidado não provaria nada"
+
+    plan = plan_workbook(fixture.valuation, fixture.catalog, fixture.template, fixture.contract)
+    geral = next(
+        sheet for sheet in plan.sheets if sheet.name == fixture.template.general.sheet_name
+    )
+    impresso = {(cell.role, cell.item_number): cell for cell in geral.cells}
+    conferidos = 0
+    for line in fixture.contract.lines:
+        item = consolidacao.get(line.code)
+        if item is None:
+            continue
+        assert impresso[("general_current_quantity", line.item_number)].number == item.quantity
+        assert impresso[("general_current_amount", line.item_number)].number == item.amount
+        conferidos += 1
+    assert conferidos == len(consolidacao), "código medido que a GERAL não imprime"
+
+    # E a deriva declarada é a mesma lista, pelos mesmos dois valores.
+    assert [
+        (drift.code, drift.general, drift.bulletins, drift.difference)
+        for drift in plan.consolidation_drifts
+    ] == [
+        (item.code, item.amount, item.bulletins_amount, item.difference)
+        for item in consolidacao.values()
+        if item.has_drift
+    ]
+
+
+def test_a_consolidacao_por_codigo_e_o_mesmo_numero_que_a_pasta_gravada_imprime(
+    tmp_path: Path,
+) -> None:
+    """F-046 T4e, critério 2: as duas derivações não podem divergir — prova, não promessa.
+
+    A consolidação por código que a `/v1` serve à praça sai de `consolidate_by_code`, a mesma
+    função que planeja a coluna corrente da PLANILHA GERAL. Este teste amarra as duas pontas
+    no artefato: a pasta é gravada com o consolidado contratual, reaberta e auditada, e cada
+    par (quantidade, valor) da consolidação é confrontado com a célula que a GERAL imprime.
+
+    O caminho COM deriva entra junto de propósito: é justamente quando `TRUNC(Σq x p)` deixa
+    de ser `Σ TRUNC(qᵢ x p)` que uma segunda derivação silenciosa apareceria como um centavo
+    de diferença entre o que a tela mostra e o que a prefeitura lê.
+    """
+    fixture = _multi_worksite(tmp_path)
+    _assert_consolidacao_bate_com_a_geral(fixture, _write_multi(fixture, tmp_path))
+
+    com_deriva = _MultiWorksiteFixture(
+        template=fixture.template,
+        contract=fixture.contract,
+        catalog=fixture.catalog,
+        valuation=_drifting_valuation(fixture),
+    )
+    saida = tmp_path / "medicao-com-deriva-servida.xlsx"
+    write_valuation_workbook(
+        com_deriva.valuation,
+        com_deriva.catalog,
+        com_deriva.template,
+        saida,
+        contract=com_deriva.contract,
+    )
+    _assert_consolidacao_bate_com_a_geral(com_deriva, saida)
+    # E a rodada com deriva tem MESMO deriva: um teste que passasse sem ela não provaria nada.
+    assert [
+        item.code
+        for item in consolidate_by_code(
+            com_deriva.valuation,
+            unit_prices={line.code: line.unit_price for line in com_deriva.contract.lines},
+        )
+        if item.has_drift
+    ] == ["AD04050055(A)"]
 
 
 def test_a_code_outside_the_consolidation_refuses_the_workbook(tmp_path: Path) -> None:
@@ -567,6 +696,33 @@ def test_two_sheets_with_the_same_name_refuse_the_plan(tmp_path: Path) -> None:
 
     assert raised.value.code == "PLAN_SHEET_NAME_COLLISION"
     assert raised.value.details["names"] == [collided]
+
+
+def test_two_worksites_that_shorten_to_the_same_label_refuse_the_plan(tmp_path: Path) -> None:
+    """Nome encurtado que colide não vira uma aba só: as duas obras somariam em silêncio.
+
+    Duas obras que só diferem na partícula caem no mesmo rótulo quando a forma curta entra
+    (`Praça do Sol` e `Praça de Sol`), e é exatamente aí que o cheque de colisão do plano
+    precisa continuar valendo.
+    """
+    fixture = _multi_worksite(tmp_path)
+    colididos = ["Praça do Sol Poente Azul", "Praça de Sol Poente Azul"]
+    renamed = [
+        bulletin.model_copy(update={"worksite_name": colididos[index]})
+        if index < len(colididos)
+        else bulletin
+        for index, bulletin in enumerate(fixture.valuation.bulletins)
+    ]
+    valuation = fixture.valuation.model_copy(update={"bulletins": renamed})
+
+    with pytest.raises(ValuationValidationError) as raised:
+        plan_workbook(valuation, fixture.catalog, fixture.template, fixture.contract)
+
+    assert raised.value.code == "PLAN_SHEET_NAME_COLLISION"
+    assert raised.value.details["names"] == [
+        "BM Praça Sol Poente Azul",
+        "MEMÓRIA Praça Sol Poente Azul",
+    ]
 
 
 def test_the_first_measurement_of_a_contract_accumulates_a_single_pair(tmp_path: Path) -> None:

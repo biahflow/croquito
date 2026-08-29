@@ -32,18 +32,22 @@ import os
 import tempfile
 import threading
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, cast
 
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from croquito_api.database import ValuationRoundRecord, ValuationRoundRevisionRecord
+from croquito_api.database import (
+    ValuationRoundPlateRecord,
+    ValuationRoundRecord,
+    ValuationRoundRevisionRecord,
+)
 from croquito_core.ids import new_uuid7
 from croquito_valuation.assignment import (
     LLM_RERANK_SUFFIX,
@@ -61,9 +65,16 @@ from croquito_valuation.models import (
     Valuation,
     ValuationApproval,
 )
-from croquito_valuation.takeoff import TakeoffPacket
+from croquito_valuation.takeoff import TakeoffItem, TakeoffPacket
 from croquito_valuation.template import WorkbookTemplate
 from croquito_valuation.workbook_writer import write_valuation_workbook
+from croquito_valuation.worksite_calc import WorksitePlateInput
+from croquito_valuation.worksite_takeoff import (
+    TakeoffItemAddress,
+    TakeoffItemIdentityLink,
+    WorksiteTakeoff,
+    build_worksite_takeoff,
+)
 from croquito_worker.valuation.catalog_search import (
     SEMANTIC_UNAVAILABLE_MESSAGE,
     SemanticArm,
@@ -74,6 +85,7 @@ from croquito_worker.valuation.round_extraction import (
     TAKEOFF_OVERLAY_DIGEST,
     TAKEOFF_OVERLAY_PACKET_DIGEST,
     TAKEOFF_OVERLAY_REF,
+    plate_ref_key,
 )
 
 # Reexport explícito: o digest canônico de artefato JSON mora do lado do worker porque quem
@@ -104,6 +116,36 @@ CATALOG_QUERY_EMPTY: Final = "CATALOG_QUERY_EMPTY"
 TAKEOFF_REVIEW_INCOMPLETE: Final = "TAKEOFF_REVIEW_INCOMPLETE"
 SUGGESTIONS_ALREADY_REFINED: Final = "SUGGESTIONS_ALREADY_REFINED"
 VALUATION_WORKBOOK_AUDIT_FAILED: Final = "VALUATION_WORKBOOK_AUDIT_FAILED"
+ROUND_PLATE_ALREADY_PRESENT: Final = "ROUND_PLATE_ALREADY_PRESENT"
+"""A folha já está na praça: mesma origem, mesma página.
+
+O código não muda de nome porque não mudou de assunto — ele sempre quis dizer "esta prancha
+já está aqui". O que mudou foi a praça: a SEGUNDA folha deixou de ser a mesma coisa que a
+folha repetida (F-046, ADR-0057)."""
+
+ROUND_PLATE_LIMIT_REACHED: Final = "ROUND_PLATE_LIMIT_REACHED"
+
+ROUND_PLATE_PAGES_REQUIRED: Final = "ROUND_PLATE_PAGES_REQUIRED"
+"""O lote chegou sem escolha nenhuma — nem página para promover, nem folha para extrair.
+
+Recusa, e não "não faz nada": o ato em lote existe justamente porque a escolha é explícita e
+nada vem marcado por padrão (pacote de design, decisão 3). Um lote vazio respondido com `200`
+faria a tela parecer que promoveu algo."""
+
+ROUND_PLATE_NOT_FOUND: Final = "ROUND_PLATE_NOT_FOUND"
+"""A folha nomeada não é desta praça. `404` de recurso, e não recusa de estado."""
+
+EXTRACTION_IN_PROGRESS: Final = "EXTRACTION_IN_PROGRESS"
+"""Já existe extração em voo nesta folha. Mesmo código que a rota singular sempre usou."""
+
+WORKSITE_PLATE_LIMIT: Final = 12
+"""Teto de folhas por praça.
+
+Existe porque cada folha é uma extração PAGA a mais, e um teto declarado é a diferença entre
+um custo que o orçamentista escolhe e um que ele descobre depois. Doze é generoso para a
+praça real — planta geral, detalhes e cortes — e continua sendo um número para ser mexido com
+medida na mão, não uma verdade sobre o mundo."""
+
 
 BULLETIN_WORKBOOK_REF: Final = "bulletin_workbook"
 """Chave do `.xlsx` publicado, em `artifact_refs_json`. Nunca uma URL assinada."""
@@ -122,6 +164,8 @@ STAGE_TAKEOFF: Final = "takeoff"
 STAGE_CODE_ASSIGNMENTS: Final = "code_assignments"
 STAGE_BULLETIN: Final = "bulletin"
 STAGE_DOSSIER: Final = "amendment_dossier"
+STAGE_WORKSITE: Final = "worksite"
+"""A praça: as folhas da rodada e o que a orçamentista declarou por cima delas (F-046)."""
 
 CATALOG_MAX_BYTES: Final = 32 * 1024 * 1024
 """Teto de leitura do catálogo instalado.
@@ -147,8 +191,19 @@ REVISION_DOCUMENT_COLUMNS: Final[tuple[str, ...]] = (
     "calc_matrix_json",
     "amendment_dossier_json",
     "extraction_lineage_json",
+    "worksite_plate_packets_json",
+    "worksite_plate_registrations_json",
+    "worksite_plate_suggestions_json",
+    "worksite_plate_assignments_json",
+    "worksite_identity_links_json",
 )
-"""Colunas JSON de artefato; ausentes são `NULL`, e `NULL` é "a etapa não aconteceu"."""
+"""Colunas JSON de artefato; ausentes são `NULL`, e `NULL` é "a etapa não aconteceu".
+
+`worksite_identity_links_json` guarda uma LISTA e não um objeto — é a única aqui —, e por
+isso não sai em `_artifact_digests` nem passa por `require_document`. Ela está nesta tupla
+pelo que a tupla governa de verdade: o que `append_revision` carrega para a revisão
+seguinte. Coluna fora daqui é coluna que some no próximo ato, e vínculo declarado que some
+é a pior falha possível desta feature."""
 
 REVISION_MAP_COLUMNS: Final[tuple[str, ...]] = ("artifact_refs_json", "artifact_digests_json")
 """Colunas de mapa; ausentes são `{}`, nunca `NULL` (é o default da coluna)."""
@@ -383,21 +438,59 @@ def require_takeoff_packet(revision: ValuationRoundRevisionRecord | None) -> Tak
     return packet
 
 
-def takeoff_overlay_ref(revision: ValuationRoundRevisionRecord | None) -> str | None:
+class PlateIdentity(Protocol):
+    """O que basta para nomear a chave de artefato de uma folha: posição e identidade.
+
+    Existe para que a folha GRAVADA (`ValuationRoundPlateRecord`) e a folha resolvida
+    (`PlateRef`) nomeiem a mesma chave pelo mesmo caminho — sem que este módulo precise
+    escolher uma das duas nem duplicar a regra do sufixo.
+    """
+
+    @property
+    def position(self) -> int: ...
+
+    @property
+    def plate_id(self) -> str: ...
+
+
+def plate_artifact_name(base: str, plate: PlateIdentity | None) -> str:
+    """Nome da chave DESTA folha em `artifact_refs_json`/`artifact_digests_json`.
+
+    Uma regra só, e ela vive no worker (`plate_ref_key`): quem ESCREVE o mapa é o comando de
+    fila e quem o LÊ é a rota, e duas convenções escritas em lados opostos passariam nos
+    testes de cada lado deixando a tela servir a imagem da folha errada.
+
+    `plate=None` é a folha de sempre — a primeira, sem sufixo —, e é isso que faz toda leitura
+    que não nomeia folha continuar lendo exatamente o que lia antes da praça.
+    """
+    if plate is None:
+        return base
+    return plate_ref_key(base, position=plate.position, plate_id=plate.plate_id)
+
+
+def takeoff_overlay_ref(
+    revision: ValuationRoundRevisionRecord | None,
+    plate: ValuationRoundPlateRecord | None = None,
+) -> str | None:
     """Chave do PNG do overlay gravada na revisão, ou `None` quando não há desenho."""
     if revision is None:
         return None
-    key = (revision.artifact_refs_json or {}).get(TAKEOFF_OVERLAY_REF)
+    key = (revision.artifact_refs_json or {}).get(plate_artifact_name(TAKEOFF_OVERLAY_REF, plate))
     return key if isinstance(key, str) and key else None
 
 
-def require_takeoff_overlay(revision: ValuationRoundRevisionRecord | None) -> str:
+def require_takeoff_overlay(
+    revision: ValuationRoundRevisionRecord | None,
+    plate: ValuationRoundPlateRecord | None = None,
+) -> str:
     """A chave do overlay publicado, ou a recusa de etapa fora de ordem.
 
     Overlay e pacote nascem no MESMO ato da extração, então rodada sem overlay é rodada
-    sem extração publicada — etapa fora de ordem, e não artefato perdido.
+    sem extração publicada — etapa fora de ordem, e não artefato perdido. Vale por FOLHA
+    desde a F-046: a folha ainda não extraída da praça está na mesma situação que a rodada
+    de uma folha antes da extração.
     """
-    key = takeoff_overlay_ref(revision)
+    key = takeoff_overlay_ref(revision, plate)
     if key is None:
         raise stage_not_ready(
             STAGE_TAKEOFF, detail="a rodada ainda não tem overlay do takeoff publicado"
@@ -406,7 +499,10 @@ def require_takeoff_overlay(revision: ValuationRoundRevisionRecord | None) -> st
 
 
 def takeoff_overlay_state(
-    revision: ValuationRoundRevisionRecord | None, *, packet_sha256: str
+    revision: ValuationRoundRevisionRecord | None,
+    *,
+    packet_sha256: str,
+    plate: ValuationRoundPlateRecord | None = None,
 ) -> dict[str, Any]:
     """Idade do overlay DERIVADA na leitura, nunca gravada como verdade (ADR-0030).
 
@@ -421,10 +517,10 @@ def takeoff_overlay_state(
     prefere duvidar a afirmar.
     """
     digests = {} if revision is None else dict(revision.artifact_digests_json or {})
-    origin = digests.get(TAKEOFF_OVERLAY_PACKET_DIGEST)
+    origin = digests.get(plate_artifact_name(TAKEOFF_OVERLAY_PACKET_DIGEST, plate))
     return {
-        "present": takeoff_overlay_ref(revision) is not None,
-        "image_sha256": digests.get(TAKEOFF_OVERLAY_DIGEST),
+        "present": takeoff_overlay_ref(revision, plate) is not None,
+        "image_sha256": digests.get(plate_artifact_name(TAKEOFF_OVERLAY_DIGEST, plate)),
         "overlay_packet_sha256": origin,
         "stale": origin != packet_sha256,
     }
@@ -592,51 +688,969 @@ def require_document(
     return dict(document)
 
 
-def require_plate_object_key(round_record: ValuationRoundRecord) -> str:
-    """Chave do PDF da prancha ingerida; rodada sem prancha é etapa fora de ordem."""
-    if round_record.plate_object_key is None:
+def require_plate_object_key(plates: Sequence[ValuationRoundPlateRecord]) -> str:
+    """Chave do PDF da PRIMEIRA folha; praça sem folha nenhuma é etapa fora de ordem."""
+    if not plates:
         raise stage_not_ready(STAGE_PLATE, detail="a rodada ainda não tem prancha associada")
-    return round_record.plate_object_key
+    return plates[0].object_key
 
 
 @dataclass(frozen=True, slots=True)
 class PlateRef:
-    """A prancha associada à rodada, com as três colunas conferidas de uma vez só."""
+    """Uma folha da praça, com a origem e a identidade que o pacote dela vai carregar.
 
+    Desde a F-046 a folha é linha de `valuation_round_plates` e não mais quatro colunas
+    escalares da rodada — `page_count` incluído, apurado por folha desde a T4: duas folhas
+    podem vir de PDFs diferentes, e a contagem da raiz descreveria o documento de uma delas
+    como se fosse o das outras.
+    """
+
+    plate_id: str
+    position: int
     upload_id: str
     object_key: str
     source_sha256: str
+    page_number: int
     page_count: int | None
 
 
-def require_plate(round_record: ValuationRoundRecord) -> PlateRef:
-    """A prancha da rodada, ou a recusa de etapa fora de ordem.
+def resolve_plate(
+    plates: Sequence[ValuationRoundPlateRecord], plate_id: str | None = None
+) -> ValuationRoundPlateRecord:
+    """A folha NOMEADA da praça, ou a primeira quando ninguém a nomeou (F-046 T4c).
 
-    As três colunas são conferidas JUNTAS de propósito: elas são gravadas no mesmo ato de
-    associação, e ler uma delas isolada obrigaria cada chamador a decidir o que fazer com
-    uma prancha meio associada — estado que a rota não sabe produzir e que ninguém deve ter
-    de tratar duas vezes. `page_count` fica de fora dessa exigência porque só a ingestão da
-    página, que é trabalho do worker, o conhece.
+    Uma resolução só, para todas as leituras por folha: sem ela cada rota decidiria por conta
+    própria o que fazer com uma folha desconhecida, e duas rotas responderiam diferente para a
+    mesma causa.
+
+    Ausência de nome é a leitura de sempre — a primeira folha —, e é isso que mantém a rodada
+    de uma folha e toda tela que ainda não conhece a praça respondendo exatamente como hoje.
+    Nome que não é desta praça é `404 ROUND_PLATE_NOT_FOUND`: recurso inexistente, e não
+    ordem da cadeia. Praça sem folha nenhuma continua sendo ordem (`ROUND_STAGE_NOT_READY`).
     """
-    if (
-        round_record.plate_object_key is None
-        or round_record.plate_upload_id is None
-        or round_record.plate_source_sha256 is None
-    ):
+    if not plates:
+        raise stage_not_ready(STAGE_PLATE, detail="a rodada ainda não tem prancha associada")
+    if plate_id is None:
+        return plates[0]
+    for plate in plates:
+        if plate.plate_id == plate_id:
+            return plate
+    raise RoundRefusal(
+        404,
+        ROUND_PLATE_NOT_FOUND,
+        "folha inexistente nesta praça",
+        {"plate_ids": [plate_id]},
+    )
+
+
+def require_plate(
+    plates: Sequence[ValuationRoundPlateRecord], plate_id: str | None = None
+) -> PlateRef:
+    """A folha nomeada da praça — a PRIMEIRA quando ninguém a nomeou —, ou a recusa de ordem.
+
+    Desde a F-046 a rodada tem N folhas. Sem `plate_id` a resposta é a da PRIMEIRA folha —
+    a que a rodada de uma folha sempre teve, e a que o disparo da extração singular continua
+    usando; com `plate_id`, é a folha nomeada (T4c). Rodada sem folha nenhuma é ordem da
+    cadeia (`ROUND_STAGE_NOT_READY`), nunca ausência de recurso; folha nomeada que não é
+    desta praça, ao contrário, é `404`.
+
+    Folha sem `upload_id` é recusada junto com a folha ausente, e não devolvida pela metade:
+    a coluna é anulável só porque o espelho escalar que ela substitui também era, e uma folha
+    meio associada é estado que a rota não sabe produzir — ninguém deve ter de tratá-lo.
+
+    A rodada não entra mais por parâmetro: desde a T4 nenhum campo da folha vem da raiz, e um
+    argumento não usado chamado `round_record` faria parecer que ainda vem.
+    """
+    chosen = resolve_plate(plates, plate_id)
+    if chosen.upload_id is None:
         raise stage_not_ready(STAGE_PLATE, detail="a rodada ainda não tem prancha associada")
     return PlateRef(
-        upload_id=round_record.plate_upload_id,
-        object_key=round_record.plate_object_key,
-        source_sha256=round_record.plate_source_sha256,
-        page_count=round_record.plate_page_count,
+        plate_id=chosen.plate_id,
+        position=chosen.position,
+        upload_id=chosen.upload_id,
+        object_key=chosen.object_key,
+        source_sha256=chosen.source_sha256,
+        page_number=chosen.page_number,
+        page_count=chosen.page_count,
     )
+
+
+def round_plates(
+    session: Session, *, round_id: str, tenant_id: str
+) -> list[ValuationRoundPlateRecord]:
+    """As folhas da praça, na ordem em que foram acrescentadas.
+
+    `tenant_id` entra no MESMO `where` do `round_id`, como em toda query deste módulo: folha
+    de rodada de outro tenant é inexistente, e é o `where` que garante isso.
+    """
+    return list(
+        session.scalars(
+            select(ValuationRoundPlateRecord)
+            .where(
+                ValuationRoundPlateRecord.round_id == round_id,
+                ValuationRoundPlateRecord.tenant_id == tenant_id,
+            )
+            .order_by(ValuationRoundPlateRecord.position)
+        )
+    )
+
+
+def mint_plate_id(*, round_id: str, position: int) -> str:
+    """A `plate_id` de uma folha nova, cunhada no ato de acrescentá-la.
+
+    A primeira folha é `rodada-{round_id}` — exatamente o que `round_extraction.dataset_id`
+    cunha hoje a partir do nome do diretório de trabalho —, e é isso que mantém a rodada de
+    uma folha byte-idêntica (ADR-0057, decisão 8). O sufixo `-f{posição}` só nasce com a
+    segunda folha, porque é só aí que duas folhas precisam se distinguir.
+
+    O identificador cabe no contrato do manifest de ingestão (`[a-z0-9][a-z0-9-]{2,63}`):
+    `rodada-` mais um UUID são 43 caracteres, e o sufixo mais longo cabe folgado no teto.
+    """
+    return f"rodada-{round_id}" if position == 1 else f"rodada-{round_id}-f{position}"
+
+
+def append_round_plate(
+    session: Session,
+    *,
+    round_record: ValuationRoundRecord,
+    plates: Sequence[ValuationRoundPlateRecord],
+    upload_id: str,
+    object_key: str,
+    source_sha256: str,
+    created_by: str,
+    page_number: int = 1,
+) -> ValuationRoundPlateRecord:
+    """Acrescenta uma folha à praça, recusando a folha REPETIDA e o excesso de folhas.
+
+    Duas recusas, e nenhuma delas é "a rodada já tem prancha": a segunda folha é o caso
+    normal desta feature. `ROUND_PLATE_ALREADY_PRESENT` passa a nomear só o que ele sempre
+    quis dizer — esta folha já está na praça —, e a igualdade é de ORIGEM: mesmo digest do
+    PDF e mesma página. Nome de arquivo e id de upload diferentes não fazem duas folhas de um
+    mesmo desenho.
+
+    O espelho escalar da PRIMEIRA folha (`plate_upload_id`, `plate_object_key`,
+    `plate_source_sha256`) continua sendo escrito enquanto o comando de fila da extração o
+    ler: é a metade `expand` do expand/contract (`services/api/AGENTS.md`), e removê-lo é
+    trabalho posterior, com aprovação humana explícita.
+    """
+    if len(plates) >= WORKSITE_PLATE_LIMIT:
+        raise RoundRefusal(
+            409,
+            ROUND_PLATE_LIMIT_REACHED,
+            "a praça atingiu o limite de folhas por rodada",
+            {"limit": WORKSITE_PLATE_LIMIT},
+        )
+    digest = source_sha256.lower()
+    for existing in plates:
+        if existing.source_sha256 == digest and existing.page_number == page_number:
+            raise RoundRefusal(
+                409,
+                ROUND_PLATE_ALREADY_PRESENT,
+                "esta folha já está na praça: mesma origem e mesma página",
+                {"plate_id": existing.plate_id, "page_number": page_number},
+            )
+    position = len(plates) + 1
+    record = ValuationRoundPlateRecord(
+        id=str(new_uuid7()),
+        tenant_id=round_record.tenant_id,
+        round_id=round_record.id,
+        plate_id=mint_plate_id(round_id=round_record.id, position=position),
+        position=position,
+        upload_id=upload_id,
+        object_key=object_key,
+        source_sha256=digest,
+        page_number=page_number,
+        created_by=created_by,
+    )
+    session.add(record)
+    if position == 1:
+        round_record.plate_upload_id = upload_id
+        round_record.plate_object_key = object_key
+        round_record.plate_source_sha256 = digest
+    return record
+
+
+def append_round_plates(
+    session: Session,
+    *,
+    round_record: ValuationRoundRecord,
+    plates: Sequence[ValuationRoundPlateRecord],
+    upload_id: str,
+    object_key: str,
+    source_sha256: str,
+    created_by: str,
+    page_numbers: Sequence[int],
+) -> list[ValuationRoundPlateRecord]:
+    """Acrescenta N folhas de UM documento à praça, num ato só (F-046 T4).
+
+    O lote é o ato porque a seleção é o ato: a orçamentista marca as páginas que viram folha
+    e confirma uma vez. Um ato por página faria a praça de seis folhas custar seis idas ao
+    mesmo diálogo, e promover todas as páginas automaticamente encheria a praça de quadro de
+    áreas e carimbo — as duas alternativas foram recusadas no pacote de design aprovado.
+
+    **Nada vem marcado por padrão**: `page_numbers` é exigido, não tem valor implícito e uma
+    lista vazia é recusa (`ROUND_PLATE_PAGES_REQUIRED`). Página repetida DENTRO do lote também
+    é recusa: ela seria a mesma folha duas vezes, que é o que `ROUND_PLATE_ALREADY_PRESENT`
+    sempre quis impedir, só que dentro de um mesmo clique.
+
+    Tudo ou nada. As duas recusas de tamanho — o teto da praça e as repetições — são apuradas
+    sobre o lote INTEIRO antes de a primeira folha ser criada. Um lote meio aplicado deixaria a
+    orçamentista com uma praça que ela não pediu e uma conta de extração que ela não escolheu.
+
+    Este módulo não valida a EXISTÊNCIA da página no PDF, e a omissão é decisão: a API não
+    renderiza documento (`services/api/AGENTS.md`), então quem descobre que a página 9 não
+    existe é a ingestão, no worker, e o desfecho fica na folha
+    (`LOCAL_PLATE_PAGE_ABSENT`) sem derrubar as demais.
+    """
+    pages = list(page_numbers)
+    if not pages:
+        raise RoundRefusal(
+            422,
+            ROUND_PLATE_PAGES_REQUIRED,
+            "escolha ao menos uma página do documento para virar folha da praça",
+            {},
+        )
+    repeated = sorted({page for page in pages if pages.count(page) > 1})
+    if repeated:
+        raise RoundRefusal(
+            409,
+            ROUND_PLATE_ALREADY_PRESENT,
+            "a mesma página foi escolhida mais de uma vez no lote",
+            {"page_numbers": repeated},
+        )
+    if len(plates) + len(pages) > WORKSITE_PLATE_LIMIT:
+        raise RoundRefusal(
+            409,
+            ROUND_PLATE_LIMIT_REACHED,
+            "a praça atingiu o limite de folhas por rodada",
+            {"limit": WORKSITE_PLATE_LIMIT, "present": len(plates), "requested": len(pages)},
+        )
+    appended: list[ValuationRoundPlateRecord] = []
+    current = list(plates)
+    for page_number in pages:
+        record = append_round_plate(
+            session,
+            round_record=round_record,
+            plates=current,
+            upload_id=upload_id,
+            object_key=object_key,
+            source_sha256=source_sha256,
+            created_by=created_by,
+            page_number=page_number,
+        )
+        current.append(record)
+        appended.append(record)
+    return appended
+
+
+def extracted_plate_ids(
+    revision: ValuationRoundRevisionRecord | None,
+    plates: Sequence[ValuationRoundPlateRecord],
+) -> set[str]:
+    """Folhas que JÁ têm pacote publicado, lidas por PRESENÇA e sem revalidar o documento.
+
+    `worksite_packets` valida cada pacote para poder somá-los; aqui a pergunta é outra — "há
+    algo gravado nesta folha?" —, e responder por validação faria um pacote antigo que deixou
+    de validar liberar uma segunda extração paga em cima da evidência que já existe. A recusa
+    de re-extrair protege exatamente esse caso, então ela não pode depender do documento estar
+    perfeito.
+
+    A folha de posição 1 é a de `takeoff_packet_json`, pela mesma divisão que o worker usa
+    para escrever; as demais são as chaves do mapa.
+    """
+    if revision is None:
+        return set()
+    extracted = {str(plate_id) for plate_id in (revision.worksite_plate_packets_json or {})}
+    if revision.takeoff_packet_json is not None:
+        first = next((plate for plate in plates if plate.position == 1), None)
+        if first is not None:
+            extracted.add(first.plate_id)
+    return extracted
+
+
+def queue_plate_extractions(
+    round_record: ValuationRoundRecord,
+    plates: Sequence[ValuationRoundPlateRecord],
+    extracted: Collection[str],
+    *,
+    plate_ids: Sequence[str],
+    extraction_id: str,
+    requested_by: str,
+    now: datetime,
+) -> list[ValuationRoundPlateRecord]:
+    """Marca como `queued` as folhas ESCOLHIDAS, e devolve exatamente quais.
+
+    O lote informa quantas folhas serão extraídas ANTES de qualquer coisa sair da máquina:
+    quem chama recebe a lista de volta e a publica na resposta, e é essa lista que diz ao
+    orçamentista quantas chamadas pagas ele acabou de autorizar. O custo por folha não pode
+    aparecer só na fatura (pacote de design, decisão 4).
+
+    Nada vem marcado por padrão aqui também: `plate_ids` é exigido e cada id tem de ser uma
+    folha DESTA praça. Folha que já tem pacote extraído é recusada nominalmente — re-extrair
+    apagaria a evidência sobre a qual as decisões já foram tomadas —, e folha com extração em
+    voo é recusada pelo mesmo motivo de sempre: ninguém paga duas vezes pela mesma leitura.
+
+    Tudo ou nada, como o lote de folhas: as recusas são apuradas sobre o lote inteiro antes de
+    a primeira folha ser marcada. Meia autorização é a pior das três respostas possíveis.
+    """
+    if not plate_ids:
+        raise RoundRefusal(
+            422,
+            ROUND_PLATE_PAGES_REQUIRED,
+            "escolha ao menos uma folha da praça para extrair",
+            {},
+        )
+    by_id = {plate.plate_id: plate for plate in plates}
+    unknown = sorted({plate_id for plate_id in plate_ids if plate_id not in by_id})
+    if unknown:
+        raise RoundRefusal(
+            404,
+            ROUND_PLATE_NOT_FOUND,
+            "folha inexistente nesta praça",
+            {"plate_ids": unknown},
+        )
+    repeated = sorted({value for value in plate_ids if list(plate_ids).count(value) > 1})
+    if repeated:
+        raise RoundRefusal(
+            409,
+            ROUND_PLATE_ALREADY_PRESENT,
+            "a mesma folha foi escolhida mais de uma vez no lote",
+            {"plate_ids": repeated},
+        )
+    published = sorted({plate_id for plate_id in plate_ids if plate_id in extracted})
+    if published:
+        raise RoundRefusal(
+            409,
+            ROUND_PLATE_ALREADY_PRESENT,
+            "a folha já tem pacote de takeoff publicado",
+            {"plate_ids": published},
+        )
+    running = sorted(
+        {
+            plate_id
+            for plate_id in plate_ids
+            if by_id[plate_id].extraction_status in ("queued", "running")
+        }
+    )
+    if running:
+        raise RoundRefusal(
+            409,
+            EXTRACTION_IN_PROGRESS,
+            "já existe uma extração em andamento nesta folha",
+            {"plate_ids": running},
+        )
+    queued: list[ValuationRoundPlateRecord] = []
+    for plate_id in plate_ids:
+        plate = by_id[plate_id]
+        plate.extraction_id = extraction_id
+        plate.extraction_status = "queued"
+        plate.extraction_failure_code = None
+        plate.extraction_requested_by = requested_by
+        plate.extraction_updated_at = now
+        queued.append(plate)
+    # A raiz continua respondendo pela rodada porque é o que a tela de hoje lê; o estado
+    # verdadeiro é o das folhas, e o worker reescreve este espelho a cada desfecho.
+    round_record.extraction_id = extraction_id
+    round_record.extraction_status = "queued"
+    round_record.extraction_failure_code = None
+    round_record.extraction_requested_by = requested_by
+    round_record.extraction_updated_at = now
+    return queued
+
+
+def worksite_packets(
+    revision: ValuationRoundRevisionRecord | None,
+) -> dict[str, TakeoffPacket]:
+    """Os pacotes de takeoff da praça, indexados pela `plate_id` que cada um DECLARA.
+
+    A primeira folha continua em `takeoff_packet_json` e as demais em
+    `worksite_plate_packets_json` — a divisão que mantém a rodada de uma folha byte-idêntica.
+    O índice sai do próprio pacote, e não da chave do mapa nem da posição da folha: é o
+    pacote que sabe de qual folha ele é, e casar por posição faria uma folha reordenada
+    responder pelos itens de outra.
+    """
+    packets: dict[str, TakeoffPacket] = {}
+    first = takeoff_packet_of(revision)
+    if first is not None:
+        packets[first.plate_id] = first
+    stored = None if revision is None else revision.worksite_plate_packets_json
+    for document in (stored or {}).values():
+        packet = TakeoffPacket.model_validate(document)
+        packets[packet.plate_id] = packet
+    return packets
+
+
+def plate_registrations(
+    revision: ValuationRoundRevisionRecord | None,
+) -> dict[str, Mapping[str, Any]]:
+    """Relatórios do registro fino de bbox por folha, indexados pela `plate_id` (F-046 T4).
+
+    Mesma divisão dos pacotes, pelo mesmo motivo: a primeira folha continua em
+    `takeoff_registration_json` e as demais no mapa próprio. A `plate_id` da primeira sai do
+    PACOTE dela, e não da folha gravada — é o pacote que diz de qual folha o relatório é, e
+    casar por posição faria uma praça reordenada declarar âncora confiável no lugar errado.
+
+    Documento gravado, lido sem revalidar: `registered_item_ids` já é fail-closed diante de
+    relatório sem método declarado, e derrubar a praça inteira por um relatório estranho seria
+    trocar uma âncora `raw` por uma tela em branco.
+    """
+    reports: dict[str, Mapping[str, Any]] = {}
+    if revision is None:
+        return reports
+    first = takeoff_packet_of(revision)
+    if first is not None and isinstance(revision.takeoff_registration_json, Mapping):
+        reports[first.plate_id] = revision.takeoff_registration_json
+    for plate_id, document in (revision.worksite_plate_registrations_json or {}).items():
+        if isinstance(document, Mapping):
+            reports[str(plate_id)] = document
+    return reports
+
+
+def require_plate_packet(
+    revision: ValuationRoundRevisionRecord | None,
+    plate: ValuationRoundPlateRecord,
+) -> TakeoffPacket:
+    """O pacote de takeoff DESTA folha, ou a recusa de etapa fora de ordem (F-046 T4c).
+
+    Irmã de `require_takeoff_packet`, com a mesma recusa e o mesmo significado: folha da praça
+    ainda não extraída é ordem da cadeia, e não recurso perdido. O índice é o de
+    `worksite_packets` — a `plate_id` que o PACOTE declara —, para que a leitura por folha não
+    invente um segundo jeito de casar pacote com prancha.
+
+    A primeira folha passa pelo mesmo caminho e devolve exatamente o pacote de
+    `takeoff_packet_json`, byte a byte: `worksite_packets` a lê de lá.
+    """
+    packet = worksite_packets(revision).get(plate.plate_id)
+    if packet is None:
+        raise stage_not_ready(
+            STAGE_TAKEOFF, detail="a folha ainda não tem pacote de takeoff publicado"
+        )
+    return packet
+
+
+def plate_packet_document(
+    revision: ValuationRoundRevisionRecord | None,
+    plate: ValuationRoundPlateRecord,
+) -> Mapping[str, Any]:
+    """O documento GRAVADO do pacote desta folha, sem revalidar — a origem do digest.
+
+    O digest tem de ser o do que está no banco, e não o de uma reserialização do modelo: é por
+    ele que a tela sabe se o pacote que ela tem na mão ainda é o corrente, e é ele que a rota
+    do overlay compara com o pacote que originou o desenho.
+    """
+    if plate.position <= 1:
+        return require_document(
+            revision,
+            "takeoff_packet_json",
+            stage=STAGE_TAKEOFF,
+            detail="a rodada ainda não tem pacote de takeoff publicado",
+        )
+    stored = None if revision is None else revision.worksite_plate_packets_json
+    document = (stored or {}).get(plate.plate_id)
+    if document is None:
+        raise stage_not_ready(
+            STAGE_TAKEOFF, detail="a folha ainda não tem pacote de takeoff publicado"
+        )
+    return dict(document)
+
+
+def plate_packet_changes(
+    revision: ValuationRoundRevisionRecord | None,
+    plate: ValuationRoundPlateRecord | None,
+    document: Mapping[str, Any],
+) -> dict[str, Any]:
+    """As colunas que a revisão nova recebe ao publicar o pacote revisado DESTA folha.
+
+    A divisão é a que a T3 fixou e que o worker escreve: a primeira folha em
+    `takeoff_packet_json`, as demais no mapa por `plate_id`. Escrever pelo mesmo caminho é o
+    que faz a rodada de uma folha continuar gravando exatamente a mesma coluna de sempre —
+    `plate=None` é a folha de sempre, e nem chega a olhar a praça.
+
+    O mapa inteiro é reescrito porque `append_revision` substitui a coluna, não a funde: as
+    folhas que este ato não tocou viajam idênticas, copiadas da cabeça.
+    """
+    if plate is None or plate.position <= 1:
+        return {"takeoff_packet_json": dict(document)}
+    stored = None if revision is None else revision.worksite_plate_packets_json
+    return {"worksite_plate_packets_json": {**(stored or {}), plate.plate_id: dict(document)}}
+
+
+def plate_registration(
+    revision: ValuationRoundRevisionRecord | None,
+    plate: ValuationRoundPlateRecord,
+) -> Mapping[str, Any] | None:
+    """O relatório de registro fino DESTA folha; é ele que separa âncora `registered` de `raw`."""
+    return plate_registrations(revision).get(plate.plate_id)
+
+
+def _is_first_plate(plate: ValuationRoundPlateRecord | None) -> bool:
+    """A folha de sempre — a primeira, ou nenhuma folha nomeada.
+
+    Uma regra só, porque ela decide em qual COLUNA cada etapa por folha lê e escreve, e duas
+    escritas dessa condição em lados opostos fariam uma rota gravar num lugar e a outra ler
+    do outro. `None` é a leitura que não nomeia folha, e ela é a primeira por definição.
+    """
+    return plate is None or plate.position <= 1
+
+
+def plate_assignments(
+    revision: ValuationRoundRevisionRecord | None,
+) -> dict[str, CodeAssignmentSet]:
+    """Os conjuntos de código da praça, indexados pela `plate_id` que cada um DECLARA.
+
+    Espelho exato de `worksite_packets`, e pelo mesmo motivo: a primeira folha continua em
+    `code_assignments_json` e as demais em `worksite_plate_assignments_json` — a divisão que
+    mantém a praça de uma folha byte-idêntica (ADR-0057, decisão 8).
+
+    O índice sai do próprio conjunto, e não da chave do mapa nem da posição da folha: é o
+    conjunto que sabe de qual prancha ele é (`CodeAssignmentSet.plate_id`), e casar por
+    posição faria uma praça reordenada medir uma folha com os códigos de outra — que é
+    exatamente o que `CALC_ASSIGNMENT_PACKET_MISMATCH` existe para impedir.
+    """
+    sets: dict[str, CodeAssignmentSet] = {}
+    first = assignments_of(revision)
+    if first is not None:
+        sets[first.plate_id] = first
+    stored = None if revision is None else revision.worksite_plate_assignments_json
+    for document in (stored or {}).values():
+        assignments = CodeAssignmentSet.model_validate(document)
+        sets[assignments.plate_id] = assignments
+    return sets
+
+
+def assignments_for_plate(
+    revision: ValuationRoundRevisionRecord | None,
+    plate: ValuationRoundPlateRecord | None,
+) -> CodeAssignmentSet | None:
+    """O conjunto de código DESTA folha, ou `None` quando ela ainda não tem decisão nenhuma.
+
+    `plate=None` é a folha de sempre e devolve exatamente `assignments_of` — byte a byte o
+    que a rodada de uma folha sempre leu, sem sequer olhar o mapa das demais.
+
+    Conjunto ausente **não** é erro: a folha extraída e revisada sem nenhuma decisão de código
+    é o estado normal de quem acabou de chegar nesta etapa.
+    """
+    if _is_first_plate(plate):
+        return assignments_of(revision)
+    stored = None if revision is None else revision.worksite_plate_assignments_json
+    document = (stored or {}).get(cast(ValuationRoundPlateRecord, plate).plate_id)
+    return None if document is None else CodeAssignmentSet.model_validate(document)
+
+
+def assignments_document_for_plate(
+    revision: ValuationRoundRevisionRecord | None,
+    plate: ValuationRoundPlateRecord | None,
+) -> dict[str, Any] | None:
+    """O documento GRAVADO do conjunto desta folha, sem revalidar — a origem do digest.
+
+    Espelha `plate_packet_document` e existe pelo mesmo motivo: o digest tem de ser o do que
+    está no banco, e não o de uma reserialização do modelo, senão a tela não consegue dizer se
+    o conjunto que ela tem na mão ainda é o corrente.
+    """
+    if _is_first_plate(plate):
+        return None if revision is None else revision.code_assignments_json
+    stored = None if revision is None else revision.worksite_plate_assignments_json
+    document = (stored or {}).get(cast(ValuationRoundPlateRecord, plate).plate_id)
+    return None if document is None else dict(document)
+
+
+def plate_assignments_changes(
+    revision: ValuationRoundRevisionRecord | None,
+    plate: ValuationRoundPlateRecord | None,
+    document: Mapping[str, Any],
+) -> dict[str, Any]:
+    """As colunas que a revisão nova recebe ao gravar o conjunto de código DESTA folha.
+
+    Espelho de `plate_packet_changes`: a primeira folha em `code_assignments_json`, as demais
+    no mapa por `plate_id`. `plate=None` é a folha de sempre e nem chega a olhar a praça, que é
+    o que faz a rodada de uma folha continuar gravando exatamente a mesma coluna.
+
+    O mapa inteiro é reescrito porque `append_revision` substitui a coluna, não a funde: as
+    folhas que este ato não tocou viajam idênticas, copiadas da cabeça.
+    """
+    if _is_first_plate(plate):
+        return {"code_assignments_json": dict(document)}
+    stored = None if revision is None else revision.worksite_plate_assignments_json
+    key = cast(ValuationRoundPlateRecord, plate).plate_id
+    return {"worksite_plate_assignments_json": {**(stored or {}), key: dict(document)}}
+
+
+def suggestions_document_for_plate(
+    revision: ValuationRoundRevisionRecord | None,
+    plate: ValuationRoundPlateRecord | None,
+) -> dict[str, Any] | None:
+    """A shortlist GRAVADA desta folha, sem revalidar; `None` é "ainda não foi calculada".
+
+    A shortlist é observação por ITEM, e os itens são os do pacote de UMA folha: servir a da
+    primeira folha sob o cabeçalho da segunda ofereceria códigos para elementos que não estão
+    naquela prancha. Por isso ela é por folha, e não da rodada.
+    """
+    if _is_first_plate(plate):
+        return None if revision is None else revision.code_suggestions_json
+    stored = None if revision is None else revision.worksite_plate_suggestions_json
+    document = (stored or {}).get(cast(ValuationRoundPlateRecord, plate).plate_id)
+    return None if document is None else dict(document)
+
+
+def plate_suggestions_changes(
+    revision: ValuationRoundRevisionRecord | None,
+    plate: ValuationRoundPlateRecord | None,
+    document: Mapping[str, Any],
+) -> dict[str, Any]:
+    """As colunas que a revisão nova recebe ao gravar a shortlist DESTA folha."""
+    if _is_first_plate(plate):
+        return {"code_suggestions_json": dict(document)}
+    stored = None if revision is None else revision.worksite_plate_suggestions_json
+    key = cast(ValuationRoundPlateRecord, plate).plate_id
+    return {"worksite_plate_suggestions_json": {**(stored or {}), key: dict(document)}}
+
+
+def identity_links_of(
+    revision: ValuationRoundRevisionRecord | None,
+) -> list[TakeoffItemIdentityLink]:
+    """Os vínculos de identidade declarados nesta revisão, revalidados na leitura."""
+    stored = None if revision is None else revision.worksite_identity_links_json
+    return [TakeoffItemIdentityLink.model_validate(document) for document in (stored or [])]
+
+
+def pending_worksite_plates(
+    plates: Sequence[ValuationRoundPlateRecord], packets: Mapping[str, TakeoffPacket]
+) -> list[str]:
+    """Folhas da praça que ainda não têm pacote extraído, na ordem da praça."""
+    return [plate.plate_id for plate in plates if plate.plate_id not in packets]
+
+
+def require_worksite_takeoff(
+    round_record: ValuationRoundRecord,
+    revision: ValuationRoundRevisionRecord | None,
+    plates: Sequence[ValuationRoundPlateRecord],
+    *,
+    identity_links: Sequence[TakeoffItemIdentityLink] | None = None,
+) -> WorksiteTakeoff:
+    """O consolidado da praça, montado a partir das folhas gravadas e dos pacotes delas.
+
+    O consolidado é DERIVADO, nunca gravado: as folhas estão na tabela filha, os pacotes na
+    revisão e os vínculos na revisão, e um quarto lugar guardando a soma dos três só poderia
+    envelhecer em silêncio — bastaria acrescentar uma folha para o consolidado gravado passar
+    a descrever uma praça que não existe mais.
+
+    Falha fechado, na ordem em que a praça pode não estar pronta: praça sem folha nenhuma e
+    folha sem pacote extraído são etapa fora de ordem (`ROUND_STAGE_NOT_READY`), nomeando
+    QUAIS folhas faltam. Depois disso quem recusa é o domínio (`build_worksite_takeoff`), com
+    os códigos que a T1 fixou.
+    """
+    if not plates:
+        raise stage_not_ready(STAGE_PLATE, detail="a rodada ainda não tem prancha associada")
+    packets = worksite_packets(revision)
+    pending = pending_worksite_plates(plates, packets)
+    if pending:
+        raise RoundRefusal(
+            409,
+            ROUND_STAGE_NOT_READY,
+            "a praça só fecha com todas as folhas extraídas",
+            {"stage": STAGE_WORKSITE, "pending_plate_ids": pending},
+        )
+    links = identity_links_of(revision) if identity_links is None else list(identity_links)
+    return build_worksite_takeoff(
+        round_record.worksite_key,
+        [packets[plate.plate_id] for plate in plates],
+        links,
+    )
+
+
+def declared_identity_link(
+    *,
+    kept: tuple[str, str],
+    discarded: tuple[str, str],
+    note: str,
+    declared_by: str,
+    declared_at: datetime,
+) -> TakeoffItemIdentityLink:
+    """O vínculo como o servidor o carimba: autor e instante nunca vêm do corpo.
+
+    O corpo declara O QUE é o mesmo elemento; quem declarou e quando é identidade do
+    principal autenticado e relógio do servidor, como em toda decisão desta cadeia.
+    """
+    return TakeoffItemIdentityLink(
+        kept=TakeoffItemAddress(plate_id=kept[0], item_id=kept[1]),
+        discarded=TakeoffItemAddress(plate_id=discarded[0], item_id=discarded[1]),
+        declared_by=declared_by,
+        declared_at=declared_at,
+        note=note,
+    )
+
+
+NO_CODE_DECISIONS_NOTES: Final = (
+    "Conjunto derivado e nunca gravado: esta folha da praça não tem decisão de código "
+    "nenhuma registrada.",
+    "Nada aqui foi confirmado por ninguém; ele existe só para que o portão do boletim nomeie "
+    "os itens que faltam decidir, em vez de recusar a praça sem dizer onde.",
+)
+"""Ressalvas do conjunto VAZIO de códigos de uma folha. Ver `no_code_decisions`."""
+
+
+def no_code_decisions(packet: TakeoffPacket, catalog: PriceCatalog) -> CodeAssignmentSet:
+    """O conjunto de códigos de uma folha que ainda não tem NENHUMA decisão registrada.
+
+    Existe por uma razão de ordem, não de conveniência. Desde a T4d cada folha TEM onde
+    guardar o conjunto dela (`worksite_plate_assignments_json`), mas a folha extraída e
+    revisada em que ninguém decidiu código nenhum continua sendo estado normal — e o boletim
+    da praça exige um conjunto POR folha para poder ser montado. Recusar aqui, do lado da
+    rota, adiantaria a recusa e trocaria os códigos do domínio pelos desta camada.
+
+    Com o conjunto vazio, quem recusa continua sendo `build_worksite_takeoff_bulletins`, na
+    ordem dele: folha pendente de revisão sai como `WORKSITE_TAKEOFF_PLATE_PENDING` (o portão
+    da praça, que vem primeiro), e folha revisada sem código sai como `CALC_ASSIGNMENT_MISSING`
+    NOMEANDO os itens. As duas respostas são as que o orçamentista precisa — nenhuma delas é
+    um boletim pela metade.
+
+    Ele **nunca é persistido** e nunca sai numa resposta: é insumo do builder, vive dentro de
+    uma chamada e morre nela. As ressalvas dizem exatamente isso, para que um conjunto vazio
+    que vazasse para algum lugar não pudesse ser lido como decisão de ninguém.
+    """
+    return CodeAssignmentSet(
+        plate_id=packet.plate_id,
+        page_number=packet.page_number,
+        image_sha256=packet.image_sha256,
+        catalog_sha256=catalog.source_sha256,
+        assignments=[],
+        safety_notes=list(NO_CODE_DECISIONS_NOTES),
+    )
+
+
+def worksite_plate_inputs(
+    revision: ValuationRoundRevisionRecord | None,
+    plates: Sequence[ValuationRoundPlateRecord],
+    *,
+    catalog: PriceCatalog,
+    first_assignments: CodeAssignmentSet,
+    calc_matrix: CalcMatrix | None,
+) -> list[WorksitePlateInput]:
+    """O que cada folha da praça leva ao boletim, na ordem da praça (F-046 T4c/T4d).
+
+    Cada folha entra com o conjunto de códigos DELA — é o que a decisão 6 do ADR-0057 chama de
+    consumir a UNIÃO dos conjuntos: `CodeAssignmentSet` continua sendo por prancha, e o
+    boletim da praça é montado com um por folha. A primeira folha entra com o conjunto que a
+    rota já tem em mãos (`first_assignments`), e por isso a praça de UMA folha sai byte a byte
+    igual à de sempre.
+
+    Folha ainda sem decisão nenhuma entra com `no_code_decisions`, e não é recusada aqui: quem
+    recusa continua sendo o domínio, na ordem dele e nomeando os itens que faltam
+    (`CALC_ASSIGNMENT_MISSING`). Adiantar a recusa nesta camada trocaria os códigos do domínio
+    pelos daqui.
+
+    A matriz posta no build fica só na primeira folha, e não é espalhada pelas outras: a
+    `CalcMatrix` cita `source_item_id` de UM pacote (ADR-0053), e repeti-la nas demais faria
+    cada folha ser cobrada por uma memória escrita sobre os itens de outra.
+
+    **Pressupõe `require_worksite_takeoff` já chamado**: é ele que garante que toda folha da
+    praça tem pacote, e por isso a indexação abaixo não trata ausência. Chamar esta função
+    antes dele levantaria `KeyError` em vez da recusa `ROUND_STAGE_NOT_READY` que nomeia as
+    folhas que faltam.
+    """
+    packets = worksite_packets(revision)
+    decided = plate_assignments(revision)
+    inputs: list[WorksitePlateInput] = []
+    for plate in plates:
+        packet = packets[plate.plate_id]
+        first = plate.position <= 1
+        stored = decided.get(plate.plate_id)
+        # `is None` explícito, e não `or`: um conjunto sem nenhuma decisão dentro é um conjunto
+        # que EXISTE, e trocá-lo pelo derivado apagaria as ressalvas que o orçamentista gravou.
+        assignments = (
+            first_assignments
+            if first
+            else (no_code_decisions(packet, catalog) if stored is None else stored)
+        )
+        inputs.append(
+            WorksitePlateInput(
+                packet=packet,
+                assignments=assignments,
+                calc_matrix=calc_matrix if first else None,
+            )
+        )
+    return inputs
+
+
+def _parcel_payload(plate_id: str, item: TakeoffItem) -> dict[str, Any]:
+    """Uma leitura da praça como a prévia da fusão a mostra, com o decimal como TEXTO.
+
+    Quantidade é `Decimal` exato neste contexto (ADR-0016): um número de JSON devolveria ao
+    cliente um binário aproximado da casa decimal escrita na legenda. Quantidade ausente é
+    `null`, nunca `"0"` — zero é um valor, ausência não.
+    """
+    return {
+        "plate_id": plate_id,
+        "item_id": item.id,
+        "label": item.label,
+        "unit": item.unit,
+        "status": item.status.value,
+        "quantity": None if item.quantity is None else str(item.quantity),
+    }
+
+
+def identity_link_preview(
+    worksite: WorksiteTakeoff,
+    packets: Mapping[str, TakeoffPacket],
+    *,
+    kept: TakeoffItemAddress,
+    discarded: TakeoffItemAddress,
+) -> dict[str, Any]:
+    """O efeito da fusão declarada no total da praça, ANTES de qualquer gravação (F-046 T4c).
+
+    A conta é do servidor, e é por isso que esta rota existe: a tela não soma
+    (`apps/web/AGENTS.md`), e sem uma prévia calculada aqui a orçamentista só descobriria o
+    efeito do vínculo depois de declará-lo — que é exatamente a decisão que o pacote de design
+    quis tornar informada.
+
+    O que a fusão faz ao total é uma coisa só e é aritmética: a leitura absorvida deixa de
+    contar, e a que fica governa (ADR-0057 D4). Então `total_before` é a soma das duas leituras
+    e `total_after` é a quantidade da que fica.
+
+    **Unidade divergente não é somada.** Duas leituras em `m2` e `m` não têm soma, e imprimir
+    uma seria fabricar um número com aparência de conta. Nesse caso os dois totais saem `null`
+    com `unit_mismatch = true`, e as duas parcelas continuam à vista para que a orçamentista
+    veja o que declarou. O mesmo vale para leitura ainda sem quantidade.
+
+    `worksite` já chega montado COM o vínculo candidato, então as recusas da T1 — vínculo dentro
+    da mesma folha, alvo inexistente, cadeia de vínculos — já aconteceram antes daqui: a prévia
+    nunca pode dizer "pode" para o que a declaração recusaria.
+    """
+    kept_item = _packet_item(packets, kept)
+    discarded_item = _packet_item(packets, discarded)
+    quantities = (kept_item.quantity, discarded_item.quantity)
+    comparable = kept_item.unit == discarded_item.unit and None not in quantities
+    total_before = (
+        None
+        if not comparable
+        else str(cast(Decimal, kept_item.quantity) + cast(Decimal, discarded_item.quantity))
+    )
+    total_after = None if not comparable else str(kept_item.quantity)
+    return {
+        "worksite_key": worksite.worksite_key,
+        "kept": _parcel_payload(kept.plate_id, kept_item),
+        "discarded": _parcel_payload(discarded.plate_id, discarded_item),
+        "unit_mismatch": kept_item.unit != discarded_item.unit,
+        "total_before": total_before,
+        "total_after": total_after,
+    }
+
+
+def _packet_item(packets: Mapping[str, TakeoffPacket], address: TakeoffItemAddress) -> TakeoffItem:
+    """O item apontado pelo endereço da praça; a existência já foi conferida pelo consolidado."""
+    for item in packets[address.plate_id].items:
+        if item.id == address.item_id:
+            return item
+    raise ValuationValidationError(  # pragma: no cover - `build_worksite_takeoff` já recusou
+        "WORKSITE_LINK_UNKNOWN_TARGET",
+        "vínculo de identidade aponta para item que não existe no pacote da prancha",
+        {"addresses": [f"{address.plate_id}:{address.item_id}"]},
+    )
+
+
+def worksite_state(
+    round_record: ValuationRoundRecord,
+    revision: ValuationRoundRevisionRecord | None,
+    plates: Sequence[ValuationRoundPlateRecord],
+) -> dict[str, Any]:
+    """A praça como a tela a lê: as folhas, o estado de cada uma e o consolidado.
+
+    Leitura TOLERANTE, como o resto do estado da rodada: consolidado que não monta sai
+    ausente com o código da recusa, e não derruba a tela. Quem recusa de verdade é a
+    declaração do vínculo e o boletim, que é onde a resposta importa.
+
+    A tolerância cobre também o artefato gravado que deixou de validar — a mesma regra que
+    `readable_valuation` já segue: ele sai como AUSENTE, com o código dizendo por quê, em vez
+    de derrubar a praça inteira antes de o orçamentista chegar nela.
+    """
+    unreadable: str | None = None
+    try:
+        packets = worksite_packets(revision)
+        links = identity_links_of(revision)
+    except ValidationError:
+        packets, links = {}, []
+        unreadable = "DOMAIN_VALIDATION_FAILED"
+    registrations = plate_registrations(revision)
+    sheets: list[dict[str, Any]] = []
+    for plate in plates:
+        packet = packets.get(plate.plate_id)
+        registered = (
+            frozenset[str]()
+            if packet is None
+            else registered_item_ids(registrations.get(plate.plate_id))
+        )
+        sheets.append(
+            {
+                "plate_id": plate.plate_id,
+                "position": plate.position,
+                "source_sha256": plate.source_sha256,
+                "page_number": plate.page_number,
+                # Por folha desde a T4: duas folhas podem vir de PDFs diferentes, e a
+                # contagem da raiz descreveria o documento de uma como se fosse o das outras.
+                "page_count": plate.page_count,
+                # O estado da extração é DA FOLHA (T4). A raiz continua tendo o dela, agora
+                # derivado destes: é isso que faz uma folha que falha não derrubar as demais.
+                "extraction_status": plate.extraction_status,
+                "extraction_failure_code": plate.extraction_failure_code,
+                "extraction_updated_at": (
+                    None
+                    if plate.extraction_updated_at is None
+                    else plate.extraction_updated_at.isoformat()
+                ),
+                "takeoff_present": packet is not None,
+                "packet_sha256": (
+                    None if packet is None else document_digest(packet.model_dump(mode="json"))
+                ),
+                "review_status": None if packet is None else review_status(packet),
+                "item_count": None if packet is None else len(packet.items),
+                "pending_items": None if packet is None else len(packet.pending_items()),
+                **({} if packet is None else anchor_counts(packet, registered)),
+            }
+        )
+    consolidated: dict[str, Any] = {
+        "present": False,
+        "worksite_takeoff_sha256": None,
+        "document": None,
+        "pending_plate_ids": pending_worksite_plates(plates, packets),
+        "refusal_code": None,
+    }
+    if unreadable is not None:
+        consolidated["refusal_code"] = unreadable
+    else:
+        try:
+            worksite = require_worksite_takeoff(round_record, revision, plates)
+        except RoundRefusal as refusal:
+            consolidated["refusal_code"] = refusal.code
+        except ValuationValidationError as error:
+            consolidated["refusal_code"] = error.code
+        else:
+            document = worksite.model_dump(mode="json")
+            consolidated["present"] = True
+            consolidated["document"] = document
+            consolidated["worksite_takeoff_sha256"] = document_digest(document)
+    return {
+        "round_id": round_record.id,
+        "version": round_record.version,
+        "worksite_key": round_record.worksite_key,
+        "worksite_name": round_record.worksite_name,
+        "plate_limit": WORKSITE_PLATE_LIMIT,
+        "plates": sheets,
+        "identity_links": [link.model_dump(mode="json") for link in links],
+        "consolidated": consolidated,
+    }
 
 
 def current_stage(
     round_record: ValuationRoundRecord,
     revision: ValuationRoundRevisionRecord | None,
+    *,
+    has_plate: bool,
 ) -> str:
     """Etapa mais avançada que a rodada alcançou, para a linha da listagem.
+
+    `has_plate` entra por parâmetro porque a folha virou tabela filha (F-046) e a listagem
+    não pode fazer uma query por linha: quem lista carrega a presença de folha das rodadas da
+    página de uma vez só e passa a resposta para cá.
 
     É leitura por PRESENÇA de artefato, na ordem da cadeia — o mesmo critério do estado por
     etapa, condensado num rótulo só. A extração não aparece aqui: ela é um estado próprio da
@@ -653,7 +1667,7 @@ def current_stage(
             return STAGE_CODE_ASSIGNMENTS
         if revision.takeoff_packet_json is not None:
             return STAGE_TAKEOFF
-    if round_record.plate_object_key is not None:
+    if has_plate:
         return STAGE_PLATE
     return STAGE_CREATED
 
@@ -1194,6 +2208,7 @@ def _contracted_prices(stored: Mapping[str, Any]) -> list[dict[str, Any]]:
 def round_state_payload(
     round_record: ValuationRoundRecord,
     revision: ValuationRoundRevisionRecord | None,
+    plates: Sequence[ValuationRoundPlateRecord],
 ) -> dict[str, Any]:
     """Estado da rodada por etapa, espelhando o `/state` do servidor de medição.
 
@@ -1268,10 +2283,23 @@ def round_state_payload(
         # período e código fora do contrato não são verificados.
         "contracted": _contracted_state(round_record),
         "artifacts": digests,
+        # A PRIMEIRA folha da praça, que é a folha única da rodada de sempre: este bloco
+        # responde exatamente como antes da F-046 para a praça de uma folha. Quantas folhas
+        # a praça tem, e o estado de cada uma, é o bloco `worksite` e a rota da praça.
         "plate": {
-            "present": round_record.plate_object_key is not None,
-            "source_sha256": round_record.plate_source_sha256,
-            "page_count": round_record.plate_page_count,
+            "present": bool(plates),
+            "source_sha256": plates[0].source_sha256 if plates else None,
+            # Da FOLHA desde a T4, e não mais da raiz: o valor é o mesmo para a praça de uma
+            # folha (a raiz continua sendo escrita como espelho dela), e passa a ser o certo
+            # quando a praça tem mais de uma — a raiz descreveria o PDF da primeira.
+            "page_count": plates[0].page_count if plates else None,
+        },
+        "worksite": {
+            "plate_count": len(plates),
+            "plate_ids": [plate.plate_id for plate in plates],
+            "identity_link_count": len(
+                (None if revision is None else revision.worksite_identity_links_json) or []
+            ),
         },
         "extraction": {
             "status": round_record.extraction_status,

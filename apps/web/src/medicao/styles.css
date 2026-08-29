@@ -1392,3 +1392,278 @@ p {
   text-decoration: line-through;
   color: var(--ink-secondary);
 }
+
+/*
+ * A praça de várias folhas (F-046, ADR-0057).
+ *
+ * O índigo é o matiz que sobrava na medição — verde é contratado/confirmado, âmbar é
+ * proposto/aviso, vermelho é ambíguo/recusa, cinza é rejeitado, roxo é reajustado (F-039)
+ * e petróleo é re-ratificado (F-040) —, e ele veste as duas coisas novas: o consolidado da
+ * praça e o vínculo de identidade. Índigo e roxo são vizinhos no matiz e nunca aparecem
+ * juntos aqui; se um dia a mesma tela mostrar reajuste e praça ao mesmo tempo, a distinção
+ * entre os dois precisa ser reavaliada. É dívida declarada, não descuido.
+ *
+ * A cor continua não sendo o único indicador: o estado da folha tem símbolo próprio e
+ * texto por extenso no HTML, e a folha em foco diz "em foco" antes de ganhar a barra.
+ */
+.jornada-medicao .folhas {
+  margin: 0 0 12px;
+}
+
+.jornada-medicao .folhas-faixa {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.jornada-medicao .folha-chip {
+  flex: 1 1 220px;
+  border: 1px solid var(--line);
+  border-left: 4px solid transparent;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.jornada-medicao .folha-chip.em-foco {
+  border-color: #c3c8e8;
+  border-left-color: #3b4a94;
+  background: #eef0fa;
+}
+
+.jornada-medicao .folha-botao {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+}
+
+.jornada-medicao .folha-foco {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #242c66;
+}
+
+.jornada-medicao .folha-titulo {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.jornada-medicao .folha-id {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+.jornada-medicao .folha-estado {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.jornada-medicao .folha-revisada .folha-estado {
+  color: var(--accent-text);
+}
+
+.jornada-medicao .folha-pendente .folha-estado {
+  color: #6b3a06;
+}
+
+.jornada-medicao .folha-extraindo .folha-estado,
+.jornada-medicao .folha-nao-extraida .folha-estado {
+  color: #5a625c;
+}
+
+.jornada-medicao .folha-falhou .folha-estado {
+  color: #7a1212;
+}
+
+.jornada-medicao .folha-resumo {
+  font-size: 0.8rem;
+  color: var(--ink-secondary);
+}
+
+/* O lote: páginas que viram folha, folhas que vão para a leitura paga. Nada marcado. */
+.jornada-medicao .acrescentar-folhas,
+.jornada-medicao .ler-folhas {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.jornada-medicao .paginas-grade {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.jornada-medicao .pagina-opcao {
+  flex: 1 1 200px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.jornada-medicao .pagina-opcao.marcada {
+  border-color: #c3c8e8;
+  background: #eef0fa;
+}
+
+.jornada-medicao .campo-checkbox {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 9px 11px;
+  font-size: 0.85rem;
+}
+
+.jornada-medicao .pagina-numero {
+  font-weight: 600;
+}
+
+.jornada-medicao .pagina-estado {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+}
+
+/* O consolidado da praça e o vínculo de identidade: a família índigo. */
+.jornada-medicao .praca-lista {
+  margin: 8px 0;
+  padding: 0 0 0 4px;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.jornada-medicao .praca-vinculo {
+  border-left: 3px solid #3b4a94;
+  padding: 6px 10px;
+  background: #eef0fa;
+  border-radius: 0 6px 6px 0;
+}
+
+.jornada-medicao .praca-vinculo p {
+  margin: 2px 0;
+  font-size: 0.85rem;
+}
+
+.jornada-medicao .praca-selo {
+  font-weight: 700;
+  color: #242c66;
+}
+
+.jornada-medicao .praca-codigo {
+  font-size: 0.78rem;
+}
+
+/* Outra origem: o PDF separado que vira mais uma folha da mesma praça. */
+.jornada-medicao .outra-origem {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+/*
+ * Os números da praça e o ato de declarar identidade (F-046 T5b).
+ *
+ * Mesma família índigo do consolidado, e pelo mesmo motivo: os dois falam da praça, não da
+ * folha. Nada aqui usa cor para dizer estado — a folha que ficou de fora do boletim é
+ * `banner-erro` com `role="alert"`, e a folha em foco na codificação diz "codificando
+ * esta" antes de ganhar a barra.
+ */
+.jornada-medicao .praca-numeros {
+  margin: 14px 0;
+}
+
+.jornada-medicao .praca-folha-numeros {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 4px solid #3b4a94;
+  border-radius: 0 8px 8px 0;
+  background: #ffffff;
+}
+
+.jornada-medicao .praca-folha-numeros h4,
+.jornada-medicao .praca-folha-numeros h5 {
+  margin: 0 0 8px;
+}
+
+.jornada-medicao .codificacao-folhas {
+  margin: 0 0 14px;
+}
+
+.jornada-medicao .codificacao-folha {
+  border: 1px solid var(--line);
+  border-left: 4px solid transparent;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.jornada-medicao .codificacao-folha.em-foco {
+  border-color: #c3c8e8;
+  border-left-color: #3b4a94;
+  background: #eef0fa;
+}
+
+.jornada-medicao .declarar-identidade {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.jornada-medicao .vinculo-lados {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.jornada-medicao .vinculo-lado {
+  flex: 1 1 260px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.jornada-medicao .vinculo-lado legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.jornada-medicao .previa-vinculo {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-left: 3px solid #3b4a94;
+  border-radius: 0 6px 6px 0;
+  background: #eef0fa;
+}
+
+.jornada-medicao .previa-parcelas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.jornada-medicao .previa-parcela {
+  flex: 1 1 240px;
+}
+
+.jornada-medicao .previa-parcela p {
+  margin: 2px 0;
+  font-size: 0.85rem;
+}
+
+.jornada-medicao .previa-tabela {
+  margin: 8px 0;
+}

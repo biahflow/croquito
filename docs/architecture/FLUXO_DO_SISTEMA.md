@@ -138,13 +138,18 @@ Todo trabalho caro é comando na fila. O despachante é único
 | `solve_trace_scene` | traçado em lote e solver, produzindo cena métrica |
 | `export_scene_package` | gera o DXF, reabre, audita, renderiza e empacota |
 | `answer_chat_turn` | turno da conversa sobre a folha |
-| `extract_valuation_plate` | leitura paga da legenda da prancha, cadeia de medição |
+| `extract_valuation_plate` | leitura paga da legenda de UMA folha da praça, cadeia de medição |
 | `extract_estimate_plate` | mesma leitura, cadeia de orçamento |
 | `rerender_takeoff_overlay` | redesenha o overlay do takeoff (medição) |
 | `rerender_estimate_takeoff_overlay` | idem, orçamento |
 
 Comando desconhecido levanta `UnroutableMessageError`. Na entrega por push isso vira
 descarte explícito em vez de reentrega infinita.
+
+Desde a F-046 a praça da medição tem N folhas, e `extract_valuation_plate` é de **uma**
+folha: o envelope carrega `plate_id`, o lote publica um comando por folha escolhida e cada
+uma tem o seu claim atômico. É isso que faz uma folha que falha não derrubar as demais — o
+estado da extração vive na folha, e o da rodada é derivado dele.
 
 ## 5. Cadeia do croqui, etapa por etapa
 
@@ -174,6 +179,27 @@ profunda é o [Valuation Context](VALUATION_CONTEXT.md).
 O caminho comum é: importar catálogo de preços → extrair a legenda da prancha (takeoff) →
 revisar item a item → sugerir e confirmar **os** códigos do catálogo → **fechar o pacote de
 serviços de cada elemento** → montar o documento.
+
+Desde a F-046 a praça pode ter **N folhas** — planta geral, detalhes, cortes —, e a extração
+é por folha: quais páginas viram folha é ato humano em lote (`POST .../plates`, nada marcado
+por padrão), quais folhas vão para a extração paga é outro (`POST .../plates/extractions`,
+com o número de folhas declarado antes de gastar). Cada folha tem seu `TakeoffPacket`, seu
+overlay e seu estado de extração; o consolidado da praça é derivado delas
+([ADR-0057](../adr/0057-multiplas-pranchas-por-praca-na-extracao-de-legenda.md)).
+
+A **medição também é da praça**, e não da primeira folha: `POST .../calc` monta o consolidado
+e mede as N folhas — um boletim por folha, com a folha de origem preservada em cada memória,
+o total saindo da consolidação por código, e a leitura declarada como o mesmo elemento físico
+contando uma vez. Folha ainda pendente de revisão **bloqueia** o boletim inteiro, nomeando
+qual: meia praça somada parece uma praça inteira. A leitura da prancha, a do takeoff e a do
+overlay aceitam `plate_id`; sem ele, respondem pela primeira folha, como antes da praça.
+
+A **etapa de código também é por folha** (T4d): shortlist, decisão, fechamento e revogação
+aceitam `plate_id`, e cada folha guarda o conjunto dela — a primeira nas colunas de sempre, as
+demais em mapas por `plate_id`. O boletim consome a **união** dos conjuntos, porque
+`CodeAssignmentSet` é por prancha e uma folha nunca é medida com os códigos de outra. É esta
+etapa que faz a praça de N folhas **fechar**: sem ela, uma praça inteiramente revisada recusava
+em `CALC_ASSIGNMENT_MISSING` e nunca virava boletim.
 
 O plural e o fechamento são do [ADR-0053](../adr/0053-cardinalidade-n-n-elemento-servico.md):
 um elemento da prancha dispara N serviços (`PISO EM CONCRETO`, medido uma vez, alimenta
@@ -220,6 +246,7 @@ não defeito.
 | `CALC_CONTRIBUTION_*` | `valuation/models.py` | a base declarada da parcela não bate com o que ela implica: canteiro com elemento de origem, parcela derivada sem dizer de qual serviço vem, código de origem fora de parcela derivada, parcela de elemento sem nomear o elemento, ou código de origem sem forma de código de catálogo |
 | `SITE_SETUP_PARAMETER_MISSING` / `SITE_SETUP_CODE_ABSENT` | `valuation/site_setup.py`, **só na aplicação** do acervo de canteiro | o acervo cita parâmetro de obra que a rodada não declarou (a recusa **nomeia todos**), ou código que o catálogo da cascata não tem (nomeia o código). Falha fechada: nenhuma parcela nasce parcialmente. A **pré-visualização não recusa** por nenhum dos dois desde 2026-08-28 (F-042 T4): ela devolve todas as parcelas e marca as bloqueadas (`missing_parameters`, `code_absent`, `blocked_parcel_ids`), porque recusar a lista de onde a saída mandava remover parcelas era beco sem saída. Prever não é aplicar: a leitura que marca não grava nada |
 | `PRECEDENT_SEED_*` | `croquito_api/precedents.py`, na **semeadura** do índice de precedentes (F-044) | a praça semeada já é rodada real do tenant (`WORKSITE_CONFLICT` — misturar as duas origens sob a mesma chave juntaria o histórico importado de uma planilha com o que o sistema gravou dos atos da orçamentista), o pacote foi normalizado por outra estratégia (`STRATEGY_UNSUPPORTED` — duas chaves para o mesmo rótulo, e a metade errada nunca reencontraria nada) ou a normalização declarada não bate com a que o servidor calcula (`NORMALIZATION_MISMATCH`, nomeando as **posições**, nunca os rótulos). A recusa fica do lado da semeadura, e **não** do fechamento de pacote: semear é importação deliberada, que pode ser refeita; fechar o pacote é o ato central da jornada, e travá-lo pela contabilidade de um índice seria a ferramenta impedindo o trabalho |
+| `WORKSITE_NAME_DOES_NOT_FIT_SHEET` | `valuation/template.py`, chamado por `valuation/worksite_calc.py` na **composição** do boletim | o nome da obra (com o sufixo da folha, na praça de N folhas) não cabe no nome de aba nem na forma curta. A recusa fica onde o rótulo **nasce**, e não na publicação do `.xlsx`: lá a praça inteira já estaria montada, servida e aprovada, e o humano não teria mais o que fazer a não ser refazer |
 | `VALUATION_EXPORT_BLOCKED` | `valuation/models.py` | medição não aprovada, aprovação que não casa com o conteúdo, período fora de sequência, código fora do contrato, preço/unidade divergentes do contrato ou saldo estourado |
 | Auditoria da planilha | `valuation/canonical.py` | reabre o `.xlsx`, recanonicaliza e compara célula a célula; divergência não publica |
 | Entitlement de IA | rotas de extração | tenant sem autorização contratual — recusa **antes** de enfileirar |

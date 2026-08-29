@@ -293,6 +293,39 @@
         "title": "AnnotateNoteRequest",
         "type": "object"
       },
+      "AppendPlatesRequest": {
+        "additionalProperties": false,
+        "description": "Ato em lote: quais páginas do documento enviado viram folhas da praça (F-046 T4).\n\n`page_numbers` é EXIGIDO e não tem valor padrão. Não é rigor decorativo: promover todas\nas páginas automaticamente encheria a praça de quadro de áreas e carimbo, e foi recusado\nnominalmente no pacote de design aprovado. A escolha é humana, explícita e em lote.\n\nO teto de 12 páginas por requisição é o teto da praça (`WORKSITE_PLATE_LIMIT`) repetido na\nfronteira: um corpo com mil páginas seria recusado de todo jeito, e recusá-lo antes de\nchegar ao domínio evita carregar a lista para nada.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "page_numbers": {
+            "items": {
+              "minimum": 1.0,
+              "type": "integer"
+            },
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Page Numbers",
+            "type": "array"
+          },
+          "upload_id": {
+            "format": "uuid",
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "base_version",
+          "page_numbers"
+        ],
+        "title": "AppendPlatesRequest",
+        "type": "object"
+      },
       "AppliedSpanOut": {
         "additionalProperties": false,
         "description": "Onde, em metros da prancha, cada cota aplicada ancorou (`start_m <= end_m`).",
@@ -1420,6 +1453,19 @@
               }
             ],
             "title": "Note"
+          },
+          "plate_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plate Id"
           }
         },
         "required": [
@@ -1976,6 +2022,34 @@
         "title": "CreatePlateExtractionRequest",
         "type": "object"
       },
+      "CreatePlatesExtractionRequest": {
+        "additionalProperties": false,
+        "description": "Ato em lote: quais folhas da praça vão para a extração paga (F-046 T4).\n\n`plate_ids` é exigido e nada vem marcado por padrão, pelo mesmo motivo da promoção: cada\nfolha é uma chamada paga, e o número delas é escolha declarada de quem paga.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "plate_ids": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Plate Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "base_version",
+          "plate_ids"
+        ],
+        "title": "CreatePlatesExtractionRequest",
+        "type": "object"
+      },
       "CreateProposalCalibrationRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2503,6 +2577,37 @@
           "justification"
         ],
         "title": "DecideProposalRequest",
+        "type": "object"
+      },
+      "DeclareIdentityLinkRequest": {
+        "additionalProperties": false,
+        "description": "Ato humano: duas leituras de folhas diferentes são o MESMO elemento físico.\n\nO corpo declara O QUE é o mesmo elemento e QUAL das duas leituras governa a quantidade\n(`kept`, \"a parcela que fica\"). Autor e instante NÃO viajam aqui: vêm do JWT e do relógio\ndo servidor, como em toda decisão desta cadeia — um corpo que carimbasse quem declarou\ndeixaria o cliente escolher a procedência do próprio ato.\n\nA nota é obrigatória porque o vínculo muda o total da praça: quem confere depois precisa\nler por que duas leituras viraram uma.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "discarded": {
+            "$ref": "#/components/schemas/TakeoffItemAddressRequest"
+          },
+          "kept": {
+            "$ref": "#/components/schemas/TakeoffItemAddressRequest"
+          },
+          "note": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_version",
+          "kept",
+          "discarded",
+          "note"
+        ],
+        "title": "DeclareIdentityLinkRequest",
         "type": "object"
       },
       "DeclaredChainResponse": {
@@ -6131,6 +6236,24 @@
         "title": "PresignUploadResponse",
         "type": "object"
       },
+      "PreviewIdentityLinkRequest": {
+        "additionalProperties": false,
+        "description": "O vínculo que a orçamentista está considerando, para ver o efeito ANTES de declarar.\n\nEspelho de `DeclareIdentityLinkRequest` sem o que só o ato tem: sem `base_version` — nada\né gravado e a versão da rodada não anda, como no `GET` da shortlist e na pré-visualização\ndo acervo de canteiro — e sem `note`, porque a justificativa é do ato, não da simulação.\n\nÉ `POST`, e não `GET`, pelo mesmo motivo da pré-visualização do acervo: o endereço das\nduas leituras viaja no corpo, e pô-lo em query string publicaria identificadores de\nconteúdo da prancha do cliente na URL, que é o que os logs de infraestrutura registram.",
+        "properties": {
+          "discarded": {
+            "$ref": "#/components/schemas/TakeoffItemAddressRequest"
+          },
+          "kept": {
+            "$ref": "#/components/schemas/TakeoffItemAddressRequest"
+          }
+        },
+        "required": [
+          "kept",
+          "discarded"
+        ],
+        "title": "PreviewIdentityLinkRequest",
+        "type": "object"
+      },
       "PriceAdjustmentRequest": {
         "additionalProperties": false,
         "description": "Declaração de reajuste na abertura da rodada (F-039, ADR-0055).\n\nO reajuste é do CONTRATO, e por isso só existe no caminho que tem contratado: rodada\naberta por upload de catálogo não tem consolidado a reajustar. A declaração é gravada com\no consolidado e é imutável na rodada, como ele (ADR-0048, decisão 7).\n\nO carimbo de identidade não entra por aqui: `declared_by` e `declared_at` vêm do\n`Principal` e do relógio do servidor, como em toda decisão da cadeia.\n\n`factor` viaja como TEXTO pelo mesmo motivo da quantidade do takeoff: fator é `Decimal`\nexato, e um `float` de JSON já teria perdido a escala escrita antes de chegar aqui.",
@@ -8714,6 +8837,19 @@
             "minItems": 1,
             "title": "Decisions",
             "type": "array"
+          },
+          "plate_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plate Id"
           }
         },
         "required": [
@@ -8721,6 +8857,30 @@
           "decisions"
         ],
         "title": "TakeoffDecisionRequest",
+        "type": "object"
+      },
+      "TakeoffItemAddressRequest": {
+        "additionalProperties": false,
+        "description": "Endereço de um item que atravessa a praça: o par `(plate_id, item_id)`.\n\n`item_id` só é único DENTRO do pacote de uma folha; sem a `plate_id` junto, duas folhas\nque cunharam o mesmo id seriam indistinguíveis (ADR-0057, decisão 5).",
+        "properties": {
+          "item_id": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Item Id",
+            "type": "string"
+          },
+          "plate_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Plate Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plate_id",
+          "item_id"
+        ],
+        "title": "TakeoffItemAddressRequest",
         "type": "object"
       },
       "TakeoffItemDecision": {
@@ -9276,6 +9436,55 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "ValuationCodeAssignmentRevocationRequest": {
+        "additionalProperties": false,
+        "description": "Retirada de um par `(elemento, código)` na medição, por folha da praça (F-046 T4d).\n\nExiste pelo mesmo motivo de `ValuationItemPackageClosureRequest`: a revogação é ato das\nduas jornadas, e só uma delas tem folhas.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "code": {
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "item_id": {
+            "pattern": "^ti_[a-f0-9]{16}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "note": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Note",
+            "type": "string"
+          },
+          "plate_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plate Id"
+          }
+        },
+        "required": [
+          "base_version",
+          "item_id",
+          "code",
+          "note"
+        ],
+        "title": "ValuationCodeAssignmentRevocationRequest",
+        "type": "object"
+      },
       "ValuationExtractionResponse": {
         "additionalProperties": false,
         "properties": {
@@ -9305,6 +9514,54 @@
           "status"
         ],
         "title": "ValuationExtractionResponse",
+        "type": "object"
+      },
+      "ValuationItemPackageClosureRequest": {
+        "additionalProperties": false,
+        "description": "Fechamento de pacote na medição, que desde a F-046 acontece POR FOLHA da praça.\n\nModelo próprio, e não um campo a mais no compartilhado: `ItemPackageClosureRequest` serve\nàs duas jornadas, e o orçamento-base não tem praça nenhuma. Acrescentar `plate_id` lá\ndeixaria a rota do orçamento aceitar um campo que ela ignora em silêncio — que é\nexatamente o tipo de contrato que o `extra=\"forbid\"` desta API existe para não ter.",
+        "properties": {
+          "base_version": {
+            "minimum": 1.0,
+            "title": "Base Version",
+            "type": "integer"
+          },
+          "item_id": {
+            "pattern": "^ti_[a-f0-9]{16}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "plate_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plate Id"
+          }
+        },
+        "required": [
+          "base_version",
+          "item_id"
+        ],
+        "title": "ValuationItemPackageClosureRequest",
         "type": "object"
       },
       "ValuationOriginSummary": {
@@ -9457,6 +9714,120 @@
           "source_sha256"
         ],
         "title": "ValuationPlateResponse",
+        "type": "object"
+      },
+      "ValuationPlateSummary": {
+        "additionalProperties": false,
+        "description": "Uma folha da praça como o lote a devolve: identidade, origem e página.",
+        "properties": {
+          "page_number": {
+            "title": "Page Number",
+            "type": "integer"
+          },
+          "plate_id": {
+            "title": "Plate Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "source_sha256": {
+            "title": "Source Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plate_id",
+          "position",
+          "page_number",
+          "source_sha256"
+        ],
+        "title": "ValuationPlateSummary",
+        "type": "object"
+      },
+      "ValuationPlatesExtractionResponse": {
+        "additionalProperties": false,
+        "description": "O lote aceito, com o número de folhas que serão extraídas declarado na resposta.\n\n`plate_count` existe para ser lido ANTES de a primeira chamada paga acontecer: o comando\nsó sai enfileirado, o worker é quem paga, e esta é a última fronteira em que o número de\nextrações autorizadas pode ser confirmado por quem as autorizou.",
+        "properties": {
+          "extraction_id": {
+            "format": "uuid",
+            "title": "Extraction Id",
+            "type": "string"
+          },
+          "plate_count": {
+            "title": "Plate Count",
+            "type": "integer"
+          },
+          "plate_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Plate Ids",
+            "type": "array"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "round_id",
+          "version",
+          "extraction_id",
+          "status",
+          "plate_count",
+          "plate_ids"
+        ],
+        "title": "ValuationPlatesExtractionResponse",
+        "type": "object"
+      },
+      "ValuationPlatesResponse": {
+        "additionalProperties": false,
+        "description": "As folhas acrescentadas e o tamanho da praça depois do ato.\n\n`plate_count` e `plate_limit` viajam juntos porque é a distância entre os dois que diz à\ntela quantas folhas ainda cabem — e cada folha que cabe é uma extração paga a mais.",
+        "properties": {
+          "appended": {
+            "items": {
+              "$ref": "#/components/schemas/ValuationPlateSummary"
+            },
+            "title": "Appended",
+            "type": "array"
+          },
+          "plate_count": {
+            "title": "Plate Count",
+            "type": "integer"
+          },
+          "plate_limit": {
+            "title": "Plate Limit",
+            "type": "integer"
+          },
+          "round_id": {
+            "format": "uuid",
+            "title": "Round Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "round_id",
+          "version",
+          "plate_count",
+          "plate_limit",
+          "appended"
+        ],
+        "title": "ValuationPlatesResponse",
         "type": "object"
       },
       "ValuationRoundPage": {
@@ -16800,7 +17171,7 @@
     },
     "/v1/valuation-rounds/{round_id}/calc": {
       "post": {
-        "description": "Constrói boletim e memória de cálculo do takeoff confirmado e dos códigos decididos.\n\nA identidade da obra vem da RODADA (`worksite_key`, `worksite_name`,\n`period_number`, `reference_label`, `address`, `contract_label`), nunca do corpo:\nem `/v1` esses rótulos são colunas de `ValuationRoundRecord` e o corpo carrega só a\nguarda de concorrência.\n\n`calc_plan=None` de propósito: o plano de cálculo POR ITEM é artefato de DIRETÓRIO do\nservidor de medição e a rodada de `/v1` não o publica. A memória de cálculo que a\nrodada aceita é a `CalcMatrix` (ADR-0053, F-038 T8), que vem no CORPO do build: quando\npresente, o boletim funde por código e resolve dependência; ausente, cada item recebe\no bloco de quantidade direta que o próprio domínio gera — nunca uma receita suposta. A\nmatriz posta é validada aqui e persistida em `calc_matrix_json` da revisão nova, para\nauditoria, antes de alimentar o builder.\n\nEsta rota **não aprova nada**: aprovação nominal da medição é ato próprio, com\nportão de saldo e contrato, e não pertence à construção do boletim.\n\nO que ela faz, quando a cabeça já trazia uma aprovação, é LEVÁ-LA ADIANTE — e\npreservar não é aprovar. A aprovação carregada continua amarrada ao digest do\nconteúdo ANTIGO, então a medição recém-montada nasce com a aprovação caduca: a\nexportação recusa com `APPROVAL_CONTENT_MISMATCH` até um ato novo, e a tela mostra os\ndois digests lado a lado em vez de fingir que ninguém nunca assinou. Descartá-la aqui\napagaria em silêncio o fato de que uma aprovação existiu. Quem responde \"houve\naprovação antes?\" é a rota, que tem a revisão em mãos, e não o domínio:\n`build_worksite_valuation` continua montando medição sem aprovação nenhuma. Ver\n`carry_approval_forward`.\n\nDuas recusas se parecem e não são a mesma coisa. Conjunto de códigos ainda\ninexistente é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem, o orçamentista tem\no que fazer para sair dela. Conjunto existente com item confirmado sem decisão é\n`422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`: invariante do\ndomínio, e quem a levanta é `packages/valuation`. Catálogo com origem diferente do\nSCO fecha a medição licitada em `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (ADR-0027) —\nitem fora do contrato vira dossiê de aditivo, nunca preço de outra tabela.\n\nA guarda de `base_version` é mudança pretendida desta migração; ver\n`BuildValuationCalcRequest`.",
+        "description": "Constrói boletim e memória de cálculo da PRAÇA INTEIRA (F-046 T4c, ADR-0057).\n\nAté a T4c esta rota media a PRIMEIRA folha: numa praça de N folhas o boletim media\n`1/N` e não dizia nada — exatamente o erro que a F-046 existe para impedir. Agora ela\nmonta o consolidado das folhas gravadas e delega a `build_worksite_takeoff_valuation`:\num boletim por folha, com a folha de origem preservada em cada memória, o total da\npraça saindo da consolidação por código que a PLANILHA GERAL já faz, e a leitura\ndeclarada como o mesmo elemento físico contando UMA vez.\n\nPraça de uma folha responde byte a byte como antes: `build_worksite_takeoff_bulletins`\npassa chave e nome da praça intactos quando a praça tem uma folha só (decisão 8), e a\n`Valuation` resultante é a mesma que `build_worksite_valuation` produzia.\n\nDuas recusas da praça passam a ser alcançáveis por aqui, as duas do domínio e nesta\nordem: folha sem pacote extraído é `409 ROUND_STAGE_NOT_READY` nomeando as folhas, e\nfolha com item ainda por revisar é `422` com `WORKSITE_TAKEOFF_PLATE_PENDING`.\n\nA identidade da obra vem da RODADA (`worksite_key`, `worksite_name`,\n`period_number`, `reference_label`, `address`, `contract_label`), nunca do corpo:\nem `/v1` esses rótulos são colunas de `ValuationRoundRecord` e o corpo carrega só a\nguarda de concorrência.\n\n`calc_plan=None` de propósito: o plano de cálculo POR ITEM é artefato de DIRETÓRIO do\nservidor de medição e a rodada de `/v1` não o publica. A memória de cálculo que a\nrodada aceita é a `CalcMatrix` (ADR-0053, F-038 T8), que vem no CORPO do build: quando\npresente, o boletim funde por código e resolve dependência; ausente, cada item recebe\no bloco de quantidade direta que o próprio domínio gera — nunca uma receita suposta. A\nmatriz posta é validada aqui e persistida em `calc_matrix_json` da revisão nova, para\nauditoria, antes de alimentar o builder.\n\nEsta rota **não aprova nada**: aprovação nominal da medição é ato próprio, com\nportão de saldo e contrato, e não pertence à construção do boletim.\n\nO que ela faz, quando a cabeça já trazia uma aprovação, é LEVÁ-LA ADIANTE — e\npreservar não é aprovar. A aprovação carregada continua amarrada ao digest do\nconteúdo ANTIGO, então a medição recém-montada nasce com a aprovação caduca: a\nexportação recusa com `APPROVAL_CONTENT_MISMATCH` até um ato novo, e a tela mostra os\ndois digests lado a lado em vez de fingir que ninguém nunca assinou. Descartá-la aqui\napagaria em silêncio o fato de que uma aprovação existiu. Quem responde \"houve\naprovação antes?\" é a rota, que tem a revisão em mãos, e não o domínio:\n`build_worksite_valuation` continua montando medição sem aprovação nenhuma. Ver\n`carry_approval_forward`.\n\nDuas recusas se parecem e não são a mesma coisa. Conjunto de códigos ainda\ninexistente é `409 ROUND_STAGE_NOT_READY` — etapa fora de ordem, o orçamentista tem\no que fazer para sair dela. Conjunto existente com item confirmado sem decisão é\n`422 DOMAIN_VALIDATION_FAILED` com `CALC_ASSIGNMENT_MISSING`: invariante do\ndomínio, e quem a levanta é `packages/valuation`. Catálogo com origem diferente do\nSCO fecha a medição licitada em `BULLETIN_PRICE_ORIGIN_FORBIDDEN` (ADR-0027) —\nitem fora do contrato vira dossiê de aditivo, nunca preço de outra tabela.\n\nA guarda de `base_version` é mudança pretendida desta migração; ver\n`BuildValuationCalcRequest`.",
         "operationId": "build_valuation_calc_v1_valuation_rounds__round_id__calc_post",
         "parameters": [
           {
@@ -16965,7 +17336,7 @@
     },
     "/v1/valuation-rounds/{round_id}/code-assignments": {
       "get": {
-        "description": "Decisões de código da rodada e os itens confirmados que ainda esperam por uma.",
+        "description": "Decisões de código de uma folha e os itens dela que ainda esperam por uma.\n\n`plate_id` é OPCIONAL e a ausência é a leitura da PRIMEIRA folha, campo por campo como\nantes da praça (F-046 T4d). A etapa de código é POR FOLHA porque o conjunto é por\nprancha: `CodeAssignmentSet` carrega `plate_id`, `page_number` e `image_sha256`, e\n`pending_items` só faz sentido contra o pacote daquela folha (ADR-0057, decisão 6).",
         "operationId": "get_valuation_code_assignments_v1_valuation_rounds__round_id__code_assignments_get",
         "parameters": [
           {
@@ -16976,6 +17347,26 @@
               "format": "uuid",
               "title": "Round Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Folha da praça a ler. Ausente, a leitura é a da primeira folha — o comportamento de sempre (F-046).",
+            "in": "query",
+            "name": "plate_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Folha da praça a ler. Ausente, a leitura é a da primeira folha — o comportamento de sempre (F-046).",
+              "title": "Plate Id"
             }
           }
         ],
@@ -17016,7 +17407,7 @@
     },
     "/v1/valuation-rounds/{round_id}/code-assignments/closures": {
       "post": {
-        "description": "Declara COMPLETO o pacote de serviços de um item — o ato que a confirmação não faz.\n\nExiste porque a presença de um código deixou de significar que o elemento acabou.\nSem esta rota, um item com um de seis códigos ficaria indistinguível de um item\nresolvido, e o boletim sairia pela metade sem ninguém ser avisado.\n\nÉ rota própria, e não uma bandeira em `/decisions`, porque `/decisions` carrega UMA\ndecisão: um pacote de seis códigos nasce em seis chamadas, e a orçamentista não sabe\nde antemão qual será a última. Quem fecha afirma outra coisa, e afirmação separada\nmerece endpoint separado — inclusive para a auditoria poder distingui-las.\n\nA rota não confere quantos códigos o item tem: fechar é decisão de quem monta o\npacote. Item sem código confirmado, pacote já fechado e item fora do takeoff\ncontinuam sendo recusa do domínio.",
+        "description": "Declara COMPLETO o pacote de serviços de um item — o ato que a confirmação não faz.\n\nExiste porque a presença de um código deixou de significar que o elemento acabou.\nSem esta rota, um item com um de seis códigos ficaria indistinguível de um item\nresolvido, e o boletim sairia pela metade sem ninguém ser avisado.\n\nÉ rota própria, e não uma bandeira em `/decisions`, porque `/decisions` carrega UMA\ndecisão: um pacote de seis códigos nasce em seis chamadas, e a orçamentista não sabe\nde antemão qual será a última. Quem fecha afirma outra coisa, e afirmação separada\nmerece endpoint separado — inclusive para a auditoria poder distingui-las.\n\nA rota não confere quantos códigos o item tem: fechar é decisão de quem monta o\npacote. Item sem código confirmado, pacote já fechado e item fora do takeoff\ncontinuam sendo recusa do domínio.\n\n`plate_id` no corpo diz de QUAL folha da praça é o elemento (F-046 T4d); sem ele, a\nprimeira, exatamente como antes. Fechar é afirmação sobre o pacote de um elemento, e\nelemento mora numa prancha.",
         "operationId": "close_valuation_item_package_v1_valuation_rounds__round_id__code_assignments_closures_post",
         "parameters": [
           {
@@ -17050,7 +17441,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ItemPackageClosureRequest"
+                "$ref": "#/components/schemas/ValuationItemPackageClosureRequest"
               }
             }
           },
@@ -17093,7 +17484,7 @@
     },
     "/v1/valuation-rounds/{round_id}/code-assignments/decisions": {
       "post": {
-        "description": "Confirma ou rejeita o código de UM item, acumulando sobre o conjunto anterior.\n\nAcumular item a item é a semântica do domínio: é ele quem recusa a re-decisão\n(`ASSIGNMENT_ITEM_ALREADY_DECIDED`) e quem carrega adiante as confirmações já\nregistradas. A rota não confere código, unidade nem estado do item — ela só monta a\ndecisão com a identidade do `Principal` e o instante do servidor.",
+        "description": "Confirma ou rejeita o código de UM item, acumulando sobre o conjunto anterior.\n\nAcumular item a item é a semântica do domínio: é ele quem recusa a re-decisão\n(`ASSIGNMENT_ITEM_ALREADY_DECIDED`) e quem carrega adiante as confirmações já\nregistradas. A rota não confere código, unidade nem estado do item — ela só monta a\ndecisão com a identidade do `Principal` e o instante do servidor.\n\n`plate_id` no corpo diz em QUAL folha da praça o item foi lido (F-046 T4d); sem ele, a\nprimeira, exatamente como antes. O conjunto acumulado é o DAQUELA folha, e é gravado no\nlugar dela: um conjunto é por prancha (ADR-0057, decisão 6), e o boletim da praça\nconsome a união deles.",
         "operationId": "decide_valuation_item_code_v1_valuation_rounds__round_id__code_assignments_decisions_post",
         "parameters": [
           {
@@ -17170,7 +17561,7 @@
     },
     "/v1/valuation-rounds/{round_id}/code-assignments/revocations": {
       "post": {
-        "description": "Desfaz um código confirmado por engano, sem refazer a rodada (F-045, ADR-0061).\n\nAté esta rota, a etapa só sabia avançar: a identidade da decisão é o par\n`(item, código)`, re-decidir um par é recusado, e não há rollback de revisão em lugar\nnenhum da `/v1`. Um código confirmado errado custava a praça inteira.\n\nRevogar é **decisão nova**, e não edição do passado: a revisão anterior continua\ngravada com o par confirmado lá dentro, e o conjunto novo registra em `revocations`\nquem desfez, quando e por quê — para que quem lê o conjunto corrente distinga \"nunca\ndecidido\" de \"decidido e desfeito\" sem comparar revisões.\n\n**Desfazer reabre o pacote** do elemento, quando ele estava fechado: a completude foi\nafirmada sobre um pacote que acabou de mudar. O efeito adiante é o desejado — o\nboletim volta a recusar aquele elemento até alguém fechar de novo.\n\nPar que não está confirmado, item fora do takeoff e rodada do regime antigo continuam\nsendo recusa do domínio, que esta rota não reimplementa.",
+        "description": "Desfaz um código confirmado por engano, sem refazer a rodada (F-045, ADR-0061).\n\nAté esta rota, a etapa só sabia avançar: a identidade da decisão é o par\n`(item, código)`, re-decidir um par é recusado, e não há rollback de revisão em lugar\nnenhum da `/v1`. Um código confirmado errado custava a praça inteira.\n\nRevogar é **decisão nova**, e não edição do passado: a revisão anterior continua\ngravada com o par confirmado lá dentro, e o conjunto novo registra em `revocations`\nquem desfez, quando e por quê — para que quem lê o conjunto corrente distinga \"nunca\ndecidido\" de \"decidido e desfeito\" sem comparar revisões.\n\n**Desfazer reabre o pacote** do elemento, quando ele estava fechado: a completude foi\nafirmada sobre um pacote que acabou de mudar. O efeito adiante é o desejado — o\nboletim volta a recusar aquele elemento até alguém fechar de novo.\n\nPar que não está confirmado, item fora do takeoff e rodada do regime antigo continuam\nsendo recusa do domínio, que esta rota não reimplementa.\n\n`plate_id` no corpo diz em QUAL folha da praça o par foi confirmado (F-046 T4d); sem\nele, a primeira, exatamente como antes. Desfazer é decisão nova sobre o conjunto\nDAQUELA folha, e é lá que ela é gravada.",
         "operationId": "revoke_valuation_item_code_v1_valuation_rounds__round_id__code_assignments_revocations_post",
         "parameters": [
           {
@@ -17204,7 +17595,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CodeAssignmentRevocationRequest"
+                "$ref": "#/components/schemas/ValuationCodeAssignmentRevocationRequest"
               }
             }
           },
@@ -17247,7 +17638,7 @@
     },
     "/v1/valuation-rounds/{round_id}/code-suggestions": {
       "get": {
-        "description": "Shortlist de código por item confirmado: observação, nunca decisão (ADR-0021).\n\nCalculada UMA vez e persistida; leitura seguinte serve o que está gravado\n(`computed: false`). A gravação entra na cadeia de revisões **sem avançar a versão da\nrodada** (decisão humana de 2026-08-17): a shortlist é artefato derivado, e se um\n`GET` movesse o token de concorrência, a próxima decisão do orçamentista levaria\n`409` por algo que ele não fez.\n\n**Nenhuma chamada paga acontece aqui**, e isso é invariante, não circunstância\n(ADR-0054 D7). O cálculo é chamado sem braço semântico (`semantic=None`), então\nnenhum índice é procurado e nenhum rótulo é embutido: a shortlist que a primeira\nleitura grava é léxica, e a híbrida exige o recompute, que é ato humano com\n`Idempotency-Key` e `base_version`. O motivo viaja em `semantic_notes`.\n\nMover a chamada paga para cá quebraria mais do que o custo: um `GET` que gasta é um\n`GET` que a tela dispara em polling. `tests/api/test_estimate_semantic_arm.py`\nguarda a invariante com um adapter que falha se for tocado.",
+        "description": "Shortlist de código por item confirmado: observação, nunca decisão (ADR-0021).\n\nCalculada UMA vez e persistida; leitura seguinte serve o que está gravado\n(`computed: false`). A gravação entra na cadeia de revisões **sem avançar a versão da\nrodada** (decisão humana de 2026-08-17): a shortlist é artefato derivado, e se um\n`GET` movesse o token de concorrência, a próxima decisão do orçamentista levaria\n`409` por algo que ele não fez.\n\n`plate_id` é OPCIONAL e a ausência é a shortlist da PRIMEIRA folha, campo por campo\ncomo antes da praça (F-046 T4d). Ela é por FOLHA porque é observação por ITEM, e os\nitens são os do pacote de uma prancha: servir a shortlist da primeira folha sob o\ncabeçalho da segunda ofereceria códigos para elementos que não estão naquele desenho.\n\n**Nenhuma chamada paga acontece aqui**, e isso é invariante, não circunstância\n(ADR-0054 D7). O cálculo é chamado sem braço semântico (`semantic=None`), então\nnenhum índice é procurado e nenhum rótulo é embutido: a shortlist que a primeira\nleitura grava é léxica, e a híbrida exige o recompute, que é ato humano com\n`Idempotency-Key` e `base_version`. O motivo viaja em `semantic_notes`.\n\nMover a chamada paga para cá quebraria mais do que o custo: um `GET` que gasta é um\n`GET` que a tela dispara em polling. `tests/api/test_estimate_semantic_arm.py`\nguarda a invariante com um adapter que falha se for tocado.",
         "operationId": "get_valuation_code_suggestions_v1_valuation_rounds__round_id__code_suggestions_get",
         "parameters": [
           {
@@ -17258,6 +17649,26 @@
               "format": "uuid",
               "title": "Round Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Folha da praça a ler. Ausente, a leitura é a da primeira folha — o comportamento de sempre (F-046).",
+            "in": "query",
+            "name": "plate_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Folha da praça a ler. Ausente, a leitura é a da primeira folha — o comportamento de sempre (F-046).",
+              "title": "Plate Id"
             }
           }
         ],
@@ -17375,7 +17786,7 @@
     },
     "/v1/valuation-rounds/{round_id}/plate": {
       "get": {
-        "description": "Metadados e URL assinada da página promovida; a URL não vai para log nem auditoria.",
+        "description": "Metadados e URL assinada da página promovida; a URL não vai para log nem auditoria.\n\n`plate_id` é OPCIONAL e a ausência dele é a leitura de sempre — a primeira folha\n(F-046 T4c). É por ele que a tela da praça abre a folha 2 em diante sem precisar de\nrota nova.",
         "operationId": "get_valuation_plate_v1_valuation_rounds__round_id__plate_get",
         "parameters": [
           {
@@ -17386,6 +17797,26 @@
               "format": "uuid",
               "title": "Round Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Folha da praça a ler. Ausente, a leitura é a da primeira folha — o comportamento de sempre (F-046).",
+            "in": "query",
+            "name": "plate_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Folha da praça a ler. Ausente, a leitura é a da primeira folha — o comportamento de sempre (F-046).",
+              "title": "Plate Id"
             }
           }
         ],
@@ -17422,7 +17853,7 @@
         ]
       },
       "post": {
-        "description": "Associa o PDF já enviado pelo presign; a API não renderiza nem lê a prancha.\n\nA ingestão da página — render a 200 DPI, manifest, digest da imagem — é trabalho do\nworker: aqui o PDF é só conferido contra o que o presign declarou.",
+        "description": "Acrescenta uma folha à praça; a API não renderiza nem lê a prancha.\n\nA ingestão da página — render a 200 DPI, manifest, digest da imagem — é trabalho do\nworker: aqui o PDF é só conferido contra o que o presign declarou.\n\nDesde a F-046 a rodada tem N folhas (ADR-0057): praça grande vem em planta geral,\ndetalhes e cortes, e a legenda quantificada é da OBRA. A segunda folha deixou de ser\nrecusa e passou a ser o caso normal; `ROUND_PLATE_ALREADY_PRESENT` recusa só a folha\nREPETIDA — mesma origem e mesma página. A resposta é da folha recém-acrescentada e\ntem a forma de sempre.",
         "operationId": "associate_valuation_plate_v1_valuation_rounds__round_id__plate_post",
         "parameters": [
           {
@@ -17497,7 +17928,7 @@
     },
     "/v1/valuation-rounds/{round_id}/plate/extractions": {
       "post": {
-        "description": "Enfileira a extração paga da legenda; nenhum provider é chamado no request path.",
+        "description": "Enfileira a extração paga da legenda; nenhum provider é chamado no request path.\n\nRota da PRIMEIRA folha, que é a folha única da rodada de sempre: desde a F-046 ela\ndelega ao mesmo núcleo do lote (`queue_plate_extractions`), com a folha nomeada, para\nque a praça de uma folha e a de N passem exatamente pelas mesmas recusas. Quem quer\nescolher quais folhas extrair usa a rota do lote.",
         "operationId": "create_valuation_plate_extraction_v1_valuation_rounds__round_id__plate_extractions_post",
         "parameters": [
           {
@@ -17570,9 +18001,159 @@
         ]
       }
     },
+    "/v1/valuation-rounds/{round_id}/plates": {
+      "post": {
+        "description": "Promove EM LOTE as páginas escolhidas de um documento a folhas da praça (F-046 T4).\n\nO ato é a seleção: a orçamentista marca quais páginas viram folha e confirma uma vez.\nNada vem marcado por padrão e não há promoção automática de todas as páginas — as duas\nalternativas foram recusadas no pacote de design aprovado, e a segunda encheria a\npraça de quadro de áreas e carimbo.\n\nTudo ou nada: o teto da praça e a página repetida são apurados sobre o lote inteiro\nantes da primeira folha. Meia promoção deixaria a orçamentista com folhas que ela não\npediu e uma conta de extração que ela não escolheu.\n\nA API não abre o PDF (`services/api/AGENTS.md`): página que não existe no documento é\ndescoberta pela ingestão, no worker, e o desfecho fica NA folha, sem derrubar as\ndemais. Promover não extrai nada — extração é ato à parte, e é o que custa dinheiro.",
+        "operationId": "append_valuation_plates_v1_valuation_rounds__round_id__plates_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppendPlatesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationPlatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Append Valuation Plates",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/plates/extractions": {
+      "post": {
+        "description": "Enfileira a extração paga de VÁRIAS folhas da praça, num ato só (F-046 T4).\n\nCada folha é uma chamada paga a mais, e por isso duas coisas são explícitas: quais\nfolhas (`plate_ids`, sem nada marcado por padrão) e quantas (`plate_count` na\nresposta, escrito antes de o worker gastar o primeiro centavo). O custo por folha não\npode aparecer só na fatura.\n\nOs freios de gasto que já existiam continuam todos: entitlement contratual do tenant\n(ADR-0012) e teto de gasto declarado no ambiente do servidor\n(`extraction_unavailable`), os dois antes de qualquer enfileiramento. O teto de folhas\npor rodada (`WORKSITE_PLATE_LIMIT`) já foi cobrado quando a folha entrou na praça.\n\nTudo ou nada: folha inexistente, folha já extraída e folha com extração em voo\nrecusam o LOTE inteiro. Uma autorização pela metade seria a pior das respostas — quem\npagou por três folhas leria \"aceito\" e receberia duas.\n\nUm comando de fila por folha, com o mesmo `extraction_id` do lote: é o que dá a cada\numa o seu claim atômico e o que faz a que falha não derrubar as demais.",
+        "operationId": "create_valuation_plates_extraction_v1_valuation_rounds__round_id__plates_extractions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePlatesExtractionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationPlatesExtractionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Valuation Plates Extraction",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
     "/v1/valuation-rounds/{round_id}/takeoff": {
       "get": {
-        "description": "Pacote de takeoff da rodada, com a âncora de evidência de cada item.",
+        "description": "Pacote de takeoff de uma folha da praça, com a âncora de evidência de cada item.\n\n`plate_id` é OPCIONAL e a ausência é a leitura da PRIMEIRA folha, campo por campo como\nantes da praça (F-046 T4c). É por ele que a revisão dos itens alcança as folhas 2..N:\nsem ele, o pacote da segunda folha só existia dentro do consolidado, que a tela não usa\npara revisar item.",
         "operationId": "get_valuation_takeoff_v1_valuation_rounds__round_id__takeoff_get",
         "parameters": [
           {
@@ -17583,6 +18164,26 @@
               "format": "uuid",
               "title": "Round Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Folha da praça a ler. Ausente, a leitura é a da primeira folha — o comportamento de sempre (F-046).",
+            "in": "query",
+            "name": "plate_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Folha da praça a ler. Ausente, a leitura é a da primeira folha — o comportamento de sempre (F-046).",
+              "title": "Plate Id"
             }
           }
         ],
@@ -17623,7 +18224,7 @@
     },
     "/v1/valuation-rounds/{round_id}/takeoff/decisions": {
       "post": {
-        "description": "Aplica o LOTE de decisões do orçamentista, grava a revisão e enfileira o overlay.\n\nO ato de revisão é o lote inteiro — uma revisão nova para todas as decisões, ou\nnenhuma. Decidir item a item produzia uma revisão por item, e com ela um\n`base_version` novo que invalidava o formulário ainda aberto na tela.\n\nA decisão é ato humano: ela avança o contador da rodada e o da cadeia de revisões.\nO overlay, não — ele é consequência, e é reconstruído fora do request path\n(ADR-0030). Entre a decisão e o desenho novo, a resposta já declara o overlay\nvencido, para que a tela não mostre o desenho anterior como se fosse deste pacote.",
+        "description": "Aplica o LOTE de decisões do orçamentista, grava a revisão e enfileira o overlay.\n\nO ato de revisão é o lote inteiro — uma revisão nova para todas as decisões, ou\nnenhuma. Decidir item a item produzia uma revisão por item, e com ela um\n`base_version` novo que invalidava o formulário ainda aberto na tela.\n\nA decisão é ato humano: ela avança o contador da rodada e o da cadeia de revisões.\nO overlay, não — ele é consequência, e é reconstruído fora do request path\n(ADR-0030). Entre a decisão e o desenho novo, a resposta já declara o overlay\nvencido, para que a tela não mostre o desenho anterior como se fosse deste pacote.\n\n`plate_id` no corpo diz QUAL folha da praça este lote revisa (F-046 T4c); sem ele, a\nprimeira, exatamente como antes. O re-render do overlay só é enfileirado para a\nprimeira folha: o comando de fila desenha o pacote de `takeoff_packet_json` e ainda\nnão sabe da praça, então enfileirá-lo para a folha 2 seria um comando que não desenha\nnada. A resposta continua verdadeira nas duas — o overlay daquela folha sai declarado\nvencido, que é o que ele é, e não some da tela (ADR-0030).",
         "operationId": "decide_valuation_takeoff_items_v1_valuation_rounds__round_id__takeoff_decisions_post",
         "parameters": [
           {
@@ -17700,7 +18301,7 @@
     },
     "/v1/valuation-rounds/{round_id}/takeoff/overlay": {
       "get": {
-        "description": "URL assinada do overlay e a idade dele; overlay vencido é `200`, nunca erro.\n\nEsconder a divergência seria pior do que mostrá-la: o desenho anterior continua\nsendo a única visão de onde cada número foi lido (ADR-0030). A URL assinada segue o\nregime da imagem da prancha — prefixo do tenant conferido antes do presign, e nunca\nregistrada em log nem em auditoria (ADR-0028 D5).",
+        "description": "URL assinada do overlay e a idade dele; overlay vencido é `200`, nunca erro.\n\nEsconder a divergência seria pior do que mostrá-la: o desenho anterior continua\nsendo a única visão de onde cada número foi lido (ADR-0030). A URL assinada segue o\nregime da imagem da prancha — prefixo do tenant conferido antes do presign, e nunca\nregistrada em log nem em auditoria (ADR-0028 D5).\n\nUm overlay por FOLHA, e nunca um overlay de praça: não existe pixel de praça\n(ADR-0057, decisão 3). `plate_id` é OPCIONAL e a ausência é o overlay da primeira\nfolha, exatamente como antes; a idade é comparada contra o pacote DAQUELA folha, que é\no único pacote de que aquele desenho pode ter nascido.",
         "operationId": "get_valuation_takeoff_overlay_v1_valuation_rounds__round_id__takeoff_overlay_get",
         "parameters": [
           {
@@ -17711,6 +18312,26 @@
               "format": "uuid",
               "title": "Round Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Folha da praça a ler. Ausente, a leitura é a da primeira folha — o comportamento de sempre (F-046).",
+            "in": "query",
+            "name": "plate_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Folha da praça a ler. Ausente, a leitura é a da primeira folha — o comportamento de sempre (F-046).",
+              "title": "Plate Id"
             }
           }
         ],
@@ -17742,6 +18363,195 @@
           }
         ],
         "summary": "Get Valuation Takeoff Overlay",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/worksite": {
+      "get": {
+        "description": "A praça: as folhas da rodada, o estado de cada uma e o consolidado (F-046).\n\nO consolidado é DERIVADO das folhas gravadas, dos pacotes das revisões e dos vínculos\ndeclarados — nunca servido de uma coluna que guardasse a soma dos três e envelhecesse\nsozinha assim que uma folha nova entrasse.\n\nLeitura tolerante, como o estado da rodada: praça que ainda não fecha sai com\n`consolidated.present = false`, as folhas pendentes nomeadas e o código da recusa,\nem vez de derrubar a tela. Quem recusa de verdade é a declaração do vínculo e o\nboletim, que é onde a resposta importa.",
+        "operationId": "get_valuation_worksite_v1_valuation_rounds__round_id__worksite_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Valuation Worksite V1 Valuation Rounds  Round Id  Worksite Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Valuation Worksite",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/worksite/identity-links": {
+      "post": {
+        "description": "Declara que duas leituras de folhas diferentes são o mesmo elemento (ADR-0057).\n\nÉ o único caminho de fusão que existe: nada aqui funde por rótulo, unidade ou\nproximidade, e sem esta declaração as duas leituras contam — o fail-closed erra para\nsomar demais, e visivelmente (decisão 4).\n\nAto humano de ponta a ponta: avança o contador da rodada, cria revisão NOVA\n(append-only, a lista de vínculos inteira gravada de uma vez) e carimba autor e\ninstante do lado do servidor. O consolidado é remontado com o vínculo novo ANTES de\ngravar qualquer coisa: é essa montagem que aplica as recusas da T1 — vínculo dentro\nda mesma folha, vínculo incompleto, alvo inexistente e cadeia de vínculos —, e uma\ndeclaração recusada não deixa revisão nenhuma para trás.",
+        "operationId": "declare_valuation_identity_link_v1_valuation_rounds__round_id__worksite_identity_links_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeclareIdentityLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Declare Valuation Identity Link V1 Valuation Rounds  Round Id  Worksite Identity Links Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Declare Valuation Identity Link",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-rounds/{round_id}/worksite/identity-links/preview": {
+      "post": {
+        "description": "O efeito da fusão no total da praça — **sem gravar nada** (F-046 T4c).\n\nÉ LEITURA, e o corpo diz isso: sem `base_version`, sem `Idempotency-Key`, sem revisão\nnova e sem avançar a versão da rodada, como a pré-visualização do acervo de canteiro.\n\nEla existe porque a conta é do SERVIDOR. A tela de medição não soma\n(`apps/web/AGENTS.md`), e sem esta rota a orçamentista só descobriria o efeito do\nvínculo depois de declará-lo — que é justamente a decisão que o pacote de design quis\ntornar informada. Todo decimal sai como TEXTO, pelo mesmo motivo do resto da jornada.\n\nAs recusas são as MESMAS da declaração, e pelo mesmo caminho: o consolidado é montado\ncom o vínculo candidato, então vínculo dentro da mesma folha, alvo inexistente e\ncadeia de vínculos recusam aqui exatamente como recusariam lá. Uma prévia que\ndissesse \"pode\" para o que o ato recusa seria pior do que prévia nenhuma.\n\nO que ela **não** faz é somar o que não tem soma: unidade divergente entre as duas\nleituras devolve os dois totais `null` com `unit_mismatch = true`, com as duas parcelas\nà vista. Um número inventado ali teria a aparência de conta conferida.",
+        "operationId": "preview_valuation_identity_link_v1_valuation_rounds__round_id__worksite_identity_links_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "round_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Round Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewIdentityLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Preview Valuation Identity Link V1 Valuation Rounds  Round Id  Worksite Identity Links Preview Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Preview Valuation Identity Link",
         "tags": [
           "valuation"
         ]
