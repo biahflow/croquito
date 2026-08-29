@@ -1,7 +1,8 @@
 # ADR-0057: A praça é o consolidado de pranchas, e a prancha continua a unidade de evidência
 
-Status: Proposed  
-Data: 2026-08-27  
+Status: Accepted  
+Data: 2026-08-27 (aceito por ato humano em 2026-08-28, Daniel Campos — os quatro pontos
+confirmados sem emenda)  
 Responsável: Product / Engineering
 
 ## Contexto
@@ -55,9 +56,8 @@ nada que impeça contar duas vezes o serviço que aparece na planta geral **e** 
 
 ## Decisão
 
-A decisão de produto é humana e este ADR é `Proposed`; a seção final lista o que o aceite
-precisa confirmar. As decisões abaixo são a direção recomendada, com o raciocínio — o coração
-do ADR.
+As decisões abaixo foram **aceitas sem emenda** por ato humano em 2026-08-28; a seção final
+registra os quatro pontos confirmados. O raciocínio de cada uma é o coração do ADR.
 
 1. **A prancha continua a unidade de evidência, e o pacote de takeoff não muda.**
    `TakeoffPacket` segue de uma folha, com `plate_id`/`page_number`/`image_sha256` e o
@@ -188,9 +188,9 @@ do ADR.
 | Digest de artefato assinado se mover | Decisão 8: consolidado é artefato novo; `TakeoffPacket` e `CodeAssignmentSet` não ganham campo |
 | Overlay de praça exigir geometria entre folhas | Decisão 3: sem overlay de praça; o consolidado lista os overlays por folha |
 
-## Decisões de produto que este ADR pede ao aceite humano
+## O que o aceite humano confirmou
 
-Este ADR recomenda uma direção; o aceite humano precisa confirmar, ponto a ponto:
+Em 2026-08-28 (Daniel Campos), os quatro pontos foram confirmados como propostos, sem emenda:
 
 1. **O pacote é por prancha com um consolidado acima** (decisões 1–2), e não um pacote de obra
    que absorve as folhas. É a escolha estrutural que orienta todo o resto.
@@ -203,12 +203,14 @@ Este ADR recomenda uma direção; o aceite humano precisa confirmar, ponto a pon
 4. **O consolidado falha fechado com qualquer folha pendente** (decisão 7). Confirmar que
    nenhuma praça mede parcial, nem para adiantar.
 
-Confirmados esses pontos, o trabalho vira Feature Contract e plano; nada aqui é implementado
-antes do aceite.
+Com os quatro confirmados, o trabalho virou Feature Contract e plano na mesma data. A
+alternativa de fundir automaticamente item repetido por rótulo e unidade iguais foi
+explicitamente recusada no aceite: o total só fica correto quando a orçamentista declara a
+sobreposição, e até lá o sistema erra para somar demais, visivelmente.
 
 ## Rastreabilidade
 
-- Feature: none (ainda por abrir)
+- Feature: [F-046](../features/F-046-praca-de-varias-pranchas/feature.md)
 - Issue: [#101](https://github.com/biahflow/croquito/issues/101)
 - Relacionados: [ADR-0053](0053-cardinalidade-n-n-elemento-servico.md) (o vínculo
   `(item_id, code)` da F-038 que sobe para `(plate_id, item_id, code)`),

@@ -110,6 +110,8 @@ retroativamente convertidos em features nem selecionados automaticamente por age
 | F-043 | HIGH | IN_PROGRESS | [A planilha sai no gabarito da prefeitura, com memória de cálculo](../features/F-043-planilha-no-gabarito-da-prefeitura/feature.md) |
 | F-044 | HIGH | IN_PROGRESS | [A shortlist aprende com as decisões de código já tomadas](../features/F-044-precedente-de-codigo/feature.md) |
 | F-045 | HIGH | READY_FOR_REVIEW | [Desfazer um código confirmado](../features/F-045-desfazer-codigo-confirmado/feature.md) |
+| F-046 | HIGH | READY_FOR_BUILD | [A praça de várias pranchas](../features/F-046-praca-de-varias-pranchas/feature.md) — ADR-0057 e pacote de design aprovados em 2026-08-28; plano e seis tasks escritos |
+| F-047 | HIGH | READY_FOR_BUILD | [O quantitativo nasce da cena aprovada](../features/F-047-quantitativo-da-cena-aprovada/feature.md) — ADR-0058 (com emenda) e pacote de design aprovados em 2026-08-28; depende de F-046; plano e oito tasks escritos |
 | F-032 | HIGH | DONE | [App de levantamento de campo (PWA offline-first)](../features/F-032-app-levantamento-campo/feature.md) — aceita por ato humano em 2026-08-28; pendem chave/conta Groq + clipes + eval paga de transcrição, o papel `field_technician` no realm e a decisão de consentimento por levantamento |
 | F-031 | MEDIUM | DONE | [Eventos de valor: telemetria de automação e emissão para o portal](../features/F-031-value-events/feature.md) — já integrada à main; aceita por ato humano em 2026-08-28; pendem o provisionamento do tópico Pub/Sub e as migrações no ambiente hospedado |
 

@@ -1,7 +1,8 @@
 # ADR-0058: O quantitativo nasce da cena aprovada, e antes disso o elemento precisa de identidade declarada
 
-Status: Proposed  
-Data: 2026-08-27  
+Status: Accepted  
+Data: 2026-08-27 (aceito por ato humano em 2026-08-28, Daniel Campos, com **uma emenda** na
+decisão 4 e a tolerância da decisão 6 nomeada — ver "O que o aceite humano confirmou")  
 Responsável: Product / Engineering
 
 ## Contexto
@@ -105,14 +106,22 @@ lista, e a redação da Decisão propõe a direção que o resto do produto já 
    proximidade. A quantidade derivada da cena entra por essa cadeia, e a `ContributionBasis`
    `DERIVED` do ADR-0053 finalmente tem de onde derivar de fato, em vez de nominalmente.
 
-4. **A quantidade derivada da cena entra no `TakeoffItem` com a precisão que a cena declarou, e
-   nunca melhor.** Um `TakeoffItem` alimentado pela cena nasce com `source` de um terceiro valor
-   — `scene_graph` — no `Literal`, e carrega a `Precision` da entidade de origem
-   (`../../packages/core/src/croquito_core/models.py:31-35`). Área `exact` entra como quantidade
-   confiável; `approximate` entra **como approximate** e continua exigindo o mesmo aceite
-   explícito que o croqui já exige para publicar aproximação — a promoção de precisão que o
-   pipeline proíbe (dimensão exata nunca derivada de pixels) continua proibida aqui. `unresolved`
-   não entra: não há quantidade a derivar de entidade não resolvida.
+4. **Só `exact` e `derived` alimentam a medição; `approximate` não entra, nem sob aceite.**
+   *(Emendado no aceite humano de 2026-08-28 — a proposta original admitia `approximate` sob o
+   mesmo aceite explícito do croqui.)* Um `TakeoffItem` alimentado pela cena nasce com `source`
+   de um terceiro valor — `scene_graph` — no `Literal`, e carrega a `Precision` da entidade de
+   origem (`../../packages/core/src/croquito_core/models.py:31-35`), que só pode ser `exact` ou
+   `derived`. Entidade `approximate` ou `unresolved` **não** produz quantidade de medição: a
+   legenda continua sendo a fonte nesses casos, lida por decisão humana como hoje.
+
+   O motivo da emenda é o destino do número, não a sua qualidade. O aceite de aproximação que o
+   croqui já tem existe para **publicar um desenho** declarando o que é aproximado; a quantidade
+   da medição vira **dinheiro** num boletim que a prefeitura paga, e aproximação com carimbo
+   continua sendo aproximação depois de multiplicada por preço unitário. Um número aproximado
+   que atravessa a fronteira para a medição deixa de ser visivelmente aproximado quando vira
+   uma linha de R$ no gabarito. A promoção de precisão que o pipeline proíbe continua proibida
+   aqui, e a fronteira entre as duas jornadas ganha uma trava a mais do que o croqui sozinho
+   precisa.
 
 5. **`QuantitySource` lê o `quantitativos.csv` do export e resolve a quantidade por
    `element_ref`, não por posição.** É o adaptador que o ROADMAP reserva. Ele casa a linha do CSV
@@ -123,8 +132,12 @@ lista, e a redação da Decisão propõe a direção que o resto do produto já 
 
 6. **Divergência entre a quantidade da cena e a lida na legenda é DIAGNÓSTICO, nunca
    sobrescrita.** Quando o mesmo elemento tem quantidade derivada da cena **e** quantidade lida
-   na legenda, e elas não batem além de uma tolerância nomeada, o sistema **abre uma Issue** e
-   não escolhe por conta própria. Nenhum dos dois números apaga o outro: a cena não sobrescreve
+   na legenda, e elas não batem além da tolerância nomeada, o sistema **abre uma Issue** e
+   não escolhe por conta própria. A tolerância, fixada no aceite humano de 2026-08-28, é **o
+   maior entre 1% do valor da legenda e 0,01 na unidade do item** — a faixa que absorve o
+   arredondamento de quem escreve `418,12` para uma área de `418,1183...`, sem deixar passar
+   erro de digitação. Ela é constante nomeada no código, não número solto: quem a mudar muda
+   uma declaração, não uma linha de comparação. Nenhum dos dois números apaga o outro: a cena não sobrescreve
    a legenda, a legenda não sobrescreve a cena. Quem revisa vê as duas, a origem de cada uma e a
    diferença, e decide — como já decide toda divergência no produto. É o mesmo princípio da
    `AMENDMENT_APPLICATION_MISMATCH` do ADR-0055/56 e do `LINE_PRICE_NOT_IN_CONTRACT`: a
@@ -146,24 +159,23 @@ lista, e a redação da Decisão propõe a direção que o resto do produto já 
    forma aditiva. A feature é uma porta que se abre quando a identidade é declarada, não um
    comportamento que muda o que já funciona.
 
-### Decisões de produto que este ADR pede ao aceite humano
+### O que o aceite humano confirmou
 
-Como o ADR é `Proposed` e a decisão é humana, o aceite precisa confirmar, ponto a ponto:
+Em 2026-08-28, ponto a ponto (Daniel Campos):
 
-1. **Que a identidade de elemento é ato humano na revisão** (Decisão 2), e não camada + rótulo
-   tratados como identidade automática. A alternativa "camada + rótulo estruturado" existe e é a
-   principal rejeitada abaixo; escolher entre ela e o ato explícito é decisão de produto, não de
-   engenharia.
-2. **A forma da identidade**: um `element_ref` novo na `Entity` (Decisão 1) versus reaproveitar
-   o par de identidade do ADR-0053 estendido até a cena. As duas conversam; qual é a canônica é
-   decisão humana.
-3. **A precisão com que a quantidade da cena entra na medição** (Decisão 4), em especial se
-   `approximate` pode alimentar a legenda sob aceite, ou se só `exact`/`derived` alimentam.
-4. **O regime da divergência** (Decisão 6): confirmar que é sempre Issue, qual a tolerância
-   nomeada que separa "igual" de "divergente", e que nenhuma das origens tem prioridade que
-   sobrescreva a outra.
-5. **A abertura de `TakeoffItem.source = scene_graph`** como terceiro valor do discriminador, e a
-   subida de versão de contrato que ele implica no lado da medição.
+1. **A identidade de elemento é ato humano na revisão** (Decisão 2). A alternativa "camada +
+   rótulo estruturado como identidade automática" foi recusada; ela permanece válida apenas
+   como **proposta** que o humano confirma.
+2. **A forma da identidade é um `element_ref` novo na `Entity`** (Decisão 1), e não a extensão
+   do par do ADR-0053 até a cena. Os dois contextos continuam com chaves próprias: a cena diz
+   qual elemento é, a legenda diz qual item é, e o elo entre eles é declarado.
+3. **Só `exact` e `derived` alimentam a medição** — emenda à Decisão 4, que admitia
+   `approximate` sob aceite. Quantidade aproximada nunca vira quantidade de boletim; nesses
+   casos a legenda segue sendo a fonte.
+4. **A divergência é sempre Issue**, nenhuma origem sobrescreve a outra, e a tolerância nomeada
+   é **o maior entre 1% do valor da legenda e 0,01 na unidade do item** (Decisão 6).
+5. **`TakeoffItem.source` ganha o terceiro valor `scene_graph`**, de forma aditiva, com a subida
+   de versão de contrato que isso implica no lado da medição (Decisão 5 e 8).
 
 ## Alternativas
 
@@ -193,6 +205,11 @@ Como o ADR é `Proposed` e a decisão é humana, o aceite precisa confirmar, pon
 - **Derivar quantidade de entidade `approximate` como se fosse `exact`** — rejeitada: repete a
   promoção de precisão que o pipeline proíbe ponta a ponta. `approximate` continua `approximate`
   até o DXF, e continua depois dele, na medição.
+- **Deixar `approximate` alimentar a medição *como* `approximate`, sob aceite explícito** — era
+  a proposta original da Decisão 4 e foi **rejeitada no aceite humano de 2026-08-28**. O carimbo
+  de aproximação sobrevive à tela e morre na planilha: multiplicado por preço unitário, o número
+  vira uma linha de R$ que ninguém lê como aproximada. Onde a cena só tem aproximação, a legenda
+  continua sendo a fonte.
 - **Abrir `QuantitySource` agora, antes da identidade de elemento** — rejeitada: sem `element_ref`
   nos dois lados, o adaptador só teria proximidade para trabalhar, que é a primeira alternativa
   rejeitada. A identidade é pré-requisito, não detalhe posterior.
@@ -238,7 +255,7 @@ Como o ADR é `Proposed` e a decisão é humana, o aceite precisa confirmar, pon
 
 ## Rastreabilidade
 
-- Feature: none (a feature será aberta a partir deste ADR, após o aceite humano)
+- Feature: [F-047](../features/F-047-quantitativo-da-cena-aprovada/feature.md)
 - Issue: [#102](https://github.com/biahflow/croquito/issues/102)
 - Relacionados: [ADR-0053](0053-cardinalidade-n-n-elemento-servico.md),
   [ADR-0005](0005-canonical-scene-graph.md),
