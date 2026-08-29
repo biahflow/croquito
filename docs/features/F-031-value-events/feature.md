@@ -2,19 +2,18 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
-> Especificada e executada em 2026-08-21 (decisão humana na mesma sessão:
-> escopo, broker Pub/Sub e inclusão do logging estruturado). Fatia 1 completa
-> na branch isolada `feat/f-031-value-events` — 5 tasks entregues, revisadas
-> linha a linha e commitadas, portões finais verdes ([evidência](evidence.md)).
-> **Não entra na main nem no deploy do MVP nesta rodada** — a integração
-> (rebase pós-F-029, renumeração das migrações 0008-0010, sync de
-> ROADMAP/STATUS) é gate humano posterior.
+> **Aceite humano em 2026-08-28**, sobre o pacote de revisão em [evidence.md](evidence.md).
+> A fatia 1 já está integrada à `main` (migrações `0011_job_stage_events` e
+> `0012_domain_events`, CLI `publish-events`). Dívida declarada, não exercida:
+> provisionamento do tópico Pub/Sub e aplicação das migrações no ambiente hospedado.
 >
-> **Desvio consciente do ritual**: `docs/product/ROADMAP.md` e `docs/STATUS.md`
-> não são editados nesta branch — outra sessão está com eles em edição
-> (F-029). A sincronização do roadmap/status acontece na integração da branch.
+> Especificada e executada em 2026-08-21 (decisão humana na mesma sessão:
+> escopo, broker Pub/Sub e inclusão do logging estruturado). Fatia 1 completa —
+> 5 tasks entregues, revisadas linha a linha e commitadas, portões finais verdes
+> ([evidência](evidence.md)). A integração à `main` (rebase pós-F-029, renumeração das
+> migrações) já ocorreu; o que resta são os atos de ambiente hospedado listados acima.
 
 ## Classification
 
@@ -118,8 +117,9 @@ Cinco tasks sequenciais (T1→T2→T3→T5→T4), contrato aditivo, detalhadas n
 
 ## Human Gates
 
-- Aceite do [ADR-0042](../../adr/0042-eventos-de-dominio-outbox-pubsub.md)
-  (Proposed; broker Pub/Sub decidido pelo usuário em sessão de 2026-08-21).
-- Integração da branch (rebase pós-F-029, renumeração de migrações, sync de
-  ROADMAP/STATUS/README de features) — decisão do usuário.
+- ~~Aceite do [ADR-0042](../../adr/0042-eventos-de-dominio-outbox-pubsub.md)~~ —
+  **satisfeito** (`Accepted`; broker Pub/Sub decidido pelo usuário em sessão de
+  2026-08-21).
+- ~~Integração da branch (rebase pós-F-029, renumeração de migrações, sync de
+  ROADMAP/STATUS/README de features)~~ — **satisfeito**: integrada à `main`.
 - Provisionamento do tópico Pub/Sub e aplicação de migrações no hosted.

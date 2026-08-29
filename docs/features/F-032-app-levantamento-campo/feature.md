@@ -2,7 +2,12 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
+
+> **Aceite humano em 2026-08-28**, sobre o pacote de revisão em [evidence-sync.md](evidence-sync.md)
+> e [evidence.md](evidence.md). Dívida declarada, não exercida: chave/conta Groq, os clipes
+> licenciados e a rodada paga da eval de transcrição; o papel `field_technician` no realm
+> Keycloak; a decisão sobre consentimento por levantamento.
 
 Fatia de sincronização ampliada COMPLETA em 2026-08-21 (T7–T17 do
 [plan-sync.md](plan-sync.md), evidência em [evidence-sync.md](evidence-sync.md)):
@@ -12,10 +17,10 @@ como observações seguradas pelos portões do scene graph, nota de voz offline,
 transcrição (Groq/OpenAI atrás de eval comparativa pendente de rodada paga),
 análise de fotos com IA atrás de entitlement, qualidade de foto no aparelho e a
 identidade visual aprovada na DAP rev.2 — tudo provado por e2e in-process
-(pytest 1932, web 853, field 261, `make check` exit 0). Pendem atos humanos:
-chave Groq + clipes + rodada paga da eval; papel `field_technician` no realm;
-decisão sobre consentimento por levantamento; decisão de merge/push (dispara
-`deploy-hml`) com a relinearização da migração 0007×F-029 na integração.
+(pytest 1932, web 853, field 261, `make check` exit 0). **Aceite humano em 2026-08-28**;
+dívida declarada, não exercida: chave Groq + clipes + rodada paga da eval; papel
+`field_technician` no realm; decisão sobre consentimento por levantamento. A branch
+`f-032-app-levantamento-campo` foi integrada à `main` (`ca18f99`).
 MVP local completo em 2026-08-21: fatia 0 (T1 scaffold) e o plano "MVP local, fatias
 1–3" (T2 motor, T3 coleta/medida, T4 ordens/chegada, T5 conclusão, T6 fotos)
 executados, revisados linha a linha e commitados na branch
@@ -24,8 +29,7 @@ em [evidence.md](evidence.md). Em 2026-08-21 (mesma data, sessão posterior) o u
 autorizou a fatia de sincronização com escopo ampliado — plano próprio em
 [plan-sync.md](plan-sync.md) — e **reabriu itens antes fora de escopo** (decisão
 humana registrada abaixo): entrada por voz, IA/CV sobre as fotos coletadas e iOS na
-matriz do piloto. A decisão de merge/push (dispara a esteira `deploy-hml`) segue
-pendente e independente desta fatia.
+matriz do piloto.
 
 ## Priority
 
@@ -208,8 +212,8 @@ Da feature completa (verificáveis nas fatias futuras, herdando os NFRs abaixo):
    [revisão 1 do pacote](mock/README.md) aprovada por ato humano de Daniel Campos em
    2026-08-21. Revisão nova do pacote exige aprovação nova; o scaffold da fatia 0
    continua fora da superfície aprovada.
-3. Decisão de merge da branch `f-032-app-levantamento-campo` (merge na main dispara a
-   esteira de deploy).
+3. ~~Decisão de merge da branch `f-032-app-levantamento-campo`~~ — **satisfeito**:
+   integrada à `main` (`ca18f99`).
 4. Declaração de início do piloto híbrido e, depois, da promoção do app a fonte
    oficial do levantamento.
 5. ~~Revisão 2 do Design Approval Package~~ — **satisfeito**: aprovada por ato
@@ -218,9 +222,13 @@ Da feature completa (verificáveis nas fatias futuras, herdando os NFRs abaixo):
    T12/T15/T17 do [plan-sync.md](plan-sync.md).
 6. Criação do papel `field_technician` e autorização do path do app no realm
    Keycloak (necessário para teste real; testes automatizados usam test tokens).
-7. Escolha e autorização do fornecedor de speech-to-text (envio de áudio de cliente
-   a serviço externo — aprovação explícita da política vigente); chamadas pagas em
-   massa (transcrição/visão em lote) seguem exigindo aprovação por rodada.
+   **Dívida declarada em 2026-08-28: não exercida.**
+7. ~~Escolha~~ do fornecedor de speech-to-text — **satisfeita** (Groq, 2026-08-21). A
+   **autorização** segue pendente e é gate de política, não de código: enviar áudio de
+   cliente a serviço externo exige aprovação explícita, e chamadas pagas em massa
+   (transcrição/visão em lote) continuam exigindo aprovação por rodada. Chave/conta Groq,
+   clipes licenciados e a rodada paga da eval de transcrição são atos do usuário,
+   **declarados como dívida em 2026-08-28**.
 
 ## References
 

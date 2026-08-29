@@ -2,12 +2,15 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
+> **Aceite humano em 2026-08-28**, sobre o pacote de revisão em [evidence.md](evidence.md).
+> Dívida declarada, não exercida: rodada local com a flag ligada no stack docker,
+> calibração com os 7 PDFs reais (`make association-calibration`) e a escolha do threshold
+> operacional a partir do relatório de calibração.
+>
 > T1–T5 executadas, revisadas linha a linha e integradas em 2026-08-21
-> ([evidência](evidence.md)). Pendem os atos humanos: rodada local com a
-> flag ligada (stack docker), calibração com os 7 PDFs reais
-> (`make association-calibration`) e a escolha do threshold operacional.
+> ([evidência](evidence.md)).
 
 > Trilha de gates da mesma data: plano aprovado em sessão ([plan.md](plan.md),
 > Task Contracts em [tasks/](tasks/)),

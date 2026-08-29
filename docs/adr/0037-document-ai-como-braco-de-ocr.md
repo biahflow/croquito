@@ -1,7 +1,7 @@
 # ADR-0037: Document AI como braço de OCR da suite hospedada
 
-Status: Proposed  
-Data: 2026-08-20  
+Status: Accepted  
+Data: 2026-08-20 (aceito por ato humano em 2026-08-28)  
 Responsável: Engineering
 
 ## Contexto

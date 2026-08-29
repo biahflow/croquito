@@ -2,8 +2,12 @@
 
 ## Status
 
-`READY_FOR_HUMAN_REVIEW`
+`DONE`
 
+> **Aceite humano em 2026-08-28**, sobre o pacote de revisão em [evidence.md](evidence.md).
+> Dívida declarada, não exercida: deploy da imagem nova do Keycloak em homologação; texto
+> final (copy) da tela segue em aberto.
+>
 > Selecionada, planejada e executada por decisões humanas de 2026-08-18. As seis tasks do
 > [plano](plan.md) estão integradas e revisadas, a validação integrada está verde — inclusive
 > o smoke headless atravessando o login real com `?job` preservado — e o pacote de revisão
