@@ -1,9 +1,11 @@
 # F-040 — Evidência
 
 Feature: [RE-RA declarada e a medição seguinte](feature.md)  
-Estado: `IN_PROGRESS` — a T6 fechou três desvios do pacote de design que a captura expôs;
-pende a **recaptura** dos estados novos (`BROWSER_REQUIRED`)  
-Data: 2026-08-27 (evidência de navegador em 2026-08-28; correção do registro e T6 em 2026-08-28)
+Estado: `IN_PROGRESS` — a T6 fechou três desvios do pacote de design que a captura expôs e a
+T7 devolveu a conta da prévia ao servidor; pende a **recaptura** dos estados novos
+(`BROWSER_REQUIRED`)  
+Data: 2026-08-27 (evidência de navegador em 2026-08-28; correção do registro, T6 e T7 em
+2026-08-28)
 
 > **Correção do registro.** Este documento afirmou, em 2026-08-28, que a feature estava
 > completa e que "nenhum critério de aceite" continuava em aberto. Era falso. A própria captura
@@ -50,6 +52,17 @@ medição seguinte no escopo.
 | `apps/web/src/medicao/requests.test.ts` | A RE-RA viajando junto de `previous_round_id` |
 | `tests/api/test_valuation_round_from_estimate.py` | `test_a_medicao_seguinte_nasce_re_ratificada`: fixa o comportamento **já existente** do servidor e serve de oráculo aos números da prévia |
 
+### T7 — a prévia deixa o cliente e vira rota
+
+| Arquivo | O que é |
+| --- | --- |
+| `services/api/.../main.py` | `POST /v1/valuation-round-previews` (somente leitura), `ValuationRoundPreviewRequest/Line/Response`, e a extração de `_contracted_valuation_origin` + `_apply_declared_acts` de dentro de `_resolve_valuation_origin` — as duas funções que a criação e a prévia passam a compartilhar |
+| `tests/api/test_valuation_round_preview.py` (13) | O par prévia × rodada criada, a ausência de escrita, o medido do período, o item novo materializado e as recusas idênticas às da criação |
+| `docs/architecture/API_CONTRACT.md`, `tests/api/openapi.snapshot.json` | A rota documentada e o snapshot regenerado (**aditivo**: 270 linhas inseridas, nenhuma removida) |
+| `apps/web/src/medicao/api.ts`, `requests.ts` (+ testes) | `previewRound` e `roundPreviewBody`: `POST` de leitura, sem `Idempotency-Key` e sem `base_version` |
+| `apps/web/src/medicao/previa.ts` (+ `previa.test.ts`) | **Perde a aritmética.** Sobra o que perguntar (`pedidoDaPrevia`), o estado da projeção (`EstadoDaPrevia`), o que é declaração (`linhasDeclaradas`) e a pontuação do sinal (`efeitoEmPtBr`) |
+| `apps/web/src/medicao/MedicaoApp.tsx` (+ testes) | Os dois componentes passam a exibir a resposta do servidor, com debounce, cancelamento da projeção anterior e os estados “projetando” e “não consegui projetar” |
+
 ## Critérios de aceite
 
 | # | Critério | Como foi verificado |
@@ -65,7 +78,8 @@ medição seguinte no escopo.
 | 9 | Nenhum digest assinado se move | `Estimate` inalterado; consolidado por parâmetro; snapshot OpenAPI aditivo |
 | 10 | `make check` e `make test` verdes | `make check` = 0 (ruff, mypy strict, check_docs, drift, build web; `infra-check` exige terraform ausente no ambiente); `make test` = 0 |
 | 11 | Evidência renderizada da tela real (`BROWSER_REQUIRED`) | ⚠️ quatro estados capturados da tela real contra o stack local em 2026-08-28 — ver abaixo; a **recaptura** dos estados da T6 está pendente |
-| 12 | A medição seguinte passa pela abertura, com herança e prévia antes de gravar (T6) | `previa.test.ts` (19), `MedicaoApp.test.tsx` (`HerancaDaRodadaAnterior`, `PreviaDaReRa`), `requests.test.ts`; e `test_valuation_round_from_estimate.py::test_a_medicao_seguinte_nasce_re_ratificada`, que fixa os mesmos números do lado do servidor |
+| 12 | A medição seguinte passa pela abertura, com herança e prévia antes de gravar (T6) | `previa.test.ts`, `MedicaoApp.test.tsx` (`HerancaDaRodadaAnterior`, `PreviaDaReRa`), `requests.test.ts` |
+| 13 | A prévia é calculada pelo **servidor**, pelo mesmo caminho da criação (T7) | `test_valuation_round_preview.py::test_a_previa_devolve_os_mesmos_numeros_da_rodada_criada` (mesmo corpo às duas rotas) e `::test_a_previa_nao_grava_nada`; `grep -rn "BigInt\|reduce(" apps/web/src/medicao/previa.ts` não devolve aritmética |
 
 ## Evidência de navegador
 
@@ -120,21 +134,22 @@ na memória, é mudança pequena e o pacote vira revisão 2.
    API grava em `declared_by` (identidade do servidor, nunca do corpo). Na imagem 02 isso
    aparece como o UUID do usuário sintético local. Copy e apresentação da autoria não estavam
    cobertas pela aprovação do pacote.
-2. **A prévia não existe na abertura a partir do orçamento assinado.** Ela precisa do
-   contratado código a código, e a lista de origens (`GET /v1/valuation-origins`) só entrega
-   contagem e total — só a rodada anterior entrega o consolidado ao cliente. Nessa porta o
-   efeito continua aparecendo depois de gravar, na memória. Fechá-la exigiria expor o
-   contratado do orçamento assinado na origem, que é mudança de contrato e não estava no
-   escopo da T6.
-3. **A prévia é calculada no cliente.** É exceção declarada à regra "a tela nunca soma" do
-   `apps/web/AGENTS.md`, com a fronteira descrita na
-   [T6](tasks/T6-a-porta-da-medicao-seguinte.md): projeção rotulada como prévia, aritmética
-   exata em texto sem `Number`, nenhuma conta de dinheiro, e os números fixados contra os da
-   API pelo par de testes `previa.test.ts` ↔ `test_a_medicao_seguinte_nasce_re_ratificada`. O
-   servidor continua sendo autoridade.
-4. **A evidência de navegador dos estados novos não foi recapturada.** As quatro imagens acima
+2. **A evidência de navegador dos estados novos não foi recapturada.** As quatro imagens acima
    são da revisão anterior e não mostram a porta nova, a herança nem a prévia. A recaptura é
    tarefa própria e é condição para a feature voltar a `READY_FOR_HUMAN_REVIEW`.
+
+### Resolvidos pela T7
+
+O desvio que a T6 registrou como "exceção declarada à regra" — **a prévia calculada no
+cliente** — deixou de ser dívida. A [T7](tasks/T7-previa-no-servidor.md) o fecha, e fecha junto
+a lacuna irmã que a T6 tinha listado.
+
+| Era | Passou a ser |
+| --- | --- |
+| A prévia é calculada no cliente, com aritmética exata em texto sobre `BigInt`, e a T6 chamou isso de exceção declarada à regra "a tela nunca soma" | A conta é do servidor, em `POST /v1/valuation-round-previews`. `previa.ts` não tem mais aritmética: sobrou chamada, estado e exibição, e a regra do `apps/web/AGENTS.md` volta a valer sem exceção |
+| Duas identidades do domínio rederivadas no navegador: o acumulado (`vigente − saldo`) e o medido do período (soma das linhas de `GET /bulletin`) | Nenhuma. `accumulated_quantity` e `measured_quantity` vêm por código na resposta da prévia, produzidos pelo mesmo caminho que grava o consolidado |
+| Os números da prévia protegidos por um par de testes que fixava **o caso sintético** dos dois lados | Protegidos pela **estrutura**: prévia e criação chamam `_contracted_valuation_origin` e `_apply_declared_acts`, e um teste manda o mesmo corpo às duas rotas |
+| A prévia não existia na abertura a partir do **orçamento assinado**, porque o cliente não recebia o contratado código a código nessa porta | Existe nas duas portas contratadas: quem projeta é o servidor, e ele conhece o contratado do orçamento assinado tão bem quanto o da rodada anterior. O limite que motivava a lacuna deixou de existir |
 
 ## Riscos remanescentes
 
@@ -152,5 +167,3 @@ na memória, é mudança pequena e o pacote vira revisão 2.
   ocorreu em 2026-08-28, **antes** de os três desvios do pacote serem vistos).
 - Decidir se a MEMÓRIA sem RE-RA deve imprimir contratado e vigente repetidos — na herança da
   medição seguinte a repetição de propósito já existe, desde a T6.
-- Decidir se a prévia deve alcançar também a abertura a partir do orçamento assinado, o que
-  exige expor o contratado código a código na lista de origens (mudança de contrato).

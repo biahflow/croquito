@@ -11,6 +11,7 @@ import {
   plateBody,
   platesExtractionBody,
   priceAdjustmentBody,
+  roundPreviewBody,
   takeoffDecisionBody,
   versionBody,
   worksiteKeyError,
@@ -624,5 +625,56 @@ describe("o vínculo de identidade", () => {
     });
     expect(corpo).not.toHaveProperty("declared_by");
     expect(corpo).not.toHaveProperty("declared_at");
+  });
+});
+
+describe("roundPreviewBody", () => {
+  it("leva só o que decide número: origem, período e os atos declarados", () => {
+    const corpo = roundPreviewBody({
+      previousRoundId: "01930000-0000-7000-8000-0000000000d1",
+      periodNumber: " 2 ",
+      amendment: {
+        label: "2ª RE-RA",
+        referencePeriod: "Processo 123/2026",
+        lines: [{ code: "CE04100010(/)", quantityDelta: "3" }],
+      },
+    });
+
+    expect(corpo).toEqual({
+      previous_round_id: "01930000-0000-7000-8000-0000000000d1",
+      period_number: 2,
+      amendment: {
+        label: "2ª RE-RA",
+        reference_period: "Processo 123/2026",
+        lines: [{ code: "CE04100010(/)", quantity_delta: "3" }],
+      },
+    });
+    // Rótulos e obra não mudam contratado, vigente nem saldo: fora da prévia.
+    expect(corpo).not.toHaveProperty("reference_label");
+    expect(corpo).not.toHaveProperty("worksite_key");
+    // A prévia não grava: não há versão a guardar nem chave a repetir.
+    expect(corpo).not.toHaveProperty("base_version");
+  });
+
+  it("na origem por orçamento assinado cita o orçamento, e só ele", () => {
+    const corpo = roundPreviewBody({
+      estimateRoundId: "01930000-0000-7000-8000-0000000000e1",
+      periodNumber: "1",
+    });
+
+    expect(corpo).toEqual({
+      estimate_round_id: "01930000-0000-7000-8000-0000000000e1",
+      period_number: 1,
+    });
+  });
+
+  it("sem declaração nenhuma, o corpo é só a origem e o período", () => {
+    const corpo = roundPreviewBody({
+      previousRoundId: "01930000-0000-7000-8000-0000000000d1",
+      periodNumber: "2",
+    });
+
+    expect(corpo).not.toHaveProperty("amendment");
+    expect(corpo).not.toHaveProperty("price_adjustment");
   });
 });

@@ -1471,6 +1471,39 @@ ilegível, `422 AMENDMENT_NEW_ITEM_CODE_MISSING` quando o item novo cita código
 catálogo contratual (não há de onde materializá-lo), e os erros de domínio da aplicação
 (`AMENDMENT_NEW_ITEM_INVALID`, `AMENDMENT_APPLICATION_MISMATCH`) como `422`.
 
+### `POST /v1/valuation-round-previews`
+
+A projeção da abertura, **sem gravar nada** (F-040, T7). Devolve o contratado que a rodada
+vai nascer com — código a código, antes e depois dos atos declarados —, para que o efeito da
+RE-RA e do reajuste seja visível enquanto ainda dá para desistir.
+
+Somente leitura: **sem** `Idempotency-Key`, sem `base_version`, sem revisão nova e sem tocar
+o consolidado da rodada de origem. Ela existe porque a conta é do servidor: a tela da medição
+**nunca** soma, multiplica ou arredonda dinheiro ou quantidade (`apps/web/AGENTS.md`,
+critério VAL-07), e sem esta rota o navegador precisaria reproduzir identidades do domínio
+(o acumulado, o medido do período) que nenhuma leitura expunha.
+
+Entrada: `estimate_round_id` **ou** `previous_round_id` (exatamente uma; `catalog_upload_id`
+não tem prévia, porque abre rodada sem contratado), `period_number`, e opcionalmente
+`price_adjustment` e `amendment` — os mesmos objetos de `POST /v1/valuation-rounds`.
+`reference_label`, `contract_label` e os campos da obra não entram: eles não mudam número.
+
+Saída: `worksite_key`, `worksite_name`, `period_number`, `previous_period_number` e
+`measured_total_amount` (os dois últimos só na origem por medição seguinte), mais `lines`.
+Cada linha traz, **como string decimal**: `code`, `item_number`, `description`, `unit`,
+`contracted_unit_price`, `current_unit_price`, `new_unit_price`, `contracted_quantity`,
+`current_quantity`, `current_balance_quantity`, `accumulated_quantity`, `measured_quantity`
+(`null` fora da medição seguinte), `re_ratified`, `amendment_delta` (com sinal explícito;
+`null` quando a RE-RA não cita o código), `new_current_quantity`, `new_balance_quantity` e
+`is_new_item`. Os pares `current_*`/`new_*` são o antes e o depois do mesmo número; sem
+declaração eles repetem o mesmo valor, de propósito.
+
+A prévia usa o **mesmo caminho de domínio** da criação e por isso devolve as **mesmas
+recusas**: `409 NEXT_ROUND_PREVIOUS_NOT_APPROVED`, `409 PERIOD_NOT_SEQUENTIAL`,
+`409 ESTIMATE_ORIGIN_NOT_SIGNED`, `422 AMENDMENT_NEW_ITEM_CODE_MISSING`,
+`422 CATALOG_REQUIRED`, `404` para rodada de outro tenant. Uma prévia que só recusasse no
+`POST` da criação seria uma prévia que mente.
+
 ### `GET /v1/valuation-rounds`
 
 Lista as rodadas do tenant, com cursor opaco. Devolve `round_id`, `worksite_key`,

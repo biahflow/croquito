@@ -27,7 +27,8 @@ do domínio, sob pena de dois veredictos sobre a mesma planilha (feature.md, Ris
 | T3 | [Declarar a RE-RA e abrir a medição seguinte na API](tasks/T3-declaracao-e-abertura-na-api.md) | **Entregue** |
 | T4 | [A memória mostra contratado → vigente com a RE-RA](tasks/T4-memoria-com-a-re-ra.md) | **Entregue** |
 | T5 | [A tela: declarar a RE-RA e abrir a medição seguinte](tasks/T5-tela-da-medicao.md) | **Entregue com desvio** |
-| T6 | [A porta da medição seguinte: herança e prévia antes de gravar](tasks/T6-a-porta-da-medicao-seguinte.md) | **Entregue** |
+| T6 | [A porta da medição seguinte: herança e prévia antes de gravar](tasks/T6-a-porta-da-medicao-seguinte.md) | **Entregue com desvio** |
+| T7 | [A prévia é do servidor, não do cliente](tasks/T7-previa-no-servidor.md) | **Entregue** |
 
 > **T5**: a declaração da RE-RA na abertura a partir do orçamento assinado e a memória
 > (contratado → vigente → saldo, com o selo "re-ratificada") estão entregues e testadas. A
@@ -47,8 +48,19 @@ do domínio, sob pena de dois veredictos sobre a mesma planilha (feature.md, Ris
 > **T6**: fecha os três desvios. Pacote aprovado é contrato da superfície: decisão aprovada e
 > não construída é dívida, não escolha de quem implementa. A tarefa não muda o servidor — ele
 > já aceitava a declaração nessa porta, e o read-model já traz o contratado por código; o que
-> faltava era a tela. Pende a **recaptura** dos estados novos (`BROWSER_REQUIRED`), que é
-> tarefa própria.
+> faltava era a tela.
+>
+> **A T6 saiu com um desvio, e o desvio era do handoff, não de quem implementou.** O spec dela
+> mandou calcular a prévia **no cliente**, contra a regra da jornada de medição escrita no
+> `apps/web/AGENTS.md` e citada pelo critério VAL-07: a tela nunca soma, multiplica ou
+> arredonda dinheiro nem quantidade. Para cumprir o spec, a tela precisou rederivar duas
+> identidades do domínio que nenhuma leitura expunha — o acumulado e o medido do período —, que
+> é exatamente a duplicação que a regra existe para impedir.
+>
+> **T7**: leva a conta para o servidor, com a rota de prévia somente-leitura, mantendo a mesma
+> tela que o pacote desenhou. A prévia e a criação passam a partir das **mesmas duas funções**,
+> e um teste manda o mesmo corpo às duas rotas para provar que os números coincidem. Pende a
+> **recaptura** dos estados novos (`BROWSER_REQUIRED`), que é tarefa própria.
 
 ## Compatibilidade de schema
 
@@ -69,6 +81,6 @@ baixo e some da `main` em silêncio.
 - Merge do PR (feito: #109, #112 e #113) e o aceite de código que fecha a
   [issue #100](https://github.com/biahflow/croquito/issues/100): **ocorrido em 2026-08-28** —
   antes de a captura expor os três desvios do pacote, que a T6 fecha.
-- Merge da T6 e **recaptura** dos estados novos: pendentes.
+- Merge da T6/T7 e **recaptura** dos estados novos: pendentes.
 - O aceite numa medição real com contrato re-ratificado permanece como dívida escrita na
   [feature](feature.md).

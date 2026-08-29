@@ -10271,6 +10271,229 @@
         "title": "ValuationRoundPage",
         "type": "object"
       },
+      "ValuationRoundPreviewLine": {
+        "additionalProperties": false,
+        "description": "Um código na prévia: o que ele é hoje, o que a declaração faz com ele e o que sobra.\n\nToda quantidade e todo dinheiro saem como **string decimal**, na mesma disciplina do resto\nda medição: a tela exibe o que veio, e não recompõe a conta (`apps/web/AGENTS.md`).\n\nOs pares `current_*` e `new_*` são o antes e o depois do mesmo número: `current_quantity` é\no vigente HOJE — que já pode trazer RE-RA herdada da rodada anterior —, e `new_quantity` é\no vigente depois do que está declarado nesta abertura. Sem declaração os dois repetem o\nmesmo número de propósito, que é o que faz a diferença aparecer no dia em que ela existir.",
+        "properties": {
+          "accumulated_quantity": {
+            "title": "Accumulated Quantity",
+            "type": "string"
+          },
+          "amendment_delta": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amendment Delta"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "contracted_quantity": {
+            "title": "Contracted Quantity",
+            "type": "string"
+          },
+          "contracted_unit_price": {
+            "title": "Contracted Unit Price",
+            "type": "string"
+          },
+          "current_balance_quantity": {
+            "title": "Current Balance Quantity",
+            "type": "string"
+          },
+          "current_quantity": {
+            "title": "Current Quantity",
+            "type": "string"
+          },
+          "current_unit_price": {
+            "title": "Current Unit Price",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "is_new_item": {
+            "default": false,
+            "title": "Is New Item",
+            "type": "boolean"
+          },
+          "item_number": {
+            "title": "Item Number",
+            "type": "string"
+          },
+          "measured_quantity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measured Quantity"
+          },
+          "new_balance_quantity": {
+            "title": "New Balance Quantity",
+            "type": "string"
+          },
+          "new_current_quantity": {
+            "title": "New Current Quantity",
+            "type": "string"
+          },
+          "new_unit_price": {
+            "title": "New Unit Price",
+            "type": "string"
+          },
+          "re_ratified": {
+            "title": "Re Ratified",
+            "type": "boolean"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "item_number",
+          "description",
+          "unit",
+          "contracted_unit_price",
+          "current_unit_price",
+          "new_unit_price",
+          "contracted_quantity",
+          "current_quantity",
+          "current_balance_quantity",
+          "accumulated_quantity",
+          "re_ratified",
+          "new_current_quantity",
+          "new_balance_quantity"
+        ],
+        "title": "ValuationRoundPreviewLine",
+        "type": "object"
+      },
+      "ValuationRoundPreviewRequest": {
+        "additionalProperties": false,
+        "description": "A projeção da abertura, antes de gravar (F-040 T7).\n\nEspelha `CreateValuationRoundRequest` no que decide NÚMERO — origem, período e os atos\ndeclarados — e omite o que só existe depois de gravar: `reference_label`,\n`contract_label` e os campos da obra não mudam o contratado, o vigente nem o saldo.\n\nSó as duas origens **contratadas**. `catalog_upload_id` abre rodada sem contratado: não há\ncontratado, vigente nem saldo a projetar, e oferecer a prévia ali prometeria uma conta que\nnão existe.",
+        "properties": {
+          "amendment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AmendmentRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "estimate_round_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate Round Id"
+          },
+          "period_number": {
+            "maximum": 999.0,
+            "minimum": 1.0,
+            "title": "Period Number",
+            "type": "integer"
+          },
+          "previous_round_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Round Id"
+          },
+          "price_adjustment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PriceAdjustmentRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "period_number"
+        ],
+        "title": "ValuationRoundPreviewRequest",
+        "type": "object"
+      },
+      "ValuationRoundPreviewResponse": {
+        "additionalProperties": false,
+        "description": "O consolidado que a rodada VAI nascer com, código a código, sem nada gravado.",
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/ValuationRoundPreviewLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "measured_total_amount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measured Total Amount"
+          },
+          "period_number": {
+            "title": "Period Number",
+            "type": "integer"
+          },
+          "previous_period_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Period Number"
+          },
+          "worksite_key": {
+            "title": "Worksite Key",
+            "type": "string"
+          },
+          "worksite_name": {
+            "title": "Worksite Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worksite_key",
+          "worksite_name",
+          "period_number",
+          "lines"
+        ],
+        "title": "ValuationRoundPreviewResponse",
+        "type": "object"
+      },
       "ValuationRoundResponse": {
         "additionalProperties": false,
         "properties": {
@@ -17423,6 +17646,53 @@
           }
         ],
         "summary": "List Valuation Origins",
+        "tags": [
+          "valuation"
+        ]
+      }
+    },
+    "/v1/valuation-round-previews": {
+      "post": {
+        "description": "O contratado que a rodada VAI nascer com, antes de gravar (F-040 T7).\n\nSomente leitura, e por isso **sem** `Idempotency-Key`, sem `base_version` e sem\nrevisão nova: não há nada a repetir nem a versionar. Nada é gravado — nem a rodada,\nnem o consolidado, nem o upload do reajuste, que aqui só é conferido.\n\nEla existe porque a conta é do SERVIDOR. Até a T6 a tela projetava o efeito da RE-RA\nsomando no cliente, o que contraria a regra da jornada de medição em\n`apps/web/AGENTS.md` e obrigava o navegador a redescobrir duas identidades do domínio\n(o acumulado e o medido do período) que nenhuma leitura expunha.\n\nAs recusas são as MESMAS da criação, e é de propósito: quem projeta uma abertura que\nseria recusada precisa ler a recusa aqui — item novo fora do catálogo contratual\n(`AMENDMENT_NEW_ITEM_CODE_MISSING`), rodada anterior não aprovada, período fora de\nsequência, catálogo ilegível (`CATALOG_REQUIRED`). Uma prévia que só recusasse no\n`POST` da criação seria uma prévia que mente.\n\n`POST` porque a declaração viaja no CORPO: a RE-RA tem linhas, notas e rótulos, e\nespremê-la em query string a exporia na URL e nos logs.",
+        "operationId": "preview_valuation_round_v1_valuation_round_previews_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValuationRoundPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValuationRoundPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Preview Valuation Round",
         "tags": [
           "valuation"
         ]

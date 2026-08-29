@@ -43,13 +43,13 @@ import {
   postSuggestionsRecompute,
   postTakeoffDecision,
   previewIdentityLink,
+  previewRound,
   searchCatalog,
   uploadCatalog,
   uploadPlateFile,
   type ApprovalState,
   type BulletinResponse,
   type CatalogSearchResponse,
-  type CatalogSearchResult,
   type CodesResponse,
   type DossierResponse,
   type IdentityLinkPreviewResponse,
@@ -192,13 +192,10 @@ import {
 } from "./labels";
 import {
   aberturaDaMedicaoSeguinte,
-  codigosParaResolver,
   efeitoEmPtBr,
-  herancaDaRodadaAnterior,
-  medidoPorCodigo,
-  previaDaReRa,
-  type LinhaDaPrevia,
-  type LinhaHerdada,
+  linhasDeclaradas,
+  pedidoDaPrevia,
+  type EstadoDaPrevia,
 } from "./previa";
 import { DICA_NOME_DA_OBRA, codeSearchTerm, worksiteKeyError } from "./requests";
 import { DICA_FATOR, REAJUSTE_OPCOES, reajusteIssue } from "./reajuste";
@@ -616,31 +613,37 @@ export function ReRatificacaoFieldset({
 }
 
 /**
- * A herança da rodada anterior, antes de qualquer declaração (F-040 T6, decisão 4 do pacote).
+ * A herança da rodada anterior, antes de qualquer declaração (F-040, decisão 4 do pacote).
  *
  * É o que a medição seguinte recebe: contratado, vigente, o que foi medido no período que
  * fechou, o acumulado resultante e o saldo. Sem RE-RA, contratado e vigente repetem o mesmo
  * número **de propósito** — é o que faz a diferença aparecer no dia em que ela existir.
  *
- * Os números são a projeção do consolidado que a rodada `n+1` vai nascer com, calculada do
- * read-model da rodada anterior; ela é declarada como prévia na própria tela, e o que vale
- * depois de gravar é a resposta da API.
+ * Todos os números vêm da prévia do servidor (`POST /v1/valuation-round-previews`), que os
+ * produz pelo mesmo caminho que gravará o consolidado. Nada foi gravado ainda: é a projeção
+ * do que a rodada `n+1` vai nascer com.
  */
-export function HerancaDaRodadaAnterior({
-  round,
-  heranca,
-  totalMedido,
-}: {
-  round: RoundSummary;
-  heranca: LinhaHerdada[] | null;
-  totalMedido: string | null;
-}) {
-  const periodoQueFechou = round.period_number;
-  if (heranca === null) {
+export function HerancaDaRodadaAnterior({ estado }: { estado: EstadoDaPrevia }) {
+  if (estado.status === "ausente") {
+    return null;
+  }
+  if (estado.status === "carregando") {
+    return <p className="campo-dica">Lendo o que vem da rodada anterior…</p>;
+  }
+  if (estado.status === "indisponivel") {
     return (
-      <p className="campo-dica">Lendo o que vem da rodada anterior…</p>
+      <p className="campo-aviso" role="alert">
+        Não foi possível projetar o que vem da rodada anterior: {estado.motivo} A medição
+        seguinte continua podendo ser aberta — quem confere o consolidado é o servidor —, mas a
+        herança não pode ser mostrada aqui.
+      </p>
     );
   }
+  const periodoQueFechou = estado.previa.previous_period_number;
+  const totalMedido = estado.previa.measured_total_amount;
+  // A linha que nasce da RE-RA declarada agora não vem da rodada anterior: mostrá-la aqui
+  // afirmaria que ela já era contratada.
+  const heranca = estado.previa.lines.filter((linha) => !linha.is_new_item);
   if (heranca.length === 0) {
     return (
       <p className="campo-aviso" role="alert">
@@ -671,10 +674,10 @@ export function HerancaDaRodadaAnterior({
         <tbody>
           {heranca.map((linha) => (
             <tr key={linha.code}>
-              <td>{linha.itemNumber}</td>
+              <td>{linha.item_number}</td>
               <td className="mono">
                 {linha.code}
-                {linha.reRatificada ? (
+                {linha.re_ratified ? (
                   <>
                     {" "}
                     <span className="selo selo-rera">re-ratificada</span>
@@ -683,17 +686,17 @@ export function HerancaDaRodadaAnterior({
               </td>
               <td>{linha.description}</td>
               <td>{linha.unit}</td>
+              <td className="numero">{formatMoneyText(linha.current_unit_price)}</td>
+              <td className="numero">{formatDecimalText(linha.contracted_quantity)}</td>
+              <td className="numero">{formatDecimalText(linha.current_quantity)}</td>
               <td className="numero">
-                {linha.unitPrice === null ? "—" : formatMoneyText(linha.unitPrice)}
+                {linha.measured_quantity === null
+                  ? "—"
+                  : formatDecimalText(linha.measured_quantity)}
               </td>
-              <td className="numero">{formatDecimalText(linha.contratado)}</td>
-              <td className="numero">{formatDecimalText(linha.vigente)}</td>
-              <td className="numero">{formatDecimalText(linha.medidoNoPeriodo)}</td>
+              <td className="numero">{formatDecimalText(linha.accumulated_quantity)}</td>
               <td className="numero">
-                {linha.acumulado === null ? "não legível" : formatDecimalText(linha.acumulado)}
-              </td>
-              <td className="numero">
-                {linha.saldo === null ? "não legível" : formatDecimalText(linha.saldo)}
+                {formatDecimalText(linha.current_balance_quantity)}
               </td>
             </tr>
           ))}
@@ -707,25 +710,50 @@ export function HerancaDaRodadaAnterior({
       )}
       <p className="dica">
         Sem RE-RA declarada, <strong>vigente é igual a contratado</strong>: as duas colunas
-        repetem o mesmo número de propósito, para que a diferença apareça quando existir. Esta
-        é a prévia do consolidado que a rodada nova vai receber; o que vale depois de gravar é
-        o que o servidor devolver.
+        repetem o mesmo número de propósito, para que a diferença apareça quando existir. Estes
+        são os números que o servidor projetou para a rodada nova; nada foi gravado ainda.
       </p>
     </div>
   );
 }
 
 /**
- * A prévia do efeito da RE-RA, antes de gravar (F-040 T6, decisão 6 do pacote).
+ * A prévia do efeito da RE-RA, antes de gravar (F-040, decisão 6 do pacote de design).
  *
  * O vigente aparece como resultado de uma conta visível — contratado, vigente hoje, o efeito
  * declarado com sinal, o vigente novo e o saldo novo. **Não existe campo onde escrever o
  * vigente**: existe o delta que o produz.
  *
- * A palavra "prévia" está na tela porque ela é isso: a autoridade sobre o número é do
- * servidor, e a memória da rodada aberta mostra a resposta dele, não esta conta.
+ * A T7 tirou a conta daqui: os dez números da linha vêm de
+ * `POST /v1/valuation-round-previews`, que os produz pelo MESMO caminho de domínio da criação
+ * da rodada. A tela exibe strings, e a palavra "prévia" continua na tela porque nada foi
+ * gravado ainda.
+ *
+ * A prévia **informa, não bloqueia**: quando o servidor não consegue projetar, a tela diz
+ * isso e a declaração segue possível — quem recusa de verdade é a criação da rodada.
  */
-export function PreviaDaReRa({ linhas }: { linhas: LinhaDaPrevia[] }) {
+export function PreviaDaReRa({
+  estado,
+  declarada,
+}: {
+  estado: EstadoDaPrevia;
+  declarada: boolean;
+}) {
+  if (!declarada) {
+    return null;
+  }
+  if (estado.status === "carregando") {
+    return <p className="campo-dica">Projetando o efeito da declaração…</p>;
+  }
+  if (estado.status === "indisponivel") {
+    return (
+      <p className="campo-aviso" role="alert">
+        Não foi possível projetar o efeito desta declaração: {estado.motivo} A abertura
+        continua possível — o servidor confere o consolidado ao gravar.
+      </p>
+    );
+  }
+  const linhas = linhasDeclaradas(estado.status === "pronta" ? estado.previa : null);
   if (linhas.length === 0) {
     return null;
   }
@@ -752,38 +780,22 @@ export function PreviaDaReRa({ linhas }: { linhas: LinhaDaPrevia[] }) {
             <tr key={linha.code}>
               <td className="mono">
                 {linha.code}
-                {linha.itemNovo ? (
+                {linha.is_new_item ? (
                   <>
                     {" "}
                     <span className="selo selo-rera">item novo</span>
                   </>
                 ) : null}
               </td>
-              <td>
-                {linha.pendente ? (
-                  <span className="campo-aviso">
-                    não encontrado no catálogo contratual desta obra
-                  </span>
-                ) : (
-                  linha.description
-                )}
-              </td>
+              <td>{linha.description}</td>
               <td>{linha.unit}</td>
-              <td className="numero">
-                {linha.unitPrice === null ? "—" : formatMoneyText(linha.unitPrice)}
-              </td>
-              <td className="numero">{formatDecimalText(linha.contratado)}</td>
-              <td className="numero">{formatDecimalText(linha.vigenteHoje)}</td>
-              <td className="numero">{efeitoEmPtBr(linha.efeito)}</td>
-              <td className="numero">
-                {linha.vigenteNovo === null
-                  ? "não legível"
-                  : formatDecimalText(linha.vigenteNovo)}
-              </td>
-              <td className="numero">{formatDecimalText(linha.acumulado)}</td>
-              <td className="numero">
-                {linha.saldoNovo === null ? "não legível" : formatDecimalText(linha.saldoNovo)}
-              </td>
+              <td className="numero">{formatMoneyText(linha.current_unit_price)}</td>
+              <td className="numero">{formatDecimalText(linha.contracted_quantity)}</td>
+              <td className="numero">{formatDecimalText(linha.current_quantity)}</td>
+              <td className="numero">{efeitoEmPtBr(linha.amendment_delta)}</td>
+              <td className="numero">{formatDecimalText(linha.new_current_quantity)}</td>
+              <td className="numero">{formatDecimalText(linha.accumulated_quantity)}</td>
+              <td className="numero">{formatDecimalText(linha.new_balance_quantity)}</td>
             </tr>
           ))}
         </tbody>
@@ -791,16 +803,14 @@ export function PreviaDaReRa({ linhas }: { linhas: LinhaDaPrevia[] }) {
       <p className="dica">
         O vigente <strong>não é digitado</strong>: ele é o vigente de hoje mais o efeito
         declarado, e o saldo novo é o vigente novo menos o acumulado, que não se move — período
-        já medido guarda a quantidade que valeu nele. Esta é a prévia; quem grava e confere o
-        consolidado é o servidor, e a memória da rodada mostrará a resposta dele.
+        já medido guarda a quantidade que valeu nele. Quem faz essa conta é o servidor, pelo
+        mesmo caminho que gravará a rodada; aqui nada foi gravado ainda.
       </p>
-      {linhas.some((linha) => linha.pendente) ? (
-        <p className="campo-aviso" role="alert">
-          Um item novo ainda não foi encontrado no catálogo contratual desta obra. Sem
-          descrição, unidade e preço, a linha não tem de onde nascer e o servidor recusará a
-          abertura.
-        </p>
-      ) : null}
+      <p className="dica">
+        O item novo aparece com descrição, unidade e preço <strong>materializados do catálogo
+        contratual</strong> desta obra. Código que o catálogo não traz não vira linha: a
+        projeção acima recusa, com a mesma frase que a abertura recusaria.
+      </p>
     </div>
   );
 }
@@ -3191,18 +3201,12 @@ export function MedicaoApp({
   // As duas portas contratadas — orçamento assinado e rodada anterior — compartilham a regra
   // de que obra, catálogo e contratado NÃO são digitados; só elas oferecem declarar RE-RA.
   const origemContratada = origem !== "upload";
-  // A medição seguinte (F-040 T6): a rodada anterior escolhida, a herança que ela deixa e o
-  // total medido no período que fechou. Nada disso cria rodada — a criação continua sendo o
-  // submit do formulário, como nas outras duas portas.
+  // A medição seguinte (F-040): a rodada anterior escolhida. Escolhê-la NÃO cria rodada — a
+  // criação continua sendo o submit do formulário, como nas outras duas portas.
   const [rodadaAnterior, setRodadaAnterior] = useState<RoundSummary | null>(null);
-  const [heranca, setHeranca] = useState<LinhaHerdada[] | null>(null);
-  const [totalMedidoAnterior, setTotalMedidoAnterior] = useState<string | null>(null);
-  // Descrição, unidade e preço dos itens novos, resolvidos no catálogo contratual da rodada
-  // anterior (ADR-0056, decisão 7). `null` na chave = buscado e não encontrado; chave ausente
-  // = ainda não buscado. Nunca busca duas vezes o mesmo código.
-  const [catalogoItemNovo, setCatalogoItemNovo] = useState<
-    Record<string, CatalogSearchResult | null>
-  >({});
+  // A projeção da abertura, do servidor (F-040 T7). Uma resposta só alimenta as DUAS tabelas:
+  // a herança da rodada anterior (as colunas `current_*`) e o efeito da declaração (as `new_*`).
+  const [previa, setPrevia] = useState<EstadoDaPrevia>({ status: "ausente" });
   // Reajuste declarado na abertura (F-039). `null` é "sem reajuste", e é o padrão: o ato
   // existe e não se impõe. Só aparece no caminho do orçamento assinado, porque sem
   // contratado não há preço contratual a reajustar.
@@ -3484,96 +3488,64 @@ export function MedicaoApp({
   };
 
   /**
-   * A herança da rodada anterior (F-040 T6): o contratado código a código e o que ela mediu.
+   * A prévia da abertura, do servidor (F-040 T7): a herança da rodada anterior e o efeito do
+   * que está declarado, numa resposta só.
    *
-   * Observacional, como a lista de origens: falha aqui NÃO impede abrir a medição seguinte —
-   * quem confere o consolidado é o servidor. O que se perde é a prévia, e a tela diz isso em
-   * vez de fingir que leu.
+   * Até a T6 esta conta era feita AQUI, no navegador — o que contraria a regra da jornada de
+   * medição (`apps/web/AGENTS.md`: a tela nunca soma, multiplica ou arredonda dinheiro ou
+   * quantidade) e obrigava a tela a rederivar o acumulado e o medido do período por fora.
+   * Agora ela pergunta e exibe.
+   *
+   * Duas guardas, e nenhuma é cosmética. O `BUSCA_DEBOUNCE_MS` da busca de códigos espera a
+   * pausa da digitação — sem ele, cada tecla do delta viraria uma projeção do consolidado
+   * inteiro. E o `AbortController` cancela a projeção anterior, para que a resposta lenta de
+   * uma declaração já abandonada não sobrescreva a da declaração atual.
+   *
+   * A prévia é OBSERVACIONAL: falha aqui não impede abrir a medição — quem confere o
+   * consolidado é o servidor, na criação. O que se perde é a projeção, e a tela diz isso.
    */
-  const carregarHeranca = useCallback(
-    async (previousRoundId: string) => {
-      const token = tokenDaSessao();
-      if (token === null) {
-        return;
-      }
-      try {
-        const [estado, boletim] = await Promise.all([
-          getRoundState(token, previousRoundId),
-          getBulletin(token, previousRoundId).catch(() => null),
-        ]);
-        setHeranca(
-          herancaDaRodadaAnterior(
-            estado.contracted.quantities ?? [],
-            estado.contracted.prices ?? [],
-            medidoPorCodigo(boletim),
-          ),
-        );
-        setTotalMedidoAnterior(boletim?.total_amount ?? null);
-      } catch {
-        setHeranca([]);
-        setTotalMedidoAnterior(null);
-      }
-    },
-    [tokenDaSessao],
+  const previaAbortRef = useRef<AbortController | null>(null);
+  const pedido = useMemo(
+    () =>
+      pedidoDaPrevia({
+        estimateRoundId: origemDoOrcamento ? origemEscolhida : null,
+        previousRoundId: origemDoOrcamento ? null : (rodadaAnterior?.round_id ?? null),
+        periodNumber: roundForm.periodNumber,
+        priceAdjustment: reajuste,
+        amendment: reRa,
+      }),
+    [origemDoOrcamento, origemEscolhida, rodadaAnterior, roundForm.periodNumber, reajuste, reRa],
   );
-
-  /**
-   * Item novo: descrição, unidade e preço resolvidos no catálogo contratual da rodada anterior
-   * (ADR-0056, decisão 7). Só a PRÉVIA usa este resultado — o corpo da RE-RA não leva preço, e
-   * quem materializa a linha no consolidado é o servidor.
-   *
-   * Duas guardas contra tráfego inútil, e nenhuma delas é cosmética: o campo do código é
-   * digitado caractere a caractere, e sem elas "CE04100010(/)" viraria uma dúzia de buscas por
-   * prefixos que não existem no catálogo.
-   *
-   * - o mesmo `BUSCA_DEBOUNCE_MS` da busca de códigos espera a pausa da digitação;
-   * - `itensNovosPedidos` guarda o que já foi perguntado, para não repetir. Um código não
-   *   encontrado fica gravado como `null`, que é resposta e não ausência de resposta.
-   */
-  const itensNovosPedidos = useRef<Set<string>>(new Set());
+  // Chave estável do pedido: sem ela, o objeto novo a cada render reexecutaria o efeito para
+  // sempre. É serialização de estado local, nunca telemetria — nada sai daqui.
+  const pedidoChave = pedido === null ? null : JSON.stringify(pedido);
   useEffect(() => {
-    const anterior = rodadaAnterior;
-    if (anterior === null || heranca === null || reRa === null) {
+    if (!origemContratada || pedidoChave === null || pedido === null) {
+      setPrevia({ status: "ausente" });
       return;
     }
     const token = tokenDaSessao();
     if (token === null) {
       return;
     }
-    const pendentes = codigosParaResolver(reRa, heranca).filter(
-      (code) => !itensNovosPedidos.current.has(code),
-    );
-    if (pendentes.length === 0) {
-      return;
-    }
+    setPrevia({ status: "carregando" });
     const timer = setTimeout(() => {
-      for (const code of pendentes) {
-        itensNovosPedidos.current.add(code);
-        void searchCatalog(token, anterior.round_id, codeSearchTerm(code))
-          .then((resposta) => {
-            const encontrado = resposta.results.find((linha) => linha.code === code) ?? null;
-            setCatalogoItemNovo((atual) => ({ ...atual, [code]: encontrado }));
-          })
-          .catch(() => {
-            // Falha de rede não é "código inexistente": esquecer o pedido deixa a próxima
-            // digitação tentar de novo, e a prévia continua declarando a linha como pendente.
-            itensNovosPedidos.current.delete(code);
-          });
-      }
+      previaAbortRef.current?.abort();
+      const controller = new AbortController();
+      previaAbortRef.current = controller;
+      previewRound(token, pedido, { signal: controller.signal })
+        .then((resposta) => setPrevia({ status: "pronta", previa: resposta }))
+        .catch((erro: unknown) => {
+          if (isAbortError(erro)) {
+            return;
+          }
+          setPrevia({ status: "indisponivel", motivo: describeError(erro) });
+        });
     }, BUSCA_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [reRa, heranca, rodadaAnterior, tokenDaSessao]);
-
-  /**
-   * A prévia do efeito da RE-RA sobre a herança (decisão 6 do pacote de design).
-   *
-   * Vazia quando não há declaração ou não há herança lida: sem contratado código a código não
-   * há prévia a fazer, e a tela não inventa uma.
-   */
-  const previaDeclarada = useMemo(
-    () => previaDaReRa(heranca ?? [], reRa, catalogoItemNovo),
-    [heranca, reRa, catalogoItemNovo],
-  );
+    // `pedido` entra pela chave: o objeto é remontado a cada render e só o conteúdo importa.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [origemContratada, pedidoChave, tokenDaSessao]);
 
   /**
    * A porta da medição seguinte (F-040 T6, decisão 1 do pacote de design).
@@ -3593,17 +3565,15 @@ export function MedicaoApp({
     setOrigemEscolhida(null);
     setReajuste(null);
     setReRa(null);
-    setCatalogoItemNovo({});
-    itensNovosPedidos.current.clear();
-    setHeranca(null);
-    setTotalMedidoAnterior(null);
+    setPrevia({ status: "ausente" });
     setAlertMessage(null);
     setRoundForm({
       ...EMPTY_ROUND_FORM,
       periodNumber: abertura.periodNumber,
       referenceLabel: abertura.referenceLabel,
     });
-    void carregarHeranca(abertura.previousRoundId);
+    // A projeção é pedida pelo efeito, assim que a origem e o período estiverem no estado:
+    // pedi-la aqui duplicaria a chamada e correria com a que o efeito já vai disparar.
   };
 
   /**
@@ -3645,10 +3615,7 @@ export function MedicaoApp({
         setRoundForm(EMPTY_ROUND_FORM);
         setOrigemEscolhida(null);
         setRodadaAnterior(null);
-        setHeranca(null);
-        setTotalMedidoAnterior(null);
-        setCatalogoItemNovo({});
-        itensNovosPedidos.current.clear();
+        setPrevia({ status: "ausente" });
         setReajuste(null);
         setReRa(null);
         setToast(
@@ -5282,11 +5249,7 @@ export function MedicaoApp({
                       calculado a partir da anterior. Ele não é digitado: período escolhido à
                       mão abre espaço para pular um ou repetir um.
                     </p>
-                    <HerancaDaRodadaAnterior
-                      round={rodadaAnterior}
-                      heranca={heranca}
-                      totalMedido={totalMedidoAnterior}
-                    />
+                    <HerancaDaRodadaAnterior estado={previa} />
                   </>
                 )
               ) : null}
@@ -5513,11 +5476,11 @@ export function MedicaoApp({
                   {reRaIssue(reRa) === null ? null : (
                     <p className="campo-aviso">{reRaIssue(reRa)}</p>
                   )}
-                  {/* A prévia é da medição seguinte: ela precisa do contratado código a
-                      código, e só a rodada anterior o entrega ao cliente. Na abertura a
-                      partir do orçamento assinado o efeito continua aparecendo depois de
-                      gravar, na memória da rodada. */}
-                  <PreviaDaReRa linhas={previaDeclarada} />
+                  {/* Nas DUAS portas contratadas: quem projeta é o servidor, e ele conhece o
+                      contratado do orçamento assinado tão bem quanto o da rodada anterior. Na
+                      T6 a prévia só existia na medição seguinte porque só ela entregava o
+                      contratado código a código ao cliente — limite que deixou de existir. */}
+                  <PreviaDaReRa estado={previa} declarada={reRa !== null} />
                 </>
               ) : null}
               <button

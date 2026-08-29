@@ -26,6 +26,7 @@ import {
   postSuggestionsRecompute,
   postTakeoffDecision,
   previewIdentityLink,
+  previewRound,
   searchCatalog,
   uploadCatalog,
 } from "./api";
@@ -443,6 +444,36 @@ describe("upload do catálogo", () => {
       period_number: 3,
       contract_label: "Contrato 05/2024",
     });
+  });
+
+  /**
+   * A prévia é `POST` porque a declaração viaja no corpo, mas **não é mutação** (F-040 T7):
+   * sem `Idempotency-Key` e sem `base_version`, porque não há nada a repetir nem a versionar.
+   */
+  it("a prévia é POST de leitura: sem chave de idempotência e sem base_version", async () => {
+    await previewRound(TOKEN, {
+      previousRoundId: ROUND,
+      periodNumber: "2",
+      amendment: {
+        label: "2ª RE-RA",
+        referencePeriod: "Processo 123/2026",
+        lines: [{ code: "CE04100010(/)", quantityDelta: "3" }],
+      },
+    });
+
+    expect(chamadas[0].url).toBe(`${BASE}/v1/valuation-round-previews`);
+    expect(headersDaChamada().Authorization).toBe(`Bearer ${TOKEN}`);
+    expect(headersDaChamada()).not.toHaveProperty("Idempotency-Key");
+    expect(corpoDaChamada()).toEqual({
+      previous_round_id: ROUND,
+      period_number: 2,
+      amendment: {
+        label: "2ª RE-RA",
+        reference_period: "Processo 123/2026",
+        lines: [{ code: "CE04100010(/)", quantity_delta: "3" }],
+      },
+    });
+    expect(corpoDaChamada()).not.toHaveProperty("base_version");
   });
 });
 

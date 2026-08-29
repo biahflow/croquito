@@ -1,6 +1,12 @@
 # F-040 · T6 — A porta da medição seguinte: herança e prévia antes de gravar
 
-Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue**
+Feature: [F-040](../feature.md) · Plano: [plan.md](../plan.md) · Estado: **Entregue com desvio**
+
+> **A "exceção declarada" descrita no fim deste documento foi desfeita pela
+> [T7](T7-previa-no-servidor.md).** Ela não era exceção que coubesse declarar: a regra do
+> `apps/web/AGENTS.md` é de produto, e o desvio veio do handoff desta tarefa, que mandou
+> calcular a prévia no cliente. A conta passou para o servidor. O restante deste documento é
+> preservado como o registro do que a T6 fez e por quê.
 
 ## Por que esta tarefa existe
 
