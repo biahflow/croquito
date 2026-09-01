@@ -7186,6 +7186,13 @@ export function OrcamentoApp({
                             planilha · sha256{" "}
                             {shortDigest(estimate.workbook_sha256)}
                           </p>
+                          {/* Com qual gabarito ela saiu (F-043 T3). Dito SEMPRE, inclusive
+                              quando não houve gabarito: ausência de carimbo é afirmação, e
+                              calar sobre ela deixaria a leitura supor um gabarito que não
+                              houve. */}
+                          <p className="dica">
+                            {procedenciaDaPlanilha(state?.estimate.workbook_template)}
+                          </p>
                           {/* O hint da tela 9 é este, e só este: o que o digest no
                               endereço do arquivo garante. Os dois avisos de ANTES do
                               clique não se repetem depois dele. */}

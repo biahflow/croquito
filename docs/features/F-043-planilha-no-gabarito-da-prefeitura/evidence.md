@@ -203,3 +203,52 @@ documento, não de mudança de desenho.
   contrato.
 - A publicação do gabarito como artefato de plataforma (decidido em 2026-08-28) ainda não foi
   construída.
+
+
+## Evidência de navegador (T3)
+
+Classificação: `BROWSER_REQUIRED` — a F-043 é `INTERFACE_CHANGE`, e o estado **02** do
+[pacote aprovado](mock/README.md) (revisão 3, aprovada por ato humano em 2026-09-01) é a
+superfície que a T3 construiu.
+
+Capturada em **2026-09-01** contra o stack local — PostgreSQL, floci e Keycloak reais, API em
+`uvicorn` e a SPA em `vite` —, com sessão OIDC real (`orcamentista.local`, tenant
+`tenant-local`) e navegação determinística em Chromium via Playwright (1440 px de largura,
+`deviceScaleFactor` 2). Nenhuma tela é mock e nenhum passo dependeu de modelo.
+
+O dado é **sintético**: o gabarito das capturas tem três linhas, não 433 — o que se mede aqui
+é a fronteira da escolha, e o escritor que percorre o gabarito inteiro já tem oráculo próprio
+na T1, provado contra o documento real. O gabarito real do cliente não está no repositório e
+não estará.
+
+| Arquivo | Estado | O que a imagem prova |
+| --- | --- | --- |
+| [`evidencia/01-sem-gabarito.png`](evidencia/01-sem-gabarito.png) | O despacho antes de escolher | O orçamento aprovado, ainda não despachado, com o seletor em **“Sem gabarito — na ordem do próprio orçamento”**. Sem escolha não há aviso de revisão nem resumo do arquivo: a tela não fala de gabarito antes de haver um. |
+| [`evidencia/02-escolher-gabarito.png`](evidencia/02-escolher-gabarito.png) | A escolha, com a revisão à vista | O seletor traz **nome, revisão e tamanho juntos** (`PLANILHA ORÇAMENTÁRIA SINTÉTICA · rev. REV. 03 — 2026-08 · 3 linhas`); o aviso nomeia a revisão e pede confirmação a quem entrega à prefeitura; e “O que vai no arquivo” lista gabarito, revisão, linhas e as duas abas, dizendo por escrito que a revisão é impressa **dentro** do arquivo. |
+| [`evidencia/03-publicada-no-gabarito.png`](evidencia/03-publicada-no-gabarito.png) | Publicada, e dizendo com o quê | Depois do despacho, a planilha existe com digest próprio **e a tela declara a procedência**: “Publicada no gabarito PLANILHA ORÇAMENTÁRIA SINTÉTICA, revisão REV. 03 — 2026-08.” O carimbo foi conferido também no banco: `estimate_round_revisions.estimate_template_json` guarda id, nome, revisão e o digest do documento. |
+
+### Dois defeitos que a captura achou, e a suíte não achava
+
+1. **A procedência não chegava à tela.** `procedenciaDaPlanilha()` existia em `gabarito.ts`,
+   com teste próprio, e **não estava ligada em lugar nenhum** — a planilha publicada não dizia
+   com qual gabarito saiu, e o carimbo só existia no banco. A suíte passava porque cada metade
+   estava certa isolada. Fechado: `workbook_template` passou a sair na leitura do estado, e a
+   tela imprime a procedência **sempre**, inclusive quando não houve gabarito — ausência de
+   carimbo é afirmação, e calar sobre ela deixaria a leitura supor um gabarito que não houve.
+2. **O seletor truncava a revisão.** Com largura automática, `rev. REV. 03 — 2026-08` era
+   cortado exatamente no ponto que a decisão 5 do pacote existe para mostrar. Fechado com
+   `width: 100%` no seletor.
+
+Os dois são do mesmo tipo que a captura de navegador vem achando nesta base: código correto em
+cada parte, e a junção que ninguém tinha olhado.
+
+### Método
+
+O ambiente foi semeado pelas **funções do próprio teste**
+(`tests/api/test_estimate_round_routes`), apontadas para o servidor real em vez do
+`TestClient` — as duas interfaces são httpx. Isso faz o estado capturado ser o mesmo que a
+suíte produz, em vez de um estado paralelo montado à mão. Três substituições foram
+necessárias: o object store (o teste escreve no fake; aqui o objeto vai ao bucket do floci,
+**com `ChecksumSHA256`**, que é o que a API confere), o `Database` e o tenant — este último
+porque `_TENANT` já está ligado como *default* de `_headers`, avaliado na importação do
+módulo, e trocar só a constante não basta.

@@ -41,7 +41,11 @@ import type {
   SiteSetupPreviewResponse,
 } from "./acervo";
 import { corpoDoDespacho } from "./gabarito";
-import type { GabaritoListResponse, GabaritoOption } from "./gabarito";
+import type {
+  CarimboDoGabarito,
+  GabaritoListResponse,
+  GabaritoOption,
+} from "./gabarito";
 import type { CalcMatrix } from "./matrix";
 import type { ItemPrecedent } from "./precedente";
 import {
@@ -350,6 +354,11 @@ export type EstimateStateEstimate = {
   estimate_sha256: string | null;
   workbook_present: boolean;
   workbook_sha256: string | null;
+  /**
+   * Com qual gabarito a planilha da cabeça foi publicada (F-043 T3). `null` é AFIRMAÇÃO —
+   * publicou na ordem do próprio orçamento —, e não ausência de informação.
+   */
+  workbook_template?: CarimboDoGabarito | null;
 };
 
 /**

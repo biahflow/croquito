@@ -3688,6 +3688,52 @@ def test_o_despacho_com_gabarito_carimba_a_revisao_na_rodada(tmp_path: Path) -> 
     assert "rows" not in carimbo
 
 
+def test_a_leitura_declara_com_qual_gabarito_a_planilha_saiu(tmp_path: Path) -> None:
+    """A procedência precisa CHEGAR à tela, não só existir no banco.
+
+    O carimbo gravado e a tela calada foi exatamente o defeito que a captura de navegador
+    achou e a suíte não achava: cada metade estava certa isolada.
+    """
+    client = _client(tmp_path)
+    state = _round_ready_for_export(client)
+    template_id = _publish_grid(client)
+
+    despacho = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate/export",
+        headers=_headers(key="exporta-para-leitura"),
+        json={"base_version": state["version"], "estimate_template_id": template_id},
+    )
+    assert despacho.status_code == 200, despacho.text
+    leitura = client.get(
+        f"/v1/estimate-rounds/{state['round_id']}", headers=_headers(key="le-procedencia")
+    )
+
+    assert leitura.status_code == 200, leitura.text
+    carimbo = leitura.json()["estimate"]["workbook_template"]
+    assert carimbo is not None
+    assert carimbo["template_version"] == "REV. 03 — 2026-08"
+
+
+def test_a_leitura_sem_gabarito_declara_ausencia_em_vez_de_omitir(tmp_path: Path) -> None:
+    """`null` é afirmação — "publicou na ordem do próprio orçamento" —, não silêncio."""
+    client = _client(tmp_path)
+    state = _round_ready_for_export(client)
+
+    despacho = client.post(
+        f"/v1/estimate-rounds/{state['round_id']}/estimate/export",
+        headers=_headers(key="exporta-sem-gab-leitura"),
+        json={"base_version": state["version"]},
+    )
+    assert despacho.status_code == 200, despacho.text
+    leitura = client.get(
+        f"/v1/estimate-rounds/{state['round_id']}", headers=_headers(key="le-sem-gabarito")
+    )
+
+    estimativa = leitura.json()["estimate"]
+    assert "workbook_template" in estimativa, "a chave existe; o que é nulo é o valor"
+    assert estimativa["workbook_template"] is None
+
+
 def test_o_despacho_sem_gabarito_continua_publicando_como_hoje(tmp_path: Path) -> None:
     """O caminho de quem não entrega àquela prefeitura não pode ter parado de funcionar.
 

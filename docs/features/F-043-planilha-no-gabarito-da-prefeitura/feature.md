@@ -2,8 +2,22 @@
 
 ## Status
 
-`IN_PROGRESS`
+`READY_FOR_HUMAN_REVIEW`
 
+> **As três tarefas entregues em 2026-09-01.** A T1 (o escritor do gabarito, provado contra o
+> documento real sem um finding do auditor) entrou pelo PR #115; a T2 (o gabarito como
+> artefato de plataforma) e a T3 (a escolha na jornada web), pelo #131.
+>
+> Os gates: [ADR-0059](../../adr/0059-item-contratado-fora-da-tabela-sco.md) aceito em
+> 2026-08-28, e o [Design Approval Package](mock/README.md) nas revisões 1 e 2 na mesma data e
+> na **revisão 3 em 2026-09-01** — as três por ato humano (Daniel Campos).
+> `BROWSER_REQUIRED` cumprido: três estados capturados contra o stack local, e a captura achou
+> dois defeitos que a suíte não achava ([evidence.md](evidence.md)).
+>
+> O que resta é ato humano: o **aceite do arquivo gerado** contra o documento real, por quem
+> entrega à prefeitura. E a pergunta registrada na evidência, que é da orçamentista: **o preço
+> do contrato embute BDI?** Ela muda o significado de duas células do documento.
+>
 > Nasce em 2026-08-28, da mesma medição de ROI que originou a
 > [F-042](../F-042-acervo-de-parcelas-de-canteiro/feature.md): o dono do produto perguntou o
 > que o sistema pode fazer para acelerar a entrega do documento, e a resposta expôs que a
