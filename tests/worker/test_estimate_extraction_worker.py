@@ -80,6 +80,8 @@ _FIXTURE_MODEL_ID = "fixture-legend-v1"
 _RESERVE_MODEL_ID = "fixture-legend-reserva-v1"
 _RESERVE_ARM_SPEC = "luna=openai:gpt-5.6-luna"
 _RESERVE_NOTE = "PROVIDER_FALLBACK_LEGEND_EXTRACTION_OPENAI"
+_BUILT_BY = "orcamentista-que-montou"
+"""Subject de quem MONTOU o orçamento; é contra ele que a aprovação compara (F-035)."""
 _STALE_OVERLAY_DIGEST = "e" * 64
 _PREVIOUS_PACKET_DIGEST = "f" * 64
 
@@ -352,6 +354,8 @@ def _seed_takeoff(tmp_path: Path, *, packet: dict[str, Any]) -> tuple[Database, 
                 takeoff_registration_json={"method": "rulings", "adjusted": [{"item_id": ITEM_ID}]},
                 code_assignments_json={"assignments": [{"item_id": ITEM_ID, "code": "01.001.001"}]},
                 estimate_json={"lines": [{"code": "01.001.001", "total": "1234.56"}]},
+                estimate_template_json={"template_id": "gabarito-sintetico", "revision": 1},
+                estimate_built_by=_BUILT_BY,
                 extraction_lineage_json={"worker_version": ESTIMATE_EXTRACTION_VERSION},
                 artifact_refs_json={
                     PLATE_IMAGE_REF: ESTIMATE_PLATE_KEY,
@@ -501,6 +505,54 @@ def test_a_extracao_do_orcamento_publica_pacote_overlay_e_lineage_numa_revisao(
     # A rodada de medição de MESMO id não foi tocada.
     assert _valuation_round(database).extraction_status == "queued"
     assert _valuation_revisions(database) == []
+
+
+def test_o_autor_e_o_gabarito_sobrevivem_a_extracao_posterior_ao_build(tmp_path: Path) -> None:
+    """`estimate_built_by` e `estimate_template_json` viajam para a revisão da extração.
+
+    A rota da extração só recusa quando já existe uma extração em voo: montar o orçamento
+    não fecha a rodada, e extrair de novo é ato normal de quem corrigiu a prancha. Sem estas
+    duas colunas na lista do comando de fila, essa segunda extração apagava, sem nenhum ato
+    humano, quem montou o orçamento e com qual gabarito a planilha saiu.
+
+    O prejuízo de perder o autor não é auto-aprovação silenciosa — a rota recusa FECHADO com
+    `ESTIMATE_APPROVAL_AUTHOR_UNKNOWN` — e sim a orçamentista ter de remontar um orçamento
+    que continua correto.
+
+    `estimate_built_by` é escalar, e é por isso que o conserto de `calc_matrix_json` na F-046
+    T4 não a alcançou: serializada por `_json_parameter`, a identidade voltaria com aspas de
+    JSON dentro da coluna. Por isso a asserção compara com a `str` crua.
+    """
+    plate = _plate_pdf()
+    database, database_url = _seed(tmp_path, plate=plate)
+    template = {"template_id": "gabarito-sintetico", "revision": 1}
+    with database.sessions.begin() as session:
+        session.add(
+            EstimateRoundRevisionRecord(
+                id=str(new_uuid7()),
+                tenant_id=TENANT_ID,
+                round_id=ROUND_ID,
+                version=1,
+                created_by="orcamentista-sintetica",
+                estimate_json={"lines": [{"code": "01.001.001", "total": "1234.56"}]},
+                estimate_template_json=template,
+                estimate_built_by=_BUILT_BY,
+                artifact_refs_json={},
+                artifact_digests_json={},
+            )
+        )
+    worker, _storage = _worker(database_url, adapter=_counting_adapter(), stored=plate)
+
+    assert worker.dispatch(_message()) == 1
+
+    revisions = _estimate_revisions(database)
+    assert [revision.version for revision in revisions] == [1, 2]
+    published = revisions[1]
+    assert published.estimate_built_by == _BUILT_BY
+    assert published.estimate_template_json == template
+    # O orçamento montado continua na cabeça: a extração acrescenta pacote, não substitui a
+    # cadeia.
+    assert published.estimate_json == revisions[0].estimate_json
 
 
 def test_o_transporte_entrega_o_envelope_do_orcamento_sem_job_id(tmp_path: Path) -> None:
@@ -697,6 +749,10 @@ def test_o_rerender_do_orcamento_publica_overlay_sem_avancar_a_versao_da_rodada(
     assert published.takeoff_registration_json == revisions[0].takeoff_registration_json
     assert published.code_assignments_json == revisions[0].code_assignments_json
     assert published.estimate_json == revisions[0].estimate_json
+    # O gabarito e o AUTOR do orçamento viajam pelo mesmo motivo, e o segundo não é JSON:
+    # ele sai da coluna como `str` e volta a ela como `str`, sem aspas de serialização.
+    assert published.estimate_template_json == revisions[0].estimate_template_json
+    assert published.estimate_built_by == _BUILT_BY
     assert published.extraction_lineage_json == revisions[0].extraction_lineage_json
     assert published.artifact_refs_json == revisions[0].artifact_refs_json
     overlay_bytes = storage.body(ESTIMATE_OVERLAY_KEY)

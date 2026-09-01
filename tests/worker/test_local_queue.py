@@ -5,31 +5,37 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 
 import fitz
 import pytest
 from PIL import Image
 from sqlalchemy import text
+from sqlalchemy.orm import DeclarativeBase
 
 from croquito_api.database import (
     AiProcessingAuthorizationRecord,
     Database,
     DomainEventRecord,
+    EstimateRoundRevisionRecord,
     JobRecord,
     JobStageEventRecord,
     ProjectRecord,
     ReviewRevisionRecord,
     TenantAiProcessingEntitlementRecord,
     UploadRecord,
+    ValuationRoundRevisionRecord,
 )
 from croquito_worker.auto_association import AutoAssociationConfigError
 from croquito_worker.local_queue import (
+    ESTIMATE_ROUND_CHAIN,
     PREVIEW_BASE_DPI,
     PROVIDER_IMAGE_MAX_BYTES,
     PROVIDER_IMAGE_MAX_SIDE_PX,
+    VALUATION_ROUND_CHAIN,
     LocalQueueWorker,
     LocalWorkerSettings,
+    RoundChain,
     S3ProtectedRawResponseStore,
     UnroutableMessageError,
     ValidatedUpload,
@@ -1234,3 +1240,39 @@ def test_dispatch_logs_error_status_and_code_then_still_reraises(
     assert record.status == "error"  # type: ignore[attr-defined]
     assert record.error_code == "UnroutableMessageError"  # type: ignore[attr-defined]
     assert isinstance(record.duration_ms, float)  # type: ignore[attr-defined]
+
+
+_REVISION_STRUCTURAL_COLUMNS: Final = frozenset(
+    {"id", "tenant_id", "round_id", "version", "parent_revision_id", "created_by", "created_at"}
+)
+"""Colunas que a própria gravação cunha; nenhuma delas é carregada da revisão anterior."""
+
+
+@pytest.mark.parametrize(
+    ("chain", "model"),
+    [
+        (VALUATION_ROUND_CHAIN, ValuationRoundRevisionRecord),
+        (ESTIMATE_ROUND_CHAIN, EstimateRoundRevisionRecord),
+    ],
+    ids=["medicao", "orcamento-base"],
+)
+def test_toda_coluna_da_revisao_declara_se_viaja(
+    chain: RoundChain, model: type[DeclarativeBase]
+) -> None:
+    """Coluna nova na tabela de revisões tem de entrar numa das duas listas da cadeia.
+
+    Este teste existe porque o mesmo defeito já reincidiu em toda coluna nova das duas
+    cadeias — `calc_matrix_json`, `estimate_template_json`, as duas colunas de código por
+    folha da praça, `scene_link_json` e `estimate_built_by` —, sempre do mesmo jeito: alguém
+    acrescenta a coluna, a cabeça de
+    `/v1` a carrega, o comando de fila não, e nenhum teste reclama porque a rota continua
+    respondendo certo até a primeira gravação do worker. Append-only não perdoa: o que não
+    viaja, some, e some sem ato humano nenhum.
+
+    Uma coluna que legitimamente NÃO deva ser carregada adiante tem de aparecer aqui como
+    exceção nomeada, com o motivo escrito. Hoje não existe nenhuma, e é por isso que a
+    comparação é de igualdade e não de contenção.
+    """
+    declared = set(chain.document_columns) | set(chain.scalar_columns)
+    stored = {column.name for column in model.__table__.columns} - _REVISION_STRUCTURAL_COLUMNS
+    assert declared == stored
