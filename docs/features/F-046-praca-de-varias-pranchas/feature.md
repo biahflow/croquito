@@ -2,8 +2,26 @@
 
 ## Status
 
-`READY_FOR_BUILD`
+`READY_FOR_HUMAN_REVIEW`
 
+> **Construída e integrada em 2026-08-29.** As seis tarefas do plano, mais as que nasceram na
+> execução, estão na `main`: o consolidado da praça e o vínculo de identidade no domínio, o
+> boletim com a parcela fundida, o centavo governado pela GERAL
+> ([ADR-0062](../../adr/0062-a-deriva-de-centavo-entre-folhas-da-praca.md)), a persistência e as
+> rotas `/v1`, a promoção de N folhas em lote e a tela da praça — PRs
+> [#125](https://github.com/biahflow/croquito/pull/125),
+> [#127](https://github.com/biahflow/croquito/pull/127) e
+> [#128](https://github.com/biahflow/croquito/pull/128).
+>
+> A captura de navegador (`BROWSER_REQUIRED`) está cumprida e registrou um **achado
+> bloqueante** que a suíte não pegava: o boletim vencido não se declarava vencido e a tela não
+> oferecia remontá-lo, o que tornava a ordem do pacote de design impercorrível numa rodada só.
+> O #127 o resolveu e o #128 refez a captura — ver [evidence.md](evidence.md).
+>
+> O que resta é ato humano: o **aceite** que fecha a
+> [issue #101](https://github.com/biahflow/croquito/issues/101), numa praça real de mais de uma
+> folha. Nenhuma foi medida ainda: o dado das capturas é sintético.
+>
 > Registrada em 2026-08-28, por seleção humana, a partir da
 > [issue #101](https://github.com/biahflow/croquito/issues/101). O
 > [ADR-0057](../../adr/0057-multiplas-pranchas-por-praca-na-extracao-de-legenda.md) foi

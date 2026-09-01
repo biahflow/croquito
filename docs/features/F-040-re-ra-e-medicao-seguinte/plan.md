@@ -83,6 +83,6 @@ baixo e some da `main` em silêncio.
   antes de a captura expor os três desvios do pacote, que a T6 fecha.
 - **Recaptura** dos seis estados: **feita em 2026-09-01**, sobre a `main` de `482fa8e`, com a
   T6 e a T7 no código ([evidence.md](evidence.md)).
-- Merge do PR da T6/T7: pendente, e é ato humano.
+- Merge do PR da T6/T7: **feito** ([#129](https://github.com/biahflow/croquito/pull/129)).
 - O aceite numa medição real com contrato re-ratificado permanece como dívida escrita na
   [feature](feature.md).

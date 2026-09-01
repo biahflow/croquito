@@ -1,7 +1,7 @@
 # F-047 — Evidência
 
 Feature: [O quantitativo nasce da cena aprovada](feature.md)
-Estado: `READY_FOR_REVIEW`
+Estado: `READY_FOR_HUMAN_REVIEW` — integrada na `main` pelos PRs #126; falta o aceite humano
 Data: 2026-08-29 (segunda rodada de captura, depois do PR #124)
 
 Esta é a evidência da [T8](tasks/T8-evidencia-de-navegador.md), a validação de navegador da
